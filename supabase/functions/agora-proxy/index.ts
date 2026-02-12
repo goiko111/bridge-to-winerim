@@ -331,7 +331,6 @@ serve(async (req) => {
 
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
-            const uPrice = Number(line.UnitPrice || 0);
             const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, NON_WINE_FAMILIES);
 
             lines.push({
