@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
@@ -582,6 +582,7 @@ function StepGoLive({
 // ── Main Wizard ──
 export default function AgoraWizard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [currentStep, setCurrentStep] = useState(1);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiToken, setApiToken] = useState("");
@@ -591,18 +592,39 @@ export default function AgoraWizard() {
   const [backfill, setBackfill] = useState(30);
   const [enabled, setEnabled] = useState(false);
   const [searchMapping, setSearchMapping] = useState("");
-  const [showWineOnly, setShowWineOnly] = useState(true); // Default wine-only
+  const [showWineOnly, setShowWineOnly] = useState(true);
   const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
 
   const {
     connectionId,
+    setConnectionId,
     testStatus, testError,
     testConnection, updateConnection,
+    loadConnection,
     daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
   } = useAgoraConnection();
+
+  // Load existing connection from URL param
+  useEffect(() => {
+    const connParam = searchParams.get("connection");
+    if (connParam && !connectionId) {
+      loadConnection(connParam).then((conn) => {
+        if (conn) {
+          setLocationName(conn.location_name);
+          setBaseUrl(conn.base_url);
+          setApiToken(conn.api_token);
+          setSyncMode(conn.sync_mode as "PULL_ONLY" | "BIDIRECTIONAL");
+          setFrequency(conn.sync_frequency_minutes);
+          setBackfill(conn.backfill_days);
+          setEnabled(conn.enabled);
+          setCurrentStep(4); // Jump to Sales view
+        }
+      });
+    }
+  }, [searchParams]);
 
   // When entering step 3 (Families), scan for business days to detect families
   useEffect(() => {

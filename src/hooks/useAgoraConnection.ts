@@ -214,13 +214,26 @@ export function useAgoraConnection() {
     }
   }, [connectionId]);
 
+  const loadConnection = useCallback(async (id: string) => {
+    const { data, error } = await supabase
+      .from("pos_connections")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (error || !data) return null;
+    setConnectionId(data.id);
+    return data;
+  }, []);
+
   return {
     connectionId,
+    setConnectionId,
     testStatus,
     testError,
     testConnection,
     saveConnection,
     updateConnection,
+    loadConnection,
     // Business days
     daysWithSales,
     selectedDay,
