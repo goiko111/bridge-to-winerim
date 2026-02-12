@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { useAgoraConnection } from "@/hooks/useAgoraConnection";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -25,38 +26,55 @@ const steps = [
   { id: 4, label: "Go Live", icon: Power },
 ];
 
-// Mock unmapped products
-const mockProducts = [
-  { id: "P001", name: "Rioja Reserva 2019", mapped: true, winerimId: "W-042", confidence: 98 },
-  { id: "P002", name: "Albariño Rías Baixas", mapped: true, winerimId: "W-017", confidence: 95 },
-  { id: "P003", name: "Ribera del Duero Crianza", mapped: false, winerimId: null, confidence: 0 },
-  { id: "P004", name: "Coca-Cola 33cl", mapped: false, winerimId: null, confidence: 0 },
-  { id: "P005", name: "Verdejo Rueda", mapped: false, winerimId: null, confidence: 72 },
-  { id: "P006", name: "Agua mineral 1L", mapped: false, winerimId: null, confidence: 0 },
-  { id: "P007", name: "Priorat Gran Reserva", mapped: false, winerimId: null, confidence: 85 },
-  { id: "P008", name: "Pan artesano", mapped: false, winerimId: null, confidence: 0 },
-];
-
 export default function AgoraWizard() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiToken, setApiToken] = useState("");
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [locationName, setLocationName] = useState("");
   const [syncMode, setSyncMode] = useState<"PULL_ONLY" | "BIDIRECTIONAL">("PULL_ONLY");
   const [frequency, setFrequency] = useState(15);
   const [backfill, setBackfill] = useState(30);
   const [enabled, setEnabled] = useState(false);
   const [searchMapping, setSearchMapping] = useState("");
 
+  const {
+    connectionId,
+    testStatus,
+    testError,
+    testConnection,
+    updateConnection,
+    products,
+    loadingProducts,
+    fetchProducts,
+    enableSync,
+  } = useAgoraConnection();
+
   const handleTestConnection = () => {
-    setTestStatus("testing");
-    setTimeout(() => {
-      setTestStatus(baseUrl && apiToken ? "success" : "error");
-    }, 1500);
+    testConnection(baseUrl, apiToken);
   };
 
-  const filteredProducts = mockProducts.filter((p) =>
+  // Fetch products when entering mapping step
+  useEffect(() => {
+    if (currentStep === 3 && connectionId) {
+      fetchProducts();
+    }
+  }, [currentStep, connectionId]);
+
+  // Save sync settings when leaving step 2
+  const handleNext = async () => {
+    if (currentStep === 2 && connectionId) {
+      await updateConnection(connectionId, {
+        sync_mode: syncMode,
+        sync_frequency_minutes: frequency,
+        backfill_days: backfill,
+        location_name: locationName || "New Location",
+      });
+    }
+    setCurrentStep((s) => Math.min(4, s + 1));
+  };
+
+  const filteredProducts = products.filter((p) =>
     p.name.toLowerCase().includes(searchMapping.toLowerCase())
   );
 
@@ -137,11 +155,22 @@ export default function AgoraWizard() {
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Connection Details</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Enter your Agora POS base URL and API token.
+                  Enter your Agora POS base URL, API token, and location name.
                 </p>
               </div>
 
               <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Location Name
+                  </label>
+                  <Input
+                    placeholder="e.g. La Vinoteca Central"
+                    value={locationName}
+                    onChange={(e) => setLocationName(e.target.value)}
+                    className="bg-background text-sm"
+                  />
+                </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                     Base URL
@@ -178,7 +207,7 @@ export default function AgoraWizard() {
                   {testStatus === "idle" && "Test Connection"}
                   {testStatus === "testing" && "Testing…"}
                   {testStatus === "success" && "Connection Successful"}
-                  {testStatus === "error" && "Connection Failed – Check credentials"}
+                  {testStatus === "error" && (testError || "Connection Failed")}
                 </Button>
               </div>
             </div>
@@ -195,7 +224,6 @@ export default function AgoraWizard() {
               </div>
 
               <div className="space-y-4">
-                {/* Mode */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-2 block">
                     Sync Mode
@@ -224,7 +252,6 @@ export default function AgoraWizard() {
                   </div>
                 </div>
 
-                {/* Frequency */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-2 block">
                     Sync Frequency
@@ -246,7 +273,6 @@ export default function AgoraWizard() {
                   </div>
                 </div>
 
-                {/* Backfill */}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-2 block">
                     Backfill Period
@@ -300,45 +326,56 @@ export default function AgoraWizard() {
                 </Button>
               </div>
 
-              <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
-                {filteredProducts.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className={`h-2 w-2 rounded-full ${
-                          p.mapped ? "bg-success" : p.confidence > 50 ? "bg-warning" : "bg-muted-foreground"
-                        }`}
-                      />
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{p.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">{p.id}</p>
+              {loadingProducts ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <span className="ml-2 text-sm text-muted-foreground">Loading products from Agora…</span>
+                </div>
+              ) : filteredProducts.length === 0 ? (
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  No products found. Make sure the connection is working.
+                </div>
+              ) : (
+                <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+                  {filteredProducts.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between px-4 py-3 bg-card hover:bg-secondary/30 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`h-2 w-2 rounded-full ${
+                            p.mapped ? "bg-success" : p.confidence > 50 ? "bg-warning" : "bg-muted-foreground"
+                          }`}
+                        />
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{p.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{p.id}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {p.mapped ? (
+                          <Badge variant="default" className="text-[10px]">
+                            <Wine className="mr-1 h-3 w-3" />
+                            {p.winerimId}
+                          </Badge>
+                        ) : p.confidence > 50 ? (
+                          <Badge variant="outline" className="text-[10px] text-warning border-warning/30">
+                            {p.confidence}% match
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Unmapped
+                          </Badge>
+                        )}
+                        <Button size="sm" variant="outline" className="h-7 text-xs">
+                          {p.mapped ? "Change" : "Map"}
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      {p.mapped ? (
-                        <Badge variant="default" className="text-[10px]">
-                          <Wine className="mr-1 h-3 w-3" />
-                          {p.winerimId}
-                        </Badge>
-                      ) : p.confidence > 50 ? (
-                        <Badge variant="outline" className="text-[10px] text-warning border-warning/30">
-                          {p.confidence}% match
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Unmapped
-                        </Badge>
-                      )}
-                      <Button size="sm" variant="outline" className="h-7 text-xs">
-                        {p.mapped ? "Change" : "Map"}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -374,16 +411,17 @@ export default function AgoraWizard() {
                   <span className="font-medium text-foreground">Last {backfill} days</span>
                 </div>
                 <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Products mapped</span>
+                  <span className="text-muted-foreground">Products</span>
                   <span className="font-medium text-foreground">
-                    {mockProducts.filter((p) => p.mapped).length} / {mockProducts.length}
+                    {products.filter((p) => p.mapped).length} / {products.length} mapped
                   </span>
                 </div>
               </div>
 
               <Button
                 size="lg"
-                onClick={() => {
+                onClick={async () => {
+                  await enableSync();
                   setEnabled(true);
                   setTimeout(() => navigate("/sync-monitor"), 1000);
                 }}
@@ -412,7 +450,7 @@ export default function AgoraWizard() {
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
         {currentStep < 4 && (
-          <Button onClick={() => setCurrentStep((s) => Math.min(4, s + 1))}>
+          <Button onClick={handleNext}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         )}

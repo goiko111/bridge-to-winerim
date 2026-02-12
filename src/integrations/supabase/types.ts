@@ -14,7 +14,51 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      pos_connections: {
+        Row: {
+          api_token: string
+          backfill_days: number
+          base_url: string
+          created_at: string
+          enabled: boolean
+          id: string
+          last_sync_at: string | null
+          location_name: string
+          provider: string
+          sync_frequency_minutes: number
+          sync_mode: string
+          updated_at: string
+        }
+        Insert: {
+          api_token: string
+          backfill_days?: number
+          base_url: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_sync_at?: string | null
+          location_name: string
+          provider?: string
+          sync_frequency_minutes?: number
+          sync_mode?: string
+          updated_at?: string
+        }
+        Update: {
+          api_token?: string
+          backfill_days?: number
+          base_url?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          last_sync_at?: string | null
+          location_name?: string
+          provider?: string
+          sync_frequency_minutes?: number
+          sync_mode?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
