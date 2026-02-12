@@ -106,15 +106,31 @@ export function useAgoraConnection() {
     setLoadingProducts(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "products", connectionId },
+        body: { action: "export", connectionId },
       });
 
       if (error) throw error;
 
-      // Map Agora products to our format (all unmapped by default)
-      const mapped: AgoraProduct[] = (data?.products || []).map((p: any, i: number) => ({
-        id: p.id || `P${String(i + 1).padStart(3, "0")}`,
-        name: p.name || p.description || `Product ${i + 1}`,
+      // Parse export data — extract unique product names from invoice lines
+      const exportData = data?.data || [];
+      const productMap = new Map<string, string>();
+
+      // Handle both array and object responses from Agora export
+      const items = Array.isArray(exportData) ? exportData : (exportData.items || exportData.tickets || []);
+      for (const item of items) {
+        const lines = item.lines || item.details || item.items || [];
+        for (const line of lines) {
+          const name = line.product_name || line.description || line.name || line.article;
+          const id = line.product_id || line.id || line.article_id || name;
+          if (name && !productMap.has(String(id))) {
+            productMap.set(String(id), String(name));
+          }
+        }
+      }
+
+      const mapped: AgoraProduct[] = Array.from(productMap.entries()).map(([id, name]) => ({
+        id,
+        name,
         mapped: false,
         winerimId: null,
         confidence: 0,
