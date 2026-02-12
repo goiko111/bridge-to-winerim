@@ -1,26 +1,42 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  Clock,
   RefreshCw,
   Filter,
   Download,
+  Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
 
-const jobs = [
-  { id: "SYNC-0048", location: "La Vinoteca Central", provider: "AGORA", status: "success", startedAt: "2026-02-11 14:30:00", duration: "4.2s", events: 24, errors: 0, businessDay: "2026-02-11" },
-  { id: "SYNC-0047", location: "Bodega del Puerto", provider: "AGORA", status: "success", startedAt: "2026-02-11 14:15:00", duration: "3.8s", events: 18, errors: 0, businessDay: "2026-02-11" },
-  { id: "SYNC-0046", location: "El Rincón del Vino", provider: "AGORA", status: "warning", startedAt: "2026-02-11 14:00:00", duration: "6.1s", events: 7, errors: 2, businessDay: "2026-02-11" },
-  { id: "SYNC-0045", location: "La Vinoteca Central", provider: "AGORA", status: "success", startedAt: "2026-02-11 13:45:00", duration: "3.5s", events: 31, errors: 0, businessDay: "2026-02-11" },
-  { id: "SYNC-0044", location: "Bodega del Puerto", provider: "AGORA", status: "failed", startedAt: "2026-02-11 13:30:00", duration: "12.4s", events: 0, errors: 1, businessDay: "2026-02-11" },
-  { id: "SYNC-0043", location: "La Vinoteca Central", provider: "AGORA", status: "success", startedAt: "2026-02-11 13:15:00", duration: "4.0s", events: 22, errors: 0, businessDay: "2026-02-10" },
-  { id: "SYNC-0042", location: "El Rincón del Vino", provider: "AGORA", status: "success", startedAt: "2026-02-11 13:00:00", duration: "3.2s", events: 15, errors: 0, businessDay: "2026-02-10" },
-  { id: "SYNC-0041", location: "Bodega del Puerto", provider: "AGORA", status: "success", startedAt: "2026-02-11 12:45:00", duration: "5.1s", events: 28, errors: 0, businessDay: "2026-02-10" },
-];
+interface Connection {
+  id: string;
+  location_name: string;
+  provider: string;
+  enabled: boolean;
+  last_sync_at: string | null;
+  last_business_day_synced: string | null;
+  created_at: string;
+  base_url: string;
+}
+
+interface SalesEvent {
+  id: string;
+  connection_id: string;
+  provider_doc_id: string;
+  business_day: string;
+  doc_type: string;
+  total_amount: number;
+  total_tax: number;
+  total_net: number;
+  line_count: number;
+  created_at: string;
+  location_name?: string;
+}
 
 const statusConfig: Record<string, { icon: typeof CheckCircle2; class: string; badgeVariant: "default" | "destructive" | "secondary" | "outline" }> = {
   success: { icon: CheckCircle2, class: "text-success", badgeVariant: "default" },
@@ -29,6 +45,37 @@ const statusConfig: Record<string, { icon: typeof CheckCircle2; class: string; b
 };
 
 export default function SyncMonitor() {
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchData = async () => {
+    setLoading(true);
+    const [connRes, eventsRes] = await Promise.all([
+      supabase.from("pos_connections").select("*").order("created_at", { ascending: false }),
+      supabase.from("sales_events").select("*").order("business_day", { ascending: false }).limit(50),
+    ]);
+
+    const conns = (connRes.data || []) as Connection[];
+    setConnections(conns);
+
+    const events = (eventsRes.data || []).map((e: any) => ({
+      ...e,
+      location_name: conns.find((c) => c.id === e.connection_id)?.location_name || "Unknown",
+    }));
+    setSalesEvents(events);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const enabledConns = connections.filter((c) => c.enabled);
+  const lastSync = connections
+    .filter((c) => c.last_sync_at)
+    .sort((a, b) => new Date(b.last_sync_at!).getTime() - new Date(a.last_sync_at!).getTime())[0];
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -39,14 +86,8 @@ export default function SyncMonitor() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm">
-            <Filter className="mr-2 h-3 w-3" /> Filter
-          </Button>
-          <Button variant="outline" size="sm">
-            <Download className="mr-2 h-3 w-3" /> Export
-          </Button>
-          <Button size="sm">
-            <RefreshCw className="mr-2 h-3 w-3" /> Run Now
+          <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
+            <RefreshCw className={`mr-2 h-3 w-3 ${loading ? "animate-spin" : ""}`} /> Refresh
           </Button>
         </div>
       </div>
@@ -54,60 +95,83 @@ export default function SyncMonitor() {
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Successful Sync</p>
-          <p className="mt-2 text-lg font-bold text-foreground">3 min ago</p>
-          <p className="text-xs text-muted-foreground">SYNC-0048 • La Vinoteca Central</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Connections</p>
+          <p className="mt-2 text-lg font-bold text-foreground">{enabledConns.length} active</p>
+          <p className="text-xs text-muted-foreground">{connections.length} total</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Next Scheduled</p>
-          <p className="mt-2 text-lg font-bold text-foreground">12 min</p>
-          <p className="text-xs text-muted-foreground">All 3 locations</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Sync</p>
+          <p className="mt-2 text-lg font-bold text-foreground">
+            {lastSync?.last_sync_at
+              ? new Date(lastSync.last_sync_at).toLocaleString()
+              : "Never"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {lastSync?.location_name || "—"}
+          </p>
         </div>
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Success Rate (24h)</p>
-          <p className="mt-2 text-lg font-bold text-success">93.7%</p>
-          <p className="text-xs text-muted-foreground">45 / 48 jobs</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Sales Events</p>
+          <p className="mt-2 text-lg font-bold text-foreground">{salesEvents.length}</p>
+          <p className="text-xs text-muted-foreground">stored in database</p>
         </div>
       </div>
 
-      {/* Jobs table */}
+      {/* Connections */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-xl border border-border bg-card shadow-card overflow-hidden"
       >
+        <div className="px-4 py-3 border-b border-border">
+          <h2 className="text-sm font-semibold text-foreground">POS Connections</h2>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Job</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Location</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Business Day</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Provider</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Duration</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Events</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Started</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Sync</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Business Day</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {jobs.map((job) => {
-                const st = statusConfig[job.status];
+              {connections.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                    <Database className="mx-auto h-8 w-8 mb-2 opacity-40" />
+                    No connections found
+                  </td>
+                </tr>
+              )}
+              {connections.map((conn) => {
+                const st = conn.enabled ? statusConfig.success : statusConfig.warning;
                 return (
-                  <tr key={job.id} className="hover:bg-secondary/30 transition-colors cursor-pointer">
-                    <td className="px-4 py-3 font-mono text-xs text-foreground">{job.id}</td>
-                    <td className="px-4 py-3 text-foreground">{job.location}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{job.businessDay}</td>
+                  <tr key={conn.id} className="hover:bg-secondary/30 transition-colors">
+                    <td className="px-4 py-3 font-medium text-foreground">{conn.location_name}</td>
+                    <td className="px-4 py-3">
+                      <Badge variant="secondary" className="text-[10px] uppercase">{conn.provider}</Badge>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <st.icon className={`h-3.5 w-3.5 ${st.class}`} />
-                        <Badge variant={st.badgeVariant} className="text-[10px] capitalize">
-                          {job.status}
+                        <Badge variant={st.badgeVariant} className="text-[10px]">
+                          {conn.enabled ? "Active" : "Inactive"}
                         </Badge>
                       </div>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{job.duration}</td>
-                    <td className="px-4 py-3 text-foreground">{job.events}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{job.startedAt}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {conn.last_sync_at ? new Date(conn.last_sync_at).toLocaleString() : "Never"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                      {conn.last_business_day_synced || "—"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {new Date(conn.created_at).toLocaleDateString()}
+                    </td>
                   </tr>
                 );
               })}
@@ -115,6 +179,48 @@ export default function SyncMonitor() {
           </table>
         </div>
       </motion.div>
+
+      {/* Sales Events */}
+      {salesEvents.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="rounded-xl border border-border bg-card shadow-card overflow-hidden"
+        >
+          <div className="px-4 py-3 border-b border-border">
+            <h2 className="text-sm font-semibold text-foreground">Sales Events</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Doc ID</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Location</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Business Day</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Type</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Lines</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {salesEvents.map((ev) => (
+                  <tr key={ev.id} className="hover:bg-secondary/30 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">{ev.provider_doc_id}</td>
+                    <td className="px-4 py-3 text-foreground">{ev.location_name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{ev.business_day}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{ev.doc_type}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">€{Number(ev.total_amount).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-foreground">{ev.line_count}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(ev.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }
