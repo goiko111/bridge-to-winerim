@@ -5,13 +5,15 @@ import {
   AlertTriangle,
   XCircle,
   RefreshCw,
-  Filter,
-  Download,
   Database,
+  Trash2,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
+import { toast } from "@/hooks/use-toast";
 
 interface Connection {
   id: string;
@@ -48,6 +50,26 @@ export default function SyncMonitor() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  const handleDelete = async (conn: Connection) => {
+    if (!window.confirm(`¿Eliminar conexión "${conn.location_name}"? Se borrarán también sus eventos y líneas de venta.`)) return;
+    setDeleting(conn.id);
+    try {
+      await supabase.from("sales_line_items").delete().eq("connection_id", conn.id);
+      await supabase.from("sales_events").delete().eq("connection_id", conn.id);
+      await supabase.from("wine_family_rules").delete().eq("connection_id", conn.id);
+      const { error } = await supabase.from("pos_connections").delete().eq("id", conn.id);
+      if (error) throw error;
+      toast({ title: "Conexión eliminada", description: conn.location_name });
+      fetchData();
+    } catch (e: any) {
+      toast({ title: "Error al eliminar", description: e.message, variant: "destructive" });
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -136,12 +158,13 @@ export default function SyncMonitor() {
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Sync</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Business Day</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
+                <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {connections.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                     <Database className="mx-auto h-8 w-8 mb-2 opacity-40" />
                     No connections found
                   </td>
@@ -170,7 +193,17 @@ export default function SyncMonitor() {
                       {conn.last_business_day_synced || "—"}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {new Date(conn.created_at).toLocaleDateString()}
+                      {new Date(conn.created_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/integrations/agora?connection=${conn.id}`)}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(conn)} disabled={deleting === conn.id}>
+                          <Trash2 className={`h-3.5 w-3.5 ${deleting === conn.id ? "animate-spin" : ""}`} />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
