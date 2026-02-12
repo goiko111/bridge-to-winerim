@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   ShieldX,
   HelpCircle,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,6 +149,7 @@ function StepFamilies({
   daysWithSales,
   selectedDay,
   onRunHistoricalScan,
+  salesEvents,
 }: {
   detectedFamilies: DetectedFamily[];
   loadingDays: boolean;
@@ -158,7 +160,31 @@ function StepFamilies({
   daysWithSales: string[];
   selectedDay: string | null;
   onRunHistoricalScan: () => void;
+  salesEvents: SalesEvent[];
 }) {
+  const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
+
+  // Build a map of family -> unique product names
+  const familyProducts = useMemo(() => {
+    const map: Record<string, { name: string; format: string; unitPrice: number; quantity: number }[]> = {};
+    for (const ev of salesEvents) {
+      for (const line of ev.lines) {
+        const fam = line.family || "Sin familia";
+        if (!map[fam]) map[fam] = [];
+        const existing = map[fam].find((p) => p.name === line.name && p.format === line.format);
+        if (existing) {
+          existing.quantity += line.quantity;
+        } else {
+          map[fam].push({ name: line.name, format: line.format, unitPrice: line.unit_price, quantity: line.quantity });
+        }
+      }
+    }
+    // Sort each family's products by name
+    for (const fam of Object.keys(map)) {
+      map[fam].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return map;
+  }, [salesEvents]);
   const sortedFamilies = useMemo(() => {
     return [...detectedFamilies].sort((a, b) => {
       const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
@@ -284,36 +310,66 @@ function StepFamilies({
               const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
 
               return (
-                <div
-                  key={f.name}
-                  className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
-                  onClick={() => setFamilyOverrides({ ...familyOverrides, [f.name]: !isWine })}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Switch
-                      checked={isWine}
-                      onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
-                        {isOverridden && <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {confidenceIcon(f.confidence)}
-                        <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
-                        <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                <div key={f.name}>
+                  <div
+                    className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
+                    onClick={() => setExpandedFamily(expandedFamily === f.name ? null : f.name)}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Switch
+                        checked={isWine}
+                        onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
+                          {isOverridden && <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>}
+                          <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${expandedFamily === f.name ? "rotate-180" : ""}`} />
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {confidenceIcon(f.confidence)}
+                          <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
+                          <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                        </div>
                       </div>
                     </div>
+                    <div className="shrink-0">
+                      {isWine ? (
+                        <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
+                      )}
+                    </div>
                   </div>
-                  <div className="shrink-0">
-                    {isWine ? (
-                      <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                    )}
-                  </div>
+                  {expandedFamily === f.name && (
+                    <div className="bg-secondary/10 border-t border-border px-6 py-2 max-h-48 overflow-y-auto">
+                      {(familyProducts[f.name] || []).length === 0 ? (
+                        <p className="text-xs text-muted-foreground py-1">No hay productos cargados para esta familia.</p>
+                      ) : (
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-muted-foreground border-b border-border">
+                              <th className="text-left py-1 font-medium">Producto</th>
+                              <th className="text-left py-1 font-medium">Formato</th>
+                              <th className="text-right py-1 font-medium">P.Unit</th>
+                              <th className="text-right py-1 font-medium">Qty</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(familyProducts[f.name] || []).map((p, i) => (
+                              <tr key={i} className="border-b border-border/50 last:border-0">
+                                <td className="py-1 text-foreground">{p.name}</td>
+                                <td className="py-1 text-muted-foreground">{p.format || "—"}</td>
+                                <td className="py-1 text-right text-foreground">{p.unitPrice.toFixed(2)}€</td>
+                                <td className="py-1 text-right text-muted-foreground">{p.quantity}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -719,6 +775,7 @@ export default function AgoraWizard() {
               daysWithSales={daysWithSales}
               selectedDay={selectedDay}
               onRunHistoricalScan={() => findDaysWithSales(90)}
+              salesEvents={salesEvents}
             />
           )}
           {currentStep === 4 && (
