@@ -11,6 +11,8 @@ export interface SalesLineItem {
   total_amount: number;
   vat_rate: number;
   is_wine_candidate: boolean;
+  wine_score?: number;
+  wine_reasons?: string[];
 }
 
 export interface SalesEvent {
@@ -27,6 +29,8 @@ export interface SalesEvent {
 export interface DetectedFamily {
   name: string;
   suggestedWine: boolean;
+  confidence: "high" | "medium" | "low";
+  itemCount: number;
 }
 
 export function useAgoraConnection() {

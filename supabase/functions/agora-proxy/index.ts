@@ -11,70 +11,152 @@ const DEFAULT_WINE_FAMILIES = [
   "vino", "vinos", "bodega", "bodegas", "cava", "cavas", "champagne",
   "espumoso", "espumosos", "tinto", "tintos", "blanco", "blancos",
   "rosado", "rosados", "crianza", "reserva", "bebidas", "wine", "wines",
+  "jerez", "manzanilla", "rioja", "ribera", "verdejo", "albariño",
+  "tempranillo", "garnacha", "monastrell", "prosecco", "lambrusco",
 ];
 
-const NON_WINE_KEYWORDS = [
-  "agua", "water", "snack", "tarta", "postre", "café", "coffee", "té",
-  "tea", "refresco", "zumo", "juice", "cerveza", "beer", "pan", "bread",
+const NON_WINE_FAMILIES = [
+  "agua", "water", "snack", "tarta", "postre", "postres", "café", "coffee",
+  "té", "tea", "refresco", "refrescos", "zumo", "juice", "cerveza", "beer",
+  "pan", "bread", "entrante", "entrantes", "ensalada", "sopa", "helado",
+  "licor", "licores", "cocktail", "coctel", "gin", "whisky", "vodka", "ron",
 ];
 
-interface AgoraLine {
-  ProductId?: string;
-  ProductName?: string;
-  SaleFormatName?: string;
-  FamilyName?: string;
-  Quantity?: number;
-  UnitPrice?: number;
-  TotalAmount?: number;
-  VatRate?: number;
-  [key: string]: unknown;
+const WINE_PRODUCT_KEYWORDS = [
+  "reserva", "crianza", "gran reserva", "joven", "roble",
+  "tinto", "blanco", "rosado", "cava", "champagne", "espumoso",
+  "tempranillo", "garnacha", "cabernet", "merlot", "syrah", "chardonnay",
+  "sauvignon", "pinot", "verdejo", "albariño", "monastrell", "godello",
+  "rioja", "ribera", "rueda", "priorat", "penedès", "somontano",
+  "magnum", "botella", "copa de vino", "75cl", "37.5cl",
+];
+
+const NON_WINE_PRODUCT_KEYWORDS = [
+  "agua", "mineral", "coca", "fanta", "nestea", "tónica", "refresco",
+  "café", "cortado", "infusión", "té", "zumo", "cerveza", "caña",
+  "tapa", "ración", "postre", "tarta", "helado", "pan", "ensalada",
+  "gin tonic", "whisky", "vodka", "ron", "mojito", "cocktail",
+];
+
+const WINE_FORMAT_KEYWORDS = [
+  "botella", "copa", "magnum", "jeroboam", "75cl", "37.5cl", "150cl",
+  "by the glass", "por copa",
+];
+
+// Price thresholds that suggest wine (in euros)
+const WINE_PRICE_MIN = 3.0;  // Wines rarely cost less than €3
+const WINE_PRICE_MAX = 500.0; // Cap for sanity
+
+interface WineScore {
+  score: number; // -100 to 100
+  reasons: string[];
 }
 
-interface AgoraInvoiceItem {
-  Lines?: AgoraLine[];
-  [key: string]: unknown;
-}
+function computeWineScore(
+  family: string | undefined,
+  name: string | undefined,
+  format: string | undefined,
+  unitPrice: number,
+  wineFamilies: string[],
+  nonWineFamilies: string[],
+): WineScore {
+  const f = (family || "").toLowerCase();
+  const n = (name || "").toLowerCase();
+  const fmt = (format || "").toLowerCase();
+  let score = 0;
+  const reasons: string[] = [];
 
-interface AgoraInvoice {
-  InvoiceId?: string;
-  Id?: string;
-  InvoiceItems?: AgoraInvoiceItem[];
-  TotalAmount?: number;
-  TotalTaxAmount?: number;
-  TotalNetAmount?: number;
-  Type?: string;
-  [key: string]: unknown;
-}
+  // 1. Family matching (strongest signal: ±50)
+  for (const wf of nonWineFamilies) {
+    if (f.includes(wf)) {
+      score -= 50;
+      reasons.push(`family_non_wine:${wf}`);
+      break;
+    }
+  }
+  if (score >= 0) {
+    for (const wf of wineFamilies) {
+      if (f.includes(wf)) {
+        score += 50;
+        reasons.push(`family_wine:${wf}`);
+        break;
+      }
+    }
+  }
 
-function parseInvoices(data: Record<string, unknown>): AgoraInvoice[] {
-  if (data.Invoices && Array.isArray(data.Invoices)) return data.Invoices;
-  // Try top-level array
-  if (Array.isArray(data)) return data;
-  return [];
+  // 2. Product name keywords (±30)
+  for (const kw of NON_WINE_PRODUCT_KEYWORDS) {
+    if (n.includes(kw)) {
+      score -= 30;
+      reasons.push(`name_non_wine:${kw}`);
+      break;
+    }
+  }
+  for (const kw of WINE_PRODUCT_KEYWORDS) {
+    if (n.includes(kw)) {
+      score += 30;
+      reasons.push(`name_wine:${kw}`);
+      break;
+    }
+  }
+
+  // 3. Format keywords (±15)
+  for (const kw of WINE_FORMAT_KEYWORDS) {
+    if (fmt.includes(kw) || n.includes(kw)) {
+      score += 15;
+      reasons.push(`format_wine:${kw}`);
+      break;
+    }
+  }
+
+  // 4. Price heuristic (±10)
+  if (unitPrice > 0) {
+    if (unitPrice >= WINE_PRICE_MIN && unitPrice <= WINE_PRICE_MAX) {
+      score += 10;
+      reasons.push(`price_range:${unitPrice}`);
+    } else if (unitPrice < WINE_PRICE_MIN) {
+      score -= 10;
+      reasons.push(`price_too_low:${unitPrice}`);
+    }
+  }
+
+  // 5. No family info fallback: slight positive if name has wine keywords
+  if (!f && score === 0) {
+    score += 5; // Slight bias towards candidate when unknown
+    reasons.push("no_family_fallback");
+  }
+
+  return { score: Math.max(-100, Math.min(100, score)), reasons };
 }
 
 function isWineCandidate(
   family: string | undefined,
   name: string | undefined,
-  wineFamilies: string[]
-): boolean {
-  const f = (family || "").toLowerCase();
-  const n = (name || "").toLowerCase();
+  format: string | undefined,
+  unitPrice: number,
+  wineFamilies: string[],
+  nonWineFamilies: string[],
+): { candidate: boolean; score: number; reasons: string[] } {
+  const { score, reasons } = computeWineScore(family, name, format, unitPrice, wineFamilies, nonWineFamilies);
+  return { candidate: score > 0, score, reasons };
+}
 
-  // If family matches non-wine keywords, exclude
-  for (const kw of NON_WINE_KEYWORDS) {
-    if (f.includes(kw) || n.includes(kw)) return false;
+function suggestFamilyClassification(familyName: string): { suggestedWine: boolean; confidence: "high" | "medium" | "low" } {
+  const f = familyName.toLowerCase();
+
+  for (const kw of NON_WINE_FAMILIES) {
+    if (f.includes(kw)) return { suggestedWine: false, confidence: "high" };
+  }
+  for (const kw of DEFAULT_WINE_FAMILIES) {
+    if (f.includes(kw)) return { suggestedWine: true, confidence: "high" };
   }
 
-  // If family matches wine families, include
-  for (const wf of wineFamilies) {
-    if (f.includes(wf.toLowerCase())) return true;
+  // Medium confidence guesses
+  if (f.includes("bebida") || f.includes("drink") || f.includes("bar")) {
+    return { suggestedWine: false, confidence: "medium" };
   }
 
-  // If no family info, default to candidate (user can filter later)
-  if (!f) return true;
-
-  return false;
+  return { suggestedWine: false, confidence: "low" };
 }
 
 serve(async (req) => {
@@ -207,6 +289,8 @@ serve(async (req) => {
           total_amount: number;
           vat_rate: number;
           is_wine_candidate: boolean;
+          wine_score: number;
+          wine_reasons: string[];
         }[] = [];
 
         let docTotal = 0;
@@ -219,16 +303,23 @@ serve(async (req) => {
             const lineTotal = Number(line.TotalAmount || 0);
             docTotal += lineTotal;
 
+            const productName = String(line.ProductName || "");
+            const formatName = String(line.SaleFormatName || "");
+            const uPrice = Number(line.UnitPrice || 0);
+            const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, NON_WINE_FAMILIES);
+
             lines.push({
               provider_product_id: String(line.ProductId || ""),
-              name: String(line.ProductName || ""),
-              format: String(line.SaleFormatName || ""),
+              name: productName,
+              format: formatName,
               family,
               quantity: Number(line.Quantity || 0),
-              unit_price: Number(line.UnitPrice || 0),
+              unit_price: uPrice,
               total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
-              is_wine_candidate: isWineCandidate(family, String(line.ProductName || ""), wineFamilies),
+              is_wine_candidate: wineResult.candidate,
+              wine_score: wineResult.score,
+              wine_reasons: wineResult.reasons,
             });
           }
         }
@@ -245,11 +336,17 @@ serve(async (req) => {
         };
       });
 
-      // Detect wine-like families
-      const detectedFamilies = Array.from(allFamilies).map((f) => ({
-        name: f,
-        suggestedWine: DEFAULT_WINE_FAMILIES.some((wf) => f.toLowerCase().includes(wf)),
-      }));
+      // Detect wine-like families with confidence
+      const detectedFamilies = Array.from(allFamilies).map((f) => {
+        const suggestion = suggestFamilyClassification(f);
+        const itemCount = salesEvents.reduce((c: number, ev: { lines: { family: string }[] }) => 
+          c + ev.lines.filter((l) => l.family === f).length, 0);
+        return {
+          name: f,
+          ...suggestion,
+          itemCount,
+        };
+      });
 
       return new Response(
         JSON.stringify({
@@ -315,20 +412,21 @@ serve(async (req) => {
           for (const line of (item.Lines || [])) {
             const lineTotal = Number(line.TotalAmount || 0);
             docTotal += lineTotal;
+            const pName = String(line.ProductName || "");
+            const fName = String(line.SaleFormatName || "");
+            const fam = String(line.FamilyName || "");
+            const uP = Number(line.UnitPrice || 0);
+            const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, NON_WINE_FAMILIES);
             lineData.push({
               provider_product_id: String(line.ProductId || ""),
-              name: String(line.ProductName || ""),
-              format: String(line.SaleFormatName || ""),
-              family: String(line.FamilyName || ""),
+              name: pName,
+              format: fName,
+              family: fam,
               quantity: Number(line.Quantity || 0),
-              unit_price: Number(line.UnitPrice || 0),
+              unit_price: uP,
               total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
-              is_wine_candidate: isWineCandidate(
-                String(line.FamilyName || ""),
-                String(line.ProductName || ""),
-                wineFamilies
-              ),
+              is_wine_candidate: wr.candidate,
             });
           }
         }

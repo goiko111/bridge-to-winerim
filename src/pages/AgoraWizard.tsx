@@ -16,6 +16,10 @@ import {
   Calendar,
   Download,
   Filter,
+  Grape,
+  ShieldCheck,
+  ShieldX,
+  HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,8 +30,9 @@ import { useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Sync Settings", icon: Settings2 },
-  { id: 3, label: "Sales & Mapping", icon: Map },
-  { id: 4, label: "Go Live", icon: Power },
+  { id: 3, label: "Families", icon: Grape },
+  { id: 4, label: "Sales & Mapping", icon: Map },
+  { id: 5, label: "Go Live", icon: Power },
 ];
 
 // ── Step 1: Connection ──
@@ -132,13 +137,171 @@ function StepSyncSettings({
   );
 }
 
-// ── Step 3: Sales & Mapping ──
+// ── Step 3: Families ──
+function StepFamilies({
+  detectedFamilies,
+  loadingDays,
+  familyOverrides,
+  setFamilyOverrides,
+}: {
+  detectedFamilies: DetectedFamily[];
+  loadingDays: boolean;
+  familyOverrides: Record<string, boolean>;
+  setFamilyOverrides: (v: Record<string, boolean>) => void;
+}) {
+  const sortedFamilies = useMemo(() => {
+    return [...detectedFamilies].sort((a, b) => {
+      // Wine first, then by confidence, then by item count
+      const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
+      const bWine = b.name in familyOverrides ? familyOverrides[b.name] : b.suggestedWine;
+      if (aWine !== bWine) return aWine ? -1 : 1;
+      const confOrder = { high: 0, medium: 1, low: 2 };
+      if (a.confidence !== b.confidence) return confOrder[a.confidence] - confOrder[b.confidence];
+      return b.itemCount - a.itemCount;
+    });
+  }, [detectedFamilies, familyOverrides]);
+
+  const wineCount = sortedFamilies.filter((f) => {
+    return f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
+  }).length;
+
+  const confidenceIcon = (c: "high" | "medium" | "low") => {
+    if (c === "high") return <ShieldCheck className="h-3.5 w-3.5 text-success" />;
+    if (c === "medium") return <HelpCircle className="h-3.5 w-3.5 text-warning" />;
+    return <ShieldX className="h-3.5 w-3.5 text-muted-foreground" />;
+  };
+
+  if (loadingDays) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Scanning sales data for product families…</span>
+      </div>
+    );
+  }
+
+  if (detectedFamilies.length === 0) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Wine Families</h2>
+          <p className="mt-1 text-sm text-muted-foreground">No product families detected yet. Go back and ensure the connection works, then proceed.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          We detected <span className="font-medium text-foreground">{detectedFamilies.length}</span> product families.
+          Confirm which ones contain wine products — only these will appear in the mapping screen.
+        </p>
+      </div>
+
+      {/* Summary bar */}
+      <div className="flex gap-4 text-xs">
+        <div className="flex items-center gap-1.5">
+          <div className="h-2.5 w-2.5 rounded-full bg-success" />
+          <span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine families</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" />
+          <span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span>
+        </div>
+      </div>
+
+      {/* Bulk actions */}
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            const overrides: Record<string, boolean> = {};
+            detectedFamilies.forEach((f) => { overrides[f.name] = true; });
+            setFamilyOverrides(overrides);
+          }}
+        >
+          Select All as Wine
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            const overrides: Record<string, boolean> = {};
+            detectedFamilies.forEach((f) => { overrides[f.name] = false; });
+            setFamilyOverrides(overrides);
+          }}
+        >
+          Deselect All
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setFamilyOverrides({})}
+        >
+          Reset to Suggestions
+        </Button>
+      </div>
+
+      {/* Family list */}
+      <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
+        {sortedFamilies.map((f) => {
+          const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
+          const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
+
+          return (
+            <div
+              key={f.name}
+              className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${
+                isWine ? "bg-success/5" : "bg-card"
+              }`}
+              onClick={() => setFamilyOverrides({ ...familyOverrides, [f.name]: !isWine })}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <Switch
+                  checked={isWine}
+                  onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
+                    {isOverridden && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {confidenceIcon(f.confidence)}
+                    <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
+                    <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                  </div>
+                </div>
+              </div>
+              <div className="shrink-0">
+                {isWine ? (
+                  <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 4: Sales & Mapping ──
 function StepSalesMapping({
   daysWithSales, selectedDay, setSelectedDay, loadingDays,
-  salesEvents, detectedFamilies, loadingSales,
+  salesEvents, loadingSales,
   onFetchDay, onSaveSales,
   saving, saveResult,
-  familyOverrides, setFamilyOverrides,
+  familyOverrides, detectedFamilies,
   searchMapping, setSearchMapping,
   showWineOnly, setShowWineOnly,
 }: {
@@ -147,28 +310,34 @@ function StepSalesMapping({
   setSelectedDay: (d: string) => void;
   loadingDays: boolean;
   salesEvents: SalesEvent[];
-  detectedFamilies: DetectedFamily[];
   loadingSales: boolean;
   onFetchDay: (day: string) => void;
   onSaveSales: (day: string) => void;
   saving: boolean;
   saveResult: { savedEvents: number; savedLines: number } | null;
   familyOverrides: Record<string, boolean>;
-  setFamilyOverrides: (v: Record<string, boolean>) => void;
+  detectedFamilies: DetectedFamily[];
   searchMapping: string;
   setSearchMapping: (v: string) => void;
   showWineOnly: boolean;
   setShowWineOnly: (v: boolean) => void;
 }) {
+  // Resolve family wine status from overrides or detected suggestion
+  const isFamilyWine = (familyName: string) => {
+    if (familyName in familyOverrides) return familyOverrides[familyName];
+    const detected = detectedFamilies.find((f) => f.name === familyName);
+    return detected?.suggestedWine ?? false;
+  };
+
   const allLines = useMemo(() => {
-    const lines: (SalesLineItem & { docId: string })[] = [];
+    const lines: (SalesLineItem & { docId: string; familyIsWine: boolean })[] = [];
     for (const ev of salesEvents) {
       for (const l of ev.lines) {
-        lines.push({ ...l, docId: ev.provider_doc_id });
+        lines.push({ ...l, docId: ev.provider_doc_id, familyIsWine: isFamilyWine(l.family) });
       }
     }
     return lines;
-  }, [salesEvents]);
+  }, [salesEvents, familyOverrides, detectedFamilies]);
 
   const filteredLines = useMemo(() => {
     let result = allLines;
@@ -177,22 +346,20 @@ function StepSalesMapping({
       result = result.filter((l) => l.name.toLowerCase().includes(q) || l.family.toLowerCase().includes(q));
     }
     if (showWineOnly) {
-      result = result.filter((l) => {
-        if (l.family in familyOverrides) return familyOverrides[l.family];
-        return l.is_wine_candidate;
-      });
+      result = result.filter((l) => l.familyIsWine || l.is_wine_candidate);
     }
     return result;
-  }, [allLines, searchMapping, showWineOnly, familyOverrides]);
+  }, [allLines, searchMapping, showWineOnly]);
 
   const totalAmount = salesEvents.reduce((s, e) => s + e.total_amount, 0);
+  const wineLines = allLines.filter((l) => l.familyIsWine || l.is_wine_candidate);
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Select a business day (cash closure) to view sales and map products.
+          Review sales data. Wine-classified items are shown by default.
         </p>
       </div>
 
@@ -239,7 +406,7 @@ function StepSalesMapping({
             <span className="font-medium text-foreground">{salesEvents.length}</span>
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Line items</span>
+            <span className="text-muted-foreground">Total line items</span>
             <span className="font-medium text-foreground">{allLines.length}</span>
           </div>
           <div className="flex justify-between text-xs">
@@ -248,7 +415,7 @@ function StepSalesMapping({
           </div>
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Wine candidates</span>
-            <span className="font-medium text-success">{allLines.filter((l) => l.is_wine_candidate).length}</span>
+            <span className="font-medium text-success">{wineLines.length}</span>
           </div>
           <Button
             size="sm"
@@ -276,35 +443,6 @@ function StepSalesMapping({
         </div>
       )}
 
-      {/* Family detection */}
-      {detectedFamilies.length > 0 && (
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-2 block">
-            <Wine className="inline h-3.5 w-3.5 mr-1" />
-            Detected Families — toggle wine/non-wine
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {detectedFamilies.map((f) => {
-              const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
-              return (
-                <button
-                  key={f.name}
-                  onClick={() => setFamilyOverrides({ ...familyOverrides, [f.name]: !isWine })}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium transition-all ${
-                    isWine
-                      ? "border-success/40 bg-success/10 text-success"
-                      : "border-border bg-secondary/30 text-muted-foreground"
-                  }`}
-                >
-                  {isWine ? <Wine className="inline h-3 w-3 mr-1" /> : null}
-                  {f.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Filters */}
       {allLines.length > 0 && (
         <>
@@ -313,7 +451,7 @@ function StepSalesMapping({
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
             </div>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
               <Switch checked={showWineOnly} onCheckedChange={setShowWineOnly} />
               <Filter className="h-3.5 w-3.5" />
               Wine only
@@ -325,29 +463,35 @@ function StepSalesMapping({
             {filteredLines.length === 0 ? (
               <div className="text-center py-8 text-sm text-muted-foreground">No matching products.</div>
             ) : (
-              filteredLines.map((l, i) => (
-                <div key={`${l.docId}-${l.provider_product_id}-${i}`} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`h-2 w-2 rounded-full shrink-0 ${l.is_wine_candidate ? "bg-success" : "bg-muted-foreground"}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{l.name}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {l.family && <span className="mr-2">{l.family}</span>}
-                        {l.format && <span className="mr-2">· {l.format}</span>}
-                        <span className="font-mono">×{l.quantity}</span>
-                      </p>
+              filteredLines.map((l, i) => {
+                const isWine = l.familyIsWine || l.is_wine_candidate;
+                return (
+                  <div key={`${l.docId}-${l.provider_product_id}-${i}`} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className={`h-2 w-2 rounded-full shrink-0 ${isWine ? "bg-success" : "bg-muted-foreground"}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{l.name}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {l.family && <span className="mr-2">{l.family}</span>}
+                          {l.format && <span className="mr-2">· {l.format}</span>}
+                          <span className="font-mono">×{l.quantity}</span>
+                          {l.wine_score !== undefined && (
+                            <span className="ml-2 font-mono text-[10px]">score: {l.wine_score}</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>
+                      {isWine ? (
+                        <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>
-                    {l.is_wine_candidate ? (
-                      <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                    )}
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </>
@@ -356,11 +500,12 @@ function StepSalesMapping({
   );
 }
 
-// ── Step 4: Go Live ──
+// ── Step 5: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill,
   salesEvents, selectedDay,
   onEnable, enabled,
+  familyOverrides, detectedFamilies,
 }: {
   syncMode: string;
   frequency: number;
@@ -369,8 +514,14 @@ function StepGoLive({
   selectedDay: string | null;
   onEnable: () => void;
   enabled: boolean;
+  familyOverrides: Record<string, boolean>;
+  detectedFamilies: DetectedFamily[];
 }) {
+  const wineFamilyCount = detectedFamilies.filter((f) => {
+    return f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
+  }).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
+
   return (
     <div className="space-y-6 text-center py-4">
       <div className="flex justify-center">
@@ -389,6 +540,7 @@ function StepGoLive({
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
         {selectedDay && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Last business day</span><span className="font-medium font-mono text-foreground">{selectedDay}</span></div>}
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine families</span><span className="font-medium text-foreground">{wineFamilyCount}</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates</span><span className="font-medium text-foreground">{wineLines.length}</span></div>
       </div>
       <Button size="lg" onClick={onEnable} className="shadow-glow">
@@ -410,7 +562,7 @@ export default function AgoraWizard() {
   const [backfill, setBackfill] = useState(30);
   const [enabled, setEnabled] = useState(false);
   const [searchMapping, setSearchMapping] = useState("");
-  const [showWineOnly, setShowWineOnly] = useState(false);
+  const [showWineOnly, setShowWineOnly] = useState(true); // Default wine-only
   const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
 
   const {
@@ -423,16 +575,16 @@ export default function AgoraWizard() {
     enableSync, saveFamilyRules,
   } = useAgoraConnection();
 
-  // When entering step 3, scan for business days
+  // When entering step 3 (Families), scan for business days to detect families
   useEffect(() => {
     if (currentStep === 3 && connectionId) {
       findDaysWithSales(backfill);
     }
   }, [currentStep, connectionId]);
 
-  // Auto-fetch when selectedDay changes
+  // Auto-fetch first day with sales when days are found (for family detection)
   useEffect(() => {
-    if (selectedDay && currentStep === 3) {
+    if (selectedDay && (currentStep === 3 || currentStep === 4)) {
       fetchSalesForDay(selectedDay);
     }
   }, [selectedDay]);
@@ -454,7 +606,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(4, s + 1));
+    setCurrentStep((s) => Math.min(5, s + 1));
   };
 
   return (
@@ -508,22 +660,31 @@ export default function AgoraWizard() {
             />
           )}
           {currentStep === 3 && (
+            <StepFamilies
+              detectedFamilies={detectedFamilies}
+              loadingDays={loadingDays}
+              familyOverrides={familyOverrides}
+              setFamilyOverrides={setFamilyOverrides}
+            />
+          )}
+          {currentStep === 4 && (
             <StepSalesMapping
               daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay} loadingDays={loadingDays}
-              salesEvents={salesEvents} detectedFamilies={detectedFamilies} loadingSales={loadingSales}
+              salesEvents={salesEvents} loadingSales={loadingSales}
               onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb}
               saving={saving} saveResult={saveResult}
-              familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
+              familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               searchMapping={searchMapping} setSearchMapping={setSearchMapping}
               showWineOnly={showWineOnly} setShowWineOnly={setShowWineOnly}
             />
           )}
-          {currentStep === 4 && (
+          {currentStep === 5 && (
             <StepGoLive
               syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/sync-monitor"), 1000); }}
               enabled={enabled}
+              familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
             />
           )}
         </motion.div>
@@ -534,7 +695,7 @@ export default function AgoraWizard() {
         <Button variant="outline" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 4 && (
+        {currentStep < 5 && (
           <Button onClick={handleNext}>Next <ArrowRight className="ml-2 h-4 w-4" /></Button>
         )}
       </div>
