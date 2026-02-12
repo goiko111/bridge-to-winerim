@@ -504,13 +504,11 @@ function StepSalesMapping({
                           {l.family && <span className="mr-2">{l.family}</span>}
                           {l.format && <span className="mr-2">· {l.format}</span>}
                           <span className="font-mono">×{l.quantity}</span>
-                          {l.wine_score !== undefined && (
-                            <span className="ml-2 font-mono text-[10px]">score: {l.wine_score}</span>
-                          )}
+                          <span className="ml-2 font-mono">@€{l.unit_price.toFixed(2)}</span>
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>
                       {isWine ? (
                         <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>

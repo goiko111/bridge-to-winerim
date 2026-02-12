@@ -323,7 +323,10 @@ serve(async (req) => {
             const family = String(line.FamilyName || "");
             if (family) allFamilies.add(family);
 
-            const lineTotal = Number(line.TotalAmount || 0);
+            const uPrice = Number(line.UnitPrice || 0);
+            const qty = Number(line.Quantity || 0);
+            const rawTotal = Number(line.TotalAmount || 0);
+            const lineTotal = rawTotal > 0 ? rawTotal : uPrice * qty;
             docTotal += lineTotal;
 
             const productName = String(line.ProductName || "");
@@ -433,19 +436,21 @@ serve(async (req) => {
 
         for (const item of items) {
           for (const line of (item.Lines || [])) {
-            const lineTotal = Number(line.TotalAmount || 0);
+            const rawTotal = Number(line.TotalAmount || 0);
+            const uP = Number(line.UnitPrice || 0);
+            const qty = Number(line.Quantity || 0);
+            const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
             const fam = String(line.FamilyName || "");
-            const uP = Number(line.UnitPrice || 0);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, NON_WINE_FAMILIES);
             lineData.push({
               provider_product_id: String(line.ProductId || ""),
               name: pName,
               format: fName,
               family: fam,
-              quantity: Number(line.Quantity || 0),
+              quantity: qty,
               unit_price: uP,
               total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
