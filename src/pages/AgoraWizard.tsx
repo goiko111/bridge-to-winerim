@@ -141,17 +141,26 @@ function StepSyncSettings({
 function StepFamilies({
   detectedFamilies,
   loadingDays,
+  loadingSales,
   familyOverrides,
   setFamilyOverrides,
+  scanStats,
+  daysWithSales,
+  selectedDay,
+  onRunHistoricalScan,
 }: {
   detectedFamilies: DetectedFamily[];
   loadingDays: boolean;
+  loadingSales: boolean;
   familyOverrides: Record<string, boolean>;
   setFamilyOverrides: (v: Record<string, boolean>) => void;
+  scanStats: { totalScanned: number; totalInvoicesFound: number } | null;
+  daysWithSales: string[];
+  selectedDay: string | null;
+  onRunHistoricalScan: () => void;
 }) {
   const sortedFamilies = useMemo(() => {
     return [...detectedFamilies].sort((a, b) => {
-      // Wine first, then by confidence, then by item count
       const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
       const bWine = b.name in familyOverrides ? familyOverrides[b.name] : b.suggestedWine;
       if (aWine !== bWine) return aWine ? -1 : 1;
@@ -171,21 +180,20 @@ function StepFamilies({
     return <ShieldX className="h-3.5 w-3.5 text-muted-foreground" />;
   };
 
-  if (loadingDays) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-sm text-muted-foreground">Scanning sales data for product families…</span>
-      </div>
-    );
-  }
+  const isLoading = loadingDays || loadingSales;
 
-  if (detectedFamilies.length === 0) {
+  if (isLoading) {
     return (
       <div className="space-y-5">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Wine Families</h2>
-          <p className="mt-1 text-sm text-muted-foreground">No product families detected yet. Go back and ensure the connection works, then proceed.</p>
+          <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Scanning sales data for product families…</p>
+        </div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">
+            {loadingDays ? "Scanning business days (up to 60 days)…" : "Loading sales data…"}
+          </span>
         </div>
       </div>
     );
@@ -196,101 +204,122 @@ function StepFamilies({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          We detected <span className="font-medium text-foreground">{detectedFamilies.length}</span> product families.
-          Confirm which ones contain wine products — only these will appear in the mapping screen.
+          {detectedFamilies.length > 0
+            ? <>We detected <span className="font-medium text-foreground">{detectedFamilies.length}</span> product families. Confirm which ones contain wine products.</>
+            : "No product families detected yet."}
         </p>
       </div>
 
-      {/* Summary bar */}
-      <div className="flex gap-4 text-xs">
-        <div className="flex items-center gap-1.5">
-          <div className="h-2.5 w-2.5 rounded-full bg-success" />
-          <span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine families</span>
+      {/* Debug info */}
+      {scanStats && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Scan Results</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Days scanned</span>
+            <span className="font-mono text-foreground">{scanStats.totalScanned}</span>
+            <span className="text-muted-foreground">Days with sales</span>
+            <span className="font-mono text-foreground">{daysWithSales.length}</span>
+            <span className="text-muted-foreground">Total invoices found</span>
+            <span className="font-mono text-foreground">{scanStats.totalInvoicesFound}</span>
+            {selectedDay && (
+              <>
+                <span className="text-muted-foreground">Last day with data</span>
+                <span className="font-mono text-foreground">{selectedDay}</span>
+              </>
+            )}
+            <span className="text-muted-foreground">Families detected</span>
+            <span className="font-mono text-foreground">{detectedFamilies.length}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" />
-          <span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span>
+      )}
+
+      {/* Empty state with historical scan button */}
+      {detectedFamilies.length === 0 && (
+        <div className="text-center py-8 space-y-4 rounded-lg border border-border bg-secondary/20">
+          <p className="text-sm text-muted-foreground">
+            {daysWithSales.length === 0
+              ? "No cash closures found in the scanned period. The restaurant may not have had recent activity."
+              : "No product families found in the sales data. Try scanning more history."}
+          </p>
+          <Button variant="secondary" onClick={onRunHistoricalScan}>
+            <Search className="mr-2 h-4 w-4" />
+            Run Historical Scan (90 days)
+          </Button>
         </div>
-      </div>
+      )}
 
-      {/* Bulk actions */}
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const overrides: Record<string, boolean> = {};
-            detectedFamilies.forEach((f) => { overrides[f.name] = true; });
-            setFamilyOverrides(overrides);
-          }}
-        >
-          Select All as Wine
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const overrides: Record<string, boolean> = {};
-            detectedFamilies.forEach((f) => { overrides[f.name] = false; });
-            setFamilyOverrides(overrides);
-          }}
-        >
-          Deselect All
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setFamilyOverrides({})}
-        >
-          Reset to Suggestions
-        </Button>
-      </div>
+      {detectedFamilies.length > 0 && (
+        <>
+          {/* Summary bar */}
+          <div className="flex gap-4 text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-success" />
+              <span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine families</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" />
+              <span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span>
+            </div>
+          </div>
 
-      {/* Family list */}
-      <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
-        {sortedFamilies.map((f) => {
-          const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
-          const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
+          {/* Bulk actions */}
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => {
+              const overrides: Record<string, boolean> = {};
+              detectedFamilies.forEach((f) => { overrides[f.name] = true; });
+              setFamilyOverrides(overrides);
+            }}>Select All as Wine</Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              const overrides: Record<string, boolean> = {};
+              detectedFamilies.forEach((f) => { overrides[f.name] = false; });
+              setFamilyOverrides(overrides);
+            }}>Deselect All</Button>
+            <Button variant="outline" size="sm" onClick={() => setFamilyOverrides({})}>Reset to Suggestions</Button>
+          </div>
 
-          return (
-            <div
-              key={f.name}
-              className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${
-                isWine ? "bg-success/5" : "bg-card"
-              }`}
-              onClick={() => setFamilyOverrides({ ...familyOverrides, [f.name]: !isWine })}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Switch
-                  checked={isWine}
-                  onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
-                    {isOverridden && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>
+          {/* Family list */}
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
+            {sortedFamilies.map((f) => {
+              const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
+              const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
+
+              return (
+                <div
+                  key={f.name}
+                  className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
+                  onClick={() => setFamilyOverrides({ ...familyOverrides, [f.name]: !isWine })}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Switch
+                      checked={isWine}
+                      onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
+                        {isOverridden && <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {confidenceIcon(f.confidence)}
+                        <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
+                        <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    {isWine ? (
+                      <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {confidenceIcon(f.confidence)}
-                    <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
-                    <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
-                  </div>
                 </div>
-              </div>
-              <div className="shrink-0">
-                {isWine ? (
-                  <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                ) : (
-                  <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -569,7 +598,7 @@ export default function AgoraWizard() {
     connectionId,
     testStatus, testError,
     testConnection, updateConnection,
-    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
@@ -578,7 +607,7 @@ export default function AgoraWizard() {
   // When entering step 3 (Families), scan for business days to detect families
   useEffect(() => {
     if (currentStep === 3 && connectionId) {
-      findDaysWithSales(backfill);
+      findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
 
@@ -663,8 +692,13 @@ export default function AgoraWizard() {
             <StepFamilies
               detectedFamilies={detectedFamilies}
               loadingDays={loadingDays}
+              loadingSales={loadingSales}
               familyOverrides={familyOverrides}
               setFamilyOverrides={setFamilyOverrides}
+              scanStats={scanStats}
+              daysWithSales={daysWithSales}
+              selectedDay={selectedDay}
+              onRunHistoricalScan={() => findDaysWithSales(90)}
             />
           )}
           {currentStep === 4 && (

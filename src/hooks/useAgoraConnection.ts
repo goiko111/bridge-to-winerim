@@ -42,6 +42,7 @@ export function useAgoraConnection() {
   const [daysWithSales, setDaysWithSales] = useState<string[]>([]);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [loadingDays, setLoadingDays] = useState(false);
+  const [scanStats, setScanStats] = useState<{ totalScanned: number; totalInvoicesFound: number } | null>(null);
 
   // Sales data
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
@@ -136,9 +137,10 @@ export function useAgoraConnection() {
     }
   };
 
-  const findDaysWithSales = useCallback(async (daysBack = 30) => {
+  const findDaysWithSales = useCallback(async (daysBack = 60) => {
     if (!connectionId) return;
     setLoadingDays(true);
+    setScanStats(null);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "find-last-business-day", connectionId, daysBack },
@@ -146,6 +148,10 @@ export function useAgoraConnection() {
       if (error) throw error;
       const days: string[] = data?.daysWithSales || [];
       setDaysWithSales(days);
+      setScanStats({
+        totalScanned: data?.totalScanned || 0,
+        totalInvoicesFound: data?.totalInvoicesFound || 0,
+      });
       if (days.length > 0 && !selectedDay) {
         setSelectedDay(days[0]);
       }
@@ -221,6 +227,7 @@ export function useAgoraConnection() {
     setSelectedDay,
     loadingDays,
     findDaysWithSales,
+    scanStats,
     // Sales
     salesEvents,
     detectedFamilies,

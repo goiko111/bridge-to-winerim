@@ -159,6 +159,21 @@ function suggestFamilyClassification(familyName: string): { suggestedWine: boole
   return { suggestedWine: false, confidence: "low" };
 }
 
+// deno-lint-ignore no-explicit-any
+function parseInvoices(raw: any): any[] {
+  if (!raw) return [];
+  // Handle { Invoices: [...] } or direct array
+  if (Array.isArray(raw)) return raw;
+  if (raw.Invoices && Array.isArray(raw.Invoices)) return raw.Invoices;
+  // Handle { Data: { Invoices: [...] } } or similar nested
+  if (raw.Data?.Invoices && Array.isArray(raw.Data.Invoices)) return raw.Data.Invoices;
+  // Try to find any array property
+  for (const key of Object.keys(raw)) {
+    if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
+  }
+  return [];
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -210,11 +225,15 @@ serve(async (req) => {
 
     // ── FIND LAST BUSINESS DAY WITH SALES ──
     if (action === "find-last-business-day") {
-      const scanDays = daysBack || 30;
+      const scanDays = daysBack || 60;
       const daysWithSales: string[] = [];
+      let consecutiveEmpty = 0;
+      let totalScanned = 0;
+      let totalInvoicesFound = 0;
 
       for (let i = 0; i < scanDays; i++) {
         const day = new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
+        totalScanned++;
         try {
           const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
           const res = await fetch(url, { headers });
@@ -226,16 +245,20 @@ serve(async (req) => {
               const invoices = parseInvoices(parsed);
               if (invoices.length > 0) {
                 daysWithSales.push(day);
-                // For speed, stop after finding 10 days with sales
-                if (daysWithSales.length >= 10) break;
+                totalInvoicesFound += invoices.length;
+                consecutiveEmpty = 0;
+                continue;
               }
             }
           }
         } catch (_) { /* skip */ }
+        consecutiveEmpty++;
+        // Stop after 10 consecutive days with no sales (no cash closure)
+        if (consecutiveEmpty >= 10 && daysWithSales.length > 0) break;
       }
 
       return new Response(
-        JSON.stringify({ daysWithSales }),
+        JSON.stringify({ daysWithSales, totalScanned, totalInvoicesFound }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
