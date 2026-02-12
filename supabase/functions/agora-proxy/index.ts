@@ -34,16 +34,26 @@ serve(async (req) => {
 
     const { base_url, api_token } = connection;
 
+    const headers = { "Api-Token": api_token, "Accept": "application/json" };
+
     // Route actions
     if (action === "test") {
-      // Test connection by hitting a simple endpoint
-      const res = await fetch(`${base_url}/api/v1/products?limit=1`, {
-        headers: { "Api-Token": api_token },
-      });
+      // Primary: business-day export endpoint
+      const today = new Date().toISOString().split("T")[0];
+      const primaryUrl = `${base_url.replace(/\/+$/, "")}/api/export/?business-day=${today}&filter=Invoices`;
+
+      let res = await fetch(primaryUrl, { headers });
+
+      // Fallback: tickets endpoint
+      if (!res.ok) {
+        const fallbackUrl = `${base_url.replace(/\/+$/, "")}/api/export/tickets/`;
+        res = await fetch(fallbackUrl, { headers });
+      }
+
       if (!res.ok) {
         const text = await res.text();
         return new Response(
-          JSON.stringify({ success: false, status: res.status, message: text }),
+          JSON.stringify({ success: false, status: res.status, message: `Agora responded ${res.status}` }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -53,19 +63,21 @@ serve(async (req) => {
       );
     }
 
-    if (action === "products") {
-      const res = await fetch(`${base_url}/api/v1/products`, {
-        headers: { "Api-Token": api_token },
-      });
+    if (action === "export") {
+      const { businessDay, filter } = await req.json().catch(() => ({}));
+      const day = businessDay || new Date().toISOString().split("T")[0];
+      const url = `${base_url.replace(/\/+$/, "")}/api/export/?business-day=${day}&filter=${filter || "Invoices"}`;
+
+      const res = await fetch(url, { headers });
       if (!res.ok) {
         return new Response(
-          JSON.stringify({ error: "Failed to fetch products", status: res.status }),
+          JSON.stringify({ error: "Failed to fetch export", status: res.status }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      const products = await res.json();
+      const data = await res.json();
       return new Response(
-        JSON.stringify({ products }),
+        JSON.stringify({ data }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
