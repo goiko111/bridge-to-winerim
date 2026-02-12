@@ -65,28 +65,53 @@ serve(async (req) => {
 
     if (action === "diagnose") {
       const baseUrlClean = base_url.replace(/\/+$/, "");
-      const today = new Date().toISOString().split("T")[0];
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+      const results: Record<string, unknown> = {};
 
-      const results: Record<string, unknown> = { today, yesterday };
+      // Try last 30 days to find any data
+      const datesToTry: string[] = [];
+      for (let i = 0; i < 30; i++) {
+        datesToTry.push(new Date(Date.now() - i * 86400000).toISOString().split("T")[0]);
+      }
 
-      // Call 1: export with today's business-day
+      // First: try without filter to see all document types
       try {
-        const url1 = `${baseUrlClean}/api/export/?business-day=${today}&filter=Invoices`;
-        const res1 = await fetch(url1, { headers });
-        const body1 = await res1.text();
-        results.exportToday = { url: url1, status: res1.status, body: body1.slice(0, 5000) };
-      } catch (e) { results.exportToday = { error: e.message }; }
+        const url = `${baseUrlClean}/api/export/?business-day=${datesToTry[0]}`;
+        const res = await fetch(url, { headers });
+        const body = await res.text();
+        results.noFilter = { url, status: res.status, body: body.slice(0, 3000) };
+      } catch (e) { results.noFilter = { error: e.message }; }
 
-      // Call 1b: export with yesterday (in case today has no data)
-      try {
-        const url1b = `${baseUrlClean}/api/export/?business-day=${yesterday}&filter=Invoices`;
-        const res1b = await fetch(url1b, { headers });
-        const body1b = await res1b.text();
-        results.exportYesterday = { url: url1b, status: res1b.status, body: body1b.slice(0, 5000) };
-      } catch (e) { results.exportYesterday = { error: e.message }; }
+      // Scan last 30 days with Invoices filter — stop at first non-empty
+      for (const day of datesToTry) {
+        try {
+          const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
+          const res = await fetch(url, { headers });
+          const body = await res.text();
+          const trimmed = body.trim();
+          if (trimmed && trimmed !== "{}" && trimmed !== "[]") {
+            results.firstHit = { day, url, status: res.status, body: body.slice(0, 5000) };
+            break;
+          }
+        } catch (_) { /* skip */ }
+      }
 
-      // Call 2: tickets endpoint
+      // If no Invoices found, scan without filter
+      if (!results.firstHit) {
+        for (const day of datesToTry) {
+          try {
+            const url = `${baseUrlClean}/api/export/?business-day=${day}`;
+            const res = await fetch(url, { headers });
+            const body = await res.text();
+            const trimmed = body.trim();
+            if (trimmed && trimmed !== "{}" && trimmed !== "[]") {
+              results.firstHitNoFilter = { day, url, status: res.status, body: body.slice(0, 5000) };
+              break;
+            }
+          } catch (_) { /* skip */ }
+        }
+      }
+
+      // Tickets endpoint
       try {
         const url2 = `${baseUrlClean}/api/export/tickets/`;
         const res2 = await fetch(url2, { headers });
