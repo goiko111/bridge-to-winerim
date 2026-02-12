@@ -22,6 +22,7 @@ export type Database = {
           created_at: string
           enabled: boolean
           id: string
+          last_business_day_synced: string | null
           last_sync_at: string | null
           location_name: string
           provider: string
@@ -36,6 +37,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          last_business_day_synced?: string | null
           last_sync_at?: string | null
           location_name: string
           provider?: string
@@ -50,6 +52,7 @@ export type Database = {
           created_at?: string
           enabled?: boolean
           id?: string
+          last_business_day_synced?: string | null
           last_sync_at?: string | null
           location_name?: string
           provider?: string
@@ -58,6 +61,157 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      sales_events: {
+        Row: {
+          business_day: string
+          connection_id: string
+          created_at: string
+          doc_type: string
+          id: string
+          line_count: number
+          provider_doc_id: string
+          raw_json: Json | null
+          total_amount: number
+          total_net: number
+          total_tax: number
+        }
+        Insert: {
+          business_day: string
+          connection_id: string
+          created_at?: string
+          doc_type?: string
+          id?: string
+          line_count?: number
+          provider_doc_id: string
+          raw_json?: Json | null
+          total_amount?: number
+          total_net?: number
+          total_tax?: number
+        }
+        Update: {
+          business_day?: string
+          connection_id?: string
+          created_at?: string
+          doc_type?: string
+          id?: string
+          line_count?: number
+          provider_doc_id?: string
+          raw_json?: Json | null
+          total_amount?: number
+          total_net?: number
+          total_tax?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_events_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_line_items: {
+        Row: {
+          connection_id: string
+          created_at: string
+          family: string | null
+          format: string | null
+          id: string
+          is_wine_candidate: boolean
+          mapped: boolean
+          name: string
+          provider_product_id: string | null
+          quantity: number
+          sales_event_id: string
+          total_amount: number
+          unit_price: number
+          vat_rate: number
+          winerim_product_id: string | null
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          family?: string | null
+          format?: string | null
+          id?: string
+          is_wine_candidate?: boolean
+          mapped?: boolean
+          name: string
+          provider_product_id?: string | null
+          quantity?: number
+          sales_event_id: string
+          total_amount?: number
+          unit_price?: number
+          vat_rate?: number
+          winerim_product_id?: string | null
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          family?: string | null
+          format?: string | null
+          id?: string
+          is_wine_candidate?: boolean
+          mapped?: boolean
+          name?: string
+          provider_product_id?: string | null
+          quantity?: number
+          sales_event_id?: string
+          total_amount?: number
+          unit_price?: number
+          vat_rate?: number
+          winerim_product_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_line_items_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_line_items_sales_event_id_fkey"
+            columns: ["sales_event_id"]
+            isOneToOne: false
+            referencedRelation: "sales_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wine_family_rules: {
+        Row: {
+          connection_id: string
+          created_at: string
+          family_name: string
+          id: string
+          is_wine: boolean
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          family_name: string
+          id?: string
+          is_wine?: boolean
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          family_name?: string
+          id?: string
+          is_wine?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wine_family_rules_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

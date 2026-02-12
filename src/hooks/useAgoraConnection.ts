@@ -1,20 +1,52 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export interface AgoraProduct {
-  id: string;
+export interface SalesLineItem {
+  provider_product_id: string;
   name: string;
-  mapped: boolean;
-  winerimId: string | null;
-  confidence: number;
+  format: string;
+  family: string;
+  quantity: number;
+  unit_price: number;
+  total_amount: number;
+  vat_rate: number;
+  is_wine_candidate: boolean;
+}
+
+export interface SalesEvent {
+  provider_doc_id: string;
+  business_day: string;
+  doc_type: string;
+  total_amount: number;
+  total_tax: number;
+  total_net: number;
+  line_count: number;
+  lines: SalesLineItem[];
+}
+
+export interface DetectedFamily {
+  name: string;
+  suggestedWine: boolean;
 }
 
 export function useAgoraConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testError, setTestError] = useState<string | null>(null);
-  const [products, setProducts] = useState<AgoraProduct[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(false);
+
+  // Business day state
+  const [daysWithSales, setDaysWithSales] = useState<string[]>([]);
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [loadingDays, setLoadingDays] = useState(false);
+
+  // Sales data
+  const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
+  const [detectedFamilies, setDetectedFamilies] = useState<DetectedFamily[]>([]);
+  const [loadingSales, setLoadingSales] = useState(false);
+
+  // Save status
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
 
   const saveConnection = async (data: {
     locationName: string;
@@ -54,7 +86,6 @@ export function useAgoraConnection() {
     setTestStatus("testing");
     setTestError(null);
 
-    // First save or update the connection so the edge function can read it
     let connId = connectionId;
     if (!connId) {
       try {
@@ -101,53 +132,77 @@ export function useAgoraConnection() {
     }
   };
 
-  const fetchProducts = async () => {
+  const findDaysWithSales = useCallback(async (daysBack = 30) => {
     if (!connectionId) return;
-    setLoadingProducts(true);
+    setLoadingDays(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "export", connectionId },
+        body: { action: "find-last-business-day", connectionId, daysBack },
       });
-
       if (error) throw error;
-
-      // Parse export data — extract unique product names from invoice lines
-      const exportData = data?.data || [];
-      const productMap = new Map<string, string>();
-
-      // Handle both array and object responses from Agora export
-      const items = Array.isArray(exportData) ? exportData : (exportData.items || exportData.tickets || []);
-      for (const item of items) {
-        const lines = item.lines || item.details || item.items || [];
-        for (const line of lines) {
-          const name = line.product_name || line.description || line.name || line.article;
-          const id = line.product_id || line.id || line.article_id || name;
-          if (name && !productMap.has(String(id))) {
-            productMap.set(String(id), String(name));
-          }
-        }
+      const days: string[] = data?.daysWithSales || [];
+      setDaysWithSales(days);
+      if (days.length > 0 && !selectedDay) {
+        setSelectedDay(days[0]);
       }
-
-      const mapped: AgoraProduct[] = Array.from(productMap.entries()).map(([id, name]) => ({
-        id,
-        name,
-        mapped: false,
-        winerimId: null,
-        confidence: 0,
-      }));
-
-      setProducts(mapped);
     } catch (e) {
-      console.error("Failed to fetch products:", e);
+      console.error("Failed to find business days:", e);
     } finally {
-      setLoadingProducts(false);
+      setLoadingDays(false);
     }
-  };
+  }, [connectionId, selectedDay]);
+
+  const fetchSalesForDay = useCallback(async (day: string) => {
+    if (!connectionId) return;
+    setLoadingSales(true);
+    setSalesEvents([]);
+    setDetectedFamilies([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "fetch-day", connectionId, businessDay: day },
+      });
+      if (error) throw error;
+      setSalesEvents(data?.salesEvents || []);
+      setDetectedFamilies(data?.detectedFamilies || []);
+    } catch (e) {
+      console.error("Failed to fetch sales:", e);
+    } finally {
+      setLoadingSales(false);
+    }
+  }, [connectionId]);
+
+  const saveSalesToDb = useCallback(async (day: string) => {
+    if (!connectionId) return;
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "save-sales", connectionId, businessDay: day },
+      });
+      if (error) throw error;
+      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 });
+    } catch (e) {
+      console.error("Failed to save sales:", e);
+    } finally {
+      setSaving(false);
+    }
+  }, [connectionId]);
 
   const enableSync = async () => {
     if (!connectionId) return;
     await updateConnection(connectionId, { enabled: true });
   };
+
+  // Wine family rules
+  const saveFamilyRules = useCallback(async (families: { name: string; isWine: boolean }[]) => {
+    if (!connectionId) return;
+    for (const f of families) {
+      await supabase.from("wine_family_rules").upsert(
+        { connection_id: connectionId, family_name: f.name, is_wine: f.isWine },
+        { onConflict: "connection_id,family_name" }
+      );
+    }
+  }, [connectionId]);
 
   return {
     connectionId,
@@ -156,9 +211,24 @@ export function useAgoraConnection() {
     testConnection,
     saveConnection,
     updateConnection,
-    products,
-    loadingProducts,
-    fetchProducts,
+    // Business days
+    daysWithSales,
+    selectedDay,
+    setSelectedDay,
+    loadingDays,
+    findDaysWithSales,
+    // Sales
+    salesEvents,
+    detectedFamilies,
+    loadingSales,
+    fetchSalesForDay,
+    // Persist
+    saving,
+    saveResult,
+    saveSalesToDb,
+    // Sync
     enableSync,
+    // Families
+    saveFamilyRules,
   };
 }
