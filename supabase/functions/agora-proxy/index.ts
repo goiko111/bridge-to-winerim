@@ -63,10 +63,47 @@ serve(async (req) => {
       );
     }
 
+    if (action === "diagnose") {
+      const baseUrlClean = base_url.replace(/\/+$/, "");
+      const today = new Date().toISOString().split("T")[0];
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+
+      const results: Record<string, unknown> = { today, yesterday };
+
+      // Call 1: export with today's business-day
+      try {
+        const url1 = `${baseUrlClean}/api/export/?business-day=${today}&filter=Invoices`;
+        const res1 = await fetch(url1, { headers });
+        const body1 = await res1.text();
+        results.exportToday = { url: url1, status: res1.status, body: body1.slice(0, 5000) };
+      } catch (e) { results.exportToday = { error: e.message }; }
+
+      // Call 1b: export with yesterday (in case today has no data)
+      try {
+        const url1b = `${baseUrlClean}/api/export/?business-day=${yesterday}&filter=Invoices`;
+        const res1b = await fetch(url1b, { headers });
+        const body1b = await res1b.text();
+        results.exportYesterday = { url: url1b, status: res1b.status, body: body1b.slice(0, 5000) };
+      } catch (e) { results.exportYesterday = { error: e.message }; }
+
+      // Call 2: tickets endpoint
+      try {
+        const url2 = `${baseUrlClean}/api/export/tickets/`;
+        const res2 = await fetch(url2, { headers });
+        const body2 = await res2.text();
+        results.tickets = { url: url2, status: res2.status, body: body2.slice(0, 5000) };
+      } catch (e) { results.tickets = { error: e.message }; }
+
+      return new Response(
+        JSON.stringify(results),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     if (action === "export") {
-      const { businessDay, filter } = await req.json().catch(() => ({}));
-      const day = businessDay || new Date().toISOString().split("T")[0];
-      const url = `${base_url.replace(/\/+$/, "")}/api/export/?business-day=${day}&filter=${filter || "Invoices"}`;
+      const baseUrlClean = base_url.replace(/\/+$/, "");
+      const day = new Date().toISOString().split("T")[0];
+      const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
 
       const res = await fetch(url, { headers });
       if (!res.ok) {
