@@ -626,9 +626,9 @@ export default function AgoraWizard() {
     }
   }, [searchParams]);
 
-  // When entering step 3 (Families), scan for business days to detect families
+  // When entering step 3 or 4, scan for business days
   useEffect(() => {
-    if (currentStep === 3 && connectionId) {
+    if ((currentStep === 3 || currentStep === 4) && connectionId && daysWithSales.length === 0 && !loadingDays) {
       findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
