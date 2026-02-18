@@ -57,6 +57,7 @@ export function useAgoraConnection() {
     locationName: string;
     baseUrl: string;
     apiToken: string;
+    winerimApiToken?: string;
     syncMode: string;
     syncFrequency: number;
     backfillDays: number;
@@ -67,10 +68,11 @@ export function useAgoraConnection() {
         location_name: data.locationName,
         base_url: data.baseUrl,
         api_token: data.apiToken,
+        winerim_api_token: data.winerimApiToken || null,
         sync_mode: data.syncMode,
         sync_frequency_minutes: data.syncFrequency,
         backfill_days: data.backfillDays,
-      })
+      } as any)
       .select()
       .single();
 
@@ -87,7 +89,7 @@ export function useAgoraConnection() {
     if (error) throw error;
   };
 
-  const testConnection = async (baseUrl: string, apiToken: string) => {
+  const testConnection = async (baseUrl: string, apiToken: string, winerimApiToken?: string) => {
     setTestStatus("testing");
     setTestError(null);
 
@@ -98,6 +100,7 @@ export function useAgoraConnection() {
           locationName: "New Location",
           baseUrl,
           apiToken,
+          winerimApiToken,
           syncMode: "PULL_ONLY",
           syncFrequency: 15,
           backfillDays: 30,
@@ -108,7 +111,7 @@ export function useAgoraConnection() {
         return false;
       }
     } else {
-      await updateConnection(connId, { base_url: baseUrl, api_token: apiToken });
+      await updateConnection(connId, { base_url: baseUrl, api_token: apiToken, winerim_api_token: winerimApiToken || null });
     }
 
     try {
