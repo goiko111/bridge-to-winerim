@@ -41,12 +41,14 @@ function StepConnection({
   locationName, setLocationName,
   baseUrl, setBaseUrl,
   apiToken, setApiToken,
+  winerimApiToken, setWinerimApiToken,
   testStatus, testError,
   onTest,
 }: {
   locationName: string; setLocationName: (v: string) => void;
   baseUrl: string; setBaseUrl: (v: string) => void;
   apiToken: string; setApiToken: (v: string) => void;
+  winerimApiToken: string; setWinerimApiToken: (v: string) => void;
   testStatus: string; testError: string | null;
   onTest: () => void;
 }) {
@@ -70,6 +72,11 @@ function StepConnection({
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Api-Token</label>
           <Input type="password" placeholder="Enter your Agora API token" value={apiToken} onChange={(e) => setApiToken(e.target.value)} className="bg-background font-mono text-sm" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Winerim API Token</label>
+          <Input type="password" placeholder="Enter your Winerim API token" value={winerimApiToken} onChange={(e) => setWinerimApiToken(e.target.value)} className="bg-background font-mono text-sm" />
+          <p className="mt-1 text-[11px] text-muted-foreground">Token de la API v2 de Winerim para sincronizar catálogo y stock.</p>
         </div>
         <Button onClick={onTest} disabled={testStatus === "testing" || !baseUrl || !apiToken} variant="secondary" className="w-full">
           {testStatus === "testing" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -640,6 +647,7 @@ export default function AgoraWizard() {
   const [currentStep, setCurrentStep] = useState(1);
   const [baseUrl, setBaseUrl] = useState("");
   const [apiToken, setApiToken] = useState("");
+  const [winerimApiToken, setWinerimApiToken] = useState("");
   const [locationName, setLocationName] = useState("");
   const [syncMode, setSyncMode] = useState<"PULL_ONLY" | "BIDIRECTIONAL">("PULL_ONLY");
   const [frequency, setFrequency] = useState(15);
@@ -670,6 +678,7 @@ export default function AgoraWizard() {
           setLocationName(conn.location_name);
           setBaseUrl(conn.base_url);
           setApiToken(conn.api_token);
+          setWinerimApiToken(conn.winerim_api_token || "");
           setSyncMode(conn.sync_mode as "PULL_ONLY" | "BIDIRECTIONAL");
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
@@ -753,8 +762,9 @@ export default function AgoraWizard() {
               locationName={locationName} setLocationName={setLocationName}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl}
               apiToken={apiToken} setApiToken={setApiToken}
+              winerimApiToken={winerimApiToken} setWinerimApiToken={setWinerimApiToken}
               testStatus={testStatus} testError={testError}
-              onTest={() => testConnection(baseUrl, apiToken)}
+              onTest={() => testConnection(baseUrl, apiToken, winerimApiToken)}
             />
           )}
           {currentStep === 2 && (

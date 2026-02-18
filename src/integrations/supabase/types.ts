@@ -29,6 +29,7 @@ export type Database = {
           sync_frequency_minutes: number
           sync_mode: string
           updated_at: string
+          winerim_api_token: string | null
         }
         Insert: {
           api_token: string
@@ -44,6 +45,7 @@ export type Database = {
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string
+          winerim_api_token?: string | null
         }
         Update: {
           api_token?: string
@@ -59,6 +61,7 @@ export type Database = {
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string
+          winerim_api_token?: string | null
         }
         Relationships: []
       }
