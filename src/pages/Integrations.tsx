@@ -108,6 +108,14 @@ const connectors: Connector[] = [
     status: "coming_soon",
     country: "Italia",
   },
+  {
+    id: "tcpos",
+    name: "Kumo (TCPOS)",
+    description: "Zucchetti TCPOS via Kumo REST API (V8). Basic auth, Swagger-documented endpoints for sales, catalog and orders.",
+    logo: "K",
+    status: "coming_soon",
+    country: "Italia",
+  },
   // México
   {
     id: "softrestaurant",
