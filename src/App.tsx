@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 import Index from "./pages/Index";
 import Integrations from "./pages/Integrations";
 import AgoraWizard from "./pages/AgoraWizard";
+import TcposWizard from "./pages/TcposWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/integrations/agora" element={<AgoraWizard />} />
+            <Route path="/integrations/tcpos" element={<TcposWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />

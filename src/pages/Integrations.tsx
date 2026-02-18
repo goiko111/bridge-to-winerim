@@ -113,7 +113,7 @@ const connectors: Connector[] = [
     name: "Kumo (TCPOS)",
     description: "Zucchetti TCPOS via Kumo REST API (V8). Basic auth, Swagger-documented endpoints for sales, catalog and orders.",
     logo: "K",
-    status: "coming_soon",
+    status: "disconnected",
     country: "Italia",
   },
   // México
@@ -282,6 +282,7 @@ export default function Integrations() {
                     }`}
                     onClick={() => {
                       if (c.id === "agora") navigate("/integrations/agora");
+                      if (c.id === "tcpos") navigate("/integrations/tcpos");
                     }}
                   >
                     <div className="p-5">
@@ -334,7 +335,8 @@ export default function Integrations() {
                           className="mt-3"
                           onClick={(e) => {
                             e.stopPropagation();
-                            navigate("/integrations/agora");
+                            if (c.id === "agora") navigate("/integrations/agora");
+                            if (c.id === "tcpos") navigate("/integrations/tcpos");
                           }}
                         >
                           Connect
