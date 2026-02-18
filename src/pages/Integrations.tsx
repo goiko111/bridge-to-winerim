@@ -67,6 +67,14 @@ const connectors: Connector[] = [
     status: "coming_soon",
     country: "España",
   },
+  {
+    id: "bdp",
+    name: "BDP",
+    description: "TPV system for hospitality. Integration via partner or export.",
+    logo: "B",
+    status: "coming_soon",
+    country: "España",
+  },
   // Italia
   {
     id: "tilby",
