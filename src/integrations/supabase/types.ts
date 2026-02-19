@@ -326,6 +326,69 @@ export type Database = {
           },
         ]
       }
+      stock_sync_log: {
+        Row: {
+          connection_id: string
+          created_at: string
+          error_message: string | null
+          id: string
+          product_name: string
+          provider_product_id: string | null
+          quantity: number
+          sales_event_id: string | null
+          sales_line_item_id: string | null
+          status: string
+          synced_at: string | null
+          winerim_product_id: string | null
+          winerim_response: Json | null
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          product_name: string
+          provider_product_id?: string | null
+          quantity?: number
+          sales_event_id?: string | null
+          sales_line_item_id?: string | null
+          status?: string
+          synced_at?: string | null
+          winerim_product_id?: string | null
+          winerim_response?: Json | null
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          product_name?: string
+          provider_product_id?: string | null
+          quantity?: number
+          sales_event_id?: string | null
+          sales_line_item_id?: string | null
+          status?: string
+          synced_at?: string | null
+          winerim_product_id?: string | null
+          winerim_response?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_sync_log_sales_event_id_fkey"
+            columns: ["sales_event_id"]
+            isOneToOne: false
+            referencedRelation: "sales_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "stock_sync_log_sales_line_item_id_fkey"
+            columns: ["sales_line_item_id"]
+            isOneToOne: false
+            referencedRelation: "sales_line_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wine_family_rules: {
         Row: {
           connection_id: string
