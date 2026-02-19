@@ -136,6 +136,51 @@ export type Database = {
         }
         Relationships: []
       }
+      product_mappings: {
+        Row: {
+          connection_id: string
+          created_at: string
+          id: string
+          match_method: string
+          match_reasons: string[] | null
+          match_score: number | null
+          provider_product_id: string
+          provider_product_name: string
+          status: string
+          updated_at: string
+          winerim_wine_id: string | null
+          winerim_wine_name: string | null
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          id?: string
+          match_method?: string
+          match_reasons?: string[] | null
+          match_score?: number | null
+          provider_product_id: string
+          provider_product_name: string
+          status?: string
+          updated_at?: string
+          winerim_wine_id?: string | null
+          winerim_wine_name?: string | null
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          id?: string
+          match_method?: string
+          match_reasons?: string[] | null
+          match_score?: number | null
+          provider_product_id?: string
+          provider_product_name?: string
+          status?: string
+          updated_at?: string
+          winerim_wine_id?: string | null
+          winerim_wine_name?: string | null
+        }
+        Relationships: []
+      }
       provider_products: {
         Row: {
           classification_override: string
@@ -420,6 +465,63 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      winerim_wines: {
+        Row: {
+          connection_id: string
+          created_at: string
+          ean: string | null
+          format: string | null
+          grape_variety: string | null
+          id: string
+          name: string
+          price: number | null
+          raw_payload: Json | null
+          region: string | null
+          sku: string | null
+          stock_quantity: number | null
+          updated_at: string
+          vintage: string | null
+          winerim_id: string
+          winery: string | null
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          ean?: string | null
+          format?: string | null
+          grape_variety?: string | null
+          id?: string
+          name: string
+          price?: number | null
+          raw_payload?: Json | null
+          region?: string | null
+          sku?: string | null
+          stock_quantity?: number | null
+          updated_at?: string
+          vintage?: string | null
+          winerim_id: string
+          winery?: string | null
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          ean?: string | null
+          format?: string | null
+          grape_variety?: string | null
+          id?: string
+          name?: string
+          price?: number | null
+          raw_payload?: Json | null
+          region?: string | null
+          sku?: string | null
+          stock_quantity?: number | null
+          updated_at?: string
+          vintage?: string | null
+          winerim_id?: string
+          winery?: string | null
+        }
+        Relationships: []
       }
     }
     Views: {
