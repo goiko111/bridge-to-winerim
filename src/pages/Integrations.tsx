@@ -155,7 +155,7 @@ const connectors: Connector[] = [
     name: "Clover",
     description: "OAuth2 + apps. Orders, payments, items, webhooks. Rate limits: 50 req/s app, 16 req/s token.",
     logo: "C",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
@@ -283,6 +283,7 @@ export default function Integrations() {
                     onClick={() => {
                       if (c.id === "agora") navigate("/integrations/agora");
                       if (c.id === "tcpos") navigate("/integrations/tcpos");
+                      if (c.id === "clover") navigate("/integrations/clover");
                     }}
                   >
                     <div className="p-5">
@@ -337,6 +338,7 @@ export default function Integrations() {
                             e.stopPropagation();
                             if (c.id === "agora") navigate("/integrations/agora");
                             if (c.id === "tcpos") navigate("/integrations/tcpos");
+                            if (c.id === "clover") navigate("/integrations/clover");
                           }}
                         >
                           Connect
