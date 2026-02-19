@@ -14,6 +14,62 @@ export type Database = {
   }
   public: {
     Tables: {
+      classification_config: {
+        Row: {
+          connection_id: string
+          created_at: string
+          format_whitelist: string[]
+          id: string
+          max_wine_price: number
+          min_wine_price: number
+          non_wine_families_blacklist: string[]
+          non_wine_keywords_blacklist: string[]
+          score_threshold_not_wine: number
+          score_threshold_wine: number
+          updated_at: string
+          wine_families_whitelist: string[]
+          wine_keywords_whitelist: string[]
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          format_whitelist?: string[]
+          id?: string
+          max_wine_price?: number
+          min_wine_price?: number
+          non_wine_families_blacklist?: string[]
+          non_wine_keywords_blacklist?: string[]
+          score_threshold_not_wine?: number
+          score_threshold_wine?: number
+          updated_at?: string
+          wine_families_whitelist?: string[]
+          wine_keywords_whitelist?: string[]
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          format_whitelist?: string[]
+          id?: string
+          max_wine_price?: number
+          min_wine_price?: number
+          non_wine_families_blacklist?: string[]
+          non_wine_keywords_blacklist?: string[]
+          score_threshold_not_wine?: number
+          score_threshold_wine?: number
+          updated_at?: string
+          wine_families_whitelist?: string[]
+          wine_keywords_whitelist?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "classification_config_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pos_connections: {
         Row: {
           api_token: string
@@ -82,11 +138,14 @@ export type Database = {
       }
       provider_products: {
         Row: {
+          classification_override: string
           connection_id: string
           created_at: string
           family: string | null
           id: string
           is_wine_candidate: boolean | null
+          last_reasons: string[] | null
+          last_score: number | null
           name: string
           price: number | null
           provider_product_id: string
@@ -99,11 +158,14 @@ export type Database = {
           wine_score: number | null
         }
         Insert: {
+          classification_override?: string
           connection_id: string
           created_at?: string
           family?: string | null
           id?: string
           is_wine_candidate?: boolean | null
+          last_reasons?: string[] | null
+          last_score?: number | null
           name: string
           price?: number | null
           provider_product_id: string
@@ -116,11 +178,14 @@ export type Database = {
           wine_score?: number | null
         }
         Update: {
+          classification_override?: string
           connection_id?: string
           created_at?: string
           family?: string | null
           id?: string
           is_wine_candidate?: boolean | null
+          last_reasons?: string[] | null
+          last_score?: number | null
           name?: string
           price?: number | null
           provider_product_id?: string
