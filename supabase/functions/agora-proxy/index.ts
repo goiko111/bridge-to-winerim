@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Default wine-like family names (case-insensitive match)
+// ── Default keyword lists ──
 const DEFAULT_WINE_FAMILIES = [
   "vino", "vinos", "bodega", "bodegas", "cava", "cavas", "champagne",
   "espumoso", "espumosos", "tinto", "tintos", "blanco", "blancos",
@@ -15,163 +15,218 @@ const DEFAULT_WINE_FAMILIES = [
   "tempranillo", "garnacha", "monastrell", "prosecco", "lambrusco",
 ];
 
-const NON_WINE_FAMILIES = [
+const DEFAULT_NON_WINE_FAMILIES = [
   "agua", "water", "snack", "tarta", "postre", "postres", "café", "coffee",
   "té", "tea", "refresco", "refrescos", "zumo", "juice", "cerveza", "beer",
   "pan", "bread", "entrante", "entrantes", "ensalada", "sopa", "helado",
   "licor", "licores", "cocktail", "coctel", "gin", "whisky", "vodka", "ron",
 ];
 
-const WINE_PRODUCT_KEYWORDS = [
-  "reserva", "crianza", "gran reserva", "joven", "roble",
-  "tinto", "blanco", "rosado", "cava", "champagne", "espumoso",
+const DEFAULT_WINE_KEYWORDS = [
+  "vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut",
+  "reserva", "crianza", "botella", "bot.", "75cl", "magnum", "copa",
   "tempranillo", "garnacha", "cabernet", "merlot", "syrah", "chardonnay",
   "sauvignon", "pinot", "verdejo", "albariño", "monastrell", "godello",
   "rioja", "ribera", "rueda", "priorat", "penedès", "somontano",
-  "magnum", "botella", "copa de vino", "75cl", "37.5cl",
+  "gran reserva", "joven", "roble", "espumoso", "copa de vino", "37.5cl",
 ];
 
-const NON_WINE_PRODUCT_KEYWORDS = [
+const DEFAULT_NON_WINE_KEYWORDS = [
+  "menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo",
+  "atún", "gambas", "postre", "tarta", "pan", "snack", "ensalada", "pescado", "carne",
   "agua", "mineral", "coca", "fanta", "nestea", "tónica", "refresco",
   "café", "cortado", "infusión", "té", "zumo", "cerveza", "caña",
-  "tapa", "ración", "postre", "tarta", "helado", "pan", "ensalada",
-  "gin tonic", "whisky", "vodka", "ron", "mojito", "cocktail",
+  "tapa", "ración", "helado", "gin tonic", "whisky", "vodka", "ron", "mojito", "cocktail",
 ];
 
-const WINE_FORMAT_KEYWORDS = [
-  "botella", "copa", "magnum", "jeroboam", "75cl", "37.5cl", "150cl",
-  "by the glass", "por copa",
+const DEFAULT_FORMAT_WHITELIST = [
+  "bot", "bottle", "botella", "75cl", "copa", "glass", "magnum", "jeroboam",
+  "37.5cl", "150cl", "by the glass", "por copa",
 ];
 
-// Price thresholds that suggest wine (in euros)
-const WINE_PRICE_MIN = 3.0;  // Wines rarely cost less than €3
-const WINE_PRICE_MAX = 500.0; // Cap for sanity
+// ── Classification config type ──
+interface ClassificationConfig {
+  wine_families_whitelist: string[];
+  non_wine_families_blacklist: string[];
+  wine_keywords_whitelist: string[];
+  non_wine_keywords_blacklist: string[];
+  format_whitelist: string[];
+  min_wine_price: number;
+  max_wine_price: number;
+  score_threshold_wine: number;
+  score_threshold_not_wine: number;
+}
 
-interface WineScore {
-  score: number; // -100 to 100
+const DEFAULT_CONFIG: ClassificationConfig = {
+  wine_families_whitelist: [],
+  non_wine_families_blacklist: [],
+  wine_keywords_whitelist: [],
+  non_wine_keywords_blacklist: [],
+  format_whitelist: [],
+  min_wine_price: 6,
+  max_wine_price: 600,
+  score_threshold_wine: 40,
+  score_threshold_not_wine: 0,
+};
+
+interface ClassificationResult {
+  classification: "WINE" | "NOT_WINE" | "NEEDS_REVIEW";
+  score: number;
   reasons: string[];
 }
 
-function computeWineScore(
+function classifyProduct(
   family: string | undefined,
   name: string | undefined,
   format: string | undefined,
-  unitPrice: number,
-  wineFamilies: string[],
-  nonWineFamilies: string[],
-): WineScore {
+  price: number,
+  config: ClassificationConfig,
+): ClassificationResult {
   const f = (family || "").toLowerCase();
   const n = (name || "").toLowerCase();
   const fmt = (format || "").toLowerCase();
-  let score = 0;
   const reasons: string[] = [];
 
-  // 1. Family matching (strongest signal: ±50)
-  for (const wf of nonWineFamilies) {
-    if (f.includes(wf)) {
-      score -= 50;
-      reasons.push(`family_non_wine:${wf}`);
-      break;
+  // Merge defaults + user config
+  const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...config.wine_families_whitelist.map(s => s.toLowerCase())];
+  const nonWineFamilies = [...DEFAULT_NON_WINE_FAMILIES, ...config.non_wine_families_blacklist.map(s => s.toLowerCase())];
+  const wineKeywords = [...DEFAULT_WINE_KEYWORDS, ...config.wine_keywords_whitelist.map(s => s.toLowerCase())];
+  const nonWineKeywords = [...DEFAULT_NON_WINE_KEYWORDS, ...config.non_wine_keywords_blacklist.map(s => s.toLowerCase())];
+  const formatWhitelist = [...DEFAULT_FORMAT_WHITELIST, ...config.format_whitelist.map(s => s.toLowerCase())];
+
+  // ── HARD RULES (short-circuit) ──
+  // Hard NOT_WINE: food/menu keywords in name or food family
+  for (const kw of nonWineKeywords) {
+    if (n === kw || n.startsWith(kw + " ") || n.endsWith(" " + kw) || n.includes(" " + kw + " ")) {
+      // Only hard-rule for strong food indicators
+      if (["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "ensalada", "pescado", "carne"].includes(kw)) {
+        reasons.push(`hard_not_wine_name:${kw}`);
+        return { classification: "NOT_WINE", score: -100, reasons };
+      }
     }
   }
-  if (score >= 0) {
-    for (const wf of wineFamilies) {
-      if (f.includes(wf)) {
-        score += 50;
-        reasons.push(`family_wine:${wf}`);
-        break;
+  for (const kw of nonWineFamilies) {
+    if (f === kw || f.includes(kw)) {
+      if (["agua", "water", "snack", "postre", "postres", "café", "coffee", "cerveza", "beer", "licor", "licores"].includes(kw)) {
+        reasons.push(`hard_not_wine_family:${kw}`);
+        return { classification: "NOT_WINE", score: -100, reasons };
       }
     }
   }
 
-  // 2. Product name keywords (±30)
-  for (const kw of NON_WINE_PRODUCT_KEYWORDS) {
-    if (n.includes(kw)) {
-      score -= 30;
-      reasons.push(`name_non_wine:${kw}`);
-      break;
+  // Hard WINE: wine keywords in name or wine family
+  for (const kw of ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut"]) {
+    if (n === kw || n.startsWith(kw + " ") || n.endsWith(" " + kw) || n.includes(" " + kw + " ")) {
+      reasons.push(`hard_wine_name:${kw}`);
+      return { classification: "WINE", score: 100, reasons };
     }
   }
-  for (const kw of WINE_PRODUCT_KEYWORDS) {
-    if (n.includes(kw)) {
-      score += 30;
-      reasons.push(`name_wine:${kw}`);
-      break;
-    }
+  // Bottle/glass patterns
+  if (/\b(botella|bot\.?\s|75\s?cl|copa de vino)\b/i.test(n)) {
+    reasons.push(`hard_wine_bottle_pattern`);
+    return { classification: "WINE", score: 100, reasons };
   }
 
-  // 3. Format keywords (±15)
-  for (const kw of WINE_FORMAT_KEYWORDS) {
+  // ── SCORING ──
+  let score = 0;
+
+  // Family: +50 / -50
+  for (const kw of nonWineFamilies) {
+    if (f.includes(kw)) { score -= 50; reasons.push(`family_blacklist:${kw}`); break; }
+  }
+  for (const kw of wineFamilies) {
+    if (f.includes(kw)) { score += 50; reasons.push(`family_whitelist:${kw}`); break; }
+  }
+
+  // Keywords: +30 / -60
+  for (const kw of wineKeywords) {
+    if (n.includes(kw)) { score += 30; reasons.push(`keyword_wine:${kw}`); break; }
+  }
+  for (const kw of nonWineKeywords) {
+    if (n.includes(kw)) { score -= 60; reasons.push(`keyword_non_wine:${kw}`); break; }
+  }
+
+  // Format: +20 bottle, +10 glass
+  for (const kw of formatWhitelist) {
     if (fmt.includes(kw) || n.includes(kw)) {
-      score += 15;
-      reasons.push(`format_wine:${kw}`);
+      const isBottle = ["bot", "bottle", "botella", "75cl", "magnum", "jeroboam", "37.5cl", "150cl"].includes(kw);
+      score += isBottle ? 20 : 10;
+      reasons.push(`format_${isBottle ? "bottle" : "glass"}:${kw}`);
       break;
     }
   }
 
-  // 4. Price heuristic (±10)
-  if (unitPrice > 0) {
-    if (unitPrice >= WINE_PRICE_MIN && unitPrice <= WINE_PRICE_MAX) {
-      score += 10;
-      reasons.push(`price_range:${unitPrice}`);
-    } else if (unitPrice < WINE_PRICE_MIN) {
-      score -= 10;
-      reasons.push(`price_too_low:${unitPrice}`);
+  // Price heuristic (only if no strong signal)
+  if (Math.abs(score) < 30 && price > 0) {
+    if (price >= (config.min_wine_price || 8) && price <= (config.max_wine_price || 400)) {
+      score += 5; reasons.push(`price_wine_range:${price}`);
+    } else if (price < 5) {
+      score -= 5; reasons.push(`price_too_low:${price}`);
     }
   }
 
-  // 5. No family info fallback: slight positive if name has wine keywords
-  if (!f && score === 0) {
-    score += 5; // Slight bias towards candidate when unknown
-    reasons.push("no_family_fallback");
-  }
+  score = Math.max(-100, Math.min(100, score));
 
-  return { score: Math.max(-100, Math.min(100, score)), reasons };
+  if (score >= config.score_threshold_wine) return { classification: "WINE", score, reasons };
+  if (score <= config.score_threshold_not_wine) return { classification: "NOT_WINE", score, reasons };
+  return { classification: "NEEDS_REVIEW", score, reasons };
 }
 
+// Legacy wrapper for backward compat
 function isWineCandidate(
-  family: string | undefined,
-  name: string | undefined,
-  format: string | undefined,
-  unitPrice: number,
-  wineFamilies: string[],
-  nonWineFamilies: string[],
+  family: string | undefined, name: string | undefined, format: string | undefined,
+  unitPrice: number, _wineFamilies: string[], _nonWineFamilies: string[],
 ): { candidate: boolean; score: number; reasons: string[] } {
-  const { score, reasons } = computeWineScore(family, name, format, unitPrice, wineFamilies, nonWineFamilies);
-  return { candidate: score > 0, score, reasons };
+  const r = classifyProduct(family, name, format, unitPrice, DEFAULT_CONFIG);
+  return { candidate: r.classification === "WINE" || r.classification === "NEEDS_REVIEW", score: r.score, reasons: r.reasons };
 }
 
 function suggestFamilyClassification(familyName: string): { suggestedWine: boolean; confidence: "high" | "medium" | "low" } {
   const f = familyName.toLowerCase();
-
-  for (const kw of NON_WINE_FAMILIES) {
+  for (const kw of DEFAULT_NON_WINE_FAMILIES) {
     if (f.includes(kw)) return { suggestedWine: false, confidence: "high" };
   }
   for (const kw of DEFAULT_WINE_FAMILIES) {
     if (f.includes(kw)) return { suggestedWine: true, confidence: "high" };
   }
-
-  // Medium confidence guesses
   if (f.includes("bebida") || f.includes("drink") || f.includes("bar")) {
     return { suggestedWine: false, confidence: "medium" };
   }
-
   return { suggestedWine: false, confidence: "low" };
 }
 
 // deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
-  // Handle { Invoices: [...] } or direct array
   if (Array.isArray(raw)) return raw;
   if (raw.Invoices && Array.isArray(raw.Invoices)) return raw.Invoices;
-  // Handle { Data: { Invoices: [...] } } or similar nested
   if (raw.Data?.Invoices && Array.isArray(raw.Data.Invoices)) return raw.Data.Invoices;
-  // Try to find any array property
   for (const key of Object.keys(raw)) {
     if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
   }
   return [];
+}
+
+// Helper to load classification config for a connection
+// deno-lint-ignore no-explicit-any
+async function loadConfig(supabase: any, connectionId: string): Promise<ClassificationConfig> {
+  const { data } = await supabase
+    .from("classification_config")
+    .select("*")
+    .eq("connection_id", connectionId)
+    .single();
+  if (!data) return DEFAULT_CONFIG;
+  return {
+    wine_families_whitelist: data.wine_families_whitelist || [],
+    non_wine_families_blacklist: data.non_wine_families_blacklist || [],
+    wine_keywords_whitelist: data.wine_keywords_whitelist || [],
+    non_wine_keywords_blacklist: data.non_wine_keywords_blacklist || [],
+    format_whitelist: data.format_whitelist || [],
+    min_wine_price: data.min_wine_price ?? 6,
+    max_wine_price: data.max_wine_price ?? 600,
+    score_threshold_wine: data.score_threshold_wine ?? 40,
+    score_threshold_not_wine: data.score_threshold_not_wine ?? 0,
+  };
 }
 
 serve(async (req) => {
@@ -211,9 +266,8 @@ serve(async (req) => {
         const r = await fetch(url, { ...opts, signal: controller1.signal });
         clearTimeout(t1);
         return r;
-      } catch (e1) {
+      } catch (_e1) {
         clearTimeout(t1);
-        // one retry
         const controller2 = new AbortController();
         const t2 = setTimeout(() => controller2.abort(), timeoutMs);
         try {
@@ -277,7 +331,6 @@ serve(async (req) => {
           }
         } catch (_) { /* skip */ }
         consecutiveEmpty++;
-        // Stop after 10 consecutive days with no sales (no cash closure)
         if (consecutiveEmpty >= 10 && daysWithSales.length > 0) break;
       }
 
@@ -309,7 +362,6 @@ serve(async (req) => {
       const rawData = await res.json();
       const invoices = parseInvoices(rawData);
 
-      // Load wine family rules for this connection
       const { data: familyRules } = await supabase
         .from("wine_family_rules")
         .select("family_name, is_wine")
@@ -320,90 +372,59 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      // Collect all unique families for auto-detection
       const allFamilies = new Set<string>();
 
       const salesEvents = invoices.map((inv) => {
         const docId = String(inv.InvoiceId || inv.Id || "");
         const items = inv.InvoiceItems || [];
         const lines: {
-          provider_product_id: string;
-          name: string;
-          format: string;
-          family: string;
-          quantity: number;
-          unit_price: number;
-          total_amount: number;
-          vat_rate: number;
-          is_wine_candidate: boolean;
-          wine_score: number;
-          wine_reasons: string[];
+          provider_product_id: string; name: string; format: string; family: string;
+          quantity: number; unit_price: number; total_amount: number; vat_rate: number;
+          is_wine_candidate: boolean; wine_score: number; wine_reasons: string[];
         }[] = [];
-
         let docTotal = 0;
 
         for (const item of items) {
           for (const line of (item.Lines || [])) {
             const family = String(line.FamilyName || "");
             if (family) allFamilies.add(family);
-
             const uPrice = Number(line.UnitPrice || 0);
             const qty = Number(line.Quantity || 0);
             const rawTotal = Number(line.TotalAmount || 0);
             const lineTotal = rawTotal > 0 ? rawTotal : uPrice * qty;
             docTotal += lineTotal;
-
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
-            const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, NON_WINE_FAMILIES);
-
+            const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lines.push({
               provider_product_id: String(line.ProductId || ""),
-              name: productName,
-              format: formatName,
-              family,
-              quantity: Number(line.Quantity || 0),
-              unit_price: uPrice,
-              total_amount: lineTotal,
+              name: productName, format: formatName, family,
+              quantity: qty, unit_price: uPrice, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
-              is_wine_candidate: wineResult.candidate,
-              wine_score: wineResult.score,
-              wine_reasons: wineResult.reasons,
+              is_wine_candidate: wineResult.candidate, wine_score: wineResult.score, wine_reasons: wineResult.reasons,
             });
           }
         }
 
         return {
-          provider_doc_id: docId,
-          business_day: day,
+          provider_doc_id: docId, business_day: day,
           doc_type: String(inv.Type || "BasicInvoice"),
           total_amount: Number(inv.TotalAmount || docTotal),
           total_tax: Number(inv.TotalTaxAmount || 0),
           total_net: Number(inv.TotalNetAmount || 0),
-          line_count: lines.length,
-          lines,
+          line_count: lines.length, lines,
         };
       });
 
-      // Detect wine-like families with confidence
       const detectedFamilies = Array.from(allFamilies).map((f) => {
         const suggestion = suggestFamilyClassification(f);
-        const itemCount = salesEvents.reduce((c: number, ev: { lines: { family: string }[] }) => 
+        const itemCount = salesEvents.reduce((c: number, ev: { lines: { family: string }[] }) =>
           c + ev.lines.filter((l) => l.family === f).length, 0);
-        return {
-          name: f,
-          ...suggestion,
-          itemCount,
-        };
+        return { name: f, ...suggestion, itemCount };
       });
 
       return new Response(
-        JSON.stringify({
-          businessDay: day,
-          invoiceCount: invoices.length,
-          salesEvents,
-          detectedFamilies,
-        }),
+        JSON.stringify({ businessDay: day, invoiceCount: invoices.length, salesEvents, detectedFamilies }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -418,14 +439,6 @@ serve(async (req) => {
         );
       }
 
-      // First fetch the parsed data
-      const fetchRes = await fetch(req.url, {
-        method: "POST",
-        headers: { ...Object.fromEntries(req.headers.entries()) },
-        body: JSON.stringify({ action: "fetch-day", connectionId, businessDay: day }),
-      });
-
-      // Instead of self-calling, inline the fetch
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
       const res = await fetch(url, { headers });
       if (!res.ok) {
@@ -442,7 +455,6 @@ serve(async (req) => {
         .from("wine_family_rules")
         .select("family_name, is_wine")
         .eq("connection_id", connectionId);
-
       const customWineFamilies = familyRules
         ?.filter((r: { is_wine: boolean }) => r.is_wine)
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
@@ -467,59 +479,40 @@ serve(async (req) => {
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
             const fam = String(line.FamilyName || "");
-            const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, NON_WINE_FAMILIES);
+            const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lineData.push({
               provider_product_id: String(line.ProductId || ""),
-              name: pName,
-              format: fName,
-              family: fam,
-              quantity: qty,
-              unit_price: uP,
-              total_amount: lineTotal,
-              vat_rate: Number(line.VatRate || 0),
-              is_wine_candidate: wr.candidate,
+              name: pName, format: fName, family: fam,
+              quantity: qty, unit_price: uP, total_amount: lineTotal,
+              vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
             });
           }
         }
 
-        // Upsert event
         const { data: eventRow, error: eventErr } = await supabase
           .from("sales_events")
           .upsert({
-            connection_id: connectionId,
-            provider_doc_id: docId,
-            business_day: day,
+            connection_id: connectionId, provider_doc_id: docId, business_day: day,
             doc_type: String(inv.Type || "BasicInvoice"),
             total_amount: Number(inv.TotalAmount || docTotal),
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
-            line_count: lineData.length,
-            raw_json: inv,
+            line_count: lineData.length, raw_json: inv,
           }, { onConflict: "connection_id,provider_doc_id" })
-          .select("id")
-          .single();
+          .select("id").single();
 
         if (eventErr || !eventRow) continue;
         savedEvents++;
 
-        // Delete old lines for this event then insert new
         await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-
-        const linesToInsert = lineData.map((l) => ({
-          ...l,
-          sales_event_id: eventRow.id,
-          connection_id: connectionId,
-        }));
-
+        const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
         if (linesToInsert.length > 0) {
           const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
           if (!lineErr) savedLines += linesToInsert.length;
         }
       }
 
-      // Update cursor
-      await supabase
-        .from("pos_connections")
+      await supabase.from("pos_connections")
         .update({ last_business_day_synced: day, last_sync_at: new Date().toISOString() })
         .eq("id", connectionId);
 
@@ -531,10 +524,7 @@ serve(async (req) => {
 
     // ── DISCOVER CATALOG ENDPOINT ──
     if (action === "discover-catalog") {
-      // lastBusinessDay already parsed from request body
-
       const filters = ["Articles", "Products", "Catalog"];
-      // Build URL variations: without business-day, then with business-day
       const urlVariations: { filter: string; url: string; label: string }[] = [];
       for (const f of filters) {
         urlVariations.push({ filter: f, url: `${baseUrlClean}/api/export/?filter=${f}`, label: `?filter=${f}` });
@@ -551,28 +541,19 @@ serve(async (req) => {
       let selectedCount = 0;
 
       for (const variation of urlVariations) {
-        if (selectedEndpoint) {
-          // Already found a working endpoint, skip remaining
-          break;
-        }
+        if (selectedEndpoint) break;
         try {
           console.log(`[discover-catalog] Trying ${variation.url}`);
           const res = await fetchWithRetry(variation.url, { headers });
           const ct = res.headers.get("content-type") || "";
-          console.log(`[discover-catalog] ${variation.label}: status=${res.status} content-type=${ct}`);
 
           if (!res.ok) {
-            // Capture error body (first 2KB)
             let errorBody = "";
-            try {
-              const raw = await res.text();
-              errorBody = raw.substring(0, 2048);
-            } catch (_) { /* ignore */ }
+            try { const raw = await res.text(); errorBody = raw.substring(0, 2048); } catch (_) { /* ignore */ }
             results.push({ filter: variation.filter, label: variation.label, status: res.status, contentType: ct, count: 0, sample: null, errorBody });
             continue;
           }
 
-          // If response is not JSON/text (file/zip), detect and skip
           if (!ct.includes("json") && !ct.includes("text")) {
             results.push({ filter: variation.filter, label: variation.label, status: res.status, contentType: ct, count: 0, sample: "binary/file response" });
             continue;
@@ -586,19 +567,14 @@ serve(async (req) => {
           }
 
           let parsed: unknown;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch (_) {
-            // Not valid JSON – capture first 2KB
+          try { parsed = JSON.parse(trimmed); } catch (_) {
             results.push({ filter: variation.filter, label: variation.label, status: res.status, contentType: ct, count: 0, sample: null, errorBody: trimmed.substring(0, 2048) });
             continue;
           }
 
-          // Try to extract array of product-like items
           let items: unknown[] = [];
-          if (Array.isArray(parsed)) {
-            items = parsed;
-          } else if (typeof parsed === "object" && parsed !== null) {
+          if (Array.isArray(parsed)) { items = parsed; }
+          else if (typeof parsed === "object" && parsed !== null) {
             for (const key of Object.keys(parsed as Record<string, unknown>)) {
               if (Array.isArray((parsed as Record<string, unknown>)[key]) && ((parsed as Record<string, unknown>)[key] as unknown[]).length > 0) {
                 items = (parsed as Record<string, unknown>)[key] as unknown[];
@@ -609,27 +585,17 @@ serve(async (req) => {
 
           const productLikeFields = ["Name", "ProductName", "name", "Description", "ArticleName", "ItemName", "ProductId", "Id"];
           const hasProductFields = items.length > 0 && typeof items[0] === "object" && items[0] !== null &&
-            productLikeFields.some((f) => f in (items[0] as Record<string, unknown>));
+            productLikeFields.some((pf) => pf in (items[0] as Record<string, unknown>));
 
-          results.push({
-            filter: variation.filter,
-            label: variation.label,
-            status: res.status,
-            contentType: ct,
-            count: items.length,
-            sample: items.length > 0 ? items[0] : null,
-          });
+          results.push({ filter: variation.filter, label: variation.label, status: res.status, contentType: ct, count: items.length, sample: items.length > 0 ? items[0] : null });
 
           if (hasProductFields && items.length > 0) {
             selectedEndpoint = variation.filter;
             selectedSample = items[0];
             selectedCount = items.length;
-            // Store as selected catalog endpoint
             await supabase.from("pos_connections").update({ catalog_endpoint: variation.filter }).eq("id", connectionId);
-            console.log(`[discover-catalog] Selected endpoint: ${variation.label} (${items.length} items)`);
           }
         } catch (e) {
-          console.error(`[discover-catalog] Error on ${variation.label}:`, e);
           results.push({ filter: variation.filter, label: variation.label, status: 0, contentType: "error", count: 0, sample: null, errorBody: String(e) });
         }
       }
@@ -640,13 +606,8 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-
       return new Response(
-        JSON.stringify({
-          success: false,
-          message: "Catalog export not enabled or not supported in this Agora version. Ask your installer to enable catalog export permissions/modules.",
-          allResults: results,
-        }),
+        JSON.stringify({ success: false, message: "Catalog export not enabled or not supported.", allResults: results }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -655,30 +616,20 @@ serve(async (req) => {
     if (action === "test-catalog-endpoint") {
       const endpoint = filter || connection.catalog_endpoint;
       if (!endpoint) {
-        return new Response(
-          JSON.stringify({ error: "No catalog endpoint specified" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "No catalog endpoint specified" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
       const res = await fetch(url, { headers });
       const ct = res.headers.get("content-type") || "";
-
       if (!res.ok) {
-        return new Response(
-          JSON.stringify({ success: false, status: res.status, contentType: ct }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: false, status: res.status, contentType: ct }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-
       if (!ct.includes("json") && !ct.includes("text")) {
-        return new Response(
-          JSON.stringify({ success: false, status: res.status, contentType: ct, message: "Binary response" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: false, status: res.status, contentType: ct, message: "Binary response" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-
       const body = await res.text();
       const parsed = JSON.parse(body);
       let items: unknown[] = [];
@@ -688,7 +639,6 @@ serve(async (req) => {
           if (Array.isArray(parsed[key]) && parsed[key].length > 0) { items = parsed[key]; break; }
         }
       }
-
       return new Response(
         JSON.stringify({ success: true, filter: endpoint, count: items.length, sample: items.slice(0, 3) }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -699,25 +649,16 @@ serve(async (req) => {
     if (action === "sync-catalog") {
       const endpoint = connection.catalog_endpoint;
       if (!endpoint) {
-        return new Response(
-          JSON.stringify({ error: "No catalog endpoint configured. Run discover-catalog first." }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "No catalog endpoint configured." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-
+      const config = await loadConfig(supabase, connectionId);
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
-      console.log(`[sync-catalog] Fetching ${url}`);
       const res = await fetch(url, { headers });
-      const ct = res.headers.get("content-type") || "";
-      console.log(`[sync-catalog] status=${res.status} content-type=${ct}`);
-
       if (!res.ok) {
-        return new Response(
-          JSON.stringify({ error: `Agora responded ${res.status}` }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-
       const body = await res.text();
       const parsed = JSON.parse(body);
       let items: Record<string, unknown>[] = [];
@@ -728,77 +669,52 @@ serve(async (req) => {
         }
       }
 
-      console.log(`[sync-catalog] Found ${items.length} products`);
-
-      // Load wine family rules
-      const { data: familyRules } = await supabase
-        .from("wine_family_rules")
-        .select("family_name, is_wine")
-        .eq("connection_id", connectionId);
-
-      const customWineFamilies = familyRules
-        ?.filter((r: { is_wine: boolean }) => r.is_wine)
-        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
-      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
-
       let upserted = 0;
       let wineCandidates = 0;
+      let needsReview = 0;
 
       for (const item of items) {
         const prodId = String(item.ProductId || item.Id || item.ArticleId || item.ItemId || "");
         if (!prodId) continue;
-
         const name = String(item.ProductName || item.Name || item.ArticleName || item.ItemName || "Unknown");
         const family = String(item.FamilyName || item.Family || item.Category || item.GroupName || "");
         const vatRate = Number(item.VatRate || item.TaxRate || 0);
         const format = String(item.SaleFormatName || item.Format || item.UnitName || "");
         const price = Number(item.Price || item.UnitPrice || item.SalePrice || 0);
 
-        const wineResult = isWineCandidate(family, name, format, price, wineFamilies, NON_WINE_FAMILIES);
-        if (wineResult.candidate) wineCandidates++;
+        const cr = classifyProduct(family, name, format, price, config);
+        if (cr.classification === "WINE") wineCandidates++;
+        if (cr.classification === "NEEDS_REVIEW") needsReview++;
 
-        const { error: upsertErr } = await supabase
-          .from("provider_products")
-          .upsert({
-            connection_id: connectionId,
-            provider_product_id: prodId,
-            name,
-            family,
-            vat_rate: vatRate,
-            sale_format: format,
-            price,
-            is_wine_candidate: wineResult.candidate,
-            wine_score: wineResult.score,
-            wine_reasons: wineResult.reasons,
-            raw_payload: item,
-          }, { onConflict: "connection_id,provider_product_id" });
-
-        if (!upsertErr) upserted++;
+        await supabase.from("provider_products").upsert({
+          connection_id: connectionId, provider_product_id: prodId,
+          name, family, vat_rate: vatRate, sale_format: format, price,
+          is_wine_candidate: cr.classification === "WINE",
+          wine_score: cr.score, wine_reasons: cr.reasons,
+          classification_override: "AUTO",
+          last_score: cr.score, last_reasons: cr.reasons,
+          raw_payload: item,
+        }, { onConflict: "connection_id,provider_product_id" });
+        upserted++;
       }
 
-      // Update connection metadata
       await supabase.from("pos_connections").update({
         last_catalog_sync_at: new Date().toISOString(),
         catalog_product_count: upserted,
         catalog_wine_candidate_count: wineCandidates,
       }).eq("id", connectionId);
 
-      console.log(`[sync-catalog] Upserted ${upserted} products, ${wineCandidates} wine candidates`);
-
       return new Response(
-        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates, endpoint }),
+        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates, needsReview, endpoint }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ── BUILD DERIVED CATALOG (fallback from invoice lines) ──
+    // ── BUILD DERIVED CATALOG ──
     if (action === "build-derived-catalog") {
       const scanDays = daysBack || 30;
-      console.log(`[derived-catalog] Building from last ${scanDays} business days of invoices`);
-
-      // Aggregate unique products from invoice lines
+      const config = await loadConfig(supabase, connectionId);
       const productMap = new Map<string, { name: string; family: string; format: string; vatRate: number; totalPrice: number; count: number }>();
-
       let daysScanned = 0;
       let totalInvoices = 0;
 
@@ -816,7 +732,6 @@ serve(async (req) => {
           if (invoices.length === 0) continue;
           daysScanned++;
           totalInvoices += invoices.length;
-
           for (const inv of invoices) {
             for (const item of (inv.InvoiceItems || [])) {
               for (const line of (item.Lines || [])) {
@@ -824,64 +739,41 @@ serve(async (req) => {
                 if (!prodId) continue;
                 const existing = productMap.get(prodId);
                 const uPrice = Number(line.UnitPrice || 0);
-                if (existing) {
-                  existing.count++;
-                  existing.totalPrice += uPrice;
-                } else {
+                if (existing) { existing.count++; existing.totalPrice += uPrice; }
+                else {
                   productMap.set(prodId, {
-                    name: String(line.ProductName || ""),
-                    family: String(line.FamilyName || ""),
-                    format: String(line.SaleFormatName || ""),
-                    vatRate: Number(line.VatRate || 0),
-                    totalPrice: uPrice,
-                    count: 1,
+                    name: String(line.ProductName || ""), family: String(line.FamilyName || ""),
+                    format: String(line.SaleFormatName || ""), vatRate: Number(line.VatRate || 0),
+                    totalPrice: uPrice, count: 1,
                   });
                 }
               }
             }
           }
-        } catch (_) { /* skip day */ }
+        } catch (_) { /* skip */ }
       }
-
-      console.log(`[derived-catalog] Scanned ${daysScanned} days, ${totalInvoices} invoices, ${productMap.size} unique products`);
-
-      // Load wine family rules
-      const { data: familyRules } = await supabase
-        .from("wine_family_rules")
-        .select("family_name, is_wine")
-        .eq("connection_id", connectionId);
-      const customWineFamilies = familyRules
-        ?.filter((r: { is_wine: boolean }) => r.is_wine)
-        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
-      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       let upserted = 0;
       let wineCandidateCount = 0;
 
       for (const [prodId, p] of productMap) {
         const avgPrice = p.count > 0 ? p.totalPrice / p.count : 0;
-        const wineResult = isWineCandidate(p.family, p.name, p.format, avgPrice, wineFamilies, NON_WINE_FAMILIES);
-        if (wineResult.candidate) wineCandidateCount++;
+        const cr = classifyProduct(p.family, p.name, p.format, avgPrice, config);
+        if (cr.classification === "WINE") wineCandidateCount++;
 
-        const { error } = await supabase
-          .from("provider_products")
-          .upsert({
-            connection_id: connectionId,
-            provider_product_id: prodId,
-            name: p.name,
-            family: p.family,
-            vat_rate: p.vatRate,
-            sale_format: p.format,
-            price: Math.round(avgPrice * 100) / 100,
-            is_wine_candidate: wineResult.candidate,
-            wine_score: wineResult.score,
-            wine_reasons: wineResult.reasons,
-            raw_payload: { derived: true, occurrences: p.count },
-          }, { onConflict: "connection_id,provider_product_id" });
-        if (!error) upserted++;
+        await supabase.from("provider_products").upsert({
+          connection_id: connectionId, provider_product_id: prodId,
+          name: p.name, family: p.family, vat_rate: p.vatRate, sale_format: p.format,
+          price: Math.round(avgPrice * 100) / 100,
+          is_wine_candidate: cr.classification === "WINE",
+          wine_score: cr.score, wine_reasons: cr.reasons,
+          classification_override: "AUTO",
+          last_score: cr.score, last_reasons: cr.reasons,
+          raw_payload: { derived: true, occurrences: p.count },
+        }, { onConflict: "connection_id,provider_product_id" });
+        upserted++;
       }
 
-      // Update connection metadata
       await supabase.from("pos_connections").update({
         last_catalog_sync_at: new Date().toISOString(),
         catalog_product_count: upserted,
@@ -889,17 +781,61 @@ serve(async (req) => {
         catalog_endpoint: "DERIVED_FROM_INVOICES",
       }).eq("id", connectionId);
 
-      console.log(`[derived-catalog] Upserted ${upserted} products, ${wineCandidateCount} wine candidates`);
+      return new Response(
+        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates: wineCandidateCount, daysScanned, totalInvoices, endpoint: "DERIVED_FROM_INVOICES" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── RECOMPUTE CLASSIFICATION ──
+    if (action === "recompute-classification") {
+      const config = await loadConfig(supabase, connectionId);
+
+      // Fetch all AUTO products for this connection (paginated)
+      let offset = 0;
+      const batchSize = 500;
+      let totalRecomputed = 0;
+      let wineCount = 0;
+      let notWineCount = 0;
+      let reviewCount = 0;
+
+      while (true) {
+        const { data: products, error: fetchErr } = await supabase
+          .from("provider_products")
+          .select("id, name, family, sale_format, price, classification_override")
+          .eq("connection_id", connectionId)
+          .eq("classification_override", "AUTO")
+          .range(offset, offset + batchSize - 1);
+
+        if (fetchErr || !products || products.length === 0) break;
+
+        for (const p of products) {
+          const cr = classifyProduct(p.family, p.name, p.sale_format, Number(p.price || 0), config);
+          await supabase.from("provider_products").update({
+            is_wine_candidate: cr.classification === "WINE",
+            wine_score: cr.score,
+            wine_reasons: cr.reasons,
+            last_score: cr.score,
+            last_reasons: cr.reasons,
+          }).eq("id", p.id);
+
+          totalRecomputed++;
+          if (cr.classification === "WINE") wineCount++;
+          else if (cr.classification === "NOT_WINE") notWineCount++;
+          else reviewCount++;
+        }
+
+        offset += batchSize;
+        if (products.length < batchSize) break;
+      }
+
+      // Update connection metadata
+      await supabase.from("pos_connections").update({
+        catalog_wine_candidate_count: wineCount,
+      }).eq("id", connectionId);
 
       return new Response(
-        JSON.stringify({
-          success: true,
-          totalProducts: upserted,
-          wineCandidates: wineCandidateCount,
-          daysScanned,
-          totalInvoices,
-          endpoint: "DERIVED_FROM_INVOICES",
-        }),
+        JSON.stringify({ success: true, totalRecomputed, wine: wineCount, notWine: notWineCount, needsReview: reviewCount }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -921,8 +857,9 @@ serve(async (req) => {
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
+    console.error("agora-proxy error:", err);
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: String(err) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

@@ -2,41 +2,19 @@ import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  Loader2,
-  XCircle,
-  Search,
-  Link2,
-  Settings2,
-  Map,
-  Power,
-  Wine,
-  Calendar,
-  Download,
-  Filter,
-  Grape,
-  ShieldCheck,
-  ShieldX,
-  HelpCircle,
-  ChevronDown,
-  Package,
-  RefreshCw,
-  Database,
-  Zap,
+  ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
+  Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
+  ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  useAgoraConnection,
-  SalesEvent,
-  SalesLineItem,
-  DetectedFamily,
-  CatalogDiscoveryResult,
-  ProviderProduct,
+  useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily,
+  CatalogDiscoveryResult, ProviderProduct, ClassificationConfig,
 } from "@/hooks/useAgoraConnection";
 
 const steps = [
@@ -48,29 +26,66 @@ const steps = [
   { id: 6, label: "Go Live", icon: Power },
 ];
 
+// ── Classification badge component ──
+function ClassificationBadge({ product }: { product: ProviderProduct | { classification_override?: string; is_wine_candidate: boolean; last_score?: number; last_reasons?: string[]; wine_score?: number; wine_reasons?: string[] } }) {
+  const override = (product as any).classification_override || "AUTO";
+  const isWine = product.is_wine_candidate;
+  const score = (product as any).last_score ?? (product as any).wine_score ?? 0;
+  const reasons = (product as any).last_reasons ?? (product as any).wine_reasons ?? [];
+
+  const getLabel = () => {
+    if (override === "WINE") return "WINE";
+    if (override === "NOT_WINE") return "NOT_WINE";
+    if (isWine) return "WINE";
+    if (score > 0 && score < 40) return "NEEDS_REVIEW";
+    return "NOT_WINE";
+  };
+
+  const label = getLabel();
+  const variant = label === "WINE" ? "default" : label === "NEEDS_REVIEW" ? "outline" : "secondary";
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant={variant} className="text-[10px] cursor-help gap-1">
+            {override !== "AUTO" && <Tag className="h-2.5 w-2.5" />}
+            {label === "WINE" && <Wine className="h-3 w-3" />}
+            {label === "NEEDS_REVIEW" && <HelpCircle className="h-3 w-3" />}
+            {label}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="left" className="max-w-xs">
+          <div className="space-y-1 text-xs">
+            <p className="font-medium">Score: {score} · Override: {override}</p>
+            {reasons.length > 0 && (
+              <ul className="list-disc pl-3 space-y-0.5">
+                {reasons.map((r: string, i: number) => <li key={i} className="text-muted-foreground">{r}</li>)}
+              </ul>
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 // ── Step 1: Connection ──
 function StepConnection({
-  locationName, setLocationName,
-  baseUrl, setBaseUrl,
-  apiToken, setApiToken,
-  winerimApiToken, setWinerimApiToken,
-  testStatus, testError,
-  onTest,
+  locationName, setLocationName, baseUrl, setBaseUrl, apiToken, setApiToken,
+  winerimApiToken, setWinerimApiToken, testStatus, testError, onTest,
 }: {
   locationName: string; setLocationName: (v: string) => void;
   baseUrl: string; setBaseUrl: (v: string) => void;
   apiToken: string; setApiToken: (v: string) => void;
   winerimApiToken: string; setWinerimApiToken: (v: string) => void;
-  testStatus: string; testError: string | null;
-  onTest: () => void;
+  testStatus: string; testError: string | null; onTest: () => void;
 }) {
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">Connection Details</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Enter your Agora POS base URL, API token, and location name.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Enter your Agora POS base URL, API token, and location name.</p>
       </div>
       <div className="space-y-4">
         <div>
@@ -106,9 +121,7 @@ function StepConnection({
 
 // ── Step 2: Sync Settings ──
 function StepSyncSettings({
-  syncMode, setSyncMode,
-  frequency, setFrequency,
-  backfill, setBackfill,
+  syncMode, setSyncMode, frequency, setFrequency, backfill, setBackfill,
   catalogSyncEnabled, onToggleCatalogSync,
 }: {
   syncMode: string; setSyncMode: (v: "PULL_ONLY" | "BIDIRECTIONAL") => void;
@@ -154,7 +167,6 @@ function StepSyncSettings({
             ))}
           </div>
         </div>
-        {/* Catalog sync toggle */}
         <div className="flex items-center justify-between rounded-lg border border-border p-3">
           <div>
             <p className="text-sm font-medium text-foreground">Sync catalog/products</p>
@@ -169,39 +181,20 @@ function StepSyncSettings({
 
 // ── Step 3: Catalog ──
 function StepCatalog({
-  catalogStatus,
-  catalogDiscovering,
-  catalogDiscoveryResults,
-  catalogDiscoverySample,
-  catalogSyncing,
-  catalogSyncResult,
-  catalogTestResult,
-  catalogTestingEndpoint,
-  catalogProducts,
-  buildingDerived,
-  derivedResult,
-  onDiscover,
-  onSync,
-  onTestEndpoint,
-  onFetchProducts,
-  onBuildDerived,
+  catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
+  catalogSyncing, catalogSyncResult, catalogTestResult, catalogTestingEndpoint,
+  catalogProducts, buildingDerived, derivedResult,
+  onDiscover, onSync, onTestEndpoint, onFetchProducts, onBuildDerived,
 }: {
   catalogStatus: { catalogEndpoint: string | null; lastCatalogSyncAt: string | null; catalogProductCount: number; catalogWineCandidateCount: number };
-  catalogDiscovering: boolean;
-  catalogDiscoveryResults: CatalogDiscoveryResult[];
-  catalogDiscoverySample: unknown;
-  catalogSyncing: boolean;
+  catalogDiscovering: boolean; catalogDiscoveryResults: CatalogDiscoveryResult[];
+  catalogDiscoverySample: unknown; catalogSyncing: boolean;
   catalogSyncResult: { totalProducts: number; wineCandidates: number } | null;
   catalogTestResult: { count: number; sample: unknown[] } | null;
-  catalogTestingEndpoint: boolean;
-  catalogProducts: ProviderProduct[];
-  buildingDerived: boolean;
-  derivedResult: { totalProducts: number; wineCandidates: number; daysScanned: number } | null;
-  onDiscover: () => void;
-  onSync: () => void;
-  onTestEndpoint: (filter?: string) => void;
-  onFetchProducts: () => void;
-  onBuildDerived: () => void;
+  catalogTestingEndpoint: boolean; catalogProducts: ProviderProduct[];
+  buildingDerived: boolean; derivedResult: { totalProducts: number; wineCandidates: number; daysScanned: number } | null;
+  onDiscover: () => void; onSync: () => void; onTestEndpoint: (filter?: string) => void;
+  onFetchProducts: () => void; onBuildDerived: () => void;
 }) {
   const [searchCatalog, setSearchCatalog] = useState("");
   const [showWineOnly, setShowWineOnly] = useState(false);
@@ -213,9 +206,7 @@ function StepCatalog({
       const q = searchCatalog.toLowerCase();
       result = result.filter((p) => p.name.toLowerCase().includes(q) || (p.family || "").toLowerCase().includes(q));
     }
-    if (showWineOnly) {
-      result = result.filter((p) => p.is_wine_candidate);
-    }
+    if (showWineOnly) result = result.filter((p) => p.is_wine_candidate);
     return result;
   }, [catalogProducts, searchCatalog, showWineOnly]);
 
@@ -223,62 +214,38 @@ function StepCatalog({
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">Catalog / Product Sync</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Discover and sync the product catalog from Agora. Independent of daily sales.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Discover and sync the product catalog from Agora.</p>
       </div>
-
-      {/* Catalog Status Panel */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-          <Database className="h-3.5 w-3.5" /> Catalog Status
-        </p>
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Database className="h-3.5 w-3.5" /> Catalog Status</p>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
           <span className="text-muted-foreground">Endpoint</span>
           <span className="font-mono text-foreground">{catalogStatus.catalogEndpoint || "Not discovered"}</span>
           <span className="text-muted-foreground">Last sync</span>
-          <span className="font-mono text-foreground">
-            {catalogStatus.lastCatalogSyncAt
-              ? new Date(catalogStatus.lastCatalogSyncAt).toLocaleString()
-              : "Never"}
-          </span>
-          <span className="text-muted-foreground">Products fetched</span>
+          <span className="font-mono text-foreground">{catalogStatus.lastCatalogSyncAt ? new Date(catalogStatus.lastCatalogSyncAt).toLocaleString() : "Never"}</span>
+          <span className="text-muted-foreground">Products</span>
           <span className="font-mono text-foreground">{catalogStatus.catalogProductCount}</span>
           <span className="text-muted-foreground">Wine candidates</span>
           <span className="font-mono text-success">{catalogStatus.catalogWineCandidateCount}</span>
         </div>
       </div>
-
-      {/* Actions */}
       <div className="flex gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={onDiscover} disabled={catalogDiscovering}>
-          {catalogDiscovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-          Discover Endpoint
+          {catalogDiscovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />} Discover Endpoint
         </Button>
         <Button variant="secondary" size="sm" onClick={onSync} disabled={catalogSyncing || !catalogStatus.catalogEndpoint}>
-          {catalogSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          Sync Now
+          {catalogSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync Now
         </Button>
         {catalogStatus.catalogEndpoint && catalogProducts.length === 0 && (
-          <Button variant="outline" size="sm" onClick={onFetchProducts}>
-            <Download className="mr-2 h-4 w-4" /> Load Products
-          </Button>
+          <Button variant="outline" size="sm" onClick={onFetchProducts}><Download className="mr-2 h-4 w-4" /> Load Products</Button>
         )}
       </div>
-
-      {/* Sync result */}
       {catalogSyncResult && (
         <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
-          <p className="font-medium text-foreground flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Catalog synced
-          </p>
-          <p className="text-muted-foreground">
-            {catalogSyncResult.totalProducts} products imported, {catalogSyncResult.wineCandidates} wine candidates detected.
-          </p>
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Catalog synced</p>
+          <p className="text-muted-foreground">{catalogSyncResult.totalProducts} products, {catalogSyncResult.wineCandidates} wine candidates.</p>
         </div>
       )}
-
-      {/* Discovery results */}
       {catalogDiscoveryResults.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground">Discovery Results</p>
@@ -288,85 +255,46 @@ function StepCatalog({
                 <div className="flex items-center justify-between">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground font-mono">{r.label}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Status: {r.status} · {r.contentType} · {r.count} items
-                    </p>
+                    <p className="text-[11px] text-muted-foreground">Status: {r.status} · {r.contentType} · {r.count} items</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {r.count > 0 ? (
-                      <Badge variant="default" className="text-[10px]">{r.count} items</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px]">
-                        {r.status >= 400 ? `Error ${r.status}` : "Empty"}
-                      </Badge>
-                    )}
-                    {r.filter === catalogStatus.catalogEndpoint && (
-                      <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>
-                    )}
+                    {r.count > 0 ? <Badge variant="default" className="text-[10px]">{r.count} items</Badge> : <Badge variant="secondary" className="text-[10px]">{r.status >= 400 ? `Error ${r.status}` : "Empty"}</Badge>}
+                    {r.filter === catalogStatus.catalogEndpoint && <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>}
                   </div>
                 </div>
                 {r.errorBody && (
-                  <pre className="rounded bg-destructive/5 border border-destructive/20 p-2 text-[10px] font-mono text-destructive overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">
-                    {r.errorBody}
-                  </pre>
+                  <pre className="rounded bg-destructive/5 border border-destructive/20 p-2 text-[10px] font-mono text-destructive overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">{r.errorBody}</pre>
                 )}
               </div>
             ))}
           </div>
-
-          {/* Unsupported message when all failed */}
           {!catalogStatus.catalogEndpoint && catalogDiscoveryResults.every((r) => r.count === 0) && (
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
-              <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
-                <HelpCircle className="h-3.5 w-3.5 text-amber-500" /> Catalog export not available
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                Catalog export is not enabled or not supported in this Agora version. Ask your installer to enable catalog export permissions/modules.
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                As a fallback, you can build a derived catalog from your invoice history:
-              </p>
+              <p className="text-xs font-medium text-foreground flex items-center gap-1.5"><HelpCircle className="h-3.5 w-3.5 text-amber-500" /> Catalog export not available</p>
+              <p className="text-[11px] text-muted-foreground">Ask your installer to enable catalog export permissions/modules.</p>
               <Button variant="secondary" size="sm" onClick={onBuildDerived} disabled={buildingDerived}>
-                {buildingDerived ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
-                Build Derived Catalog (last 30 days)
+                {buildingDerived ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />} Build Derived Catalog (last 30 days)
               </Button>
             </div>
           )}
         </div>
       )}
-
-      {/* Derived catalog result */}
       {derivedResult && (
         <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
-          <p className="font-medium text-foreground flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Derived catalog built
-          </p>
-          <p className="text-muted-foreground">
-            Scanned {derivedResult.daysScanned} business days → {derivedResult.totalProducts} unique products, {derivedResult.wineCandidates} wine candidates.
-          </p>
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Derived catalog built</p>
+          <p className="text-muted-foreground">Scanned {derivedResult.daysScanned} days → {derivedResult.totalProducts} products, {derivedResult.wineCandidates} wine candidates.</p>
         </div>
       )}
-
-      {/* Sample record */}
       {catalogDiscoverySample && (
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground">Sample Record</p>
-          <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-48 overflow-y-auto text-foreground">
-            {JSON.stringify(catalogDiscoverySample, null, 2)}
-          </pre>
+          <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-48 overflow-y-auto text-foreground">{JSON.stringify(catalogDiscoverySample, null, 2)}</pre>
         </div>
       )}
-
-      {/* Debug: Test any endpoint */}
       <div className="space-y-2 rounded-lg border border-border p-4">
         <p className="text-xs font-medium text-muted-foreground">Debug: Test Catalog Endpoint</p>
         <div className="flex gap-2">
-          <Input
-            placeholder="Filter name (e.g. Articles, Products, Catalog)"
-            value={testFilter}
-            onChange={(e) => setTestFilter(e.target.value)}
-            className="bg-background text-sm font-mono flex-1"
-          />
+          <Input placeholder="Filter name (e.g. Articles)" value={testFilter} onChange={(e) => setTestFilter(e.target.value)} className="bg-background text-sm font-mono flex-1" />
           <Button variant="outline" size="sm" onClick={() => onTestEndpoint(testFilter || undefined)} disabled={catalogTestingEndpoint}>
             {catalogTestingEndpoint ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
           </Button>
@@ -374,14 +302,10 @@ function StepCatalog({
         {catalogTestResult && (
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">{catalogTestResult.count} items found</p>
-            <pre className="rounded-lg bg-secondary/30 p-2 text-xs font-mono overflow-x-auto max-h-36 overflow-y-auto text-foreground">
-              {JSON.stringify(catalogTestResult.sample, null, 2)}
-            </pre>
+            <pre className="rounded-lg bg-secondary/30 p-2 text-xs font-mono overflow-x-auto max-h-36 overflow-y-auto text-foreground">{JSON.stringify(catalogTestResult.sample, null, 2)}</pre>
           </div>
         )}
       </div>
-
-      {/* Product list (from DB) */}
       {catalogProducts.length > 0 && (
         <div className="space-y-3">
           <div className="flex gap-3 items-center">
@@ -391,41 +315,30 @@ function StepCatalog({
             </div>
             <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
               <Switch checked={showWineOnly} onCheckedChange={setShowWineOnly} />
-              <Wine className="h-3.5 w-3.5" />
-              Wine only
+              <Wine className="h-3.5 w-3.5" /> Wine only
             </label>
           </div>
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
             {filteredProducts.length === 0 ? (
               <div className="text-center py-6 text-sm text-muted-foreground">No matching products.</div>
-            ) : (
-              filteredProducts.map((p) => (
-                <div key={p.id} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`h-2 w-2 rounded-full shrink-0 ${p.is_wine_candidate ? "bg-success" : "bg-muted-foreground"}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {p.family && <span className="mr-2">{p.family}</span>}
-                        {p.sale_format && <span className="mr-2">· {p.sale_format}</span>}
-                        {p.price > 0 && <span className="font-mono">€{p.price.toFixed(2)}</span>}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="shrink-0">
-                    {p.is_wine_candidate ? (
-                      <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                    )}
+            ) : filteredProducts.map((p) => (
+              <div key={p.id} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`h-2 w-2 rounded-full shrink-0 ${p.is_wine_candidate ? "bg-success" : "bg-muted-foreground"}`} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {p.family && <span className="mr-2">{p.family}</span>}
+                      {p.sale_format && <span className="mr-2">· {p.sale_format}</span>}
+                      {p.price > 0 && <span className="font-mono">€{p.price.toFixed(2)}</span>}
+                    </p>
                   </div>
                 </div>
-              ))
-            )}
+                <ClassificationBadge product={p} />
+              </div>
+            ))}
           </div>
-          <p className="text-[11px] text-muted-foreground text-right">
-            Showing {filteredProducts.length} of {catalogProducts.length} products
-          </p>
+          <p className="text-[11px] text-muted-foreground text-right">Showing {filteredProducts.length} of {catalogProducts.length}</p>
         </div>
       )}
     </div>
@@ -434,85 +347,95 @@ function StepCatalog({
 
 // ── Step 4: Families ──
 function StepFamilies({
-  detectedFamilies,
-  loadingDays,
-  loadingSales,
-  familyOverrides,
-  setFamilyOverrides,
-  scanStats,
-  daysWithSales,
-  selectedDay,
-  onRunHistoricalScan,
-  salesEvents,
+  detectedFamilies, loadingDays, loadingSales, familyOverrides, setFamilyOverrides,
+  scanStats, daysWithSales, selectedDay, onRunHistoricalScan, salesEvents,
+  catalogProducts, onAddKeyword,
 }: {
-  detectedFamilies: DetectedFamily[];
-  loadingDays: boolean;
-  loadingSales: boolean;
-  familyOverrides: Record<string, boolean>;
-  setFamilyOverrides: (v: Record<string, boolean>) => void;
+  detectedFamilies: DetectedFamily[]; loadingDays: boolean; loadingSales: boolean;
+  familyOverrides: Record<string, boolean>; setFamilyOverrides: (v: Record<string, boolean>) => void;
   scanStats: { totalScanned: number; totalInvoicesFound: number } | null;
-  daysWithSales: string[];
-  selectedDay: string | null;
-  onRunHistoricalScan: () => void;
-  salesEvents: SalesEvent[];
+  daysWithSales: string[]; selectedDay: string | null;
+  onRunHistoricalScan: () => void; salesEvents: SalesEvent[];
+  catalogProducts: ProviderProduct[];
+  onAddKeyword: (keyword: string, type: "wine" | "non_wine") => void;
 }) {
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
+  // Merge families from catalog + sales
+  const allFamilies = useMemo(() => {
+    const familyMap: Record<string, { itemCount: number; wineCount: number; notWineCount: number }> = {};
+    for (const p of catalogProducts) {
+      const fam = p.family || "Sin familia";
+      if (!familyMap[fam]) familyMap[fam] = { itemCount: 0, wineCount: 0, notWineCount: 0 };
+      familyMap[fam].itemCount++;
+      if (p.is_wine_candidate) familyMap[fam].wineCount++; else familyMap[fam].notWineCount++;
+    }
+    for (const df of detectedFamilies) {
+      if (!familyMap[df.name]) {
+        familyMap[df.name] = { itemCount: df.itemCount, wineCount: 0, notWineCount: 0 };
+      }
+    }
+    return familyMap;
+  }, [catalogProducts, detectedFamilies]);
+
   const familyProducts = useMemo(() => {
-    const map: Record<string, { name: string; format: string; unitPrice: number; quantity: number }[]> = {};
-    for (const ev of salesEvents) {
-      for (const line of ev.lines) {
-        const fam = line.family || "Sin familia";
-        if (!map[fam]) map[fam] = [];
-        const existing = map[fam].find((p) => p.name === line.name && p.format === line.format);
-        if (existing) {
-          existing.quantity += line.quantity;
-        } else {
-          map[fam].push({ name: line.name, format: line.format, unitPrice: line.unit_price, quantity: line.quantity });
+    const map: Record<string, { name: string; format: string; unitPrice: number; quantity: number; isWine: boolean }[]> = {};
+    // From catalog
+    for (const p of catalogProducts) {
+      const fam = p.family || "Sin familia";
+      if (!map[fam]) map[fam] = [];
+      map[fam].push({ name: p.name, format: p.sale_format || "", unitPrice: p.price, quantity: 0, isWine: p.is_wine_candidate });
+    }
+    // Fallback from sales
+    if (catalogProducts.length === 0) {
+      for (const ev of salesEvents) {
+        for (const line of ev.lines) {
+          const fam = line.family || "Sin familia";
+          if (!map[fam]) map[fam] = [];
+          const existing = map[fam].find((p) => p.name === line.name && p.format === line.format);
+          if (existing) existing.quantity += line.quantity;
+          else map[fam].push({ name: line.name, format: line.format, unitPrice: line.unit_price, quantity: line.quantity, isWine: line.is_wine_candidate });
         }
       }
     }
-    for (const fam of Object.keys(map)) {
-      map[fam].sort((a, b) => a.name.localeCompare(b.name));
-    }
+    for (const fam of Object.keys(map)) map[fam].sort((a, b) => a.name.localeCompare(b.name));
     return map;
-  }, [salesEvents]);
+  }, [salesEvents, catalogProducts]);
 
   const sortedFamilies = useMemo(() => {
-    return [...detectedFamilies].sort((a, b) => {
+    const entries = Object.entries(allFamilies).map(([name, info]) => {
+      const detected = detectedFamilies.find((f) => f.name === name);
+      const suggestedWine = detected?.suggestedWine ?? (info.wineCount > info.notWineCount);
+      const confidence = detected?.confidence ?? "low";
+      return { name, suggestedWine, confidence, itemCount: info.itemCount, wineCount: info.wineCount, notWineCount: info.notWineCount };
+    });
+    return entries.sort((a, b) => {
       const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
       const bWine = b.name in familyOverrides ? familyOverrides[b.name] : b.suggestedWine;
       if (aWine !== bWine) return aWine ? -1 : 1;
-      const confOrder = { high: 0, medium: 1, low: 2 };
-      if (a.confidence !== b.confidence) return confOrder[a.confidence] - confOrder[b.confidence];
       return b.itemCount - a.itemCount;
     });
-  }, [detectedFamilies, familyOverrides]);
+  }, [allFamilies, detectedFamilies, familyOverrides]);
 
-  const wineCount = sortedFamilies.filter((f) => {
-    return f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
-  }).length;
+  const wineCount = sortedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
+  const isLoading = loadingDays || loadingSales;
 
-  const confidenceIcon = (c: "high" | "medium" | "low") => {
+  const confidenceIcon = (c: string) => {
     if (c === "high") return <ShieldCheck className="h-3.5 w-3.5 text-success" />;
     if (c === "medium") return <HelpCircle className="h-3.5 w-3.5 text-warning" />;
     return <ShieldX className="h-3.5 w-3.5 text-muted-foreground" />;
   };
-
-  const isLoading = loadingDays || loadingSales;
 
   if (isLoading) {
     return (
       <div className="space-y-5">
         <div>
           <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Scanning sales data for product families…</p>
+          <p className="mt-1 text-sm text-muted-foreground">Scanning sales data…</p>
         </div>
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">
-            {loadingDays ? "Scanning business days (up to 60 days)…" : "Loading sales data…"}
-          </span>
+          <span className="ml-2 text-sm text-muted-foreground">{loadingDays ? "Scanning business days…" : "Loading sales…"}</span>
         </div>
       </div>
     );
@@ -523,9 +446,9 @@ function StepFamilies({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {detectedFamilies.length > 0
-            ? <>We detected <span className="font-medium text-foreground">{detectedFamilies.length}</span> product families. Confirm which ones contain wine products.</>
-            : "No product families detected yet."}
+          {sortedFamilies.length > 0
+            ? <>Detected <span className="font-medium text-foreground">{sortedFamilies.length}</span> families. One-click to classify as Wine/Not wine.</>
+            : "No families detected yet."}
         </p>
       </div>
 
@@ -533,82 +456,54 @@ function StepFamilies({
         <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
           <p className="text-xs font-medium text-muted-foreground">Scan Results</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-muted-foreground">Days scanned</span>
-            <span className="font-mono text-foreground">{scanStats.totalScanned}</span>
-            <span className="text-muted-foreground">Days with sales</span>
-            <span className="font-mono text-foreground">{daysWithSales.length}</span>
-            <span className="text-muted-foreground">Total invoices found</span>
-            <span className="font-mono text-foreground">{scanStats.totalInvoicesFound}</span>
-            {selectedDay && (
-              <>
-                <span className="text-muted-foreground">Last day with data</span>
-                <span className="font-mono text-foreground">{selectedDay}</span>
-              </>
-            )}
-            <span className="text-muted-foreground">Families detected</span>
-            <span className="font-mono text-foreground">{detectedFamilies.length}</span>
+            <span className="text-muted-foreground">Days scanned</span><span className="font-mono text-foreground">{scanStats.totalScanned}</span>
+            <span className="text-muted-foreground">Days with sales</span><span className="font-mono text-foreground">{daysWithSales.length}</span>
+            <span className="text-muted-foreground">Total invoices</span><span className="font-mono text-foreground">{scanStats.totalInvoicesFound}</span>
+            {selectedDay && <><span className="text-muted-foreground">Last day with data</span><span className="font-mono text-foreground">{selectedDay}</span></>}
+            <span className="text-muted-foreground">Families</span><span className="font-mono text-foreground">{sortedFamilies.length}</span>
           </div>
         </div>
       )}
 
-      {detectedFamilies.length === 0 && (
+      {sortedFamilies.length === 0 && (
         <div className="text-center py-8 space-y-4 rounded-lg border border-border bg-secondary/20">
-          <p className="text-sm text-muted-foreground">
-            {daysWithSales.length === 0
-              ? "No cash closures found in the scanned period. The restaurant may not have had recent activity."
-              : "No product families found in the sales data. Try scanning more history."}
-          </p>
-          <Button variant="secondary" onClick={onRunHistoricalScan}>
-            <Search className="mr-2 h-4 w-4" />
-            Run Historical Scan (90 days)
-          </Button>
+          <p className="text-sm text-muted-foreground">No families found. Try scanning more history or sync catalog first.</p>
+          <Button variant="secondary" onClick={onRunHistoricalScan}><Search className="mr-2 h-4 w-4" /> Run Historical Scan (90 days)</Button>
         </div>
       )}
 
-      {detectedFamilies.length > 0 && (
+      {sortedFamilies.length > 0 && (
         <>
           <div className="flex gap-4 text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-full bg-success" />
-              <span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine families</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" />
-              <span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span>
-            </div>
+            <div className="flex items-center gap-1.5"><div className="h-2.5 w-2.5 rounded-full bg-success" /><span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine</span></div>
+            <div className="flex items-center gap-1.5"><div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" /><span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span></div>
           </div>
-
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="outline" size="sm" onClick={() => {
-              const overrides: Record<string, boolean> = {};
-              detectedFamilies.forEach((f) => { overrides[f.name] = true; });
-              setFamilyOverrides(overrides);
+              const o: Record<string, boolean> = {};
+              sortedFamilies.forEach((f) => { o[f.name] = true; });
+              setFamilyOverrides(o);
             }}>Select All as Wine</Button>
             <Button variant="outline" size="sm" onClick={() => {
-              const overrides: Record<string, boolean> = {};
-              detectedFamilies.forEach((f) => { overrides[f.name] = false; });
-              setFamilyOverrides(overrides);
+              const o: Record<string, boolean> = {};
+              sortedFamilies.forEach((f) => { o[f.name] = false; });
+              setFamilyOverrides(o);
             }}>Deselect All</Button>
-            <Button variant="outline" size="sm" onClick={() => setFamilyOverrides({})}>Reset to Suggestions</Button>
+            <Button variant="outline" size="sm" onClick={() => setFamilyOverrides({})}>Reset</Button>
           </div>
-
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
             {sortedFamilies.map((f) => {
               const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
               const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
-
               return (
                 <div key={f.name}>
-                  <div
-                    className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
-                    onClick={() => setExpandedFamily(expandedFamily === f.name ? null : f.name)}
-                  >
+                  <div className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
+                    onClick={() => setExpandedFamily(expandedFamily === f.name ? null : f.name)}>
                     <div className="flex items-center gap-3 min-w-0">
-                      <Switch
-                        checked={isWine}
-                        onCheckedChange={(v) => setFamilyOverrides({ ...familyOverrides, [f.name]: v })}
-                        onClick={(e) => e.stopPropagation()}
-                      />
+                      <Switch checked={isWine} onCheckedChange={(v) => {
+                        setFamilyOverrides({ ...familyOverrides, [f.name]: v });
+                        onAddKeyword(f.name, v ? "wine" : "non_wine");
+                      }} onClick={(e) => e.stopPropagation()} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
@@ -617,40 +512,36 @@ function StepFamilies({
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
                           {confidenceIcon(f.confidence)}
-                          <span className="text-[11px] text-muted-foreground capitalize">{f.confidence} confidence</span>
+                          <span className="text-[11px] text-muted-foreground capitalize">{f.confidence}</span>
                           <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                          {f.wineCount > 0 && <span className="text-[11px] text-success">({f.wineCount} wine)</span>}
                         </div>
                       </div>
                     </div>
                     <div className="shrink-0">
-                      {isWine ? (
-                        <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                      )}
+                      {isWine ? <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                        : <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>}
                     </div>
                   </div>
                   {expandedFamily === f.name && (
                     <div className="bg-secondary/10 border-t border-border px-6 py-2 max-h-48 overflow-y-auto">
                       {(familyProducts[f.name] || []).length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1">No hay productos cargados para esta familia.</p>
+                        <p className="text-xs text-muted-foreground py-1">No products loaded for this family.</p>
                       ) : (
                         <table className="w-full text-xs">
-                          <thead>
-                            <tr className="text-muted-foreground border-b border-border">
-                              <th className="text-left py-1 font-medium">Producto</th>
-                              <th className="text-left py-1 font-medium">Formato</th>
-                              <th className="text-right py-1 font-medium">P.Unit</th>
-                              <th className="text-right py-1 font-medium">Qty</th>
-                            </tr>
-                          </thead>
+                          <thead><tr className="text-muted-foreground border-b border-border">
+                            <th className="text-left py-1 font-medium">Product</th>
+                            <th className="text-left py-1 font-medium">Format</th>
+                            <th className="text-right py-1 font-medium">Price</th>
+                            <th className="text-right py-1 font-medium">Class</th>
+                          </tr></thead>
                           <tbody>
                             {(familyProducts[f.name] || []).map((p, i) => (
                               <tr key={i} className="border-b border-border/50 last:border-0">
                                 <td className="py-1 text-foreground">{p.name}</td>
                                 <td className="py-1 text-muted-foreground">{p.format || "—"}</td>
                                 <td className="py-1 text-right text-foreground">{p.unitPrice.toFixed(2)}€</td>
-                                <td className="py-1 text-right text-muted-foreground">{p.quantity}</td>
+                                <td className="py-1 text-right">{p.isWine ? <Wine className="h-3 w-3 text-success inline" /> : <span className="text-muted-foreground">—</span>}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -671,125 +562,129 @@ function StepFamilies({
 // ── Step 5: Sales & Mapping ──
 function StepSalesMapping({
   daysWithSales, selectedDay, setSelectedDay, loadingDays,
-  salesEvents, loadingSales,
-  onFetchDay, onSaveSales,
-  saving, saveResult,
-  familyOverrides, detectedFamilies,
-  searchMapping, setSearchMapping,
-  showWineOnly, setShowWineOnly,
-  catalogProducts,
+  salesEvents, loadingSales, onFetchDay, onSaveSales,
+  saving, saveResult, familyOverrides, detectedFamilies,
+  catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
 }: {
-  daysWithSales: string[];
-  selectedDay: string | null;
-  setSelectedDay: (d: string) => void;
-  loadingDays: boolean;
-  salesEvents: SalesEvent[];
-  loadingSales: boolean;
-  onFetchDay: (day: string) => void;
-  onSaveSales: (day: string) => void;
-  saving: boolean;
-  saveResult: { savedEvents: number; savedLines: number } | null;
-  familyOverrides: Record<string, boolean>;
-  detectedFamilies: DetectedFamily[];
-  searchMapping: string;
-  setSearchMapping: (v: string) => void;
-  showWineOnly: boolean;
-  setShowWineOnly: (v: boolean) => void;
+  daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
+  loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
+  onFetchDay: (day: string) => void; onSaveSales: (day: string) => void;
+  saving: boolean; saveResult: { savedEvents: number; savedLines: number } | null;
+  familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   catalogProducts: ProviderProduct[];
+  onOverride: (id: string, override: "WINE" | "NOT_WINE" | "AUTO") => void;
+  onBulkOverride: (ids: string[], override: "WINE" | "NOT_WINE") => void;
+  recomputing: boolean; onRecompute: () => void;
+  recomputeResult: { wine: number; notWine: number; needsReview: number } | null;
 }) {
+  const [searchMapping, setSearchMapping] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const useCatalog = catalogProducts.length > 0;
+
   const isFamilyWine = (familyName: string) => {
     if (familyName in familyOverrides) return familyOverrides[familyName];
     const detected = detectedFamilies.find((f) => f.name === familyName);
     return detected?.suggestedWine ?? false;
   };
 
-  // Prefer catalog products if available; fall back to invoice lines
-  const useCatalog = catalogProducts.length > 0;
+  // Split products by classification
+  const { wineProducts, notWineProducts, reviewProducts } = useMemo(() => {
+    const products = useCatalog
+      ? catalogProducts.map((p) => ({
+          id: p.id, provider_product_id: p.provider_product_id, name: p.name,
+          format: p.sale_format || "", family: p.family || "", quantity: 0,
+          unit_price: p.price, total_amount: 0, vat_rate: p.vat_rate,
+          is_wine_candidate: p.is_wine_candidate, wine_score: p.wine_score,
+          wine_reasons: p.wine_reasons, classification_override: p.classification_override,
+          last_score: p.last_score, last_reasons: p.last_reasons,
+          familyIsWine: isFamilyWine(p.family || ""),
+        }))
+      : salesEvents.flatMap((ev) =>
+          ev.lines.map((l, i) => ({
+            id: `${ev.provider_doc_id}-${i}`, provider_product_id: l.provider_product_id, name: l.name,
+            format: l.format, family: l.family, quantity: l.quantity,
+            unit_price: l.unit_price, total_amount: l.total_amount, vat_rate: l.vat_rate,
+            is_wine_candidate: l.is_wine_candidate, wine_score: l.wine_score || 0,
+            wine_reasons: l.wine_reasons || [], classification_override: "AUTO",
+            last_score: l.wine_score || 0, last_reasons: l.wine_reasons || [],
+            familyIsWine: isFamilyWine(l.family),
+          }))
+        );
 
-  const allLines = useMemo(() => {
-    if (useCatalog) {
-      // Map catalog products to display format
-      return catalogProducts.map((p) => ({
-        provider_product_id: p.provider_product_id,
-        name: p.name,
-        format: p.sale_format || "",
-        family: p.family || "",
-        quantity: 0,
-        unit_price: p.price,
-        total_amount: 0,
-        vat_rate: p.vat_rate,
-        is_wine_candidate: p.is_wine_candidate,
-        wine_score: p.wine_score,
-        wine_reasons: p.wine_reasons,
-        docId: "catalog",
-        familyIsWine: isFamilyWine(p.family || ""),
-      }));
-    }
-    const lines: (SalesLineItem & { docId: string; familyIsWine: boolean })[] = [];
-    for (const ev of salesEvents) {
-      for (const l of ev.lines) {
-        lines.push({ ...l, docId: ev.provider_doc_id, familyIsWine: isFamilyWine(l.family) });
-      }
-    }
-    return lines;
-  }, [salesEvents, familyOverrides, detectedFamilies, catalogProducts, useCatalog]);
+    const search = searchMapping.toLowerCase();
+    const filtered = search
+      ? products.filter((p) => p.name.toLowerCase().includes(search) || p.family.toLowerCase().includes(search))
+      : products;
 
-  const filteredLines = useMemo(() => {
-    let result = allLines;
-    if (searchMapping) {
-      const q = searchMapping.toLowerCase();
-      result = result.filter((l) => l.name.toLowerCase().includes(q) || l.family.toLowerCase().includes(q));
-    }
-    if (showWineOnly) {
-      result = result.filter((l) => l.familyIsWine || l.is_wine_candidate);
-    }
-    return result;
-  }, [allLines, searchMapping, showWineOnly]);
+    return {
+      wineProducts: filtered.filter((p) => p.classification_override === "WINE" || (p.classification_override === "AUTO" && p.is_wine_candidate)),
+      notWineProducts: filtered.filter((p) => p.classification_override === "NOT_WINE" || (p.classification_override === "AUTO" && !p.is_wine_candidate && p.last_score <= 0)),
+      reviewProducts: filtered.filter((p) => p.classification_override === "AUTO" && !p.is_wine_candidate && p.last_score > 0),
+    };
+  }, [catalogProducts, salesEvents, familyOverrides, detectedFamilies, searchMapping, useCatalog]);
 
-  const totalAmount = salesEvents.reduce((s, e) => s + e.total_amount, 0);
-  const wineLines = allLines.filter((l) => l.familyIsWine || l.is_wine_candidate);
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const renderProductRow = (p: typeof wineProducts[0]) => (
+    <div key={p.id} className="flex items-center justify-between px-4 py-2 bg-card hover:bg-secondary/30 transition-colors group">
+      <div className="flex items-center gap-3 min-w-0">
+        {useCatalog && (
+          <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)}
+            className="h-3.5 w-3.5 rounded border-border accent-primary" />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {p.family && <span className="mr-2">{p.family}</span>}
+            {p.format && <span className="mr-2">· {p.format}</span>}
+            {p.unit_price > 0 && <span className="font-mono">€{p.unit_price.toFixed(2)}</span>}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {useCatalog && (
+          <div className="hidden group-hover:flex gap-1">
+            <button onClick={() => onOverride(p.id, "WINE")} className="text-[10px] px-1.5 py-0.5 rounded border border-success/30 text-success hover:bg-success/10">Wine</button>
+            <button onClick={() => onOverride(p.id, "NOT_WINE")} className="text-[10px] px-1.5 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10">Not wine</button>
+            {p.classification_override !== "AUTO" && (
+              <button onClick={() => onOverride(p.id, "AUTO")} className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:bg-secondary">Auto</button>
+            )}
+          </div>
+        )}
+        <ClassificationBadge product={p} />
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {useCatalog
-            ? "Showing products from catalog. Wine-classified items highlighted."
-            : "Review sales data. Wine-classified items are shown by default."}
+          {useCatalog ? "Products from catalog with classification. NEEDS_REVIEW tab shown by default." : "Review sales data."}
         </p>
-        {useCatalog && (
-          <Badge variant="outline" className="mt-1 text-[10px]">
-            <Package className="mr-1 h-3 w-3" /> Using catalog ({catalogProducts.length} products)
-          </Badge>
-        )}
+        {useCatalog && <Badge variant="outline" className="mt-1 text-[10px]"><Package className="mr-1 h-3 w-3" /> Catalog ({catalogProducts.length})</Badge>}
       </div>
 
-      {/* Day selector (still useful for sales data) */}
+      {/* Day selector for invoice-based */}
       {!useCatalog && (
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-2 block">
-            <Calendar className="inline h-3.5 w-3.5 mr-1" />
-            Business Day (cash closure)
-          </label>
+          <label className="text-xs font-medium text-muted-foreground mb-2 block"><Calendar className="inline h-3.5 w-3.5 mr-1" /> Business Day</label>
           {loadingDays ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-              <Loader2 className="h-4 w-4 animate-spin" /> Scanning for days with sales…
-            </div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /> Scanning…</div>
           ) : daysWithSales.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-2">No cash closures found in the last 30 days.</p>
+            <p className="text-sm text-muted-foreground py-2">No cash closures found.</p>
           ) : (
             <div className="flex flex-wrap gap-2">
               {daysWithSales.map((day) => (
-                <button
-                  key={day}
-                  onClick={() => { setSelectedDay(day); onFetchDay(day); }}
-                  className={`rounded-lg border px-3 py-2 text-xs font-mono font-medium transition-all ${
-                    selectedDay === day
-                      ? "border-primary bg-primary/5 text-primary"
-                      : "border-border text-muted-foreground hover:border-primary/30"
-                  }`}
-                >
+                <button key={day} onClick={() => { setSelectedDay(day); onFetchDay(day); }}
+                  className={`rounded-lg border px-3 py-2 text-xs font-mono transition-all ${selectedDay === day ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
                   {day}
                 </button>
               ))}
@@ -798,104 +693,78 @@ function StepSalesMapping({
         </div>
       )}
 
-      {/* Sales summary */}
-      {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Business Day</span>
-            <span className="font-mono font-medium text-foreground">{selectedDay}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Invoices</span>
-            <span className="font-medium text-foreground">{salesEvents.length}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Total line items</span>
-            <span className="font-medium text-foreground">{allLines.length}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Total</span>
-            <span className="font-medium text-foreground">€{totalAmount.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-muted-foreground">Wine candidates</span>
-            <span className="font-medium text-success">{wineLines.length}</span>
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="w-full mt-2"
-            onClick={() => onSaveSales(selectedDay)}
-            disabled={saving}
-          >
-            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-            {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines` : "Save to DB"}
+      {/* Recompute + bulk actions */}
+      {useCatalog && (
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
+            {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+            Recompute Classification
           </Button>
+          {selectedIds.size > 0 && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
+                <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
+                Mark {selectedIds.size} as Not Wine
+              </Button>
+            </>
+          )}
         </div>
       )}
 
-      {!useCatalog && selectedDay && !loadingSales && salesEvents.length === 0 && (
-        <div className="text-center py-8 text-sm text-muted-foreground rounded-lg border border-border bg-secondary/20">
-          No hay datos porque no hubo cierre de caja ese día.
+      {recomputeResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
+          <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
         </div>
       )}
 
-      {!useCatalog && loadingSales && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Loading sales…</span>
-        </div>
-      )}
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
+      </div>
 
-      {/* Filters */}
-      {allLines.length > 0 && (
-        <>
-          <div className="flex gap-3 items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
-            </div>
-            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
-              <Switch checked={showWineOnly} onCheckedChange={setShowWineOnly} />
-              <Filter className="h-3.5 w-3.5" />
-              Wine only
-            </label>
-          </div>
-
+      {/* Tabs */}
+      <Tabs defaultValue="review">
+        <TabsList className="w-full">
+          <TabsTrigger value="review" className="flex-1">
+            <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
+          </TabsTrigger>
+          <TabsTrigger value="wine" className="flex-1">
+            <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
+          </TabsTrigger>
+          <TabsTrigger value="notwine" className="flex-1">
+            Not Wine ({notWineProducts.length})
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="review">
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {filteredLines.length === 0 ? (
-              <div className="text-center py-8 text-sm text-muted-foreground">No matching products.</div>
-            ) : (
-              filteredLines.map((l, i) => {
-                const isWine = l.familyIsWine || l.is_wine_candidate;
-                return (
-                  <div key={`${l.docId}-${l.provider_product_id}-${i}`} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className={`h-2 w-2 rounded-full shrink-0 ${isWine ? "bg-success" : "bg-muted-foreground"}`} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{l.name}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {l.family && <span className="mr-2">{l.family}</span>}
-                          {l.format && <span className="mr-2">· {l.format}</span>}
-                          {l.quantity > 0 && <span className="font-mono">×{l.quantity}</span>}
-                          {l.unit_price > 0 && <span className="ml-2 font-mono">@€{l.unit_price.toFixed(2)}</span>}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      {l.total_amount > 0 && <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>}
-                      {isWine ? (
-                        <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
+              : reviewProducts.map(renderProductRow)}
           </div>
-        </>
+        </TabsContent>
+        <TabsContent value="wine">
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+            {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
+              : wineProducts.map(renderProductRow)}
+          </div>
+        </TabsContent>
+        <TabsContent value="notwine">
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+            {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
+              : notWineProducts.map(renderProductRow)}
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {/* Save for invoice mode */}
+      {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
+        <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines` : "Save to DB"}
+        </Button>
       )}
     </div>
   );
@@ -903,40 +772,26 @@ function StepSalesMapping({
 
 // ── Step 6: Go Live ──
 function StepGoLive({
-  syncMode, frequency, backfill,
-  salesEvents, selectedDay,
-  onEnable, enabled,
-  familyOverrides, detectedFamilies,
-  catalogStatus,
+  syncMode, frequency, backfill, salesEvents, selectedDay,
+  onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
 }: {
-  syncMode: string;
-  frequency: number;
-  backfill: number;
-  salesEvents: SalesEvent[];
-  selectedDay: string | null;
-  onEnable: () => void;
-  enabled: boolean;
-  familyOverrides: Record<string, boolean>;
-  detectedFamilies: DetectedFamily[];
+  syncMode: string; frequency: number; backfill: number;
+  salesEvents: SalesEvent[]; selectedDay: string | null;
+  onEnable: () => void; enabled: boolean;
+  familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   catalogStatus: { catalogEndpoint: string | null; catalogProductCount: number; catalogWineCandidateCount: number; catalogSyncEnabled: boolean };
 }) {
-  const wineFamilyCount = detectedFamilies.filter((f) => {
-    return f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
-  }).length;
+  const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
 
   return (
     <div className="space-y-6 text-center py-4">
       <div className="flex justify-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-          <Power className="h-8 w-8 text-primary" />
-        </div>
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10"><Power className="h-8 w-8 text-primary" /></div>
       </div>
       <div>
         <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
-        <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
-          Your Agora integration is configured. Enable sync to start pulling sales data every {frequency} minutes.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Enable sync to start pulling sales data every {frequency} minutes.</p>
       </div>
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>
@@ -950,7 +805,7 @@ function StepGoLive({
             <div className="border-t border-border pt-2 mt-2" />
             <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog endpoint</span><span className="font-mono font-medium text-foreground">{catalogStatus.catalogEndpoint}</span></div>
             <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog products</span><span className="font-medium text-foreground">{catalogStatus.catalogProductCount}</span></div>
-            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog wine candidates</span><span className="font-medium text-success">{catalogStatus.catalogWineCandidateCount}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates</span><span className="font-medium text-success">{catalogStatus.catalogWineCandidateCount}</span></div>
             <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog sync</span><span className="font-medium text-foreground">{catalogStatus.catalogSyncEnabled ? "Enabled" : "Disabled"}</span></div>
           </>
         )}
@@ -975,42 +830,24 @@ export default function AgoraWizard() {
   const [frequency, setFrequency] = useState(15);
   const [backfill, setBackfill] = useState(30);
   const [enabled, setEnabled] = useState(false);
-  const [searchMapping, setSearchMapping] = useState("");
-  const [showWineOnly, setShowWineOnly] = useState(true);
   const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
 
   const {
-    connectionId,
-    setConnectionId,
-    testStatus, testError,
-    testConnection, updateConnection,
-    loadConnection,
+    connectionId, setConnectionId,
+    testStatus, testError, testConnection, updateConnection, loadConnection,
     daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
-    saving, saveResult, saveSalesToDb,
-    enableSync, saveFamilyRules,
-    // Catalog
-    catalogStatus,
-    catalogDiscovering,
-    catalogDiscoveryResults,
-    catalogDiscoverySample,
-    catalogSyncing,
-    catalogSyncResult,
-    catalogTestResult,
-    catalogTestingEndpoint,
-    catalogProducts,
-    discoverCatalog,
-    syncCatalog,
-    testCatalogEndpoint,
-    fetchCatalogProducts,
-    toggleCatalogSync,
-    // Derived catalog fallback
-    buildingDerived,
-    derivedResult,
-    buildDerivedCatalog,
+    saving, saveResult, saveSalesToDb, enableSync, saveFamilyRules,
+    catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
+    catalogSyncing, catalogSyncResult, catalogTestResult, catalogTestingEndpoint,
+    catalogProducts, discoverCatalog, syncCatalog, testCatalogEndpoint,
+    fetchCatalogProducts, toggleCatalogSync,
+    buildingDerived, derivedResult, buildDerivedCatalog,
+    classificationConfig, loadClassificationConfig, saveClassificationConfig,
+    recomputing, recomputeResult, recomputeClassification,
+    overrideProductClassification, bulkOverrideProducts,
   } = useAgoraConnection();
 
-  // Load existing connection from URL param
   useEffect(() => {
     const connParam = searchParams.get("connection");
     if (connParam && !connectionId) {
@@ -1024,47 +861,69 @@ export default function AgoraWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          setCurrentStep(5); // Jump to Sales view
+          setCurrentStep(5);
         }
       });
     }
   }, [searchParams]);
 
-  // When entering step 4 or 5, scan for business days
   useEffect(() => {
     if ((currentStep === 4 || currentStep === 5) && connectionId && daysWithSales.length === 0 && !loadingDays) {
       findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
 
-  // Auto-fetch first day with sales when days are found (for family detection)
   useEffect(() => {
-    if (selectedDay && (currentStep === 4 || currentStep === 5)) {
-      fetchSalesForDay(selectedDay);
-    }
+    if (selectedDay && (currentStep === 4 || currentStep === 5)) fetchSalesForDay(selectedDay);
   }, [selectedDay]);
 
-  // Auto-discover catalog when entering step 3
   useEffect(() => {
-    if (currentStep === 3 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) {
-      discoverCatalog();
+    if (currentStep === 3 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) discoverCatalog();
+  }, [currentStep, connectionId]);
+
+  // Load classification config and products when entering step 4 or 5
+  useEffect(() => {
+    if ((currentStep === 4 || currentStep === 5) && connectionId) {
+      loadClassificationConfig();
+      if (catalogProducts.length === 0) fetchCatalogProducts();
     }
   }, [currentStep, connectionId]);
+
+  // Pre-seed classification config on first connection
+  useEffect(() => {
+    if (connectionId && currentStep === 4 && !classificationConfig.id) {
+      saveClassificationConfig({
+        non_wine_keywords_blacklist: ["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "postre", "tarta", "pan", "snack", "ensalada", "pescado", "carne"],
+        wine_keywords_whitelist: ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut", "reserva", "crianza", "botella", "bot.", "75cl", "magnum", "copa"],
+        format_whitelist: ["BOT", "Bottle", "75cl", "Copa", "Glass"],
+      });
+    }
+  }, [connectionId, currentStep]);
+
+  const handleAddKeyword = (keyword: string, type: "wine" | "non_wine") => {
+    if (type === "wine") {
+      const current = classificationConfig.wine_families_whitelist || [];
+      if (!current.includes(keyword)) {
+        saveClassificationConfig({ wine_families_whitelist: [...current, keyword] });
+      }
+    } else {
+      const current = classificationConfig.non_wine_families_blacklist || [];
+      if (!current.includes(keyword)) {
+        saveClassificationConfig({ non_wine_families_blacklist: [...current, keyword] });
+      }
+    }
+  };
 
   const handleNext = async () => {
     if (currentStep === 2 && connectionId) {
       await updateConnection(connectionId, {
-        sync_mode: syncMode,
-        sync_frequency_minutes: frequency,
-        backfill_days: backfill,
-        location_name: locationName || "New Location",
+        sync_mode: syncMode, sync_frequency_minutes: frequency,
+        backfill_days: backfill, location_name: locationName || "New Location",
       });
     }
     if (currentStep === 4) {
-      // Save family overrides
       const families = detectedFamilies.map((f) => ({
-        name: f.name,
-        isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
+        name: f.name, isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
@@ -1076,7 +935,6 @@ export default function AgoraWizard() {
       <button onClick={() => navigate("/integrations")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
         <ArrowLeft className="h-4 w-4" /> Back to Integrations
       </button>
-
       <div className="flex items-center gap-4">
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-lg">A</div>
         <div>
@@ -1084,8 +942,6 @@ export default function AgoraWizard() {
           <p className="text-sm text-muted-foreground">Set up your Agora integration in a few steps.</p>
         </div>
       </div>
-
-      {/* Step indicator */}
       <div className="flex items-center gap-1.5">
         {steps.map((step, i) => {
           const isActive = step.id === currentStep;
@@ -1101,95 +957,61 @@ export default function AgoraWizard() {
           );
         })}
       </div>
-
-      {/* Step content */}
       <AnimatePresence mode="wait">
         <motion.div key={currentStep} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }} className="rounded-xl border border-border bg-card p-6 shadow-card">
           {currentStep === 1 && (
-            <StepConnection
-              locationName={locationName} setLocationName={setLocationName}
-              baseUrl={baseUrl} setBaseUrl={setBaseUrl}
-              apiToken={apiToken} setApiToken={setApiToken}
+            <StepConnection locationName={locationName} setLocationName={setLocationName}
+              baseUrl={baseUrl} setBaseUrl={setBaseUrl} apiToken={apiToken} setApiToken={setApiToken}
               winerimApiToken={winerimApiToken} setWinerimApiToken={setWinerimApiToken}
-              testStatus={testStatus} testError={testError}
-              onTest={() => testConnection(baseUrl, apiToken, winerimApiToken)}
-            />
+              testStatus={testStatus} testError={testError} onTest={() => testConnection(baseUrl, apiToken, winerimApiToken)} />
           )}
           {currentStep === 2 && (
-            <StepSyncSettings
-              syncMode={syncMode} setSyncMode={setSyncMode}
-              frequency={frequency} setFrequency={setFrequency}
-              backfill={backfill} setBackfill={setBackfill}
-              catalogSyncEnabled={catalogStatus.catalogSyncEnabled}
-              onToggleCatalogSync={toggleCatalogSync}
-            />
+            <StepSyncSettings syncMode={syncMode} setSyncMode={setSyncMode}
+              frequency={frequency} setFrequency={setFrequency} backfill={backfill} setBackfill={setBackfill}
+              catalogSyncEnabled={catalogStatus.catalogSyncEnabled} onToggleCatalogSync={toggleCatalogSync} />
           )}
           {currentStep === 3 && (
-            <StepCatalog
-              catalogStatus={catalogStatus}
-              catalogDiscovering={catalogDiscovering}
-              catalogDiscoveryResults={catalogDiscoveryResults}
-              catalogDiscoverySample={catalogDiscoverySample}
-              catalogSyncing={catalogSyncing}
-              catalogSyncResult={catalogSyncResult}
-              catalogTestResult={catalogTestResult}
-              catalogTestingEndpoint={catalogTestingEndpoint}
-              catalogProducts={catalogProducts}
-              buildingDerived={buildingDerived}
-              derivedResult={derivedResult}
-              onDiscover={discoverCatalog}
-              onSync={syncCatalog}
-              onTestEndpoint={testCatalogEndpoint}
-              onFetchProducts={fetchCatalogProducts}
-              onBuildDerived={buildDerivedCatalog}
-            />
+            <StepCatalog catalogStatus={catalogStatus}
+              catalogDiscovering={catalogDiscovering} catalogDiscoveryResults={catalogDiscoveryResults}
+              catalogDiscoverySample={catalogDiscoverySample} catalogSyncing={catalogSyncing}
+              catalogSyncResult={catalogSyncResult} catalogTestResult={catalogTestResult}
+              catalogTestingEndpoint={catalogTestingEndpoint} catalogProducts={catalogProducts}
+              buildingDerived={buildingDerived} derivedResult={derivedResult}
+              onDiscover={discoverCatalog} onSync={syncCatalog} onTestEndpoint={testCatalogEndpoint}
+              onFetchProducts={fetchCatalogProducts} onBuildDerived={buildDerivedCatalog} />
           )}
           {currentStep === 4 && (
-            <StepFamilies
-              detectedFamilies={detectedFamilies}
-              loadingDays={loadingDays}
-              loadingSales={loadingSales}
-              familyOverrides={familyOverrides}
-              setFamilyOverrides={setFamilyOverrides}
-              scanStats={scanStats}
-              daysWithSales={daysWithSales}
-              selectedDay={selectedDay}
-              onRunHistoricalScan={() => findDaysWithSales(90)}
-              salesEvents={salesEvents}
-            />
+            <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
+              familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
+              scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
+              onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
+              catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
           )}
           {currentStep === 5 && (
-            <StepSalesMapping
-              daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay} loadingDays={loadingDays}
-              salesEvents={salesEvents} loadingSales={loadingSales}
-              onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb}
-              saving={saving} saveResult={saveResult}
+            <StepSalesMapping daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
+              loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
+              onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
-              searchMapping={searchMapping} setSearchMapping={setSearchMapping}
-              showWineOnly={showWineOnly} setShowWineOnly={setShowWineOnly}
               catalogProducts={catalogProducts}
-            />
+              onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
+              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
           )}
           {currentStep === 6 && (
-            <StepGoLive
-              syncMode={syncMode} frequency={frequency} backfill={backfill}
+            <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
-              onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/sync-monitor"), 1000); }}
-              enabled={enabled}
-              familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
-              catalogStatus={catalogStatus}
-            />
+              onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
+              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus} />
           )}
         </motion.div>
       </AnimatePresence>
-
-      {/* Navigation */}
       <div className="flex justify-between">
-        <Button variant="outline" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
+        <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
         {currentStep < 6 && (
-          <Button onClick={handleNext}>Next <ArrowRight className="ml-2 h-4 w-4" /></Button>
+          <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
+            Next <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
         )}
       </div>
     </div>
