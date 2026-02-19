@@ -163,7 +163,7 @@ const connectors: Connector[] = [
     name: "Square POS",
     description: "OAuth2 + Orders search + Catalog + Webhooks. Handle 429/backoff for rate limits.",
     logo: "S",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
@@ -203,7 +203,7 @@ const connectors: Connector[] = [
     name: "Oracle MICROS Simphony",
     description: "REST APIs with OAuth2/TLS. CCAPI for config/catalog, STS Gen2 for cloud transactions.",
     logo: "O",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
 ];
@@ -284,6 +284,8 @@ export default function Integrations() {
                       if (c.id === "agora") navigate("/integrations/agora");
                       if (c.id === "tcpos") navigate("/integrations/tcpos");
                       if (c.id === "clover") navigate("/integrations/clover");
+                      if (c.id === "square") navigate("/integrations/square");
+                      if (c.id === "simphony") navigate("/integrations/simphony");
                     }}
                   >
                     <div className="p-5">
@@ -339,6 +341,8 @@ export default function Integrations() {
                             if (c.id === "agora") navigate("/integrations/agora");
                             if (c.id === "tcpos") navigate("/integrations/tcpos");
                             if (c.id === "clover") navigate("/integrations/clover");
+                            if (c.id === "square") navigate("/integrations/square");
+                            if (c.id === "simphony") navigate("/integrations/simphony");
                           }}
                         >
                           Connect
