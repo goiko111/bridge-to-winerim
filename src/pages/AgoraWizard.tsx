@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "@/hooks/use-toast";
 import {
   useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily,
   CatalogDiscoveryResult, ProviderProduct, ClassificationConfig,
@@ -23,7 +25,8 @@ const steps = [
   { id: 3, label: "Catalog", icon: Package },
   { id: 4, label: "Families", icon: Grape },
   { id: 5, label: "Sales & Mapping", icon: Map },
-  { id: 6, label: "Go Live", icon: Power },
+  { id: 6, label: "Wine Matching", icon: Wine },
+  { id: 7, label: "Go Live", icon: Power },
 ];
 
 // ── Classification badge component ──
@@ -770,7 +773,308 @@ function StepSalesMapping({
   );
 }
 
-// ── Step 6: Go Live ──
+// ── Step 6: Wine Matching ──
+interface ProductMapping {
+  id: string;
+  provider_product_id: string;
+  provider_product_name: string;
+  winerim_wine_id: string | null;
+  winerim_wine_name: string | null;
+  match_method: string;
+  match_score: number;
+  match_reasons: string[];
+  status: string;
+}
+
+interface WinerimWine {
+  winerim_id: string;
+  name: string;
+  winery: string | null;
+  vintage: string | null;
+  region: string | null;
+}
+
+function StepWineMatching({
+  connectionId,
+}: {
+  connectionId: string | null;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [matching, setMatching] = useState(false);
+  const [aiMatching, setAiMatching] = useState(false);
+  const [mappings, setMappings] = useState<ProductMapping[]>([]);
+  const [winerimWines, setWinerimWines] = useState<WinerimWine[]>([]);
+  const [matchResult, setMatchResult] = useState<{ matched: number; skuMatched: number; fuzzyMatched: number; noMatch: number } | null>(null);
+  const [aiResult, setAiResult] = useState<{ processed: number; updated: number } | null>(null);
+  const [searchWinerim, setSearchWinerim] = useState("");
+  const [editingMapping, setEditingMapping] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    const [mappingsRes, winesRes] = await Promise.all([
+      supabase.from("product_mappings").select("*").eq("connection_id", connectionId).order("match_score", { ascending: false }).limit(500),
+      supabase.from("winerim_wines").select("winerim_id, name, winery, vintage, region").eq("connection_id", connectionId).order("name").limit(500),
+    ]);
+    setMappings((mappingsRes.data || []) as unknown as ProductMapping[]);
+    setWinerimWines((winesRes.data || []) as unknown as WinerimWine[]);
+    setLoading(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const fetchWinerimCatalog = async () => {
+    if (!connectionId) return;
+    setFetchingCatalog(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "fetch-catalog", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast({ title: "Catálogo Winerim cargado", description: `${data.totalWines} vinos importados` });
+        await loadData();
+      } else {
+        toast({ title: "Error", description: data?.error || "No se pudo cargar el catálogo", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setFetchingCatalog(false); }
+  };
+
+  const runMatching = async () => {
+    if (!connectionId) return;
+    setMatching(true); setMatchResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "match-products", connectionId },
+      });
+      if (error) throw error;
+      setMatchResult(data);
+      await loadData();
+    } catch (e: any) {
+      toast({ title: "Error matching", description: e.message, variant: "destructive" });
+    } finally { setMatching(false); }
+  };
+
+  const runAiMatching = async () => {
+    if (!connectionId) return;
+    setAiMatching(true); setAiResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "ai-match", connectionId },
+      });
+      if (error) throw error;
+      setAiResult(data);
+      await loadData();
+    } catch (e: any) {
+      toast({ title: "Error AI matching", description: e.message, variant: "destructive" });
+    } finally { setAiMatching(false); }
+  };
+
+  const confirmMapping = async (mappingId: string, winerimWineId?: string, winerimWineName?: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "confirm-mapping", connectionId, mappingId, winerimWineId, winerimWineName },
+    });
+    await loadData();
+    setEditingMapping(null);
+  };
+
+  const rejectMapping = async (mappingId: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "reject-mapping", connectionId, mappingId },
+    });
+    await loadData();
+  };
+
+  const ignoreMapping = async (mappingId: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "ignore-mapping", connectionId, mappingId },
+    });
+    await loadData();
+  };
+
+  const pendingMappings = mappings.filter(m => m.status === "PENDING");
+  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED");
+  const rejectedMappings = mappings.filter(m => m.status === "REJECTED" || m.status === "IGNORED");
+
+  const filteredWines = searchWinerim
+    ? winerimWines.filter(w => w.name.toLowerCase().includes(searchWinerim.toLowerCase()) || (w.winery || "").toLowerCase().includes(searchWinerim.toLowerCase()))
+    : winerimWines;
+
+  const methodBadge = (method: string) => {
+    const v = method === "SKU" ? "default" : method === "AI" ? "secondary" : "outline";
+    return <Badge variant={v} className="text-[10px]">{method}</Badge>;
+  };
+
+  const scoreBadge = (score: number) => {
+    const color = score >= 80 ? "text-success" : score >= 50 ? "text-warning" : "text-destructive";
+    return <span className={`font-mono text-[10px] font-medium ${color}`}>{score}%</span>;
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Wine Matching (POS → Winerim)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Match POS wine products with your Winerim catalog to enable stock sync.
+        </p>
+      </div>
+
+      {/* Status bar */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <div className="grid grid-cols-3 gap-4 text-xs">
+          <div><span className="text-muted-foreground block">Winerim Wines</span><span className="font-medium text-foreground text-sm">{winerimWines.length}</span></div>
+          <div><span className="text-muted-foreground block">Matched</span><span className="font-medium text-success text-sm">{confirmedMappings.length}</span></div>
+          <div><span className="text-muted-foreground block">Pending Review</span><span className="font-medium text-warning text-sm">{pendingMappings.length}</span></div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={fetchWinerimCatalog} disabled={fetchingCatalog}>
+          {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          {winerimWines.length > 0 ? "Refresh Winerim Catalog" : "Fetch Winerim Catalog"}
+        </Button>
+        {winerimWines.length > 0 && (
+          <>
+            <Button variant="secondary" size="sm" onClick={runMatching} disabled={matching}>
+              {matching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+              SKU + Fuzzy Match
+            </Button>
+            {pendingMappings.length > 0 && (
+              <Button variant="outline" size="sm" onClick={runAiMatching} disabled={aiMatching}>
+                {aiMatching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <span className="mr-2">🤖</span>}
+                AI Match ({pendingMappings.length} pending)
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+
+      {matchResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Matching completed</p>
+          <p className="text-muted-foreground">
+            {matchResult.matched} matched ({matchResult.skuMatched} SKU, {matchResult.fuzzyMatched} fuzzy), {matchResult.noMatch} no match
+          </p>
+        </div>
+      )}
+      {aiResult && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5">🤖 AI Matching completed</p>
+          <p className="text-muted-foreground">{aiResult.processed} processed, {aiResult.updated} updated</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : mappings.length === 0 && winerimWines.length === 0 ? (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+          <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">Fetch your Winerim catalog first, then run matching.</p>
+        </div>
+      ) : (
+        <Tabs defaultValue="pending" className="space-y-3">
+          <TabsList className="w-full">
+            <TabsTrigger value="pending" className="flex-1">
+              <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Pending ({pendingMappings.length})
+            </TabsTrigger>
+            <TabsTrigger value="confirmed" className="flex-1">
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirmed ({confirmedMappings.length})
+            </TabsTrigger>
+            <TabsTrigger value="rejected" className="flex-1">
+              Rejected ({rejectedMappings.length})
+            </TabsTrigger>
+          </TabsList>
+
+          {[
+            { key: "pending", items: pendingMappings },
+            { key: "confirmed", items: confirmedMappings },
+            { key: "rejected", items: rejectedMappings },
+          ].map(({ key, items }) => (
+            <TabsContent key={key} value={key}>
+              <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                {items.length === 0 ? (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    {key === "pending" ? "No pending matches. Run matching first." : `No ${key} matches.`}
+                  </div>
+                ) : items.map((m) => (
+                  <div key={m.id} className="px-4 py-3 bg-card hover:bg-secondary/30 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{m.provider_product_name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <p className="text-sm text-primary truncate">{m.winerim_wine_name || "No match"}</p>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {methodBadge(m.match_method)}
+                          {scoreBadge(m.match_score)}
+                          {m.match_reasons.length > 0 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger><HelpCircle className="h-3 w-3 text-muted-foreground" /></TooltipTrigger>
+                                <TooltipContent side="right" className="max-w-xs text-xs">
+                                  {m.match_reasons.map((r, i) => <div key={i}>{r}</div>)}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
+                      </div>
+                      {key === "pending" && (
+                        <div className="flex gap-1 shrink-0">
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-success hover:text-success" onClick={() => confirmMapping(m.id)}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditingMapping(editingMapping === m.id ? null : m.id)}>
+                            <Search className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => rejectMapping(m.id)}>
+                            <XCircle className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => ignoreMapping(m.id)}>
+                            <Filter className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {/* Manual search panel */}
+                    {editingMapping === m.id && (
+                      <div className="mt-3 border-t border-border pt-3 space-y-2">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <Input placeholder="Search Winerim wines…" value={searchWinerim} onChange={(e) => setSearchWinerim(e.target.value)} className="pl-9 bg-background text-sm h-8" />
+                        </div>
+                        <div className="max-h-40 overflow-y-auto divide-y divide-border rounded border border-border">
+                          {filteredWines.slice(0, 20).map((w) => (
+                            <button key={w.winerim_id} onClick={() => confirmMapping(m.id, w.winerim_id, w.name)}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/30 transition-colors flex items-center justify-between">
+                              <div>
+                                <span className="font-medium text-foreground">{w.name}</span>
+                                {w.winery && <span className="text-muted-foreground ml-2">({w.winery})</span>}
+                                {w.vintage && <span className="text-muted-foreground ml-1">{w.vintage}</span>}
+                              </div>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
+    </div>
+  );
+}
+
+// ── Step 7: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
@@ -927,7 +1231,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(6, s + 1));
+    setCurrentStep((s) => Math.min(7, s + 1));
   };
 
   return (
@@ -997,6 +1301,9 @@ export default function AgoraWizard() {
               recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
           )}
           {currentStep === 6 && (
+            <StepWineMatching connectionId={connectionId} />
+          )}
+          {currentStep === 7 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -1008,7 +1315,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 6 && (
+        {currentStep < 7 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>

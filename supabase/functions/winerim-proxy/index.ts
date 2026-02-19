@@ -6,6 +6,142 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ── Fuzzy matching helpers ──
+function normalize(s: string): string {
+  return s.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(s: string): Set<string> {
+  return new Set(normalize(s).split(" ").filter(t => t.length > 1));
+}
+
+// Jaccard similarity
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  const intersection = new Set([...a].filter(x => b.has(x)));
+  const union = new Set([...a, ...b]);
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
+// Levenshtein distance
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+function levenshteinSimilarity(a: string, b: string): number {
+  const na = normalize(a), nb = normalize(b);
+  const maxLen = Math.max(na.length, nb.length);
+  if (maxLen === 0) return 1;
+  return 1 - levenshtein(na, nb) / maxLen;
+}
+
+interface MatchCandidate {
+  winerim_id: string;
+  winerim_name: string;
+  score: number;
+  method: string;
+  reasons: string[];
+}
+
+function findBestMatches(
+  posName: string,
+  posSku: string | null,
+  posFamily: string | null,
+  winerimWines: { winerim_id: string; name: string; sku: string | null; ean: string | null; winery: string | null; grape_variety: string | null; format: string | null }[],
+  maxResults = 3,
+): MatchCandidate[] {
+  const candidates: MatchCandidate[] = [];
+
+  for (const wine of winerimWines) {
+    let score = 0;
+    const reasons: string[] = [];
+    let method = "FUZZY";
+
+    // SKU/EAN exact match
+    if (posSku && posSku.length > 2) {
+      if (wine.sku && normalize(wine.sku) === normalize(posSku)) {
+        score += 100;
+        reasons.push("sku_exact_match");
+        method = "SKU";
+      }
+      if (wine.ean && normalize(wine.ean) === normalize(posSku)) {
+        score += 100;
+        reasons.push("ean_exact_match");
+        method = "SKU";
+      }
+    }
+
+    // Jaccard token similarity
+    const posTokens = tokenize(posName);
+    const wineTokens = tokenize(wine.name);
+    const jaccard = jaccardSimilarity(posTokens, wineTokens);
+    if (jaccard > 0) {
+      score += Math.round(jaccard * 60);
+      reasons.push(`jaccard:${jaccard.toFixed(2)}`);
+    }
+
+    // Levenshtein similarity
+    const levSim = levenshteinSimilarity(posName, wine.name);
+    if (levSim > 0.3) {
+      score += Math.round(levSim * 30);
+      reasons.push(`levenshtein:${levSim.toFixed(2)}`);
+    }
+
+    // Winery name bonus
+    if (wine.winery) {
+      const wineryNorm = normalize(wine.winery);
+      if (normalize(posName).includes(wineryNorm) && wineryNorm.length > 2) {
+        score += 15;
+        reasons.push(`winery_match:${wine.winery}`);
+      }
+    }
+
+    // Grape variety bonus
+    if (wine.grape_variety) {
+      const grapeNorm = normalize(wine.grape_variety);
+      if (normalize(posName).includes(grapeNorm) && grapeNorm.length > 2) {
+        score += 10;
+        reasons.push(`grape_match:${wine.grape_variety}`);
+      }
+    }
+
+    // Family/category bonus
+    if (posFamily && wine.winery) {
+      const famNorm = normalize(posFamily);
+      const wineryNorm = normalize(wine.winery);
+      if (famNorm.includes(wineryNorm) || wineryNorm.includes(famNorm)) {
+        score += 5;
+        reasons.push("family_winery_overlap");
+      }
+    }
+
+    if (score > 10) {
+      candidates.push({ winerim_id: wine.winerim_id, winerim_name: wine.name, score: Math.min(score, 100), method, reasons });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates.slice(0, maxResults);
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -16,9 +152,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, connectionId, wines, productId, quantity } = await req.json();
+    const body = await req.json();
+    const { action, connectionId } = body;
 
-    // Fetch connection to get winerim_api_token
+    // Fetch connection
     const { data: connection, error: connError } = await supabase
       .from("pos_connections")
       .select("*")
@@ -52,84 +189,341 @@ serve(async (req) => {
         headers: winerimHeaders,
       });
       if (!res.ok) {
-        const body = await res.text();
+        const errBody = await res.text();
         return new Response(
-          JSON.stringify({ success: false, status: res.status, error: body.substring(0, 2048) }),
+          JSON.stringify({ success: false, status: res.status, error: errBody.substring(0, 2048) }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
       const data = await res.json();
+
+      // Parse wines - handle different response formats
+      let wines: Record<string, unknown>[] = [];
+      if (Array.isArray(data)) wines = data;
+      else if (data?.wines && Array.isArray(data.wines)) wines = data.wines;
+      else if (data?.data && Array.isArray(data.data)) wines = data.data;
+
+      // Upsert into winerim_wines
+      let upserted = 0;
+      for (const w of wines) {
+        const winerimId = String(w.id || w.wine_id || w.product_id || "");
+        if (!winerimId) continue;
+        await supabase.from("winerim_wines").upsert({
+          connection_id: connectionId,
+          winerim_id: winerimId,
+          name: String(w.name || w.wine_name || "Unknown"),
+          sku: w.sku ? String(w.sku) : null,
+          ean: w.ean ? String(w.ean) : null,
+          vintage: w.vintage ? String(w.vintage) : null,
+          winery: w.winery ? String(w.winery) : (w.producer ? String(w.producer) : null),
+          region: w.region ? String(w.region) : (w.appellation ? String(w.appellation) : null),
+          grape_variety: w.grape_variety ? String(w.grape_variety) : (w.grape ? String(w.grape) : null),
+          format: w.format ? String(w.format) : null,
+          price: w.price ? Number(w.price) : null,
+          stock_quantity: w.stock_quantity != null ? Number(w.stock_quantity) : (w.stock != null ? Number(w.stock) : null),
+          raw_payload: w,
+        }, { onConflict: "connection_id,winerim_id" });
+        upserted++;
+      }
+
       return new Response(
-        JSON.stringify({ success: true, wines: data }),
+        JSON.stringify({ success: true, totalWines: upserted }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ── UPDATE STOCK (single product) ──
-    if (action === "update-stock") {
-      if (!productId || quantity === undefined) {
+    // ── MATCH PRODUCTS (SKU + Fuzzy) ──
+    if (action === "match-products") {
+      // Load wine candidates from provider_products
+      const { data: posProducts } = await supabase
+        .from("provider_products")
+        .select("provider_product_id, name, family, sale_format, price")
+        .eq("connection_id", connectionId)
+        .eq("is_wine_candidate", true)
+        .limit(1000);
+
+      // Load winerim wines
+      const { data: winerimWines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, sku, ean, winery, grape_variety, format")
+        .eq("connection_id", connectionId)
+        .limit(1000);
+
+      if (!posProducts || posProducts.length === 0) {
         return new Response(
-          JSON.stringify({ error: "productId and quantity required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ success: true, matched: 0, message: "No wine candidate products to match" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const res = await fetch(`https://api.winerim.com/api/v2/stock`, {
+      if (!winerimWines || winerimWines.length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No Winerim wines cached. Fetch catalog first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      let matched = 0;
+      let skuMatched = 0;
+      let fuzzyMatched = 0;
+      let noMatch = 0;
+
+      for (const pos of posProducts) {
+        // Check if already has a confirmed mapping
+        const { data: existing } = await supabase
+          .from("product_mappings")
+          .select("id, status")
+          .eq("connection_id", connectionId)
+          .eq("provider_product_id", pos.provider_product_id)
+          .limit(1);
+
+        if (existing && existing.length > 0 && existing[0].status === "CONFIRMED") continue;
+
+        const candidates = findBestMatches(
+          pos.name,
+          pos.provider_product_id, // Try as SKU
+          pos.family,
+          winerimWines as any[],
+          3,
+        );
+
+        if (candidates.length === 0) {
+          noMatch++;
+          continue;
+        }
+
+        const best = candidates[0];
+        const status = best.score >= 80 ? "CONFIRMED" : "PENDING";
+
+        await supabase.from("product_mappings").upsert({
+          connection_id: connectionId,
+          provider_product_id: pos.provider_product_id,
+          provider_product_name: pos.name,
+          winerim_wine_id: best.winerim_id,
+          winerim_wine_name: best.winerim_name,
+          match_method: best.method,
+          match_score: best.score,
+          match_reasons: best.reasons,
+          status,
+        }, { onConflict: "connection_id,provider_product_id" });
+
+        matched++;
+        if (best.method === "SKU") skuMatched++;
+        else fuzzyMatched++;
+
+        // If auto-confirmed, also update the sales_line_items winerim_product_id
+        if (status === "CONFIRMED") {
+          await supabase.from("sales_line_items")
+            .update({ winerim_product_id: best.winerim_id, mapped: true })
+            .eq("connection_id", connectionId)
+            .eq("provider_product_id", pos.provider_product_id);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, matched, skuMatched, fuzzyMatched, noMatch, totalPosProducts: posProducts.length, totalWinerimWines: winerimWines.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── AI MATCH (for low-confidence matches) ──
+    if (action === "ai-match") {
+      const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+      if (!lovableApiKey) {
+        return new Response(
+          JSON.stringify({ success: false, error: "AI gateway not configured" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Get pending mappings
+      const { data: pendingMappings } = await supabase
+        .from("product_mappings")
+        .select("id, provider_product_id, provider_product_name, winerim_wine_id, winerim_wine_name, match_score")
+        .eq("connection_id", connectionId)
+        .eq("status", "PENDING")
+        .order("match_score", { ascending: true })
+        .limit(20);
+
+      if (!pendingMappings || pendingMappings.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, processed: 0, message: "No pending mappings to review" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Load winerim wines for context
+      const { data: winerimWines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, winery, grape_variety, vintage, region")
+        .eq("connection_id", connectionId)
+        .limit(500);
+
+      const wineList = (winerimWines || []).map((w: any) =>
+        `${w.winerim_id}: ${w.name}${w.winery ? ` (${w.winery})` : ""}${w.vintage ? ` ${w.vintage}` : ""}`
+      ).join("\n");
+
+      const posItems = pendingMappings.map((m: any) =>
+        `POS:"${m.provider_product_name}" current_match:"${m.winerim_wine_name}" score:${m.match_score}`
+      ).join("\n");
+
+      const prompt = `You are a wine product matching expert. Given POS product names and a wine catalog, determine the best match for each POS product.
+
+WINE CATALOG:
+${wineList}
+
+POS PRODUCTS TO MATCH:
+${posItems}
+
+For each POS product, respond with a JSON array of objects:
+[{"pos_name": "...", "best_winerim_id": "..." or null if no match, "confidence": 0-100, "reasoning": "..."}]
+
+Consider: abbreviations (bot.=botella), formats (75cl, copa), wine names may be partial, different orderings.
+If the current match looks correct, confirm it. If a better match exists, suggest it. If no match, return null.
+Respond ONLY with the JSON array, no other text.`;
+
+      const aiRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${lovableApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-3-flash-preview",
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.1,
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const errText = await aiRes.text();
+        return new Response(
+          JSON.stringify({ success: false, error: `AI gateway error: ${aiRes.status}`, details: errText.substring(0, 500) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const aiData = await aiRes.json();
+      const content = aiData?.choices?.[0]?.message?.content || "";
+
+      // Parse AI response
+      let aiResults: { pos_name: string; best_winerim_id: string | null; confidence: number; reasoning: string }[] = [];
+      try {
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) aiResults = JSON.parse(jsonMatch[0]);
+      } catch {
+        return new Response(
+          JSON.stringify({ success: false, error: "Failed to parse AI response", raw: content.substring(0, 1000) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      let updated = 0;
+      for (const aiMatch of aiResults) {
+        const mapping = pendingMappings.find((m: any) => m.provider_product_name === aiMatch.pos_name);
+        if (!mapping) continue;
+
+        if (aiMatch.best_winerim_id && aiMatch.confidence >= 70) {
+          const winerimWine = (winerimWines || []).find((w: any) => w.winerim_id === aiMatch.best_winerim_id);
+          await supabase.from("product_mappings").update({
+            winerim_wine_id: aiMatch.best_winerim_id,
+            winerim_wine_name: winerimWine?.name || mapping.winerim_wine_name,
+            match_method: "AI",
+            match_score: aiMatch.confidence,
+            match_reasons: [`ai:${aiMatch.reasoning}`],
+            status: aiMatch.confidence >= 85 ? "CONFIRMED" : "PENDING",
+          }).eq("id", mapping.id);
+
+          // Auto-confirm high confidence
+          if (aiMatch.confidence >= 85) {
+            await supabase.from("sales_line_items")
+              .update({ winerim_product_id: aiMatch.best_winerim_id, mapped: true })
+              .eq("connection_id", connectionId)
+              .eq("provider_product_id", mapping.provider_product_id);
+          }
+          updated++;
+        } else if (!aiMatch.best_winerim_id) {
+          // No match found by AI
+          await supabase.from("product_mappings").update({
+            match_method: "AI",
+            match_reasons: [`ai_no_match:${aiMatch.reasoning}`],
+          }).eq("id", mapping.id);
+          updated++;
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, processed: pendingMappings.length, updated, aiResults }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── CONFIRM MAPPING ──
+    if (action === "confirm-mapping") {
+      const { mappingId, winerimWineId, winerimWineName } = body;
+      if (!mappingId) {
+        return new Response(JSON.stringify({ error: "mappingId required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const updateData: Record<string, unknown> = { status: "CONFIRMED" };
+      if (winerimWineId) {
+        updateData.winerim_wine_id = winerimWineId;
+        updateData.winerim_wine_name = winerimWineName || "";
+        updateData.match_method = "MANUAL";
+        updateData.match_score = 100;
+      }
+
+      const { error } = await supabase.from("product_mappings").update(updateData).eq("id", mappingId);
+      if (error) {
+        return new Response(JSON.stringify({ error: error.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Also update sales_line_items
+      const { data: mapping } = await supabase.from("product_mappings").select("*").eq("id", mappingId).single();
+      if (mapping) {
+        await supabase.from("sales_line_items")
+          .update({ winerim_product_id: mapping.winerim_wine_id, mapped: true })
+          .eq("connection_id", connectionId)
+          .eq("provider_product_id", mapping.provider_product_id);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── REJECT MAPPING ──
+    if (action === "reject-mapping") {
+      const { mappingId } = body;
+      await supabase.from("product_mappings").update({ status: "REJECTED" }).eq("id", mappingId);
+      return new Response(JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── IGNORE MAPPING ──
+    if (action === "ignore-mapping") {
+      const { mappingId } = body;
+      await supabase.from("product_mappings").update({ status: "IGNORED" }).eq("id", mappingId);
+      return new Response(JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── UPDATE STOCK ──
+    if (action === "update-stock") {
+      const { productId, quantity } = body;
+      const res = await fetch("https://api.winerim.com/api/v2/stock", {
         method: "PUT",
         headers: winerimHeaders,
         body: JSON.stringify({ product_id: productId, quantity_change: -Math.abs(quantity) }),
       });
-
       const responseBody = await res.text();
       let parsed;
       try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
-
       return new Response(
         JSON.stringify({ success: res.ok, status: res.status, response: parsed }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // ── BULK UPDATE STOCK (multiple products) ──
-    if (action === "bulk-update-stock") {
-      if (!wines || !Array.isArray(wines)) {
-        return new Response(
-          JSON.stringify({ error: "wines array required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const results: { productId: string; success: boolean; status?: number; error?: string }[] = [];
-
-      for (const wine of wines) {
-        try {
-          const res = await fetch(`https://api.winerim.com/api/v2/stock`, {
-            method: "PUT",
-            headers: winerimHeaders,
-            body: JSON.stringify({
-              product_id: wine.winerim_product_id,
-              quantity_change: -Math.abs(wine.quantity),
-            }),
-          });
-          const body = await res.text();
-          results.push({
-            productId: wine.winerim_product_id,
-            success: res.ok,
-            status: res.status,
-            error: res.ok ? undefined : body.substring(0, 500),
-          });
-        } catch (e) {
-          results.push({
-            productId: wine.winerim_product_id,
-            success: false,
-            error: String(e),
-          });
-        }
-      }
-
-      const successCount = results.filter(r => r.success).length;
-      return new Response(
-        JSON.stringify({ success: true, total: wines.length, successCount, failedCount: wines.length - successCount, results }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
