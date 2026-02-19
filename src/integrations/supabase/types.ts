@@ -19,10 +19,15 @@ export type Database = {
           api_token: string
           backfill_days: number
           base_url: string
+          catalog_endpoint: string | null
+          catalog_product_count: number | null
+          catalog_sync_enabled: boolean | null
+          catalog_wine_candidate_count: number | null
           created_at: string
           enabled: boolean
           id: string
           last_business_day_synced: string | null
+          last_catalog_sync_at: string | null
           last_sync_at: string | null
           location_name: string
           provider: string
@@ -35,10 +40,15 @@ export type Database = {
           api_token: string
           backfill_days?: number
           base_url: string
+          catalog_endpoint?: string | null
+          catalog_product_count?: number | null
+          catalog_sync_enabled?: boolean | null
+          catalog_wine_candidate_count?: number | null
           created_at?: string
           enabled?: boolean
           id?: string
           last_business_day_synced?: string | null
+          last_catalog_sync_at?: string | null
           last_sync_at?: string | null
           location_name: string
           provider?: string
@@ -51,10 +61,15 @@ export type Database = {
           api_token?: string
           backfill_days?: number
           base_url?: string
+          catalog_endpoint?: string | null
+          catalog_product_count?: number | null
+          catalog_sync_enabled?: boolean | null
+          catalog_wine_candidate_count?: number | null
           created_at?: string
           enabled?: boolean
           id?: string
           last_business_day_synced?: string | null
+          last_catalog_sync_at?: string | null
           last_sync_at?: string | null
           location_name?: string
           provider?: string
@@ -64,6 +79,68 @@ export type Database = {
           winerim_api_token?: string | null
         }
         Relationships: []
+      }
+      provider_products: {
+        Row: {
+          connection_id: string
+          created_at: string
+          family: string | null
+          id: string
+          is_wine_candidate: boolean | null
+          name: string
+          price: number | null
+          provider_product_id: string
+          provider_updated_at: string | null
+          raw_payload: Json | null
+          sale_format: string | null
+          updated_at: string
+          vat_rate: number | null
+          wine_reasons: string[] | null
+          wine_score: number | null
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          family?: string | null
+          id?: string
+          is_wine_candidate?: boolean | null
+          name: string
+          price?: number | null
+          provider_product_id: string
+          provider_updated_at?: string | null
+          raw_payload?: Json | null
+          sale_format?: string | null
+          updated_at?: string
+          vat_rate?: number | null
+          wine_reasons?: string[] | null
+          wine_score?: number | null
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          family?: string | null
+          id?: string
+          is_wine_candidate?: boolean | null
+          name?: string
+          price?: number | null
+          provider_product_id?: string
+          provider_updated_at?: string | null
+          raw_payload?: Json | null
+          sale_format?: string | null
+          updated_at?: string
+          vat_rate?: number | null
+          wine_reasons?: string[] | null
+          wine_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_products_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sales_events: {
         Row: {

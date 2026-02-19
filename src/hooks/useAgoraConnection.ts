@@ -33,6 +33,35 @@ export interface DetectedFamily {
   itemCount: number;
 }
 
+export interface CatalogDiscoveryResult {
+  filter: string;
+  status: number;
+  contentType: string;
+  count: number;
+  sample: unknown;
+}
+
+export interface CatalogStatus {
+  catalogEndpoint: string | null;
+  lastCatalogSyncAt: string | null;
+  catalogProductCount: number;
+  catalogWineCandidateCount: number;
+  catalogSyncEnabled: boolean;
+}
+
+export interface ProviderProduct {
+  id: string;
+  provider_product_id: string;
+  name: string;
+  family: string | null;
+  vat_rate: number;
+  sale_format: string | null;
+  price: number;
+  is_wine_candidate: boolean;
+  wine_score: number;
+  wine_reasons: string[];
+}
+
 export function useAgoraConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
@@ -52,6 +81,23 @@ export function useAgoraConnection() {
   // Save status
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
+
+  // Catalog state
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>({
+    catalogEndpoint: null,
+    lastCatalogSyncAt: null,
+    catalogProductCount: 0,
+    catalogWineCandidateCount: 0,
+    catalogSyncEnabled: true,
+  });
+  const [catalogDiscovering, setCatalogDiscovering] = useState(false);
+  const [catalogDiscoveryResults, setCatalogDiscoveryResults] = useState<CatalogDiscoveryResult[]>([]);
+  const [catalogDiscoverySample, setCatalogDiscoverySample] = useState<unknown>(null);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
+  const [catalogSyncResult, setCatalogSyncResult] = useState<{ totalProducts: number; wineCandidates: number } | null>(null);
+  const [catalogTestResult, setCatalogTestResult] = useState<{ count: number; sample: unknown[] } | null>(null);
+  const [catalogTestingEndpoint, setCatalogTestingEndpoint] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState<ProviderProduct[]>([]);
 
   const saveConnection = async (data: {
     locationName: string;
@@ -217,6 +263,97 @@ export function useAgoraConnection() {
     }
   }, [connectionId]);
 
+  // ── Catalog methods ──
+
+  const discoverCatalog = useCallback(async () => {
+    if (!connectionId) return;
+    setCatalogDiscovering(true);
+    setCatalogDiscoveryResults([]);
+    setCatalogDiscoverySample(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "discover-catalog", connectionId },
+      });
+      if (error) throw error;
+      setCatalogDiscoveryResults(data?.allResults || []);
+      if (data?.success) {
+        setCatalogDiscoverySample(data.sample);
+        setCatalogStatus((prev) => ({ ...prev, catalogEndpoint: data.selectedEndpoint }));
+      }
+      return data;
+    } catch (e) {
+      console.error("Failed to discover catalog:", e);
+    } finally {
+      setCatalogDiscovering(false);
+    }
+  }, [connectionId]);
+
+  const syncCatalog = useCallback(async () => {
+    if (!connectionId) return;
+    setCatalogSyncing(true);
+    setCatalogSyncResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "sync-catalog", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        setCatalogSyncResult({ totalProducts: data.totalProducts, wineCandidates: data.wineCandidates });
+        setCatalogStatus((prev) => ({
+          ...prev,
+          lastCatalogSyncAt: new Date().toISOString(),
+          catalogProductCount: data.totalProducts,
+          catalogWineCandidateCount: data.wineCandidates,
+          catalogEndpoint: data.endpoint,
+        }));
+      }
+      return data;
+    } catch (e) {
+      console.error("Failed to sync catalog:", e);
+    } finally {
+      setCatalogSyncing(false);
+    }
+  }, [connectionId]);
+
+  const testCatalogEndpoint = useCallback(async (filter?: string) => {
+    if (!connectionId) return;
+    setCatalogTestingEndpoint(true);
+    setCatalogTestResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "test-catalog-endpoint", connectionId, filter },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        setCatalogTestResult({ count: data.count, sample: data.sample || [] });
+      }
+      return data;
+    } catch (e) {
+      console.error("Failed to test catalog endpoint:", e);
+    } finally {
+      setCatalogTestingEndpoint(false);
+    }
+  }, [connectionId]);
+
+  const fetchCatalogProducts = useCallback(async () => {
+    if (!connectionId) return;
+    const { data, error } = await supabase
+      .from("provider_products")
+      .select("id, provider_product_id, name, family, vat_rate, sale_format, price, is_wine_candidate, wine_score, wine_reasons")
+      .eq("connection_id", connectionId)
+      .order("name")
+      .limit(500);
+    if (!error && data) {
+      setCatalogProducts(data as unknown as ProviderProduct[]);
+    }
+  }, [connectionId]);
+
+  const toggleCatalogSync = useCallback(async (enabled: boolean) => {
+    if (!connectionId) return;
+    await updateConnection(connectionId, { catalog_sync_enabled: enabled });
+    setCatalogStatus((prev) => ({ ...prev, catalogSyncEnabled: enabled }));
+  }, [connectionId]);
+
   const loadConnection = useCallback(async (id: string) => {
     const { data, error } = await supabase
       .from("pos_connections")
@@ -225,6 +362,15 @@ export function useAgoraConnection() {
       .single();
     if (error || !data) return null;
     setConnectionId(data.id);
+    // Load catalog status from connection
+    const conn = data as any;
+    setCatalogStatus({
+      catalogEndpoint: conn.catalog_endpoint || null,
+      lastCatalogSyncAt: conn.last_catalog_sync_at || null,
+      catalogProductCount: conn.catalog_product_count || 0,
+      catalogWineCandidateCount: conn.catalog_wine_candidate_count || 0,
+      catalogSyncEnabled: conn.catalog_sync_enabled ?? true,
+    });
     return data;
   }, []);
 
@@ -257,5 +403,20 @@ export function useAgoraConnection() {
     enableSync,
     // Families
     saveFamilyRules,
+    // Catalog
+    catalogStatus,
+    catalogDiscovering,
+    catalogDiscoveryResults,
+    catalogDiscoverySample,
+    catalogSyncing,
+    catalogSyncResult,
+    catalogTestResult,
+    catalogTestingEndpoint,
+    catalogProducts,
+    discoverCatalog,
+    syncCatalog,
+    testCatalogEndpoint,
+    fetchCatalogProducts,
+    toggleCatalogSync,
   };
 }

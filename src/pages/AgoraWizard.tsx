@@ -21,19 +21,31 @@ import {
   ShieldX,
   HelpCircle,
   ChevronDown,
+  Package,
+  RefreshCw,
+  Database,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@/hooks/useAgoraConnection";
+import {
+  useAgoraConnection,
+  SalesEvent,
+  SalesLineItem,
+  DetectedFamily,
+  CatalogDiscoveryResult,
+  ProviderProduct,
+} from "@/hooks/useAgoraConnection";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Sync Settings", icon: Settings2 },
-  { id: 3, label: "Families", icon: Grape },
-  { id: 4, label: "Sales & Mapping", icon: Map },
-  { id: 5, label: "Go Live", icon: Power },
+  { id: 3, label: "Catalog", icon: Package },
+  { id: 4, label: "Families", icon: Grape },
+  { id: 5, label: "Sales & Mapping", icon: Map },
+  { id: 6, label: "Go Live", icon: Power },
 ];
 
 // ── Step 1: Connection ──
@@ -97,10 +109,12 @@ function StepSyncSettings({
   syncMode, setSyncMode,
   frequency, setFrequency,
   backfill, setBackfill,
+  catalogSyncEnabled, onToggleCatalogSync,
 }: {
   syncMode: string; setSyncMode: (v: "PULL_ONLY" | "BIDIRECTIONAL") => void;
   frequency: number; setFrequency: (v: number) => void;
   backfill: number; setBackfill: (v: number) => void;
+  catalogSyncEnabled: boolean; onToggleCatalogSync: (v: boolean) => void;
 }) {
   return (
     <div className="space-y-5">
@@ -140,12 +154,239 @@ function StepSyncSettings({
             ))}
           </div>
         </div>
+        {/* Catalog sync toggle */}
+        <div className="flex items-center justify-between rounded-lg border border-border p-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">Sync catalog/products</p>
+            <p className="text-xs text-muted-foreground">Fetch the full product catalog from Agora daily</p>
+          </div>
+          <Switch checked={catalogSyncEnabled} onCheckedChange={onToggleCatalogSync} />
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Step 3: Families ──
+// ── Step 3: Catalog ──
+function StepCatalog({
+  catalogStatus,
+  catalogDiscovering,
+  catalogDiscoveryResults,
+  catalogDiscoverySample,
+  catalogSyncing,
+  catalogSyncResult,
+  catalogTestResult,
+  catalogTestingEndpoint,
+  catalogProducts,
+  onDiscover,
+  onSync,
+  onTestEndpoint,
+  onFetchProducts,
+}: {
+  catalogStatus: { catalogEndpoint: string | null; lastCatalogSyncAt: string | null; catalogProductCount: number; catalogWineCandidateCount: number };
+  catalogDiscovering: boolean;
+  catalogDiscoveryResults: CatalogDiscoveryResult[];
+  catalogDiscoverySample: unknown;
+  catalogSyncing: boolean;
+  catalogSyncResult: { totalProducts: number; wineCandidates: number } | null;
+  catalogTestResult: { count: number; sample: unknown[] } | null;
+  catalogTestingEndpoint: boolean;
+  catalogProducts: ProviderProduct[];
+  onDiscover: () => void;
+  onSync: () => void;
+  onTestEndpoint: (filter?: string) => void;
+  onFetchProducts: () => void;
+}) {
+  const [searchCatalog, setSearchCatalog] = useState("");
+  const [showWineOnly, setShowWineOnly] = useState(false);
+  const [testFilter, setTestFilter] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    let result = catalogProducts;
+    if (searchCatalog) {
+      const q = searchCatalog.toLowerCase();
+      result = result.filter((p) => p.name.toLowerCase().includes(q) || (p.family || "").toLowerCase().includes(q));
+    }
+    if (showWineOnly) {
+      result = result.filter((p) => p.is_wine_candidate);
+    }
+    return result;
+  }, [catalogProducts, searchCatalog, showWineOnly]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Catalog / Product Sync</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Discover and sync the product catalog from Agora. Independent of daily sales.
+        </p>
+      </div>
+
+      {/* Catalog Status Panel */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+          <Database className="h-3.5 w-3.5" /> Catalog Status
+        </p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Endpoint</span>
+          <span className="font-mono text-foreground">{catalogStatus.catalogEndpoint || "Not discovered"}</span>
+          <span className="text-muted-foreground">Last sync</span>
+          <span className="font-mono text-foreground">
+            {catalogStatus.lastCatalogSyncAt
+              ? new Date(catalogStatus.lastCatalogSyncAt).toLocaleString()
+              : "Never"}
+          </span>
+          <span className="text-muted-foreground">Products fetched</span>
+          <span className="font-mono text-foreground">{catalogStatus.catalogProductCount}</span>
+          <span className="text-muted-foreground">Wine candidates</span>
+          <span className="font-mono text-success">{catalogStatus.catalogWineCandidateCount}</span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={onDiscover} disabled={catalogDiscovering}>
+          {catalogDiscovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+          Discover Endpoint
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onSync} disabled={catalogSyncing || !catalogStatus.catalogEndpoint}>
+          {catalogSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          Sync Now
+        </Button>
+        {catalogStatus.catalogEndpoint && catalogProducts.length === 0 && (
+          <Button variant="outline" size="sm" onClick={onFetchProducts}>
+            <Download className="mr-2 h-4 w-4" /> Load Products
+          </Button>
+        )}
+      </div>
+
+      {/* Sync result */}
+      {catalogSyncResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Catalog synced
+          </p>
+          <p className="text-muted-foreground">
+            {catalogSyncResult.totalProducts} products imported, {catalogSyncResult.wineCandidates} wine candidates detected.
+          </p>
+        </div>
+      )}
+
+      {/* Discovery results */}
+      {catalogDiscoveryResults.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Discovery Results</p>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+            {catalogDiscoveryResults.map((r) => (
+              <div key={r.filter} className="flex items-center justify-between px-4 py-2.5 bg-card">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground font-mono">?filter={r.filter}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Status: {r.status} · {r.contentType} · {r.count} items
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {r.count > 0 ? (
+                    <Badge variant="default" className="text-[10px]">{r.count} items</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-[10px]">Empty</Badge>
+                  )}
+                  {r.filter === catalogStatus.catalogEndpoint && (
+                    <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Sample record */}
+      {catalogDiscoverySample && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Sample Record</p>
+          <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-48 overflow-y-auto text-foreground">
+            {JSON.stringify(catalogDiscoverySample, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {/* Debug: Test any endpoint */}
+      <div className="space-y-2 rounded-lg border border-border p-4">
+        <p className="text-xs font-medium text-muted-foreground">Debug: Test Catalog Endpoint</p>
+        <div className="flex gap-2">
+          <Input
+            placeholder="Filter name (e.g. Articles, Products, Catalog)"
+            value={testFilter}
+            onChange={(e) => setTestFilter(e.target.value)}
+            className="bg-background text-sm font-mono flex-1"
+          />
+          <Button variant="outline" size="sm" onClick={() => onTestEndpoint(testFilter || undefined)} disabled={catalogTestingEndpoint}>
+            {catalogTestingEndpoint ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+          </Button>
+        </div>
+        {catalogTestResult && (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">{catalogTestResult.count} items found</p>
+            <pre className="rounded-lg bg-secondary/30 p-2 text-xs font-mono overflow-x-auto max-h-36 overflow-y-auto text-foreground">
+              {JSON.stringify(catalogTestResult.sample, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* Product list (from DB) */}
+      {catalogProducts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Search products…" value={searchCatalog} onChange={(e) => setSearchCatalog(e.target.value)} className="pl-10 bg-background" />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={showWineOnly} onCheckedChange={setShowWineOnly} />
+              <Wine className="h-3.5 w-3.5" />
+              Wine only
+            </label>
+          </div>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
+            {filteredProducts.length === 0 ? (
+              <div className="text-center py-6 text-sm text-muted-foreground">No matching products.</div>
+            ) : (
+              filteredProducts.map((p) => (
+                <div key={p.id} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${p.is_wine_candidate ? "bg-success" : "bg-muted-foreground"}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {p.family && <span className="mr-2">{p.family}</span>}
+                        {p.sale_format && <span className="mr-2">· {p.sale_format}</span>}
+                        {p.price > 0 && <span className="font-mono">€{p.price.toFixed(2)}</span>}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    {p.is_wine_candidate ? (
+                      <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground text-right">
+            Showing {filteredProducts.length} of {catalogProducts.length} products
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 4: Families ──
 function StepFamilies({
   detectedFamilies,
   loadingDays,
@@ -171,7 +412,6 @@ function StepFamilies({
 }) {
   const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
-  // Build a map of family -> unique product names
   const familyProducts = useMemo(() => {
     const map: Record<string, { name: string; format: string; unitPrice: number; quantity: number }[]> = {};
     for (const ev of salesEvents) {
@@ -186,12 +426,12 @@ function StepFamilies({
         }
       }
     }
-    // Sort each family's products by name
     for (const fam of Object.keys(map)) {
       map[fam].sort((a, b) => a.name.localeCompare(b.name));
     }
     return map;
   }, [salesEvents]);
+
   const sortedFamilies = useMemo(() => {
     return [...detectedFamilies].sort((a, b) => {
       const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
@@ -243,7 +483,6 @@ function StepFamilies({
         </p>
       </div>
 
-      {/* Debug info */}
       {scanStats && (
         <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
           <p className="text-xs font-medium text-muted-foreground">Scan Results</p>
@@ -266,7 +505,6 @@ function StepFamilies({
         </div>
       )}
 
-      {/* Empty state with historical scan button */}
       {detectedFamilies.length === 0 && (
         <div className="text-center py-8 space-y-4 rounded-lg border border-border bg-secondary/20">
           <p className="text-sm text-muted-foreground">
@@ -283,7 +521,6 @@ function StepFamilies({
 
       {detectedFamilies.length > 0 && (
         <>
-          {/* Summary bar */}
           <div className="flex gap-4 text-xs">
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full bg-success" />
@@ -295,7 +532,6 @@ function StepFamilies({
             </div>
           </div>
 
-          {/* Bulk actions */}
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => {
               const overrides: Record<string, boolean> = {};
@@ -310,7 +546,6 @@ function StepFamilies({
             <Button variant="outline" size="sm" onClick={() => setFamilyOverrides({})}>Reset to Suggestions</Button>
           </div>
 
-          {/* Family list */}
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
             {sortedFamilies.map((f) => {
               const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
@@ -387,7 +622,7 @@ function StepFamilies({
   );
 }
 
-// ── Step 4: Sales & Mapping ──
+// ── Step 5: Sales & Mapping ──
 function StepSalesMapping({
   daysWithSales, selectedDay, setSelectedDay, loadingDays,
   salesEvents, loadingSales,
@@ -396,6 +631,7 @@ function StepSalesMapping({
   familyOverrides, detectedFamilies,
   searchMapping, setSearchMapping,
   showWineOnly, setShowWineOnly,
+  catalogProducts,
 }: {
   daysWithSales: string[];
   selectedDay: string | null;
@@ -413,15 +649,36 @@ function StepSalesMapping({
   setSearchMapping: (v: string) => void;
   showWineOnly: boolean;
   setShowWineOnly: (v: boolean) => void;
+  catalogProducts: ProviderProduct[];
 }) {
-  // Resolve family wine status from overrides or detected suggestion
   const isFamilyWine = (familyName: string) => {
     if (familyName in familyOverrides) return familyOverrides[familyName];
     const detected = detectedFamilies.find((f) => f.name === familyName);
     return detected?.suggestedWine ?? false;
   };
 
+  // Prefer catalog products if available; fall back to invoice lines
+  const useCatalog = catalogProducts.length > 0;
+
   const allLines = useMemo(() => {
+    if (useCatalog) {
+      // Map catalog products to display format
+      return catalogProducts.map((p) => ({
+        provider_product_id: p.provider_product_id,
+        name: p.name,
+        format: p.sale_format || "",
+        family: p.family || "",
+        quantity: 0,
+        unit_price: p.price,
+        total_amount: 0,
+        vat_rate: p.vat_rate,
+        is_wine_candidate: p.is_wine_candidate,
+        wine_score: p.wine_score,
+        wine_reasons: p.wine_reasons,
+        docId: "catalog",
+        familyIsWine: isFamilyWine(p.family || ""),
+      }));
+    }
     const lines: (SalesLineItem & { docId: string; familyIsWine: boolean })[] = [];
     for (const ev of salesEvents) {
       for (const l of ev.lines) {
@@ -429,7 +686,7 @@ function StepSalesMapping({
       }
     }
     return lines;
-  }, [salesEvents, familyOverrides, detectedFamilies]);
+  }, [salesEvents, familyOverrides, detectedFamilies, catalogProducts, useCatalog]);
 
   const filteredLines = useMemo(() => {
     let result = allLines;
@@ -451,43 +708,52 @@ function StepSalesMapping({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Review sales data. Wine-classified items are shown by default.
+          {useCatalog
+            ? "Showing products from catalog. Wine-classified items highlighted."
+            : "Review sales data. Wine-classified items are shown by default."}
         </p>
-      </div>
-
-      {/* Day selector */}
-      <div>
-        <label className="text-xs font-medium text-muted-foreground mb-2 block">
-          <Calendar className="inline h-3.5 w-3.5 mr-1" />
-          Business Day (cash closure)
-        </label>
-        {loadingDays ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-            <Loader2 className="h-4 w-4 animate-spin" /> Scanning for days with sales…
-          </div>
-        ) : daysWithSales.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-2">No cash closures found in the last 30 days.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {daysWithSales.map((day) => (
-              <button
-                key={day}
-                onClick={() => { setSelectedDay(day); onFetchDay(day); }}
-                className={`rounded-lg border px-3 py-2 text-xs font-mono font-medium transition-all ${
-                  selectedDay === day
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-border text-muted-foreground hover:border-primary/30"
-                }`}
-              >
-                {day}
-              </button>
-            ))}
-          </div>
+        {useCatalog && (
+          <Badge variant="outline" className="mt-1 text-[10px]">
+            <Package className="mr-1 h-3 w-3" /> Using catalog ({catalogProducts.length} products)
+          </Badge>
         )}
       </div>
 
+      {/* Day selector (still useful for sales data) */}
+      {!useCatalog && (
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-2 block">
+            <Calendar className="inline h-3.5 w-3.5 mr-1" />
+            Business Day (cash closure)
+          </label>
+          {loadingDays ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Scanning for days with sales…
+            </div>
+          ) : daysWithSales.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">No cash closures found in the last 30 days.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {daysWithSales.map((day) => (
+                <button
+                  key={day}
+                  onClick={() => { setSelectedDay(day); onFetchDay(day); }}
+                  className={`rounded-lg border px-3 py-2 text-xs font-mono font-medium transition-all ${
+                    selectedDay === day
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/30"
+                  }`}
+                >
+                  {day}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Sales summary */}
-      {selectedDay && !loadingSales && salesEvents.length > 0 && (
+      {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
         <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
           <div className="flex justify-between text-xs">
             <span className="text-muted-foreground">Business Day</span>
@@ -522,13 +788,13 @@ function StepSalesMapping({
         </div>
       )}
 
-      {selectedDay && !loadingSales && salesEvents.length === 0 && (
+      {!useCatalog && selectedDay && !loadingSales && salesEvents.length === 0 && (
         <div className="text-center py-8 text-sm text-muted-foreground rounded-lg border border-border bg-secondary/20">
           No hay datos porque no hubo cierre de caja ese día.
         </div>
       )}
 
-      {loadingSales && (
+      {!useCatalog && loadingSales && (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           <span className="ml-2 text-sm text-muted-foreground">Loading sales…</span>
@@ -550,7 +816,6 @@ function StepSalesMapping({
             </label>
           </div>
 
-          {/* Products table */}
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
             {filteredLines.length === 0 ? (
               <div className="text-center py-8 text-sm text-muted-foreground">No matching products.</div>
@@ -566,13 +831,13 @@ function StepSalesMapping({
                         <p className="text-[11px] text-muted-foreground">
                           {l.family && <span className="mr-2">{l.family}</span>}
                           {l.format && <span className="mr-2">· {l.format}</span>}
-                          <span className="font-mono">×{l.quantity}</span>
-                          <span className="ml-2 font-mono">@€{l.unit_price.toFixed(2)}</span>
+                          {l.quantity > 0 && <span className="font-mono">×{l.quantity}</span>}
+                          {l.unit_price > 0 && <span className="ml-2 font-mono">@€{l.unit_price.toFixed(2)}</span>}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>
+                      {l.total_amount > 0 && <span className="text-xs font-mono text-foreground">€{l.total_amount.toFixed(2)}</span>}
                       {isWine ? (
                         <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
                       ) : (
@@ -590,12 +855,13 @@ function StepSalesMapping({
   );
 }
 
-// ── Step 5: Go Live ──
+// ── Step 6: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill,
   salesEvents, selectedDay,
   onEnable, enabled,
   familyOverrides, detectedFamilies,
+  catalogStatus,
 }: {
   syncMode: string;
   frequency: number;
@@ -606,6 +872,7 @@ function StepGoLive({
   enabled: boolean;
   familyOverrides: Record<string, boolean>;
   detectedFamilies: DetectedFamily[];
+  catalogStatus: { catalogEndpoint: string | null; catalogProductCount: number; catalogWineCandidateCount: number; catalogSyncEnabled: boolean };
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => {
     return f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
@@ -631,7 +898,16 @@ function StepGoLive({
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
         {selectedDay && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Last business day</span><span className="font-medium font-mono text-foreground">{selectedDay}</span></div>}
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine families</span><span className="font-medium text-foreground">{wineFamilyCount}</span></div>
-        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates</span><span className="font-medium text-foreground">{wineLines.length}</span></div>
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates (sales)</span><span className="font-medium text-foreground">{wineLines.length}</span></div>
+        {catalogStatus.catalogEndpoint && (
+          <>
+            <div className="border-t border-border pt-2 mt-2" />
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog endpoint</span><span className="font-mono font-medium text-foreground">{catalogStatus.catalogEndpoint}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog products</span><span className="font-medium text-foreground">{catalogStatus.catalogProductCount}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog wine candidates</span><span className="font-medium text-success">{catalogStatus.catalogWineCandidateCount}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog sync</span><span className="font-medium text-foreground">{catalogStatus.catalogSyncEnabled ? "Enabled" : "Disabled"}</span></div>
+          </>
+        )}
       </div>
       <Button size="lg" onClick={onEnable} className="shadow-glow">
         {enabled ? (<><CheckCircle2 className="mr-2 h-4 w-4" /> Sync Enabled — Redirecting…</>) : "Enable Sync"}
@@ -667,6 +943,21 @@ export default function AgoraWizard() {
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
+    // Catalog
+    catalogStatus,
+    catalogDiscovering,
+    catalogDiscoveryResults,
+    catalogDiscoverySample,
+    catalogSyncing,
+    catalogSyncResult,
+    catalogTestResult,
+    catalogTestingEndpoint,
+    catalogProducts,
+    discoverCatalog,
+    syncCatalog,
+    testCatalogEndpoint,
+    fetchCatalogProducts,
+    toggleCatalogSync,
   } = useAgoraConnection();
 
   // Load existing connection from URL param
@@ -683,25 +974,32 @@ export default function AgoraWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          setCurrentStep(4); // Jump to Sales view
+          setCurrentStep(5); // Jump to Sales view
         }
       });
     }
   }, [searchParams]);
 
-  // When entering step 3 or 4, scan for business days
+  // When entering step 4 or 5, scan for business days
   useEffect(() => {
-    if ((currentStep === 3 || currentStep === 4) && connectionId && daysWithSales.length === 0 && !loadingDays) {
+    if ((currentStep === 4 || currentStep === 5) && connectionId && daysWithSales.length === 0 && !loadingDays) {
       findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
 
   // Auto-fetch first day with sales when days are found (for family detection)
   useEffect(() => {
-    if (selectedDay && (currentStep === 3 || currentStep === 4)) {
+    if (selectedDay && (currentStep === 4 || currentStep === 5)) {
       fetchSalesForDay(selectedDay);
     }
   }, [selectedDay]);
+
+  // Auto-discover catalog when entering step 3
+  useEffect(() => {
+    if (currentStep === 3 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) {
+      discoverCatalog();
+    }
+  }, [currentStep, connectionId]);
 
   const handleNext = async () => {
     if (currentStep === 2 && connectionId) {
@@ -712,7 +1010,7 @@ export default function AgoraWizard() {
         location_name: locationName || "New Location",
       });
     }
-    if (currentStep === 3) {
+    if (currentStep === 4) {
       // Save family overrides
       const families = detectedFamilies.map((f) => ({
         name: f.name,
@@ -720,7 +1018,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(5, s + 1));
+    setCurrentStep((s) => Math.min(6, s + 1));
   };
 
   return (
@@ -738,16 +1036,16 @@ export default function AgoraWizard() {
       </div>
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         {steps.map((step, i) => {
           const isActive = step.id === currentStep;
           const isDone = step.id < currentStep;
           return (
-            <div key={step.id} className="flex items-center gap-2 flex-1">
-              <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
-                {isDone ? <CheckCircle2 className="h-4 w-4" /> : step.id}
+            <div key={step.id} className="flex items-center gap-1.5 flex-1">
+              <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
+                {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : step.id}
               </div>
-              <span className={`text-xs font-medium hidden sm:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              <span className={`text-[11px] font-medium hidden md:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
               {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
             </div>
           );
@@ -772,9 +1070,28 @@ export default function AgoraWizard() {
               syncMode={syncMode} setSyncMode={setSyncMode}
               frequency={frequency} setFrequency={setFrequency}
               backfill={backfill} setBackfill={setBackfill}
+              catalogSyncEnabled={catalogStatus.catalogSyncEnabled}
+              onToggleCatalogSync={toggleCatalogSync}
             />
           )}
           {currentStep === 3 && (
+            <StepCatalog
+              catalogStatus={catalogStatus}
+              catalogDiscovering={catalogDiscovering}
+              catalogDiscoveryResults={catalogDiscoveryResults}
+              catalogDiscoverySample={catalogDiscoverySample}
+              catalogSyncing={catalogSyncing}
+              catalogSyncResult={catalogSyncResult}
+              catalogTestResult={catalogTestResult}
+              catalogTestingEndpoint={catalogTestingEndpoint}
+              catalogProducts={catalogProducts}
+              onDiscover={discoverCatalog}
+              onSync={syncCatalog}
+              onTestEndpoint={testCatalogEndpoint}
+              onFetchProducts={fetchCatalogProducts}
+            />
+          )}
+          {currentStep === 4 && (
             <StepFamilies
               detectedFamilies={detectedFamilies}
               loadingDays={loadingDays}
@@ -788,7 +1105,7 @@ export default function AgoraWizard() {
               salesEvents={salesEvents}
             />
           )}
-          {currentStep === 4 && (
+          {currentStep === 5 && (
             <StepSalesMapping
               daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay} loadingDays={loadingDays}
               salesEvents={salesEvents} loadingSales={loadingSales}
@@ -797,15 +1114,17 @@ export default function AgoraWizard() {
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               searchMapping={searchMapping} setSearchMapping={setSearchMapping}
               showWineOnly={showWineOnly} setShowWineOnly={setShowWineOnly}
+              catalogProducts={catalogProducts}
             />
           )}
-          {currentStep === 5 && (
+          {currentStep === 6 && (
             <StepGoLive
               syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/sync-monitor"), 1000); }}
               enabled={enabled}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
+              catalogStatus={catalogStatus}
             />
           )}
         </motion.div>
@@ -816,7 +1135,7 @@ export default function AgoraWizard() {
         <Button variant="outline" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 5 && (
+        {currentStep < 6 && (
           <Button onClick={handleNext}>Next <ArrowRight className="ml-2 h-4 w-4" /></Button>
         )}
       </div>

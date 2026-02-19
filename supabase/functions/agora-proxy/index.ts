@@ -505,6 +505,231 @@ serve(async (req) => {
       );
     }
 
+    // ── DISCOVER CATALOG ENDPOINT ──
+    if (action === "discover-catalog") {
+      const endpoints = [
+        { filter: "Articles", label: "Articles" },
+        { filter: "Products", label: "Products" },
+        { filter: "Catalog", label: "Catalog" },
+      ];
+      const results: { filter: string; status: number; contentType: string; count: number; sample: unknown }[] = [];
+
+      for (const ep of endpoints) {
+        try {
+          const url = `${baseUrlClean}/api/export/?filter=${ep.filter}`;
+          console.log(`[discover-catalog] Trying ${url}`);
+          const res = await fetch(url, { headers });
+          const ct = res.headers.get("content-type") || "";
+          console.log(`[discover-catalog] ${ep.filter}: status=${res.status} content-type=${ct}`);
+
+          if (!res.ok) {
+            results.push({ filter: ep.filter, status: res.status, contentType: ct, count: 0, sample: null });
+            continue;
+          }
+
+          // If response is not JSON (file/zip), detect and skip
+          if (!ct.includes("json") && !ct.includes("text")) {
+            results.push({ filter: ep.filter, status: res.status, contentType: ct, count: 0, sample: "binary/file response" });
+            continue;
+          }
+
+          const body = await res.text();
+          const trimmed = body.trim();
+          if (!trimmed || trimmed === "{}" || trimmed === "[]") {
+            results.push({ filter: ep.filter, status: res.status, contentType: ct, count: 0, sample: null });
+            continue;
+          }
+
+          const parsed = JSON.parse(trimmed);
+          // Try to extract array of product-like items
+          let items: unknown[] = [];
+          if (Array.isArray(parsed)) {
+            items = parsed;
+          } else if (typeof parsed === "object" && parsed !== null) {
+            // Look for the first array property containing objects
+            for (const key of Object.keys(parsed)) {
+              if (Array.isArray(parsed[key]) && parsed[key].length > 0) {
+                items = parsed[key];
+                break;
+              }
+            }
+          }
+
+          // Check if items look like products (have name-like fields)
+          const productLikeFields = ["Name", "ProductName", "name", "Description", "ArticleName", "ItemName", "ProductId", "Id"];
+          const hasProductFields = items.length > 0 && typeof items[0] === "object" && items[0] !== null &&
+            productLikeFields.some((f) => f in (items[0] as Record<string, unknown>));
+
+          results.push({
+            filter: ep.filter,
+            status: res.status,
+            contentType: ct,
+            count: items.length,
+            sample: items.length > 0 ? items[0] : null,
+          });
+
+          if (hasProductFields && items.length > 0) {
+            // Store as selected catalog endpoint
+            await supabase.from("pos_connections").update({ catalog_endpoint: ep.filter }).eq("id", connectionId);
+            console.log(`[discover-catalog] Selected endpoint: ${ep.filter} (${items.length} items)`);
+            return new Response(
+              JSON.stringify({ success: true, selectedEndpoint: ep.filter, productCount: items.length, sample: items[0], allResults: results }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        } catch (e) {
+          console.error(`[discover-catalog] Error on ${ep.filter}:`, e);
+          results.push({ filter: ep.filter, status: 0, contentType: "error", count: 0, sample: String(e) });
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: false, message: "No catalog endpoint returned product-like data", allResults: results }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── TEST CATALOG ENDPOINT ──
+    if (action === "test-catalog-endpoint") {
+      const { filter } = await req.json().catch(() => ({}));
+      const endpoint = filter || connection.catalog_endpoint;
+      if (!endpoint) {
+        return new Response(
+          JSON.stringify({ error: "No catalog endpoint specified" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
+      const res = await fetch(url, { headers });
+      const ct = res.headers.get("content-type") || "";
+
+      if (!res.ok) {
+        return new Response(
+          JSON.stringify({ success: false, status: res.status, contentType: ct }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (!ct.includes("json") && !ct.includes("text")) {
+        return new Response(
+          JSON.stringify({ success: false, status: res.status, contentType: ct, message: "Binary response" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const body = await res.text();
+      const parsed = JSON.parse(body);
+      let items: unknown[] = [];
+      if (Array.isArray(parsed)) items = parsed;
+      else if (typeof parsed === "object" && parsed !== null) {
+        for (const key of Object.keys(parsed)) {
+          if (Array.isArray(parsed[key]) && parsed[key].length > 0) { items = parsed[key]; break; }
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, filter: endpoint, count: items.length, sample: items.slice(0, 3) }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── SYNC CATALOG ──
+    if (action === "sync-catalog") {
+      const endpoint = connection.catalog_endpoint;
+      if (!endpoint) {
+        return new Response(
+          JSON.stringify({ error: "No catalog endpoint configured. Run discover-catalog first." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
+      console.log(`[sync-catalog] Fetching ${url}`);
+      const res = await fetch(url, { headers });
+      const ct = res.headers.get("content-type") || "";
+      console.log(`[sync-catalog] status=${res.status} content-type=${ct}`);
+
+      if (!res.ok) {
+        return new Response(
+          JSON.stringify({ error: `Agora responded ${res.status}` }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const body = await res.text();
+      const parsed = JSON.parse(body);
+      let items: Record<string, unknown>[] = [];
+      if (Array.isArray(parsed)) items = parsed;
+      else if (typeof parsed === "object" && parsed !== null) {
+        for (const key of Object.keys(parsed)) {
+          if (Array.isArray(parsed[key]) && parsed[key].length > 0) { items = parsed[key]; break; }
+        }
+      }
+
+      console.log(`[sync-catalog] Found ${items.length} products`);
+
+      // Load wine family rules
+      const { data: familyRules } = await supabase
+        .from("wine_family_rules")
+        .select("family_name, is_wine")
+        .eq("connection_id", connectionId);
+
+      const customWineFamilies = familyRules
+        ?.filter((r: { is_wine: boolean }) => r.is_wine)
+        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
+
+      let upserted = 0;
+      let wineCandidates = 0;
+
+      for (const item of items) {
+        const prodId = String(item.ProductId || item.Id || item.ArticleId || item.ItemId || "");
+        if (!prodId) continue;
+
+        const name = String(item.ProductName || item.Name || item.ArticleName || item.ItemName || "Unknown");
+        const family = String(item.FamilyName || item.Family || item.Category || item.GroupName || "");
+        const vatRate = Number(item.VatRate || item.TaxRate || 0);
+        const format = String(item.SaleFormatName || item.Format || item.UnitName || "");
+        const price = Number(item.Price || item.UnitPrice || item.SalePrice || 0);
+
+        const wineResult = isWineCandidate(family, name, format, price, wineFamilies, NON_WINE_FAMILIES);
+        if (wineResult.candidate) wineCandidates++;
+
+        const { error: upsertErr } = await supabase
+          .from("provider_products")
+          .upsert({
+            connection_id: connectionId,
+            provider_product_id: prodId,
+            name,
+            family,
+            vat_rate: vatRate,
+            sale_format: format,
+            price,
+            is_wine_candidate: wineResult.candidate,
+            wine_score: wineResult.score,
+            wine_reasons: wineResult.reasons,
+            raw_payload: item,
+          }, { onConflict: "connection_id,provider_product_id" });
+
+        if (!upsertErr) upserted++;
+      }
+
+      // Update connection metadata
+      await supabase.from("pos_connections").update({
+        last_catalog_sync_at: new Date().toISOString(),
+        catalog_product_count: upserted,
+        catalog_wine_candidate_count: wineCandidates,
+      }).eq("id", connectionId);
+
+      console.log(`[sync-catalog] Upserted ${upserted} products, ${wineCandidates} wine candidates`);
+
+      return new Response(
+        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates, endpoint }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── DIAGNOSE (legacy) ──
     if (action === "diagnose" || action === "export") {
       const day = businessDay || new Date().toISOString().split("T")[0];
