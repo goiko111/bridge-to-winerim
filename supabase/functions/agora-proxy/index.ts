@@ -841,6 +841,150 @@ serve(async (req) => {
       );
     }
 
+    // ── SYNC STOCK TO WINERIM ──
+    if (action === "sync-stock") {
+      const day = businessDay;
+      if (!day) {
+        return new Response(
+          JSON.stringify({ error: "businessDay required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      if (!winerimToken) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No Winerim API token configured" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Get all mapped wine line items for this day
+      const { data: events } = await supabase
+        .from("sales_events")
+        .select("id")
+        .eq("connection_id", connectionId)
+        .eq("business_day", day);
+
+      if (!events || events.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, message: "No sales events for this day", synced: 0, skipped: 0, failed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const eventIds = events.map((e: { id: string }) => e.id);
+      const { data: lines } = await supabase
+        .from("sales_line_items")
+        .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate")
+        .in("sales_event_id", eventIds);
+
+      if (!lines || lines.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, message: "No line items found", synced: 0, skipped: 0, failed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Filter: only mapped wine items with winerim_product_id
+      const mappedLines = lines.filter((l: { winerim_product_id: string | null; is_wine_candidate: boolean }) =>
+        l.winerim_product_id && l.is_wine_candidate
+      );
+
+      let synced = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      const winerimHeaders = {
+        "Authorization": `Bearer ${winerimToken}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      };
+
+      for (const line of mappedLines) {
+        // Check if already synced
+        const { data: existing } = await supabase
+          .from("stock_sync_log")
+          .select("id")
+          .eq("sales_line_item_id", line.id)
+          .eq("status", "SUCCESS")
+          .limit(1);
+
+        if (existing && existing.length > 0) {
+          skipped++;
+          continue;
+        }
+
+        // Create pending log entry
+        const { data: logEntry } = await supabase
+          .from("stock_sync_log")
+          .insert({
+            connection_id: connectionId,
+            sales_event_id: line.sales_event_id,
+            sales_line_item_id: line.id,
+            provider_product_id: line.provider_product_id,
+            winerim_product_id: line.winerim_product_id,
+            product_name: line.name,
+            quantity: Math.abs(Number(line.quantity)),
+            status: "PENDING",
+          })
+          .select("id")
+          .single();
+
+        try {
+          const res = await fetch("https://api.winerim.com/api/v2/stock", {
+            method: "PUT",
+            headers: winerimHeaders,
+            body: JSON.stringify({
+              product_id: line.winerim_product_id,
+              quantity_change: -Math.abs(Number(line.quantity)),
+            }),
+          });
+
+          const responseBody = await res.text();
+          let parsed;
+          try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
+
+          if (res.ok) {
+            await supabase.from("stock_sync_log").update({
+              status: "SUCCESS",
+              winerim_response: parsed,
+              synced_at: new Date().toISOString(),
+            }).eq("id", logEntry?.id);
+            synced++;
+          } else {
+            await supabase.from("stock_sync_log").update({
+              status: "FAILED",
+              error_message: responseBody.substring(0, 500),
+              winerim_response: parsed,
+            }).eq("id", logEntry?.id);
+            failed++;
+          }
+        } catch (e) {
+          await supabase.from("stock_sync_log").update({
+            status: "FAILED",
+            error_message: String(e),
+          }).eq("id", logEntry?.id);
+          failed++;
+        }
+      }
+
+      const unmappedCount = lines.length - mappedLines.length;
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          synced,
+          skipped,
+          failed,
+          unmapped: unmappedCount,
+          totalLines: lines.length,
+          mappedLines: mappedLines.length,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── DIAGNOSE (legacy) ──
     if (action === "diagnose" || action === "export") {
       const day = businessDay || new Date().toISOString().split("T")[0];
