@@ -11,6 +11,9 @@ import {
   ArrowDownToLine,
   Clock,
   Wine,
+  Upload,
+  Play,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -70,9 +73,11 @@ export default function SyncMonitor() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [stockLogs, setStockLogs] = useState<StockSyncLog[]>([]);
+  const [outboundTasks, setOutboundTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [syncingStock, setSyncingStock] = useState<string | null>(null);
+  const [processingOutbound, setProcessingOutbound] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const handleDelete = async (conn: Connection) => {
@@ -123,12 +128,32 @@ export default function SyncMonitor() {
     }
   }, []);
 
+  const processOutboundForConnection = useCallback(async (conn: Connection) => {
+    setProcessingOutbound(conn.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "process-outbound-queue", connectionId: conn.id },
+      });
+      if (error) throw error;
+      toast({
+        title: "Outbound processed",
+        description: `${data.succeeded} succeeded, ${data.failed} failed of ${data.processed} tasks`,
+      });
+      fetchData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setProcessingOutbound(null);
+    }
+  }, []);
+
   const fetchData = async () => {
     setLoading(true);
-    const [connRes, eventsRes, logsRes] = await Promise.all([
+    const [connRes, eventsRes, logsRes, outboundRes] = await Promise.all([
       supabase.from("pos_connections").select("*").order("created_at", { ascending: false }),
       supabase.from("sales_events").select("*").order("business_day", { ascending: false }).limit(50),
       supabase.from("stock_sync_log").select("*").order("created_at", { ascending: false }).limit(100),
+      supabase.from("outbound_tasks").select("*").order("created_at", { ascending: false }).limit(100),
     ]);
 
     const conns = (connRes.data || []) as Connection[];
@@ -140,6 +165,7 @@ export default function SyncMonitor() {
     }));
     setSalesEvents(events);
     setStockLogs((logsRes.data || []) as unknown as StockSyncLog[]);
+    setOutboundTasks(outboundRes.data || []);
     setLoading(false);
   };
 
@@ -172,8 +198,7 @@ export default function SyncMonitor() {
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid gap-4 sm:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-5">
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Connections</p>
           <p className="mt-2 text-lg font-bold text-foreground">{enabledConns.length} active</p>
@@ -182,13 +207,9 @@ export default function SyncMonitor() {
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Sync</p>
           <p className="mt-2 text-lg font-bold text-foreground">
-            {lastSync?.last_sync_at
-              ? new Date(lastSync.last_sync_at).toLocaleString()
-              : "Never"}
+            {lastSync?.last_sync_at ? new Date(lastSync.last_sync_at).toLocaleString() : "Never"}
           </p>
-          <p className="text-xs text-muted-foreground">
-            {lastSync?.location_name || "—"}
-          </p>
+          <p className="text-xs text-muted-foreground">{lastSync?.location_name || "—"}</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Sales Events</p>
@@ -205,6 +226,16 @@ export default function SyncMonitor() {
             {pendingLogs.length > 0 ? `${pendingLogs.length} pending` : "deductions sent"}
           </p>
         </div>
+        <div className="rounded-xl border border-border bg-card p-4 shadow-card">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Outbound</p>
+          <p className="mt-2 text-lg font-bold text-foreground">
+            <span className="text-success">{outboundTasks.filter((t: any) => t.status === "SUCCESS").length}</span>
+            <span className="text-muted-foreground ml-1">/ {outboundTasks.length}</span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {outboundTasks.filter((t: any) => t.status === "QUEUED").length} queued
+          </p>
+        </div>
       </div>
 
       <Tabs defaultValue="connections" className="space-y-4">
@@ -215,6 +246,14 @@ export default function SyncMonitor() {
             Stock Sync
             {failedLogs.length > 0 && (
               <Badge variant="destructive" className="ml-2 text-[10px]">{failedLogs.length}</Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="outbound">
+            Outbound
+            {outboundTasks.filter((t: any) => t.status === "FAILED" || t.status === "BLOCKED").length > 0 && (
+              <Badge variant="destructive" className="ml-2 text-[10px]">
+                {outboundTasks.filter((t: any) => t.status === "FAILED" || t.status === "BLOCKED").length}
+              </Badge>
             )}
           </TabsTrigger>
         </TabsList>
@@ -424,6 +463,66 @@ export default function SyncMonitor() {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        </TabsContent>
+
+        {/* Outbound Tab */}
+        <TabsContent value="outbound">
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-border bg-card shadow-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-foreground">Outbound Tasks (Winerim → Agora)</h2>
+              <div className="flex gap-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-success" /> {outboundTasks.filter((t: any) => t.status === "SUCCESS").length}</span>
+                <span className="flex items-center gap-1"><Clock className="h-3 w-3 text-warning" /> {outboundTasks.filter((t: any) => t.status === "QUEUED").length}</span>
+                <span className="flex items-center gap-1"><XCircle className="h-3 w-3 text-destructive" /> {outboundTasks.filter((t: any) => t.status === "FAILED").length}</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Product</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Attempts</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Error/Reason</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {outboundTasks.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      <Upload className="mx-auto h-8 w-8 mb-2 opacity-40" /> No outbound tasks yet.
+                    </td></tr>
+                  )}
+                  {outboundTasks.map((t: any) => (
+                    <tr key={t.id} className="hover:bg-secondary/30 transition-colors">
+                      <td className="px-4 py-3 text-foreground max-w-[200px] truncate">{t.payload_json?.Name || t.task_type}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant={t.status === "SUCCESS" ? "default" : t.status === "FAILED" ? "destructive" : t.status === "BLOCKED" ? "outline" : "secondary"} className="text-[10px]">
+                          {t.status}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{t.attempts}/{t.max_attempts}</td>
+                      <td className="px-4 py-3 text-xs text-destructive max-w-[200px] truncate">{t.last_error || t.blocked_reason || "—"}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">
+                        {(t.status === "FAILED" || t.status === "BLOCKED") && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7"
+                            onClick={async () => {
+                              await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", t.id);
+                              fetchData();
+                            }}>
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

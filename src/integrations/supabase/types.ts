@@ -70,6 +70,59 @@ export type Database = {
           },
         ]
       }
+      outbound_tasks: {
+        Row: {
+          attempts: number
+          blocked_reason: string | null
+          connection_id: string
+          created_at: string
+          external_id: string | null
+          id: string
+          last_error: string | null
+          max_attempts: number
+          payload_json: Json
+          status: string
+          task_type: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          blocked_reason?: string | null
+          connection_id: string
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload_json?: Json
+          status?: string
+          task_type?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          blocked_reason?: string | null
+          connection_id?: string
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload_json?: Json
+          status?: string
+          task_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "outbound_tasks_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pos_connections: {
         Row: {
           api_token: string
@@ -80,6 +133,10 @@ export type Database = {
           catalog_sync_enabled: boolean | null
           catalog_wine_candidate_count: number | null
           created_at: string
+          default_bottle_format_name: string | null
+          default_glass_format_name: string | null
+          default_vat_rate: number | null
+          default_wine_family_name: string | null
           enabled: boolean
           id: string
           last_business_day_synced: string | null
@@ -101,6 +158,10 @@ export type Database = {
           catalog_sync_enabled?: boolean | null
           catalog_wine_candidate_count?: number | null
           created_at?: string
+          default_bottle_format_name?: string | null
+          default_glass_format_name?: string | null
+          default_vat_rate?: number | null
+          default_wine_family_name?: string | null
           enabled?: boolean
           id?: string
           last_business_day_synced?: string | null
@@ -122,6 +183,10 @@ export type Database = {
           catalog_sync_enabled?: boolean | null
           catalog_wine_candidate_count?: number | null
           created_at?: string
+          default_bottle_format_name?: string | null
+          default_glass_format_name?: string | null
+          default_vat_rate?: number | null
+          default_wine_family_name?: string | null
           enabled?: boolean
           id?: string
           last_business_day_synced?: string | null
@@ -181,6 +246,56 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_capabilities: {
+        Row: {
+          can_read_catalog: boolean
+          can_read_sales: boolean
+          can_write_products: string
+          connection_id: string
+          created_at: string
+          id: string
+          last_checked_at: string | null
+          provider: string
+          updated_at: string
+          write_endpoint: string | null
+          write_endpoints_json: Json | null
+        }
+        Insert: {
+          can_read_catalog?: boolean
+          can_read_sales?: boolean
+          can_write_products?: string
+          connection_id: string
+          created_at?: string
+          id?: string
+          last_checked_at?: string | null
+          provider?: string
+          updated_at?: string
+          write_endpoint?: string | null
+          write_endpoints_json?: Json | null
+        }
+        Update: {
+          can_read_catalog?: boolean
+          can_read_sales?: boolean
+          can_write_products?: string
+          connection_id?: string
+          created_at?: string
+          id?: string
+          last_checked_at?: string | null
+          provider?: string
+          updated_at?: string
+          write_endpoint?: string | null
+          write_endpoints_json?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_capabilities_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       provider_products: {
         Row: {
           classification_override: string
@@ -191,16 +306,20 @@ export type Database = {
           is_wine_candidate: boolean | null
           last_reasons: string[] | null
           last_score: number | null
+          last_synced_at: string | null
           name: string
           price: number | null
           provider_product_id: string
           provider_updated_at: string | null
           raw_payload: Json | null
           sale_format: string | null
+          sync_error: string | null
+          sync_status: string
           updated_at: string
           vat_rate: number | null
           wine_reasons: string[] | null
           wine_score: number | null
+          winerim_wine_id: string | null
         }
         Insert: {
           classification_override?: string
@@ -211,16 +330,20 @@ export type Database = {
           is_wine_candidate?: boolean | null
           last_reasons?: string[] | null
           last_score?: number | null
+          last_synced_at?: string | null
           name: string
           price?: number | null
           provider_product_id: string
           provider_updated_at?: string | null
           raw_payload?: Json | null
           sale_format?: string | null
+          sync_error?: string | null
+          sync_status?: string
           updated_at?: string
           vat_rate?: number | null
           wine_reasons?: string[] | null
           wine_score?: number | null
+          winerim_wine_id?: string | null
         }
         Update: {
           classification_override?: string
@@ -231,16 +354,20 @@ export type Database = {
           is_wine_candidate?: boolean | null
           last_reasons?: string[] | null
           last_score?: number | null
+          last_synced_at?: string | null
           name?: string
           price?: number | null
           provider_product_id?: string
           provider_updated_at?: string | null
           raw_payload?: Json | null
           sale_format?: string | null
+          sync_error?: string | null
+          sync_status?: string
           updated_at?: string
           vat_rate?: number | null
           wine_reasons?: string[] | null
           wine_score?: number | null
+          winerim_wine_id?: string | null
         }
         Relationships: [
           {

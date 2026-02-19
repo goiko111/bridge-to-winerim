@@ -985,6 +985,437 @@ serve(async (req) => {
       );
     }
 
+    // ── DETECT WRITE CAPABILITIES ──
+    if (action === "detect-capabilities") {
+      const writeEndpoints = [
+        { path: "/api/import/articles", label: "POST /api/import/articles" },
+        { path: "/api/import/products", label: "POST /api/import/products" },
+        { path: "/api/products", label: "POST /api/products" },
+        { path: "/api/articles", label: "POST /api/articles" },
+      ];
+
+      const results: { path: string; label: string; status: number; supports: boolean; body?: string }[] = [];
+      let writeEndpoint: string | null = null;
+      let canWrite: "YES" | "NO" | "UNKNOWN" = "NO";
+
+      for (const ep of writeEndpoints) {
+        try {
+          // Try OPTIONS first for safe detection
+          let res: Response;
+          try {
+            res = await fetchWithRetry(`${baseUrlClean}${ep.path}`, {
+              method: "OPTIONS",
+              headers: { ...headers, "Content-Type": "application/json" },
+            }, 8000);
+          } catch (_) {
+            // OPTIONS not supported, try POST with minimal payload
+            res = await fetchWithRetry(`${baseUrlClean}${ep.path}`, {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: JSON.stringify({ _test: true, Name: "WINERIM_TEST_PROBE", ExternalRef: "WINERIM_TEST_PROBE_DELETE" }),
+            }, 8000);
+          }
+
+          const bodyText = await res.text();
+          const bodyPreview = bodyText.substring(0, 512);
+
+          // 200/201/202 = endpoint exists and accepted (may have created something)
+          // 400 with validation error = endpoint exists, supports write
+          // 404/405 = endpoint doesn't exist
+          const supports = res.status !== 404 && res.status !== 405 && res.status !== 501;
+
+          results.push({ path: ep.path, label: ep.label, status: res.status, supports, body: bodyPreview });
+
+          if (supports && !writeEndpoint) {
+            writeEndpoint = ep.path;
+            canWrite = "YES";
+
+            // If we got 200/201 (accidentally created), try to rollback
+            if (res.status === 200 || res.status === 201) {
+              try {
+                const created = JSON.parse(bodyText);
+                const createdId = created?.Id || created?.ProductId || created?.ArticleId;
+                if (createdId) {
+                  // Attempt DELETE rollback
+                  await fetchWithRetry(`${baseUrlClean}${ep.path}/${createdId}`, {
+                    method: "DELETE",
+                    headers,
+                  }, 5000).catch(() => {});
+                }
+              } catch (_) { /* rollback best-effort */ }
+              // If no rollback possible, mark as UNKNOWN for safety
+              canWrite = "UNKNOWN";
+            }
+          }
+        } catch (e) {
+          results.push({ path: ep.path, label: ep.label, status: 0, supports: false, body: String(e) });
+        }
+      }
+
+      // Upsert capabilities
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "AGORA",
+        can_read_sales: true,
+        can_read_catalog: !!connection.catalog_endpoint,
+        can_write_products: canWrite,
+        write_endpoint: writeEndpoint,
+        write_endpoints_json: results,
+        last_checked_at: new Date().toISOString(),
+      }, { onConflict: "connection_id" });
+
+      return new Response(
+        JSON.stringify({ success: true, canWrite, writeEndpoint, results }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── PROCESS OUTBOUND TASK ──
+    if (action === "process-outbound-task") {
+      const { taskId } = await req.json().catch(() => ({ taskId: undefined }));
+      const taskIdToUse = taskId || (await req.json().catch(() => ({}))).taskId;
+
+      // Fetch task
+      const { data: task, error: taskErr } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("id", taskId)
+        .single();
+      if (taskErr || !task) {
+        return new Response(JSON.stringify({ error: "Task not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Check capabilities
+      const { data: caps } = await supabase
+        .from("provider_capabilities")
+        .select("*")
+        .eq("connection_id", task.connection_id)
+        .single();
+
+      if (!caps || caps.can_write_products === "NO") {
+        await supabase.from("outbound_tasks").update({
+          status: "BLOCKED",
+          blocked_reason: "Agora installation does not support write operations. Export the product data and provide to your Agora installer.",
+        }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "Write not supported" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (caps.can_write_products === "UNKNOWN") {
+        await supabase.from("outbound_tasks").update({
+          status: "BLOCKED",
+          blocked_reason: "Write capability not confirmed. Run capability detection first, or confirm manually.",
+        }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "Write capability unknown" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const writeEp = caps.write_endpoint;
+      if (!writeEp) {
+        await supabase.from("outbound_tasks").update({ status: "BLOCKED", blocked_reason: "No write endpoint detected" }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Mark as running
+      await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
+
+      const payload = task.payload_json;
+
+      try {
+        // Check if product already exists (idempotency via ExternalRef)
+        let existingProductId = task.external_id;
+
+        if (!existingProductId && payload.ExternalRef) {
+          // Try to find by ExternalRef in catalog
+          const { data: existingProduct } = await supabase
+            .from("provider_products")
+            .select("provider_product_id")
+            .eq("connection_id", task.connection_id)
+            .eq("provider_product_id", payload.ExternalRef)
+            .single();
+          if (existingProduct) existingProductId = existingProduct.provider_product_id;
+        }
+
+        let res: Response;
+        if (existingProductId) {
+          // Try PUT/PATCH for update
+          res = await fetchWithRetry(`${baseUrlClean}${writeEp}/${existingProductId}`, {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        } else {
+          // POST for create
+          res = await fetchWithRetry(`${baseUrlClean}${writeEp}`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        }
+
+        const resBody = await res.text();
+        const resPreview = resBody.substring(0, 2048);
+
+        if (res.status === 401 || res.status === 403) {
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED", last_error: `Auth error ${res.status}: ${resPreview}`,
+          }).eq("id", task.id);
+          // Flag connection
+          await supabase.from("pos_connections").update({ enabled: false }).eq("id", task.connection_id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED", error: "Auth error" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        if (res.status === 404 || res.status === 405) {
+          await supabase.from("outbound_tasks").update({
+            status: "BLOCKED", blocked_reason: `Endpoint returned ${res.status}. Write not supported.`,
+          }).eq("id", task.id);
+          await supabase.from("provider_capabilities").update({ can_write_products: "NO" }).eq("connection_id", task.connection_id);
+          return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        if (!res.ok) {
+          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+          await supabase.from("outbound_tasks").update({
+            status: shouldRetry ? "QUEUED" : "FAILED",
+            last_error: `HTTP ${res.status}: ${resPreview}`,
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED", error: resPreview }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        // Success - extract external ID
+        let externalId = existingProductId;
+        try {
+          const created = JSON.parse(resBody);
+          externalId = String(created?.Id || created?.ProductId || created?.ArticleId || externalId || "");
+        } catch (_) {}
+
+        await supabase.from("outbound_tasks").update({
+          status: "SUCCESS", external_id: externalId, last_error: null,
+        }).eq("id", task.id);
+
+        // Update provider_products sync status
+        if (payload._winerim_wine_id) {
+          await supabase.from("provider_products").update({
+            sync_status: "SYNCED", sync_error: null, last_synced_at: new Date().toISOString(),
+          }).eq("connection_id", task.connection_id).eq("winerim_wine_id", payload._winerim_wine_id);
+        }
+
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", externalId }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      } catch (e) {
+        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        await supabase.from("outbound_tasks").update({
+          status: shouldRetry ? "QUEUED" : "FAILED",
+          last_error: String(e).substring(0, 500),
+        }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── QUEUE OUTBOUND TASKS (push wines to Agora) ──
+    if (action === "queue-outbound") {
+      const { winerimWineIds } = await req.json().catch(() => ({ winerimWineIds: [] }));
+      
+      // Get connection defaults
+      const defaultFamily = connection.default_wine_family_name || "Vinos";
+      const defaultVat = Number(connection.default_vat_rate || 10);
+      const defaultBottleFormat = connection.default_bottle_format_name || "BOT";
+
+      // Get mapped wines
+      const { data: mappings } = await supabase
+        .from("product_mappings")
+        .select("*, winerim_wines!inner(name, price, format, winerim_id, sku, ean)")
+        .eq("connection_id", connectionId)
+        .eq("status", "CONFIRMED")
+        .in("winerim_wine_id", winerimWineIds || []);
+
+      if (!mappings || mappings.length === 0) {
+        // Fallback: get winerim wines directly
+        const { data: wines } = await supabase
+          .from("winerim_wines")
+          .select("*")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", winerimWineIds || []);
+
+        if (!wines || wines.length === 0) {
+          return new Response(JSON.stringify({ success: false, error: "No wines found to push" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        let queued = 0;
+        for (const wine of wines) {
+          const payload = {
+            Name: wine.name,
+            FamilyName: defaultFamily,
+            SaleFormatName: defaultBottleFormat,
+            Price: wine.price || 0,
+            VatRate: defaultVat,
+            ExternalRef: `WINERIM_${wine.winerim_id}`,
+            _winerim_wine_id: wine.winerim_id,
+          };
+
+          // Check idempotency - skip if task already exists
+          const { data: existing } = await supabase
+            .from("outbound_tasks")
+            .select("id")
+            .eq("connection_id", connectionId)
+            .eq("task_type", "AGORA_UPSERT_PRODUCT")
+            .contains("payload_json", { ExternalRef: payload.ExternalRef })
+            .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
+            .limit(1);
+
+          if (existing && existing.length > 0) continue;
+
+          await supabase.from("outbound_tasks").insert({
+            connection_id: connectionId,
+            task_type: "AGORA_UPSERT_PRODUCT",
+            payload_json: payload,
+            status: "QUEUED",
+          });
+          queued++;
+        }
+
+        return new Response(JSON.stringify({ success: true, queued }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let queued = 0;
+      for (const m of mappings) {
+        const wine = (m as any).winerim_wines;
+        const payload = {
+          Name: wine.name,
+          FamilyName: defaultFamily,
+          SaleFormatName: defaultBottleFormat,
+          Price: wine.price || 0,
+          VatRate: defaultVat,
+          ExternalRef: `WINERIM_${wine.winerim_id}`,
+          SKU: wine.sku || undefined,
+          EAN: wine.ean || undefined,
+          _winerim_wine_id: wine.winerim_id,
+        };
+
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_UPSERT_PRODUCT")
+          .contains("payload_json", { ExternalRef: payload.ExternalRef })
+          .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
+          .limit(1);
+
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_UPSERT_PRODUCT",
+          payload_json: payload,
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── PROCESS OUTBOUND QUEUE (batch worker) ──
+    if (action === "process-outbound-queue") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("id")
+        .eq("connection_id", connectionId)
+        .eq("status", "QUEUED")
+        .order("created_at")
+        .limit(10);
+
+      if (!tasks || tasks.length === 0) {
+        return new Response(JSON.stringify({ success: true, processed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let processed = 0;
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const t of tasks) {
+        try {
+          // Recursive call to process single task
+          const { data: result } = await supabase.functions.invoke("agora-proxy", {
+            body: { action: "process-outbound-task", connectionId, taskId: t.id },
+          });
+          processed++;
+          if (result?.status === "SUCCESS") succeeded++;
+          else failed++;
+        } catch (_) { failed++; processed++; }
+      }
+
+      return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── EXPORT PRODUCTS (JSON/CSV fallback) ──
+    if (action === "export-products") {
+      const { format: exportFormat, winerimWineIds: exportIds } = await req.json().catch(() => ({ format: "json", winerimWineIds: [] }));
+
+      let wines: any[] = [];
+      if (exportIds && exportIds.length > 0) {
+        const { data } = await supabase.from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", exportIds);
+        wines = data || [];
+      } else {
+        // All confirmed mappings
+        const { data: mappings } = await supabase
+          .from("product_mappings")
+          .select("winerim_wine_id, winerim_wine_name")
+          .eq("connection_id", connectionId)
+          .eq("status", "CONFIRMED");
+        if (mappings) {
+          const ids = mappings.map(m => m.winerim_wine_id).filter(Boolean);
+          if (ids.length > 0) {
+            const { data } = await supabase.from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", ids);
+            wines = data || [];
+          }
+        }
+      }
+
+      const defaultFamily = connection.default_wine_family_name || "Vinos";
+      const defaultVat = Number(connection.default_vat_rate || 10);
+      const defaultFormat = connection.default_bottle_format_name || "BOT";
+
+      const exportRows = wines.map((w: any) => ({
+        externalRef: `WINERIM_${w.winerim_id}`,
+        name: w.name,
+        family: defaultFamily,
+        format: defaultFormat,
+        vat_rate: defaultVat,
+        price: w.price || 0,
+        sku: w.sku || "",
+        ean: w.ean || "",
+      }));
+
+      if (exportFormat === "csv") {
+        const csvHeader = "externalRef,name,family,format,vat_rate,price,sku,ean";
+        const csvRows = exportRows.map(r =>
+          `"${r.externalRef}","${r.name.replace(/"/g, '""')}","${r.family}","${r.format}",${r.vat_rate},${r.price},"${r.sku}","${r.ean}"`
+        );
+        return new Response(
+          [csvHeader, ...csvRows].join("\n"),
+          { headers: { ...corsHeaders, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=agora-import.csv" } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, products: exportRows, count: exportRows.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── DIAGNOSE (legacy) ──
     if (action === "diagnose" || action === "export") {
       const day = businessDay || new Date().toISOString().split("T")[0];
