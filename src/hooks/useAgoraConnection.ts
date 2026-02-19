@@ -35,10 +35,12 @@ export interface DetectedFamily {
 
 export interface CatalogDiscoveryResult {
   filter: string;
+  label: string;
   status: number;
   contentType: string;
   count: number;
   sample: unknown;
+  errorBody?: string;
 }
 
 export interface CatalogStatus {
@@ -271,8 +273,10 @@ export function useAgoraConnection() {
     setCatalogDiscoveryResults([]);
     setCatalogDiscoverySample(null);
     try {
+      // Use the last known business day with sales for business-day variations
+      const lastDay = daysWithSales.length > 0 ? daysWithSales[0] : null;
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "discover-catalog", connectionId },
+        body: { action: "discover-catalog", connectionId, lastBusinessDay: lastDay },
       });
       if (error) throw error;
       setCatalogDiscoveryResults(data?.allResults || []);
@@ -286,7 +290,7 @@ export function useAgoraConnection() {
     } finally {
       setCatalogDiscovering(false);
     }
-  }, [connectionId]);
+  }, [connectionId, daysWithSales]);
 
   const syncCatalog = useCallback(async () => {
     if (!connectionId) return;
@@ -354,6 +358,37 @@ export function useAgoraConnection() {
     setCatalogStatus((prev) => ({ ...prev, catalogSyncEnabled: enabled }));
   }, [connectionId]);
 
+  // Build derived catalog from invoice lines when catalog export is unavailable
+  const [buildingDerived, setBuildingDerived] = useState(false);
+  const [derivedResult, setDerivedResult] = useState<{ totalProducts: number; wineCandidates: number; daysScanned: number } | null>(null);
+
+  const buildDerivedCatalog = useCallback(async () => {
+    if (!connectionId) return;
+    setBuildingDerived(true);
+    setDerivedResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "build-derived-catalog", connectionId, daysBack: 30 },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        setDerivedResult({ totalProducts: data.totalProducts, wineCandidates: data.wineCandidates, daysScanned: data.daysScanned });
+        setCatalogStatus((prev) => ({
+          ...prev,
+          lastCatalogSyncAt: new Date().toISOString(),
+          catalogProductCount: data.totalProducts,
+          catalogWineCandidateCount: data.wineCandidates,
+          catalogEndpoint: "DERIVED_FROM_INVOICES",
+        }));
+      }
+      return data;
+    } catch (e) {
+      console.error("Failed to build derived catalog:", e);
+    } finally {
+      setBuildingDerived(false);
+    }
+  }, [connectionId]);
+
   const loadConnection = useCallback(async (id: string) => {
     const { data, error } = await supabase
       .from("pos_connections")
@@ -418,5 +453,9 @@ export function useAgoraConnection() {
     testCatalogEndpoint,
     fetchCatalogProducts,
     toggleCatalogSync,
+    // Derived catalog fallback
+    buildingDerived,
+    derivedResult,
+    buildDerivedCatalog,
   };
 }

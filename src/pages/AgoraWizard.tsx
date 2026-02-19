@@ -178,10 +178,13 @@ function StepCatalog({
   catalogTestResult,
   catalogTestingEndpoint,
   catalogProducts,
+  buildingDerived,
+  derivedResult,
   onDiscover,
   onSync,
   onTestEndpoint,
   onFetchProducts,
+  onBuildDerived,
 }: {
   catalogStatus: { catalogEndpoint: string | null; lastCatalogSyncAt: string | null; catalogProductCount: number; catalogWineCandidateCount: number };
   catalogDiscovering: boolean;
@@ -192,10 +195,13 @@ function StepCatalog({
   catalogTestResult: { count: number; sample: unknown[] } | null;
   catalogTestingEndpoint: boolean;
   catalogProducts: ProviderProduct[];
+  buildingDerived: boolean;
+  derivedResult: { totalProducts: number; wineCandidates: number; daysScanned: number } | null;
   onDiscover: () => void;
   onSync: () => void;
   onTestEndpoint: (filter?: string) => void;
   onFetchProducts: () => void;
+  onBuildDerived: () => void;
 }) {
   const [searchCatalog, setSearchCatalog] = useState("");
   const [showWineOnly, setShowWineOnly] = useState(false);
@@ -277,27 +283,67 @@ function StepCatalog({
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground">Discovery Results</p>
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
-            {catalogDiscoveryResults.map((r) => (
-              <div key={r.filter} className="flex items-center justify-between px-4 py-2.5 bg-card">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground font-mono">?filter={r.filter}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    Status: {r.status} · {r.contentType} · {r.count} items
-                  </p>
+            {catalogDiscoveryResults.map((r, idx) => (
+              <div key={`${r.label}-${idx}`} className="px-4 py-2.5 bg-card space-y-1">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground font-mono">{r.label}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Status: {r.status} · {r.contentType} · {r.count} items
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {r.count > 0 ? (
+                      <Badge variant="default" className="text-[10px]">{r.count} items</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px]">
+                        {r.status >= 400 ? `Error ${r.status}` : "Empty"}
+                      </Badge>
+                    )}
+                    {r.filter === catalogStatus.catalogEndpoint && (
+                      <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {r.count > 0 ? (
-                    <Badge variant="default" className="text-[10px]">{r.count} items</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-[10px]">Empty</Badge>
-                  )}
-                  {r.filter === catalogStatus.catalogEndpoint && (
-                    <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>
-                  )}
-                </div>
+                {r.errorBody && (
+                  <pre className="rounded bg-destructive/5 border border-destructive/20 p-2 text-[10px] font-mono text-destructive overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">
+                    {r.errorBody}
+                  </pre>
+                )}
               </div>
             ))}
           </div>
+
+          {/* Unsupported message when all failed */}
+          {!catalogStatus.catalogEndpoint && catalogDiscoveryResults.every((r) => r.count === 0) && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+              <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                <HelpCircle className="h-3.5 w-3.5 text-amber-500" /> Catalog export not available
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                Catalog export is not enabled or not supported in this Agora version. Ask your installer to enable catalog export permissions/modules.
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                As a fallback, you can build a derived catalog from your invoice history:
+              </p>
+              <Button variant="secondary" size="sm" onClick={onBuildDerived} disabled={buildingDerived}>
+                {buildingDerived ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+                Build Derived Catalog (last 30 days)
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Derived catalog result */}
+      {derivedResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-success" /> Derived catalog built
+          </p>
+          <p className="text-muted-foreground">
+            Scanned {derivedResult.daysScanned} business days → {derivedResult.totalProducts} unique products, {derivedResult.wineCandidates} wine candidates.
+          </p>
         </div>
       )}
 
@@ -958,6 +1004,10 @@ export default function AgoraWizard() {
     testCatalogEndpoint,
     fetchCatalogProducts,
     toggleCatalogSync,
+    // Derived catalog fallback
+    buildingDerived,
+    derivedResult,
+    buildDerivedCatalog,
   } = useAgoraConnection();
 
   // Load existing connection from URL param
@@ -1085,10 +1135,13 @@ export default function AgoraWizard() {
               catalogTestResult={catalogTestResult}
               catalogTestingEndpoint={catalogTestingEndpoint}
               catalogProducts={catalogProducts}
+              buildingDerived={buildingDerived}
+              derivedResult={derivedResult}
               onDiscover={discoverCatalog}
               onSync={syncCatalog}
               onTestEndpoint={testCatalogEndpoint}
               onFetchProducts={fetchCatalogProducts}
+              onBuildDerived={buildDerivedCatalog}
             />
           )}
           {currentStep === 4 && (
