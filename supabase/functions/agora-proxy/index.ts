@@ -255,8 +255,9 @@ serve(async (req) => {
     }
 
     const { base_url, api_token } = connection;
-    const baseUrlClean = base_url.replace(/\/+$/, "");
-    const headers: Record<string, string> = { "Api-Token": api_token, Accept: "*/*" };
+    const baseUrlClean = base_url.trim().replace(/\/+$/, "");
+    const apiTokenClean = api_token.trim();
+    const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
     // Helper: fetch with timeout + 1 retry
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
