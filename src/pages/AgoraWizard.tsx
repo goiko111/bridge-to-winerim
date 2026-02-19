@@ -5,6 +5,7 @@ import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
+  Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,15 +19,18 @@ import {
   useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily,
   CatalogDiscoveryResult, ProviderProduct, ClassificationConfig,
 } from "@/hooks/useAgoraConnection";
+import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Sync Settings", icon: Settings2 },
-  { id: 3, label: "Catalog", icon: Package },
-  { id: 4, label: "Families", icon: Grape },
-  { id: 5, label: "Sales & Mapping", icon: Map },
-  { id: 6, label: "Wine Matching", icon: Wine },
-  { id: 7, label: "Go Live", icon: Power },
+  { id: 3, label: "Capabilities", icon: Shield },
+  { id: 4, label: "Catalog", icon: Package },
+  { id: 5, label: "Families", icon: Grape },
+  { id: 6, label: "Sales & Mapping", icon: Map },
+  { id: 7, label: "Wine Matching", icon: Wine },
+  { id: 8, label: "Outbound Sync", icon: Upload },
+  { id: 9, label: "Go Live", icon: Power },
 ];
 
 // ── Classification badge component ──
@@ -1074,7 +1078,287 @@ function StepWineMatching({
   );
 }
 
-// ── Step 7: Go Live ──
+// ── Step 3: Capabilities Detection ──
+function StepCapabilities({
+  connectionId, capabilities, detecting, detectionResults, onDetect, onLoadCapabilities,
+  exporting, onExport,
+}: {
+  connectionId: string | null;
+  capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
+  detecting: boolean;
+  detectionResults: unknown[];
+  onDetect: () => void;
+  onLoadCapabilities: () => void;
+  exporting: boolean;
+  onExport: (format: "json" | "csv") => void;
+}) {
+  useEffect(() => { onLoadCapabilities(); }, [connectionId]);
+
+  const canWrite = capabilities?.can_write_products || "UNKNOWN";
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Capabilities Detection</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Check if this Agora installation supports writing products (creating/updating wines).
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" /> Write Capability</p>
+        <div className="flex items-center gap-3">
+          {canWrite === "YES" && <Badge variant="default" className="text-xs"><CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Write Supported</Badge>}
+          {canWrite === "NO" && <Badge variant="destructive" className="text-xs"><XCircle className="mr-1 h-3.5 w-3.5" /> Write Not Supported</Badge>}
+          {canWrite === "UNKNOWN" && <Badge variant="outline" className="text-xs"><HelpCircle className="mr-1 h-3.5 w-3.5" /> Unknown</Badge>}
+          {capabilities?.write_endpoint && <span className="text-xs font-mono text-muted-foreground">{capabilities.write_endpoint}</span>}
+        </div>
+        {capabilities?.last_checked_at && (
+          <p className="text-[11px] text-muted-foreground">Last checked: {new Date(capabilities.last_checked_at).toLocaleString()}</p>
+        )}
+      </div>
+
+      <Button variant="secondary" size="sm" onClick={onDetect} disabled={detecting}>
+        {detecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+        Detect Write Support
+      </Button>
+
+      {(detectionResults as any[]).length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Detection Results</p>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+            {(detectionResults as any[]).map((r: any, i: number) => (
+              <div key={i} className="px-4 py-2.5 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-mono text-foreground">{r.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={r.supports ? "default" : "secondary"} className="text-[10px]">
+                      {r.status} {r.supports ? "✓ Supported" : "✗ Not found"}
+                    </Badge>
+                  </div>
+                </div>
+                {r.body && <pre className="mt-1 text-[10px] font-mono text-muted-foreground truncate max-w-full">{r.body.substring(0, 200)}</pre>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {canWrite === "NO" && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Write not supported</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                This Agora installation does not expose write endpoints. You can still export products
+                as JSON or CSV to provide to your Agora installer for manual import.
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
+              <FileJson className="mr-2 h-4 w-4" /> Export JSON
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
+              <FileText className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            💡 Deliver the exported file to your Agora installer for manual product creation.
+          </p>
+        </div>
+      )}
+
+      {canWrite === "UNKNOWN" && !detecting && (detectionResults as any[]).length > 0 && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
+          <p>⚠️ Detection was inconclusive. A test product may have been created—please verify in Agora.
+          You can proceed with export mode, or confirm write capability manually.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 8: Outbound Sync Panel ──
+function StepOutboundSync({
+  connectionId, capabilities, outboundTasks, loadingTasks,
+  processingQueue, queuingProducts, exporting,
+  onLoadTasks, onProcessQueue, onRetry, onExport,
+  winerimWines, onQueueProducts,
+}: {
+  connectionId: string | null;
+  capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
+  outboundTasks: OutboundTask[];
+  loadingTasks: boolean;
+  processingQueue: boolean;
+  queuingProducts: boolean;
+  exporting: boolean;
+  onLoadTasks: () => void;
+  onProcessQueue: () => void;
+  onRetry: (taskId: string) => void;
+  onExport: (format: "json" | "csv") => void;
+  winerimWines: { winerim_id: string; name: string }[];
+  onQueueProducts: (ids: string[]) => void;
+}) {
+  const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => { onLoadTasks(); }, [connectionId]);
+
+  const canWrite = capabilities?.can_write_products === "YES";
+  const queuedTasks = outboundTasks.filter(t => t.status === "QUEUED");
+  const runningTasks = outboundTasks.filter(t => t.status === "RUNNING");
+  const successTasks = outboundTasks.filter(t => t.status === "SUCCESS");
+  const failedTasks = outboundTasks.filter(t => t.status === "FAILED");
+  const blockedTasks = outboundTasks.filter(t => t.status === "BLOCKED");
+
+  const toggleWine = (id: string) => {
+    setSelectedWineIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Outbound Sync (Winerim → Agora)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {canWrite
+            ? "Push matched wines from Winerim to your Agora product catalog."
+            : "Write not supported. Use export to create products in Agora manually."}
+        </p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-5 gap-2">
+        {[
+          { label: "Queued", count: queuedTasks.length, color: "text-primary" },
+          { label: "Running", count: runningTasks.length, color: "text-primary" },
+          { label: "Success", count: successTasks.length, color: "text-success" },
+          { label: "Failed", count: failedTasks.length, color: "text-destructive" },
+          { label: "Blocked", count: blockedTasks.length, color: "text-amber-500" },
+        ].map(s => (
+          <div key={s.label} className="rounded-lg border border-border bg-card p-3 text-center">
+            <p className={`text-lg font-bold ${s.color}`}>{s.count}</p>
+            <p className="text-[10px] text-muted-foreground uppercase">{s.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 flex-wrap">
+        {canWrite && (
+          <>
+            <Button variant="secondary" size="sm" onClick={onProcessQueue}
+              disabled={processingQueue || queuedTasks.length === 0}>
+              {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              Process Queue ({queuedTasks.length})
+            </Button>
+          </>
+        )}
+        <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
+          <FileJson className="mr-2 h-4 w-4" /> Export JSON
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
+          <FileText className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onLoadTasks} disabled={loadingTasks}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
+        </Button>
+      </div>
+
+      {/* Queue wines */}
+      {canWrite && winerimWines.length > 0 && (
+        <div className="rounded-lg border border-border p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">Push Wines to Agora</p>
+          <div className="max-h-48 overflow-y-auto divide-y divide-border rounded-lg border border-border">
+            {winerimWines.map(w => (
+              <label key={w.winerim_id} className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/30 cursor-pointer text-sm">
+                <input type="checkbox" checked={selectedWineIds.has(w.winerim_id)}
+                  onChange={() => toggleWine(w.winerim_id)}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary" />
+                <span className="text-foreground">{w.name}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
+              onClick={() => { onQueueProducts(Array.from(selectedWineIds)); setSelectedWineIds(new Set()); }}>
+              {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Push {selectedWineIds.size} to Agora
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => {
+              setSelectedWineIds(new Set(winerimWines.map(w => w.winerim_id)));
+            }}>Select All</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Task list */}
+      <Tabs defaultValue="all" className="space-y-3">
+        <TabsList className="w-full">
+          <TabsTrigger value="all" className="flex-1">All ({outboundTasks.length})</TabsTrigger>
+          <TabsTrigger value="failed" className="flex-1">
+            Failed ({failedTasks.length})
+            {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="blocked" className="flex-1">
+            Blocked ({blockedTasks.length})
+          </TabsTrigger>
+        </TabsList>
+
+        {[
+          { key: "all", items: outboundTasks },
+          { key: "failed", items: failedTasks },
+          { key: "blocked", items: blockedTasks },
+        ].map(({ key, items }) => (
+          <TabsContent key={key} value={key}>
+            <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
+              {items.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">No tasks.</div>
+              ) : items.map(t => (
+                <div key={t.id} className="px-4 py-3 bg-card hover:bg-secondary/30 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {(t.payload_json as any)?.Name || t.task_type}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
+                        <Badge variant={
+                          t.status === "SUCCESS" ? "default" :
+                          t.status === "FAILED" ? "destructive" :
+                          t.status === "BLOCKED" ? "outline" :
+                          "secondary"
+                        } className="text-[10px]">{t.status}</Badge>
+                        <span>Attempts: {t.attempts}/{t.max_attempts}</span>
+                        {t.external_id && <span className="font-mono">ID: {t.external_id}</span>}
+                      </div>
+                      {t.last_error && (
+                        <p className="mt-1 text-[11px] text-destructive truncate">{t.last_error}</p>
+                      )}
+                      {t.blocked_reason && (
+                        <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
+                      )}
+                    </div>
+                    {(t.status === "FAILED" || t.status === "BLOCKED") && (
+                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRetry(t.id)}>
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </TabsContent>
+        ))}
+      </Tabs>
+    </div>
+  );
+}
+
+// ── Step 9: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
@@ -1152,6 +1436,11 @@ export default function AgoraWizard() {
     overrideProductClassification, bulkOverrideProducts,
   } = useAgoraConnection();
 
+  const outbound = useOutboundSync(connectionId);
+
+  // Winerim wines for outbound push
+  const [winerimWinesForPush, setWinerimWinesForPush] = useState<{ winerim_id: string; name: string }[]>([]);
+
   useEffect(() => {
     const connParam = searchParams.get("connection");
     if (connParam && !connectionId) {
@@ -1165,37 +1454,35 @@ export default function AgoraWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          setCurrentStep(5);
+          setCurrentStep(6);
         }
       });
     }
   }, [searchParams]);
 
   useEffect(() => {
-    if ((currentStep === 4 || currentStep === 5) && connectionId && daysWithSales.length === 0 && !loadingDays) {
+    if ((currentStep === 5 || currentStep === 6) && connectionId && daysWithSales.length === 0 && !loadingDays) {
       findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if (selectedDay && (currentStep === 4 || currentStep === 5)) fetchSalesForDay(selectedDay);
+    if (selectedDay && (currentStep === 5 || currentStep === 6)) fetchSalesForDay(selectedDay);
   }, [selectedDay]);
 
   useEffect(() => {
-    if (currentStep === 3 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) discoverCatalog();
+    if (currentStep === 4 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) discoverCatalog();
   }, [currentStep, connectionId]);
 
-  // Load classification config and products when entering step 4 or 5
   useEffect(() => {
-    if ((currentStep === 4 || currentStep === 5) && connectionId) {
+    if ((currentStep === 5 || currentStep === 6) && connectionId) {
       loadClassificationConfig();
       if (catalogProducts.length === 0) fetchCatalogProducts();
     }
   }, [currentStep, connectionId]);
 
-  // Pre-seed classification config on first connection
   useEffect(() => {
-    if (connectionId && currentStep === 4 && !classificationConfig.id) {
+    if (connectionId && currentStep === 5 && !classificationConfig.id) {
       saveClassificationConfig({
         non_wine_keywords_blacklist: ["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "postre", "tarta", "pan", "snack", "ensalada", "pescado", "carne"],
         wine_keywords_whitelist: ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut", "reserva", "crianza", "botella", "bot.", "75cl", "magnum", "copa"],
@@ -1203,6 +1490,18 @@ export default function AgoraWizard() {
       });
     }
   }, [connectionId, currentStep]);
+
+  // Load winerim wines when entering step 8
+  useEffect(() => {
+    if (currentStep === 8 && connectionId) {
+      supabase.from("winerim_wines")
+        .select("winerim_id, name")
+        .eq("connection_id", connectionId)
+        .order("name")
+        .limit(500)
+        .then(({ data }) => { if (data) setWinerimWinesForPush(data as any); });
+    }
+  }, [currentStep, connectionId]);
 
   const handleAddKeyword = (keyword: string, type: "wine" | "non_wine") => {
     if (type === "wine") {
@@ -1225,13 +1524,13 @@ export default function AgoraWizard() {
         backfill_days: backfill, location_name: locationName || "New Location",
       });
     }
-    if (currentStep === 4) {
+    if (currentStep === 5) {
       const families = detectedFamilies.map((f) => ({
         name: f.name, isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(7, s + 1));
+    setCurrentStep((s) => Math.min(9, s + 1));
   };
 
   return (
@@ -1246,16 +1545,16 @@ export default function AgoraWizard() {
           <p className="text-sm text-muted-foreground">Set up your Agora integration in a few steps.</p>
         </div>
       </div>
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         {steps.map((step, i) => {
           const isActive = step.id === currentStep;
           const isDone = step.id < currentStep;
           return (
-            <div key={step.id} className="flex items-center gap-1.5 flex-1">
-              <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
-                {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : step.id}
+            <div key={step.id} className="flex items-center gap-1 flex-1">
+              <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
+                {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.id}
               </div>
-              <span className={`text-[11px] font-medium hidden md:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              <span className={`text-[10px] font-medium hidden lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
               {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
             </div>
           );
@@ -1275,6 +1574,13 @@ export default function AgoraWizard() {
               catalogSyncEnabled={catalogStatus.catalogSyncEnabled} onToggleCatalogSync={toggleCatalogSync} />
           )}
           {currentStep === 3 && (
+            <StepCapabilities connectionId={connectionId}
+              capabilities={outbound.capabilities} detecting={outbound.detecting}
+              detectionResults={outbound.detectionResults}
+              onDetect={outbound.detectCapabilities} onLoadCapabilities={outbound.loadCapabilities}
+              exporting={outbound.exporting} onExport={outbound.exportProducts} />
+          )}
+          {currentStep === 4 && (
             <StepCatalog catalogStatus={catalogStatus}
               catalogDiscovering={catalogDiscovering} catalogDiscoveryResults={catalogDiscoveryResults}
               catalogDiscoverySample={catalogDiscoverySample} catalogSyncing={catalogSyncing}
@@ -1284,14 +1590,14 @@ export default function AgoraWizard() {
               onDiscover={discoverCatalog} onSync={syncCatalog} onTestEndpoint={testCatalogEndpoint}
               onFetchProducts={fetchCatalogProducts} onBuildDerived={buildDerivedCatalog} />
           )}
-          {currentStep === 4 && (
+          {currentStep === 5 && (
             <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
               familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
               scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
               onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
               catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
           )}
-          {currentStep === 5 && (
+          {currentStep === 6 && (
             <StepSalesMapping daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
               loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
               onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
@@ -1300,10 +1606,21 @@ export default function AgoraWizard() {
               onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
               recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
           )}
-          {currentStep === 6 && (
+          {currentStep === 7 && (
             <StepWineMatching connectionId={connectionId} />
           )}
-          {currentStep === 7 && (
+          {currentStep === 8 && (
+            <StepOutboundSync connectionId={connectionId}
+              capabilities={outbound.capabilities}
+              outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
+              processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
+              exporting={outbound.exporting}
+              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
+              onRetry={outbound.retryTask} onExport={outbound.exportProducts}
+              winerimWines={winerimWinesForPush}
+              onQueueProducts={(ids) => outbound.queueProducts(ids)} />
+          )}
+          {currentStep === 9 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -1315,7 +1632,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 7 && (
+        {currentStep < 9 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
