@@ -32,7 +32,7 @@ const connectors: Connector[] = [
     name: "Revo XEF",
     description: "REST API with Bearer auth, pagination and 120 req/min. Sales, catalog and bidirectional sync.",
     logo: "R",
-    status: "coming_soon",
+    status: "disconnected",
     country: "España",
   },
   {
@@ -282,6 +282,7 @@ export default function Integrations() {
                     }`}
                     onClick={() => {
                       if (c.id === "agora") navigate("/integrations/agora");
+                      if (c.id === "revo") navigate("/integrations/revo");
                       if (c.id === "tcpos") navigate("/integrations/tcpos");
                       if (c.id === "clover") navigate("/integrations/clover");
                       if (c.id === "square") navigate("/integrations/square");
@@ -340,6 +341,7 @@ export default function Integrations() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (c.id === "agora") navigate("/integrations/agora");
+                            if (c.id === "revo") navigate("/integrations/revo");
                             if (c.id === "tcpos") navigate("/integrations/tcpos");
                             if (c.id === "clover") navigate("/integrations/clover");
                             if (c.id === "square") navigate("/integrations/square");
