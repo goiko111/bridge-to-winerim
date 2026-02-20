@@ -149,8 +149,29 @@ export default function CassaWizard() {
                   {hook.testStatus === "idle" && "Test Connection"}
                   {hook.testStatus === "testing" && "Authenticating…"}
                   {hook.testStatus === "success" && "Connected"}
-                  {hook.testStatus === "error" && (hook.testError || "Failed")}
+                  {hook.testStatus === "error" && "Failed – see details below"}
                 </Button>
+
+                {/* Diagnostics panel */}
+                {hook.diagnostics && hook.diagnostics.length > 0 && (
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
+                    <p className="text-xs font-medium text-foreground">Connection Diagnostics</p>
+                    {hook.diagnostics.map((d: any, i: number) => (
+                      <div key={i} className="rounded border border-border bg-background p-2 text-xs space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant={d.status >= 200 && d.status < 300 ? "default" : "destructive"} className="text-[10px]">{d.method}</Badge>
+                          <span className="font-mono text-muted-foreground">{d.url}</span>
+                          <Badge variant={d.status >= 200 && d.status < 300 ? "default" : "destructive"} className="text-[10px]">HTTP {d.status}</Badge>
+                        </div>
+                        <pre className="whitespace-pre-wrap text-[11px] text-muted-foreground max-h-24 overflow-auto">{d.body}</pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {hook.testStatus === "error" && hook.testError && !hook.diagnostics?.length && (
+                  <p className="text-xs text-destructive">{hook.testError}</p>
+                )}
               </div>
             </div>
           )}
