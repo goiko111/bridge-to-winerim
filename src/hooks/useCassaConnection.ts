@@ -29,24 +29,44 @@ export interface CassaSalesEvent {
   }[];
 }
 
+interface CassaState {
+  connectionId: string | null;
+  testStatus: "idle" | "testing" | "success" | "error";
+  testError: string | null;
+  diagnostics: any[] | null;
+  salesPoints: CassaSalesPoint[];
+  salesEvents: CassaSalesEvent[];
+  loadingSales: boolean;
+  saving: boolean;
+  saveResult: { savedEvents: number; savedLines: number } | null;
+  syncingProducts: boolean;
+  productSyncResult: { totalProducts: number; wineCandidates: number } | null;
+  backfilling: boolean;
+  backfillResult: { totalSaved: number; totalLines: number; errors: string[] } | null;
+}
+
+const initialState: CassaState = {
+  connectionId: null,
+  testStatus: "idle",
+  testError: null,
+  diagnostics: null,
+  salesPoints: [],
+  salesEvents: [],
+  loadingSales: false,
+  saving: false,
+  saveResult: null,
+  syncingProducts: false,
+  productSyncResult: null,
+  backfilling: false,
+  backfillResult: null,
+};
+
 export function useCassaConnection() {
-  const [connectionId, setConnectionId] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [testError, setTestError] = useState<string | null>(null);
-  const [diagnostics, setDiagnostics] = useState<any[] | null>(null);
-  const [salesPoints, setSalesPoints] = useState<CassaSalesPoint[]>([]);
+  const [state, setState] = useState<CassaState>(initialState);
 
-  const [salesEvents, setSalesEvents] = useState<CassaSalesEvent[]>([]);
-  const [loadingSales, setLoadingSales] = useState(false);
-
-  const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
-
-  const [syncingProducts, setSyncingProducts] = useState(false);
-  const [productSyncResult, setProductSyncResult] = useState<{ totalProducts: number; wineCandidates: number } | null>(null);
-
-  const [backfilling, setBackfilling] = useState(false);
-  const [backfillResult, setBackfillResult] = useState<{ totalSaved: number; totalLines: number; errors: string[] } | null>(null);
+  const patch = useCallback((partial: Partial<CassaState>) => {
+    setState((prev) => ({ ...prev, ...partial }));
+  }, []);
 
   const saveConnection = async (data: {
     locationName: string; apiKey: string; winerimApiToken?: string;
@@ -68,7 +88,7 @@ export function useCassaConnection() {
       } as any)
       .select().single();
     if (error) throw error;
-    setConnectionId(row.id);
+    patch({ connectionId: row.id });
     return row.id;
   };
 
@@ -78,17 +98,15 @@ export function useCassaConnection() {
   };
 
   const testConnection = async (apiKey: string, winerimApiToken?: string) => {
-    setTestStatus("testing");
-    setTestError(null);
-    setDiagnostics(null);
-    let connId = connectionId;
+    patch({ testStatus: "testing", testError: null, diagnostics: null });
+    let connId = state.connectionId;
     if (!connId) {
       try {
         connId = await saveConnection({
           locationName: "New Location", apiKey, winerimApiToken,
           syncMode: "PULL_ONLY", syncFrequency: 15, backfillDays: 30,
         });
-      } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
+      } catch (e: any) { patch({ testStatus: "error", testError: e.message }); return false; }
     } else {
       await updateConnection(connId, { api_token: apiKey, winerim_api_token: winerimApiToken || null });
     }
@@ -96,104 +114,115 @@ export function useCassaConnection() {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
         body: { action: "test", connectionId: connId },
       });
-      if (data?.diagnostics) setDiagnostics(data.diagnostics);
-      if (error) { setTestStatus("error"); setTestError(error.message); return false; }
+      if (data?.diagnostics) patch({ diagnostics: data.diagnostics });
+      if (error) { patch({ testStatus: "error", testError: error.message }); return false; }
       if (data?.success) {
-        setTestStatus("success");
-        setSalesPoints(data.salesPoints || []);
+        patch({ testStatus: "success", salesPoints: data.salesPoints || [] });
         return true;
       } else {
-        setTestStatus("error");
-        setTestError(data?.message || data?.error || "Connection failed");
+        patch({ testStatus: "error", testError: data?.message || data?.error || "Connection failed" });
         return false;
       }
-    } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
+    } catch (e: any) { patch({ testStatus: "error", testError: e.message }); return false; }
   };
 
   const fetchSalesPoints = useCallback(async () => {
-    if (!connectionId) return;
+    if (!state.connectionId) return;
     try {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
-        body: { action: "fetch-sales-points", connectionId },
+        body: { action: "fetch-sales-points", connectionId: state.connectionId },
       });
       if (error) throw error;
-      setSalesPoints(data?.salesPoints || []);
+      patch({ salesPoints: data?.salesPoints || [] });
     } catch (e) { console.error("Failed to fetch sales points:", e); }
-  }, [connectionId]);
+  }, [state.connectionId, patch]);
 
   const fetchDocuments = useCallback(async (day: string) => {
-    if (!connectionId) return;
-    setLoadingSales(true); setSalesEvents([]);
+    if (!state.connectionId) return;
+    patch({ loadingSales: true, salesEvents: [] });
     try {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
-        body: { action: "fetch-documents", connectionId, businessDay: day },
+        body: { action: "fetch-documents", connectionId: state.connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSalesEvents(data?.salesEvents || []);
-    } catch (e) { console.error("Failed to fetch documents:", e); }
-    finally { setLoadingSales(false); }
-  }, [connectionId]);
+      patch({ salesEvents: data?.salesEvents || [], loadingSales: false });
+    } catch (e) { console.error("Failed to fetch documents:", e); patch({ loadingSales: false }); }
+  }, [state.connectionId, patch]);
 
   const saveSalesToDb = useCallback(async (day: string) => {
-    if (!connectionId) return;
-    setSaving(true); setSaveResult(null);
+    if (!state.connectionId) return;
+    patch({ saving: true, saveResult: null });
     try {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
-        body: { action: "save-sales", connectionId, businessDay: day },
+        body: { action: "save-sales", connectionId: state.connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 });
-    } catch (e) { console.error("Failed to save sales:", e); }
-    finally { setSaving(false); }
-  }, [connectionId]);
+      patch({ saveResult: { savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 }, saving: false });
+    } catch (e) { console.error("Failed to save sales:", e); patch({ saving: false }); }
+  }, [state.connectionId, patch]);
 
   const syncProducts = useCallback(async () => {
-    if (!connectionId) return;
-    setSyncingProducts(true); setProductSyncResult(null);
+    if (!state.connectionId) return;
+    patch({ syncingProducts: true, productSyncResult: null });
     try {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
-        body: { action: "sync-products", connectionId },
+        body: { action: "sync-products", connectionId: state.connectionId },
       });
       if (error) throw error;
-      if (data?.success) setProductSyncResult({ totalProducts: data.totalProducts, wineCandidates: data.wineCandidates });
-    } catch (e) { console.error("Failed to sync products:", e); }
-    finally { setSyncingProducts(false); }
-  }, [connectionId]);
+      if (data?.success) patch({ productSyncResult: { totalProducts: data.totalProducts, wineCandidates: data.wineCandidates }, syncingProducts: false });
+      else patch({ syncingProducts: false });
+    } catch (e) { console.error("Failed to sync products:", e); patch({ syncingProducts: false }); }
+  }, [state.connectionId, patch]);
 
   const runBackfill = useCallback(async (daysBack = 30) => {
-    if (!connectionId) return;
-    setBackfilling(true); setBackfillResult(null);
+    if (!state.connectionId) return;
+    patch({ backfilling: true, backfillResult: null });
     try {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
-        body: { action: "backfill", connectionId, daysBack },
+        body: { action: "backfill", connectionId: state.connectionId, daysBack },
       });
       if (error) throw error;
-      if (data?.success) setBackfillResult({ totalSaved: data.totalSaved, totalLines: data.totalLines, errors: data.errors || [] });
-    } catch (e) { console.error("Failed to backfill:", e); }
-    finally { setBackfilling(false); }
-  }, [connectionId]);
+      if (data?.success) patch({ backfillResult: { totalSaved: data.totalSaved, totalLines: data.totalLines, errors: data.errors || [] }, backfilling: false });
+      else patch({ backfilling: false });
+    } catch (e) { console.error("Failed to backfill:", e); patch({ backfilling: false }); }
+  }, [state.connectionId, patch]);
 
   const enableSync = async () => {
-    if (!connectionId) return;
-    await updateConnection(connectionId, { enabled: true });
+    if (!state.connectionId) return;
+    await updateConnection(state.connectionId, { enabled: true });
   };
 
   const loadConnection = useCallback(async (id: string) => {
     const { data, error } = await supabase.from("pos_connections").select("*").eq("id", id).single();
     if (error || !data) return null;
-    setConnectionId(data.id);
+    patch({ connectionId: data.id });
     return data;
-  }, []);
+  }, [patch]);
 
   return {
-    connectionId, setConnectionId,
-    testStatus, testError, testConnection, diagnostics,
-    saveConnection, updateConnection, loadConnection,
-    salesPoints, fetchSalesPoints,
-    salesEvents, loadingSales, fetchDocuments,
-    saving, saveResult, saveSalesToDb,
-    syncingProducts, productSyncResult, syncProducts,
-    backfilling, backfillResult, runBackfill,
+    connectionId: state.connectionId,
+    setConnectionId: (id: string | null) => patch({ connectionId: id }),
+    testStatus: state.testStatus,
+    testError: state.testError,
+    testConnection,
+    diagnostics: state.diagnostics,
+    saveConnection,
+    updateConnection,
+    loadConnection,
+    salesPoints: state.salesPoints,
+    fetchSalesPoints,
+    salesEvents: state.salesEvents,
+    loadingSales: state.loadingSales,
+    fetchDocuments,
+    saving: state.saving,
+    saveResult: state.saveResult,
+    saveSalesToDb,
+    syncingProducts: state.syncingProducts,
+    productSyncResult: state.productSyncResult,
+    syncProducts,
+    backfilling: state.backfilling,
+    backfillResult: state.backfillResult,
+    runBackfill,
     enableSync,
   };
 }
