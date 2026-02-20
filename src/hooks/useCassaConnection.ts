@@ -33,6 +33,7 @@ export function useCassaConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testError, setTestError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<any[] | null>(null);
   const [salesPoints, setSalesPoints] = useState<CassaSalesPoint[]>([]);
 
   const [salesEvents, setSalesEvents] = useState<CassaSalesEvent[]>([]);
@@ -79,6 +80,7 @@ export function useCassaConnection() {
   const testConnection = async (apiKey: string, winerimApiToken?: string) => {
     setTestStatus("testing");
     setTestError(null);
+    setDiagnostics(null);
     let connId = connectionId;
     if (!connId) {
       try {
@@ -94,6 +96,7 @@ export function useCassaConnection() {
       const { data, error } = await supabase.functions.invoke("cassa-proxy", {
         body: { action: "test", connectionId: connId },
       });
+      if (data?.diagnostics) setDiagnostics(data.diagnostics);
       if (error) { setTestStatus("error"); setTestError(error.message); return false; }
       if (data?.success) {
         setTestStatus("success");
@@ -101,7 +104,7 @@ export function useCassaConnection() {
         return true;
       } else {
         setTestStatus("error");
-        setTestError(data?.message || "Connection failed");
+        setTestError(data?.message || data?.error || "Connection failed");
         return false;
       }
     } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
@@ -184,7 +187,7 @@ export function useCassaConnection() {
 
   return {
     connectionId, setConnectionId,
-    testStatus, testError, testConnection,
+    testStatus, testError, testConnection, diagnostics,
     saveConnection, updateConnection, loadConnection,
     salesPoints, fetchSalesPoints,
     salesEvents, loadingSales, fetchDocuments,

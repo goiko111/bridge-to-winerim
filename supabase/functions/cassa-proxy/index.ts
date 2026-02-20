@@ -209,33 +209,68 @@ serve(async (req) => {
     try {
       token = await getToken(apiKey, connectionId);
     } catch (e) {
+      const errMsg = (e as Error).message;
       return new Response(
-        JSON.stringify({ success: false, error: `Auth failed: ${(e as Error).message}` }),
+        JSON.stringify({
+          success: false,
+          error: `Auth failed: ${errMsg}`,
+          diagnostics: [{
+            step: "token",
+            url: `${CASSA_API_BASE}/apikey/token`,
+            method: "POST",
+            status: errMsg.match(/\((\d+)\)/)?.[1] ? parseInt(errMsg.match(/\((\d+)\)/)?.[1] || "0") : 0,
+            body: errMsg.substring(0, 300),
+          }],
+        }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     // ── TEST ──
     if (action === "test") {
+      const diagnostics: { step: string; url: string; method: string; status: number; body: string }[] = [];
       try {
-        // Try fetching sales points as a lightweight test
-        const res = await fetchCassa(`${CASSA_API_BASE}/v1/salespoints`, token, connectionId);
+        // Step 1: Token acquisition (already done above, but report it)
+        diagnostics.push({
+          step: "token",
+          url: `${CASSA_API_BASE}/apikey/token`,
+          method: "POST",
+          status: 200,
+          body: "Token acquired successfully",
+        });
+
+        // Step 2: Healthcheck — lightweight GET to confirm auth works
+        const healthUrl = `${CASSA_API_BASE}/salespoints`;
+        const res = await fetchCassa(healthUrl, token, connectionId);
+        const resBody = await res.text();
+        diagnostics.push({
+          step: "healthcheck",
+          url: healthUrl,
+          method: "GET",
+          status: res.status,
+          body: resBody.substring(0, 300),
+        });
+
         if (!res.ok) {
-          const errBody = await res.text();
           return new Response(
-            JSON.stringify({ success: false, status: res.status, message: `Cassa responded ${res.status}: ${errBody.substring(0, 200)}` }),
+            JSON.stringify({ success: false, status: res.status, message: `Healthcheck failed (${res.status})`, diagnostics }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
         }
-        const data = await res.json();
-        const salesPoints = Array.isArray(data) ? data : data.data || data.items || [];
+
+        let salesPoints: unknown[] = [];
+        try {
+          const data = JSON.parse(resBody);
+          salesPoints = Array.isArray(data) ? data : data.data || data.items || [];
+        } catch { /* non-JSON response */ }
+
         return new Response(
-          JSON.stringify({ success: true, salesPointCount: salesPoints.length, salesPoints }),
+          JSON.stringify({ success: true, salesPointCount: salesPoints.length, salesPoints, diagnostics }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       } catch (e) {
         return new Response(
-          JSON.stringify({ success: false, message: (e as Error).message }),
+          JSON.stringify({ success: false, message: (e as Error).message, diagnostics }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
@@ -243,7 +278,7 @@ serve(async (req) => {
 
     // ── FETCH SALES POINTS ──
     if (action === "fetch-sales-points") {
-      const res = await fetchCassa(`${CASSA_API_BASE}/v1/salespoints`, token, connectionId);
+      const res = await fetchCassa(`${CASSA_API_BASE}/salespoints`, token, connectionId);
       if (!res.ok) {
         return new Response(
           JSON.stringify({ error: `Cassa responded ${res.status}` }),
@@ -282,7 +317,7 @@ serve(async (req) => {
           start: String(start),
           limit: String(limit),
         });
-        const res = await fetchCassa(`${CASSA_API_BASE}/v1/documents?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}/documents?${params}`, token, connectionId);
         if (!res.ok) {
           return new Response(
             JSON.stringify({ error: `Cassa responded ${res.status}` }),
@@ -357,7 +392,7 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ datetimeFrom, datetimeTo, start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/v1/documents?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}/documents?${params}`, token, connectionId);
         if (!res.ok) break;
         const data = await res.json();
         const docs = Array.isArray(data) ? data : data.data || data.items || data.documents || [];
@@ -436,7 +471,7 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/v1/products?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}/products?${params}`, token, connectionId);
         if (!res.ok) {
           return new Response(
             JSON.stringify({ error: `Cassa responded ${res.status}` }),
@@ -465,7 +500,7 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/v1/products?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}/products?${params}`, token, connectionId);
         if (!res.ok) break;
         const data = await res.json();
         const products = Array.isArray(data) ? data : data.data || data.items || data.products || [];
@@ -524,7 +559,7 @@ serve(async (req) => {
           const datetimeFrom = `${day}T00:00:00`;
           const datetimeTo = `${day}T23:59:59`;
           const params = new URLSearchParams({ datetimeFrom, datetimeTo, start: "0", limit: "500" });
-          const res = await fetchCassa(`${CASSA_API_BASE}/v1/documents?${params}`, token, connectionId);
+          const res = await fetchCassa(`${CASSA_API_BASE}/documents?${params}`, token, connectionId);
           if (!res.ok) { errors.push(`${day}: HTTP ${res.status}`); continue; }
           const data = await res.json();
           const docs = Array.isArray(data) ? data : data.data || data.items || data.documents || [];
