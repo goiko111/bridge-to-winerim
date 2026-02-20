@@ -11,6 +11,7 @@ import TcposWizard from "./pages/TcposWizard";
 import CloverWizard from "./pages/CloverWizard";
 import SquareWizard from "./pages/SquareWizard";
 import SimphonyWizard from "./pages/SimphonyWizard";
+import CassaWizard from "./pages/CassaWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/integrations/clover" element={<CloverWizard />} />
             <Route path="/integrations/square" element={<SquareWizard />} />
             <Route path="/integrations/simphony" element={<SimphonyWizard />} />
+            <Route path="/integrations/cassa" element={<CassaWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />

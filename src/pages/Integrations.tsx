@@ -89,7 +89,7 @@ const connectors: Connector[] = [
     name: "Cassa in Cloud",
     description: "TeamSystem enterprise POS. API key auth, token-based access, HMAC-signed webhooks.",
     logo: "C",
-    status: "coming_soon",
+    status: "disconnected",
     country: "Italia",
   },
   {
@@ -286,6 +286,7 @@ export default function Integrations() {
                       if (c.id === "clover") navigate("/integrations/clover");
                       if (c.id === "square") navigate("/integrations/square");
                       if (c.id === "simphony") navigate("/integrations/simphony");
+                      if (c.id === "cassa") navigate("/integrations/cassa");
                     }}
                   >
                     <div className="p-5">
@@ -343,6 +344,7 @@ export default function Integrations() {
                             if (c.id === "clover") navigate("/integrations/clover");
                             if (c.id === "square") navigate("/integrations/square");
                             if (c.id === "simphony") navigate("/integrations/simphony");
+                            if (c.id === "cassa") navigate("/integrations/cassa");
                           }}
                         >
                           Connect
