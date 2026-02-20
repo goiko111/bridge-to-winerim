@@ -226,11 +226,57 @@ serve(async (req) => {
       );
     }
 
+    // ── Endpoint discovery: try multiple path prefixes for salespoints ──
+    const SALESPOINTS_CANDIDATES = [
+      "/api/v1/salespoints",
+      "/v1/salespoints",
+      "/api/salespoints",
+      "/v2/salespoints",
+      "/api/v2/salespoints",
+      "/salespoints",
+    ];
+
+    async function discoverBasePath(
+      tkn: string, connId: string,
+    ): Promise<{ basePath: string; url: string; status: number; body: string; salesPoints: unknown[] } | null> {
+      for (const candidate of SALESPOINTS_CANDIDATES) {
+        const testUrl = `${CASSA_API_BASE}${candidate}`;
+        try {
+          const r = await fetchCassa(testUrl, tkn, connId);
+          const txt = await r.text();
+          if (r.ok && r.headers.get("content-type")?.includes("json")) {
+            let sp: unknown[] = [];
+            try {
+              const d = JSON.parse(txt);
+              sp = Array.isArray(d) ? d : d.data || d.items || d.salesPoints || [];
+            } catch { /* ignore */ }
+            // Extract base path prefix (everything before /salespoints)
+            const prefix = candidate.replace(/\/salespoints$/, "");
+            return { basePath: prefix, url: testUrl, status: r.status, body: txt.substring(0, 300), salesPoints: sp };
+          }
+          // If 404 or HTML, keep trying
+        } catch { /* network error, try next */ }
+      }
+      return null;
+    }
+
+    // Helper: get the stored or discovered base path
+    async function getApiBasePath(tkn: string, connId: string, conn: any): Promise<string> {
+      // Check if we already discovered and stored a catalog_endpoint as base path
+      if (conn.catalog_endpoint) return conn.catalog_endpoint;
+      const result = await discoverBasePath(tkn, connId);
+      if (result) {
+        // Persist discovered base path
+        await supabase.from("pos_connections").update({ catalog_endpoint: result.basePath }).eq("id", connId);
+        return result.basePath;
+      }
+      return ""; // fallback to root
+    }
+
     // ── TEST ──
     if (action === "test") {
       const diagnostics: { step: string; url: string; method: string; status: number; body: string }[] = [];
       try {
-        // Step 1: Token acquisition (already done above, but report it)
         diagnostics.push({
           step: "token",
           url: `${CASSA_API_BASE}/apikey/token`,
@@ -239,34 +285,46 @@ serve(async (req) => {
           body: "Token acquired successfully",
         });
 
-        // Step 2: Healthcheck — lightweight GET to confirm auth works
-        const healthUrl = `${CASSA_API_BASE}/salespoints`;
-        const res = await fetchCassa(healthUrl, token, connectionId);
-        const resBody = await res.text();
-        diagnostics.push({
-          step: "healthcheck",
-          url: healthUrl,
-          method: "GET",
-          status: res.status,
-          body: resBody.substring(0, 300),
-        });
+        // Step 2: Discover correct API base path
+        const discovery = await discoverBasePath(token, connectionId);
+        if (discovery) {
+          diagnostics.push({
+            step: "healthcheck",
+            url: discovery.url,
+            method: "GET",
+            status: discovery.status,
+            body: discovery.body,
+          });
+          // Store discovered base path
+          await supabase.from("pos_connections").update({ catalog_endpoint: discovery.basePath }).eq("id", connectionId);
 
-        if (!res.ok) {
           return new Response(
-            JSON.stringify({ success: false, status: res.status, message: `Healthcheck failed (${res.status})`, diagnostics }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+            JSON.stringify({
+              success: true,
+              salesPointCount: discovery.salesPoints.length,
+              salesPoints: discovery.salesPoints,
+              discoveredBasePath: discovery.basePath,
+              diagnostics,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
         }
 
-        let salesPoints: unknown[] = [];
-        try {
-          const data = JSON.parse(resBody);
-          salesPoints = Array.isArray(data) ? data : data.data || data.items || [];
-        } catch { /* non-JSON response */ }
+        // All candidates failed — report them
+        for (const candidate of SALESPOINTS_CANDIDATES) {
+          const testUrl = `${CASSA_API_BASE}${candidate}`;
+          try {
+            const r = await fetchCassa(testUrl, token, connectionId);
+            const txt = await r.text();
+            diagnostics.push({ step: "discovery", url: testUrl, method: "GET", status: r.status, body: txt.substring(0, 300) });
+          } catch (e) {
+            diagnostics.push({ step: "discovery", url: testUrl, method: "GET", status: 0, body: (e as Error).message.substring(0, 300) });
+          }
+        }
 
         return new Response(
-          JSON.stringify({ success: true, salesPointCount: salesPoints.length, salesPoints, diagnostics }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          JSON.stringify({ success: false, message: "Could not discover a working API path for salespoints. See diagnostics.", diagnostics }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       } catch (e) {
         return new Response(
@@ -278,10 +336,11 @@ serve(async (req) => {
 
     // ── FETCH SALES POINTS ──
     if (action === "fetch-sales-points") {
-      const res = await fetchCassa(`${CASSA_API_BASE}/salespoints`, token, connectionId);
+      const basePath = await getApiBasePath(token, connectionId, connection);
+      const res = await fetchCassa(`${CASSA_API_BASE}${basePath}/salespoints`, token, connectionId);
       if (!res.ok) {
         return new Response(
-          JSON.stringify({ error: `Cassa responded ${res.status}` }),
+          JSON.stringify({ error: `Cassa responded ${res.status}`, url: `${CASSA_API_BASE}${basePath}/salespoints` }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
@@ -295,6 +354,7 @@ serve(async (req) => {
 
     // ── FETCH DOCUMENTS (SALES) ──
     if (action === "fetch-documents") {
+      const basePath = await getApiBasePath(token, connectionId, connection);
       const day = businessDay;
       if (!day) {
         return new Response(JSON.stringify({ error: "businessDay is required" }),
@@ -317,7 +377,7 @@ serve(async (req) => {
           start: String(start),
           limit: String(limit),
         });
-        const res = await fetchCassa(`${CASSA_API_BASE}/documents?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}${basePath}/documents?${params}`, token, connectionId);
         if (!res.ok) {
           return new Response(
             JSON.stringify({ error: `Cassa responded ${res.status}` }),
@@ -392,7 +452,8 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ datetimeFrom, datetimeTo, start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/documents?${params}`, token, connectionId);
+        const basePath2 = await getApiBasePath(token, connectionId, connection);
+        const res = await fetchCassa(`${CASSA_API_BASE}${basePath2}/documents?${params}`, token, connectionId);
         if (!res.ok) break;
         const data = await res.json();
         const docs = Array.isArray(data) ? data : data.data || data.items || data.documents || [];
@@ -464,6 +525,7 @@ serve(async (req) => {
 
     // ── FETCH PRODUCTS (CATALOG) ──
     if (action === "fetch-products") {
+      const basePath = await getApiBasePath(token, connectionId, connection);
       let allProducts: any[] = [];
       let start = 0;
       const limit = 100;
@@ -471,7 +533,7 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/products?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}${basePath}/products?${params}`, token, connectionId);
         if (!res.ok) {
           return new Response(
             JSON.stringify({ error: `Cassa responded ${res.status}` }),
@@ -493,6 +555,7 @@ serve(async (req) => {
 
     // ── SYNC PRODUCTS TO DB ──
     if (action === "sync-products") {
+      const basePath = await getApiBasePath(token, connectionId, connection);
       let allProducts: any[] = [];
       let start = 0;
       const limit = 100;
@@ -500,7 +563,7 @@ serve(async (req) => {
 
       while (hasMore) {
         const params = new URLSearchParams({ start: String(start), limit: String(limit) });
-        const res = await fetchCassa(`${CASSA_API_BASE}/products?${params}`, token, connectionId);
+        const res = await fetchCassa(`${CASSA_API_BASE}${basePath}/products?${params}`, token, connectionId);
         if (!res.ok) break;
         const data = await res.json();
         const products = Array.isArray(data) ? data : data.data || data.items || data.products || [];
