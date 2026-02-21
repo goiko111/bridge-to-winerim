@@ -21,36 +21,35 @@ serve(async (req) => {
     const url = new URL(req.url);
     const verificationCode = url.searchParams.get("verificationCode");
     if (verificationCode) {
+      console.log("Webhook verification (GET):", verificationCode);
       return new Response(verificationCode, {
         status: 200,
         headers: { "Content-Type": "text/plain" },
       });
     }
 
-    // ── B) Validate X-Clover-Auth header ──
-    // Clover sends this header with the "Auth Token" configured in app settings.
-    // We store the expected value as CLOVER_APP_SECRET (or a dedicated secret).
-    const cloverAuthHeader = req.headers.get("X-Clover-Auth") || "";
-    const expectedAuthCode = Deno.env.get("CLOVER_APP_SECRET") || "";
-
-    // If the auth code is configured, validate it
-    if (expectedAuthCode && cloverAuthHeader !== expectedAuthCode) {
-      console.warn("X-Clover-Auth mismatch. Rejecting webhook.");
-      // Still return 200 to avoid Clover retries, but don't process
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid X-Clover-Auth" }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // ── C) Handle POST verification (verificationCode in body) ──
+    // ── B) Parse body first to check for verificationCode before auth check ──
     const body = await req.json();
 
+    // Handle POST verification (verificationCode in body) — BEFORE auth check
     if (body.verificationCode) {
+      console.log("Webhook verification (POST):", body.verificationCode);
       return new Response(body.verificationCode, {
         status: 200,
         headers: { "Content-Type": "text/plain" },
       });
+    }
+
+    // ── C) Validate X-Clover-Auth header (only for actual event payloads) ──
+    const cloverAuthHeader = req.headers.get("X-Clover-Auth") || "";
+    const expectedAuthCode = Deno.env.get("CLOVER_APP_SECRET") || "";
+
+    if (expectedAuthCode && cloverAuthHeader && cloverAuthHeader !== expectedAuthCode) {
+      console.warn("X-Clover-Auth mismatch. Rejecting webhook.");
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid X-Clover-Auth" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // ── D) Process webhook events ──
