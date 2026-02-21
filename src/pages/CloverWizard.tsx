@@ -5,6 +5,7 @@ import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle,
   Search, Link2, Settings2, Map, Power, Wine, Calendar,
   Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle, ChevronDown,
+  ExternalLink, ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,30 +27,26 @@ const steps = [
   { id: 5, label: "Go Live", icon: Power },
 ];
 
-// ── Step 1: Connection ──
+// ── Step 1: Connection (OAuth) ──
 function StepConnection({
   locationName, setLocationName,
   region, setRegion,
-  merchantId, setMerchantId,
-  bearerToken, setBearerToken,
   winerimApiToken, setWinerimApiToken,
-  testStatus, testError, merchantName,
-  onTest,
+  oauthStatus, oauthError, merchantName,
+  onConnectClover,
 }: {
   locationName: string; setLocationName: (v: string) => void;
   region: string; setRegion: (v: string) => void;
-  merchantId: string; setMerchantId: (v: string) => void;
-  bearerToken: string; setBearerToken: (v: string) => void;
   winerimApiToken: string; setWinerimApiToken: (v: string) => void;
-  testStatus: string; testError: string | null; merchantName: string | null;
-  onTest: () => void;
+  oauthStatus: string; oauthError: string | null; merchantName: string | null;
+  onConnectClover: () => void;
 }) {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Connection Details</h2>
+        <h2 className="text-lg font-semibold text-foreground">Connect Clover</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Enter your Clover region, Merchant ID, and API Bearer token.
+          Authorize your Clover merchant via OAuth. No manual tokens needed.
         </p>
       </div>
       <div className="space-y-4">
@@ -69,29 +66,61 @@ function StepConnection({
           </div>
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Merchant ID</label>
-          <Input placeholder="e.g. ABCDEF1234" value={merchantId} onChange={(e) => setMerchantId(e.target.value)} className="bg-background font-mono text-sm" />
-          <p className="mt-1 text-[11px] text-muted-foreground">Find this in Clover Dashboard → Account & Setup → Merchant ID.</p>
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Bearer Token (API Token)</label>
-          <Input type="password" placeholder="Your Clover API token" value={bearerToken} onChange={(e) => setBearerToken(e.target.value)} className="bg-background font-mono text-sm" />
-          <p className="mt-1 text-[11px] text-muted-foreground">OAuth token from your Clover app or Setup → API Tokens.</p>
-        </div>
-        <div>
           <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Winerim API Token</label>
           <Input type="password" placeholder="Winerim API v2 token" value={winerimApiToken} onChange={(e) => setWinerimApiToken(e.target.value)} className="bg-background font-mono text-sm" />
           <p className="mt-1 text-[11px] text-muted-foreground">Winerim API v2 token for catalog & stock sync.</p>
         </div>
-        <Button onClick={onTest} disabled={testStatus === "testing" || !merchantId || !bearerToken || !region} variant="secondary" className="w-full">
-          {testStatus === "testing" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {testStatus === "success" && <CheckCircle2 className="mr-2 h-4 w-4 text-success" />}
-          {testStatus === "error" && <XCircle className="mr-2 h-4 w-4 text-destructive" />}
-          {testStatus === "idle" && "Test Connection"}
-          {testStatus === "testing" && "Testing…"}
-          {testStatus === "success" && (merchantName ? `Connected: ${merchantName}` : "Connection successful")}
-          {testStatus === "error" && (testError || "Connection failed")}
+
+        {/* OAuth Status */}
+        {oauthStatus === "connected" && (
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              <span className="text-sm font-semibold text-foreground">Clover Connected</span>
+            </div>
+            {merchantName && (
+              <p className="text-xs text-muted-foreground">Merchant: <span className="font-medium text-foreground">{merchantName}</span></p>
+            )}
+            <p className="text-[11px] text-muted-foreground">OAuth tokens securely stored. You can proceed to configure sync settings.</p>
+          </div>
+        )}
+
+        {oauthStatus === "error" && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+            <div className="flex items-center gap-2">
+              <XCircle className="h-4 w-4 text-destructive" />
+              <span className="text-sm font-medium text-destructive">{oauthError || "Connection failed"}</span>
+            </div>
+          </div>
+        )}
+
+        <Button
+          onClick={onConnectClover}
+          disabled={oauthStatus === "connecting" || oauthStatus === "connected" || !region}
+          className="w-full"
+          variant={oauthStatus === "connected" ? "secondary" : "default"}
+        >
+          {oauthStatus === "connecting" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {oauthStatus === "connected" && <CheckCircle2 className="mr-2 h-4 w-4 text-success" />}
+          {oauthStatus === "idle" && <ExternalLink className="mr-2 h-4 w-4" />}
+          {oauthStatus === "error" && <ShieldAlert className="mr-2 h-4 w-4" />}
+          {oauthStatus === "idle" && "Connect Clover (OAuth)"}
+          {oauthStatus === "connecting" && "Waiting for authorization…"}
+          {oauthStatus === "connected" && `Connected: ${merchantName || "OK"}`}
+          {oauthStatus === "error" && "Retry Connection"}
         </Button>
+
+        <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-1.5">
+          <p className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5" /> App Market OAuth Flow
+          </p>
+          <ul className="text-[11px] text-muted-foreground space-y-0.5 ml-5 list-disc">
+            <li>A popup will open to authorize on Clover</li>
+            <li>Tokens are exchanged and stored server-side only</li>
+            <li>No API keys or secrets are exposed to the browser</li>
+            <li>Scopes: Orders, Payments, Inventory, Merchant, Items</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
@@ -526,11 +555,13 @@ function StepGoLive({
   salesEvents, selectedDay,
   onEnable, enabled,
   familyOverrides, detectedFamilies,
+  merchantName,
 }: {
   syncMode: string; frequency: number; backfill: number;
   salesEvents: SalesEvent[]; selectedDay: string | null;
   onEnable: () => void; enabled: boolean;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
+  merchantName: string | null;
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
@@ -545,10 +576,12 @@ function StepGoLive({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
         <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">
-          Clover integration is configured. Enable sync to start importing orders every {frequency} minutes.
+          Clover integration is configured{merchantName ? ` for ${merchantName}` : ""}. Enable sync to start importing orders every {frequency} minutes.
         </p>
       </div>
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Auth</span><span className="font-medium text-success">OAuth ✓</span></div>
+        {merchantName && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Merchant</span><span className="font-medium text-foreground">{merchantName}</span></div>}
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
@@ -569,8 +602,6 @@ export default function CloverWizard() {
   const [searchParams] = useSearchParams();
   const [currentStep, setCurrentStep] = useState(1);
   const [region, setRegion] = useState(REGIONS[0].base);
-  const [merchantId, setMerchantId] = useState("");
-  const [bearerToken, setBearerToken] = useState("");
   const [winerimApiToken, setWinerimApiToken] = useState("");
   const [locationName, setLocationName] = useState("");
   const [syncMode, setSyncMode] = useState<"PULL_ONLY" | "BIDIRECTIONAL">("PULL_ONLY");
@@ -581,39 +612,40 @@ export default function CloverWizard() {
   const [showWineOnly, setShowWineOnly] = useState(true);
   const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
 
-  // base_url = region + /v3/merchants/ + merchantId
-  const baseUrl = `${region}/v3/merchants/${merchantId}`;
-
   const {
-    connectionId, setConnectionId,
+    connectionId,
     testStatus, testError, merchantName,
-    testConnection, updateConnection, loadConnection,
+    oauthStatus, oauthError,
+    startOAuth, testConnection, updateConnection, loadConnection,
     daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
   } = useCloverConnection();
 
-  // Load existing connection
+  // Handle OAuth callback (if redirected back or popup completed)
   useEffect(() => {
     const connParam = searchParams.get("connection");
+    const oauthResult = searchParams.get("oauth");
+
     if (connParam && !connectionId) {
       loadConnection(connParam).then((conn) => {
         if (conn) {
           setLocationName(conn.location_name);
-          // Parse base_url to extract region and merchantId
-          const urlMatch = conn.base_url.match(/^(https:\/\/api[^/]*clover\.com)\/v3\/merchants\/(.+)$/);
-          if (urlMatch) {
-            setRegion(urlMatch[1]);
-            setMerchantId(urlMatch[2]);
-          }
-          setBearerToken(conn.api_token);
+          // Parse region from base_url
+          const regionMatch = conn.base_url.match(/^(https:\/\/api[^/]*clover\.com)/);
+          if (regionMatch) setRegion(regionMatch[1]);
           setWinerimApiToken(conn.winerim_api_token || "");
           setSyncMode(conn.sync_mode as "PULL_ONLY" | "BIDIRECTIONAL");
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          setCurrentStep(4);
+          // If OAuth was just completed, go to step 2
+          if (oauthResult === "success") {
+            setCurrentStep(2);
+          } else {
+            setCurrentStep(conn.enabled ? 5 : 2);
+          }
         }
       });
     }
@@ -630,6 +662,15 @@ export default function CloverWizard() {
       fetchSalesForDay(selectedDay);
     }
   }, [selectedDay]);
+
+  // Auto-advance to step 2 when OAuth completes
+  useEffect(() => {
+    if (oauthStatus === "connected" && currentStep === 1) {
+      // Short delay so user sees the success state
+      const timer = setTimeout(() => setCurrentStep(2), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [oauthStatus, currentStep]);
 
   const handleNext = async () => {
     if (currentStep === 2 && connectionId) {
@@ -650,6 +691,11 @@ export default function CloverWizard() {
     setCurrentStep((s) => Math.min(5, s + 1));
   };
 
+  const canProceed = () => {
+    if (currentStep === 1) return oauthStatus === "connected" || testStatus === "success";
+    return true;
+  };
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       <button onClick={() => navigate("/integrations")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -660,7 +706,7 @@ export default function CloverWizard() {
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-lg">C</div>
         <div>
           <h1 className="text-xl font-bold text-foreground">Connect Clover POS</h1>
-          <p className="text-sm text-muted-foreground">Set up Clover integration in a few steps.</p>
+          <p className="text-sm text-muted-foreground">OAuth App Market integration — secure, no manual tokens.</p>
         </div>
       </div>
 
@@ -688,11 +734,9 @@ export default function CloverWizard() {
             <StepConnection
               locationName={locationName} setLocationName={setLocationName}
               region={region} setRegion={setRegion}
-              merchantId={merchantId} setMerchantId={setMerchantId}
-              bearerToken={bearerToken} setBearerToken={setBearerToken}
               winerimApiToken={winerimApiToken} setWinerimApiToken={setWinerimApiToken}
-              testStatus={testStatus} testError={testError} merchantName={merchantName}
-              onTest={() => testConnection(baseUrl, bearerToken, winerimApiToken)}
+              oauthStatus={oauthStatus} oauthError={oauthError} merchantName={merchantName}
+              onConnectClover={() => startOAuth(region, locationName, winerimApiToken)}
             />
           )}
           {currentStep === 2 && (
@@ -724,6 +768,7 @@ export default function CloverWizard() {
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
               enabled={enabled}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
+              merchantName={merchantName}
             />
           )}
         </motion.div>
@@ -735,7 +780,7 @@ export default function CloverWizard() {
           <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Back
           </Button>
-          <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
+          <Button onClick={handleNext} disabled={!canProceed()}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>

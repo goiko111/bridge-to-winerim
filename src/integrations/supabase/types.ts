@@ -296,6 +296,59 @@ export type Database = {
           },
         ]
       }
+      provider_credentials: {
+        Row: {
+          access_token_enc: string
+          connection_id: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          merchant_id: string
+          oauth_state: string | null
+          oauth_state_expires_at: string | null
+          refresh_token_enc: string | null
+          scopes: string[]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          access_token_enc: string
+          connection_id: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          merchant_id: string
+          oauth_state?: string | null
+          oauth_state_expires_at?: string | null
+          refresh_token_enc?: string | null
+          scopes?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          access_token_enc?: string
+          connection_id?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          merchant_id?: string
+          oauth_state?: string | null
+          oauth_state_expires_at?: string | null
+          refresh_token_enc?: string | null
+          scopes?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_credentials_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       provider_products: {
         Row: {
           classification_override: string
@@ -557,6 +610,50 @@ export type Database = {
             columns: ["sales_line_item_id"]
             isOneToOne: false
             referencedRelation: "sales_line_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      webhook_events: {
+        Row: {
+          connection_id: string | null
+          created_at: string
+          event_id: string
+          event_type: string
+          id: string
+          payload: Json
+          processed_at: string | null
+          provider: string
+          status: string
+        }
+        Insert: {
+          connection_id?: string | null
+          created_at?: string
+          event_id: string
+          event_type: string
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          provider?: string
+          status?: string
+        }
+        Update: {
+          connection_id?: string | null
+          created_at?: string
+          event_id?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          provider?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "webhook_events_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
             referencedColumns: ["id"]
           },
         ]

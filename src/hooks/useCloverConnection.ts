@@ -33,39 +33,96 @@ export interface DetectedFamily {
   itemCount: number;
 }
 
+export interface CatalogProduct {
+  provider_product_id: string;
+  name: string;
+  family: string;
+  price: number;
+  is_wine_candidate: boolean;
+  wine_score: number;
+  wine_reasons: string[];
+}
+
+export interface OAuthCredential {
+  merchant_id: string;
+  status: string;
+  scopes: string[];
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CloverState {
+  connectionId: string | null;
+  testStatus: "idle" | "testing" | "success" | "error";
+  testError: string | null;
+  merchantName: string | null;
+  // OAuth
+  oauthStatus: "idle" | "connecting" | "connected" | "error";
+  oauthError: string | null;
+  oauthCredential: OAuthCredential | null;
+  // Days / sales
+  daysWithSales: string[];
+  selectedDay: string | null;
+  loadingDays: boolean;
+  scanStats: { totalScanned: number; totalInvoicesFound: number } | null;
+  salesEvents: SalesEvent[];
+  detectedFamilies: DetectedFamily[];
+  loadingSales: boolean;
+  // Catalog
+  catalogProducts: CatalogProduct[];
+  loadingCatalog: boolean;
+  catalogStats: { totalProducts: number; wineCandidates: number } | null;
+  // Save
+  saving: boolean;
+  saveResult: { savedEvents: number; savedLines: number } | null;
+}
+
+const initialState: CloverState = {
+  connectionId: null,
+  testStatus: "idle",
+  testError: null,
+  merchantName: null,
+  oauthStatus: "idle",
+  oauthError: null,
+  oauthCredential: null,
+  daysWithSales: [],
+  selectedDay: null,
+  loadingDays: false,
+  scanStats: null,
+  salesEvents: [],
+  detectedFamilies: [],
+  loadingSales: false,
+  catalogProducts: [],
+  loadingCatalog: false,
+  catalogStats: null,
+  saving: false,
+  saveResult: null,
+};
+
 export function useCloverConnection() {
-  const [connectionId, setConnectionId] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
-  const [testError, setTestError] = useState<string | null>(null);
-  const [merchantName, setMerchantName] = useState<string | null>(null);
+  const [state, setState] = useState<CloverState>(initialState);
 
-  const [daysWithSales, setDaysWithSales] = useState<string[]>([]);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [loadingDays, setLoadingDays] = useState(false);
-  const [scanStats, setScanStats] = useState<{ totalScanned: number; totalInvoicesFound: number } | null>(null);
+  const patch = useCallback((partial: Partial<CloverState>) => {
+    setState((prev) => ({ ...prev, ...partial }));
+  }, []);
 
-  const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
-  const [detectedFamilies, setDetectedFamilies] = useState<DetectedFamily[]>([]);
-  const [loadingSales, setLoadingSales] = useState(false);
-
-  const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
-
+  // ── Save connection (creates a pos_connections row) ──
   const saveConnection = async (data: {
     locationName: string;
-    baseUrl: string; // https://api.eu.clover.com/v3/merchants/{mId}
-    apiToken: string; // Bearer token
+    region: string;
     winerimApiToken?: string;
     syncMode: string;
     syncFrequency: number;
     backfillDays: number;
   }) => {
+    // For OAuth, we store region as base_url initially (will be updated after OAuth)
     const { data: row, error } = await supabase
       .from("pos_connections")
       .insert({
-        location_name: data.locationName,
-        base_url: data.baseUrl,
-        api_token: data.apiToken,
+        location_name: data.locationName || "New Location",
+        base_url: data.region, // Just the region base URL initially
+        api_token: "OAUTH_PENDING", // Placeholder until OAuth completes
         winerim_api_token: data.winerimApiToken || null,
         provider: "clover",
         sync_mode: data.syncMode,
@@ -76,7 +133,7 @@ export function useCloverConnection() {
       .single();
 
     if (error) throw error;
-    setConnectionId(row.id);
+    patch({ connectionId: row.id });
     return row.id;
   };
 
@@ -88,135 +145,215 @@ export function useCloverConnection() {
     if (error) throw error;
   };
 
-  const testConnection = async (baseUrl: string, apiToken: string, winerimApiToken?: string) => {
-    setTestStatus("testing");
-    setTestError(null);
-    setMerchantName(null);
+  // ── OAuth: Start flow ──
+  const startOAuth = useCallback(async (region: string, locationName: string, winerimApiToken?: string) => {
+    patch({ oauthStatus: "connecting", oauthError: null });
 
-    let connId = connectionId;
+    let connId = state.connectionId;
     if (!connId) {
       try {
         connId = await saveConnection({
-          locationName: "New Location",
-          baseUrl,
-          apiToken,
+          locationName,
+          region,
           winerimApiToken,
           syncMode: "PULL_ONLY",
           syncFrequency: 15,
           backfillDays: 30,
         });
       } catch (e: any) {
-        setTestStatus("error");
-        setTestError(e.message);
-        return false;
+        patch({ oauthStatus: "error", oauthError: e.message });
+        return;
       }
     } else {
-      await updateConnection(connId, { base_url: baseUrl, api_token: apiToken, winerim_api_token: winerimApiToken || null });
+      // Update region if changed
+      await updateConnection(connId, { base_url: region, winerim_api_token: winerimApiToken || null });
     }
 
     try {
-      const { data, error } = await supabase.functions.invoke("clover-proxy", {
-        body: { action: "test", connectionId: connId },
+      const { data, error } = await supabase.functions.invoke("clover-oauth", {
+        body: { action: "start", connectionId: connId, region },
       });
 
       if (error) {
-        setTestStatus("error");
-        setTestError(error.message);
+        patch({ oauthStatus: "error", oauthError: error.message });
+        return;
+      }
+
+      if (data?.authorizeUrl) {
+        // Open OAuth popup
+        const popup = window.open(data.authorizeUrl, "clover-oauth", "width=600,height=700,popup=yes");
+
+        // Listen for OAuth completion via postMessage
+        const handler = (event: MessageEvent) => {
+          if (event.data?.type === "CLOVER_OAUTH_SUCCESS") {
+            window.removeEventListener("message", handler);
+            patch({
+              oauthStatus: "connected",
+              connectionId: event.data.connectionId,
+              merchantName: event.data.merchantName || event.data.merchantId,
+              testStatus: "success",
+            });
+          }
+        };
+        window.addEventListener("message", handler);
+
+        // Fallback: poll for status if popup is blocked or postMessage fails
+        const pollInterval = setInterval(async () => {
+          if (popup?.closed) {
+            clearInterval(pollInterval);
+            window.removeEventListener("message", handler);
+            // Check if OAuth completed
+            const { data: statusData } = await supabase.functions.invoke("clover-oauth", {
+              body: { action: "status", connectionId: connId },
+            });
+            if (statusData?.credential?.status === "CONNECTED") {
+              patch({
+                oauthStatus: "connected",
+                oauthCredential: statusData.credential,
+                merchantName: statusData.credential.merchant_id,
+                testStatus: "success",
+              });
+            } else {
+              patch({ oauthStatus: "error", oauthError: "OAuth window closed without completing authorization." });
+            }
+          }
+        }, 1500);
+
+        // Clean up after 5 minutes max
+        setTimeout(() => {
+          clearInterval(pollInterval);
+          window.removeEventListener("message", handler);
+        }, 5 * 60 * 1000);
+      }
+    } catch (e: any) {
+      patch({ oauthStatus: "error", oauthError: e.message });
+    }
+  }, [state.connectionId]);
+
+  // ── Test connection (using stored OAuth token) ──
+  const testConnection = async () => {
+    if (!state.connectionId) return false;
+    patch({ testStatus: "testing", testError: null, merchantName: null });
+
+    try {
+      const { data, error } = await supabase.functions.invoke("clover-proxy", {
+        body: { action: "test", connectionId: state.connectionId },
+      });
+
+      if (error) {
+        patch({ testStatus: "error", testError: error.message });
         return false;
       }
 
       if (data?.success) {
-        setTestStatus("success");
-        setMerchantName(data.merchantName || null);
+        patch({ testStatus: "success", merchantName: data.merchantName || null });
         return true;
       } else {
-        setTestStatus("error");
-        setTestError(data?.message || "Connection failed");
+        patch({ testStatus: "error", testError: data?.message || "Connection failed" });
         return false;
       }
     } catch (e: any) {
-      setTestStatus("error");
-      setTestError(e.message);
+      patch({ testStatus: "error", testError: e.message });
       return false;
     }
   };
 
-  const findDaysWithSales = useCallback(async (daysBack = 60) => {
-    if (!connectionId) return;
-    setLoadingDays(true);
-    setScanStats(null);
+  // ── Fetch catalog ──
+  const fetchCatalog = useCallback(async () => {
+    if (!state.connectionId) return;
+    patch({ loadingCatalog: true, catalogProducts: [], catalogStats: null });
     try {
       const { data, error } = await supabase.functions.invoke("clover-proxy", {
-        body: { action: "find-last-business-day", connectionId, daysBack },
+        body: { action: "fetch-catalog", connectionId: state.connectionId },
+      });
+      if (error) throw error;
+      patch({
+        catalogProducts: data?.products || [],
+        catalogStats: { totalProducts: data?.totalProducts || 0, wineCandidates: data?.wineCandidates || 0 },
+        loadingCatalog: false,
+      });
+    } catch (e) {
+      console.error("Failed to fetch catalog:", e);
+      patch({ loadingCatalog: false });
+    }
+  }, [state.connectionId]);
+
+  // ── Find days with sales ──
+  const findDaysWithSales = useCallback(async (daysBack = 60) => {
+    if (!state.connectionId) return;
+    patch({ loadingDays: true, scanStats: null });
+    try {
+      const { data, error } = await supabase.functions.invoke("clover-proxy", {
+        body: { action: "find-last-business-day", connectionId: state.connectionId, daysBack },
       });
       if (error) throw error;
       const days: string[] = data?.daysWithSales || [];
-      setDaysWithSales(days);
-      setScanStats({
-        totalScanned: data?.totalScanned || 0,
-        totalInvoicesFound: data?.totalInvoicesFound || 0,
+      patch({
+        daysWithSales: days,
+        scanStats: { totalScanned: data?.totalScanned || 0, totalInvoicesFound: data?.totalInvoicesFound || 0 },
+        selectedDay: days.length > 0 && !state.selectedDay ? days[0] : state.selectedDay,
+        loadingDays: false,
       });
-      if (days.length > 0 && !selectedDay) {
-        setSelectedDay(days[0]);
-      }
     } catch (e) {
       console.error("Failed to find business days:", e);
-    } finally {
-      setLoadingDays(false);
+      patch({ loadingDays: false });
     }
-  }, [connectionId, selectedDay]);
+  }, [state.connectionId, state.selectedDay]);
 
+  // ── Fetch sales for a day ──
   const fetchSalesForDay = useCallback(async (day: string) => {
-    if (!connectionId) return;
-    setLoadingSales(true);
-    setSalesEvents([]);
-    setDetectedFamilies([]);
+    if (!state.connectionId) return;
+    patch({ loadingSales: true, salesEvents: [], detectedFamilies: [] });
     try {
       const { data, error } = await supabase.functions.invoke("clover-proxy", {
-        body: { action: "fetch-day", connectionId, businessDay: day },
+        body: { action: "fetch-day", connectionId: state.connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSalesEvents(data?.salesEvents || []);
-      setDetectedFamilies(data?.detectedFamilies || []);
+      patch({
+        salesEvents: data?.salesEvents || [],
+        detectedFamilies: data?.detectedFamilies || [],
+        loadingSales: false,
+      });
     } catch (e) {
       console.error("Failed to fetch sales:", e);
-    } finally {
-      setLoadingSales(false);
+      patch({ loadingSales: false });
     }
-  }, [connectionId]);
+  }, [state.connectionId]);
 
+  // ── Save sales to DB ──
   const saveSalesToDb = useCallback(async (day: string) => {
-    if (!connectionId) return;
-    setSaving(true);
-    setSaveResult(null);
+    if (!state.connectionId) return;
+    patch({ saving: true, saveResult: null });
     try {
       const { data, error } = await supabase.functions.invoke("clover-proxy", {
-        body: { action: "save-sales", connectionId, businessDay: day },
+        body: { action: "save-sales", connectionId: state.connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 });
+      patch({ saveResult: { savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 }, saving: false });
     } catch (e) {
       console.error("Failed to save sales:", e);
-    } finally {
-      setSaving(false);
+      patch({ saving: false });
     }
-  }, [connectionId]);
+  }, [state.connectionId]);
 
+  // ── Enable sync ──
   const enableSync = async () => {
-    if (!connectionId) return;
-    await updateConnection(connectionId, { enabled: true });
+    if (!state.connectionId) return;
+    await updateConnection(state.connectionId, { enabled: true });
   };
 
+  // ── Save family rules ──
   const saveFamilyRules = useCallback(async (families: { name: string; isWine: boolean }[]) => {
-    if (!connectionId) return;
+    if (!state.connectionId) return;
     for (const f of families) {
       await supabase.from("wine_family_rules").upsert(
-        { connection_id: connectionId, family_name: f.name, is_wine: f.isWine },
+        { connection_id: state.connectionId, family_name: f.name, is_wine: f.isWine },
         { onConflict: "connection_id,family_name" }
       );
     }
-  }, [connectionId]);
+  }, [state.connectionId]);
 
+  // ── Load existing connection ──
   const loadConnection = useCallback(async (id: string) => {
     const { data, error } = await supabase
       .from("pos_connections")
@@ -224,32 +361,56 @@ export function useCloverConnection() {
       .eq("id", id)
       .single();
     if (error || !data) return null;
-    setConnectionId(data.id);
+    patch({ connectionId: data.id });
+
+    // Check OAuth status
+    const { data: credData } = await supabase.functions.invoke("clover-oauth", {
+      body: { action: "status", connectionId: id },
+    });
+    if (credData?.credential?.status === "CONNECTED") {
+      patch({
+        oauthStatus: "connected",
+        oauthCredential: credData.credential,
+        merchantName: credData.credential.merchant_id,
+        testStatus: "success",
+      });
+    }
+
     return data;
   }, []);
 
   return {
-    connectionId,
-    setConnectionId,
-    testStatus,
-    testError,
-    merchantName,
+    // State
+    connectionId: state.connectionId,
+    testStatus: state.testStatus,
+    testError: state.testError,
+    merchantName: state.merchantName,
+    oauthStatus: state.oauthStatus,
+    oauthError: state.oauthError,
+    oauthCredential: state.oauthCredential,
+    daysWithSales: state.daysWithSales,
+    selectedDay: state.selectedDay,
+    loadingDays: state.loadingDays,
+    scanStats: state.scanStats,
+    salesEvents: state.salesEvents,
+    detectedFamilies: state.detectedFamilies,
+    loadingSales: state.loadingSales,
+    catalogProducts: state.catalogProducts,
+    loadingCatalog: state.loadingCatalog,
+    catalogStats: state.catalogStats,
+    saving: state.saving,
+    saveResult: state.saveResult,
+    // Actions
+    setSelectedDay: (day: string | null) => patch({ selectedDay: day }),
+    setConnectionId: (id: string | null) => patch({ connectionId: id }),
+    startOAuth,
     testConnection,
     saveConnection,
     updateConnection,
     loadConnection,
-    daysWithSales,
-    selectedDay,
-    setSelectedDay,
-    loadingDays,
     findDaysWithSales,
-    scanStats,
-    salesEvents,
-    detectedFamilies,
-    loadingSales,
     fetchSalesForDay,
-    saving,
-    saveResult,
+    fetchCatalog,
     saveSalesToDb,
     enableSync,
     saveFamilyRules,
