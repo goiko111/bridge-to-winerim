@@ -632,9 +632,11 @@ export default function CloverWizard() {
       loadConnection(connParam).then((conn) => {
         if (conn) {
           setLocationName(conn.location_name);
-          // Parse region from base_url
-          const regionMatch = conn.base_url.match(/^(https:\/\/api[^/]*clover\.com)/);
-          if (regionMatch) setRegion(regionMatch[1]);
+          // Parse region from base_url (now stores region directly, e.g. https://api.eu.clover.com)
+          const baseUrl = conn.base_url || "";
+          if (baseUrl.includes("eu")) setRegion("https://api.eu.clover.com");
+          else if (baseUrl.includes("la")) setRegion("https://api.la.clover.com");
+          else setRegion("https://api.clover.com");
           setWinerimApiToken(conn.winerim_api_token || "");
           setSyncMode(conn.sync_mode as "PULL_ONLY" | "BIDIRECTIONAL");
           setFrequency(conn.sync_frequency_minutes);

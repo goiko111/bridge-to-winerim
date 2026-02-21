@@ -100,14 +100,7 @@ function suggestFamilyClassification(familyName: string) {
 }
 
 // ── Clover API helpers ──
-function parseCloverOrders(raw: any): any[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (raw.elements && Array.isArray(raw.elements)) return raw.elements;
-  return [];
-}
-
-function parseCloverItems(raw: any): any[] {
+function parseCloverElements(raw: any): any[] {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
   if (raw.elements && Array.isArray(raw.elements)) return raw.elements;
@@ -127,22 +120,41 @@ function mapCloverLineItem(item: any) {
   };
 }
 
-// Helper: get auth headers for a connection (uses provider_credentials if available)
-async function getAuthHeaders(supabase: any, connection: any): Promise<Record<string, string>> {
-  // Try OAuth credentials first
+// ── Resolve merchantId + token from provider_credentials ──
+async function resolveAuth(supabase: any, connectionId: string, connection: any): Promise<{ merchantId: string; token: string; apiBase: string } | null> {
   const { data: cred } = await supabase
     .from("provider_credentials")
-    .select("access_token_enc, status")
-    .eq("connection_id", connection.id)
+    .select("access_token_enc, merchant_id, status")
+    .eq("connection_id", connectionId)
     .eq("status", "CONNECTED")
     .single();
 
   const token = cred?.access_token_enc || connection.api_token;
+  const merchantId = cred?.merchant_id;
 
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-  };
+  if (!merchantId || merchantId === "PENDING") {
+    return null;
+  }
+
+  // base_url stores region (e.g. https://api.eu.clover.com)
+  let apiBase = connection.base_url.replace(/\/+$/, "");
+  // If base_url already contains /v3/merchants, extract the api root
+  if (apiBase.includes("/v3/merchants")) {
+    apiBase = apiBase.split("/v3/merchants")[0];
+  }
+  // Ensure it's an API domain
+  if (!apiBase.includes("api")) {
+    if (apiBase.includes("eu")) apiBase = "https://api.eu.clover.com";
+    else if (apiBase.includes("la")) apiBase = "https://api.la.clover.com";
+    else apiBase = "https://api.clover.com";
+  }
+
+  return { merchantId, token, apiBase };
+}
+
+// Build the merchant REST base: {apiBase}/v3/merchants/{merchantId}
+function merchantBase(auth: { apiBase: string; merchantId: string }): string {
+  return `${auth.apiBase}/v3/merchants/${auth.merchantId}`;
 }
 
 // Rate-limit aware fetch with backoff
@@ -157,7 +169,6 @@ async function cloverFetch(url: string, headers: Record<string, string>, retries
     }
     return res;
   }
-  // Final attempt
   return fetch(url, { headers });
 }
 
@@ -186,17 +197,29 @@ serve(async (req) => {
       );
     }
 
-    const baseUrlClean = connection.base_url.replace(/\/+$/, "");
-    const headers = await getAuthHeaders(supabase, connection);
+    // Resolve auth (merchantId + token + apiBase)
+    const auth = await resolveAuth(supabase, connectionId, connection);
+    if (!auth) {
+      return new Response(
+        JSON.stringify({ error: "Missing merchantId. Complete OAuth first." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const base = merchantBase(auth);
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${auth.token}`,
+      Accept: "application/json",
+    };
 
     // ── TEST ──
     if (action === "test") {
       try {
-        const res = await cloverFetch(baseUrlClean, headers);
+        const res = await cloverFetch(base, headers);
         if (res.ok) {
           const merchant = await res.json();
           return new Response(
-            JSON.stringify({ success: true, merchantName: merchant.name || "" }),
+            JSON.stringify({ success: true, merchantName: merchant.name || "", merchantId: auth.merchantId }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -219,7 +242,7 @@ serve(async (req) => {
       const limit = 100;
 
       while (true) {
-        const url = `${baseUrlClean}/items?expand=categories&limit=${limit}&offset=${offset}`;
+        const url = `${base}/items?expand=categories&limit=${limit}&offset=${offset}`;
         const res = await cloverFetch(url, headers);
         if (!res.ok) {
           return new Response(
@@ -228,14 +251,13 @@ serve(async (req) => {
           );
         }
         const body = await res.json();
-        const items = parseCloverItems(body);
+        const items = parseCloverElements(body);
         allItems = allItems.concat(items);
         if (items.length < limit) break;
         offset += limit;
         if (offset > 10000) break;
       }
 
-      // Load family rules
       const { data: familyRules } = await supabase
         .from("wine_family_rules")
         .select("family_name, is_wine")
@@ -245,18 +267,14 @@ serve(async (req) => {
         .map((r: any) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      // Map to provider_products format
       const products = allItems.map((item: any) => {
         const name = String(item.name || "");
         const family = String(item.categories?.elements?.[0]?.name || "");
         const price = Number(item.price || 0) / 100;
         const wr = isWineCandidate(family, name, "", price, wineFamilies, NON_WINE_FAMILIES);
-
         return {
           provider_product_id: String(item.id),
-          name,
-          family,
-          price,
+          name, family, price,
           is_wine_candidate: wr.candidate,
           wine_score: wr.score,
           wine_reasons: wr.reasons,
@@ -264,31 +282,23 @@ serve(async (req) => {
         };
       });
 
-      // Upsert into provider_products
       let synced = 0;
       for (const p of products) {
         const { error } = await supabase
           .from("provider_products")
-          .upsert(
-            {
-              connection_id: connectionId,
-              provider_product_id: p.provider_product_id,
-              name: p.name,
-              family: p.family || null,
-              price: p.price,
-              is_wine_candidate: p.is_wine_candidate,
-              wine_score: p.wine_score,
-              wine_reasons: p.wine_reasons,
-              raw_payload: p.raw_payload,
-              last_synced_at: new Date().toISOString(),
-              sync_status: "SYNCED",
-            },
-            { onConflict: "connection_id,provider_product_id" }
-          );
+          .upsert({
+            connection_id: connectionId,
+            provider_product_id: p.provider_product_id,
+            name: p.name, family: p.family || null, price: p.price,
+            is_wine_candidate: p.is_wine_candidate,
+            wine_score: p.wine_score, wine_reasons: p.wine_reasons,
+            raw_payload: p.raw_payload,
+            last_synced_at: new Date().toISOString(),
+            sync_status: "SYNCED",
+          }, { onConflict: "connection_id,provider_product_id" });
         if (!error) synced++;
       }
 
-      // Update connection catalog stats
       const wineCandidates = products.filter((p: any) => p.is_wine_candidate).length;
       await supabase
         .from("pos_connections")
@@ -300,13 +310,7 @@ serve(async (req) => {
         .eq("id", connectionId);
 
       return new Response(
-        JSON.stringify({
-          success: true,
-          totalProducts: products.length,
-          wineCandidates,
-          synced,
-          products,
-        }),
+        JSON.stringify({ success: true, totalProducts: products.length, wineCandidates, synced, products }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -322,16 +326,15 @@ serve(async (req) => {
         const dayDate = new Date(Date.now() - i * 86400000);
         const day = dayDate.toISOString().split("T")[0];
         totalScanned++;
-
         const startOfDay = new Date(day + "T00:00:00Z").getTime();
         const endOfDay = startOfDay + 86400000;
 
         try {
-          const url = `${baseUrlClean}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&limit=1`;
+          const url = `${base}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&limit=1`;
           const res = await cloverFetch(url, headers);
           if (res.ok) {
             const body = await res.json();
-            const orders = parseCloverOrders(body);
+            const orders = parseCloverElements(body);
             if (orders.length > 0) {
               daysWithSales.push(day);
               totalInvoicesFound += body.elements?.length || orders.length;
@@ -364,7 +367,7 @@ serve(async (req) => {
       const limit = 100;
 
       while (true) {
-        const url = `${baseUrlClean}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
+        const url = `${base}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
         const res = await cloverFetch(url, headers);
         if (!res.ok) {
           return new Response(
@@ -373,14 +376,13 @@ serve(async (req) => {
           );
         }
         const body = await res.json();
-        const orders = parseCloverOrders(body);
+        const orders = parseCloverElements(body);
         allOrders = allOrders.concat(orders);
         if (orders.length < limit) break;
         offset += limit;
         if (offset > 10000) break;
       }
 
-      // Load wine family rules
       const { data: familyRules } = await supabase
         .from("wine_family_rules")
         .select("family_name, is_wine")
@@ -402,26 +404,15 @@ serve(async (req) => {
           if (mapped.family) allFamilies.add(mapped.family);
           const lineTotal = mapped.total_amount > 0 ? mapped.total_amount : mapped.unit_price * mapped.quantity;
           const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
-          lines.push({
-            ...mapped,
-            total_amount: lineTotal,
-            is_wine_candidate: wr.candidate,
-            wine_score: wr.score,
-            wine_reasons: wr.reasons,
-          });
+          lines.push({ ...mapped, total_amount: lineTotal, is_wine_candidate: wr.candidate, wine_score: wr.score, wine_reasons: wr.reasons });
         }
 
         const total = Number(order.total || 0) / 100;
-
         return {
-          provider_doc_id: docId,
-          business_day: day,
+          provider_doc_id: docId, business_day: day,
           doc_type: String(order.orderType?.label || order.state || "Order"),
-          total_amount: total,
-          total_tax: Number(order.taxRemoved === false ? (order.total - (order.total / 1.1)) : 0) / 100,
-          total_net: total,
-          line_count: lines.length,
-          lines,
+          total_amount: total, total_tax: 0, total_net: total,
+          line_count: lines.length, lines,
         };
       });
 
@@ -456,16 +447,11 @@ serve(async (req) => {
       const limit = 100;
 
       while (true) {
-        const url = `${baseUrlClean}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
+        const url = `${base}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
         const res = await cloverFetch(url, headers);
-        if (!res.ok) {
-          return new Response(
-            JSON.stringify({ error: `Clover responded ${res.status}` }),
-            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
+        if (!res.ok) break;
         const body = await res.json();
-        const orders = parseCloverOrders(body);
+        const orders = parseCloverElements(body);
         allOrders = allOrders.concat(orders);
         if (orders.length < limit) break;
         offset += limit;
@@ -493,42 +479,25 @@ serve(async (req) => {
           const mapped = mapCloverLineItem(item);
           const lineTotal = mapped.total_amount > 0 ? mapped.total_amount : mapped.unit_price * mapped.quantity;
           const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
-          lineData.push({
-            ...mapped,
-            total_amount: lineTotal,
-            is_wine_candidate: wr.candidate,
-          });
+          lineData.push({ ...mapped, total_amount: lineTotal, is_wine_candidate: wr.candidate });
         }
 
         const total = Number(order.total || 0) / 100;
-
         const { data: eventRow, error: eventErr } = await supabase
           .from("sales_events")
           .upsert({
-            connection_id: connectionId,
-            provider_doc_id: docId,
-            business_day: day,
+            connection_id: connectionId, provider_doc_id: docId, business_day: day,
             doc_type: String(order.orderType?.label || order.state || "Order"),
-            total_amount: total,
-            total_tax: 0,
-            total_net: total,
-            line_count: lineData.length,
-            raw_json: order,
+            total_amount: total, total_tax: 0, total_net: total,
+            line_count: lineData.length, raw_json: order,
           }, { onConflict: "connection_id,provider_doc_id" })
-          .select("id")
-          .single();
+          .select("id").single();
 
         if (eventErr || !eventRow) continue;
         savedEvents++;
 
         await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-
-        const linesToInsert = lineData.map((l) => ({
-          ...l,
-          sales_event_id: eventRow.id,
-          connection_id: connectionId,
-        }));
-
+        const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
         if (linesToInsert.length > 0) {
           const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
           if (!lineErr) savedLines += linesToInsert.length;
@@ -546,7 +515,7 @@ serve(async (req) => {
       );
     }
 
-    // ── BACKFILL: Bulk import N days of orders ──
+    // ── BACKFILL ──
     if (action === "backfill") {
       const days = daysBack || 30;
       let totalEvents = 0;
@@ -565,11 +534,11 @@ serve(async (req) => {
           const limit = 100;
 
           while (true) {
-            const url = `${baseUrlClean}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
+            const url = `${base}/orders?filter=createdTime>=${startOfDay}&filter=createdTime<${endOfDay}&expand=lineItems&limit=${limit}&offset=${offset}`;
             const res = await cloverFetch(url, headers);
             if (!res.ok) break;
             const body = await res.json();
-            const orders = parseCloverOrders(body);
+            const orders = parseCloverElements(body);
             allOrders = allOrders.concat(orders);
             if (orders.length < limit) break;
             offset += limit;
@@ -603,15 +572,12 @@ serve(async (req) => {
             const { data: eventRow, error: eventErr } = await supabase
               .from("sales_events")
               .upsert({
-                connection_id: connectionId,
-                provider_doc_id: docId,
-                business_day: day,
+                connection_id: connectionId, provider_doc_id: docId, business_day: day,
                 doc_type: String(order.orderType?.label || order.state || "Order"),
                 total_amount: total, total_tax: 0, total_net: total,
                 line_count: lineData.length, raw_json: order,
               }, { onConflict: "connection_id,provider_doc_id" })
-              .select("id")
-              .single();
+              .select("id").single();
 
             if (eventErr || !eventRow) continue;
             totalEvents++;

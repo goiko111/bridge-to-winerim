@@ -8,44 +8,59 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  // Respond to OPTIONS quickly
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  // Must respond 200 in < 1s per Clover requirements
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const cloverAppSecret = Deno.env.get("CLOVER_APP_SECRET") || "";
   const supabase = createClient(supabaseUrl, serviceKey);
 
   try {
-    // Clover webhook verification: if it sends a verification challenge
+    // ── A) Clover webhook verification handshake (GET with verificationCode) ──
     const url = new URL(req.url);
     const verificationCode = url.searchParams.get("verificationCode");
     if (verificationCode) {
-      // Clover handshake: respond with the verification code
       return new Response(verificationCode, {
         status: 200,
         headers: { "Content-Type": "text/plain" },
       });
     }
 
+    // ── B) Validate X-Clover-Auth header ──
+    // Clover sends this header with the "Auth Token" configured in app settings.
+    // We store the expected value as CLOVER_APP_SECRET (or a dedicated secret).
+    const cloverAuthHeader = req.headers.get("X-Clover-Auth") || "";
+    const expectedAuthCode = Deno.env.get("CLOVER_APP_SECRET") || "";
+
+    // If the auth code is configured, validate it
+    if (expectedAuthCode && cloverAuthHeader !== expectedAuthCode) {
+      console.warn("X-Clover-Auth mismatch. Rejecting webhook.");
+      // Still return 200 to avoid Clover retries, but don't process
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid X-Clover-Auth" }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── C) Handle POST verification (verificationCode in body) ──
     const body = await req.json();
 
-    // Clover sends webhooks as:
-    // { "merchants": { "MERCHANT_ID": [ { "type": "UPDATE", "objectId": "ORDER_ID", "ts": 12345, "appId": "..." } ] } }
-    // Or newer format:
-    // { "verificationCode": "...", "merchants": {...} }
+    if (body.verificationCode) {
+      return new Response(body.verificationCode, {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
 
+    // ── D) Process webhook events ──
     const merchants = body.merchants || {};
-
     let eventsProcessed = 0;
 
     for (const [merchantId, events] of Object.entries(merchants)) {
       if (!Array.isArray(events)) continue;
 
-      // Find the connection for this merchant
+      // Find connection for this merchant
       const { data: cred } = await supabase
         .from("provider_credentials")
         .select("connection_id")
@@ -62,7 +77,7 @@ serve(async (req) => {
         const eventId = `${merchantId}_${event.objectId || ""}_${event.ts || Date.now()}`;
         const eventType = String(event.type || "UNKNOWN").toUpperCase();
 
-        // Dedup: try to insert, skip if already exists
+        // Dedupe: try to insert, skip if already exists
         const { error: insertErr } = await supabase
           .from("webhook_events")
           .insert({
@@ -75,7 +90,6 @@ serve(async (req) => {
           });
 
         if (insertErr) {
-          // Likely duplicate (unique constraint on provider+event_id)
           if (insertErr.code === "23505") {
             console.log(`Duplicate webhook event skipped: ${eventId}`);
             continue;
@@ -86,16 +100,14 @@ serve(async (req) => {
 
         eventsProcessed++;
 
-        // Enqueue async processing based on event type
-        // For ORDER events, trigger a sales sync
+        // Queue async processing for ORDER/PAYMENT events
         if (eventType.includes("ORDER") || eventType.includes("PAYMENT")) {
-          // We could call clover-proxy here to fetch and store the order
-          // For now, just mark it for processing
           console.log(`Queued ${eventType} event for connection ${cred.connection_id}: ${event.objectId}`);
         }
       }
     }
 
+    // Must respond 200 in < 1s per Clover requirements
     return new Response(
       JSON.stringify({ success: true, eventsProcessed }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
