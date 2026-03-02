@@ -255,7 +255,10 @@ serve(async (req) => {
     }
 
     const { base_url, api_token } = connection;
-    const baseUrlClean = base_url.trim().replace(/\/+$/, "");
+    let baseUrlClean = base_url.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\//i.test(baseUrlClean)) {
+      baseUrlClean = `http://${baseUrlClean}`;
+    }
     const apiTokenClean = api_token.trim();
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
