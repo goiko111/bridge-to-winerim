@@ -6,6 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const WINERIM_BASE_URL = "https://app.winerim.com/api/v2";
+
 // ── Fuzzy matching helpers ──
 function normalize(s: string): string {
   return s.toLowerCase()
@@ -19,14 +21,12 @@ function tokenize(s: string): Set<string> {
   return new Set(normalize(s).split(" ").filter(t => t.length > 1));
 }
 
-// Jaccard similarity
 function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   const intersection = new Set([...a].filter(x => b.has(x)));
   const union = new Set([...a, ...b]);
   return union.size === 0 ? 0 : intersection.size / union.size;
 }
 
-// Levenshtein distance
 function levenshtein(a: string, b: string): number {
   const m = a.length, n = b.length;
   if (m === 0) return n;
@@ -75,7 +75,6 @@ function findBestMatches(
     const reasons: string[] = [];
     let method = "FUZZY";
 
-    // SKU/EAN exact match
     if (posSku && posSku.length > 2) {
       if (wine.sku && normalize(wine.sku) === normalize(posSku)) {
         score += 100;
@@ -89,7 +88,6 @@ function findBestMatches(
       }
     }
 
-    // Jaccard token similarity
     const posTokens = tokenize(posName);
     const wineTokens = tokenize(wine.name);
     const jaccard = jaccardSimilarity(posTokens, wineTokens);
@@ -98,14 +96,12 @@ function findBestMatches(
       reasons.push(`jaccard:${jaccard.toFixed(2)}`);
     }
 
-    // Levenshtein similarity
     const levSim = levenshteinSimilarity(posName, wine.name);
     if (levSim > 0.3) {
       score += Math.round(levSim * 30);
       reasons.push(`levenshtein:${levSim.toFixed(2)}`);
     }
 
-    // Winery name bonus
     if (wine.winery) {
       const wineryNorm = normalize(wine.winery);
       if (normalize(posName).includes(wineryNorm) && wineryNorm.length > 2) {
@@ -114,7 +110,6 @@ function findBestMatches(
       }
     }
 
-    // Grape variety bonus
     if (wine.grape_variety) {
       const grapeNorm = normalize(wine.grape_variety);
       if (normalize(posName).includes(grapeNorm) && grapeNorm.length > 2) {
@@ -123,7 +118,6 @@ function findBestMatches(
       }
     }
 
-    // Family/category bonus
     if (posFamily && wine.winery) {
       const famNorm = normalize(posFamily);
       const wineryNorm = normalize(wine.winery);
@@ -140,6 +134,47 @@ function findBestMatches(
 
   candidates.sort((a, b) => b.score - a.score);
   return candidates.slice(0, maxResults);
+}
+
+// Helper to build Winerim headers with correct auth
+function buildWinerimHeaders(token: string): Record<string, string> {
+  return {
+    "WINERIM-API-TOKEN": token,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+}
+
+// Fetch all wines from Winerim with pagination
+async function fetchAllWines(headers: Record<string, string>): Promise<Record<string, unknown>[]> {
+  const allWines: Record<string, unknown>[] = [];
+  let page = 1;
+  const limit = 100;
+
+  while (true) {
+    const url = `${WINERIM_BASE_URL}/wines?page=${page}&limit=${limit}`;
+    console.log(`Fetching wines page ${page}: ${url}`);
+    const res = await fetch(url, { headers });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Winerim API error ${res.status}: ${errBody.substring(0, 500)}`);
+    }
+
+    const data = await res.json();
+
+    // Response format: { success: true, pagination: {...}, wines: [...] }
+    const wines = data?.wines || [];
+    if (!Array.isArray(wines) || wines.length === 0) break;
+
+    allWines.push(...wines);
+
+    const totalPages = data?.pagination?.total_pages || 1;
+    if (page >= totalPages) break;
+    page++;
+  }
+
+  return allWines;
 }
 
 serve(async (req) => {
@@ -177,50 +212,37 @@ serve(async (req) => {
       );
     }
 
-    const winerimHeaders = {
-      "Authorization": `Bearer ${winerimToken}`,
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    };
+    const winerimHeaders = buildWinerimHeaders(winerimToken);
 
     // ── FETCH WINE CATALOG ──
     if (action === "fetch-catalog") {
-      const res = await fetch("https://api.winerim.com/api/v2/wines", {
-        headers: winerimHeaders,
-      });
-      if (!res.ok) {
-        const errBody = await res.text();
-        return new Response(
-          JSON.stringify({ success: false, status: res.status, error: errBody.substring(0, 2048) }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const data = await res.json();
-
-      // Parse wines - handle different response formats
-      let wines: Record<string, unknown>[] = [];
-      if (Array.isArray(data)) wines = data;
-      else if (data?.wines && Array.isArray(data.wines)) wines = data.wines;
-      else if (data?.data && Array.isArray(data.data)) wines = data.data;
+      const wines = await fetchAllWines(winerimHeaders);
 
       // Upsert into winerim_wines
       let upserted = 0;
       for (const w of wines) {
-        const winerimId = String(w.id || w.wine_id || w.product_id || "");
+        const winerimId = String(w.id || "");
         if (!winerimId) continue;
+
+        // Build grape variety from grapes array if available
+        let grapeVariety: string | null = null;
+        if (Array.isArray(w.grapes) && w.grapes.length > 0) {
+          grapeVariety = (w.grapes as { name: string }[]).map(g => g.name).join(", ");
+        }
+
         await supabase.from("winerim_wines").upsert({
           connection_id: connectionId,
           winerim_id: winerimId,
-          name: String(w.name || w.wine_name || "Unknown"),
-          sku: w.sku ? String(w.sku) : null,
-          ean: w.ean ? String(w.ean) : null,
+          name: String(w.name || "Unknown"),
+          sku: w.identifier ? String(w.identifier) : null,
+          ean: null,
           vintage: w.vintage ? String(w.vintage) : null,
-          winery: w.winery ? String(w.winery) : (w.producer ? String(w.producer) : null),
-          region: w.region ? String(w.region) : (w.appellation ? String(w.appellation) : null),
-          grape_variety: w.grape_variety ? String(w.grape_variety) : (w.grape ? String(w.grape) : null),
-          format: w.format ? String(w.format) : null,
-          price: w.price ? Number(w.price) : null,
-          stock_quantity: w.stock_quantity != null ? Number(w.stock_quantity) : (w.stock != null ? Number(w.stock) : null),
+          winery: w.winery ? String(w.winery) : null,
+          region: w.region ? String(w.region) : null,
+          grape_variety: grapeVariety,
+          format: w.subname ? String(w.subname) : null,
+          price: null, // prices are per-variant in detail endpoint
+          stock_quantity: null, // stock is per-variant
           raw_payload: w,
         }, { onConflict: "connection_id,winerim_id" });
         upserted++;
@@ -234,7 +256,6 @@ serve(async (req) => {
 
     // ── MATCH PRODUCTS (SKU + Fuzzy) ──
     if (action === "match-products") {
-      // Load wine candidates from provider_products
       const { data: posProducts } = await supabase
         .from("provider_products")
         .select("provider_product_id, name, family, sale_format, price")
@@ -242,7 +263,6 @@ serve(async (req) => {
         .eq("is_wine_candidate", true)
         .limit(1000);
 
-      // Load winerim wines
       const { data: winerimWines } = await supabase
         .from("winerim_wines")
         .select("winerim_id, name, sku, ean, winery, grape_variety, format")
@@ -269,7 +289,6 @@ serve(async (req) => {
       let noMatch = 0;
 
       for (const pos of posProducts) {
-        // Check if already has a confirmed mapping
         const { data: existing } = await supabase
           .from("product_mappings")
           .select("id, status")
@@ -281,7 +300,7 @@ serve(async (req) => {
 
         const candidates = findBestMatches(
           pos.name,
-          pos.provider_product_id, // Try as SKU
+          pos.provider_product_id,
           pos.family,
           winerimWines as any[],
           3,
@@ -311,7 +330,6 @@ serve(async (req) => {
         if (best.method === "SKU") skuMatched++;
         else fuzzyMatched++;
 
-        // If auto-confirmed, also update the sales_line_items winerim_product_id
         if (status === "CONFIRMED") {
           await supabase.from("sales_line_items")
             .update({ winerim_product_id: best.winerim_id, mapped: true })
@@ -336,7 +354,6 @@ serve(async (req) => {
         );
       }
 
-      // Get pending mappings
       const { data: pendingMappings } = await supabase
         .from("product_mappings")
         .select("id, provider_product_id, provider_product_name, winerim_wine_id, winerim_wine_name, match_score")
@@ -352,7 +369,6 @@ serve(async (req) => {
         );
       }
 
-      // Load winerim wines for context
       const { data: winerimWines } = await supabase
         .from("winerim_wines")
         .select("winerim_id, name, winery, grape_variety, vintage, region")
@@ -406,7 +422,6 @@ Respond ONLY with the JSON array, no other text.`;
       const aiData = await aiRes.json();
       const content = aiData?.choices?.[0]?.message?.content || "";
 
-      // Parse AI response
       let aiResults: { pos_name: string; best_winerim_id: string | null; confidence: number; reasoning: string }[] = [];
       try {
         const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -434,7 +449,6 @@ Respond ONLY with the JSON array, no other text.`;
             status: aiMatch.confidence >= 85 ? "CONFIRMED" : "PENDING",
           }).eq("id", mapping.id);
 
-          // Auto-confirm high confidence
           if (aiMatch.confidence >= 85) {
             await supabase.from("sales_line_items")
               .update({ winerim_product_id: aiMatch.best_winerim_id, mapped: true })
@@ -443,7 +457,6 @@ Respond ONLY with the JSON array, no other text.`;
           }
           updated++;
         } else if (!aiMatch.best_winerim_id) {
-          // No match found by AI
           await supabase.from("product_mappings").update({
             match_method: "AI",
             match_reasons: [`ai_no_match:${aiMatch.reasoning}`],
@@ -480,7 +493,6 @@ Respond ONLY with the JSON array, no other text.`;
           { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Also update sales_line_items
       const { data: mapping } = await supabase.from("product_mappings").select("*").eq("id", mappingId).single();
       if (mapping) {
         await supabase.from("sales_line_items")
@@ -512,18 +524,71 @@ Respond ONLY with the JSON array, no other text.`;
     }
 
     // ── UPDATE STOCK ──
+    // Uses PUT /api/v2/stock/{stockId} with { stock: N }
     if (action === "update-stock") {
-      const { productId, quantity } = body;
-      const res = await fetch("https://api.winerim.com/api/v2/stock", {
+      const { stockId, stock } = body;
+      if (!stockId) {
+        return new Response(JSON.stringify({ error: "stockId required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const url = `${WINERIM_BASE_URL}/stock/${stockId}`;
+      const res = await fetch(url, {
         method: "PUT",
         headers: winerimHeaders,
-        body: JSON.stringify({ product_id: productId, quantity_change: -Math.abs(quantity) }),
+        body: JSON.stringify({ stock: Math.max(0, Math.round(stock)) }),
       });
       const responseBody = await res.text();
       let parsed;
       try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
       return new Response(
         JSON.stringify({ success: res.ok, status: res.status, response: parsed }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── BULK UPDATE STOCK ──
+    // Uses PUT /api/v2/stock/bulk with { items: [{ id, stock }, ...] }
+    if (action === "bulk-update-stock") {
+      const { items } = body; // [{ stockId, stock }]
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return new Response(JSON.stringify({ error: "items array required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const bulkItems = items.map((i: { stockId: number; stock: number }) => ({
+        id: i.stockId,
+        stock: Math.max(0, Math.round(i.stock)),
+      }));
+
+      // Process in chunks of 100
+      const results: any[] = [];
+      for (let i = 0; i < bulkItems.length; i += 100) {
+        const chunk = bulkItems.slice(i, i + 100);
+        const url = `${WINERIM_BASE_URL}/stock/bulk`;
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: winerimHeaders,
+          body: JSON.stringify({ items: chunk }),
+        });
+        const data = await res.json();
+        results.push(data);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, results }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── GET STOCK FOR WINE ──
+    if (action === "get-stock") {
+      const { wineId } = body;
+      const url = `${WINERIM_BASE_URL}/stock/wine/${wineId}`;
+      const res = await fetch(url, { headers: winerimHeaders });
+      const data = await res.json();
+      return new Response(
+        JSON.stringify({ success: res.ok, status: res.status, data }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
