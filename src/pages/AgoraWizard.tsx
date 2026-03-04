@@ -1162,7 +1162,7 @@ function StepWinerimCatalog({
   queuingProducts,
 }: {
   connectionId: string | null;
-  onQueueProducts: (ids: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
   queuingProducts: boolean;
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
@@ -1325,46 +1325,53 @@ function StepWinerimCatalog({
     setGeneratingXml(true);
     setPreviewXml(null);
     try {
-      const formatTypes: string[] = [];
-      // Determine formats from selected wines
-      const selWines = wines.filter(w => selectedIds.has(w.winerim_id));
-      formatTypes.push("BOTTLE");
-      if (selWines.some(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0)) {
-        formatTypes.push("GLASS");
-      }
+      // Always send both formats — backend validates per-wine eligibility
+      const formatTypes = ["BOTTLE", "GLASS"];
 
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds), formatTypes },
       });
       if (error) throw error;
 
-      // Check for validation issues
       const validationResults = data?.validationResults || [];
+      
+      // Build format diagnostics
+      const formatsGenerated = validationResults.filter((v: any) => v.validation?.valid).map((v: any) => v.formatType);
+      const formatsSkipped = validationResults.filter((v: any) => !v.validation?.valid);
+      const uniqueGenerated = [...new Set(formatsGenerated)] as string[];
+      const skippedReasons = formatsSkipped.map((v: any) => {
+        const wine = wines.find(w => w.winerim_id === v.winerimId);
+        const name = wine?.name || v.winerimId;
+        const missing = v.validation?.missingFields || [];
+        if (v.formatType === "GLASS") {
+          if (missing.includes("missing_glass_sale_price")) return `COPA ${name}: No glass price available`;
+          if (missing.includes("serve_by_glass_not_enabled")) return `COPA ${name}: serve_by_glass not enabled`;
+          if (missing.includes("wine_inactive")) return `COPA ${name}: Wine is inactive`;
+        }
+        if (v.formatType === "BOTTLE") {
+          if (missing.includes("missing_bottle_sale_price")) return `BOT. ${name}: No bottle price available`;
+          if (missing.includes("wine_inactive")) return `BOT. ${name}: Wine is inactive`;
+        }
+        return `${v.formatType} ${name}: ${missing.join(", ")}`;
+      });
+
       const allInvalid = validationResults.length > 0 && validationResults.every((v: any) => !v.validation?.valid);
-      const warnings = validationResults
-        .filter((v: any) => !v.validation?.valid)
-        .map((v: any) => {
-          const missing = v.validation?.missingFields || [];
-          const wine = wines.find(w => w.winerim_id === v.winerimId);
-          const name = wine?.name || v.winerimId;
-          if (missing.includes("missing_bottle_sale_price")) return `${name}: No bottle price available for Agora export`;
-          if (missing.includes("missing_glass_sale_price")) return `${name}: No glass price available`;
-          if (missing.includes("serve_by_glass_not_enabled")) return `${name}: Glass service not enabled`;
-          if (missing.includes("wine_inactive")) return `${name}: Wine is inactive`;
-          return `${name}: ${missing.join(", ")}`;
-        });
 
       if (allInvalid && (!data?.xml || !data.xml.includes("<Product"))) {
-        const warningMsg = warnings.length > 0
-          ? `No exportable products found.\n\nIssues:\n${warnings.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Pricing may be missing. Click "Refresh Catalog" to re-fetch wine details from Winerim.`
-          : "No exportable products found. Pricing data may be missing — click \"Refresh Catalog\" to re-fetch.";
+        const warningMsg = skippedReasons.length > 0
+          ? `No exportable products found.\n\nIssues:\n${skippedReasons.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Click "Refresh Catalog" to re-fetch wine details.`
+          : "No exportable products found. Click \"Refresh Catalog\" to re-fetch.";
         setPreviewXml(warningMsg);
       } else {
-        let result = data?.xml || "No XML generated";
-        if (warnings.length > 0) {
-          result = `<!-- WARNINGS:\n${warnings.map((w: string) => `  - ${w}`).join("\n")}\n-->\n${result}`;
+        // Build diagnostic header
+        const diagLines: string[] = [];
+        diagLines.push(`Formats generated: ${uniqueGenerated.join(", ") || "none"}`);
+        if (skippedReasons.length > 0) {
+          diagLines.push(`Formats skipped (${formatsSkipped.length}):`);
+          skippedReasons.forEach((r: string) => diagLines.push(`  - ${r}`));
         }
-        setPreviewXml(result);
+        const diagComment = `<!-- DIAGNOSTICS:\n${diagLines.map(l => `  ${l}`).join("\n")}\n-->`;
+        setPreviewXml(`${diagComment}\n${data?.xml || "No XML generated"}`);
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -1382,10 +1389,11 @@ function StepWinerimCatalog({
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-        <div className="grid grid-cols-4 gap-4 text-xs">
+        <div className="grid grid-cols-5 gap-4 text-xs">
           <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
           <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
           <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">With Glass Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
         {lastEnrichedAt && (
@@ -1456,7 +1464,7 @@ function StepWinerimCatalog({
             {selectedIds.size > 0 && (
               <>
                 <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
-                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds)); clearSelection(); }}
+                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds), ["BOTTLE", "GLASS"]); clearSelection(); }}
                   disabled={queuingProducts} className="h-7 text-[11px]">
                   {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
                   Push {selectedIds.size} to Agora
@@ -1657,7 +1665,7 @@ function StepOutboundSync({
   onRetry: (taskId: string) => void;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
-  onQueueProducts: (ids: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
 
@@ -1743,7 +1751,7 @@ function StepOutboundSync({
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
-              onClick={() => { onQueueProducts(Array.from(selectedWineIds)); setSelectedWineIds(new Set()); }}>
+              onClick={() => { onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]); setSelectedWineIds(new Set()); }}>
               {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               Push {selectedWineIds.size} to Agora
             </Button>
@@ -2536,7 +2544,7 @@ export default function AgoraWizard() {
           )}
           {currentStep === 9 && (
             <StepWinerimCatalog connectionId={connectionId}
-              onQueueProducts={(ids) => outbound.queueProducts(ids)}
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               queuingProducts={outbound.queuingProducts} />
           )}
           {currentStep === 10 && (
@@ -2553,7 +2561,7 @@ export default function AgoraWizard() {
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
               onRetry={outbound.retryTask} onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
-              onQueueProducts={(ids) => outbound.queueProducts(ids)} />
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
