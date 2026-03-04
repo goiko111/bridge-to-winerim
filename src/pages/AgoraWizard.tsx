@@ -1375,7 +1375,7 @@ function StepOutboundSync({
 
 // ── Step 5: Master Data ──
 function StepMasterData({
-  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId,
+  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
 }: {
   masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
   syncing: boolean; syncError: string | null;
@@ -1383,6 +1383,7 @@ function StepMasterData({
   writeCapability: "UNKNOWN" | "YES" | "NO";
   writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
   connectionId: string | null;
+  saveWriteSettings: (settings: Partial<import("@/hooks/useAgoraMasterData").WriteSettings>) => Promise<void>;
 }) {
   useEffect(() => { onLoad(); }, []);
 
@@ -2051,7 +2052,7 @@ export default function AgoraWizard() {
               syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
               onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
               writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings}
-              connectionId={connectionId} />
+              connectionId={connectionId} saveWriteSettings={agoraMaster.saveWriteSettings} />
           )}
           {currentStep === 6 && (
             <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
