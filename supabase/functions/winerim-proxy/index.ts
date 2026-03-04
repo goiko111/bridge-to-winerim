@@ -594,8 +594,9 @@ serve(async (req) => {
       }
 
       console.log(`Fetching details for ${targetIds.length} wines...`);
-      const detailMap = await fetchWineDetails(targetIds, winerimHeaders, 5);
-      
+      const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5);
+      const detailMap = detailsResult.details;
+
       let enriched = 0;
       const fieldsDiscovered: string[] = [];
 
@@ -652,6 +653,9 @@ serve(async (req) => {
           requested: targetIds.length,
           enriched,
           detailsMissing: targetIds.length - enriched,
+          detailRequestsAttempted: detailsResult.attempted,
+          detailRequestsSucceeded: detailsResult.succeeded,
+          detailRequestsFailed: detailsResult.failed,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
