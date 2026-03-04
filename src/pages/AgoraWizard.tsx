@@ -1201,8 +1201,7 @@ function StepCapabilities({
 
       {canWrite === "UNKNOWN" && !detecting && (detectionResults as any[]).length > 0 && (
         <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
-          <p>⚠️ Detection was inconclusive. A test product may have been created—please verify in Agora.
-          You can proceed with export mode, or confirm write capability manually.</p>
+          <p>⚠️ REST detection was inconclusive. This is expected for most Agora installations. Use <strong>XML Import</strong> (Steps 5 & 9) to push products instead.</p>
         </div>
       )}
     </div>
