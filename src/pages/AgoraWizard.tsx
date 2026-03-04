@@ -1463,7 +1463,7 @@ function StepWinerimCatalog({
             {selectedIds.size > 0 && (
               <>
                 <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
-                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds)); clearSelection(); }}
+                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds), ["BOTTLE", "GLASS"]); clearSelection(); }}
                   disabled={queuingProducts} className="h-7 text-[11px]">
                   {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
                   Push {selectedIds.size} to Agora
