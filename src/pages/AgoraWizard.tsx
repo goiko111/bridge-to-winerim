@@ -2615,10 +2615,20 @@ export default function AgoraWizard() {
           const isDone = step.id < currentStep;
           return (
             <div key={step.id} className="flex items-center gap-1 flex-1">
-              <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(step.id)}
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all cursor-pointer hover:ring-2 hover:ring-primary/40 ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
+              >
                 {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.id}
-              </div>
-              <span className={`text-[10px] font-medium hidden xl:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(step.id)}
+                className={`text-[10px] font-medium hidden xl:block cursor-pointer hover:text-foreground transition-colors ${isActive ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                {step.label}
+              </button>
               {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
             </div>
           );
