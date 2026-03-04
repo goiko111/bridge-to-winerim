@@ -227,10 +227,9 @@ export function useAgoraMasterData(connectionId: string | null) {
         validationResults: data?.validationResults || [],
         winesProcessed: data?.winesProcessed || 0,
       });
-      // Update write capability based on result
+      // Update write capability status only — auto_push_verified_ready must be enabled manually
       if (data?.success) {
         setWriteCapability("YES");
-        setWriteSettings(prev => ({ ...prev, auto_push_verified_ready: true }));
       }
       return data;
     } catch (e: any) {
