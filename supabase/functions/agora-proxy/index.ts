@@ -1888,6 +1888,16 @@ serve(async (req) => {
           }, { onConflict: "connection_id,provider_product_id" });
         }
 
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: task.connection_id,
+          provider: "AGORA",
+          can_read_sales: true,
+          can_read_catalog: true,
+          can_write_products: "YES",
+          write_endpoint: "/api/import/",
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
+
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,
           external_id: String(500000 + Number(winerimWineId || 0)),
