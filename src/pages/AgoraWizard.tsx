@@ -2127,12 +2127,7 @@ function StepMasterData({
         </div>
       ))}
       {masterData.productsSummary.length > 0 && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-3">
-          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Package className="h-3.5 w-3.5" /> Existing Products ({masterData.productsSummary.length})
-          </p>
-          <p className="text-[11px] text-muted-foreground mt-1">Products already in Agora. New wines will get IDs starting at 500000+.</p>
-        </div>
+        <AgoraProductsPanel products={masterData.productsSummary} />
       )}
     </div>
   );
