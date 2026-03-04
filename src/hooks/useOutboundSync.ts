@@ -128,7 +128,7 @@ export function useOutboundSync(connectionId: string | null) {
   }, [connectionId, loadOutboundTasks]);
 
   const retryTask = useCallback(async (taskId: string) => {
-    await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null }).eq("id", taskId);
+    await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", taskId);
     await loadOutboundTasks();
   }, [loadOutboundTasks]);
 
