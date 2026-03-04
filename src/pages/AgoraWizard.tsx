@@ -1832,44 +1832,100 @@ function StepOutboundSync({
 }
 
 // ── Agora Products Panel (browsable) ──
-function AgoraProductsPanel({ products }: { products: { Id: string; Name: string; FamilyId?: string; VatId?: string }[] }) {
+function AgoraProductsPanel({ products, families }: {
+  products: { Id: string; Name: string; FamilyId?: string; VatId?: string }[];
+  families: { Id: string; Name: string }[];
+}) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(false);
+  const [selectedFamily, setSelectedFamily] = useState<string>("ALL");
+  const [viewMode, setViewMode] = useState<"list" | "families">("list");
 
-  const filtered = search.trim()
-    ? products.filter(p => p.Name.toLowerCase().includes(search.toLowerCase()) || p.Id.includes(search))
-    : products;
+  const familyMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    families.forEach(f => { map[f.Id] = f.Name; });
+    return map;
+  }, [families]);
+
+  const familyGroups = useMemo(() => {
+    const groups: Record<string, typeof products> = {};
+    products.forEach(p => {
+      const fid = p.FamilyId || "none";
+      if (!groups[fid]) groups[fid] = [];
+      groups[fid].push(p);
+    });
+    return Object.entries(groups)
+      .map(([id, items]) => ({ id, name: familyMap[id] || (id === "none" ? "Sin familia" : `Family ${id}`), items }))
+      .sort((a, b) => b.items.length - a.items.length);
+  }, [products, familyMap]);
+
+  const filtered = useMemo(() => {
+    let list = products;
+    if (selectedFamily !== "ALL") {
+      list = list.filter(p => (p.FamilyId || "none") === selectedFamily);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(p => p.Name.toLowerCase().includes(q) || p.Id.includes(q));
+    }
+    return list;
+  }, [products, selectedFamily, search]);
 
   const shown = expanded ? filtered : filtered.slice(0, 50);
 
   return (
     <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
           <Package className="h-3.5 w-3.5" /> Agora Products ({products.length})
         </p>
-        <Input
-          placeholder="Search by name or ID..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-7 w-56 text-xs"
-        />
+        <div className="flex gap-2 items-center">
+          <div className="flex rounded-md border border-border overflow-hidden">
+            <button onClick={() => setViewMode("list")}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${viewMode === "list" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"}`}>
+              List
+            </button>
+            <button onClick={() => setViewMode("families")}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${viewMode === "families" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"}`}>
+              By Family
+            </button>
+          </div>
+          <Input
+            placeholder="Search by name or ID..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 w-48 text-xs"
+          />
+        </div>
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic py-2 text-center">No products match your search.</p>
-      ) : (
-        <>
+      {viewMode === "families" ? (
+        <div className="space-y-2">
+          {/* Family filter chips */}
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => setSelectedFamily("ALL")}
+              className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium border transition-colors ${selectedFamily === "ALL" ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:border-primary/40"}`}>
+              All ({products.length})
+            </button>
+            {familyGroups.map(g => (
+              <button key={g.id} onClick={() => setSelectedFamily(g.id)}
+                className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium border transition-colors ${selectedFamily === g.id ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:border-primary/40"}`}>
+                {g.name} ({g.items.length})
+              </button>
+            ))}
+          </div>
+          {/* Product list for selected family */}
           <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
-            <div className="grid grid-cols-[80px_1fr_80px_80px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
-              <span>ID</span><span>Name</span><span>Family</span><span>VAT</span>
+            <div className="grid grid-cols-[80px_1fr_100px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
+              <span>ID</span><span>Name</span><span>Family</span>
             </div>
-            {shown.map((p) => (
-              <div key={p.Id} className="grid grid-cols-[80px_1fr_80px_80px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+            {shown.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground italic py-3 text-center">No products in this family.</p>
+            ) : shown.map((p) => (
+              <div key={p.Id} className="grid grid-cols-[80px_1fr_100px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
                 <span className="font-mono text-muted-foreground">{p.Id}</span>
                 <span className="text-foreground truncate">{p.Name}</span>
-                <span className="text-muted-foreground">{p.FamilyId || "—"}</span>
-                <span className="text-muted-foreground">{p.VatId || "—"}</span>
+                <span className="text-muted-foreground truncate">{familyMap[p.FamilyId || ""] || "—"}</span>
               </div>
             ))}
           </div>
@@ -1878,10 +1934,37 @@ function AgoraProductsPanel({ products }: { products: { Id: string; Name: string
               Show all {filtered.length} products
             </Button>
           )}
-          {expanded && filtered.length > 50 && (
-            <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(false)}>
-              Collapse
-            </Button>
+        </div>
+      ) : (
+        <>
+          {filtered.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground italic py-2 text-center">No products match your search.</p>
+          ) : (
+            <>
+              <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                <div className="grid grid-cols-[80px_1fr_100px_60px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
+                  <span>ID</span><span>Name</span><span>Family</span><span>VAT</span>
+                </div>
+                {shown.map((p) => (
+                  <div key={p.Id} className="grid grid-cols-[80px_1fr_100px_60px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+                    <span className="font-mono text-muted-foreground">{p.Id}</span>
+                    <span className="text-foreground truncate">{p.Name}</span>
+                    <span className="text-muted-foreground truncate">{familyMap[p.FamilyId || ""] || "—"}</span>
+                    <span className="text-muted-foreground">{p.VatId || "—"}</span>
+                  </div>
+                ))}
+              </div>
+              {!expanded && filtered.length > 50 && (
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(true)}>
+                  Show all {filtered.length} products
+                </Button>
+              )}
+              {expanded && filtered.length > 50 && (
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(false)}>
+                  Collapse
+                </Button>
+              )}
+            </>
           )}
         </>
       )}
@@ -2189,7 +2272,7 @@ function StepMasterData({
         </div>
       ))}
       {masterData.productsSummary.length > 0 && (
-        <AgoraProductsPanel products={masterData.productsSummary} />
+        <AgoraProductsPanel products={masterData.productsSummary} families={masterData.families} />
       )}
     </div>
   );
