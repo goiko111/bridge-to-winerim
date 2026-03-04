@@ -87,18 +87,14 @@ function classifyProduct(
   const fmt = (format || "").toLowerCase();
   const reasons: string[] = [];
 
-  // Merge defaults + user config
   const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...config.wine_families_whitelist.map(s => s.toLowerCase())];
   const nonWineFamilies = [...DEFAULT_NON_WINE_FAMILIES, ...config.non_wine_families_blacklist.map(s => s.toLowerCase())];
   const wineKeywords = [...DEFAULT_WINE_KEYWORDS, ...config.wine_keywords_whitelist.map(s => s.toLowerCase())];
   const nonWineKeywords = [...DEFAULT_NON_WINE_KEYWORDS, ...config.non_wine_keywords_blacklist.map(s => s.toLowerCase())];
   const formatWhitelist = [...DEFAULT_FORMAT_WHITELIST, ...config.format_whitelist.map(s => s.toLowerCase())];
 
-  // ── HARD RULES (short-circuit) ──
-  // Hard NOT_WINE: food/menu keywords in name or food family
   for (const kw of nonWineKeywords) {
     if (n === kw || n.startsWith(kw + " ") || n.endsWith(" " + kw) || n.includes(" " + kw + " ")) {
-      // Only hard-rule for strong food indicators
       if (["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "ensalada", "pescado", "carne"].includes(kw)) {
         reasons.push(`hard_not_wine_name:${kw}`);
         return { classification: "NOT_WINE", score: -100, reasons };
@@ -114,39 +110,30 @@ function classifyProduct(
     }
   }
 
-  // Hard WINE: wine keywords in name or wine family
   for (const kw of ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut"]) {
     if (n === kw || n.startsWith(kw + " ") || n.endsWith(" " + kw) || n.includes(" " + kw + " ")) {
       reasons.push(`hard_wine_name:${kw}`);
       return { classification: "WINE", score: 100, reasons };
     }
   }
-  // Bottle/glass patterns
   if (/\b(botella|bot\.?\s|75\s?cl|copa de vino)\b/i.test(n)) {
     reasons.push(`hard_wine_bottle_pattern`);
     return { classification: "WINE", score: 100, reasons };
   }
 
-  // ── SCORING ──
   let score = 0;
-
-  // Family: +50 / -50
   for (const kw of nonWineFamilies) {
     if (f.includes(kw)) { score -= 50; reasons.push(`family_blacklist:${kw}`); break; }
   }
   for (const kw of wineFamilies) {
     if (f.includes(kw)) { score += 50; reasons.push(`family_whitelist:${kw}`); break; }
   }
-
-  // Keywords: +30 / -60
   for (const kw of wineKeywords) {
     if (n.includes(kw)) { score += 30; reasons.push(`keyword_wine:${kw}`); break; }
   }
   for (const kw of nonWineKeywords) {
     if (n.includes(kw)) { score -= 60; reasons.push(`keyword_non_wine:${kw}`); break; }
   }
-
-  // Format: +20 bottle, +10 glass
   for (const kw of formatWhitelist) {
     if (fmt.includes(kw) || n.includes(kw)) {
       const isBottle = ["bot", "bottle", "botella", "75cl", "magnum", "jeroboam", "37.5cl", "150cl"].includes(kw);
@@ -155,8 +142,6 @@ function classifyProduct(
       break;
     }
   }
-
-  // Price heuristic (only if no strong signal)
   if (Math.abs(score) < 30 && price > 0) {
     if (price >= (config.min_wine_price || 8) && price <= (config.max_wine_price || 400)) {
       score += 5; reasons.push(`price_wine_range:${price}`);
@@ -164,15 +149,12 @@ function classifyProduct(
       score -= 5; reasons.push(`price_too_low:${price}`);
     }
   }
-
   score = Math.max(-100, Math.min(100, score));
-
   if (score >= config.score_threshold_wine) return { classification: "WINE", score, reasons };
   if (score <= config.score_threshold_not_wine) return { classification: "NOT_WINE", score, reasons };
   return { classification: "NEEDS_REVIEW", score, reasons };
 }
 
-// Legacy wrapper for backward compat
 function isWineCandidate(
   family: string | undefined, name: string | undefined, format: string | undefined,
   unitPrice: number, _wineFamilies: string[], _nonWineFamilies: string[],
@@ -207,7 +189,6 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
-// Helper to load classification config for a connection
 // deno-lint-ignore no-explicit-any
 async function loadConfig(supabase: any, connectionId: string): Promise<ClassificationConfig> {
   const { data } = await supabase
@@ -229,9 +210,130 @@ async function loadConfig(supabase: any, connectionId: string): Promise<Classifi
   };
 }
 
-// ── XML IMPORT GENERATOR ──
+// ── WINE TYPE -> FAMILY MAPPING (deterministic) ──
+const WINE_TYPE_FAMILY_MAP: Record<string, string[]> = {
+  "tinto": ["VINOS TINTOS", "Tintos", "Tinto", "T "],
+  "blanco": ["VINOS BLANCOS", "Blancos", "Blanco", "B "],
+  "rosado": ["VINOS ROSADOS", "Rosados", "Rosado"],
+  "espumoso": ["ESPUMOSOS", "Espumosos", "Cava", "Champagne"],
+  "cava": ["ESPUMOSOS", "Cava", "Espumosos"],
+  "champagne": ["ESPUMOSOS", "Champagne", "Espumosos"],
+  "generoso": ["GENEROSOS", "Generosos", "Jerez"],
+  "fortificado": ["GENEROSOS", "Generosos"],
+};
+
+// ── DETERMINISTIC FAMILY ID GENERATOR ──
+function stableFamilyId(name: string): string {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) - hash + normalized.charCodeAt(i)) | 0;
+  }
+  return String(900000 + (Math.abs(hash) % 9999));
+}
+
+// ── WINE VALIDATION ──
+interface WineValidationResult {
+  valid: boolean;
+  warnings: string[];
+  missingFields: string[];
+}
+
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[]): string {
+function validateWineForAgora(wine: any, formatType: string): WineValidationResult {
+  const warnings: string[] = [];
+  const missingFields: string[] = [];
+  const raw = wine.raw_payload || {};
+
+  if (!wine.name || wine.name.length < 2) {
+    missingFields.push("missing_wine_name");
+  }
+
+  // Check wine type/style - used for family resolution
+  const wineType = extractWineType(wine);
+  if (!wineType) {
+    warnings.push("missing_wine_type_will_use_default_family");
+  }
+
+  if (formatType === "BOTTLE") {
+    const bottlePrice = extractBottleSalePrice(wine);
+    if (!bottlePrice || bottlePrice <= 0) {
+      missingFields.push("missing_bottle_sale_price");
+    }
+    const bottleCost = extractBottleCostPrice(wine);
+    if (!bottleCost || bottleCost <= 0) {
+      warnings.push("missing_bottle_cost_price_will_use_zero");
+    }
+  }
+
+  if (formatType === "GLASS") {
+    const glassPrice = extractGlassSalePrice(wine);
+    if (!glassPrice || glassPrice <= 0) {
+      missingFields.push("missing_glass_sale_price");
+    }
+    const glassCost = extractGlassCostPrice(wine);
+    if (!glassCost || glassCost <= 0) {
+      warnings.push("missing_glass_cost_price_will_use_zero");
+    }
+  }
+
+  return {
+    valid: missingFields.length === 0,
+    warnings,
+    missingFields,
+  };
+}
+
+// ── REAL FIELD EXTRACTION from Winerim wine data ──
+// deno-lint-ignore no-explicit-any
+function extractWineType(wine: any): string | null {
+  const raw = wine.raw_payload || {};
+  // Try actual wine type/category/style fields from Winerim
+  const type = raw.type || raw.wine_type || raw.category || raw.style || null;
+  if (type && typeof type === "string" && type.length > 0) return type.toLowerCase();
+  // Try color field
+  const color = raw.color || raw.colour || null;
+  if (color && typeof color === "string") return color.toLowerCase();
+  // Do NOT fall back to grape_variety or region - those are not wine types
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+function extractBottleSalePrice(wine: any): number | null {
+  const raw = wine.raw_payload || {};
+  // Try specific bottle price fields from Winerim
+  const price = raw.bottle_sale_price ?? raw.sale_price ?? raw.price ?? raw.pvp ?? wine.price;
+  if (price && Number(price) > 0) return Number(price);
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+function extractBottleCostPrice(wine: any): number | null {
+  const raw = wine.raw_payload || {};
+  const cost = raw.bottle_purchase_price ?? raw.purchase_price ?? raw.cost_price ?? raw.cost ?? null;
+  if (cost && Number(cost) > 0) return Number(cost);
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+function extractGlassSalePrice(wine: any): number | null {
+  const raw = wine.raw_payload || {};
+  const price = raw.glass_sale_price ?? raw.glass_price ?? null;
+  if (price && Number(price) > 0) return Number(price);
+  return null;
+}
+
+// deno-lint-ignore no-explicit-any
+function extractGlassCostPrice(wine: any): number | null {
+  const raw = wine.raw_payload || {};
+  const cost = raw.glass_cost ?? raw.glass_cost_price ?? null;
+  if (cost && Number(cost) > 0) return Number(cost);
+  return null;
+}
+
+// ── XML IMPORT GENERATOR (HARDENED) ──
+// deno-lint-ignore no-explicit-any
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
@@ -240,38 +342,25 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
   const existingProducts = (masterData.products_summary_json || []) as { Id: string; Name: string }[];
 
-  // Resolve defaults from connection settings
   const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
   const defaultPrepTypeId = connection.default_preparation_type_id || (prepTypes.length > 0 ? prepTypes[0].Id : "1");
   const defaultPrepOrderId = connection.default_preparation_order_id || (prepOrders.length > 0 ? prepOrders[0].Id : "1");
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
-  // Wine type -> family mapping
-  const WINE_FAMILY_MAP: Record<string, string[]> = {
-    "tinto": ["VINOS TINTOS", "Tintos", "Tinto"],
-    "blanco": ["VINOS BLANCOS", "Blancos", "Blanco"],
-    "rosado": ["VINOS ROSADOS", "Rosados", "Rosado"],
-    "espumoso": ["ESPUMOSOS", "Espumosos", "Cava", "Champagne"],
-    "cava": ["ESPUMOSOS", "Cava", "Espumosos"],
-    "champagne": ["ESPUMOSOS", "Champagne", "Espumosos"],
-    "generoso": ["GENEROSOS", "Generosos", "Jerez"],
-    "fortificado": ["GENEROSOS", "Generosos"],
-  };
-
-  function findFamilyId(wineType?: string): { id: string; needsCreate: boolean; familyName: string } {
+  function findFamilyId(wineType: string | null): { id: string; needsCreate: boolean; familyName: string } {
     // First try connection default
     if (connection.default_family_id) {
       const found = families.find(f => f.Id === connection.default_family_id);
       if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
     }
 
-    // Try matching wine type
+    // Try matching wine type (only from real type field, not grape/region)
     if (wineType) {
       const typeKey = wineType.toLowerCase();
-      const candidates = WINE_FAMILY_MAP[typeKey] || [];
+      const candidates = WINE_TYPE_FAMILY_MAP[typeKey] || [];
       for (const candidate of candidates) {
-        const found = families.find(f => f.Name.toLowerCase() === candidate.toLowerCase());
+        const found = families.find(f => f.Name.toLowerCase().includes(candidate.toLowerCase()));
         if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
       }
     }
@@ -283,10 +372,10 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
     }
 
-    // Auto-create if enabled
-    if (autoCreateFamilies) {
-      const newFamilyName = wineType ? `Vinos ${wineType.charAt(0).toUpperCase() + wineType.slice(1)}` : "Vinos";
-      const newId = String(900000 + Math.floor(Math.random() * 10000));
+    // Auto-create if enabled - use DETERMINISTIC ID
+    if (autoCreateFamilies && wineType) {
+      const newFamilyName = `Vinos ${wineType.charAt(0).toUpperCase() + wineType.slice(1)}`;
+      const newId = stableFamilyId(newFamilyName);
       return { id: newId, needsCreate: true, familyName: newFamilyName };
     }
 
@@ -297,7 +386,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   function findVatIdByRate(vatList: { Id: string; VatRate: string }[], rate?: number): string | null {
     if (!rate) return null;
-    const rateStr = (rate / 100).toFixed(2); // 10 -> 0.10
+    const rateStr = (rate / 100).toFixed(2);
     const found = vatList.find(v => v.VatRate === rateStr);
     return found?.Id || null;
   }
@@ -310,22 +399,25 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     return s.length <= maxLen ? s : s.substring(0, maxLen);
   }
 
-  // Build products and track needed families
   const newFamilies: { id: string; name: string }[] = [];
   const productXmls: string[] = [];
+  const validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] = [];
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
     const wineName = wine.name || "Unknown Wine";
-    const wineType = wine.grape_variety || wine.region || "";
+    const wineType = extractWineType(wine);
 
     for (const fmt of formatTypes) {
+      // Validate before generating
+      const validation = validateWineForAgora(wine, fmt);
+      validationResults.push({ winerimId: String(winerimId), formatType: fmt, validation });
+
+      // Skip formats with missing required fields
+      if (!validation.valid) continue;
+
       const isGlass = fmt === "GLASS";
       const productId = isGlass ? 700000 + winerimId : 500000 + winerimId;
-      const saleFormatId = productId; // BaseSaleFormatId = same as productId for simple products
-
-      // Check if product already exists
-      const existsAlready = existingProducts.some(p => p.Id === String(productId));
 
       const familyResult = findFamilyId(wineType);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
@@ -334,22 +426,28 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
       const productName = isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
       const buttonText = truncate(isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`, 20);
-      const costPrice = (wine.price ? Number(wine.price) * 0.4 : 0).toFixed(2); // estimate cost as 40% of sale price
-      const salePrice = wine.price ? Number(wine.price).toFixed(2) : "0.00";
-      const glassSalePrice = wine.price ? (Number(wine.price) / 5).toFixed(2) : "0.00"; // ~1/5 of bottle
-      const mainPrice = isGlass ? glassSalePrice : salePrice;
 
-      // Build Prices XML for all price lists
+      // Use REAL prices from Winerim, never invent
+      let mainPrice: string;
+      let costPrice: string;
+
+      if (isGlass) {
+        mainPrice = (extractGlassSalePrice(wine) || 0).toFixed(2);
+        costPrice = (extractGlassCostPrice(wine) || 0).toFixed(2);
+      } else {
+        mainPrice = (extractBottleSalePrice(wine) || 0).toFixed(2);
+        costPrice = (extractBottleCostPrice(wine) || 0).toFixed(2);
+      }
+
       const pricesXml = priceLists.map(pl =>
         `        <Price PriceListId="${pl.Id}" MainPrice="${mainPrice}" AddinPrice="" MenuItemPrice="0.00" />`
       ).join("\n");
 
-      // Build CostPrices XML for all warehouses
       const costPricesXml = warehouses.map(wh =>
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" BaseSaleFormatId="${saleFormatId}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" BaseSaleFormatId="${productId}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -360,10 +458,8 @@ ${costPricesXml}
     }
   }
 
-  // Build final XML
   let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n`;
 
-  // Add new families if needed
   if (newFamilies.length > 0) {
     xml += `  <Families>\n`;
     for (const f of newFamilies) {
@@ -372,13 +468,79 @@ ${costPricesXml}
     xml += `  </Families>\n`;
   }
 
-  // Add products
-  xml += `  <Products>\n`;
-  xml += productXmls.join("\n");
-  xml += `\n  </Products>\n`;
+  if (productXmls.length > 0) {
+    xml += `  <Products>\n`;
+    xml += productXmls.join("\n");
+    xml += `\n  </Products>\n`;
+  }
   xml += `</Import>`;
 
-  return xml;
+  return { xml, validationResults };
+}
+
+// ── PARSE AGORA IMPORT RESPONSE ──
+interface AgoraImportParsedResponse {
+  success: boolean;
+  importedCount: number;
+  updatedCount: number;
+  errors: string[];
+  warnings: string[];
+  rawPreview: string;
+}
+
+function parseAgoraImportResponse(status: number, body: string): AgoraImportParsedResponse {
+  const rawPreview = body.substring(0, 2048);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  let importedCount = 0;
+  let updatedCount = 0;
+
+  if (status === 404 || status === 405) {
+    return { success: false, importedCount: 0, updatedCount: 0, errors: [`HTTP ${status}: Import endpoint not available`], warnings: [], rawPreview };
+  }
+
+  if (status >= 400) {
+    errors.push(`HTTP ${status}`);
+  }
+
+  // Try parse XML response for structured errors
+  const errorMatches = body.match(/<Error[^>]*>([^<]*)<\/Error>/gi);
+  if (errorMatches) {
+    for (const m of errorMatches) {
+      const content = m.replace(/<\/?Error[^>]*>/gi, "").trim();
+      if (content) errors.push(content);
+    }
+  }
+
+  // Check for common error patterns
+  const missingFamilyMatch = body.match(/FamilyId[^<]*not found|invalid FamilyId|unknown family/i);
+  if (missingFamilyMatch) errors.push("missing_FamilyId: " + missingFamilyMatch[0].substring(0, 100));
+
+  const missingVatMatch = body.match(/VatId[^<]*not found|invalid VatId|unknown vat/i);
+  if (missingVatMatch) errors.push("missing_VatId: " + missingVatMatch[0].substring(0, 100));
+
+  const missingPriceListMatch = body.match(/PriceListId[^<]*not found|invalid PriceListId/i);
+  if (missingPriceListMatch) errors.push("invalid_PriceListId: " + missingPriceListMatch[0].substring(0, 100));
+
+  // Check for warning patterns
+  const warningMatches = body.match(/<Warning[^>]*>([^<]*)<\/Warning>/gi);
+  if (warningMatches) {
+    for (const m of warningMatches) {
+      const content = m.replace(/<\/?Warning[^>]*>/gi, "").trim();
+      if (content) warnings.push(content);
+    }
+  }
+
+  // Try to extract counts
+  const importedMatch = body.match(/imported[:\s]*(\d+)/i);
+  if (importedMatch) importedCount = parseInt(importedMatch[1]);
+  const updatedMatch = body.match(/updated[:\s]*(\d+)/i);
+  if (updatedMatch) updatedCount = parseInt(updatedMatch[1]);
+
+  // If HTTP OK and no structured errors, consider success
+  const success = status >= 200 && status < 300 && errors.length === 0;
+
+  return { success, importedCount, updatedCount, errors, warnings, rawPreview };
 }
 
 serve(async (req) => {
@@ -391,7 +553,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, connectionId, businessDay, daysBack, lastBusinessDay, filter } = await req.json();
+    // ── FIX PRIORITY 1: Read body ONCE ──
+    const payload = await req.json();
+    const { action, connectionId, businessDay, daysBack, lastBusinessDay, filter } = payload;
 
     const { data: connection, error: connError } = await supabase
       .from("pos_connections")
@@ -414,7 +578,6 @@ serve(async (req) => {
     const apiTokenClean = api_token.trim();
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
-    // Helper: fetch with timeout + 1 retry
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
       const controller1 = new AbortController();
       const t1 = setTimeout(() => controller1.abort(), timeoutMs);
@@ -451,10 +614,7 @@ serve(async (req) => {
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── FIND LAST BUSINESS DAY WITH SALES ──
@@ -500,19 +660,15 @@ serve(async (req) => {
     if (action === "fetch-day") {
       const day = businessDay;
       if (!day) {
-        return new Response(
-          JSON.stringify({ error: "businessDay is required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "businessDay is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
       const res = await fetch(url, { headers });
       if (!res.ok) {
-        return new Response(
-          JSON.stringify({ error: `Agora responded ${res.status}` }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const rawData = await res.json();
@@ -530,14 +686,10 @@ serve(async (req) => {
 
       const allFamilies = new Set<string>();
 
-      const salesEvents = invoices.map((inv) => {
+      const salesEvents = invoices.map((inv: any) => {
         const docId = String(inv.InvoiceId || inv.Id || "");
         const items = inv.InvoiceItems || [];
-        const lines: {
-          provider_product_id: string; name: string; format: string; family: string;
-          quantity: number; unit_price: number; total_amount: number; vat_rate: number;
-          is_wine_candidate: boolean; wine_score: number; wine_reasons: string[];
-        }[] = [];
+        const lines: any[] = [];
         let docTotal = 0;
 
         for (const item of items) {
@@ -574,8 +726,8 @@ serve(async (req) => {
 
       const detectedFamilies = Array.from(allFamilies).map((f) => {
         const suggestion = suggestFamilyClassification(f);
-        const itemCount = salesEvents.reduce((c: number, ev: { lines: { family: string }[] }) =>
-          c + ev.lines.filter((l) => l.family === f).length, 0);
+        const itemCount = salesEvents.reduce((c: number, ev: any) =>
+          c + ev.lines.filter((l: any) => l.family === f).length, 0);
         return { name: f, ...suggestion, itemCount };
       });
 
@@ -589,19 +741,15 @@ serve(async (req) => {
     if (action === "save-sales") {
       const day = businessDay;
       if (!day) {
-        return new Response(
-          JSON.stringify({ error: "businessDay required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "businessDay required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
       const res = await fetch(url, { headers });
       if (!res.ok) {
-        return new Response(
-          JSON.stringify({ error: `Agora responded ${res.status}` }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const rawData = await res.json();
@@ -699,7 +847,6 @@ serve(async (req) => {
       for (const variation of urlVariations) {
         if (selectedEndpoint) break;
         try {
-          console.log(`[discover-catalog] Trying ${variation.url}`);
           const res = await fetchWithRetry(variation.url, { headers });
           const ct = res.headers.get("content-type") || "";
 
@@ -815,36 +962,36 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const body = await res.text();
-      const parsed = JSON.parse(body);
-      let items: Record<string, unknown>[] = [];
-      if (Array.isArray(parsed)) items = parsed;
-      else if (typeof parsed === "object" && parsed !== null) {
-        for (const key of Object.keys(parsed)) {
-          if (Array.isArray(parsed[key]) && parsed[key].length > 0) { items = parsed[key]; break; }
+
+      const rawData = await res.json();
+      let items: any[] = [];
+      if (Array.isArray(rawData)) items = rawData;
+      else if (typeof rawData === "object" && rawData !== null) {
+        for (const key of Object.keys(rawData)) {
+          if (Array.isArray(rawData[key]) && rawData[key].length > 0) { items = rawData[key]; break; }
         }
       }
 
       let upserted = 0;
-      let wineCandidates = 0;
-      let needsReview = 0;
+      let wineCandidateCount = 0;
 
       for (const item of items) {
-        const prodId = String(item.ProductId || item.Id || item.ArticleId || item.ItemId || "");
+        const prodId = String(item.Id || item.ProductId || item.ArticleId || "");
         if (!prodId) continue;
-        const name = String(item.ProductName || item.Name || item.ArticleName || item.ItemName || "Unknown");
-        const family = String(item.FamilyName || item.Family || item.Category || item.GroupName || "");
-        const vatRate = Number(item.VatRate || item.TaxRate || 0);
-        const format = String(item.SaleFormatName || item.Format || item.UnitName || "");
-        const price = Number(item.Price || item.UnitPrice || item.SalePrice || 0);
 
-        const cr = classifyProduct(family, name, format, price, config);
-        if (cr.classification === "WINE") wineCandidates++;
-        if (cr.classification === "NEEDS_REVIEW") needsReview++;
+        const prodName = String(item.Name || item.ProductName || item.ArticleName || "");
+        const prodFamily = String(item.FamilyName || item.Family || "");
+        const prodFormat = String(item.SaleFormatName || item.Format || "");
+        const prodPrice = Number(item.Price || item.MainPrice || item.UnitPrice || 0);
+        const prodVat = Number(item.VatRate || item.Vat || 0);
+
+        const cr = classifyProduct(prodFamily, prodName, prodFormat, prodPrice, config);
+        if (cr.classification === "WINE") wineCandidateCount++;
 
         await supabase.from("provider_products").upsert({
           connection_id: connectionId, provider_product_id: prodId,
-          name, family, vat_rate: vatRate, sale_format: format, price,
+          name: prodName, family: prodFamily, vat_rate: prodVat, sale_format: prodFormat,
+          price: Math.round(prodPrice * 100) / 100,
           is_wine_candidate: cr.classification === "WINE",
           wine_score: cr.score, wine_reasons: cr.reasons,
           classification_override: "AUTO",
@@ -857,46 +1004,47 @@ serve(async (req) => {
       await supabase.from("pos_connections").update({
         last_catalog_sync_at: new Date().toISOString(),
         catalog_product_count: upserted,
-        catalog_wine_candidate_count: wineCandidates,
+        catalog_wine_candidate_count: wineCandidateCount,
       }).eq("id", connectionId);
 
       return new Response(
-        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates, needsReview, endpoint }),
+        JSON.stringify({ success: true, totalProducts: upserted, wineCandidates: wineCandidateCount, endpoint }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // ── BUILD DERIVED CATALOG ──
     if (action === "build-derived-catalog") {
-      const scanDays = daysBack || 30;
+      const scanDaysBack = daysBack || 30;
       const config = await loadConfig(supabase, connectionId);
       const productMap = new Map<string, { name: string; family: string; format: string; vatRate: number; totalPrice: number; count: number }>();
       let daysScanned = 0;
       let totalInvoices = 0;
 
-      for (let i = 0; i < scanDays * 2 && daysScanned < scanDays; i++) {
+      for (let i = 0; i < scanDaysBack; i++) {
         const day = new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
+        daysScanned++;
         try {
           const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-          const res = await fetchWithRetry(url, { headers });
+          const res = await fetch(url, { headers });
           if (!res.ok) continue;
           const body = await res.text();
-          const trimmed = body.trim();
-          if (!trimmed || trimmed === "{}" || trimmed === "[]") continue;
-          const parsed = JSON.parse(trimmed);
+          if (!body.trim() || body.trim() === "{}" || body.trim() === "[]") continue;
+          const parsed = JSON.parse(body);
           const invoices = parseInvoices(parsed);
-          if (invoices.length === 0) continue;
-          daysScanned++;
           totalInvoices += invoices.length;
+
           for (const inv of invoices) {
             for (const item of (inv.InvoiceItems || [])) {
               for (const line of (item.Lines || [])) {
                 const prodId = String(line.ProductId || "");
                 if (!prodId) continue;
-                const existing = productMap.get(prodId);
                 const uPrice = Number(line.UnitPrice || 0);
-                if (existing) { existing.count++; existing.totalPrice += uPrice; }
-                else {
+                const existing = productMap.get(prodId);
+                if (existing) {
+                  existing.totalPrice += uPrice;
+                  existing.count++;
+                } else {
                   productMap.set(prodId, {
                     name: String(line.ProductName || ""), family: String(line.FamilyName || ""),
                     format: String(line.SaleFormatName || ""), vatRate: Number(line.VatRate || 0),
@@ -946,8 +1094,6 @@ serve(async (req) => {
     // ── RECOMPUTE CLASSIFICATION ──
     if (action === "recompute-classification") {
       const config = await loadConfig(supabase, connectionId);
-
-      // Fetch all AUTO products for this connection (paginated)
       let offset = 0;
       const batchSize = 500;
       let totalRecomputed = 0;
@@ -969,10 +1115,8 @@ serve(async (req) => {
           const cr = classifyProduct(p.family, p.name, p.sale_format, Number(p.price || 0), config);
           await supabase.from("provider_products").update({
             is_wine_candidate: cr.classification === "WINE",
-            wine_score: cr.score,
-            wine_reasons: cr.reasons,
-            last_score: cr.score,
-            last_reasons: cr.reasons,
+            wine_score: cr.score, wine_reasons: cr.reasons,
+            last_score: cr.score, last_reasons: cr.reasons,
           }).eq("id", p.id);
 
           totalRecomputed++;
@@ -985,7 +1129,6 @@ serve(async (req) => {
         if (products.length < batchSize) break;
       }
 
-      // Update connection metadata
       await supabase.from("pos_connections").update({
         catalog_wine_candidate_count: wineCount,
       }).eq("id", connectionId);
@@ -1000,32 +1143,23 @@ serve(async (req) => {
     if (action === "sync-stock") {
       const day = businessDay;
       if (!day) {
-        return new Response(
-          JSON.stringify({ error: "businessDay required" }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ error: "businessDay required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const winerimToken = (connection.winerim_api_token || "").trim();
       if (!winerimToken) {
-        return new Response(
-          JSON.stringify({ success: false, error: "No Winerim API token configured" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: false, error: "No Winerim API token configured" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Get all mapped wine line items for this day
       const { data: events } = await supabase
-        .from("sales_events")
-        .select("id")
-        .eq("connection_id", connectionId)
-        .eq("business_day", day);
+        .from("sales_events").select("id")
+        .eq("connection_id", connectionId).eq("business_day", day);
 
       if (!events || events.length === 0) {
-        return new Response(
-          JSON.stringify({ success: true, message: "No sales events for this day", synced: 0, skipped: 0, failed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: true, message: "No sales events for this day", synced: 0, skipped: 0, failed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const eventIds = events.map((e: { id: string }) => e.id);
@@ -1035,20 +1169,12 @@ serve(async (req) => {
         .in("sales_event_id", eventIds);
 
       if (!lines || lines.length === 0) {
-        return new Response(
-          JSON.stringify({ success: true, message: "No line items found", synced: 0, skipped: 0, failed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: true, message: "No line items found", synced: 0, skipped: 0, failed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Filter: only mapped wine items with winerim_product_id
-      const mappedLines = lines.filter((l: { winerim_product_id: string | null; is_wine_candidate: boolean }) =>
-        l.winerim_product_id && l.is_wine_candidate
-      );
-
-      let synced = 0;
-      let skipped = 0;
-      let failed = 0;
+      const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
+      let synced = 0, skipped = 0, failed = 0;
 
       const winerimHeaders = {
         "Authorization": `Bearer ${winerimToken}`,
@@ -1057,85 +1183,44 @@ serve(async (req) => {
       };
 
       for (const line of mappedLines) {
-        // Check if already synced
         const { data: existing } = await supabase
-          .from("stock_sync_log")
-          .select("id")
-          .eq("sales_line_item_id", line.id)
-          .eq("status", "SUCCESS")
-          .limit(1);
+          .from("stock_sync_log").select("id")
+          .eq("sales_line_item_id", (line as any).id).eq("status", "SUCCESS").limit(1);
 
-        if (existing && existing.length > 0) {
-          skipped++;
-          continue;
-        }
+        if (existing && existing.length > 0) { skipped++; continue; }
 
-        // Create pending log entry
         const { data: logEntry } = await supabase
           .from("stock_sync_log")
           .insert({
-            connection_id: connectionId,
-            sales_event_id: line.sales_event_id,
-            sales_line_item_id: line.id,
-            provider_product_id: line.provider_product_id,
-            winerim_product_id: line.winerim_product_id,
-            product_name: line.name,
-            quantity: Math.abs(Number(line.quantity)),
-            status: "PENDING",
-          })
-          .select("id")
-          .single();
+            connection_id: connectionId, sales_event_id: (line as any).sales_event_id,
+            sales_line_item_id: (line as any).id, provider_product_id: (line as any).provider_product_id,
+            winerim_product_id: (line as any).winerim_product_id, product_name: (line as any).name,
+            quantity: Math.abs(Number((line as any).quantity)), status: "PENDING",
+          }).select("id").single();
 
         try {
           const res = await fetch("https://api.winerim.com/api/v2/stock", {
-            method: "PUT",
-            headers: winerimHeaders,
-            body: JSON.stringify({
-              product_id: line.winerim_product_id,
-              quantity_change: -Math.abs(Number(line.quantity)),
-            }),
+            method: "PUT", headers: winerimHeaders,
+            body: JSON.stringify({ product_id: (line as any).winerim_product_id, quantity_change: -Math.abs(Number((line as any).quantity)) }),
           });
-
           const responseBody = await res.text();
-          let parsed;
-          try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
+          let parsed; try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
 
           if (res.ok) {
-            await supabase.from("stock_sync_log").update({
-              status: "SUCCESS",
-              winerim_response: parsed,
-              synced_at: new Date().toISOString(),
-            }).eq("id", logEntry?.id);
+            await supabase.from("stock_sync_log").update({ status: "SUCCESS", winerim_response: parsed, synced_at: new Date().toISOString() }).eq("id", logEntry?.id);
             synced++;
           } else {
-            await supabase.from("stock_sync_log").update({
-              status: "FAILED",
-              error_message: responseBody.substring(0, 500),
-              winerim_response: parsed,
-            }).eq("id", logEntry?.id);
+            await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: responseBody.substring(0, 500), winerim_response: parsed }).eq("id", logEntry?.id);
             failed++;
           }
         } catch (e) {
-          await supabase.from("stock_sync_log").update({
-            status: "FAILED",
-            error_message: String(e),
-          }).eq("id", logEntry?.id);
+          await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: String(e) }).eq("id", logEntry?.id);
           failed++;
         }
       }
 
-      const unmappedCount = lines.length - mappedLines.length;
-
       return new Response(
-        JSON.stringify({
-          success: true,
-          synced,
-          skipped,
-          failed,
-          unmapped: unmappedCount,
-          totalLines: lines.length,
-          mappedLines: mappedLines.length,
-        }),
+        JSON.stringify({ success: true, synced, skipped, failed, unmapped: lines.length - mappedLines.length, totalLines: lines.length, mappedLines: mappedLines.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -1155,7 +1240,6 @@ serve(async (req) => {
 
       for (const ep of writeEndpoints) {
         try {
-          // Try OPTIONS first for safe detection
           let res: Response;
           try {
             res = await fetchWithRetry(`${baseUrlClean}${ep.path}`, {
@@ -1163,7 +1247,6 @@ serve(async (req) => {
               headers: { ...headers, "Content-Type": "application/json" },
             }, 8000);
           } catch (_) {
-            // OPTIONS not supported, try POST with minimal payload
             res = await fetchWithRetry(`${baseUrlClean}${ep.path}`, {
               method: "POST",
               headers: { ...headers, "Content-Type": "application/json" },
@@ -1173,50 +1256,23 @@ serve(async (req) => {
 
           const bodyText = await res.text();
           const bodyPreview = bodyText.substring(0, 512);
-
-          // 200/201/202 = endpoint exists and accepted (may have created something)
-          // 400 with validation error = endpoint exists, supports write
-          // 404/405 = endpoint doesn't exist
           const supports = res.status !== 404 && res.status !== 405 && res.status !== 501;
-
           results.push({ path: ep.path, label: ep.label, status: res.status, supports, body: bodyPreview });
 
           if (supports && !writeEndpoint) {
             writeEndpoint = ep.path;
-            canWrite = "YES";
-
-            // If we got 200/201 (accidentally created), try to rollback
-            if (res.status === 200 || res.status === 201) {
-              try {
-                const created = JSON.parse(bodyText);
-                const createdId = created?.Id || created?.ProductId || created?.ArticleId;
-                if (createdId) {
-                  // Attempt DELETE rollback
-                  await fetchWithRetry(`${baseUrlClean}${ep.path}/${createdId}`, {
-                    method: "DELETE",
-                    headers,
-                  }, 5000).catch(() => {});
-                }
-              } catch (_) { /* rollback best-effort */ }
-              // If no rollback possible, mark as UNKNOWN for safety
-              canWrite = "UNKNOWN";
-            }
+            canWrite = "UNKNOWN"; // Never auto-YES from detection alone
           }
         } catch (e) {
           results.push({ path: ep.path, label: ep.label, status: 0, supports: false, body: String(e) });
         }
       }
 
-      // Upsert capabilities
       await supabase.from("provider_capabilities").upsert({
-        connection_id: connectionId,
-        provider: "AGORA",
-        can_read_sales: true,
-        can_read_catalog: !!connection.catalog_endpoint,
-        can_write_products: canWrite,
-        write_endpoint: writeEndpoint,
-        write_endpoints_json: results,
-        last_checked_at: new Date().toISOString(),
+        connection_id: connectionId, provider: "AGORA",
+        can_read_sales: true, can_read_catalog: !!connection.catalog_endpoint,
+        can_write_products: canWrite, write_endpoint: writeEndpoint,
+        write_endpoints_json: results, last_checked_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
 
       return new Response(
@@ -1225,33 +1281,23 @@ serve(async (req) => {
       );
     }
 
-    // ── PROCESS OUTBOUND TASK ──
+    // ── PROCESS OUTBOUND TASK (legacy JSON mode) ──
     if (action === "process-outbound-task") {
-      const { taskId } = await req.json().catch(() => ({ taskId: undefined }));
-      const taskIdToUse = taskId || (await req.json().catch(() => ({}))).taskId;
+      const taskId = payload.taskId;
 
-      // Fetch task
       const { data: task, error: taskErr } = await supabase
-        .from("outbound_tasks")
-        .select("*")
-        .eq("id", taskId)
-        .single();
+        .from("outbound_tasks").select("*").eq("id", taskId).single();
       if (taskErr || !task) {
         return new Response(JSON.stringify({ error: "Task not found" }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Check capabilities
       const { data: caps } = await supabase
-        .from("provider_capabilities")
-        .select("*")
-        .eq("connection_id", task.connection_id)
-        .single();
+        .from("provider_capabilities").select("*").eq("connection_id", task.connection_id).single();
 
       if (!caps || caps.can_write_products === "NO") {
         await supabase.from("outbound_tasks").update({
-          status: "BLOCKED",
-          blocked_reason: "Agora installation does not support write operations. Export the product data and provide to your Agora installer.",
+          status: "BLOCKED", blocked_reason: "Write not supported for this Agora installation.",
         }).eq("id", task.id);
         return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "Write not supported" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1259,8 +1305,7 @@ serve(async (req) => {
 
       if (caps.can_write_products === "UNKNOWN") {
         await supabase.from("outbound_tasks").update({
-          status: "BLOCKED",
-          blocked_reason: "Write capability not confirmed. Run capability detection first, or confirm manually.",
+          status: "BLOCKED", blocked_reason: "Write capability not confirmed. Run a manual XML import first.",
         }).eq("id", task.id);
         return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "Write capability unknown" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1273,40 +1318,26 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Mark as running
       await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
-
-      const payload = task.payload_json;
+      const taskPayload = task.payload_json;
 
       try {
-        // Check if product already exists (idempotency via ExternalRef)
         let existingProductId = task.external_id;
-
-        if (!existingProductId && payload.ExternalRef) {
-          // Try to find by ExternalRef in catalog
+        if (!existingProductId && taskPayload.ExternalRef) {
           const { data: existingProduct } = await supabase
-            .from("provider_products")
-            .select("provider_product_id")
-            .eq("connection_id", task.connection_id)
-            .eq("provider_product_id", payload.ExternalRef)
-            .single();
+            .from("provider_products").select("provider_product_id")
+            .eq("connection_id", task.connection_id).eq("provider_product_id", taskPayload.ExternalRef).single();
           if (existingProduct) existingProductId = existingProduct.provider_product_id;
         }
 
         let res: Response;
         if (existingProductId) {
-          // Try PUT/PATCH for update
           res = await fetchWithRetry(`${baseUrlClean}${writeEp}/${existingProductId}`, {
-            method: "PUT",
-            headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(taskPayload),
           });
         } else {
-          // POST for create
           res = await fetchWithRetry(`${baseUrlClean}${writeEp}`, {
-            method: "POST",
-            headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(taskPayload),
           });
         }
 
@@ -1314,19 +1345,13 @@ serve(async (req) => {
         const resPreview = resBody.substring(0, 2048);
 
         if (res.status === 401 || res.status === 403) {
-          await supabase.from("outbound_tasks").update({
-            status: "FAILED", last_error: `Auth error ${res.status}: ${resPreview}`,
-          }).eq("id", task.id);
-          // Flag connection
-          await supabase.from("pos_connections").update({ enabled: false }).eq("id", task.connection_id);
+          await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `Auth error ${res.status}: ${resPreview}` }).eq("id", task.id);
           return new Response(JSON.stringify({ success: false, status: "FAILED", error: "Auth error" }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         if (res.status === 404 || res.status === 405) {
-          await supabase.from("outbound_tasks").update({
-            status: "BLOCKED", blocked_reason: `Endpoint returned ${res.status}. Write not supported.`,
-          }).eq("id", task.id);
+          await supabase.from("outbound_tasks").update({ status: "BLOCKED", blocked_reason: `Endpoint returned ${res.status}.` }).eq("id", task.id);
           await supabase.from("provider_capabilities").update({ can_write_products: "NO" }).eq("connection_id", task.connection_id);
           return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1338,176 +1363,52 @@ serve(async (req) => {
             status: shouldRetry ? "QUEUED" : "FAILED",
             last_error: `HTTP ${res.status}: ${resPreview}`,
           }).eq("id", task.id);
-          return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED", error: resPreview }),
+          return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // Success - extract external ID
-        let externalId = existingProductId;
+        let externalId = task.external_id;
         try {
-          const created = JSON.parse(resBody);
-          externalId = String(created?.Id || created?.ProductId || created?.ArticleId || externalId || "");
-        } catch (_) {}
+          const parsed = JSON.parse(resBody);
+          externalId = parsed?.Id || parsed?.ProductId || parsed?.ArticleId || externalId;
+        } catch (_) { /* not JSON */ }
 
         await supabase.from("outbound_tasks").update({
-          status: "SUCCESS", external_id: externalId, last_error: null,
+          status: "SUCCESS", last_error: null, external_id: externalId ? String(externalId) : null,
         }).eq("id", task.id);
 
-        // Update provider_products sync status
-        if (payload._winerim_wine_id) {
-          await supabase.from("provider_products").update({
-            sync_status: "SYNCED", sync_error: null, last_synced_at: new Date().toISOString(),
-          }).eq("connection_id", task.connection_id).eq("winerim_wine_id", payload._winerim_wine_id);
-        }
-
-        return new Response(JSON.stringify({ success: true, status: "SUCCESS", externalId }),
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", externalId, responsePreview: resPreview }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
       } catch (e) {
         const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
         await supabase.from("outbound_tasks").update({
-          status: shouldRetry ? "QUEUED" : "FAILED",
-          last_error: String(e).substring(0, 500),
+          status: shouldRetry ? "QUEUED" : "FAILED", last_error: String(e).substring(0, 500),
         }).eq("id", task.id);
         return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
-    // ── QUEUE OUTBOUND TASKS (push wines to Agora) ──
-    if (action === "queue-outbound") {
-      const { winerimWineIds } = await req.json().catch(() => ({ winerimWineIds: [] }));
-      
-      // Get connection defaults
-      const defaultFamily = connection.default_wine_family_name || "Vinos";
-      const defaultVat = Number(connection.default_vat_rate || 10);
-      const defaultBottleFormat = connection.default_bottle_format_name || "BOT";
-
-      // Get mapped wines
-      const { data: mappings } = await supabase
-        .from("product_mappings")
-        .select("*, winerim_wines!inner(name, price, format, winerim_id, sku, ean)")
-        .eq("connection_id", connectionId)
-        .eq("status", "CONFIRMED")
-        .in("winerim_wine_id", winerimWineIds || []);
-
-      if (!mappings || mappings.length === 0) {
-        // Fallback: get winerim wines directly
-        const { data: wines } = await supabase
-          .from("winerim_wines")
-          .select("*")
-          .eq("connection_id", connectionId)
-          .in("winerim_id", winerimWineIds || []);
-
-        if (!wines || wines.length === 0) {
-          return new Response(JSON.stringify({ success: false, error: "No wines found to push" }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        }
-
-        let queued = 0;
-        for (const wine of wines) {
-          const payload = {
-            Name: wine.name,
-            FamilyName: defaultFamily,
-            SaleFormatName: defaultBottleFormat,
-            Price: wine.price || 0,
-            VatRate: defaultVat,
-            ExternalRef: `WINERIM_${wine.winerim_id}`,
-            _winerim_wine_id: wine.winerim_id,
-          };
-
-          // Check idempotency - skip if task already exists
-          const { data: existing } = await supabase
-            .from("outbound_tasks")
-            .select("id")
-            .eq("connection_id", connectionId)
-            .eq("task_type", "AGORA_UPSERT_PRODUCT")
-            .contains("payload_json", { ExternalRef: payload.ExternalRef })
-            .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
-            .limit(1);
-
-          if (existing && existing.length > 0) continue;
-
-          await supabase.from("outbound_tasks").insert({
-            connection_id: connectionId,
-            task_type: "AGORA_UPSERT_PRODUCT",
-            payload_json: payload,
-            status: "QUEUED",
-          });
-          queued++;
-        }
-
-        return new Response(JSON.stringify({ success: true, queued }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      let queued = 0;
-      for (const m of mappings) {
-        const wine = (m as any).winerim_wines;
-        const payload = {
-          Name: wine.name,
-          FamilyName: defaultFamily,
-          SaleFormatName: defaultBottleFormat,
-          Price: wine.price || 0,
-          VatRate: defaultVat,
-          ExternalRef: `WINERIM_${wine.winerim_id}`,
-          SKU: wine.sku || undefined,
-          EAN: wine.ean || undefined,
-          _winerim_wine_id: wine.winerim_id,
-        };
-
-        const { data: existing } = await supabase
-          .from("outbound_tasks")
-          .select("id")
-          .eq("connection_id", connectionId)
-          .eq("task_type", "AGORA_UPSERT_PRODUCT")
-          .contains("payload_json", { ExternalRef: payload.ExternalRef })
-          .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
-          .limit(1);
-
-        if (existing && existing.length > 0) continue;
-
-        await supabase.from("outbound_tasks").insert({
-          connection_id: connectionId,
-          task_type: "AGORA_UPSERT_PRODUCT",
-          payload_json: payload,
-          status: "QUEUED",
-        });
-        queued++;
-      }
-
-      return new Response(JSON.stringify({ success: true, queued }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
-    // ── PROCESS OUTBOUND QUEUE (batch worker) ──
+    // ── PROCESS OUTBOUND QUEUE (legacy JSON) ──
     if (action === "process-outbound-queue") {
       const { data: tasks } = await supabase
-        .from("outbound_tasks")
-        .select("id")
-        .eq("connection_id", connectionId)
-        .eq("status", "QUEUED")
-        .order("created_at")
-        .limit(10);
+        .from("outbound_tasks").select("id")
+        .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT"])
+        .eq("status", "QUEUED").order("created_at").limit(10);
 
       if (!tasks || tasks.length === 0) {
         return new Response(JSON.stringify({ success: true, processed: 0 }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      let processed = 0;
-      let succeeded = 0;
-      let failed = 0;
-
+      let processed = 0, succeeded = 0, failed = 0;
       for (const t of tasks) {
         try {
-          // Recursive call to process single task
           const { data: result } = await supabase.functions.invoke("agora-proxy", {
             body: { action: "process-outbound-task", connectionId, taskId: t.id },
           });
           processed++;
-          if (result?.status === "SUCCESS") succeeded++;
-          else failed++;
+          if (result?.status === "SUCCESS") succeeded++; else failed++;
         } catch (_) { failed++; processed++; }
       }
 
@@ -1517,21 +1418,19 @@ serve(async (req) => {
 
     // ── EXPORT PRODUCTS (JSON/CSV fallback) ──
     if (action === "export-products") {
-      const { format: exportFormat, winerimWineIds: exportIds } = await req.json().catch(() => ({ format: "json", winerimWineIds: [] }));
+      const exportFormat = payload.format || "json";
+      const exportIds = payload.winerimWineIds || [];
 
       let wines: any[] = [];
       if (exportIds && exportIds.length > 0) {
         const { data } = await supabase.from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", exportIds);
         wines = data || [];
       } else {
-        // All confirmed mappings
         const { data: mappings } = await supabase
-          .from("product_mappings")
-          .select("winerim_wine_id, winerim_wine_name")
-          .eq("connection_id", connectionId)
-          .eq("status", "CONFIRMED");
+          .from("product_mappings").select("winerim_wine_id, winerim_wine_name")
+          .eq("connection_id", connectionId).eq("status", "CONFIRMED");
         if (mappings) {
-          const ids = mappings.map(m => m.winerim_wine_id).filter(Boolean);
+          const ids = mappings.map((m: any) => m.winerim_wine_id).filter(Boolean);
           if (ids.length > 0) {
             const { data } = await supabase.from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", ids);
             wines = data || [];
@@ -1544,25 +1443,18 @@ serve(async (req) => {
       const defaultFormat = connection.default_bottle_format_name || "BOT";
 
       const exportRows = wines.map((w: any) => ({
-        externalRef: `WINERIM_${w.winerim_id}`,
-        name: w.name,
-        family: defaultFamily,
-        format: defaultFormat,
-        vat_rate: defaultVat,
-        price: w.price || 0,
-        sku: w.sku || "",
-        ean: w.ean || "",
+        externalRef: `WINERIM_${w.winerim_id}`, name: w.name, family: defaultFamily,
+        format: defaultFormat, vat_rate: defaultVat, price: w.price || 0,
+        sku: w.sku || "", ean: w.ean || "",
       }));
 
       if (exportFormat === "csv") {
         const csvHeader = "externalRef,name,family,format,vat_rate,price,sku,ean";
-        const csvRows = exportRows.map(r =>
+        const csvRows = exportRows.map((r: any) =>
           `"${r.externalRef}","${r.name.replace(/"/g, '""')}","${r.family}","${r.format}",${r.vat_rate},${r.price},"${r.sku}","${r.ean}"`
         );
-        return new Response(
-          [csvHeader, ...csvRows].join("\n"),
-          { headers: { ...corsHeaders, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=agora-import.csv" } }
-        );
+        return new Response([csvHeader, ...csvRows].join("\n"),
+          { headers: { ...corsHeaders, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=agora-import.csv" } });
       }
 
       return new Response(
@@ -1572,6 +1464,7 @@ serve(async (req) => {
     }
 
     // ── SYNC AGORA MASTER DATA ──
+    // FIX PRIORITY 2: Only proves export-master works; does NOT set can_write_products=YES
     if (action === "sync-master-data") {
       const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml" };
@@ -1596,7 +1489,6 @@ serve(async (req) => {
 
       const rawXml = await res.text();
       
-      // Parse XML using regex-based extraction (no external XML parser in Deno edge functions)
       function extractElements(xml: string, tagName: string): Record<string, string>[] {
         const results: Record<string, string>[] = [];
         const selfClosingRegex = new RegExp(`<${tagName}\\s([^>]*?)\\/>`, "gi");
@@ -1610,7 +1502,6 @@ serve(async (req) => {
           }
           results.push(attrs);
         }
-        // Also match non-self-closing (for Products with children)
         const openRegex = new RegExp(`<${tagName}\\s([^>]*?)>`, "gi");
         while ((match = openRegex.exec(xml)) !== null) {
           const attrs: Record<string, string> = {};
@@ -1619,7 +1510,6 @@ serve(async (req) => {
           while ((attrMatch = attrRegex.exec(match[1])) !== null) {
             attrs[attrMatch[1]] = attrMatch[2];
           }
-          // Avoid duplicates from self-closing
           if (!results.some(r => r.Id === attrs.Id && r.Name === attrs.Name)) {
             results.push(attrs);
           }
@@ -1632,41 +1522,33 @@ serve(async (req) => {
       const priceLists = extractElements(rawXml, "PriceList");
       const prepTypes = extractElements(rawXml, "PreparationType");
       const prepOrders = extractElements(rawXml, "PreparationOrder");
-      const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name); // filter out empty
+      const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name);
       const products = extractElements(rawXml, "Product");
 
-      // Products summary: just Id + Name + FamilyId to keep it lightweight
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
       }));
 
-      // Upsert master data
       await supabase.from("agora_master_data").upsert({
         connection_id: connectionId,
-        families_json: families,
-        vats_json: vats,
-        price_lists_json: priceLists,
-        preparation_types_json: prepTypes,
-        preparation_orders_json: prepOrders,
-        warehouses_json: warehouses,
-        products_summary_json: productsSummary,
+        families_json: families, vats_json: vats, price_lists_json: priceLists,
+        preparation_types_json: prepTypes, preparation_orders_json: prepOrders,
+        warehouses_json: warehouses, products_summary_json: productsSummary,
         raw_xml_preview: rawXml.substring(0, 5000),
         fetched_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
 
-      // Update write_mode on connection if we got valid data
+      // FIX: Only set write_mode, NOT can_write_products
       if (families.length > 0 || products.length > 0) {
         await supabase.from("pos_connections").update({
           write_mode: "XML_IMPORT",
         }).eq("id", connectionId).eq("write_mode", "NONE");
 
-        // Update capabilities
+        // Set capabilities to UNKNOWN (not YES) - only a real POST proves write
         await supabase.from("provider_capabilities").upsert({
-          connection_id: connectionId,
-          provider: "AGORA",
-          can_read_sales: true,
-          can_read_catalog: true,
-          can_write_products: "YES",
+          connection_id: connectionId, provider: "AGORA",
+          can_read_sales: true, can_read_catalog: true,
+          can_write_products: "UNKNOWN",
           write_endpoint: "/api/import/",
           last_checked_at: new Date().toISOString(),
         }, { onConflict: "connection_id" });
@@ -1675,13 +1557,9 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: true,
-          families: families.length,
-          vats: vats.length,
-          priceLists: priceLists.length,
-          preparationTypes: prepTypes.length,
-          preparationOrders: prepOrders.length,
-          warehouses: warehouses.length,
-          products: productsSummary.length,
+          families: families.length, vats: vats.length, priceLists: priceLists.length,
+          preparationTypes: prepTypes.length, preparationOrders: prepOrders.length,
+          warehouses: warehouses.length, products: productsSummary.length,
           masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1690,14 +1568,11 @@ serve(async (req) => {
 
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
-      const { winerimWineIds, formatTypes } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"] }));
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE"];
       
-      // Load master data
       const { data: masterData } = await supabase
-        .from("agora_master_data")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .single();
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
 
       if (!masterData) {
         return new Response(
@@ -1706,38 +1581,30 @@ serve(async (req) => {
         );
       }
 
-      // Load wines
       const { data: wines } = await supabase
-        .from("winerim_wines")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", winerimWineIds || []);
+        .from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
-        return new Response(
-          JSON.stringify({ success: false, error: "No wines found" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: false, error: "No wines found" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const xml = generateImportXml(wines, masterData, connection, formatTypes || ["BOTTLE"]);
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes);
 
       return new Response(
-        JSON.stringify({ success: true, xml, wineCount: wines.length }),
+        JSON.stringify({ success: true, xml, wineCount: wines.length, validationResults }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // ── XML IMPORT (POST /api/import/) ──
     if (action === "xml-import") {
-      const { winerimWineIds, formatTypes, dryRun } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"], dryRun: false }));
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE"];
+      const dryRun = payload.dryRun || false;
 
-      // Load master data
       const { data: masterData } = await supabase
-        .from("agora_master_data")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .single();
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
 
       if (!masterData) {
         return new Response(
@@ -1746,25 +1613,19 @@ serve(async (req) => {
         );
       }
 
-      // Load wines
       const { data: wines } = await supabase
-        .from("winerim_wines")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", winerimWineIds || []);
+        .from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
-        return new Response(
-          JSON.stringify({ success: false, error: "No wines found" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({ success: false, error: "No wines found" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const xml = generateImportXml(wines, masterData, connection, formatTypes || ["BOTTLE"]);
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes);
 
       if (dryRun) {
         return new Response(
-          JSON.stringify({ success: true, dryRun: true, xml }),
+          JSON.stringify({ success: true, dryRun: true, xml, validationResults }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -1779,11 +1640,7 @@ serve(async (req) => {
 
       let importRes: Response;
       try {
-        importRes = await fetchWithRetry(importUrl, {
-          method: "POST",
-          headers: xmlHeaders,
-          body: xml,
-        }, 30000);
+        importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
       } catch (e) {
         return new Response(
           JSON.stringify({ success: false, error: `Failed to reach Agora import: ${e}` }),
@@ -1792,12 +1649,37 @@ serve(async (req) => {
       }
 
       const responseBody = await importRes.text().catch(() => "");
-      const responsePreview = responseBody.substring(0, 2048);
+
+      // FIX PRIORITY 6: Parse response properly
+      const parsedResponse = parseAgoraImportResponse(importRes.status, responseBody);
+
+      // FIX PRIORITY 2: Set can_write_products based on actual result
+      if (parsedResponse.success) {
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: connectionId, provider: "AGORA",
+          can_read_sales: true, can_read_catalog: true,
+          can_write_products: "YES",
+          write_endpoint: "/api/import/",
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
+
+        // FIX PRIORITY 7: Mark auto_push_verified_ready on first success
+        await supabase.from("pos_connections").update({
+          auto_push_verified_ready: true,
+        }).eq("id", connectionId);
+      } else if (importRes.status === 404 || importRes.status === 405) {
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: connectionId, provider: "AGORA",
+          can_read_sales: true, can_read_catalog: true,
+          can_write_products: "NO",
+          write_endpoint: "/api/import/",
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
+      }
 
       // Update mappings
-      const fmtTypes = formatTypes || ["BOTTLE"];
       for (const wine of wines) {
-        for (const fmt of fmtTypes) {
+        for (const fmt of formatTypes) {
           const agoraProductId = fmt === "GLASS" 
             ? String(700000 + Number(wine.winerim_id || 0))
             : String(500000 + Number(wine.winerim_id || 0));
@@ -1806,57 +1688,58 @@ serve(async (req) => {
             connection_id: connectionId,
             provider_product_id: agoraProductId,
             provider_product_name: fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`,
-            winerim_wine_id: wine.winerim_id,
-            winerim_wine_name: wine.name,
-            match_method: "XML_IMPORT",
-            match_score: 100,
+            winerim_wine_id: wine.winerim_id, winerim_wine_name: wine.name,
+            match_method: "XML_IMPORT", match_score: 100,
             match_reasons: ["Created via XML import"],
-            status: importRes.ok ? "CONFIRMED" : "PENDING",
-            format_type: fmt,
-            agora_product_id: agoraProductId,
-            last_synced_at: importRes.ok ? new Date().toISOString() : null,
-            last_sync_error: importRes.ok ? null : responsePreview.substring(0, 500),
+            status: parsedResponse.success ? "CONFIRMED" : "PENDING",
+            format_type: fmt, agora_product_id: agoraProductId,
+            last_synced_at: parsedResponse.success ? new Date().toISOString() : null,
+            last_sync_error: parsedResponse.success ? null : parsedResponse.errors.join("; ").substring(0, 500),
           }, { onConflict: "connection_id,provider_product_id" });
         }
       }
 
       return new Response(
         JSON.stringify({
-          success: importRes.ok,
+          success: parsedResponse.success,
           status: importRes.status,
-          responsePreview,
+          parsedResponse,
+          validationResults,
           xmlSent: xml.substring(0, 3000),
           winesProcessed: wines.length,
-          formatsUsed: fmtTypes,
+          formatsUsed: formatTypes,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ── PROCESS OUTBOUND TASK (XML_IMPORT mode) ──
+    // ── PROCESS XML OUTBOUND TASK ──
     if (action === "process-xml-outbound-task") {
-      const { taskId } = await req.json().catch(() => ({ taskId: undefined }));
+      const taskId = payload.taskId;
 
       const { data: task, error: taskErr } = await supabase
-        .from("outbound_tasks")
-        .select("*")
-        .eq("id", taskId)
-        .single();
+        .from("outbound_tasks").select("*").eq("id", taskId).single();
       if (taskErr || !task) {
         return new Response(JSON.stringify({ error: "Task not found" }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Mark as running
+      // Check capabilities - must be YES (not UNKNOWN)
+      const { data: caps } = await supabase
+        .from("provider_capabilities").select("can_write_products").eq("connection_id", task.connection_id).single();
+      if (!caps || caps.can_write_products !== "YES") {
+        await supabase.from("outbound_tasks").update({
+          status: "BLOCKED", blocked_reason: `Write capability is ${caps?.can_write_products || "UNKNOWN"}. Run a manual XML import first to verify.`,
+        }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
 
       try {
-        // Load master data
         const { data: masterData } = await supabase
-          .from("agora_master_data")
-          .select("*")
-          .eq("connection_id", task.connection_id)
-          .single();
+          .from("agora_master_data").select("*").eq("connection_id", task.connection_id).single();
 
         if (!masterData) {
           await supabase.from("outbound_tasks").update({
@@ -1866,17 +1749,13 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const payload = task.payload_json as Record<string, unknown>;
-        const winerimWineId = payload._winerim_wine_id as string;
-        const fmtTypes = (payload._format_types as string[]) || ["BOTTLE"];
+        const taskPayload = task.payload_json as Record<string, unknown>;
+        const winerimWineId = taskPayload._winerim_wine_id as string;
+        const fmtTypes = (taskPayload._format_types as string[]) || ["BOTTLE"];
 
-        // Load wine
         const { data: wineArr } = await supabase
-          .from("winerim_wines")
-          .select("*")
-          .eq("connection_id", task.connection_id)
-          .eq("winerim_id", winerimWineId)
-          .limit(1);
+          .from("winerim_wines").select("*")
+          .eq("connection_id", task.connection_id).eq("winerim_id", winerimWineId).limit(1);
 
         if (!wineArr || wineArr.length === 0) {
           await supabase.from("outbound_tasks").update({
@@ -1886,9 +1765,18 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const xml = generateImportXml(wineArr, masterData, connection, fmtTypes);
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes);
 
-        // POST
+        // Check if any products were actually generated (validation may have skipped all)
+        if (!xml.includes("<Product ")) {
+          const reasons = validationResults.map(v => v.validation.missingFields.join(", ")).filter(Boolean).join("; ");
+          await supabase.from("outbound_tasks").update({
+            status: "BLOCKED", blocked_reason: `Validation failed: ${reasons || "no products generated"}`,
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "BLOCKED", validationResults }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
         const importUrl = `${baseUrlClean}/api/import/`;
         const xmlHeaders = {
           "Api-Token": apiTokenClean,
@@ -1896,22 +1784,29 @@ serve(async (req) => {
           "Content-Type": "application/xml; charset=utf-8",
         };
 
-        const importRes = await fetchWithRetry(importUrl, {
-          method: "POST",
-          headers: xmlHeaders,
-          body: xml,
-        }, 30000);
-
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
         const responseBody = await importRes.text().catch(() => "");
-        const responsePreview = responseBody.substring(0, 2048);
+        const parsedResponse = parseAgoraImportResponse(importRes.status, responseBody);
 
-        if (!importRes.ok) {
-          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        if (!parsedResponse.success) {
+          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500;
+          const errorMsg = parsedResponse.errors.length > 0 
+            ? parsedResponse.errors.join("; ").substring(0, 500)
+            : `HTTP ${importRes.status}: ${parsedResponse.rawPreview.substring(0, 300)}`;
+          
+          // If it's a data error (4xx), don't retry - BLOCK
+          const isDataError = importRes.status >= 400 && importRes.status < 500;
           await supabase.from("outbound_tasks").update({
-            status: shouldRetry ? "QUEUED" : "FAILED",
-            last_error: `HTTP ${importRes.status}: ${responsePreview}`,
+            status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
+            last_error: errorMsg,
+            blocked_reason: isDataError ? `Data error: ${errorMsg}` : null,
           }).eq("id", task.id);
-          return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
+
+          if (importRes.status === 404 || importRes.status === 405) {
+            await supabase.from("provider_capabilities").update({ can_write_products: "NO" }).eq("connection_id", task.connection_id);
+          }
+
+          return new Response(JSON.stringify({ success: false, status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"), parsedResponse }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -1925,13 +1820,9 @@ serve(async (req) => {
             connection_id: task.connection_id,
             provider_product_id: agoraProductId,
             provider_product_name: fmt === "GLASS" ? `COPA ${wineArr[0].name}` : `BOT. ${wineArr[0].name}`,
-            winerim_wine_id: winerimWineId,
-            winerim_wine_name: wineArr[0].name,
-            match_method: "XML_IMPORT",
-            match_score: 100,
-            status: "CONFIRMED",
-            format_type: fmt,
-            agora_product_id: agoraProductId,
+            winerim_wine_id: winerimWineId, winerim_wine_name: wineArr[0].name,
+            match_method: "XML_IMPORT", match_score: 100,
+            status: "CONFIRMED", format_type: fmt, agora_product_id: agoraProductId,
             last_synced_at: new Date().toISOString(),
           }, { onConflict: "connection_id,provider_product_id" });
         }
@@ -1941,7 +1832,10 @@ serve(async (req) => {
           external_id: String(500000 + Number(winerimWineId || 0)),
         }).eq("id", task.id);
 
-        return new Response(JSON.stringify({ success: true, status: "SUCCESS", responsePreview }),
+        // Mark verified ready on first task success too
+        await supabase.from("pos_connections").update({ auto_push_verified_ready: true }).eq("id", task.connection_id);
+
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (e) {
@@ -1957,19 +1851,17 @@ serve(async (req) => {
 
     // ── QUEUE XML OUTBOUND TASKS ──
     if (action === "queue-xml-outbound") {
-      const { winerimWineIds, formatTypes } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"] }));
-      const fmtTypes = formatTypes || ["BOTTLE"];
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE"];
 
       let queued = 0;
-      for (const wineId of (winerimWineIds || [])) {
-        // Check idempotency
+      for (const wineId of winerimWineIds) {
         const { data: existing } = await supabase
-          .from("outbound_tasks")
-          .select("id")
+          .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
           .contains("payload_json", { _winerim_wine_id: wineId })
-          .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
+          .in("status", ["QUEUED", "RUNNING"])
           .limit(1);
 
         if (existing && existing.length > 0) continue;
@@ -1979,8 +1871,9 @@ serve(async (req) => {
           task_type: "AGORA_XML_UPSERT_PRODUCT",
           payload_json: {
             _winerim_wine_id: wineId,
-            _format_types: fmtTypes,
+            _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
+            _trigger_source: "MANUAL",
           },
           status: "QUEUED",
         });
@@ -1994,13 +1887,11 @@ serve(async (req) => {
     // ── PROCESS XML OUTBOUND QUEUE (batch) ──
     if (action === "process-xml-outbound-queue") {
       const { data: tasks } = await supabase
-        .from("outbound_tasks")
-        .select("id")
+        .from("outbound_tasks").select("id")
         .eq("connection_id", connectionId)
         .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
         .eq("status", "QUEUED")
-        .order("created_at")
-        .limit(10);
+        .order("created_at").limit(10);
 
       if (!tasks || tasks.length === 0) {
         return new Response(JSON.stringify({ success: true, processed: 0 }),
@@ -2028,26 +1919,21 @@ serve(async (req) => {
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
       const res = await fetch(url, { headers });
       const data = await res.json();
-      return new Response(
-        JSON.stringify({ data, status: res.status }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ data, status: res.status }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── EVALUATE AUTO-PUSH ──
-    // Called after Winerim catalog sync to evaluate which wines should be auto-pushed
     if (action === "evaluate-auto-push") {
-      const { winerimWineIds, eventType } = await req.json().catch(() => ({ winerimWineIds: [], eventType: "CREATE" }));
-      const evtType = eventType || "CREATE";
+      const winerimWineIds = payload.winerimWineIds || [];
+      const evtType = payload.eventType || "CREATE";
 
-      // Check auto-push config
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
       const autoPushBottle = connection.auto_push_bottle ?? true;
       const autoPushGlass = connection.auto_push_glass ?? false;
       const requireReview = connection.require_manual_review_before_push ?? true;
 
-      // Quick exit if auto-push disabled for this event type
       if (evtType === "CREATE" && !autoPushOnCreate) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -2057,35 +1943,33 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Check write_mode
       if (connection.write_mode !== "XML_IMPORT") {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "write_mode is not XML_IMPORT" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Check capabilities
+      // FIX PRIORITY 7: Must have can_write_products=YES AND auto_push_verified_ready=true
       const { data: caps } = await supabase
-        .from("provider_capabilities")
-        .select("can_write_products")
-        .eq("connection_id", connectionId)
-        .single();
+        .from("provider_capabilities").select("can_write_products").eq("connection_id", connectionId).single();
       if (!caps || caps.can_write_products !== "YES") {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "can_write_products is not YES" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      if (!connection.auto_push_verified_ready) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_not_verified_no_manual_import_success_yet" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
       // Check master data exists
       const { data: masterData } = await supabase
-        .from("agora_master_data")
-        .select("id, families_json, vats_json, price_lists_json, warehouses_json")
-        .eq("connection_id", connectionId)
-        .single();
+        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json")
+        .eq("connection_id", connectionId).single();
       if (!masterData) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no master data cached" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Validate master data has minimum required items
       const families = (masterData as any).families_json || [];
       const vats = (masterData as any).vats_json || [];
       const warnings: string[] = [];
@@ -2096,12 +1980,9 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Load wines
       const { data: wines } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, name, price, format, winery, grape_variety, region, vintage")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", winerimWineIds || []);
+        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload")
+        .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no wines found" }),
@@ -2113,7 +1994,6 @@ serve(async (req) => {
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
       for (const wine of wines) {
-        // Require manual review check
         if (requireReview) {
           const hasName = wine.name && wine.name.length > 2;
           if (!hasName) {
@@ -2121,19 +2001,29 @@ serve(async (req) => {
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "invalid_name" });
             continue;
           }
+          // Validate wine has required fields for the formats we'll push
+          const formatTypes: string[] = [];
+          if (autoPushBottle) formatTypes.push("BOTTLE");
+          if (autoPushGlass) formatTypes.push("GLASS");
+          let allValid = true;
+          for (const fmt of formatTypes) {
+            const validation = validateWineForAgora(wine, fmt);
+            if (!validation.valid) {
+              skipped++;
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `validation_failed:${validation.missingFields.join(",")}` });
+              allValid = false;
+              break;
+            }
+          }
+          if (!allValid) continue;
         }
 
-        // For UPDATE events, check existing mapping
         if (evtType === "UPDATE") {
           const { data: existingMapping } = await supabase
-            .from("product_mappings")
-            .select("id, last_synced_at")
-            .eq("connection_id", connectionId)
-            .eq("winerim_wine_id", wine.winerim_id)
-            .eq("match_method", "XML_IMPORT")
-            .limit(1);
+            .from("product_mappings").select("id, last_synced_at")
+            .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+            .eq("match_method", "XML_IMPORT").limit(1);
 
-          // Only auto-update if mapping exists and was synced at least once
           if (!existingMapping || existingMapping.length === 0 || !existingMapping[0].last_synced_at) {
             if (!autoPushOnCreate) {
               skipped++;
@@ -2143,23 +2033,20 @@ serve(async (req) => {
           }
         }
 
-        // Build format types to push
         const formatTypes: string[] = [];
         if (autoPushBottle) formatTypes.push("BOTTLE");
         if (autoPushGlass) formatTypes.push("GLASS");
         if (formatTypes.length === 0) { skipped++; continue; }
 
-        // Debounce: check for recent task (within 5 minutes) for same wine
+        // Debounce
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         const { data: recentTask } = await supabase
-          .from("outbound_tasks")
-          .select("id")
+          .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
           .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
           .in("status", ["QUEUED", "RUNNING"])
-          .gte("created_at", fiveMinAgo)
-          .limit(1);
+          .gte("created_at", fiveMinAgo).limit(1);
 
         if (recentTask && recentTask.length > 0) {
           skipped++;
@@ -2167,15 +2054,13 @@ serve(async (req) => {
           continue;
         }
 
-        // Anti-spam: check for 3+ consecutive failures
+        // Anti-spam
         const { data: recentFailures } = await supabase
-          .from("outbound_tasks")
-          .select("id, status")
+          .from("outbound_tasks").select("id, status")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
           .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
-          .order("created_at", { ascending: false })
-          .limit(3);
+          .order("created_at", { ascending: false }).limit(3);
 
         if (recentFailures && recentFailures.length >= 3 && recentFailures.every((t: any) => t.status === "FAILED" || t.status === "BLOCKED")) {
           skipped++;
@@ -2183,7 +2068,6 @@ serve(async (req) => {
           continue;
         }
 
-        // Create outbound task
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "AGORA_XML_UPSERT_PRODUCT",

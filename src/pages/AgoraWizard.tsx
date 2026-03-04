@@ -1371,11 +1371,13 @@ function StepOutboundSync({
 
 // ── Step 5: Master Data ──
 function StepMasterData({
-  masterData, syncing, syncError, onSync, onLoad,
+  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings,
 }: {
   masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
   syncing: boolean; syncError: string | null;
   onSync: () => void; onLoad: () => void;
+  writeCapability: "UNKNOWN" | "YES" | "NO";
+  writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
 }) {
   useEffect(() => { onLoad(); }, []);
 
@@ -1396,6 +1398,28 @@ function StepMasterData({
           Fetch master data (families, VATs, price lists, etc.) from Agora via <code className="text-xs font-mono bg-secondary px-1 rounded">/api/export-master/</code>
         </p>
       </div>
+
+      {/* Status badges */}
+      <div className="flex gap-2 flex-wrap">
+        {masterData.fetchedAt ? (
+          <Badge variant="default" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" /> Master data synced</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px]"><AlertTriangle className="mr-1 h-3 w-3" /> Not synced</Badge>
+        )}
+        {writeCapability === "YES" ? (
+          <Badge variant="default" className="text-[10px] bg-success"><CheckCircle2 className="mr-1 h-3 w-3" /> Write verified</Badge>
+        ) : writeCapability === "NO" ? (
+          <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Write not supported</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> Write unknown</Badge>
+        )}
+        {writeSettings.auto_push_verified_ready ? (
+          <Badge variant="default" className="text-[10px]"><Zap className="mr-1 h-3 w-3" /> Auto-push ready</Badge>
+        ) : (
+          <Badge variant="outline" className="text-[10px]">Auto-push not verified</Badge>
+        )}
+      </div>
+
       <Button variant="secondary" size="sm" onClick={onSync} disabled={syncing}>
         {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
         Sync Agora Master Data
@@ -1407,6 +1431,11 @@ function StepMasterData({
       )}
       {masterData.fetchedAt && (
         <p className="text-[11px] text-muted-foreground">Last synced: {new Date(masterData.fetchedAt).toLocaleString()}</p>
+      )}
+      {writeCapability === "UNKNOWN" && masterData.fetchedAt && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600">
+          <p className="flex items-center gap-1.5"><AlertTriangle className="h-3 w-3" /> Master data synced but write not yet verified. Go to Write Settings and run a manual XML import to confirm write capability.</p>
+        </div>
       )}
       {sections.map(({ label, data, icon: Icon }) => (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
@@ -1808,7 +1837,8 @@ export default function AgoraWizard() {
           {currentStep === 5 && (
             <StepMasterData masterData={agoraMaster.masterData}
               syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
-              onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData} />
+              onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
+              writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings} />
           )}
           {currentStep === 6 && (
             <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
