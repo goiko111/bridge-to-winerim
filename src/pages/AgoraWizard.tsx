@@ -14,6 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -1467,6 +1471,81 @@ function StepMasterData({
           <Badge variant="default" className="text-[10px]"><Zap className="mr-1 h-3 w-3" /> Auto-push ready</Badge>
         ) : (
           <Badge variant="outline" className="text-[10px]">Auto-push not verified</Badge>
+        )}
+      </div>
+
+      {/* ── Auto-push verification gate ── */}
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+        <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
+          <Shield className="h-3.5 w-3.5 text-primary" /> Auto-push Verification Gate
+        </p>
+        {writeSettings.auto_push_verified_ready ? (
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              ✅ This connection is verified for auto-push. Products can be automatically pushed to Agora when created or updated.
+            </p>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-[11px] text-destructive border-destructive/30 hover:bg-destructive/5">
+                  <ShieldX className="mr-1 h-3 w-3" /> Revoke auto-push verification
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Revoke auto-push verification?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will disable automatic product push to Agora. You will need to manually import products and re-verify before auto-push can be used again.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() => saveWriteSettings({ auto_push_verified_ready: false })}
+                  >
+                    Revoke verification
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              ⚠️ Auto-push is disabled. Run a manual XML import, verify products were created correctly in Agora, then mark as verified below.
+            </p>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  disabled={writeCapability !== "YES"}
+                >
+                  <ShieldCheck className="mr-1 h-3 w-3" /> Mark connection as verified for auto-push
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Enable auto-push verification?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Use this only after verifying that products were created correctly in Agora (correct names, prices, families, VAT rates, and that they are sellable).
+                    <br /><br />
+                    Once verified, the system will be allowed to automatically push new products to Agora based on your auto-push settings.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => saveWriteSettings({ auto_push_verified_ready: true })}>
+                    Confirm — I verified in Agora
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            {writeCapability !== "YES" && (
+              <p className="text-[10px] text-muted-foreground italic">Run a successful manual XML import first to unlock this option.</p>
+            )}
+          </div>
         )}
       </div>
 
