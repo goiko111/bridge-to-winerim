@@ -241,8 +241,13 @@ function StepCatalog({
           <span className="text-muted-foreground">Products</span>
           <span className="font-mono text-foreground">{catalogStatus.catalogProductCount}</span>
           <span className="text-muted-foreground">Wine candidates</span>
-          <span className="font-mono text-success">{catalogStatus.catalogWineCandidateCount}</span>
+          <span className={`font-mono ${catalogStatus.catalogWineCandidateCount > 0 ? "text-success" : "text-muted-foreground"}`}>{catalogStatus.catalogWineCandidateCount}</span>
         </div>
+        {catalogStatus.catalogWineCandidateCount === 0 && catalogStatus.catalogProductCount > 0 && (
+          <p className="text-[11px] text-muted-foreground col-span-2 mt-1 flex items-center gap-1">
+            <HelpCircle className="h-3 w-3 shrink-0" /> No wines currently in POS catalog. Wine candidates will appear after pushing products from Winerim.
+          </p>
+        )}
       </div>
       <div className="flex gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={onDiscover} disabled={catalogDiscovering}>
