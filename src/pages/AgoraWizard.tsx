@@ -1139,6 +1139,232 @@ function StepWineMatching({
   );
 }
 
+// ── Step 9: Winerim Catalog (Winerim → Agora) ──
+interface WinerimCatalogWine {
+  winerim_id: string;
+  name: string;
+  wine_type: string | null;
+  bottle_sale_price: number | null;
+  glass_sale_price: number | null;
+  serve_by_glass: boolean;
+  is_active: boolean;
+  winery: string | null;
+  region: string | null;
+  vintage: string | null;
+}
+
+function StepWinerimCatalog({
+  connectionId,
+  onQueueProducts,
+  queuingProducts,
+}: {
+  connectionId: string | null;
+  onQueueProducts: (ids: string[]) => void;
+  queuingProducts: boolean;
+}) {
+  const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [search, setSearch] = useState("");
+  const [filterActive, setFilterActive] = useState(true);
+  const [filterGlass, setFilterGlass] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [previewXml, setPreviewXml] = useState<string | null>(null);
+  const [generatingXml, setGeneratingXml] = useState(false);
+
+  const loadWines = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    const data = await fetchAllWinerimWines(connectionId,
+      "winerim_id, name, wine_type, bottle_sale_price, glass_sale_price, serve_by_glass, is_active, winery, region, vintage"
+    );
+    setWines(data as WinerimCatalogWine[]);
+    setLoading(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadWines(); }, [loadWines]);
+
+  const fetchCatalog = async () => {
+    if (!connectionId) return;
+    setFetchingCatalog(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "fetch-catalog", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast({ title: "Winerim catalog synced", description: `${data.totalWines} wines imported` });
+        await loadWines();
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setFetchingCatalog(false); }
+  };
+
+  const filteredWines = useMemo(() => {
+    let result = wines;
+    if (filterActive) result = result.filter(w => w.is_active);
+    if (filterGlass) result = result.filter(w => w.serve_by_glass);
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(w =>
+        w.name.toLowerCase().includes(q) ||
+        (w.winery || "").toLowerCase().includes(q) ||
+        (w.wine_type || "").toLowerCase().includes(q) ||
+        (w.region || "").toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [wines, search, filterActive, filterGlass]);
+
+  const toggleWine = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedIds(new Set(filteredWines.map(w => w.winerim_id)));
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const handlePreviewXml = async () => {
+    if (!connectionId || selectedIds.size === 0) return;
+    setGeneratingXml(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds) },
+      });
+      if (error) throw error;
+      setPreviewXml(data?.xml || "No XML generated");
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setGeneratingXml(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Winerim Catalog (Winerim → Agora)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Browse your Winerim wine catalog, select wines, and push them to Agora POS.
+        </p>
+      </div>
+
+      {/* Stats */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <div className="grid grid-cols-4 gap-4 text-xs">
+          <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
+          <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
+          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null).length}</span></div>
+          <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={fetchCatalog} disabled={fetchingCatalog}>
+          {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : wines.length === 0 ? (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+          <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">No Winerim wines synced yet. Click "Fetch Winerim Catalog" above.</p>
+        </div>
+      ) : (
+        <>
+          {/* Search and filters */}
+          <div className="flex gap-3 items-center flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Search wines…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10 bg-background" />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterActive} onCheckedChange={setFilterActive} /> Active only
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterGlass} onCheckedChange={setFilterGlass} /> Glass only
+            </label>
+          </div>
+
+          {/* Selection actions */}
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-[11px]">Select All ({filteredWines.length})</Button>
+            {selectedIds.size > 0 && (
+              <>
+                <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
+                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds)); clearSelection(); }}
+                  disabled={queuingProducts} className="h-7 text-[11px]">
+                  {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                  Push {selectedIds.size} to Agora
+                </Button>
+                <Button variant="outline" size="sm" onClick={handlePreviewXml} disabled={generatingXml} className="h-7 text-[11px]">
+                  {generatingXml ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+                  Preview XML
+                </Button>
+              </>
+            )}
+            <span className="text-[11px] text-muted-foreground ml-auto">
+              Showing {filteredWines.length} of {wines.length}
+            </span>
+          </div>
+
+          {/* Wine list */}
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
+            {filteredWines.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground">No wines match your filters.</div>
+            ) : filteredWines.map((w) => (
+              <label key={w.winerim_id} className="flex items-center gap-3 px-4 py-2.5 bg-card hover:bg-secondary/30 cursor-pointer transition-colors">
+                <input type="checkbox" checked={selectedIds.has(w.winerim_id)} onChange={() => toggleWine(w.winerim_id)}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
+                    {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
+                    {w.wine_type && <span className="capitalize">{w.wine_type}</span>}
+                    {w.winery && <span>{w.winery}</span>}
+                    {w.vintage && <span>{w.vintage}</span>}
+                    {w.region && <span>{w.region}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0 text-[11px]">
+                  {w.bottle_sale_price != null && (
+                    <span className="font-mono text-foreground">🍾 €{Number(w.bottle_sale_price).toFixed(2)}</span>
+                  )}
+                  {w.glass_sale_price != null && (
+                    <span className="font-mono text-foreground">🥂 €{Number(w.glass_sale_price).toFixed(2)}</span>
+                  )}
+                  {w.serve_by_glass && <Badge variant="outline" className="text-[10px]">Glass</Badge>}
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {/* XML Preview */}
+          {previewXml && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">XML Preview</p>
+                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPreviewXml(null)}>Close</Button>
+              </div>
+              <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto text-foreground whitespace-pre-wrap">
+                {previewXml}
+              </pre>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Step 3: Capabilities Detection ──
 function StepCapabilities({
   connectionId, capabilities, detecting, detectionResults, onDetect, onLoadCapabilities,
