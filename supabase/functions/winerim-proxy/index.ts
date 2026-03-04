@@ -314,56 +314,11 @@ serve(async (req) => {
 
     const winerimHeaders = buildWinerimHeaders(winerimToken);
 
-    // ── FETCH WINE CATALOG ──
+    // ── FETCH WINE CATALOG (list sync + paginated detail enrichment) ──
     if (action === "fetch-catalog") {
-      const wines = await fetchAllWines(winerimHeaders);
-
-      // Batch-fetch wine details to get pricing (prices array with bottle/glass/magnum)
-      const wineIds = wines.map(w => String(w.id || "")).filter(Boolean);
-      console.log(`Fetching details for ${wineIds.length} wines to get pricing...`);
-      const detailMap = await fetchWineDetails(wineIds, winerimHeaders, 5);
-      console.log(`Got details for ${detailMap.size} of ${wineIds.length} wines`);
-
-      // ── EXTRACT NORMALIZED POS-READY FIELDS ──
-      // Parses Winerim's prices array: [{variant: "botella"|"copa"|"magnum"|..., price: N, erpStock: {...}}]
-      function extractNormalizedFields(listWine: Record<string, unknown>, detail: Record<string, unknown> | null) {
-        const w = { ...listWine, ...(detail || {}) };
-
-        // Wine type
-        const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
-        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
-
-        // ── Parse prices array from Winerim API ──
-        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
-        
-        // Find prices by variant
-        const bottleEntry = prices.find(p => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
-        const glassEntry = prices.find(p => p.variant === "copa");
-        const magnumEntry = prices.find(p => p.variant === "magnum");
-
-        // Bottle pricing: from prices array, then fallback to explicit fields
-        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
-        const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
-
-        // Glass pricing: from prices array
-        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(w.glass_sale_price ?? w.glass_price);
-        const glassCostPrice = toPositiveNumber(w.glass_cost_price ?? w.glass_cost);
-
-        // Magnum pricing: from prices array
-        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(w.magnum_sale_price);
-        const magnumPurchasePrice = toPositiveNumber(w.magnum_purchase_price ?? w.magnum_cost);
-
-        // serve_by_glass: true if a 'copa' variant exists in prices
-        const serveByGlass = !!glassEntry || w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
-
-        // is_active: from 'active' field in detail response
-        const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
-
-        // Stock from bottle entry
-        const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
-
-        return { wineType, bottleSalePrice, bottlePurchasePrice, glassSalePrice, glassCostPrice, magnumSalePrice, magnumPurchasePrice, serveByGlass, isActive, stockQuantity };
-      }
+      const mode = String(body.mode || "start"); // start | enrich
+      const detailOffset = Math.max(0, Number(body.detailOffset || 0));
+      const detailBatchSize = Math.min(200, Math.max(25, Number(body.detailBatchSize || 100)));
 
       function toPositiveNumber(val: unknown): number | null {
         if (val === null || val === undefined) return null;
@@ -371,120 +326,229 @@ serve(async (req) => {
         return n > 0 ? n : null;
       }
 
-      // Load existing wines for change detection
-      const { data: existingWines } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, is_active")
-        .eq("connection_id", connectionId);
-      const existingMap = new Map((existingWines || []).map((w: any) => [w.winerim_id, w]));
+      function extractNormalizedFields(listWine: Record<string, unknown>, detail: Record<string, unknown> | null) {
+        const w = { ...listWine, ...(detail || {}) };
 
-      // Track which wines actually changed exportable fields
-      const changedWineIds: string[] = [];
-      const newWineIds: string[] = [];
-      let detailsFound = 0;
+        const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
+        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
-      let upserted = 0;
-      for (const w of wines) {
-        const winerimId = String(w.id || "");
-        if (!winerimId) continue;
+        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
+        const bottleEntry = prices.find(p => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
+        const glassEntry = prices.find(p => p.variant === "copa");
+        const magnumEntry = prices.find(p => p.variant === "magnum");
 
-        const detail = detailMap.get(winerimId) || null;
-        if (detail) detailsFound++;
+        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
+        const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
+        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(w.glass_sale_price ?? w.glass_price);
+        const glassCostPrice = toPositiveNumber(w.glass_cost_price ?? w.glass_cost);
+        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(w.magnum_sale_price);
+        const magnumPurchasePrice = toPositiveNumber(w.magnum_purchase_price ?? w.magnum_cost);
+
+        const serveByGlass = !!glassEntry || w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
+        const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
+        const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
+
+        return {
+          wineType,
+          bottleSalePrice,
+          bottlePurchasePrice,
+          glassSalePrice,
+          glassCostPrice,
+          magnumSalePrice,
+          magnumPurchasePrice,
+          serveByGlass,
+          isActive,
+          stockQuantity,
+        };
+      }
+
+      let listWinesFetched = 0;
+      let listWinesUpserted = 0;
+      let totalWines = 0;
+      let batchWineIds: string[] = [];
+      const baseWineMap = new Map<string, Record<string, unknown>>();
+
+      if (mode === "start") {
+        const wines = await fetchAllWines(winerimHeaders);
+        listWinesFetched = wines.length;
+        totalWines = wines.length;
+
+        console.log(`[winerim-proxy] fetch-catalog start: wines fetched from list=${listWinesFetched}`);
+
+        for (const w of wines) {
+          const winerimId = String(w.id || "");
+          if (!winerimId) continue;
+
+          baseWineMap.set(winerimId, w);
+
+          let grapeVariety: string | null = null;
+          const grapes = w.grapes as { name: string }[] | undefined;
+          if (Array.isArray(grapes) && grapes.length > 0) {
+            grapeVariety = grapes.map(g => g.name).join(", ");
+          }
+
+          const nf = extractNormalizedFields(w, null);
+          const upsertPayload: Record<string, unknown> = {
+            connection_id: connectionId,
+            winerim_id: winerimId,
+            name: String(w.name || "Unknown"),
+            sku: w.identifier ? String(w.identifier) : null,
+            ean: w.ean ? String(w.ean) : null,
+            vintage: w.vintage ? String(w.vintage) : null,
+            winery: w.winery ? String(w.winery) : null,
+            region: w.region ? String(w.region) : null,
+            grape_variety: grapeVariety,
+            format: w.subname ? String(w.subname) : null,
+            raw_payload: w,
+            serve_by_glass: nf.serveByGlass,
+            is_active: nf.isActive,
+          };
+
+          if (nf.wineType) upsertPayload.wine_type = nf.wineType;
+          if (nf.bottleSalePrice != null) {
+            upsertPayload.bottle_sale_price = nf.bottleSalePrice;
+            upsertPayload.price = nf.bottleSalePrice;
+          }
+          if (nf.bottlePurchasePrice != null) upsertPayload.bottle_purchase_price = nf.bottlePurchasePrice;
+          if (nf.glassSalePrice != null) upsertPayload.glass_sale_price = nf.glassSalePrice;
+          if (nf.glassCostPrice != null) upsertPayload.glass_cost_price = nf.glassCostPrice;
+          if (nf.magnumSalePrice != null) upsertPayload.magnum_sale_price = nf.magnumSalePrice;
+          if (nf.magnumPurchasePrice != null) upsertPayload.magnum_purchase_price = nf.magnumPurchasePrice;
+          if (nf.stockQuantity != null) upsertPayload.stock_quantity = nf.stockQuantity;
+
+          await supabase
+            .from("winerim_wines")
+            .upsert(upsertPayload, { onConflict: "connection_id,winerim_id" });
+
+          listWinesUpserted++;
+        }
+
+        batchWineIds = wines
+          .map((w) => String(w.id || ""))
+          .filter(Boolean)
+          .slice(detailOffset, detailOffset + detailBatchSize);
+      } else {
+        const { count } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id", { count: "exact", head: true })
+          .eq("connection_id", connectionId);
+
+        totalWines = count || 0;
+
+        const { data: batchRows } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, raw_payload")
+          .eq("connection_id", connectionId)
+          .order("winerim_id")
+          .range(detailOffset, detailOffset + detailBatchSize - 1);
+
+        const rows = batchRows || [];
+        batchWineIds = rows.map((r: any) => String(r.winerim_id)).filter(Boolean);
+        for (const row of rows) {
+          baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+        }
+
+        console.log(
+          `[winerim-proxy] fetch-catalog enrich: offset=${detailOffset} batch=${detailBatchSize} ` +
+          `target=${batchWineIds.length} total=${totalWines}`,
+        );
+      }
+
+      const detailsResult = batchWineIds.length > 0
+        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
+        : { details: new Map<string, Record<string, unknown>>(), attempted: 0, succeeded: 0, failed: 0 };
+
+      console.log(
+        `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +
+        `succeeded=${detailsResult.succeeded} failed=${detailsResult.failed}`,
+      );
+
+      let detailsUpdated = 0;
+      let winesUpdatedWithBottlePrice = 0;
+      let winesUpdatedWithGlassPrice = 0;
+
+      for (const winerimId of batchWineIds) {
+        const detail = detailsResult.details.get(winerimId);
+        if (!detail) continue;
+
+        const baseWine = baseWineMap.get(winerimId) || {};
+        const mergedPayload = { ...baseWine, ...detail };
+        const nf = extractNormalizedFields(baseWine, detail);
 
         let grapeVariety: string | null = null;
-        // Check both list and detail for grapes
-        const grapes = (detail?.grapes || w.grapes) as { name: string }[] | undefined;
+        const grapes = (detail.grapes || (baseWine as any).grapes) as { name: string }[] | undefined;
         if (Array.isArray(grapes) && grapes.length > 0) {
           grapeVariety = grapes.map(g => g.name).join(", ");
         }
 
-        const nf = extractNormalizedFields(w, detail);
-        const existing = existingMap.get(winerimId);
-
-        // Detect if this is new or changed
-        if (!existing) {
-          newWineIds.push(winerimId);
-        } else {
-          const changed =
-            String(w.name || "Unknown") !== existing.name ||
-            nf.wineType !== existing.wine_type ||
-            nf.bottleSalePrice !== (existing.bottle_sale_price ? Number(existing.bottle_sale_price) : null) ||
-            nf.bottlePurchasePrice !== (existing.bottle_purchase_price ? Number(existing.bottle_purchase_price) : null) ||
-            nf.glassSalePrice !== (existing.glass_sale_price ? Number(existing.glass_sale_price) : null) ||
-            nf.glassCostPrice !== (existing.glass_cost_price ? Number(existing.glass_cost_price) : null) ||
-            nf.isActive !== existing.is_active;
-          if (changed) changedWineIds.push(winerimId);
-        }
-
-        // Merge raw_payload with detail data for reference
-        const mergedPayload = { ...w, ...(detail || {}) };
-
-        await supabase.from("winerim_wines").upsert({
-          connection_id: connectionId,
-          winerim_id: winerimId,
-          name: String(detail?.name || w.name || "Unknown"),
-          sku: (detail?.identifier || w.identifier) ? String(detail?.identifier || w.identifier) : null,
-          ean: detail?.ean ? String(detail.ean) : null,
-          vintage: (detail?.vintage || w.vintage) ? String(detail?.vintage || w.vintage) : null,
-          winery: (detail?.winery || w.winery) ? String(detail?.winery || w.winery) : null,
-          region: (detail?.region || w.region) ? String(detail?.region || w.region) : null,
-          grape_variety: grapeVariety,
-          format: (detail?.subname || w.subname) ? String(detail?.subname || w.subname) : null,
-          price: nf.bottleSalePrice,
-          stock_quantity: nf.stockQuantity != null ? nf.stockQuantity : toPositiveNumber(detail?.stock ?? w.stock),
+        const updateData: Record<string, unknown> = {
           raw_payload: mergedPayload,
-          // Normalized POS-ready fields
-          wine_type: nf.wineType,
-          bottle_sale_price: nf.bottleSalePrice,
-          bottle_purchase_price: nf.bottlePurchasePrice,
-          glass_sale_price: nf.glassSalePrice,
-          glass_cost_price: nf.glassCostPrice,
-          magnum_sale_price: nf.magnumSalePrice,
-          magnum_purchase_price: nf.magnumPurchasePrice,
           serve_by_glass: nf.serveByGlass,
           is_active: nf.isActive,
-        }, { onConflict: "connection_id,winerim_id" });
-        upserted++;
-      }
+          grape_variety: grapeVariety,
+        };
 
-      // ── AUTO-PUSH TRIGGER (only on meaningful changes) ──
-      try {
-        const { data: agoraConnections } = await supabase
-          .from("pos_connections")
-          .select("id, auto_push_on_create, auto_push_on_update, write_mode, winerim_api_token")
-          .eq("provider", "agora")
-          .eq("write_mode", "XML_IMPORT")
-          .eq("winerim_api_token", winerimToken);
-
-        if (agoraConnections && agoraConnections.length > 0) {
-          for (const agoraConn of agoraConnections) {
-            if (!agoraConn.auto_push_on_create && !agoraConn.auto_push_on_update) continue;
-
-            if (agoraConn.auto_push_on_create && newWineIds.length > 0) {
-              await supabase.functions.invoke("agora-proxy", {
-                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: newWineIds, eventType: "CREATE" },
-              }).catch((e: Error) => console.error("Auto-push CREATE failed:", e));
-            }
-
-            if (agoraConn.auto_push_on_update && changedWineIds.length > 0) {
-              await supabase.functions.invoke("agora-proxy", {
-                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: changedWineIds, eventType: "UPDATE" },
-              }).catch((e: Error) => console.error("Auto-push UPDATE failed:", e));
-            }
-          }
+        if (detail.name || (baseWine as any).name) updateData.name = String(detail.name || (baseWine as any).name || "Unknown");
+        if (nf.wineType) updateData.wine_type = nf.wineType;
+        if (nf.bottleSalePrice != null) {
+          updateData.bottle_sale_price = nf.bottleSalePrice;
+          updateData.price = nf.bottleSalePrice;
+          winesUpdatedWithBottlePrice++;
         }
-      } catch (e) {
-        console.error("Auto-push trigger failed (non-blocking):", e);
+        if (nf.bottlePurchasePrice != null) updateData.bottle_purchase_price = nf.bottlePurchasePrice;
+        if (nf.glassSalePrice != null) {
+          updateData.glass_sale_price = nf.glassSalePrice;
+          winesUpdatedWithGlassPrice++;
+        }
+        if (nf.glassCostPrice != null) updateData.glass_cost_price = nf.glassCostPrice;
+        if (nf.magnumSalePrice != null) updateData.magnum_sale_price = nf.magnumSalePrice;
+        if (nf.magnumPurchasePrice != null) updateData.magnum_purchase_price = nf.magnumPurchasePrice;
+        if (nf.stockQuantity != null) updateData.stock_quantity = nf.stockQuantity;
+
+        await supabase
+          .from("winerim_wines")
+          .update(updateData)
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
+
+        detailsUpdated++;
       }
+
+      const processedDetails = Math.min(totalWines, detailOffset + batchWineIds.length);
+      const remainingDetails = Math.max(totalWines - processedDetails, 0);
+      const complete = remainingDetails === 0;
+
+      const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
+
+      console.log(
+        `[winerim-proxy] fetch-catalog result: listFetched=${listWinesFetched} ` +
+        `detailProcessed=${processedDetails}/${totalWines} bottleUpdated=${winesUpdatedWithBottlePrice} ` +
+        `glassUpdated=${winesUpdatedWithGlassPrice} complete=${complete}`,
+      );
 
       return new Response(
         JSON.stringify({
           success: true,
-          totalWines: upserted,
-          detailsFetched: detailsFound,
-          detailsMissing: wineIds.length - detailsFound,
-          newWines: newWineIds.length,
-          changedWines: changedWineIds.length,
+          mode,
+          totalWines,
+          listWinesFetched,
+          listWinesUpserted,
+          detailOffset,
+          detailBatchSize,
+          processedDetails,
+          remainingDetails,
+          nextDetailOffset: complete ? null : processedDetails,
+          complete,
+          enrichmentCompletedAt,
+          detailRequestsAttempted: detailsResult.attempted,
+          detailRequestsSucceeded: detailsResult.succeeded,
+          detailRequestsFailed: detailsResult.failed,
+          winesUpdatedWithBottlePrice,
+          winesUpdatedWithGlassPrice,
+          detailsUpdated,
+          detailsMissing: detailsResult.failed,
+          newWines: 0,
+          changedWines: 0,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
