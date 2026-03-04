@@ -1325,46 +1325,53 @@ function StepWinerimCatalog({
     setGeneratingXml(true);
     setPreviewXml(null);
     try {
-      const formatTypes: string[] = [];
-      // Determine formats from selected wines
-      const selWines = wines.filter(w => selectedIds.has(w.winerim_id));
-      formatTypes.push("BOTTLE");
-      if (selWines.some(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0)) {
-        formatTypes.push("GLASS");
-      }
+      // Always send both formats — backend validates per-wine eligibility
+      const formatTypes = ["BOTTLE", "GLASS"];
 
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds), formatTypes },
       });
       if (error) throw error;
 
-      // Check for validation issues
       const validationResults = data?.validationResults || [];
+      
+      // Build format diagnostics
+      const formatsGenerated = validationResults.filter((v: any) => v.validation?.valid).map((v: any) => v.formatType);
+      const formatsSkipped = validationResults.filter((v: any) => !v.validation?.valid);
+      const uniqueGenerated = [...new Set(formatsGenerated)] as string[];
+      const skippedReasons = formatsSkipped.map((v: any) => {
+        const wine = wines.find(w => w.winerim_id === v.winerimId);
+        const name = wine?.name || v.winerimId;
+        const missing = v.validation?.missingFields || [];
+        if (v.formatType === "GLASS") {
+          if (missing.includes("missing_glass_sale_price")) return `COPA ${name}: No glass price available`;
+          if (missing.includes("serve_by_glass_not_enabled")) return `COPA ${name}: serve_by_glass not enabled`;
+          if (missing.includes("wine_inactive")) return `COPA ${name}: Wine is inactive`;
+        }
+        if (v.formatType === "BOTTLE") {
+          if (missing.includes("missing_bottle_sale_price")) return `BOT. ${name}: No bottle price available`;
+          if (missing.includes("wine_inactive")) return `BOT. ${name}: Wine is inactive`;
+        }
+        return `${v.formatType} ${name}: ${missing.join(", ")}`;
+      });
+
       const allInvalid = validationResults.length > 0 && validationResults.every((v: any) => !v.validation?.valid);
-      const warnings = validationResults
-        .filter((v: any) => !v.validation?.valid)
-        .map((v: any) => {
-          const missing = v.validation?.missingFields || [];
-          const wine = wines.find(w => w.winerim_id === v.winerimId);
-          const name = wine?.name || v.winerimId;
-          if (missing.includes("missing_bottle_sale_price")) return `${name}: No bottle price available for Agora export`;
-          if (missing.includes("missing_glass_sale_price")) return `${name}: No glass price available`;
-          if (missing.includes("serve_by_glass_not_enabled")) return `${name}: Glass service not enabled`;
-          if (missing.includes("wine_inactive")) return `${name}: Wine is inactive`;
-          return `${name}: ${missing.join(", ")}`;
-        });
 
       if (allInvalid && (!data?.xml || !data.xml.includes("<Product"))) {
-        const warningMsg = warnings.length > 0
-          ? `No exportable products found.\n\nIssues:\n${warnings.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Pricing may be missing. Click "Refresh Catalog" to re-fetch wine details from Winerim.`
-          : "No exportable products found. Pricing data may be missing — click \"Refresh Catalog\" to re-fetch.";
+        const warningMsg = skippedReasons.length > 0
+          ? `No exportable products found.\n\nIssues:\n${skippedReasons.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Click "Refresh Catalog" to re-fetch wine details.`
+          : "No exportable products found. Click \"Refresh Catalog\" to re-fetch.";
         setPreviewXml(warningMsg);
       } else {
-        let result = data?.xml || "No XML generated";
-        if (warnings.length > 0) {
-          result = `<!-- WARNINGS:\n${warnings.map((w: string) => `  - ${w}`).join("\n")}\n-->\n${result}`;
+        // Build diagnostic header
+        const diagLines: string[] = [];
+        diagLines.push(`Formats generated: ${uniqueGenerated.join(", ") || "none"}`);
+        if (skippedReasons.length > 0) {
+          diagLines.push(`Formats skipped (${formatsSkipped.length}):`);
+          skippedReasons.forEach((r: string) => diagLines.push(`  - ${r}`));
         }
-        setPreviewXml(result);
+        const diagComment = `<!-- DIAGNOSTICS:\n${diagLines.map(l => `  ${l}`).join("\n")}\n-->`;
+        setPreviewXml(`${diagComment}\n${data?.xml || "No XML generated"}`);
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
