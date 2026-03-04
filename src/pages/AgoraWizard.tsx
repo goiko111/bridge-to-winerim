@@ -43,16 +43,28 @@ const steps = [
 ];
 
 // Helper to fetch all rows from a table without limit
-async function fetchAllRows<T>(table: string, connectionId: string, select: string, orderBy?: string): Promise<T[]> {
+async function fetchAllWinerimWines(connectionId: string, select: string): Promise<any[]> {
   const PAGE_SIZE = 1000;
-  const allRows: T[] = [];
+  const allRows: any[] = [];
   let from = 0;
   while (true) {
-    let query = supabase.from(table).select(select).eq("connection_id", connectionId).range(from, from + PAGE_SIZE - 1);
-    if (orderBy) query = query.order(orderBy);
-    const { data, error } = await query;
+    const { data, error } = await supabase.from("winerim_wines").select(select).eq("connection_id", connectionId).order("name").range(from, from + PAGE_SIZE - 1);
     if (error || !data || data.length === 0) break;
-    allRows.push(...(data as unknown as T[]));
+    allRows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return allRows;
+}
+
+async function fetchAllMappings(connectionId: string): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  const allRows: any[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase.from("product_mappings").select("*").eq("connection_id", connectionId).order("match_score", { ascending: false }).range(from, from + PAGE_SIZE - 1);
+    if (error || !data || data.length === 0) break;
+    allRows.push(...data);
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
