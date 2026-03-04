@@ -1716,7 +1716,7 @@ function StepOutboundSync({
 
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
-        {canWrite && (
+        {canProcessQueue && (
           <>
             <Button variant="secondary" size="sm" onClick={onProcessQueue}
               disabled={processingQueue || queuedTasks.length === 0}>
