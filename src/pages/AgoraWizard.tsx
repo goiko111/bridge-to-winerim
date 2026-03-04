@@ -1024,9 +1024,21 @@ function StepWineMatching({
       {loading ? (
         <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : mappings.length === 0 && winerimWines.length === 0 ? (
-        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20 space-y-2">
           <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
           <p className="text-sm text-muted-foreground">Fetch your Winerim catalog first, then run matching.</p>
+        </div>
+      ) : mappings.length === 0 && winerimWines.length > 0 ? (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 space-y-2">
+          <div className="flex items-start gap-2">
+            <HelpCircle className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-foreground">No POS wine products to match</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                This customer has no wine products in Agora yet. Use the <strong>Winerim Catalog</strong> step (next step) to browse and push wines directly into Agora.
+              </p>
+            </div>
+          </div>
         </div>
       ) : (
         <Tabs defaultValue="pending" className="space-y-3">
