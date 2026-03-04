@@ -187,6 +187,7 @@ export type Database = {
           auto_push_glass: boolean
           auto_push_on_create: boolean
           auto_push_on_update: boolean
+          auto_push_verified_ready: boolean
           backfill_days: number
           base_url: string
           catalog_endpoint: string | null
@@ -226,6 +227,7 @@ export type Database = {
           auto_push_glass?: boolean
           auto_push_on_create?: boolean
           auto_push_on_update?: boolean
+          auto_push_verified_ready?: boolean
           backfill_days?: number
           base_url: string
           catalog_endpoint?: string | null
@@ -265,6 +267,7 @@ export type Database = {
           auto_push_glass?: boolean
           auto_push_on_create?: boolean
           auto_push_on_update?: boolean
+          auto_push_verified_ready?: boolean
           backfill_days?: number
           base_url?: string
           catalog_endpoint?: string | null

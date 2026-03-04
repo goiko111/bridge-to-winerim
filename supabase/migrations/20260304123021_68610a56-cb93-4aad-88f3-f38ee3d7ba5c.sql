@@ -1,0 +1,1 @@
+ALTER TABLE public.pos_connections ADD COLUMN IF NOT EXISTS auto_push_verified_ready boolean NOT NULL DEFAULT false;
