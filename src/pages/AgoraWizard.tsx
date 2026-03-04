@@ -1975,9 +1975,9 @@ export default function AgoraWizard() {
     }
   }, [connectionId, currentStep]);
 
-  // Load master data + write settings when entering steps 5 or 9
+  // Load master data + write settings when entering steps 3, 5 or 9
   useEffect(() => {
-    if ((currentStep === 5 || currentStep === 9) && connectionId) {
+    if ((currentStep === 3 || currentStep === 5 || currentStep === 9) && connectionId) {
       agoraMaster.loadMasterData();
       agoraMaster.loadWriteSettings();
     }
