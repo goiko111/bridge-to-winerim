@@ -276,11 +276,11 @@ serve(async (req) => {
     if (action === "fetch-catalog") {
       const wines = await fetchAllWines(winerimHeaders);
 
-      // Detail fetch is done separately via 'fetch-wine-details' action
-      // The list endpoint provides: type, name, winery, region, vintage, country
-      // Pricing requires the standalone detail fetch
-      const detailMap = new Map<string, Record<string, unknown>>();
+      // Batch-fetch wine details to get pricing (prices array with bottle/glass/magnum)
       const wineIds = wines.map(w => String(w.id || "")).filter(Boolean);
+      console.log(`Fetching details for ${wineIds.length} wines to get pricing...`);
+      const detailMap = await fetchWineDetails(wineIds, winerimHeaders, 5);
+      console.log(`Got details for ${detailMap.size} of ${wineIds.length} wines`);
 
       // ── EXTRACT NORMALIZED POS-READY FIELDS ──
       // Parses Winerim's prices array: [{variant: "botella"|"copa"|"magnum"|..., price: N, erpStock: {...}}]
