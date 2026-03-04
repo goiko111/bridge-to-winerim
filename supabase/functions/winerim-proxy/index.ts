@@ -179,7 +179,11 @@ async function fetchAllWines(headers: Record<string, string>): Promise<Record<st
 
 // Fetch individual wine detail to get pricing fields
 // Tries multiple endpoint patterns since Winerim API may vary
-async function fetchWineDetail(wineId: string, headers: Record<string, string>): Promise<Record<string, unknown> | null> {
+async function fetchWineDetail(
+  wineId: string,
+  headers: Record<string, string>,
+  timeoutMs = 12000,
+): Promise<Record<string, unknown> | null> {
   const endpointsToTry = [
     `${WINERIM_BASE_URL}/wines/${wineId}`,
     `${WINERIM_BASE_URL}/wine/${wineId}`,
@@ -187,52 +191,90 @@ async function fetchWineDetail(wineId: string, headers: Record<string, string>):
   ];
 
   for (const url of endpointsToTry) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
     try {
-      const res = await fetch(url, { headers });
+      const res = await fetch(url, { headers, signal: controller.signal });
       const body = await res.text();
+
       if (!res.ok) {
-        console.log(`Wine detail ${wineId} (${url}): HTTP ${res.status}`);
+        console.log(`[winerim-proxy] wine detail ${wineId} (${url}): HTTP ${res.status}`);
         continue;
       }
+
       try {
         const data = JSON.parse(body);
         const wine = data?.wine || data;
-        console.log(`Wine detail ${wineId} SUCCESS via ${url}: keys=[${Object.keys(wine).join(",")}]`);
+        console.log(`[winerim-proxy] wine detail ${wineId} SUCCESS via ${url}`);
         return wine;
       } catch {
-        console.log(`Wine detail ${wineId}: non-JSON from ${url}`);
+        console.log(`[winerim-proxy] wine detail ${wineId}: non-JSON from ${url}`);
         continue;
       }
-    } catch (e) {
-      console.error(`Wine detail ${wineId} (${url}) failed:`, e);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout")) {
+        console.log(`[winerim-proxy] wine detail ${wineId} (${url}) timed out after ${timeoutMs}ms`);
+      } else {
+        console.log(`[winerim-proxy] wine detail ${wineId} (${url}) failed: ${msg}`);
+      }
       continue;
+    } finally {
+      clearTimeout(timeout);
     }
   }
+
   return null;
 }
 
-// Batch fetch wine details with concurrency control
+interface FetchWineDetailsResult {
+  details: Map<string, Record<string, unknown>>;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+}
+
+// Batch fetch wine details with concurrency control + diagnostics
 async function fetchWineDetails(
   wineIds: string[],
   headers: Record<string, string>,
   concurrency = 5,
-): Promise<Map<string, Record<string, unknown>>> {
-  const results = new Map<string, Record<string, unknown>>();
-  
+): Promise<FetchWineDetailsResult> {
+  const details = new Map<string, Record<string, unknown>>();
+  const attempted = wineIds.length;
+  let succeeded = 0;
+  let failed = 0;
+
+  const totalBatches = Math.ceil(wineIds.length / concurrency);
+
   for (let i = 0; i < wineIds.length; i += concurrency) {
     const batch = wineIds.slice(i, i + concurrency);
-    const promises = batch.map(async (id) => {
-      const detail = await fetchWineDetail(id, headers);
-      if (detail) results.set(id, detail);
-    });
-    await Promise.all(promises);
+    await Promise.all(
+      batch.map(async (id) => {
+        const detail = await fetchWineDetail(id, headers);
+        if (detail) {
+          details.set(id, detail);
+          succeeded++;
+        } else {
+          failed++;
+        }
+      }),
+    );
+
+    const processed = Math.min(i + concurrency, wineIds.length);
+    const batchNo = Math.floor(i / concurrency) + 1;
+    console.log(
+      `[winerim-proxy] detail progress batch ${batchNo}/${totalBatches} ` +
+      `processed=${processed}/${wineIds.length} succeeded=${succeeded} failed=${failed}`,
+    );
+
     // Small delay between batches to avoid rate limiting
     if (i + concurrency < wineIds.length) {
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 120));
     }
   }
 
-  return results;
+  return { details, attempted, succeeded, failed };
 }
 
 serve(async (req) => {
