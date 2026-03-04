@@ -28,6 +28,12 @@ export interface WriteSettings {
   auto_create_families: boolean;
   write_bottle: boolean;
   write_glass: boolean;
+  // Auto-push settings
+  auto_push_on_create: boolean;
+  auto_push_on_update: boolean;
+  auto_push_bottle: boolean;
+  auto_push_glass: boolean;
+  require_manual_review_before_push: boolean;
 }
 
 const EMPTY_MASTER: AgoraMasterData = {
@@ -45,6 +51,11 @@ const DEFAULT_WRITE_SETTINGS: WriteSettings = {
   auto_create_families: false,
   write_bottle: true,
   write_glass: false,
+  auto_push_on_create: false,
+  auto_push_on_update: false,
+  auto_push_bottle: true,
+  auto_push_glass: false,
+  require_manual_review_before_push: true,
 };
 
 export function useAgoraMasterData(connectionId: string | null) {
@@ -88,7 +99,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     if (!connectionId) return;
     const { data } = await supabase
       .from("pos_connections")
-      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass")
+      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass, auto_push_on_create, auto_push_on_update, auto_push_bottle, auto_push_glass, require_manual_review_before_push")
       .eq("id", connectionId)
       .single();
     if (data) {

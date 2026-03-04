@@ -248,6 +248,57 @@ serve(async (req) => {
         upserted++;
       }
 
+      // ── AUTO-PUSH TRIGGER ──
+      // After catalog sync, check if any AGORA connections with auto_push_on_create enabled
+      // should enqueue new wines
+      try {
+        // Find all AGORA connections for this connection's base connection
+        const { data: agoraConnections } = await supabase
+          .from("pos_connections")
+          .select("id, auto_push_on_create, auto_push_on_update, write_mode, winerim_api_token")
+          .eq("provider", "agora")
+          .eq("write_mode", "XML_IMPORT")
+          .eq("winerim_api_token", winerimToken);
+
+        if (agoraConnections && agoraConnections.length > 0) {
+          // Determine which wines are new vs updated
+          // For simplicity: all synced wines are potential candidates
+          const allWineIds = wines.map((w: Record<string, unknown>) => String(w.id || "")).filter(Boolean);
+
+          for (const agoraConn of agoraConnections) {
+            if (!agoraConn.auto_push_on_create && !agoraConn.auto_push_on_update) continue;
+
+            // Check which wines already have mappings (= updates) vs new (= creates)
+            const { data: existingMappings } = await supabase
+              .from("product_mappings")
+              .select("winerim_wine_id")
+              .eq("connection_id", agoraConn.id)
+              .eq("match_method", "XML_IMPORT")
+              .in("winerim_wine_id", allWineIds);
+
+            const existingIds = new Set((existingMappings || []).map((m: any) => m.winerim_wine_id));
+            const newWineIds = allWineIds.filter(id => !existingIds.has(id));
+            const updatedWineIds = allWineIds.filter(id => existingIds.has(id));
+
+            // Trigger auto-push for new wines
+            if (agoraConn.auto_push_on_create && newWineIds.length > 0) {
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: newWineIds, eventType: "CREATE" },
+              }).catch((e: Error) => console.error("Auto-push CREATE failed:", e));
+            }
+
+            // Trigger auto-push for updated wines
+            if (agoraConn.auto_push_on_update && updatedWineIds.length > 0) {
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: updatedWineIds, eventType: "UPDATE" },
+              }).catch((e: Error) => console.error("Auto-push UPDATE failed:", e));
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Auto-push trigger failed (non-blocking):", e);
+      }
+
       return new Response(
         JSON.stringify({ success: true, totalWines: upserted }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

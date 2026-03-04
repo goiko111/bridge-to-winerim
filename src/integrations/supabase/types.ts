@@ -183,6 +183,10 @@ export type Database = {
         Row: {
           api_token: string
           auto_create_families: boolean
+          auto_push_bottle: boolean
+          auto_push_glass: boolean
+          auto_push_on_create: boolean
+          auto_push_on_update: boolean
           backfill_days: number
           base_url: string
           catalog_endpoint: string | null
@@ -206,6 +210,7 @@ export type Database = {
           last_sync_at: string | null
           location_name: string
           provider: string
+          require_manual_review_before_push: boolean
           sync_frequency_minutes: number
           sync_mode: string
           updated_at: string
@@ -217,6 +222,10 @@ export type Database = {
         Insert: {
           api_token: string
           auto_create_families?: boolean
+          auto_push_bottle?: boolean
+          auto_push_glass?: boolean
+          auto_push_on_create?: boolean
+          auto_push_on_update?: boolean
           backfill_days?: number
           base_url: string
           catalog_endpoint?: string | null
@@ -240,6 +249,7 @@ export type Database = {
           last_sync_at?: string | null
           location_name: string
           provider?: string
+          require_manual_review_before_push?: boolean
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string
@@ -251,6 +261,10 @@ export type Database = {
         Update: {
           api_token?: string
           auto_create_families?: boolean
+          auto_push_bottle?: boolean
+          auto_push_glass?: boolean
+          auto_push_on_create?: boolean
+          auto_push_on_update?: boolean
           backfill_days?: number
           base_url?: string
           catalog_endpoint?: string | null
@@ -274,6 +288,7 @@ export type Database = {
           last_sync_at?: string | null
           location_name?: string
           provider?: string
+          require_manual_review_before_push?: boolean
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string
