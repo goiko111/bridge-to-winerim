@@ -1831,6 +1831,68 @@ function StepOutboundSync({
   );
 }
 
+// ── Agora Products Panel (browsable) ──
+function AgoraProductsPanel({ products }: { products: { Id: string; Name: string; FamilyId?: string; VatId?: string }[] }) {
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(false);
+
+  const filtered = search.trim()
+    ? products.filter(p => p.Name.toLowerCase().includes(search.toLowerCase()) || p.Id.includes(search))
+    : products;
+
+  const shown = expanded ? filtered : filtered.slice(0, 50);
+
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+          <Package className="h-3.5 w-3.5" /> Agora Products ({products.length})
+        </p>
+        <Input
+          placeholder="Search by name or ID..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-7 w-56 text-xs"
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground italic py-2 text-center">No products match your search.</p>
+      ) : (
+        <>
+          <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
+            <div className="grid grid-cols-[80px_1fr_80px_80px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
+              <span>ID</span><span>Name</span><span>Family</span><span>VAT</span>
+            </div>
+            {shown.map((p) => (
+              <div key={p.Id} className="grid grid-cols-[80px_1fr_80px_80px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+                <span className="font-mono text-muted-foreground">{p.Id}</span>
+                <span className="text-foreground truncate">{p.Name}</span>
+                <span className="text-muted-foreground">{p.FamilyId || "—"}</span>
+                <span className="text-muted-foreground">{p.VatId || "—"}</span>
+              </div>
+            ))}
+          </div>
+          {!expanded && filtered.length > 50 && (
+            <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(true)}>
+              Show all {filtered.length} products
+            </Button>
+          )}
+          {expanded && filtered.length > 50 && (
+            <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(false)}>
+              Collapse
+            </Button>
+          )}
+        </>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">
+        Products loaded from last Master Data sync. New wines created via XML import will appear here after re-syncing.
+      </p>
+    </div>
+  );
+}
+
 // ── Step 5: Master Data ──
 function StepMasterData({
   masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
@@ -2127,12 +2189,7 @@ function StepMasterData({
         </div>
       ))}
       {masterData.productsSummary.length > 0 && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-3">
-          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Package className="h-3.5 w-3.5" /> Existing Products ({masterData.productsSummary.length})
-          </p>
-          <p className="text-[11px] text-muted-foreground mt-1">Products already in Agora. New wines will get IDs starting at 500000+.</p>
-        </div>
+        <AgoraProductsPanel products={masterData.productsSummary} />
       )}
     </div>
   );
