@@ -1389,10 +1389,11 @@ function StepWinerimCatalog({
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-        <div className="grid grid-cols-4 gap-4 text-xs">
+        <div className="grid grid-cols-5 gap-4 text-xs">
           <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
           <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
           <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">With Glass Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
         {lastEnrichedAt && (
