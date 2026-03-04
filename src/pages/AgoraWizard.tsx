@@ -1145,12 +1145,15 @@ interface WinerimCatalogWine {
   name: string;
   wine_type: string | null;
   bottle_sale_price: number | null;
+  bottle_purchase_price: number | null;
   glass_sale_price: number | null;
+  glass_cost_price: number | null;
   serve_by_glass: boolean;
   is_active: boolean;
   winery: string | null;
   region: string | null;
   vintage: string | null;
+  updated_at: string;
 }
 
 function StepWinerimCatalog({
