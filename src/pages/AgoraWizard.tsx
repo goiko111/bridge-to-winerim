@@ -1296,6 +1296,14 @@ function StepWinerimCatalog({
           <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
+        {wines.length > 0 && wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length === 0 && (
+          <div className="flex items-start gap-2 mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <p className="text-xs text-destructive">
+              No wines have pricing data yet. Click <strong>"Refresh Catalog"</strong> to fetch wine details including prices from Winerim.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Actions */}
