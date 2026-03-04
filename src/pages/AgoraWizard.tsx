@@ -1385,9 +1385,14 @@ function StepWinerimCatalog({
         <div className="grid grid-cols-4 gap-4 text-xs">
           <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
           <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
-          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null).length}</span></div>
+          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
+        {lastEnrichedAt && (
+          <p className="text-[11px] text-muted-foreground">
+            Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
+          </p>
+        )}
         {wines.length > 0 && wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length === 0 && (
           <div className="flex items-start gap-2 mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
@@ -1402,9 +1407,25 @@ function StepWinerimCatalog({
       <div className="flex gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={fetchCatalog} disabled={fetchingCatalog}>
           {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          {wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
+          {fetchingCatalog
+            ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
+            : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
       </div>
+
+      {(fetchingCatalog || refreshDiagnostics) && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
+          <p className="text-muted-foreground">Diagnostics</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <p className="text-foreground">List fetched: <span className="font-mono">{refreshDiagnostics?.listFetched ?? 0}</span></p>
+            <p className="text-foreground">Details attempted: <span className="font-mono">{refreshDiagnostics?.detailAttempted ?? 0}</span></p>
+            <p className="text-foreground">Details succeeded: <span className="font-mono">{refreshDiagnostics?.detailSucceeded ?? 0}</span></p>
+            <p className="text-foreground">Progress: <span className="font-mono">{refreshDiagnostics?.processed ?? 0}/{refreshDiagnostics?.total ?? 0}</span></p>
+            <p className="text-foreground">Bottle priced: <span className="font-mono">{refreshDiagnostics?.bottleUpdated ?? 0}</span></p>
+            <p className="text-foreground">Glass priced: <span className="font-mono">{refreshDiagnostics?.glassUpdated ?? 0}</span></p>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
