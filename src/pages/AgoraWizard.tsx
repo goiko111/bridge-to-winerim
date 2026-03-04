@@ -1694,7 +1694,9 @@ function StepOutboundSync({
         <p className="mt-1 text-sm text-muted-foreground">
           {canWrite
             ? "Push matched wines from Winerim to your Agora product catalog."
-            : "Write not supported. Use export to create products in Agora manually."}
+            : canProcessQueue
+              ? "Write not validated yet, but you can process queued tasks to validate XML import."
+              : "Write not supported. Use export to create products in Agora manually."}
         </p>
       </div>
 
