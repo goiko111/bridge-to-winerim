@@ -2243,23 +2243,19 @@ export default function AgoraWizard() {
     }
   }, [connectionId, currentStep]);
 
-  // Load master data + write settings when entering steps 3, 5 or 9
+  // Load master data + write settings when entering steps 3, 5 or 10
   useEffect(() => {
-    if ((currentStep === 3 || currentStep === 5 || currentStep === 9) && connectionId) {
+    if ((currentStep === 3 || currentStep === 5 || currentStep === 10) && connectionId) {
       agoraMaster.loadMasterData();
       agoraMaster.loadWriteSettings();
     }
   }, [currentStep, connectionId]);
 
-  // Load winerim wines when entering step 10
+  // Load winerim wines when entering step 11
   useEffect(() => {
-    if (currentStep === 10 && connectionId) {
-      supabase.from("winerim_wines")
-        .select("winerim_id, name")
-        .eq("connection_id", connectionId)
-        .order("name")
-        .limit(500)
-        .then(({ data }) => { if (data) setWinerimWinesForPush(data as any); });
+    if (currentStep === 11 && connectionId) {
+      fetchAllWinerimWines(connectionId, "winerim_id, name")
+        .then((data) => { setWinerimWinesForPush(data as any); });
     }
   }, [currentStep, connectionId]);
 
@@ -2290,7 +2286,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(11, s + 1));
+    setCurrentStep((s) => Math.min(12, s + 1));
   };
 
   return (
@@ -2379,11 +2375,16 @@ export default function AgoraWizard() {
             <StepWineMatching connectionId={connectionId} />
           )}
           {currentStep === 9 && (
+            <StepWinerimCatalog connectionId={connectionId}
+              onQueueProducts={(ids) => outbound.queueProducts(ids)}
+              queuingProducts={outbound.queuingProducts} />
+          )}
+          {currentStep === 10 && (
             <StepWriteSettings writeSettings={agoraMaster.writeSettings}
               masterData={agoraMaster.masterData}
               onSave={agoraMaster.saveWriteSettings} />
           )}
-          {currentStep === 10 && (
+          {currentStep === 11 && (
             <StepOutboundSync connectionId={connectionId}
               capabilities={outbound.capabilities}
               outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
@@ -2394,7 +2395,7 @@ export default function AgoraWizard() {
               winerimWines={winerimWinesForPush}
               onQueueProducts={(ids) => outbound.queueProducts(ids)} />
           )}
-          {currentStep === 11 && (
+          {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -2406,7 +2407,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 11 && (
+        {currentStep < 12 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
