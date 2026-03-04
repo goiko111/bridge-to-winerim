@@ -1677,6 +1677,7 @@ function StepOutboundSync({
   const successTasks = outboundTasks.filter(t => t.status === "SUCCESS");
   const failedTasks = outboundTasks.filter(t => t.status === "FAILED");
   const blockedTasks = outboundTasks.filter(t => t.status === "BLOCKED");
+  const canProcessQueue = canWrite || queuedTasks.length > 0;
 
   const toggleWine = (id: string) => {
     setSelectedWineIds(prev => {
