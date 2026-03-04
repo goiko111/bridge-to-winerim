@@ -1541,13 +1541,27 @@ function StepWriteSettings({
           <Switch checked={writeSettings.write_bottle} onCheckedChange={(v) => onSave({ write_bottle: v })} />
         </div>
         <div className="flex items-center justify-between">
-          <div><p className="text-sm text-foreground">Write Glass (COPA)</p><p className="text-[11px] text-muted-foreground">Create glass/copa products in Agora</p></div>
+          <div><p className="text-sm text-foreground">Write Glass (COPA)</p><p className="text-[11px] text-muted-foreground">Create glass/copa products in Agora. Requires serve_by_glass + glass_sale_price on the wine.</p></div>
           <Switch checked={writeSettings.write_glass} onCheckedChange={(v) => onSave({ write_glass: v })} />
         </div>
         <div className="flex items-center justify-between">
           <div><p className="text-sm text-foreground">Auto-create Missing Families</p><p className="text-[11px] text-muted-foreground">Create wine families in Agora if they don't exist</p></div>
           <Switch checked={writeSettings.auto_create_families} onCheckedChange={(v) => onSave({ auto_create_families: v })} />
         </div>
+        {writeSettings.write_glass && (
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Estimated Glasses per Bottle (fallback for glass cost)</label>
+            <div className="flex gap-2 items-center">
+              {[4, 5, 6, 7, 8].map((n) => (
+                <button key={n} onClick={() => onSave({ estimated_glasses_per_bottle: n })}
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium transition-all ${writeSettings.estimated_glasses_per_bottle === n ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">Used to estimate glass cost when glass_cost_price is missing: bottle_purchase_price ÷ {writeSettings.estimated_glasses_per_bottle}</p>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">

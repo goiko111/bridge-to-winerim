@@ -240,16 +240,14 @@ interface WineValidationResult {
 }
 
 // deno-lint-ignore no-explicit-any
-function validateWineForAgora(wine: any, formatType: string): WineValidationResult {
+function validateWineForAgora(wine: any, formatType: string, connection?: any): WineValidationResult {
   const warnings: string[] = [];
   const missingFields: string[] = [];
-  const raw = wine.raw_payload || {};
 
   if (!wine.name || wine.name.length < 2) {
     missingFields.push("missing_wine_name");
   }
 
-  // Check wine type/style - used for family resolution
   const wineType = extractWineType(wine);
   if (!wineType) {
     warnings.push("missing_wine_type_will_use_default_family");
@@ -267,13 +265,21 @@ function validateWineForAgora(wine: any, formatType: string): WineValidationResu
   }
 
   if (formatType === "GLASS") {
+    // PRIORITY 4: Glass eligibility requires serve_by_glass + glass_sale_price
+    if (!wine.serve_by_glass) {
+      missingFields.push("serve_by_glass_not_enabled");
+    }
     const glassPrice = extractGlassSalePrice(wine);
     if (!glassPrice || glassPrice <= 0) {
       missingFields.push("missing_glass_sale_price");
     }
-    const glassCost = extractGlassCostPrice(wine);
+    const glassCost = extractGlassCostPrice(wine, connection);
     if (!glassCost || glassCost <= 0) {
       warnings.push("missing_glass_cost_price_will_use_zero");
+    } else if (!wine.glass_cost_price && wine.bottle_purchase_price) {
+      // Cost was estimated from bottle price
+      const glassesPerBottle = connection?.estimated_glasses_per_bottle || 5;
+      warnings.push(`glass_cost_estimated_from_bottle_price_divided_by_${glassesPerBottle}`);
     }
   }
 
@@ -284,31 +290,39 @@ function validateWineForAgora(wine: any, formatType: string): WineValidationResu
   };
 }
 
-// ── REAL FIELD EXTRACTION from Winerim wine data ──
+// ── FIELD EXTRACTION (PRIORITY 3: use normalized DB fields first) ──
 // deno-lint-ignore no-explicit-any
 function extractWineType(wine: any): string | null {
+  // 1. Use normalized DB field first
+  if (wine.wine_type && typeof wine.wine_type === "string" && wine.wine_type.length > 0) {
+    return wine.wine_type.toLowerCase();
+  }
+  // 2. Fallback to known raw_payload keys (mapped explicitly)
   const raw = wine.raw_payload || {};
-  // Try actual wine type/category/style fields from Winerim
-  const type = raw.type || raw.wine_type || raw.category || raw.style || null;
+  const type = raw.type || raw.wine_type || raw.category || raw.style || raw.color || raw.colour || null;
   if (type && typeof type === "string" && type.length > 0) return type.toLowerCase();
-  // Try color field
-  const color = raw.color || raw.colour || null;
-  if (color && typeof color === "string") return color.toLowerCase();
-  // Do NOT fall back to grape_variety or region - those are not wine types
+  // Do NOT fall back to grape_variety or region
   return null;
 }
 
 // deno-lint-ignore no-explicit-any
 function extractBottleSalePrice(wine: any): number | null {
+  // 1. Normalized DB field
+  if (wine.bottle_sale_price && Number(wine.bottle_sale_price) > 0) return Number(wine.bottle_sale_price);
+  // 2. Generic price field (legacy)
+  if (wine.price && Number(wine.price) > 0) return Number(wine.price);
+  // 3. Known raw_payload keys
   const raw = wine.raw_payload || {};
-  // Try specific bottle price fields from Winerim
-  const price = raw.bottle_sale_price ?? raw.sale_price ?? raw.price ?? raw.pvp ?? wine.price;
+  const price = raw.bottle_sale_price ?? raw.sale_price ?? raw.pvp ?? raw.price ?? null;
   if (price && Number(price) > 0) return Number(price);
   return null;
 }
 
 // deno-lint-ignore no-explicit-any
 function extractBottleCostPrice(wine: any): number | null {
+  // 1. Normalized DB field
+  if (wine.bottle_purchase_price && Number(wine.bottle_purchase_price) > 0) return Number(wine.bottle_purchase_price);
+  // 2. Known raw_payload keys
   const raw = wine.raw_payload || {};
   const cost = raw.bottle_purchase_price ?? raw.purchase_price ?? raw.cost_price ?? raw.cost ?? null;
   if (cost && Number(cost) > 0) return Number(cost);
@@ -317,6 +331,9 @@ function extractBottleCostPrice(wine: any): number | null {
 
 // deno-lint-ignore no-explicit-any
 function extractGlassSalePrice(wine: any): number | null {
+  // 1. Normalized DB field
+  if (wine.glass_sale_price && Number(wine.glass_sale_price) > 0) return Number(wine.glass_sale_price);
+  // 2. Known raw_payload keys
   const raw = wine.raw_payload || {};
   const price = raw.glass_sale_price ?? raw.glass_price ?? null;
   if (price && Number(price) > 0) return Number(price);
@@ -324,10 +341,19 @@ function extractGlassSalePrice(wine: any): number | null {
 }
 
 // deno-lint-ignore no-explicit-any
-function extractGlassCostPrice(wine: any): number | null {
+function extractGlassCostPrice(wine: any, connection?: any): number | null {
+  // 1. Normalized DB field
+  if (wine.glass_cost_price && Number(wine.glass_cost_price) > 0) return Number(wine.glass_cost_price);
+  // 2. Known raw_payload keys
   const raw = wine.raw_payload || {};
-  const cost = raw.glass_cost ?? raw.glass_cost_price ?? null;
+  const cost = raw.glass_cost_price ?? raw.glass_cost ?? null;
   if (cost && Number(cost) > 0) return Number(cost);
+  // 3. PRIORITY 4: Configurable fallback from bottle purchase price
+  const bottleCost = extractBottleCostPrice(wine);
+  if (bottleCost && bottleCost > 0) {
+    const glassesPerBottle = connection?.estimated_glasses_per_bottle || 5;
+    return Math.round((bottleCost / glassesPerBottle) * 100) / 100;
+  }
   return null;
 }
 
@@ -409,8 +435,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     const wineType = extractWineType(wine);
 
     for (const fmt of formatTypes) {
-      // Validate before generating
-      const validation = validateWineForAgora(wine, fmt);
+      // Validate before generating (pass connection for glass cost fallback)
+      const validation = validateWineForAgora(wine, fmt, connection);
       validationResults.push({ winerimId: String(winerimId), formatType: fmt, validation });
 
       // Skip formats with missing required fields
@@ -427,13 +453,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const productName = isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
       const buttonText = truncate(isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`, 20);
 
-      // Use REAL prices from Winerim, never invent
+      // Use REAL prices from normalized fields, never invent
       let mainPrice: string;
       let costPrice: string;
 
       if (isGlass) {
         mainPrice = (extractGlassSalePrice(wine) || 0).toFixed(2);
-        costPrice = (extractGlassCostPrice(wine) || 0).toFixed(2);
+        costPrice = (extractGlassCostPrice(wine, connection) || 0).toFixed(2);
       } else {
         mainPrice = (extractBottleSalePrice(wine) || 0).toFixed(2);
         costPrice = (extractBottleCostPrice(wine) || 0).toFixed(2);
@@ -447,7 +473,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" BaseSaleFormatId="${productId}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+      // PRIORITY 6: Do NOT set BaseSaleFormatId — create standalone products
+      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -1591,8 +1618,22 @@ serve(async (req) => {
 
       const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes);
 
+      // PRIORITY 7: Include source data summary for preview transparency
+      const sourceDataSummary = wines.map((w: any) => ({
+        winerim_id: w.winerim_id,
+        name: w.name,
+        wine_type: w.wine_type || null,
+        bottle_sale_price: w.bottle_sale_price ? Number(w.bottle_sale_price) : null,
+        bottle_purchase_price: w.bottle_purchase_price ? Number(w.bottle_purchase_price) : null,
+        glass_sale_price: w.glass_sale_price ? Number(w.glass_sale_price) : null,
+        glass_cost_price: w.glass_cost_price ? Number(w.glass_cost_price) : null,
+        serve_by_glass: w.serve_by_glass || false,
+        is_active: w.is_active !== false,
+        source: "normalized_db_fields",
+      }));
+
       return new Response(
-        JSON.stringify({ success: true, xml, wineCount: wines.length, validationResults }),
+        JSON.stringify({ success: true, xml, wineCount: wines.length, validationResults, sourceDataSummary }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

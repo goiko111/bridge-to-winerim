@@ -34,6 +34,7 @@ export interface WriteSettings {
   auto_push_glass: boolean;
   require_manual_review_before_push: boolean;
   auto_push_verified_ready: boolean;
+  estimated_glasses_per_bottle: number;
 }
 
 export interface ValidationResult {
@@ -76,6 +77,7 @@ const DEFAULT_WRITE_SETTINGS: WriteSettings = {
   auto_push_glass: false,
   require_manual_review_before_push: true,
   auto_push_verified_ready: false,
+  estimated_glasses_per_bottle: 5,
 };
 
 export function useAgoraMasterData(connectionId: string | null) {
@@ -87,6 +89,7 @@ export function useAgoraMasterData(connectionId: string | null) {
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewValidation, setPreviewValidation] = useState<ValidationResult[]>([]);
+  const [previewSourceData, setPreviewSourceData] = useState<any[]>([]);
 
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{
@@ -119,7 +122,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     if (!connectionId) return;
     const { data } = await supabase
       .from("pos_connections")
-      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass, auto_push_on_create, auto_push_on_update, auto_push_bottle, auto_push_glass, require_manual_review_before_push, auto_push_verified_ready")
+      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass, auto_push_on_create, auto_push_on_update, auto_push_bottle, auto_push_glass, require_manual_review_before_push, auto_push_verified_ready, estimated_glasses_per_bottle")
       .eq("id", connectionId).single();
     if (data) {
       setWriteSettings(data as unknown as WriteSettings);
@@ -179,6 +182,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     setPreviewing(true);
     setPreviewXml(null);
     setPreviewValidation([]);
+    setPreviewSourceData([]);
     try {
       const formatTypes = [];
       if (writeSettings.write_bottle) formatTypes.push("BOTTLE");
@@ -192,6 +196,7 @@ export function useAgoraMasterData(connectionId: string | null) {
       if (data?.success) {
         setPreviewXml(data.xml);
         setPreviewValidation(data.validationResults || []);
+        setPreviewSourceData(data.sourceDataSummary || []);
       }
       return data;
     } catch (e: any) {
@@ -262,7 +267,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     masterData, syncing, syncError,
     loadMasterData, syncMasterData,
     writeSettings, loadWriteSettings, saveWriteSettings,
-    previewXml, previewing, previewImportXml, previewValidation,
+    previewXml, previewing, previewImportXml, previewValidation, previewSourceData,
     importing, importResult, importXml,
     queueXmlOutbound, processXmlQueue,
     writeCapability,
