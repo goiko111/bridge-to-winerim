@@ -2544,7 +2544,7 @@ export default function AgoraWizard() {
           )}
           {currentStep === 9 && (
             <StepWinerimCatalog connectionId={connectionId}
-              onQueueProducts={(ids) => outbound.queueProducts(ids)}
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               queuingProducts={outbound.queuingProducts} />
           )}
           {currentStep === 10 && (
@@ -2561,7 +2561,7 @@ export default function AgoraWizard() {
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
               onRetry={outbound.retryTask} onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
-              onQueueProducts={(ids) => outbound.queueProducts(ids)} />
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
