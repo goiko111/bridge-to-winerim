@@ -241,8 +241,13 @@ function StepCatalog({
           <span className="text-muted-foreground">Products</span>
           <span className="font-mono text-foreground">{catalogStatus.catalogProductCount}</span>
           <span className="text-muted-foreground">Wine candidates</span>
-          <span className="font-mono text-success">{catalogStatus.catalogWineCandidateCount}</span>
+          <span className={`font-mono ${catalogStatus.catalogWineCandidateCount > 0 ? "text-success" : "text-muted-foreground"}`}>{catalogStatus.catalogWineCandidateCount}</span>
         </div>
+        {catalogStatus.catalogWineCandidateCount === 0 && catalogStatus.catalogProductCount > 0 && (
+          <p className="text-[11px] text-muted-foreground col-span-2 mt-1 flex items-center gap-1">
+            <HelpCircle className="h-3 w-3 shrink-0" /> No wines currently in POS catalog. Wine candidates will appear after pushing products from Winerim.
+          </p>
+        )}
       </div>
       <div className="flex gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={onDiscover} disabled={catalogDiscovering}>
@@ -295,9 +300,15 @@ function StepCatalog({
         </div>
       )}
       {derivedResult && (
-        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-2">
           <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Derived catalog built</p>
           <p className="text-muted-foreground">Scanned {derivedResult.daysScanned} days → {derivedResult.totalProducts} products, {derivedResult.wineCandidates} wine candidates.</p>
+          {derivedResult.wineCandidates === 0 && (
+            <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-2 text-[11px] text-blue-700 flex items-start gap-1.5">
+              <HelpCircle className="h-3 w-3 shrink-0 mt-0.5" />
+              <span>This customer currently has no wines in Agora POS, so derived wine candidates may be low or zero until Winerim products are pushed.</span>
+            </div>
+          )}
         </div>
       )}
       {catalogDiscoverySample && (
@@ -1113,13 +1124,27 @@ function StepCapabilities({
         </p>
       </div>
 
-      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" /> Write Capability</p>
-        <div className="flex items-center gap-3">
-          {canWrite === "YES" && <Badge variant="default" className="text-xs"><CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Write Supported</Badge>}
-          {canWrite === "NO" && <Badge variant="destructive" className="text-xs"><XCircle className="mr-1 h-3.5 w-3.5" /> Write Not Supported</Badge>}
-          {canWrite === "UNKNOWN" && <Badge variant="outline" className="text-xs"><HelpCircle className="mr-1 h-3.5 w-3.5" /> Unknown</Badge>}
-          {capabilities?.write_endpoint && <span className="text-xs font-mono text-muted-foreground">{capabilities.write_endpoint}</span>}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" /> Write Capabilities</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">REST Write</p>
+            <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
+            <p className="text-[10px] text-muted-foreground mt-1">Standard REST endpoints not available on this installation.</p>
+          </div>
+          <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">XML Import Write</p>
+            {canWrite === "YES" ? (
+              <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Supported</Badge>
+            ) : canWrite === "UNKNOWN" ? (
+              <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> Not Verified</Badge>
+            ) : (
+              <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {canWrite === "YES" ? "XML import validated via manual test." : "Run a manual XML import to verify."}
+            </p>
+          </div>
         </div>
         {capabilities?.last_checked_at && (
           <p className="text-[11px] text-muted-foreground">Last checked: {new Date(capabilities.last_checked_at).toLocaleString()}</p>
@@ -1128,7 +1153,7 @@ function StepCapabilities({
 
       <Button variant="secondary" size="sm" onClick={onDetect} disabled={detecting}>
         {detecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-        Detect Write Support
+        Detect REST Write Support
       </Button>
 
       {(detectionResults as any[]).length > 0 && (
@@ -1152,15 +1177,14 @@ function StepCapabilities({
         </div>
       )}
 
-      {canWrite === "NO" && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+      {canWrite !== "YES" && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
           <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+            <HelpCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
             <div>
-              <p className="text-sm font-medium text-foreground">Write not supported</p>
+              <p className="text-sm font-medium text-foreground">REST write not available</p>
               <p className="text-xs text-muted-foreground mt-1">
-                This Agora installation does not expose write endpoints. You can still export products
-                as JSON or CSV to provide to your Agora installer for manual import.
+                This Agora installation does not expose REST write endpoints. Use <strong>XML Import</strong> (Steps 5 & 9) to push products, or export as JSON/CSV for manual import.
               </p>
             </div>
           </div>
@@ -1172,16 +1196,12 @@ function StepCapabilities({
               <FileText className="mr-2 h-4 w-4" /> Export CSV
             </Button>
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            💡 Deliver the exported file to your Agora installer for manual product creation.
-          </p>
         </div>
       )}
 
       {canWrite === "UNKNOWN" && !detecting && (detectionResults as any[]).length > 0 && (
         <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
-          <p>⚠️ Detection was inconclusive. A test product may have been created—please verify in Agora.
-          You can proceed with export mode, or confirm write capability manually.</p>
+          <p>⚠️ REST detection was inconclusive. This is expected for most Agora installations. Use <strong>XML Import</strong> (Steps 5 & 9) to push products instead.</p>
         </div>
       )}
     </div>
@@ -1463,11 +1483,11 @@ function StepMasterData({
           <Badge variant="outline" className="text-[10px]"><AlertTriangle className="mr-1 h-3 w-3" /> Not synced</Badge>
         )}
         {writeCapability === "YES" ? (
-          <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Write verified</Badge>
-        ) : writeCapability === "NO" ? (
-          <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Write not supported</Badge>
+          <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> XML import validated</Badge>
+        ) : writeCapability === "UNKNOWN" ? (
+          <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> XML import not verified</Badge>
         ) : (
-          <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> Write unknown</Badge>
+          <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> XML import not supported</Badge>
         )}
         {writeSettings.auto_push_verified_ready ? (
           <Badge variant="default" className="text-[10px]"><Zap className="mr-1 h-3 w-3" /> Auto-push ready</Badge>
@@ -1592,7 +1612,13 @@ function StepMasterData({
             Enriched {enrichResult.enriched} wines · {enrichResult.detailsMissing} details not found
           </div>
         )}
-        {wineStats ? (
+        {wineStats && wineStats.total === 0 ? (
+          <div className="rounded-lg border border-border bg-secondary/20 p-4 text-center space-y-1">
+            <Wine className="mx-auto h-6 w-6 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No Winerim wine data synced yet</p>
+            <p className="text-[11px] text-muted-foreground">Go to "Wine Matching" step and fetch your Winerim catalog first.</p>
+          </div>
+        ) : wineStats ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="rounded-lg border border-border bg-background p-3 text-center">
               <p className="text-lg font-bold text-foreground">{wineStats.total}</p>
