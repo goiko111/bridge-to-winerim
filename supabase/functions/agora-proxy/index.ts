@@ -992,8 +992,13 @@ serve(async (req) => {
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
       const res = await fetch(url, { headers });
       if (!res.ok) {
-        return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const errorBody = await res.text().catch(() => "");
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Agora catalog export returned ${res.status}. This endpoint may not be supported by this installation.`,
+          status: res.status,
+          errorBody: errorBody.substring(0, 500),
+        }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const rawData = await res.json();
