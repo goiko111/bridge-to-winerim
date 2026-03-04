@@ -1691,10 +1691,10 @@ function StepMasterData({
   const loadWineStats = useCallback(async () => {
     if (!connectionId) return;
     setLoadingStats(true);
-    const { data } = await supabase.from("winerim_wines")
-      .select("bottle_sale_price, glass_sale_price, serve_by_glass, wine_type, is_active")
-      .eq("connection_id", connectionId);
-    if (data) {
+    const data = await fetchAllWinerimWines(connectionId,
+      "bottle_sale_price, glass_sale_price, serve_by_glass, wine_type, is_active"
+    );
+    if (data.length > 0) {
       setWineStats({
         total: data.length,
         hasBottlePrice: data.filter((w: any) => w.bottle_sale_price != null).length,
@@ -1705,6 +1705,8 @@ function StepMasterData({
         missingWineType: data.filter((w: any) => w.wine_type == null).length,
         inactive: data.filter((w: any) => w.is_active === false).length,
       });
+    } else {
+      setWineStats({ total: 0, hasBottlePrice: 0, hasGlassPrice: 0, serveByGlass: 0, hasWineType: 0, missingPricing: 0, missingWineType: 0, inactive: 0 });
     }
     setLoadingStats(false);
   }, [connectionId]);
