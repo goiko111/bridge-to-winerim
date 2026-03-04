@@ -227,8 +227,8 @@ export function useAgoraMasterData(connectionId: string | null) {
         validationResults: data?.validationResults || [],
         winesProcessed: data?.winesProcessed || 0,
       });
-      // Update write capability status only — auto_push_verified_ready must be enabled manually
-      if (data?.success) {
+      // Only mark write capability as YES for REAL imports, never for dry-runs
+      if (data?.success && !dryRun) {
         setWriteCapability("YES");
       }
       return data;

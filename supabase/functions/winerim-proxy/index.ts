@@ -456,13 +456,20 @@ serve(async (req) => {
       let targetIds: string[] = winerimWineIds || [];
       
       if (targetIds.length === 0) {
-        const { data: missingPricing } = await supabase
+        // Find wines missing ANY important operational field, not just bottle_sale_price
+        const { data: allWines } = await supabase
           .from("winerim_wines")
-          .select("winerim_id")
+          .select("winerim_id, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass")
           .eq("connection_id", connectionId)
-          .is("bottle_sale_price", null)
-          .limit(100);
-        targetIds = (missingPricing || []).map((w: any) => w.winerim_id);
+          .limit(1000);
+        
+        targetIds = (allWines || []).filter((w: any) => 
+          w.wine_type == null ||
+          w.bottle_sale_price == null ||
+          w.bottle_purchase_price == null ||
+          (w.serve_by_glass === true && w.glass_sale_price == null) ||
+          (w.serve_by_glass === true && w.glass_cost_price == null)
+        ).map((w: any) => w.winerim_id).slice(0, 100);
       }
 
       if (targetIds.length === 0) {

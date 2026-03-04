@@ -1390,7 +1390,7 @@ function StepMasterData({
   // ── Wine data diagnostics ──
   const [wineStats, setWineStats] = useState<{
     total: number; hasBottlePrice: number; hasGlassPrice: number;
-    serveByGlass: number; hasWineType: number; missingPricing: number; stale: number;
+    serveByGlass: number; hasWineType: number; missingPricing: number; missingWineType: number; inactive: number;
   } | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -1410,7 +1410,8 @@ function StepMasterData({
         serveByGlass: data.filter((w: any) => w.serve_by_glass).length,
         hasWineType: data.filter((w: any) => w.wine_type != null).length,
         missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null).length,
-        stale: data.filter((w: any) => w.wine_type == null).length,
+        missingWineType: data.filter((w: any) => w.wine_type == null).length,
+        inactive: data.filter((w: any) => w.is_active === false).length,
       });
     }
     setLoadingStats(false);
