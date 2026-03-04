@@ -205,6 +205,7 @@ export type Database = {
           default_warehouse_id: string | null
           default_wine_family_name: string | null
           enabled: boolean
+          estimated_glasses_per_bottle: number
           id: string
           last_business_day_synced: string | null
           last_catalog_sync_at: string | null
@@ -245,6 +246,7 @@ export type Database = {
           default_warehouse_id?: string | null
           default_wine_family_name?: string | null
           enabled?: boolean
+          estimated_glasses_per_bottle?: number
           id?: string
           last_business_day_synced?: string | null
           last_catalog_sync_at?: string | null
@@ -285,6 +287,7 @@ export type Database = {
           default_warehouse_id?: string | null
           default_wine_family_name?: string | null
           enabled?: boolean
+          estimated_glasses_per_bottle?: number
           id?: string
           last_business_day_synced?: string | null
           last_catalog_sync_at?: string | null
@@ -805,56 +808,83 @@ export type Database = {
       }
       winerim_wines: {
         Row: {
+          bottle_purchase_price: number | null
+          bottle_sale_price: number | null
           connection_id: string
           created_at: string
           ean: string | null
           format: string | null
+          glass_cost_price: number | null
+          glass_sale_price: number | null
           grape_variety: string | null
           id: string
+          is_active: boolean
+          magnum_purchase_price: number | null
+          magnum_sale_price: number | null
           name: string
           price: number | null
           raw_payload: Json | null
           region: string | null
+          serve_by_glass: boolean
           sku: string | null
           stock_quantity: number | null
           updated_at: string
           vintage: string | null
+          wine_type: string | null
           winerim_id: string
           winery: string | null
         }
         Insert: {
+          bottle_purchase_price?: number | null
+          bottle_sale_price?: number | null
           connection_id: string
           created_at?: string
           ean?: string | null
           format?: string | null
+          glass_cost_price?: number | null
+          glass_sale_price?: number | null
           grape_variety?: string | null
           id?: string
+          is_active?: boolean
+          magnum_purchase_price?: number | null
+          magnum_sale_price?: number | null
           name: string
           price?: number | null
           raw_payload?: Json | null
           region?: string | null
+          serve_by_glass?: boolean
           sku?: string | null
           stock_quantity?: number | null
           updated_at?: string
           vintage?: string | null
+          wine_type?: string | null
           winerim_id: string
           winery?: string | null
         }
         Update: {
+          bottle_purchase_price?: number | null
+          bottle_sale_price?: number | null
           connection_id?: string
           created_at?: string
           ean?: string | null
           format?: string | null
+          glass_cost_price?: number | null
+          glass_sale_price?: number | null
           grape_variety?: string | null
           id?: string
+          is_active?: boolean
+          magnum_purchase_price?: number | null
+          magnum_sale_price?: number | null
           name?: string
           price?: number | null
           raw_payload?: Json | null
           region?: string | null
+          serve_by_glass?: boolean
           sku?: string | null
           stock_quantity?: number | null
           updated_at?: string
           vintage?: string | null
+          wine_type?: string | null
           winerim_id?: string
           winery?: string | null
         }

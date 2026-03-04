@@ -218,16 +218,69 @@ serve(async (req) => {
     if (action === "fetch-catalog") {
       const wines = await fetchAllWines(winerimHeaders);
 
-      // Upsert into winerim_wines
+      // ── EXTRACT NORMALIZED POS-READY FIELDS ──
+      function extractNormalizedFields(w: Record<string, unknown>) {
+        // Wine type: try type, wine_type, category, style, color, colour
+        const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
+        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? rawType.toLowerCase() : null;
+
+        // Bottle pricing: try explicit fields, then fallback to top-level price/pvp
+        const bottleSalePrice = Number(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price ?? 0) || null;
+        const bottlePurchasePrice = Number(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost ?? 0) || null;
+
+        // Glass pricing: explicit fields only
+        const glassSalePrice = Number(w.glass_sale_price ?? w.glass_price ?? 0) || null;
+        const glassCostPrice = Number(w.glass_cost_price ?? w.glass_cost ?? 0) || null;
+
+        // Magnum pricing
+        const magnumSalePrice = Number(w.magnum_sale_price ?? 0) || null;
+        const magnumPurchasePrice = Number(w.magnum_purchase_price ?? w.magnum_cost ?? 0) || null;
+
+        // Flags
+        const serveByGlass = w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
+        const isActive = w.is_active !== false && w.active !== false && w.status !== "inactive";
+
+        return { wineType, bottleSalePrice, bottlePurchasePrice, glassSalePrice, glassCostPrice, magnumSalePrice, magnumPurchasePrice, serveByGlass, isActive };
+      }
+
+      // Load existing wines for change detection (PRIORITY 5)
+      const { data: existingWines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, is_active")
+        .eq("connection_id", connectionId);
+      const existingMap = new Map((existingWines || []).map((w: any) => [w.winerim_id, w]));
+
+      // Track which wines actually changed exportable fields
+      const changedWineIds: string[] = [];
+      const newWineIds: string[] = [];
+
       let upserted = 0;
       for (const w of wines) {
         const winerimId = String(w.id || "");
         if (!winerimId) continue;
 
-        // Build grape variety from grapes array if available
         let grapeVariety: string | null = null;
         if (Array.isArray(w.grapes) && w.grapes.length > 0) {
           grapeVariety = (w.grapes as { name: string }[]).map(g => g.name).join(", ");
+        }
+
+        const nf = extractNormalizedFields(w);
+        const existing = existingMap.get(winerimId);
+
+        // Detect if this is new or changed
+        if (!existing) {
+          newWineIds.push(winerimId);
+        } else {
+          // Only flag as changed if exportable fields differ
+          const changed =
+            String(w.name || "Unknown") !== existing.name ||
+            nf.wineType !== existing.wine_type ||
+            nf.bottleSalePrice !== (existing.bottle_sale_price ? Number(existing.bottle_sale_price) : null) ||
+            nf.bottlePurchasePrice !== (existing.bottle_purchase_price ? Number(existing.bottle_purchase_price) : null) ||
+            nf.glassSalePrice !== (existing.glass_sale_price ? Number(existing.glass_sale_price) : null) ||
+            nf.glassCostPrice !== (existing.glass_cost_price ? Number(existing.glass_cost_price) : null) ||
+            nf.isActive !== existing.is_active;
+          if (changed) changedWineIds.push(winerimId);
         }
 
         await supabase.from("winerim_wines").upsert({
@@ -241,18 +294,25 @@ serve(async (req) => {
           region: w.region ? String(w.region) : null,
           grape_variety: grapeVariety,
           format: w.subname ? String(w.subname) : null,
-          price: null, // prices are per-variant in detail endpoint
-          stock_quantity: null, // stock is per-variant
+          price: nf.bottleSalePrice,
+          stock_quantity: null,
           raw_payload: w,
+          // Normalized POS-ready fields
+          wine_type: nf.wineType,
+          bottle_sale_price: nf.bottleSalePrice,
+          bottle_purchase_price: nf.bottlePurchasePrice,
+          glass_sale_price: nf.glassSalePrice,
+          glass_cost_price: nf.glassCostPrice,
+          magnum_sale_price: nf.magnumSalePrice,
+          magnum_purchase_price: nf.magnumPurchasePrice,
+          serve_by_glass: nf.serveByGlass,
+          is_active: nf.isActive,
         }, { onConflict: "connection_id,winerim_id" });
         upserted++;
       }
 
-      // ── AUTO-PUSH TRIGGER ──
-      // After catalog sync, check if any AGORA connections with auto_push_on_create enabled
-      // should enqueue new wines
+      // ── AUTO-PUSH TRIGGER (PRIORITY 5: only on meaningful changes) ──
       try {
-        // Find all AGORA connections for this connection's base connection
         const { data: agoraConnections } = await supabase
           .from("pos_connections")
           .select("id, auto_push_on_create, auto_push_on_update, write_mode, winerim_api_token")
@@ -261,36 +321,20 @@ serve(async (req) => {
           .eq("winerim_api_token", winerimToken);
 
         if (agoraConnections && agoraConnections.length > 0) {
-          // Determine which wines are new vs updated
-          // For simplicity: all synced wines are potential candidates
-          const allWineIds = wines.map((w: Record<string, unknown>) => String(w.id || "")).filter(Boolean);
-
           for (const agoraConn of agoraConnections) {
             if (!agoraConn.auto_push_on_create && !agoraConn.auto_push_on_update) continue;
 
-            // Check which wines already have mappings (= updates) vs new (= creates)
-            const { data: existingMappings } = await supabase
-              .from("product_mappings")
-              .select("winerim_wine_id")
-              .eq("connection_id", agoraConn.id)
-              .eq("match_method", "XML_IMPORT")
-              .in("winerim_wine_id", allWineIds);
-
-            const existingIds = new Set((existingMappings || []).map((m: any) => m.winerim_wine_id));
-            const newWineIds = allWineIds.filter(id => !existingIds.has(id));
-            const updatedWineIds = allWineIds.filter(id => existingIds.has(id));
-
-            // Trigger auto-push for new wines
+            // Trigger auto-push for NEW wines only
             if (agoraConn.auto_push_on_create && newWineIds.length > 0) {
               await supabase.functions.invoke("agora-proxy", {
                 body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: newWineIds, eventType: "CREATE" },
               }).catch((e: Error) => console.error("Auto-push CREATE failed:", e));
             }
 
-            // Trigger auto-push for updated wines
-            if (agoraConn.auto_push_on_update && updatedWineIds.length > 0) {
+            // Trigger auto-push ONLY for wines with actual exportable field changes
+            if (agoraConn.auto_push_on_update && changedWineIds.length > 0) {
               await supabase.functions.invoke("agora-proxy", {
-                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: updatedWineIds, eventType: "UPDATE" },
+                body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: changedWineIds, eventType: "UPDATE" },
               }).catch((e: Error) => console.error("Auto-push UPDATE failed:", e));
             }
           }
@@ -300,7 +344,7 @@ serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, totalWines: upserted }),
+        JSON.stringify({ success: true, totalWines: upserted, newWines: newWineIds.length, changedWines: changedWineIds.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
