@@ -1785,12 +1785,12 @@ serve(async (req) => {
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Check capabilities - must be YES (not UNKNOWN)
-      const { data: caps } = await supabase
-        .from("provider_capabilities").select("can_write_products").eq("connection_id", task.connection_id).single();
-      if (!caps || caps.can_write_products !== "YES") {
+      // Allow first real XML import to validate write capability.
+      // Only block when XML import mode is not enabled.
+      if (connection.write_mode !== "XML_IMPORT") {
         await supabase.from("outbound_tasks").update({
-          status: "BLOCKED", blocked_reason: `Write capability is ${caps?.can_write_products || "UNKNOWN"}. Run a manual XML import first to verify.`,
+          status: "BLOCKED",
+          blocked_reason: "Write mode is not XML_IMPORT. Configure Write Settings first.",
         }).eq("id", task.id);
         return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -1887,6 +1887,16 @@ serve(async (req) => {
             last_synced_at: new Date().toISOString(),
           }, { onConflict: "connection_id,provider_product_id" });
         }
+
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: task.connection_id,
+          provider: "AGORA",
+          can_read_sales: true,
+          can_read_catalog: true,
+          can_write_products: "YES",
+          write_endpoint: "/api/import/",
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
 
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,

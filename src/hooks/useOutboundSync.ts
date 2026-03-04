@@ -100,12 +100,26 @@ export function useOutboundSync(connectionId: string | null) {
     if (!connectionId) return;
     setProcessingQueue(true);
     try {
-      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+      const { data: xmlData, error: xmlError } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "process-xml-outbound-queue", connectionId },
+      });
+      if (xmlError) throw xmlError;
+
+      // Backward compatibility: also process legacy JSON queue if any old tasks exist
+      const { data: legacyData, error: legacyError } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "process-outbound-queue", connectionId },
       });
-      if (error) throw error;
+      if (legacyError) throw legacyError;
+
       await loadOutboundTasks();
-      return data;
+      return {
+        success: true,
+        processed: (xmlData?.processed || 0) + (legacyData?.processed || 0),
+        succeeded: (xmlData?.succeeded || 0) + (legacyData?.succeeded || 0),
+        failed: (xmlData?.failed || 0) + (legacyData?.failed || 0),
+        xml: xmlData,
+        legacy: legacyData,
+      };
     } catch (e) {
       console.error("Failed to process queue:", e);
     } finally {
@@ -114,7 +128,7 @@ export function useOutboundSync(connectionId: string | null) {
   }, [connectionId, loadOutboundTasks]);
 
   const retryTask = useCallback(async (taskId: string) => {
-    await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null }).eq("id", taskId);
+    await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", taskId);
     await loadOutboundTasks();
   }, [loadOutboundTasks]);
 
