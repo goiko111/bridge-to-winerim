@@ -882,7 +882,7 @@ function StepWineMatching({
     setFetchingCatalog(true);
     try {
       const { data, error } = await supabase.functions.invoke("winerim-proxy", {
-        body: { action: "fetch-catalog", connectionId },
+        body: { action: "fetch-catalog", connectionId, mode: "start", detailOffset: 0, detailBatchSize: 100 },
       });
       if (error) throw error;
       if (data?.success) {
