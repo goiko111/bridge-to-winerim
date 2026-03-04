@@ -867,11 +867,11 @@ function StepWineMatching({
     if (!connectionId) return;
     setLoading(true);
     const [mappingsData, winesData] = await Promise.all([
-      fetchAllRows<ProductMapping>("product_mappings", connectionId, "*", "match_score"),
-      fetchAllRows<WinerimWine>("winerim_wines", connectionId, "winerim_id, name, winery, vintage, region", "name"),
+      fetchAllMappings(connectionId),
+      fetchAllWinerimWines(connectionId, "winerim_id, name, winery, vintage, region"),
     ]);
-    setMappings(mappingsData);
-    setWinerimWines(winesData);
+    setMappings(mappingsData as ProductMapping[]);
+    setWinerimWines(winesData as WinerimWine[]);
     setLoading(false);
   }, [connectionId]);
 
