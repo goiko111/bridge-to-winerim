@@ -1390,7 +1390,7 @@ function StepMasterData({
   // ── Wine data diagnostics ──
   const [wineStats, setWineStats] = useState<{
     total: number; hasBottlePrice: number; hasGlassPrice: number;
-    serveByGlass: number; hasWineType: number; missingPricing: number; stale: number;
+    serveByGlass: number; hasWineType: number; missingPricing: number; missingWineType: number; inactive: number;
   } | null>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -1410,7 +1410,8 @@ function StepMasterData({
         serveByGlass: data.filter((w: any) => w.serve_by_glass).length,
         hasWineType: data.filter((w: any) => w.wine_type != null).length,
         missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null).length,
-        stale: data.filter((w: any) => w.wine_type == null).length,
+        missingWineType: data.filter((w: any) => w.wine_type == null).length,
+        inactive: data.filter((w: any) => w.is_active === false).length,
       });
     }
     setLoadingStats(false);
@@ -1617,22 +1618,26 @@ function StepMasterData({
               <p className={`text-lg font-bold ${wineStats.missingPricing > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.missingPricing}</p>
               <p className="text-[10px] text-muted-foreground">Missing all pricing</p>
             </div>
-            <div className={`rounded-lg border p-3 text-center ${wineStats.stale > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
-              <p className={`text-lg font-bold ${wineStats.stale > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.stale}</p>
-              <p className="text-[10px] text-muted-foreground">Stale (no type)</p>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.missingWineType > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.missingWineType > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.missingWineType}</p>
+              <p className="text-[10px] text-muted-foreground">Missing wine type</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.inactive > 0 ? "border-red-500/30 bg-red-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.inactive > 0 ? "text-red-600" : "text-emerald-600"}`}>{wineStats.inactive}</p>
+              <p className="text-[10px] text-muted-foreground">Inactive</p>
             </div>
             <div className="rounded-lg border border-border bg-background p-3 text-center">
-              <p className="text-lg font-bold text-emerald-600">{Math.round((wineStats.hasBottlePrice / Math.max(wineStats.total - wineStats.stale, 1)) * 100)}%</p>
+              <p className="text-lg font-bold text-emerald-600">{Math.round((wineStats.hasBottlePrice / Math.max(wineStats.total - wineStats.inactive, 1)) * 100)}%</p>
               <p className="text-[10px] text-muted-foreground">Active coverage</p>
             </div>
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground italic">Loading stats...</p>
         )}
-        {wineStats && wineStats.missingPricing > 0 && wineStats.stale < wineStats.missingPricing && (
+        {wineStats && wineStats.missingPricing > 0 && (
           <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-2 text-[11px] text-amber-600 flex items-center gap-1.5">
             <AlertTriangle className="h-3 w-3 shrink-0" />
-            {wineStats.missingPricing - wineStats.stale} active wines missing pricing. Click "Enrich Missing Pricing" to fetch detail data from Winerim.
+            {wineStats.missingPricing} wines missing pricing. Click "Enrich Missing Pricing" to fetch detail data from Winerim.
           </div>
         )}
       </div>
