@@ -1100,7 +1100,7 @@ function StepWineMatching({
 // ── Step 3: Capabilities Detection ──
 function StepCapabilities({
   connectionId, capabilities, detecting, detectionResults, onDetect, onLoadCapabilities,
-  exporting, onExport,
+  exporting, onExport, writeMode, xmlWriteCapability,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -1110,10 +1110,18 @@ function StepCapabilities({
   onLoadCapabilities: () => void;
   exporting: boolean;
   onExport: (format: "json" | "csv") => void;
+  writeMode: string;
+  xmlWriteCapability: "UNKNOWN" | "YES" | "NO";
 }) {
   useEffect(() => { onLoadCapabilities(); }, [connectionId]);
 
-  const canWrite = capabilities?.can_write_products || "UNKNOWN";
+  // XML Import status: 3 states based on write_mode + successful import
+  const xmlStatus: "NOT_SUPPORTED" | "SUPPORTED_NOT_VERIFIED" | "VALIDATED" =
+    writeMode !== "XML_IMPORT"
+      ? "NOT_SUPPORTED"
+      : xmlWriteCapability === "YES"
+        ? "VALIDATED"
+        : "SUPPORTED_NOT_VERIFIED";
 
   return (
     <div className="space-y-5">
@@ -1134,15 +1142,19 @@ function StepCapabilities({
           </div>
           <div className="rounded-lg border border-border bg-background p-3 space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">XML Import Write</p>
-            {canWrite === "YES" ? (
-              <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Supported</Badge>
-            ) : canWrite === "UNKNOWN" ? (
-              <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> Not Verified</Badge>
+            {xmlStatus === "VALIDATED" ? (
+              <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Validated</Badge>
+            ) : xmlStatus === "SUPPORTED_NOT_VERIFIED" ? (
+              <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600"><HelpCircle className="mr-1 h-3 w-3" /> Supported / Not Verified</Badge>
             ) : (
-              <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
+              <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
             )}
             <p className="text-[10px] text-muted-foreground mt-1">
-              {canWrite === "YES" ? "XML import validated via manual test." : "Run a manual XML import to verify."}
+              {xmlStatus === "VALIDATED"
+                ? "XML import has been validated successfully for this connection."
+                : xmlStatus === "SUPPORTED_NOT_VERIFIED"
+                  ? "XML import is available. Run a manual XML import to validate before enabling auto-push."
+                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 9)."}
             </p>
           </div>
         </div>
@@ -1177,33 +1189,25 @@ function StepCapabilities({
         </div>
       )}
 
-      {canWrite !== "YES" && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
-          <div className="flex items-start gap-2">
-            <HelpCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-foreground">REST write not available</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                This Agora installation does not expose REST write endpoints. Use <strong>XML Import</strong> (Steps 5 & 9) to push products, or export as JSON/CSV for manual import.
-              </p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
-              <FileJson className="mr-2 h-4 w-4" /> Export JSON
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
-              <FileText className="mr-2 h-4 w-4" /> Export CSV
-            </Button>
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+        <div className="flex items-start gap-2">
+          <HelpCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-foreground">REST write not available</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              This Agora installation does not expose REST write endpoints. Use <strong>XML Import</strong> (Steps 5 & 9) to push products, or export as JSON/CSV for manual import.
+            </p>
           </div>
         </div>
-      )}
-
-      {canWrite === "UNKNOWN" && !detecting && (detectionResults as any[]).length > 0 && (
-        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs text-muted-foreground">
-          <p>⚠️ REST detection was inconclusive. This is expected for most Agora installations. Use <strong>XML Import</strong> (Steps 5 & 9) to push products instead.</p>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
+            <FileJson className="mr-2 h-4 w-4" /> Export JSON
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
+            <FileText className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
