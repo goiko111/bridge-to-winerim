@@ -2034,6 +2034,179 @@ serve(async (req) => {
       );
     }
 
+    // ── EVALUATE AUTO-PUSH ──
+    // Called after Winerim catalog sync to evaluate which wines should be auto-pushed
+    if (action === "evaluate-auto-push") {
+      const { winerimWineIds, eventType } = await req.json().catch(() => ({ winerimWineIds: [], eventType: "CREATE" }));
+      const evtType = eventType || "CREATE";
+
+      // Check auto-push config
+      const autoPushOnCreate = connection.auto_push_on_create ?? false;
+      const autoPushOnUpdate = connection.auto_push_on_update ?? false;
+      const autoPushBottle = connection.auto_push_bottle ?? true;
+      const autoPushGlass = connection.auto_push_glass ?? false;
+      const requireReview = connection.require_manual_review_before_push ?? true;
+
+      // Quick exit if auto-push disabled for this event type
+      if (evtType === "CREATE" && !autoPushOnCreate) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (evtType === "UPDATE" && !autoPushOnUpdate) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Check write_mode
+      if (connection.write_mode !== "XML_IMPORT") {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "write_mode is not XML_IMPORT" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Check capabilities
+      const { data: caps } = await supabase
+        .from("provider_capabilities")
+        .select("can_write_products")
+        .eq("connection_id", connectionId)
+        .single();
+      if (!caps || caps.can_write_products !== "YES") {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "can_write_products is not YES" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Check master data exists
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("id, families_json, vats_json, price_lists_json, warehouses_json")
+        .eq("connection_id", connectionId)
+        .single();
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "no master data cached" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Validate master data has minimum required items
+      const families = (masterData as any).families_json || [];
+      const vats = (masterData as any).vats_json || [];
+      const warnings: string[] = [];
+      if (families.length === 0) warnings.push("missing_families");
+      if (vats.length === 0) warnings.push("missing_vats");
+      if (warnings.length > 0) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "master_data_incomplete", warnings }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Load wines
+      const { data: wines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, price, format, winery, grape_variety, region, vintage")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", winerimWineIds || []);
+
+      if (!wines || wines.length === 0) {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "no wines found" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let queued = 0;
+      let skipped = 0;
+      const skippedReasons: { winerim_id: string; reason: string }[] = [];
+
+      for (const wine of wines) {
+        // Require manual review check
+        if (requireReview) {
+          const hasName = wine.name && wine.name.length > 2;
+          if (!hasName) {
+            skipped++;
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "invalid_name" });
+            continue;
+          }
+        }
+
+        // For UPDATE events, check existing mapping
+        if (evtType === "UPDATE") {
+          const { data: existingMapping } = await supabase
+            .from("product_mappings")
+            .select("id, last_synced_at")
+            .eq("connection_id", connectionId)
+            .eq("winerim_wine_id", wine.winerim_id)
+            .eq("match_method", "XML_IMPORT")
+            .limit(1);
+
+          // Only auto-update if mapping exists and was synced at least once
+          if (!existingMapping || existingMapping.length === 0 || !existingMapping[0].last_synced_at) {
+            if (!autoPushOnCreate) {
+              skipped++;
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: "no_existing_mapping_for_update" });
+              continue;
+            }
+          }
+        }
+
+        // Build format types to push
+        const formatTypes: string[] = [];
+        if (autoPushBottle) formatTypes.push("BOTTLE");
+        if (autoPushGlass) formatTypes.push("GLASS");
+        if (formatTypes.length === 0) { skipped++; continue; }
+
+        // Debounce: check for recent task (within 5 minutes) for same wine
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+        const { data: recentTask } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
+          .in("status", ["QUEUED", "RUNNING"])
+          .gte("created_at", fiveMinAgo)
+          .limit(1);
+
+        if (recentTask && recentTask.length > 0) {
+          skipped++;
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "debounce_recent_task" });
+          continue;
+        }
+
+        // Anti-spam: check for 3+ consecutive failures
+        const { data: recentFailures } = await supabase
+          .from("outbound_tasks")
+          .select("id, status")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
+          .order("created_at", { ascending: false })
+          .limit(3);
+
+        if (recentFailures && recentFailures.length >= 3 && recentFailures.every((t: any) => t.status === "FAILED" || t.status === "BLOCKED")) {
+          skipped++;
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "too_many_failures_manual_intervention_required" });
+          continue;
+        }
+
+        // Create outbound task
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wine.winerim_id,
+            _format_types: formatTypes,
+            _write_mode: "XML_IMPORT",
+            _trigger_source: evtType === "CREATE" ? "AUTO_CREATE" : "AUTO_UPDATE",
+            _requested_at: new Date().toISOString(),
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped}`);
+
+      return new Response(JSON.stringify({
+        success: true, queued, skipped, skippedReasons,
+        totalWines: wines.length, eventType: evtType,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(
       JSON.stringify({ error: "Unknown action" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

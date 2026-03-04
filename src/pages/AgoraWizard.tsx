@@ -1327,15 +1327,22 @@ function StepOutboundSync({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {(t.payload_json as any)?.Name || t.task_type}
+                        {(t.payload_json as any)?.Name || (t.payload_json as any)?._winerim_wine_id ? `Wine ${(t.payload_json as any)?._winerim_wine_id}` : t.task_type}
                       </p>
-                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                         <Badge variant={
                           t.status === "SUCCESS" ? "default" :
                           t.status === "FAILED" ? "destructive" :
                           t.status === "BLOCKED" ? "outline" :
                           "secondary"
                         } className="text-[10px]">{t.status}</Badge>
+                        {(t.payload_json as any)?._trigger_source && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {(t.payload_json as any)._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :
+                             (t.payload_json as any)._trigger_source === "AUTO_UPDATE" ? "⚡ Auto Update" : 
+                             (t.payload_json as any)._trigger_source}
+                          </Badge>
+                        )}
                         <span>Attempts: {t.attempts}/{t.max_attempts}</span>
                         {t.external_id && <span className="font-mono">ID: {t.external_id}</span>}
                       </div>
@@ -1512,6 +1519,46 @@ function StepWriteSettings({
           <div><p className="text-sm text-foreground">Auto-create Missing Families</p><p className="text-[11px] text-muted-foreground">Create wine families in Agora if they don't exist</p></div>
           <Switch checked={writeSettings.auto_create_families} onCheckedChange={(v) => onSave({ auto_create_families: v })} />
         </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+        <div className="flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" />
+          <p className="text-xs font-medium text-foreground">Auto Push</p>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          When enabled, syncing the Winerim catalog will automatically create outbound tasks to push new/updated wines to Agora.
+        </p>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push on Create</p><p className="text-[11px] text-muted-foreground">Queue push when a new wine is synced from Winerim</p></div>
+          <Switch checked={writeSettings.auto_push_on_create} onCheckedChange={(v) => onSave({ auto_push_on_create: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push on Update</p><p className="text-[11px] text-muted-foreground">Queue push when an existing wine is updated (only if already synced)</p></div>
+          <Switch checked={writeSettings.auto_push_on_update} onCheckedChange={(v) => onSave({ auto_push_on_update: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push Bottle</p><p className="text-[11px] text-muted-foreground">Auto-push BOT. format</p></div>
+          <Switch checked={writeSettings.auto_push_bottle} onCheckedChange={(v) => onSave({ auto_push_bottle: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push Glass</p><p className="text-[11px] text-muted-foreground">Auto-push COPA format</p></div>
+          <Switch checked={writeSettings.auto_push_glass} onCheckedChange={(v) => onSave({ auto_push_glass: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Require Manual Review</p><p className="text-[11px] text-muted-foreground">Only auto-push wines with valid name and resolvable data</p></div>
+          <Switch checked={writeSettings.require_manual_review_before_push} onCheckedChange={(v) => onSave({ require_manual_review_before_push: v })} />
+        </div>
+        {!writeSettings.auto_push_on_create && !writeSettings.auto_push_on_update && (
+          <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3" /> Auto-push is disabled. Wines will only be pushed manually from the Outbound Sync step.
+          </div>
+        )}
+        {(writeSettings.auto_push_on_create || writeSettings.auto_push_on_update) && writeSettings.write_mode !== "XML_IMPORT" && (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3" /> Auto-push requires write_mode = XML_IMPORT. Sync Master Data first to enable.
+          </div>
+        )}
       </div>
     </div>
   );
