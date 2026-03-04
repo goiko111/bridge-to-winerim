@@ -1231,12 +1231,49 @@ function StepWinerimCatalog({
   const handlePreviewXml = async () => {
     if (!connectionId || selectedIds.size === 0) return;
     setGeneratingXml(true);
+    setPreviewXml(null);
     try {
+      const formatTypes: string[] = [];
+      // Determine formats from selected wines
+      const selWines = wines.filter(w => selectedIds.has(w.winerim_id));
+      formatTypes.push("BOTTLE");
+      if (selWines.some(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0)) {
+        formatTypes.push("GLASS");
+      }
+
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds) },
+        body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds), formatTypes },
       });
       if (error) throw error;
-      setPreviewXml(data?.xml || "No XML generated");
+
+      // Check for validation issues
+      const validationResults = data?.validationResults || [];
+      const allInvalid = validationResults.length > 0 && validationResults.every((v: any) => !v.validation?.valid);
+      const warnings = validationResults
+        .filter((v: any) => !v.validation?.valid)
+        .map((v: any) => {
+          const missing = v.validation?.missingFields || [];
+          const wine = wines.find(w => w.winerim_id === v.winerimId);
+          const name = wine?.name || v.winerimId;
+          if (missing.includes("missing_bottle_sale_price")) return `${name}: No bottle price available for Agora export`;
+          if (missing.includes("missing_glass_sale_price")) return `${name}: No glass price available`;
+          if (missing.includes("serve_by_glass_not_enabled")) return `${name}: Glass service not enabled`;
+          if (missing.includes("wine_inactive")) return `${name}: Wine is inactive`;
+          return `${name}: ${missing.join(", ")}`;
+        });
+
+      if (allInvalid && (!data?.xml || !data.xml.includes("<Product"))) {
+        const warningMsg = warnings.length > 0
+          ? `No exportable products found.\n\nIssues:\n${warnings.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Pricing may be missing. Click "Refresh Catalog" to re-fetch wine details from Winerim.`
+          : "No exportable products found. Pricing data may be missing — click \"Refresh Catalog\" to re-fetch.";
+        setPreviewXml(warningMsg);
+      } else {
+        let result = data?.xml || "No XML generated";
+        if (warnings.length > 0) {
+          result = `<!-- WARNINGS:\n${warnings.map((w: string) => `  - ${w}`).join("\n")}\n-->\n${result}`;
+        }
+        setPreviewXml(result);
+      }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally { setGeneratingXml(false); }
