@@ -546,18 +546,36 @@ serve(async (req) => {
 
     // ── MATCH PRODUCTS (SKU + Fuzzy) ──
     if (action === "match-products") {
-      const { data: posProducts } = await supabase
-        .from("provider_products")
-        .select("provider_product_id, name, family, sale_format, price")
-        .eq("connection_id", connectionId)
-        .eq("is_wine_candidate", true)
-        .limit(1000);
+      // Fetch all POS wine candidates (paginated)
+      const posProducts: any[] = [];
+      let posFrom = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, family, sale_format, price")
+          .eq("connection_id", connectionId)
+          .eq("is_wine_candidate", true)
+          .range(posFrom, posFrom + 999);
+        if (!data || data.length === 0) break;
+        posProducts.push(...data);
+        if (data.length < 1000) break;
+        posFrom += 1000;
+      }
 
-      const { data: winerimWines } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, name, sku, ean, winery, grape_variety, format")
-        .eq("connection_id", connectionId)
-        .limit(1000);
+      // Fetch all Winerim wines (paginated)
+      const winerimWines: any[] = [];
+      let wFrom = 0;
+      while (true) {
+        const { data } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, name, sku, ean, winery, grape_variety, format")
+          .eq("connection_id", connectionId)
+          .range(wFrom, wFrom + 999);
+        if (!data || data.length === 0) break;
+        winerimWines.push(...data);
+        if (data.length < 1000) break;
+        wFrom += 1000;
+      }
 
       if (!posProducts || posProducts.length === 0) {
         return new Response(
