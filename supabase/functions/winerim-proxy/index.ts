@@ -177,6 +177,64 @@ async function fetchAllWines(headers: Record<string, string>): Promise<Record<st
   return allWines;
 }
 
+// Fetch individual wine detail to get pricing fields
+// Tries multiple endpoint patterns since Winerim API may vary
+async function fetchWineDetail(wineId: string, headers: Record<string, string>): Promise<Record<string, unknown> | null> {
+  const endpointsToTry = [
+    `${WINERIM_BASE_URL}/wines/${wineId}`,
+    `${WINERIM_BASE_URL}/wine/${wineId}`,
+    `${WINERIM_BASE_URL}/wines/${wineId}/detail`,
+  ];
+
+  for (const url of endpointsToTry) {
+    try {
+      const res = await fetch(url, { headers });
+      const body = await res.text();
+      if (!res.ok) {
+        console.log(`Wine detail ${wineId} (${url}): HTTP ${res.status}`);
+        continue;
+      }
+      try {
+        const data = JSON.parse(body);
+        const wine = data?.wine || data;
+        console.log(`Wine detail ${wineId} SUCCESS via ${url}: keys=[${Object.keys(wine).join(",")}]`);
+        return wine;
+      } catch {
+        console.log(`Wine detail ${wineId}: non-JSON from ${url}`);
+        continue;
+      }
+    } catch (e) {
+      console.error(`Wine detail ${wineId} (${url}) failed:`, e);
+      continue;
+    }
+  }
+  return null;
+}
+
+// Batch fetch wine details with concurrency control
+async function fetchWineDetails(
+  wineIds: string[],
+  headers: Record<string, string>,
+  concurrency = 5,
+): Promise<Map<string, Record<string, unknown>>> {
+  const results = new Map<string, Record<string, unknown>>();
+  
+  for (let i = 0; i < wineIds.length; i += concurrency) {
+    const batch = wineIds.slice(i, i + concurrency);
+    const promises = batch.map(async (id) => {
+      const detail = await fetchWineDetail(id, headers);
+      if (detail) results.set(id, detail);
+    });
+    await Promise.all(promises);
+    // Small delay between batches to avoid rate limiting
+    if (i + concurrency < wineIds.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  return results;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -218,32 +276,60 @@ serve(async (req) => {
     if (action === "fetch-catalog") {
       const wines = await fetchAllWines(winerimHeaders);
 
+      // Detail fetch is done separately via 'fetch-wine-details' action
+      // The list endpoint provides: type, name, winery, region, vintage, country
+      // Pricing requires the standalone detail fetch
+      const detailMap = new Map<string, Record<string, unknown>>();
+      const wineIds = wines.map(w => String(w.id || "")).filter(Boolean);
+
       // ── EXTRACT NORMALIZED POS-READY FIELDS ──
-      function extractNormalizedFields(w: Record<string, unknown>) {
-        // Wine type: try type, wine_type, category, style, color, colour
+      // Parses Winerim's prices array: [{variant: "botella"|"copa"|"magnum"|..., price: N, erpStock: {...}}]
+      function extractNormalizedFields(listWine: Record<string, unknown>, detail: Record<string, unknown> | null) {
+        const w = { ...listWine, ...(detail || {}) };
+
+        // Wine type
         const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
-        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? rawType.toLowerCase() : null;
+        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
-        // Bottle pricing: try explicit fields, then fallback to top-level price/pvp
-        const bottleSalePrice = Number(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price ?? 0) || null;
-        const bottlePurchasePrice = Number(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost ?? 0) || null;
+        // ── Parse prices array from Winerim API ──
+        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
+        
+        // Find prices by variant
+        const bottleEntry = prices.find(p => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
+        const glassEntry = prices.find(p => p.variant === "copa");
+        const magnumEntry = prices.find(p => p.variant === "magnum");
 
-        // Glass pricing: explicit fields only
-        const glassSalePrice = Number(w.glass_sale_price ?? w.glass_price ?? 0) || null;
-        const glassCostPrice = Number(w.glass_cost_price ?? w.glass_cost ?? 0) || null;
+        // Bottle pricing: from prices array, then fallback to explicit fields
+        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
+        const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
 
-        // Magnum pricing
-        const magnumSalePrice = Number(w.magnum_sale_price ?? 0) || null;
-        const magnumPurchasePrice = Number(w.magnum_purchase_price ?? w.magnum_cost ?? 0) || null;
+        // Glass pricing: from prices array
+        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(w.glass_sale_price ?? w.glass_price);
+        const glassCostPrice = toPositiveNumber(w.glass_cost_price ?? w.glass_cost);
 
-        // Flags
-        const serveByGlass = w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
-        const isActive = w.is_active !== false && w.active !== false && w.status !== "inactive";
+        // Magnum pricing: from prices array
+        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(w.magnum_sale_price);
+        const magnumPurchasePrice = toPositiveNumber(w.magnum_purchase_price ?? w.magnum_cost);
 
-        return { wineType, bottleSalePrice, bottlePurchasePrice, glassSalePrice, glassCostPrice, magnumSalePrice, magnumPurchasePrice, serveByGlass, isActive };
+        // serve_by_glass: true if a 'copa' variant exists in prices
+        const serveByGlass = !!glassEntry || w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
+
+        // is_active: from 'active' field in detail response
+        const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
+
+        // Stock from bottle entry
+        const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
+
+        return { wineType, bottleSalePrice, bottlePurchasePrice, glassSalePrice, glassCostPrice, magnumSalePrice, magnumPurchasePrice, serveByGlass, isActive, stockQuantity };
       }
 
-      // Load existing wines for change detection (PRIORITY 5)
+      function toPositiveNumber(val: unknown): number | null {
+        if (val === null || val === undefined) return null;
+        const n = Number(val);
+        return n > 0 ? n : null;
+      }
+
+      // Load existing wines for change detection
       const { data: existingWines } = await supabase
         .from("winerim_wines")
         .select("winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, is_active")
@@ -253,25 +339,30 @@ serve(async (req) => {
       // Track which wines actually changed exportable fields
       const changedWineIds: string[] = [];
       const newWineIds: string[] = [];
+      let detailsFound = 0;
 
       let upserted = 0;
       for (const w of wines) {
         const winerimId = String(w.id || "");
         if (!winerimId) continue;
 
+        const detail = detailMap.get(winerimId) || null;
+        if (detail) detailsFound++;
+
         let grapeVariety: string | null = null;
-        if (Array.isArray(w.grapes) && w.grapes.length > 0) {
-          grapeVariety = (w.grapes as { name: string }[]).map(g => g.name).join(", ");
+        // Check both list and detail for grapes
+        const grapes = (detail?.grapes || w.grapes) as { name: string }[] | undefined;
+        if (Array.isArray(grapes) && grapes.length > 0) {
+          grapeVariety = grapes.map(g => g.name).join(", ");
         }
 
-        const nf = extractNormalizedFields(w);
+        const nf = extractNormalizedFields(w, detail);
         const existing = existingMap.get(winerimId);
 
         // Detect if this is new or changed
         if (!existing) {
           newWineIds.push(winerimId);
         } else {
-          // Only flag as changed if exportable fields differ
           const changed =
             String(w.name || "Unknown") !== existing.name ||
             nf.wineType !== existing.wine_type ||
@@ -283,20 +374,23 @@ serve(async (req) => {
           if (changed) changedWineIds.push(winerimId);
         }
 
+        // Merge raw_payload with detail data for reference
+        const mergedPayload = { ...w, ...(detail || {}) };
+
         await supabase.from("winerim_wines").upsert({
           connection_id: connectionId,
           winerim_id: winerimId,
-          name: String(w.name || "Unknown"),
-          sku: w.identifier ? String(w.identifier) : null,
-          ean: null,
-          vintage: w.vintage ? String(w.vintage) : null,
-          winery: w.winery ? String(w.winery) : null,
-          region: w.region ? String(w.region) : null,
+          name: String(detail?.name || w.name || "Unknown"),
+          sku: (detail?.identifier || w.identifier) ? String(detail?.identifier || w.identifier) : null,
+          ean: detail?.ean ? String(detail.ean) : null,
+          vintage: (detail?.vintage || w.vintage) ? String(detail?.vintage || w.vintage) : null,
+          winery: (detail?.winery || w.winery) ? String(detail?.winery || w.winery) : null,
+          region: (detail?.region || w.region) ? String(detail?.region || w.region) : null,
           grape_variety: grapeVariety,
-          format: w.subname ? String(w.subname) : null,
+          format: (detail?.subname || w.subname) ? String(detail?.subname || w.subname) : null,
           price: nf.bottleSalePrice,
-          stock_quantity: null,
-          raw_payload: w,
+          stock_quantity: nf.stockQuantity != null ? nf.stockQuantity : toPositiveNumber(detail?.stock ?? w.stock),
+          raw_payload: mergedPayload,
           // Normalized POS-ready fields
           wine_type: nf.wineType,
           bottle_sale_price: nf.bottleSalePrice,
@@ -311,7 +405,7 @@ serve(async (req) => {
         upserted++;
       }
 
-      // ── AUTO-PUSH TRIGGER (PRIORITY 5: only on meaningful changes) ──
+      // ── AUTO-PUSH TRIGGER (only on meaningful changes) ──
       try {
         const { data: agoraConnections } = await supabase
           .from("pos_connections")
@@ -324,14 +418,12 @@ serve(async (req) => {
           for (const agoraConn of agoraConnections) {
             if (!agoraConn.auto_push_on_create && !agoraConn.auto_push_on_update) continue;
 
-            // Trigger auto-push for NEW wines only
             if (agoraConn.auto_push_on_create && newWineIds.length > 0) {
               await supabase.functions.invoke("agora-proxy", {
                 body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: newWineIds, eventType: "CREATE" },
               }).catch((e: Error) => console.error("Auto-push CREATE failed:", e));
             }
 
-            // Trigger auto-push ONLY for wines with actual exportable field changes
             if (agoraConn.auto_push_on_update && changedWineIds.length > 0) {
               await supabase.functions.invoke("agora-proxy", {
                 body: { action: "evaluate-auto-push", connectionId: agoraConn.id, winerimWineIds: changedWineIds, eventType: "UPDATE" },
@@ -344,7 +436,103 @@ serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, totalWines: upserted, newWines: newWineIds.length, changedWines: changedWineIds.length }),
+        JSON.stringify({
+          success: true,
+          totalWines: upserted,
+          detailsFetched: detailsFound,
+          detailsMissing: wineIds.length - detailsFound,
+          newWines: newWineIds.length,
+          changedWines: changedWineIds.length,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── FETCH WINE DETAILS (standalone, for enriching existing wines) ──
+    if (action === "fetch-wine-details") {
+      const { winerimWineIds } = body;
+      
+      // If specific IDs provided, use those. Otherwise fetch all wines missing pricing.
+      let targetIds: string[] = winerimWineIds || [];
+      
+      if (targetIds.length === 0) {
+        const { data: missingPricing } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id")
+          .eq("connection_id", connectionId)
+          .is("bottle_sale_price", null)
+          .limit(100);
+        targetIds = (missingPricing || []).map((w: any) => w.winerim_id);
+      }
+
+      if (targetIds.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, enriched: 0, message: "All wines already have pricing data" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log(`Fetching details for ${targetIds.length} wines...`);
+      const detailMap = await fetchWineDetails(targetIds, winerimHeaders, 5);
+      
+      let enriched = 0;
+      const fieldsDiscovered: string[] = [];
+
+      for (const [winerimId, detail] of detailMap) {
+        // Log first detail to discover available fields
+        if (enriched === 0) {
+          const keys = Object.keys(detail);
+          fieldsDiscovered.push(...keys);
+          console.log(`Wine detail fields discovered: ${keys.join(", ")}`);
+        }
+
+        function toPositiveNumber(val: unknown): number | null {
+          if (val === null || val === undefined) return null;
+          const n = Number(val);
+          return n > 0 ? n : null;
+        }
+
+        // Parse prices array from Winerim detail response
+        const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
+        const bottleEntry = prices.find((p: any) => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
+        const glassEntry = prices.find((p: any) => p.variant === "copa");
+        const magnumEntry = prices.find((p: any) => p.variant === "magnum");
+
+        const rawType = detail.type || detail.wine_type || detail.category || detail.style || detail.color;
+        const updateData: Record<string, unknown> = {
+          raw_payload: detail,
+          wine_type: rawType && typeof rawType === "string" ? String(rawType).toLowerCase() : undefined,
+          bottle_sale_price: toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(detail.bottle_sale_price ?? detail.sale_price ?? detail.pvp ?? detail.price),
+          bottle_purchase_price: toPositiveNumber(detail.bottle_purchase_price ?? detail.purchase_price ?? detail.cost_price ?? detail.cost),
+          glass_sale_price: toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(detail.glass_sale_price ?? detail.glass_price),
+          glass_cost_price: toPositiveNumber(detail.glass_cost_price ?? detail.glass_cost),
+          magnum_sale_price: toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(detail.magnum_sale_price),
+          magnum_purchase_price: toPositiveNumber(detail.magnum_purchase_price),
+          serve_by_glass: !!glassEntry || detail.serve_by_glass === true || detail.by_glass === true || undefined,
+          is_active: detail.active !== false && detail.is_active !== false ? true : false,
+          stock_quantity: bottleEntry?.erpStock?.stock ?? undefined,
+        };
+
+        // Remove undefined values
+        for (const key of Object.keys(updateData)) {
+          if (updateData[key] === undefined) delete updateData[key];
+        }
+
+        await supabase.from("winerim_wines")
+          .update(updateData)
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
+        enriched++;
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          requested: targetIds.length,
+          enriched,
+          detailsMissing: targetIds.length - enriched,
+          fieldsDiscovered: fieldsDiscovered.slice(0, 50),
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
