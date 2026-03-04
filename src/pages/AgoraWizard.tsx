@@ -2070,7 +2070,9 @@ export default function AgoraWizard() {
               capabilities={outbound.capabilities} detecting={outbound.detecting}
               detectionResults={outbound.detectionResults}
               onDetect={outbound.detectCapabilities} onLoadCapabilities={outbound.loadCapabilities}
-              exporting={outbound.exporting} onExport={outbound.exportProducts} />
+              exporting={outbound.exporting} onExport={outbound.exportProducts}
+              writeMode={agoraMaster.writeSettings.write_mode}
+              xmlWriteCapability={agoraMaster.writeCapability} />
           )}
           {currentStep === 4 && (
             <StepCatalog catalogStatus={catalogStatus}
