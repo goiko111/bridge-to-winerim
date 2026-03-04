@@ -1168,6 +1168,16 @@ function StepWinerimCatalog({
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
+    total: number;
+    processed: number;
+    listFetched: number;
+    detailAttempted: number;
+    detailSucceeded: number;
+    bottleUpdated: number;
+    glassUpdated: number;
+  } | null>(null);
+  const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterActive, setFilterActive] = useState(true);
   const [filterGlass, setFilterGlass] = useState(false);
@@ -1178,10 +1188,22 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const data = await fetchAllWinerimWines(connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, glass_sale_price, serve_by_glass, is_active, winery, region, vintage"
+    const data = await fetchAllWinerimWines(
+      connectionId,
+      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active, winery, region, vintage, updated_at"
     );
-    setWines(data as WinerimCatalogWine[]);
+    const rows = data as WinerimCatalogWine[];
+    setWines(rows);
+
+    const latestEnriched = rows
+      .filter((w) =>
+        (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) ||
+        (w.glass_sale_price != null && Number(w.glass_sale_price) > 0)
+      )
+      .map((w) => w.updated_at)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+
+    setLastEnrichedAt(latestEnriched);
     setLoading(false);
   }, [connectionId]);
 
@@ -1190,18 +1212,85 @@ function StepWinerimCatalog({
   const fetchCatalog = async () => {
     if (!connectionId) return;
     setFetchingCatalog(true);
+    setRefreshDiagnostics(null);
+
     try {
-      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
-        body: { action: "fetch-catalog", connectionId },
-      });
-      if (error) throw error;
-      if (data?.success) {
-        toast({ title: "Winerim catalog synced", description: `${data.totalWines} wines imported` });
-        await loadWines();
+      const runBatch = async (mode: "start" | "enrich", offset: number) => {
+        const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+          body: { action: "fetch-catalog", connectionId, mode, detailOffset: offset, detailBatchSize: 100 },
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Catalog refresh failed");
+        return data;
+      };
+
+      let total = 0;
+      let processed = 0;
+      let listFetched = 0;
+      let detailAttempted = 0;
+      let detailSucceeded = 0;
+      let bottleUpdated = 0;
+      let glassUpdated = 0;
+
+      let mode: "start" | "enrich" = "start";
+      let nextOffset = 0;
+      let complete = false;
+      let completionTs: string | null = null;
+
+      while (!complete) {
+        const batch = await runBatch(mode, nextOffset);
+
+        total = Number(batch.totalWines || total);
+        processed = Number(batch.processedDetails || processed);
+        listFetched = Math.max(listFetched, Number(batch.listWinesFetched || 0));
+        detailAttempted += Number(batch.detailRequestsAttempted || 0);
+        detailSucceeded += Number(batch.detailRequestsSucceeded || 0);
+        bottleUpdated += Number(batch.winesUpdatedWithBottlePrice || 0);
+        glassUpdated += Number(batch.winesUpdatedWithGlassPrice || 0);
+
+        setRefreshDiagnostics({
+          total,
+          processed,
+          listFetched,
+          detailAttempted,
+          detailSucceeded,
+          bottleUpdated,
+          glassUpdated,
+        });
+
+        complete = Boolean(batch.complete);
+        if (complete) {
+          completionTs = batch.enrichmentCompletedAt || new Date().toISOString();
+        } else {
+          const candidateOffset = Number(batch.nextDetailOffset ?? processed);
+          if (!Number.isFinite(candidateOffset) || candidateOffset <= nextOffset) {
+            throw new Error("Pricing enrichment stalled before completion.");
+          }
+          nextOffset = candidateOffset;
+          mode = "enrich";
+        }
+      }
+
+      await loadWines();
+      if (completionTs) setLastEnrichedAt(completionTs);
+
+      if (detailAttempted > 0 && detailSucceeded === 0) {
+        toast({
+          title: "Catalog synced, but detail enrichment failed",
+          description: "No wine detail requests succeeded. Check connection/token and retry refresh.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Winerim catalog refresh completed",
+          description: `List: ${listFetched} wines · Details: ${detailSucceeded}/${detailAttempted} · Bottle priced: ${bottleUpdated} · Glass priced: ${glassUpdated}`,
+        });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally { setFetchingCatalog(false); }
+    } finally {
+      setFetchingCatalog(false);
+    }
   };
 
   const filteredWines = useMemo(() => {
