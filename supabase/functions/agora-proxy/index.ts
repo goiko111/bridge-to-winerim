@@ -1643,8 +1643,19 @@ serve(async (req) => {
         source: "normalized_db_fields",
       }));
 
+      const hasProducts = xml.includes("<Product");
       return new Response(
-        JSON.stringify({ success: true, xml, wineCount: wines.length, validationResults, sourceDataSummary }),
+        JSON.stringify({
+          success: hasProducts,
+          xml,
+          wineCount: wines.length,
+          validationResults,
+          sourceDataSummary,
+          ...(hasProducts ? {} : {
+            error: "No exportable products generated. Check validation results for details.",
+            hint: "Pricing data may be missing. Re-sync Winerim catalog to fetch wine details.",
+          }),
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
