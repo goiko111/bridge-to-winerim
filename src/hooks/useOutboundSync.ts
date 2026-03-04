@@ -84,7 +84,7 @@ export function useOutboundSync(connectionId: string | null) {
     setQueuingProducts(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "queue-outbound", connectionId, winerimWineIds },
+        body: { action: "queue-xml-outbound", connectionId, winerimWineIds, formatTypes: ["BOTTLE"] },
       });
       if (error) throw error;
       await loadOutboundTasks();
