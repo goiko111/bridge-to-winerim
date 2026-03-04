@@ -1671,7 +1671,7 @@ function StepOutboundSync({
 
   useEffect(() => { onLoadTasks(); }, [connectionId]);
 
-  const canWrite = capabilities?.can_write_products === "YES";
+  const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN";
   const queuedTasks = outboundTasks.filter(t => t.status === "QUEUED");
   const runningTasks = outboundTasks.filter(t => t.status === "RUNNING");
   const successTasks = outboundTasks.filter(t => t.status === "SUCCESS");
