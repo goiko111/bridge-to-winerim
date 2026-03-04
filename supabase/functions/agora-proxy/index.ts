@@ -2038,6 +2038,13 @@ serve(async (req) => {
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
       for (const wine of wines) {
+        // Block inactive wines from auto-push
+        if (wine.is_active === false) {
+          skipped++;
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive" });
+          continue;
+        }
+
         if (requireReview) {
           const hasName = wine.name && wine.name.length > 2;
           if (!hasName) {
