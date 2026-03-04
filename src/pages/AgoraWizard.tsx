@@ -1371,15 +1371,65 @@ function StepOutboundSync({
 
 // ── Step 5: Master Data ──
 function StepMasterData({
-  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings,
+  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId,
 }: {
   masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
   syncing: boolean; syncError: string | null;
   onSync: () => void; onLoad: () => void;
   writeCapability: "UNKNOWN" | "YES" | "NO";
   writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
+  connectionId: string | null;
 }) {
   useEffect(() => { onLoad(); }, []);
+
+  // ── Wine data diagnostics ──
+  const [wineStats, setWineStats] = useState<{
+    total: number; hasBottlePrice: number; hasGlassPrice: number;
+    serveByGlass: number; hasWineType: number; missingPricing: number; stale: number;
+  } | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<{ enriched: number; detailsMissing: number } | null>(null);
+
+  const loadWineStats = useCallback(async () => {
+    if (!connectionId) return;
+    setLoadingStats(true);
+    const { data } = await supabase.from("winerim_wines")
+      .select("bottle_sale_price, glass_sale_price, serve_by_glass, wine_type, is_active")
+      .eq("connection_id", connectionId);
+    if (data) {
+      setWineStats({
+        total: data.length,
+        hasBottlePrice: data.filter((w: any) => w.bottle_sale_price != null).length,
+        hasGlassPrice: data.filter((w: any) => w.glass_sale_price != null).length,
+        serveByGlass: data.filter((w: any) => w.serve_by_glass).length,
+        hasWineType: data.filter((w: any) => w.wine_type != null).length,
+        missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null).length,
+        stale: data.filter((w: any) => w.wine_type == null).length,
+      });
+    }
+    setLoadingStats(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadWineStats(); }, [loadWineStats]);
+
+  const enrichWines = useCallback(async () => {
+    if (!connectionId) return;
+    setEnriching(true);
+    setEnrichResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "fetch-wine-details", connectionId },
+      });
+      if (error) throw error;
+      setEnrichResult({ enriched: data?.enriched || 0, detailsMissing: data?.detailsMissing || 0 });
+      await loadWineStats();
+    } catch (e: any) {
+      console.error("Enrich failed:", e);
+    } finally {
+      setEnriching(false);
+    }
+  }, [connectionId, loadWineStats]);
 
   const sections = [
     { label: "Families", data: masterData.families, icon: Grape },
@@ -1407,7 +1457,7 @@ function StepMasterData({
           <Badge variant="outline" className="text-[10px]"><AlertTriangle className="mr-1 h-3 w-3" /> Not synced</Badge>
         )}
         {writeCapability === "YES" ? (
-          <Badge variant="default" className="text-[10px] bg-success"><CheckCircle2 className="mr-1 h-3 w-3" /> Write verified</Badge>
+          <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Write verified</Badge>
         ) : writeCapability === "NO" ? (
           <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Write not supported</Badge>
         ) : (
@@ -1437,6 +1487,76 @@ function StepMasterData({
           <p className="flex items-center gap-1.5"><AlertTriangle className="h-3 w-3" /> Master data synced but write not yet verified. Go to Write Settings and run a manual XML import to confirm write capability.</p>
         </div>
       )}
+
+      {/* ── Wine Data Diagnostics ── */}
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Wine className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium text-foreground">Winerim Data Diagnostics</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={loadWineStats} disabled={loadingStats}>
+              {loadingStats ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+              Refresh
+            </Button>
+            <Button variant="secondary" size="sm" className="h-7 text-[11px]" onClick={enrichWines} disabled={enriching}>
+              {enriching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Download className="mr-1 h-3 w-3" />}
+              Enrich Missing Pricing
+            </Button>
+          </div>
+        </div>
+        {enrichResult && (
+          <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
+            Enriched {enrichResult.enriched} wines · {enrichResult.detailsMissing} details not found
+          </div>
+        )}
+        {wineStats ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{wineStats.total}</p>
+              <p className="text-[10px] text-muted-foreground">Total wines</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-emerald-600">{wineStats.hasBottlePrice}</p>
+              <p className="text-[10px] text-muted-foreground">With bottle price</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-blue-600">{wineStats.hasGlassPrice}</p>
+              <p className="text-[10px] text-muted-foreground">With glass price</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-violet-600">{wineStats.serveByGlass}</p>
+              <p className="text-[10px] text-muted-foreground">Serve by glass</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{wineStats.hasWineType}</p>
+              <p className="text-[10px] text-muted-foreground">With wine type</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.missingPricing > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.missingPricing > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.missingPricing}</p>
+              <p className="text-[10px] text-muted-foreground">Missing all pricing</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.stale > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.stale > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.stale}</p>
+              <p className="text-[10px] text-muted-foreground">Stale (no type)</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-emerald-600">{Math.round((wineStats.hasBottlePrice / Math.max(wineStats.total - wineStats.stale, 1)) * 100)}%</p>
+              <p className="text-[10px] text-muted-foreground">Active coverage</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground italic">Loading stats...</p>
+        )}
+        {wineStats && wineStats.missingPricing > 0 && wineStats.stale < wineStats.missingPricing && (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            {wineStats.missingPricing - wineStats.stale} active wines missing pricing. Click "Enrich Missing Pricing" to fetch detail data from Winerim.
+          </div>
+        )}
+      </div>
+
       {sections.map(({ label, data, icon: Icon }) => (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
           <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
@@ -1466,7 +1586,6 @@ function StepMasterData({
     </div>
   );
 }
-
 // ── Step 9: Write Settings ──
 function StepWriteSettings({
   writeSettings, masterData, onSave,
@@ -1852,7 +1971,8 @@ export default function AgoraWizard() {
             <StepMasterData masterData={agoraMaster.masterData}
               syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
               onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
-              writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings} />
+              writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings}
+              connectionId={connectionId} />
           )}
           {currentStep === 6 && (
             <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}

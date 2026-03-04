@@ -2022,7 +2022,7 @@ serve(async (req) => {
       }
 
       const { data: wines } = await supabase
-        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload")
+        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
@@ -2042,41 +2042,33 @@ serve(async (req) => {
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "invalid_name" });
             continue;
           }
-          // Validate wine has required fields for the formats we'll push
-          const formatTypes: string[] = [];
-          if (autoPushBottle) formatTypes.push("BOTTLE");
-          if (autoPushGlass) formatTypes.push("GLASS");
-          let allValid = true;
-          for (const fmt of formatTypes) {
-            const validation = validateWineForAgora(wine, fmt);
-            if (!validation.valid) {
-              skipped++;
-              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `validation_failed:${validation.missingFields.join(",")}` });
-              allValid = false;
-              break;
-            }
-          }
-          if (!allValid) continue;
         }
 
-        if (evtType === "UPDATE") {
-          const { data: existingMapping } = await supabase
-            .from("product_mappings").select("id, last_synced_at")
-            .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
-            .eq("match_method", "XML_IMPORT").limit(1);
-
-          if (!existingMapping || existingMapping.length === 0 || !existingMapping[0].last_synced_at) {
-            if (!autoPushOnCreate) {
-              skipped++;
-              skippedReasons.push({ winerim_id: wine.winerim_id, reason: "no_existing_mapping_for_update" });
-              continue;
-            }
-          }
-        }
-
+        // Build format list with per-format eligibility checks
         const formatTypes: string[] = [];
-        if (autoPushBottle) formatTypes.push("BOTTLE");
-        if (autoPushGlass) formatTypes.push("GLASS");
+        if (autoPushBottle) {
+          const bottleValidation = validateWineForAgora(wine, "BOTTLE", connection);
+          if (bottleValidation.valid) {
+            formatTypes.push("BOTTLE");
+          } else {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `bottle_validation_failed:${bottleValidation.missingFields.join(",")}` });
+          }
+        }
+        if (autoPushGlass) {
+          // GLASS gate: must have serve_by_glass=true AND glass_sale_price>0
+          if (!wine.serve_by_glass) {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:serve_by_glass_not_enabled" });
+          } else if (!wine.glass_sale_price || Number(wine.glass_sale_price) <= 0) {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:no_glass_sale_price" });
+          } else {
+            const glassValidation = validateWineForAgora(wine, "GLASS", connection);
+            if (glassValidation.valid) {
+              formatTypes.push("GLASS");
+            } else {
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `glass_validation_failed:${glassValidation.missingFields.join(",")}` });
+            }
+          }
+        }
         if (formatTypes.length === 0) { skipped++; continue; }
 
         // Debounce
