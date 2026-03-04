@@ -1704,10 +1704,8 @@ serve(async (req) => {
           last_checked_at: new Date().toISOString(),
         }, { onConflict: "connection_id" });
 
-        // FIX PRIORITY 7: Mark auto_push_verified_ready on first success
-        await supabase.from("pos_connections").update({
-          auto_push_verified_ready: true,
-        }).eq("id", connectionId);
+        // auto_push_verified_ready is NOT set here — it must be enabled manually by the user
+        // after verifying products were created correctly in Agora
       } else if (importRes.status === 404 || importRes.status === 405) {
         await supabase.from("provider_capabilities").upsert({
           connection_id: connectionId, provider: "AGORA",
@@ -1873,8 +1871,7 @@ serve(async (req) => {
           external_id: String(500000 + Number(winerimWineId || 0)),
         }).eq("id", task.id);
 
-        // Mark verified ready on first task success too
-        await supabase.from("pos_connections").update({ auto_push_verified_ready: true }).eq("id", task.connection_id);
+        // auto_push_verified_ready is NOT set here — manual verification required
 
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
