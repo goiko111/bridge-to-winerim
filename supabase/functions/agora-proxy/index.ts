@@ -244,6 +244,12 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any): 
   const warnings: string[] = [];
   const missingFields: string[] = [];
 
+  // BLOCK inactive wines — never create sellable products for inactive wines
+  if (wine.is_active === false) {
+    missingFields.push("wine_inactive");
+    return { valid: false, warnings: ["Wine is inactive in Winerim — blocked from Agora push"], missingFields };
+  }
+
   if (!wine.name || wine.name.length < 2) {
     missingFields.push("missing_wine_name");
   }
