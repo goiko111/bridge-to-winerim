@@ -1665,7 +1665,7 @@ function StepOutboundSync({
   onRetry: (taskId: string) => void;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
-  onQueueProducts: (ids: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
 
@@ -1751,7 +1751,7 @@ function StepOutboundSync({
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
-              onClick={() => { onQueueProducts(Array.from(selectedWineIds)); setSelectedWineIds(new Set()); }}>
+              onClick={() => { onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]); setSelectedWineIds(new Set()); }}>
               {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               Push {selectedWineIds.size} to Agora
             </Button>
