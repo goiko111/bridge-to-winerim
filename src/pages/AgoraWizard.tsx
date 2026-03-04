@@ -882,7 +882,7 @@ function StepWineMatching({
     setFetchingCatalog(true);
     try {
       const { data, error } = await supabase.functions.invoke("winerim-proxy", {
-        body: { action: "fetch-catalog", connectionId },
+        body: { action: "fetch-catalog", connectionId, mode: "start", detailOffset: 0, detailBatchSize: 100 },
       });
       if (error) throw error;
       if (data?.success) {
@@ -1145,12 +1145,15 @@ interface WinerimCatalogWine {
   name: string;
   wine_type: string | null;
   bottle_sale_price: number | null;
+  bottle_purchase_price: number | null;
   glass_sale_price: number | null;
+  glass_cost_price: number | null;
   serve_by_glass: boolean;
   is_active: boolean;
   winery: string | null;
   region: string | null;
   vintage: string | null;
+  updated_at: string;
 }
 
 function StepWinerimCatalog({
@@ -1165,6 +1168,16 @@ function StepWinerimCatalog({
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
+    total: number;
+    processed: number;
+    listFetched: number;
+    detailAttempted: number;
+    detailSucceeded: number;
+    bottleUpdated: number;
+    glassUpdated: number;
+  } | null>(null);
+  const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterActive, setFilterActive] = useState(true);
   const [filterGlass, setFilterGlass] = useState(false);
@@ -1175,10 +1188,22 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const data = await fetchAllWinerimWines(connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, glass_sale_price, serve_by_glass, is_active, winery, region, vintage"
+    const data = await fetchAllWinerimWines(
+      connectionId,
+      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active, winery, region, vintage, updated_at"
     );
-    setWines(data as WinerimCatalogWine[]);
+    const rows = data as WinerimCatalogWine[];
+    setWines(rows);
+
+    const latestEnriched = rows
+      .filter((w) =>
+        (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) ||
+        (w.glass_sale_price != null && Number(w.glass_sale_price) > 0)
+      )
+      .map((w) => w.updated_at)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+
+    setLastEnrichedAt(latestEnriched);
     setLoading(false);
   }, [connectionId]);
 
@@ -1187,18 +1212,85 @@ function StepWinerimCatalog({
   const fetchCatalog = async () => {
     if (!connectionId) return;
     setFetchingCatalog(true);
+    setRefreshDiagnostics(null);
+
     try {
-      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
-        body: { action: "fetch-catalog", connectionId },
-      });
-      if (error) throw error;
-      if (data?.success) {
-        toast({ title: "Winerim catalog synced", description: `${data.totalWines} wines imported` });
-        await loadWines();
+      const runBatch = async (mode: "start" | "enrich", offset: number) => {
+        const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+          body: { action: "fetch-catalog", connectionId, mode, detailOffset: offset, detailBatchSize: 100 },
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Catalog refresh failed");
+        return data;
+      };
+
+      let total = 0;
+      let processed = 0;
+      let listFetched = 0;
+      let detailAttempted = 0;
+      let detailSucceeded = 0;
+      let bottleUpdated = 0;
+      let glassUpdated = 0;
+
+      let mode: "start" | "enrich" = "start";
+      let nextOffset = 0;
+      let complete = false;
+      let completionTs: string | null = null;
+
+      while (!complete) {
+        const batch = await runBatch(mode, nextOffset);
+
+        total = Number(batch.totalWines || total);
+        processed = Number(batch.processedDetails || processed);
+        listFetched = Math.max(listFetched, Number(batch.listWinesFetched || 0));
+        detailAttempted += Number(batch.detailRequestsAttempted || 0);
+        detailSucceeded += Number(batch.detailRequestsSucceeded || 0);
+        bottleUpdated += Number(batch.winesUpdatedWithBottlePrice || 0);
+        glassUpdated += Number(batch.winesUpdatedWithGlassPrice || 0);
+
+        setRefreshDiagnostics({
+          total,
+          processed,
+          listFetched,
+          detailAttempted,
+          detailSucceeded,
+          bottleUpdated,
+          glassUpdated,
+        });
+
+        complete = Boolean(batch.complete);
+        if (complete) {
+          completionTs = batch.enrichmentCompletedAt || new Date().toISOString();
+        } else {
+          const candidateOffset = Number(batch.nextDetailOffset ?? processed);
+          if (!Number.isFinite(candidateOffset) || candidateOffset <= nextOffset) {
+            throw new Error("Pricing enrichment stalled before completion.");
+          }
+          nextOffset = candidateOffset;
+          mode = "enrich";
+        }
+      }
+
+      await loadWines();
+      if (completionTs) setLastEnrichedAt(completionTs);
+
+      if (detailAttempted > 0 && detailSucceeded === 0) {
+        toast({
+          title: "Catalog synced, but detail enrichment failed",
+          description: "No wine detail requests succeeded. Check connection/token and retry refresh.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Winerim catalog refresh completed",
+          description: `List: ${listFetched} wines · Details: ${detailSucceeded}/${detailAttempted} · Bottle priced: ${bottleUpdated} · Glass priced: ${glassUpdated}`,
+        });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally { setFetchingCatalog(false); }
+    } finally {
+      setFetchingCatalog(false);
+    }
   };
 
   const filteredWines = useMemo(() => {
@@ -1293,9 +1385,14 @@ function StepWinerimCatalog({
         <div className="grid grid-cols-4 gap-4 text-xs">
           <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
           <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
-          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null).length}</span></div>
+          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
+        {lastEnrichedAt && (
+          <p className="text-[11px] text-muted-foreground">
+            Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
+          </p>
+        )}
         {wines.length > 0 && wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length === 0 && (
           <div className="flex items-start gap-2 mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
@@ -1310,9 +1407,25 @@ function StepWinerimCatalog({
       <div className="flex gap-2 flex-wrap">
         <Button variant="secondary" size="sm" onClick={fetchCatalog} disabled={fetchingCatalog}>
           {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-          {wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
+          {fetchingCatalog
+            ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
+            : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
       </div>
+
+      {(fetchingCatalog || refreshDiagnostics) && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
+          <p className="text-muted-foreground">Diagnostics</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <p className="text-foreground">List fetched: <span className="font-mono">{refreshDiagnostics?.listFetched ?? 0}</span></p>
+            <p className="text-foreground">Details attempted: <span className="font-mono">{refreshDiagnostics?.detailAttempted ?? 0}</span></p>
+            <p className="text-foreground">Details succeeded: <span className="font-mono">{refreshDiagnostics?.detailSucceeded ?? 0}</span></p>
+            <p className="text-foreground">Progress: <span className="font-mono">{refreshDiagnostics?.processed ?? 0}/{refreshDiagnostics?.total ?? 0}</span></p>
+            <p className="text-foreground">Bottle priced: <span className="font-mono">{refreshDiagnostics?.bottleUpdated ?? 0}</span></p>
+            <p className="text-foreground">Glass priced: <span className="font-mono">{refreshDiagnostics?.glassUpdated ?? 0}</span></p>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
