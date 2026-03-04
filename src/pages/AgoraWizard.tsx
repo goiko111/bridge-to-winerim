@@ -36,10 +36,28 @@ const steps = [
   { id: 6, label: "Families", icon: Grape },
   { id: 7, label: "Sales & Mapping", icon: Map },
   { id: 8, label: "Wine Matching", icon: Wine },
-  { id: 9, label: "Write Settings", icon: Wrench },
-  { id: 10, label: "Outbound Sync", icon: Upload },
-  { id: 11, label: "Go Live", icon: Power },
+  { id: 9, label: "Winerim Catalog", icon: Grape },
+  { id: 10, label: "Write Settings", icon: Wrench },
+  { id: 11, label: "Outbound Sync", icon: Upload },
+  { id: 12, label: "Go Live", icon: Power },
 ];
+
+// Helper to fetch all rows from a table without limit
+async function fetchAllRows<T>(table: string, connectionId: string, select: string, orderBy?: string): Promise<T[]> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+  while (true) {
+    let query = supabase.from(table).select(select).eq("connection_id", connectionId).range(from, from + PAGE_SIZE - 1);
+    if (orderBy) query = query.order(orderBy);
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) break;
+    allRows.push(...(data as unknown as T[]));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return allRows;
+}
 
 // ── Classification badge component ──
 function ClassificationBadge({ product }: { product: ProviderProduct | { classification_override?: string; is_wine_candidate: boolean; last_score?: number; last_reasons?: string[]; wine_score?: number; wine_reasons?: string[] } }) {
@@ -836,12 +854,12 @@ function StepWineMatching({
   const loadData = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const [mappingsRes, winesRes] = await Promise.all([
-      supabase.from("product_mappings").select("*").eq("connection_id", connectionId).order("match_score", { ascending: false }).limit(500),
-      supabase.from("winerim_wines").select("winerim_id, name, winery, vintage, region").eq("connection_id", connectionId).order("name").limit(500),
+    const [mappingsData, winesData] = await Promise.all([
+      fetchAllRows<ProductMapping>("product_mappings", connectionId, "*", "match_score"),
+      fetchAllRows<WinerimWine>("winerim_wines", connectionId, "winerim_id, name, winery, vintage, region", "name"),
     ]);
-    setMappings((mappingsRes.data || []) as unknown as ProductMapping[]);
-    setWinerimWines((winesRes.data || []) as unknown as WinerimWine[]);
+    setMappings(mappingsData);
+    setWinerimWines(winesData);
     setLoading(false);
   }, [connectionId]);
 
