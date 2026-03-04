@@ -5,7 +5,8 @@ import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
-  Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield,
+  Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
+  Server, Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,17 +21,20 @@ import {
   CatalogDiscoveryResult, ProviderProduct, ClassificationConfig,
 } from "@/hooks/useAgoraConnection";
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
+import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Sync Settings", icon: Settings2 },
   { id: 3, label: "Capabilities", icon: Shield },
   { id: 4, label: "Catalog", icon: Package },
-  { id: 5, label: "Families", icon: Grape },
-  { id: 6, label: "Sales & Mapping", icon: Map },
-  { id: 7, label: "Wine Matching", icon: Wine },
-  { id: 8, label: "Outbound Sync", icon: Upload },
-  { id: 9, label: "Go Live", icon: Power },
+  { id: 5, label: "Master Data", icon: Server },
+  { id: 6, label: "Families", icon: Grape },
+  { id: 7, label: "Sales & Mapping", icon: Map },
+  { id: 8, label: "Wine Matching", icon: Wine },
+  { id: 9, label: "Write Settings", icon: Wrench },
+  { id: 10, label: "Outbound Sync", icon: Upload },
+  { id: 11, label: "Go Live", icon: Power },
 ];
 
 // ── Classification badge component ──
@@ -1358,7 +1362,162 @@ function StepOutboundSync({
   );
 }
 
-// ── Step 9: Go Live ──
+// ── Step 5: Master Data ──
+function StepMasterData({
+  masterData, syncing, syncError, onSync, onLoad,
+}: {
+  masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
+  syncing: boolean; syncError: string | null;
+  onSync: () => void; onLoad: () => void;
+}) {
+  useEffect(() => { onLoad(); }, []);
+
+  const sections = [
+    { label: "Families", data: masterData.families, icon: Grape },
+    { label: "VATs", data: masterData.vats, icon: Tag },
+    { label: "Price Lists", data: masterData.priceLists, icon: FileText },
+    { label: "Preparation Types", data: masterData.preparationTypes, icon: Settings2 },
+    { label: "Preparation Orders", data: masterData.preparationOrders, icon: Settings2 },
+    { label: "Warehouses", data: masterData.warehouses, icon: Database },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Agora Master Data</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Fetch master data (families, VATs, price lists, etc.) from Agora via <code className="text-xs font-mono bg-secondary px-1 rounded">/api/export-master/</code>
+        </p>
+      </div>
+      <Button variant="secondary" size="sm" onClick={onSync} disabled={syncing}>
+        {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+        Sync Agora Master Data
+      </Button>
+      {syncError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          <p className="font-medium flex items-center gap-1.5"><XCircle className="h-3.5 w-3.5" /> {syncError}</p>
+        </div>
+      )}
+      {masterData.fetchedAt && (
+        <p className="text-[11px] text-muted-foreground">Last synced: {new Date(masterData.fetchedAt).toLocaleString()}</p>
+      )}
+      {sections.map(({ label, data, icon: Icon }) => (
+        <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Icon className="h-3.5 w-3.5" /> {label} ({data.length})
+          </p>
+          {data.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {data.map((item: any, i: number) => (
+                <Badge key={i} variant="outline" className="text-[10px] font-mono">
+                  {item.Id}: {item.Name}{item.VatRate ? ` (${(Number(item.VatRate) * 100).toFixed(0)}%)` : ""}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground italic">No data yet. Click sync above.</p>
+          )}
+        </div>
+      ))}
+      {masterData.productsSummary.length > 0 && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Package className="h-3.5 w-3.5" /> Existing Products ({masterData.productsSummary.length})
+          </p>
+          <p className="text-[11px] text-muted-foreground mt-1">Products already in Agora. New wines will get IDs starting at 500000+.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 9: Write Settings ──
+function StepWriteSettings({
+  writeSettings, masterData, onSave,
+}: {
+  writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
+  masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
+  onSave: (s: Partial<import("@/hooks/useAgoraMasterData").WriteSettings>) => void;
+}) {
+  const families = masterData.families;
+  const vats = masterData.vats;
+  const prepTypes = masterData.preparationTypes;
+  const prepOrders = masterData.preparationOrders;
+  const warehouses = masterData.warehouses;
+
+  const SelectDropdown = ({ label, value, options, onChange }: {
+    label: string; value: string | null;
+    options: { id: string; label: string }[];
+    onChange: (v: string) => void;
+  }) => (
+    <div>
+      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{label}</label>
+      <select
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+      >
+        <option value="">Auto / Default</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>{o.id}: {o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Write Settings</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Configure defaults for creating wine products in Agora via XML import.
+        </p>
+      </div>
+
+      {families.length === 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+          <p className="font-medium flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> No master data loaded. Go back to "Master Data" step and sync first.</p>
+        </div>
+      )}
+
+      <div className="grid gap-4">
+        <SelectDropdown label="Default Wine Family" value={writeSettings.default_family_id}
+          options={families.map((f: any) => ({ id: f.Id, label: f.Name }))}
+          onChange={(v) => onSave({ default_family_id: v || null })} />
+        <SelectDropdown label="Default VAT" value={writeSettings.default_vat_id}
+          options={vats.map((v: any) => ({ id: v.Id, label: `${v.Name} (${(Number(v.VatRate) * 100).toFixed(0)}%)` }))}
+          onChange={(v) => onSave({ default_vat_id: v || null })} />
+        <SelectDropdown label="Preparation Type" value={writeSettings.default_preparation_type_id}
+          options={prepTypes.map((p: any) => ({ id: p.Id, label: p.Name }))}
+          onChange={(v) => onSave({ default_preparation_type_id: v || null })} />
+        <SelectDropdown label="Preparation Order" value={writeSettings.default_preparation_order_id}
+          options={prepOrders.map((p: any) => ({ id: p.Id, label: p.Name }))}
+          onChange={(v) => onSave({ default_preparation_order_id: v || null })} />
+        <SelectDropdown label="Default Warehouse" value={writeSettings.default_warehouse_id}
+          options={warehouses.map((w: any) => ({ id: w.Id, label: w.Name }))}
+          onChange={(v) => onSave({ default_warehouse_id: v || null })} />
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <p className="text-xs font-medium text-muted-foreground">Format Options</p>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Write Bottle (BOT.)</p><p className="text-[11px] text-muted-foreground">Create bottle products in Agora</p></div>
+          <Switch checked={writeSettings.write_bottle} onCheckedChange={(v) => onSave({ write_bottle: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Write Glass (COPA)</p><p className="text-[11px] text-muted-foreground">Create glass/copa products in Agora</p></div>
+          <Switch checked={writeSettings.write_glass} onCheckedChange={(v) => onSave({ write_glass: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-create Missing Families</p><p className="text-[11px] text-muted-foreground">Create wine families in Agora if they don't exist</p></div>
+          <Switch checked={writeSettings.auto_create_families} onCheckedChange={(v) => onSave({ auto_create_families: v })} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 11: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
@@ -1437,6 +1596,7 @@ export default function AgoraWizard() {
   } = useAgoraConnection();
 
   const outbound = useOutboundSync(connectionId);
+  const agoraMaster = useAgoraMasterData(connectionId);
 
   // Winerim wines for outbound push
   const [winerimWinesForPush, setWinerimWinesForPush] = useState<{ winerim_id: string; name: string }[]>([]);
@@ -1454,20 +1614,20 @@ export default function AgoraWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          setCurrentStep(6);
+          setCurrentStep(7);
         }
       });
     }
   }, [searchParams]);
 
   useEffect(() => {
-    if ((currentStep === 5 || currentStep === 6) && connectionId && daysWithSales.length === 0 && !loadingDays) {
+    if ((currentStep === 6 || currentStep === 7) && connectionId && daysWithSales.length === 0 && !loadingDays) {
       findDaysWithSales(60);
     }
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if (selectedDay && (currentStep === 5 || currentStep === 6)) fetchSalesForDay(selectedDay);
+    if (selectedDay && (currentStep === 6 || currentStep === 7)) fetchSalesForDay(selectedDay);
   }, [selectedDay]);
 
   useEffect(() => {
@@ -1475,14 +1635,14 @@ export default function AgoraWizard() {
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if ((currentStep === 5 || currentStep === 6) && connectionId) {
+    if ((currentStep === 6 || currentStep === 7) && connectionId) {
       loadClassificationConfig();
       if (catalogProducts.length === 0) fetchCatalogProducts();
     }
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if (connectionId && currentStep === 5 && !classificationConfig.id) {
+    if (connectionId && currentStep === 6 && !classificationConfig.id) {
       saveClassificationConfig({
         non_wine_keywords_blacklist: ["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "postre", "tarta", "pan", "snack", "ensalada", "pescado", "carne"],
         wine_keywords_whitelist: ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut", "reserva", "crianza", "botella", "bot.", "75cl", "magnum", "copa"],
@@ -1491,9 +1651,17 @@ export default function AgoraWizard() {
     }
   }, [connectionId, currentStep]);
 
-  // Load winerim wines when entering step 8
+  // Load master data + write settings when entering steps 5 or 9
   useEffect(() => {
-    if (currentStep === 8 && connectionId) {
+    if ((currentStep === 5 || currentStep === 9) && connectionId) {
+      agoraMaster.loadMasterData();
+      agoraMaster.loadWriteSettings();
+    }
+  }, [currentStep, connectionId]);
+
+  // Load winerim wines when entering step 10
+  useEffect(() => {
+    if (currentStep === 10 && connectionId) {
       supabase.from("winerim_wines")
         .select("winerim_id, name")
         .eq("connection_id", connectionId)
@@ -1524,13 +1692,13 @@ export default function AgoraWizard() {
         backfill_days: backfill, location_name: locationName || "New Location",
       });
     }
-    if (currentStep === 5) {
+    if (currentStep === 6) {
       const families = detectedFamilies.map((f) => ({
         name: f.name, isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(9, s + 1));
+    setCurrentStep((s) => Math.min(11, s + 1));
   };
 
   return (
@@ -1554,7 +1722,7 @@ export default function AgoraWizard() {
               <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
                 {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.id}
               </div>
-              <span className={`text-[10px] font-medium hidden lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              <span className={`text-[10px] font-medium hidden xl:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
               {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
             </div>
           );
@@ -1591,13 +1759,18 @@ export default function AgoraWizard() {
               onFetchProducts={fetchCatalogProducts} onBuildDerived={buildDerivedCatalog} />
           )}
           {currentStep === 5 && (
+            <StepMasterData masterData={agoraMaster.masterData}
+              syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
+              onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData} />
+          )}
+          {currentStep === 6 && (
             <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
               familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
               scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
               onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
               catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
           )}
-          {currentStep === 6 && (
+          {currentStep === 7 && (
             <StepSalesMapping daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
               loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
               onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
@@ -1606,10 +1779,15 @@ export default function AgoraWizard() {
               onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
               recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
           )}
-          {currentStep === 7 && (
+          {currentStep === 8 && (
             <StepWineMatching connectionId={connectionId} />
           )}
-          {currentStep === 8 && (
+          {currentStep === 9 && (
+            <StepWriteSettings writeSettings={agoraMaster.writeSettings}
+              masterData={agoraMaster.masterData}
+              onSave={agoraMaster.saveWriteSettings} />
+          )}
+          {currentStep === 10 && (
             <StepOutboundSync connectionId={connectionId}
               capabilities={outbound.capabilities}
               outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
@@ -1620,7 +1798,7 @@ export default function AgoraWizard() {
               winerimWines={winerimWinesForPush}
               onQueueProducts={(ids) => outbound.queueProducts(ids)} />
           )}
-          {currentStep === 9 && (
+          {currentStep === 11 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -1632,7 +1810,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 9 && (
+        {currentStep < 11 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>

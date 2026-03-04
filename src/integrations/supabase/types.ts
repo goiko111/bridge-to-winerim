@@ -14,6 +14,62 @@ export type Database = {
   }
   public: {
     Tables: {
+      agora_master_data: {
+        Row: {
+          connection_id: string
+          created_at: string
+          families_json: Json
+          fetched_at: string | null
+          id: string
+          preparation_orders_json: Json
+          preparation_types_json: Json
+          price_lists_json: Json
+          products_summary_json: Json
+          raw_xml_preview: string | null
+          updated_at: string
+          vats_json: Json
+          warehouses_json: Json
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          families_json?: Json
+          fetched_at?: string | null
+          id?: string
+          preparation_orders_json?: Json
+          preparation_types_json?: Json
+          price_lists_json?: Json
+          products_summary_json?: Json
+          raw_xml_preview?: string | null
+          updated_at?: string
+          vats_json?: Json
+          warehouses_json?: Json
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          families_json?: Json
+          fetched_at?: string | null
+          id?: string
+          preparation_orders_json?: Json
+          preparation_types_json?: Json
+          price_lists_json?: Json
+          products_summary_json?: Json
+          raw_xml_preview?: string | null
+          updated_at?: string
+          vats_json?: Json
+          warehouses_json?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agora_master_data_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       classification_config: {
         Row: {
           connection_id: string
@@ -126,6 +182,7 @@ export type Database = {
       pos_connections: {
         Row: {
           api_token: string
+          auto_create_families: boolean
           backfill_days: number
           base_url: string
           catalog_endpoint: string | null
@@ -134,8 +191,13 @@ export type Database = {
           catalog_wine_candidate_count: number | null
           created_at: string
           default_bottle_format_name: string | null
+          default_family_id: string | null
           default_glass_format_name: string | null
+          default_preparation_order_id: string | null
+          default_preparation_type_id: string | null
+          default_vat_id: string | null
           default_vat_rate: number | null
+          default_warehouse_id: string | null
           default_wine_family_name: string | null
           enabled: boolean
           id: string
@@ -148,9 +210,13 @@ export type Database = {
           sync_mode: string
           updated_at: string
           winerim_api_token: string | null
+          write_bottle: boolean
+          write_glass: boolean
+          write_mode: string
         }
         Insert: {
           api_token: string
+          auto_create_families?: boolean
           backfill_days?: number
           base_url: string
           catalog_endpoint?: string | null
@@ -159,8 +225,13 @@ export type Database = {
           catalog_wine_candidate_count?: number | null
           created_at?: string
           default_bottle_format_name?: string | null
+          default_family_id?: string | null
           default_glass_format_name?: string | null
+          default_preparation_order_id?: string | null
+          default_preparation_type_id?: string | null
+          default_vat_id?: string | null
           default_vat_rate?: number | null
+          default_warehouse_id?: string | null
           default_wine_family_name?: string | null
           enabled?: boolean
           id?: string
@@ -173,9 +244,13 @@ export type Database = {
           sync_mode?: string
           updated_at?: string
           winerim_api_token?: string | null
+          write_bottle?: boolean
+          write_glass?: boolean
+          write_mode?: string
         }
         Update: {
           api_token?: string
+          auto_create_families?: boolean
           backfill_days?: number
           base_url?: string
           catalog_endpoint?: string | null
@@ -184,8 +259,13 @@ export type Database = {
           catalog_wine_candidate_count?: number | null
           created_at?: string
           default_bottle_format_name?: string | null
+          default_family_id?: string | null
           default_glass_format_name?: string | null
+          default_preparation_order_id?: string | null
+          default_preparation_type_id?: string | null
+          default_vat_id?: string | null
           default_vat_rate?: number | null
+          default_warehouse_id?: string | null
           default_wine_family_name?: string | null
           enabled?: boolean
           id?: string
@@ -198,14 +278,21 @@ export type Database = {
           sync_mode?: string
           updated_at?: string
           winerim_api_token?: string | null
+          write_bottle?: boolean
+          write_glass?: boolean
+          write_mode?: string
         }
         Relationships: []
       }
       product_mappings: {
         Row: {
+          agora_product_id: string | null
           connection_id: string
           created_at: string
+          format_type: string
           id: string
+          last_sync_error: string | null
+          last_synced_at: string | null
           match_method: string
           match_reasons: string[] | null
           match_score: number | null
@@ -217,9 +304,13 @@ export type Database = {
           winerim_wine_name: string | null
         }
         Insert: {
+          agora_product_id?: string | null
           connection_id: string
           created_at?: string
+          format_type?: string
           id?: string
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           match_method?: string
           match_reasons?: string[] | null
           match_score?: number | null
@@ -231,9 +322,13 @@ export type Database = {
           winerim_wine_name?: string | null
         }
         Update: {
+          agora_product_id?: string | null
           connection_id?: string
           created_at?: string
+          format_type?: string
           id?: string
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           match_method?: string
           match_reasons?: string[] | null
           match_score?: number | null

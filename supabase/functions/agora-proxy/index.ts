@@ -229,6 +229,158 @@ async function loadConfig(supabase: any, connectionId: string): Promise<Classifi
   };
 }
 
+// ── XML IMPORT GENERATOR ──
+// deno-lint-ignore no-explicit-any
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[]): string {
+  const families = (masterData.families_json || []) as { Id: string; Name: string }[];
+  const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
+  const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+  const prepTypes = (masterData.preparation_types_json || []) as { Id: string; Name: string }[];
+  const prepOrders = (masterData.preparation_orders_json || []) as { Id: string; Name: string }[];
+  const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
+  const existingProducts = (masterData.products_summary_json || []) as { Id: string; Name: string }[];
+
+  // Resolve defaults from connection settings
+  const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
+  const defaultPrepTypeId = connection.default_preparation_type_id || (prepTypes.length > 0 ? prepTypes[0].Id : "1");
+  const defaultPrepOrderId = connection.default_preparation_order_id || (prepOrders.length > 0 ? prepOrders[0].Id : "1");
+  const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
+  const autoCreateFamilies = connection.auto_create_families ?? false;
+
+  // Wine type -> family mapping
+  const WINE_FAMILY_MAP: Record<string, string[]> = {
+    "tinto": ["VINOS TINTOS", "Tintos", "Tinto"],
+    "blanco": ["VINOS BLANCOS", "Blancos", "Blanco"],
+    "rosado": ["VINOS ROSADOS", "Rosados", "Rosado"],
+    "espumoso": ["ESPUMOSOS", "Espumosos", "Cava", "Champagne"],
+    "cava": ["ESPUMOSOS", "Cava", "Espumosos"],
+    "champagne": ["ESPUMOSOS", "Champagne", "Espumosos"],
+    "generoso": ["GENEROSOS", "Generosos", "Jerez"],
+    "fortificado": ["GENEROSOS", "Generosos"],
+  };
+
+  function findFamilyId(wineType?: string): { id: string; needsCreate: boolean; familyName: string } {
+    // First try connection default
+    if (connection.default_family_id) {
+      const found = families.find(f => f.Id === connection.default_family_id);
+      if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
+    }
+
+    // Try matching wine type
+    if (wineType) {
+      const typeKey = wineType.toLowerCase();
+      const candidates = WINE_FAMILY_MAP[typeKey] || [];
+      for (const candidate of candidates) {
+        const found = families.find(f => f.Name.toLowerCase() === candidate.toLowerCase());
+        if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
+      }
+    }
+
+    // Fallback: search for generic wine family
+    const genericNames = ["Vinos", "Vino", "Wine", "Wines", connection.default_wine_family_name || "Vinos"];
+    for (const name of genericNames) {
+      const found = families.find(f => f.Name.toLowerCase() === name.toLowerCase());
+      if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
+    }
+
+    // Auto-create if enabled
+    if (autoCreateFamilies) {
+      const newFamilyName = wineType ? `Vinos ${wineType.charAt(0).toUpperCase() + wineType.slice(1)}` : "Vinos";
+      const newId = String(900000 + Math.floor(Math.random() * 10000));
+      return { id: newId, needsCreate: true, familyName: newFamilyName };
+    }
+
+    // Ultimate fallback: first family
+    if (families.length > 0) return { id: families[0].Id, needsCreate: false, familyName: families[0].Name };
+    return { id: "1", needsCreate: false, familyName: "Vinos" };
+  }
+
+  function findVatIdByRate(vatList: { Id: string; VatRate: string }[], rate?: number): string | null {
+    if (!rate) return null;
+    const rateStr = (rate / 100).toFixed(2); // 10 -> 0.10
+    const found = vatList.find(v => v.VatRate === rateStr);
+    return found?.Id || null;
+  }
+
+  function escapeXml(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+
+  function truncate(s: string, maxLen: number): string {
+    return s.length <= maxLen ? s : s.substring(0, maxLen);
+  }
+
+  // Build products and track needed families
+  const newFamilies: { id: string; name: string }[] = [];
+  const productXmls: string[] = [];
+
+  for (const wine of wines) {
+    const winerimId = Number(wine.winerim_id || wine.id || 0);
+    const wineName = wine.name || "Unknown Wine";
+    const wineType = wine.grape_variety || wine.region || "";
+
+    for (const fmt of formatTypes) {
+      const isGlass = fmt === "GLASS";
+      const productId = isGlass ? 700000 + winerimId : 500000 + winerimId;
+      const saleFormatId = productId; // BaseSaleFormatId = same as productId for simple products
+
+      // Check if product already exists
+      const existsAlready = existingProducts.some(p => p.Id === String(productId));
+
+      const familyResult = findFamilyId(wineType);
+      if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
+        newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
+      }
+
+      const productName = isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
+      const buttonText = truncate(isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`, 20);
+      const costPrice = (wine.price ? Number(wine.price) * 0.4 : 0).toFixed(2); // estimate cost as 40% of sale price
+      const salePrice = wine.price ? Number(wine.price).toFixed(2) : "0.00";
+      const glassSalePrice = wine.price ? (Number(wine.price) / 5).toFixed(2) : "0.00"; // ~1/5 of bottle
+      const mainPrice = isGlass ? glassSalePrice : salePrice;
+
+      // Build Prices XML for all price lists
+      const pricesXml = priceLists.map(pl =>
+        `        <Price PriceListId="${pl.Id}" MainPrice="${mainPrice}" AddinPrice="" MenuItemPrice="0.00" />`
+      ).join("\n");
+
+      // Build CostPrices XML for all warehouses
+      const costPricesXml = warehouses.map(wh =>
+        `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
+      ).join("\n");
+
+      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" BaseSaleFormatId="${saleFormatId}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+      <Prices>
+${pricesXml}
+      </Prices>
+      <CostPrices>
+${costPricesXml}
+      </CostPrices>
+    </Product>`);
+    }
+  }
+
+  // Build final XML
+  let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n`;
+
+  // Add new families if needed
+  if (newFamilies.length > 0) {
+    xml += `  <Families>\n`;
+    for (const f of newFamilies) {
+      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.name, 15))}" Color="#8B0000" Order="100" />\n`;
+    }
+    xml += `  </Families>\n`;
+  }
+
+  // Add products
+  xml += `  <Products>\n`;
+  xml += productXmls.join("\n");
+  xml += `\n  </Products>\n`;
+  xml += `</Import>`;
+
+  return xml;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -1417,6 +1569,457 @@ serve(async (req) => {
         JSON.stringify({ success: true, products: exportRows, count: exportRows.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // ── SYNC AGORA MASTER DATA ──
+    if (action === "sync-master-data") {
+      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses`;
+      const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml" };
+      
+      let res: Response;
+      try {
+        res = await fetchWithRetry(url, { headers: xmlHeaders }, 30000);
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ success: false, error: `Failed to reach Agora: ${e}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        return new Response(
+          JSON.stringify({ success: false, error: `Agora responded ${res.status}`, body: body.substring(0, 2048) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const rawXml = await res.text();
+      
+      // Parse XML using regex-based extraction (no external XML parser in Deno edge functions)
+      function extractElements(xml: string, tagName: string): Record<string, string>[] {
+        const results: Record<string, string>[] = [];
+        const selfClosingRegex = new RegExp(`<${tagName}\\s([^>]*?)\\/>`, "gi");
+        let match;
+        while ((match = selfClosingRegex.exec(xml)) !== null) {
+          const attrs: Record<string, string> = {};
+          const attrRegex = /(\w+)="([^"]*)"/g;
+          let attrMatch;
+          while ((attrMatch = attrRegex.exec(match[1])) !== null) {
+            attrs[attrMatch[1]] = attrMatch[2];
+          }
+          results.push(attrs);
+        }
+        // Also match non-self-closing (for Products with children)
+        const openRegex = new RegExp(`<${tagName}\\s([^>]*?)>`, "gi");
+        while ((match = openRegex.exec(xml)) !== null) {
+          const attrs: Record<string, string> = {};
+          const attrRegex = /(\w+)="([^"]*)"/g;
+          let attrMatch;
+          while ((attrMatch = attrRegex.exec(match[1])) !== null) {
+            attrs[attrMatch[1]] = attrMatch[2];
+          }
+          // Avoid duplicates from self-closing
+          if (!results.some(r => r.Id === attrs.Id && r.Name === attrs.Name)) {
+            results.push(attrs);
+          }
+        }
+        return results;
+      }
+
+      const families = extractElements(rawXml, "Family");
+      const vats = extractElements(rawXml, "Vat");
+      const priceLists = extractElements(rawXml, "PriceList");
+      const prepTypes = extractElements(rawXml, "PreparationType");
+      const prepOrders = extractElements(rawXml, "PreparationOrder");
+      const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name); // filter out empty
+      const products = extractElements(rawXml, "Product");
+
+      // Products summary: just Id + Name + FamilyId to keep it lightweight
+      const productsSummary = products.map(p => ({
+        Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
+      }));
+
+      // Upsert master data
+      await supabase.from("agora_master_data").upsert({
+        connection_id: connectionId,
+        families_json: families,
+        vats_json: vats,
+        price_lists_json: priceLists,
+        preparation_types_json: prepTypes,
+        preparation_orders_json: prepOrders,
+        warehouses_json: warehouses,
+        products_summary_json: productsSummary,
+        raw_xml_preview: rawXml.substring(0, 5000),
+        fetched_at: new Date().toISOString(),
+      }, { onConflict: "connection_id" });
+
+      // Update write_mode on connection if we got valid data
+      if (families.length > 0 || products.length > 0) {
+        await supabase.from("pos_connections").update({
+          write_mode: "XML_IMPORT",
+        }).eq("id", connectionId).eq("write_mode", "NONE");
+
+        // Update capabilities
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: connectionId,
+          provider: "AGORA",
+          can_read_sales: true,
+          can_read_catalog: true,
+          can_write_products: "YES",
+          write_endpoint: "/api/import/",
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          families: families.length,
+          vats: vats.length,
+          priceLists: priceLists.length,
+          preparationTypes: prepTypes.length,
+          preparationOrders: prepOrders.length,
+          warehouses: warehouses.length,
+          products: productsSummary.length,
+          masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── PREVIEW XML (dry-run, no send) ──
+    if (action === "preview-xml") {
+      const { winerimWineIds, formatTypes } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"] }));
+      
+      // Load master data
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .single();
+
+      if (!masterData) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No master data cached. Run 'Sync Master Data' first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Load wines
+      const { data: wines } = await supabase
+        .from("winerim_wines")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", winerimWineIds || []);
+
+      if (!wines || wines.length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No wines found" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const xml = generateImportXml(wines, masterData, connection, formatTypes || ["BOTTLE"]);
+
+      return new Response(
+        JSON.stringify({ success: true, xml, wineCount: wines.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── XML IMPORT (POST /api/import/) ──
+    if (action === "xml-import") {
+      const { winerimWineIds, formatTypes, dryRun } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"], dryRun: false }));
+
+      // Load master data
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .single();
+
+      if (!masterData) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No master data. Run 'Sync Master Data' first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Load wines
+      const { data: wines } = await supabase
+        .from("winerim_wines")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", winerimWineIds || []);
+
+      if (!wines || wines.length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No wines found" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const xml = generateImportXml(wines, masterData, connection, formatTypes || ["BOTTLE"]);
+
+      if (dryRun) {
+        return new Response(
+          JSON.stringify({ success: true, dryRun: true, xml }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // POST to Agora
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+
+      let importRes: Response;
+      try {
+        importRes = await fetchWithRetry(importUrl, {
+          method: "POST",
+          headers: xmlHeaders,
+          body: xml,
+        }, 30000);
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ success: false, error: `Failed to reach Agora import: ${e}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const responseBody = await importRes.text().catch(() => "");
+      const responsePreview = responseBody.substring(0, 2048);
+
+      // Update mappings
+      const fmtTypes = formatTypes || ["BOTTLE"];
+      for (const wine of wines) {
+        for (const fmt of fmtTypes) {
+          const agoraProductId = fmt === "GLASS" 
+            ? String(700000 + Number(wine.winerim_id || 0))
+            : String(500000 + Number(wine.winerim_id || 0));
+
+          await supabase.from("product_mappings").upsert({
+            connection_id: connectionId,
+            provider_product_id: agoraProductId,
+            provider_product_name: fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`,
+            winerim_wine_id: wine.winerim_id,
+            winerim_wine_name: wine.name,
+            match_method: "XML_IMPORT",
+            match_score: 100,
+            match_reasons: ["Created via XML import"],
+            status: importRes.ok ? "CONFIRMED" : "PENDING",
+            format_type: fmt,
+            agora_product_id: agoraProductId,
+            last_synced_at: importRes.ok ? new Date().toISOString() : null,
+            last_sync_error: importRes.ok ? null : responsePreview.substring(0, 500),
+          }, { onConflict: "connection_id,provider_product_id" });
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: importRes.ok,
+          status: importRes.status,
+          responsePreview,
+          xmlSent: xml.substring(0, 3000),
+          winesProcessed: wines.length,
+          formatsUsed: fmtTypes,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── PROCESS OUTBOUND TASK (XML_IMPORT mode) ──
+    if (action === "process-xml-outbound-task") {
+      const { taskId } = await req.json().catch(() => ({ taskId: undefined }));
+
+      const { data: task, error: taskErr } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("id", taskId)
+        .single();
+      if (taskErr || !task) {
+        return new Response(JSON.stringify({ error: "Task not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Mark as running
+      await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
+
+      try {
+        // Load master data
+        const { data: masterData } = await supabase
+          .from("agora_master_data")
+          .select("*")
+          .eq("connection_id", task.connection_id)
+          .single();
+
+        if (!masterData) {
+          await supabase.from("outbound_tasks").update({
+            status: "BLOCKED", blocked_reason: "No master data cached. Run 'Sync Master Data' first.",
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "BLOCKED" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        const payload = task.payload_json as Record<string, unknown>;
+        const winerimWineId = payload._winerim_wine_id as string;
+        const fmtTypes = (payload._format_types as string[]) || ["BOTTLE"];
+
+        // Load wine
+        const { data: wineArr } = await supabase
+          .from("winerim_wines")
+          .select("*")
+          .eq("connection_id", task.connection_id)
+          .eq("winerim_id", winerimWineId)
+          .limit(1);
+
+        if (!wineArr || wineArr.length === 0) {
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED", last_error: `Wine ${winerimWineId} not found in cache`,
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        const xml = generateImportXml(wineArr, masterData, connection, fmtTypes);
+
+        // POST
+        const importUrl = `${baseUrlClean}/api/import/`;
+        const xmlHeaders = {
+          "Api-Token": apiTokenClean,
+          Accept: "application/xml",
+          "Content-Type": "application/xml; charset=utf-8",
+        };
+
+        const importRes = await fetchWithRetry(importUrl, {
+          method: "POST",
+          headers: xmlHeaders,
+          body: xml,
+        }, 30000);
+
+        const responseBody = await importRes.text().catch(() => "");
+        const responsePreview = responseBody.substring(0, 2048);
+
+        if (!importRes.ok) {
+          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+          await supabase.from("outbound_tasks").update({
+            status: shouldRetry ? "QUEUED" : "FAILED",
+            last_error: `HTTP ${importRes.status}: ${responsePreview}`,
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        // Success - update mappings
+        for (const fmt of fmtTypes) {
+          const agoraProductId = fmt === "GLASS"
+            ? String(700000 + Number(winerimWineId || 0))
+            : String(500000 + Number(winerimWineId || 0));
+
+          await supabase.from("product_mappings").upsert({
+            connection_id: task.connection_id,
+            provider_product_id: agoraProductId,
+            provider_product_name: fmt === "GLASS" ? `COPA ${wineArr[0].name}` : `BOT. ${wineArr[0].name}`,
+            winerim_wine_id: winerimWineId,
+            winerim_wine_name: wineArr[0].name,
+            match_method: "XML_IMPORT",
+            match_score: 100,
+            status: "CONFIRMED",
+            format_type: fmt,
+            agora_product_id: agoraProductId,
+            last_synced_at: new Date().toISOString(),
+          }, { onConflict: "connection_id,provider_product_id" });
+        }
+
+        await supabase.from("outbound_tasks").update({
+          status: "SUCCESS", last_error: null,
+          external_id: String(500000 + Number(winerimWineId || 0)),
+        }).eq("id", task.id);
+
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", responsePreview }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+      } catch (e) {
+        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        await supabase.from("outbound_tasks").update({
+          status: shouldRetry ? "QUEUED" : "FAILED",
+          last_error: String(e).substring(0, 500),
+        }).eq("id", task.id);
+        return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── QUEUE XML OUTBOUND TASKS ──
+    if (action === "queue-xml-outbound") {
+      const { winerimWineIds, formatTypes } = await req.json().catch(() => ({ winerimWineIds: [], formatTypes: ["BOTTLE"] }));
+      const fmtTypes = formatTypes || ["BOTTLE"];
+
+      let queued = 0;
+      for (const wineId of (winerimWineIds || [])) {
+        // Check idempotency
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wineId })
+          .in("status", ["QUEUED", "RUNNING", "SUCCESS"])
+          .limit(1);
+
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wineId,
+            _format_types: fmtTypes,
+            _write_mode: "XML_IMPORT",
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── PROCESS XML OUTBOUND QUEUE (batch) ──
+    if (action === "process-xml-outbound-queue") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("id")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .eq("status", "QUEUED")
+        .order("created_at")
+        .limit(10);
+
+      if (!tasks || tasks.length === 0) {
+        return new Response(JSON.stringify({ success: true, processed: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let processed = 0, succeeded = 0, failed = 0;
+      for (const t of tasks) {
+        try {
+          const { data: result } = await supabase.functions.invoke("agora-proxy", {
+            body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
+          });
+          processed++;
+          if (result?.status === "SUCCESS") succeeded++; else failed++;
+        } catch (_) { failed++; processed++; }
+      }
+
+      return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── DIAGNOSE (legacy) ──
