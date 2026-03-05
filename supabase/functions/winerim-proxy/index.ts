@@ -470,6 +470,24 @@ serve(async (req) => {
           }
 
           const nf = extractNormalizedFields(w, null);
+
+          // Determine pricing status from list data
+          let pricingStatus = "MISSING";
+          let pricingMissingReason: string | null = "no_prices_array"; // default: list endpoint rarely has prices
+          
+          const listPrices = Array.isArray(w.prices) ? w.prices as unknown[] : [];
+          if (nf.bottleSalePrice != null) {
+            pricingStatus = "READY";
+            pricingMissingReason = null;
+          } else if (listPrices.length > 0) {
+            // Has prices array but no recognized bottle price
+            const variants = listPrices.map((p: any) => p?.variant).filter(Boolean);
+            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
+          } else if (Array.isArray(w.prices)) {
+            pricingMissingReason = "prices_array_empty";
+          }
+
           const upsertPayload: Record<string, unknown> = {
             connection_id: connectionId,
             winerim_id: winerimId,
@@ -484,14 +502,14 @@ serve(async (req) => {
             raw_payload: w,
             serve_by_glass: nf.serveByGlass,
             is_active: nf.isActive,
+            pricing_status: pricingStatus,
+            pricing_missing_reason: pricingMissingReason,
           };
 
           if (nf.wineType) upsertPayload.wine_type = nf.wineType;
           if (nf.bottleSalePrice != null) {
             upsertPayload.bottle_sale_price = nf.bottleSalePrice;
             upsertPayload.price = nf.bottleSalePrice;
-            upsertPayload.pricing_status = "READY";
-            upsertPayload.pricing_missing_reason = null;
           }
           if (nf.bottlePurchasePrice != null) upsertPayload.bottle_purchase_price = nf.bottlePurchasePrice;
           if (nf.glassSalePrice != null) upsertPayload.glass_sale_price = nf.glassSalePrice;
@@ -1141,6 +1159,107 @@ Respond ONLY with the JSON array, no other text.`;
       const data = await res.json();
       return new Response(
         JSON.stringify({ success: res.ok, status: res.status, data }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── DIAGNOSE UNKNOWN (reclassify wines with null pricing_missing_reason) ──
+    if (action === "diagnose-unknown") {
+      // Fetch all non-ready wines with null or empty pricing_missing_reason
+      const allUnknown: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, name, raw_payload, pricing_status, pricing_missing_reason, bottle_sale_price, glass_sale_price, magnum_sale_price")
+          .eq("connection_id", connectionId)
+          .neq("pricing_status", "READY")
+          .range(from, from + 999);
+        if (error || !data || data.length === 0) break;
+        allUnknown.push(...data);
+        if (data.length < 1000) break;
+        from += 1000;
+      }
+
+      // Filter to only those with null/unknown reason
+      const toReclassify = allUnknown.filter((w: any) => !w.pricing_missing_reason || w.pricing_missing_reason === "unknown");
+      
+      console.log(`[winerim-proxy] diagnose-unknown: total non-ready=${allUnknown.length} with null/unknown reason=${toReclassify.length}`);
+
+      const results: Record<string, number> = {};
+      let reclassified = 0;
+      const debugSamples: any[] = [];
+
+      for (const wine of toReclassify) {
+        const raw = (wine.raw_payload || {}) as Record<string, unknown>;
+        
+        // Check if wine actually has pricing already (shouldn't be non-ready)
+        if (wine.bottle_sale_price != null && Number(wine.bottle_sale_price) > 0) {
+          await supabase.from("winerim_wines")
+            .update({ pricing_status: "READY", pricing_missing_reason: null })
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", wine.winerim_id);
+          results["reclassified_to_ready"] = (results["reclassified_to_ready"] || 0) + 1;
+          reclassified++;
+          continue;
+        }
+
+        // Diagnose why no price
+        const prices = Array.isArray(raw.prices) ? raw.prices as unknown[] : [];
+        let reason: string;
+
+        if (!Array.isArray(raw.prices)) {
+          reason = "no_prices_array";
+        } else if (prices.length === 0) {
+          reason = "prices_array_empty";
+        } else {
+          const variants = prices.map((p: any) => p?.variant).filter(Boolean);
+          const hasBottle = variants.some((v: string) => ["botella", "botella-pequena", "media-botella"].includes(v));
+          if (hasBottle) {
+            // Had bottle variant but price was null/0
+            reason = "sale_price_missing";
+          } else if (variants.length > 0) {
+            reason = "format_not_recognized";
+          } else {
+            reason = "no_prices_array";
+          }
+        }
+
+        // Collect debug samples (first 5)
+        if (debugSamples.length < 5) {
+          debugSamples.push({
+            winerim_id: wine.winerim_id,
+            name: wine.name,
+            has_raw_payload: !!raw && Object.keys(raw).length > 0,
+            has_prices_field: "prices" in raw,
+            prices_is_array: Array.isArray(raw.prices),
+            prices_length: Array.isArray(raw.prices) ? (raw.prices as unknown[]).length : null,
+            price_variants: Array.isArray(raw.prices) ? (raw.prices as any[]).map((p: any) => p?.variant) : null,
+            diagnosed_reason: reason,
+            current_status: wine.pricing_status,
+          });
+        }
+
+        await supabase.from("winerim_wines")
+          .update({ pricing_missing_reason: reason })
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", wine.winerim_id);
+        
+        results[reason] = (results[reason] || 0) + 1;
+        reclassified++;
+      }
+
+      console.log(`[winerim-proxy] diagnose-unknown complete: reclassified=${reclassified} results=${JSON.stringify(results)}`);
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          totalNonReady: allUnknown.length,
+          toReclassify: toReclassify.length,
+          reclassified, 
+          results,
+          debugSamples,
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
