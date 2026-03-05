@@ -1187,10 +1187,12 @@ function StepWinerimCatalog({
   connectionId,
   onQueueProducts,
   queuingProducts,
+  families,
 }: {
   connectionId: string | null;
-  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[], familyOverrideId?: string) => void;
   queuingProducts: boolean;
+  families: { Id: string; Name: string }[];
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
   const [loading, setLoading] = useState(false);
