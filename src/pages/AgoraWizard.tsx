@@ -1506,7 +1506,7 @@ function StepWinerimCatalog({
                 </div>
                 <div className="flex items-center gap-3 shrink-0 text-[11px]">
                   {w.bottle_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3.5 w-3.5" /> €{Number(w.bottle_sale_price).toFixed(2)}</span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3 w-3" /> €{Number(w.bottle_sale_price).toFixed(2)}</span>
                   )}
                   {w.glass_sale_price != null && (
                     <span className="font-mono text-foreground inline-flex items-center gap-1"><GlassWater className="h-3.5 w-3.5" /> €{Number(w.glass_sale_price).toFixed(2)}</span>
