@@ -1213,6 +1213,7 @@ function StepWinerimCatalog({
   const [filterNonReadyOnly, setFilterNonReadyOnly] = useState(false);
   const [filterMissingReason, setFilterMissingReason] = useState<"all" | PricingMissingReason>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [familyOverrideId, setFamilyOverrideId] = useState("");
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
   const [enrichingMissing, setEnrichingMissing] = useState(false);
@@ -1752,7 +1753,7 @@ function StepWinerimCatalog({
                 <>
                   <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
                   <Button variant="secondary" size="sm"
-                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"]); clearSelection(); }}
+                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
                     disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
                     {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
                     Push {pushableIds.length} to Agora
