@@ -862,6 +862,7 @@ function StepWineMatching({
   const [matchResult, setMatchResult] = useState<{ matched: number; skuMatched: number; fuzzyMatched: number; noMatch: number } | null>(null);
   const [aiResult, setAiResult] = useState<{ processed: number; updated: number } | null>(null);
   const [searchWinerim, setSearchWinerim] = useState("");
+  const [searchMappings, setSearchMappings] = useState("");
   const [editingMapping, setEditingMapping] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -949,9 +950,15 @@ function StepWineMatching({
     await loadData();
   };
 
-  const pendingMappings = mappings.filter(m => m.status === "PENDING");
-  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED");
-  const rejectedMappings = mappings.filter(m => m.status === "REJECTED" || m.status === "IGNORED");
+  const matchesSearch = (m: ProductMapping) => {
+    if (!searchMappings.trim()) return true;
+    const q = searchMappings.toLowerCase();
+    return m.provider_product_name.toLowerCase().includes(q) || (m.winerim_wine_name || "").toLowerCase().includes(q);
+  };
+
+  const pendingMappings = mappings.filter(m => m.status === "PENDING" && matchesSearch(m));
+  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED" && matchesSearch(m));
+  const rejectedMappings = mappings.filter(m => (m.status === "REJECTED" || m.status === "IGNORED") && matchesSearch(m));
 
   const filteredWines = searchWinerim
     ? winerimWines.filter(w => w.name.toLowerCase().includes(searchWinerim.toLowerCase()) || (w.winery || "").toLowerCase().includes(searchWinerim.toLowerCase()))
