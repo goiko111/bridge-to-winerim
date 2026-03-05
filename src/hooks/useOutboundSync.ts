@@ -79,12 +79,12 @@ export function useOutboundSync(connectionId: string | null) {
     setLoadingTasks(false);
   }, [connectionId]);
 
-  const queueProducts = useCallback(async (winerimWineIds: string[], formatTypes?: string[]) => {
+  const queueProducts = useCallback(async (winerimWineIds: string[], formatTypes?: string[], familyOverrideId?: string) => {
     if (!connectionId) return;
     setQueuingProducts(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "queue-xml-outbound", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS"] },
+        body: { action: "queue-xml-outbound", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS"], familyOverrideId: familyOverrideId || null },
       });
       if (error) throw error;
       await loadOutboundTasks();

@@ -26,7 +26,7 @@ import {
 } from "@/hooks/useAgoraConnection";
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
-import PilotFamiliesPanel from "@/components/PilotFamiliesPanel";
+import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -1187,10 +1187,12 @@ function StepWinerimCatalog({
   connectionId,
   onQueueProducts,
   queuingProducts,
+  families,
 }: {
   connectionId: string | null;
-  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[], familyOverrideId?: string) => void;
   queuingProducts: boolean;
+  families: { Id: string; Name: string }[];
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1211,6 +1213,7 @@ function StepWinerimCatalog({
   const [filterNonReadyOnly, setFilterNonReadyOnly] = useState(false);
   const [filterMissingReason, setFilterMissingReason] = useState<"all" | PricingMissingReason>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [familyOverrideId, setFamilyOverrideId] = useState("");
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
   const [enrichingMissing, setEnrichingMissing] = useState(false);
@@ -1750,7 +1753,7 @@ function StepWinerimCatalog({
                 <>
                   <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
                   <Button variant="secondary" size="sm"
-                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"]); clearSelection(); }}
+                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
                     disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
                     {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
                     Push {pushableIds.length} to Agora
@@ -1767,6 +1770,26 @@ function StepWinerimCatalog({
               Only READY wines are pushable · Showing {filteredWines.length} of {wines.length}
             </span>
           </div>
+
+          {/* Family override at push time */}
+          {families.length > 0 && selectedIds.size > 0 && (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Family override:</span>
+              <select
+                value={familyOverrideId}
+                onChange={(e) => setFamilyOverrideId(e.target.value)}
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="">Use default mapping</option>
+                {families.map(f => (
+                  <option key={f.Id} value={f.Id}>{f.Id}: {f.Name}</option>
+                ))}
+              </select>
+              {familyOverrideId && (
+                <span className="text-[10px] text-primary font-medium">All selected wines will be sent to this family</span>
+              )}
+            </div>
+          )}
 
           {/* Wine list */}
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
@@ -2562,8 +2585,8 @@ function StepMasterData({
         )}
       </div>
 
-      {/* ── Pilot Families ── */}
-      <PilotFamiliesPanel
+      {/* ── Agora Family Manager ── */}
+      <AgoraFamilyManager
         connectionId={connectionId}
         families={masterData.families}
         onSyncMasterData={onSync}
@@ -3011,8 +3034,9 @@ export default function AgoraWizard() {
           )}
           {currentStep === 9 && (
             <StepWinerimCatalog connectionId={connectionId}
-              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
-              queuingProducts={outbound.queuingProducts} />
+              onQueueProducts={(ids, fmts, familyOverride) => outbound.queueProducts(ids, fmts, familyOverride)}
+              queuingProducts={outbound.queuingProducts}
+              families={agoraMaster.masterData.families} />
           )}
           {currentStep === 10 && (
             <StepWriteSettings writeSettings={agoraMaster.writeSettings}

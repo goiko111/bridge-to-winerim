@@ -1737,6 +1737,57 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── CREATE SINGLE FAMILY (manual) ──
+    if (action === "create-family") {
+      const familyName = payload.familyName;
+      const familyButtonText = payload.familyButtonText || familyName.substring(0, 20);
+      const familyColor = payload.familyColor || "#8B0000";
+      const familyOrder = payload.familyOrder || 100;
+      const familyShowInPos = payload.familyShowInPos !== false;
+      const familyParentId = payload.familyParentId || null;
+
+      if (!familyName) {
+        return new Response(JSON.stringify({ success: false, error: "familyName is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const newId = stableFamilyId(familyName);
+
+      function escXml2(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+      xml += `    <Family Id="${newId}" Name="${escXml2(familyName)}" ShowInPos="${familyShowInPos}" ButtonText="${escXml2(familyButtonText)}" Color="${familyColor}" Order="${familyOrder}"`;
+      if (familyParentId) xml += ` ParentFamilyId="${familyParentId}"`;
+      xml += ` />\n`;
+      xml += `  </Families>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders2 = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders2, body: xml }, 30000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+
+        return new Response(JSON.stringify({
+          success: parsed.success,
+          familyId: newId,
+          familyName,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlSent: xml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
       const winerimWineIds = payload.winerimWineIds || [];
@@ -1950,6 +2001,7 @@ serve(async (req) => {
         const taskPayload = task.payload_json as Record<string, unknown>;
         const winerimWineId = taskPayload._winerim_wine_id as string;
         const fmtTypes = (taskPayload._format_types as string[]) || ["BOTTLE"];
+        const familyOverrideId = taskPayload._family_override_id as string | undefined;
 
         const { data: wineArr } = await supabase
           .from("winerim_wines").select("*")
@@ -1963,7 +2015,15 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
+        let customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
+        // If family override is set, create an override mapping that takes priority
+        if (familyOverrideId) {
+          const overrideMapping: Record<string, { id: string; name: string }> = {};
+          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_postre", "magnum"]) {
+            overrideMapping[key] = { id: familyOverrideId, name: `Override Family ${familyOverrideId}` };
+          }
+          customFamilyMappings = overrideMapping;
+        }
         const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings);
 
         // Check if any products were actually generated (validation may have skipped all)
@@ -2062,6 +2122,8 @@ serve(async (req) => {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
 
+      const familyOverrideId = payload.familyOverrideId || null;
+
       let queued = 0;
       for (const wineId of winerimWineIds) {
         const { data: existing } = await supabase
@@ -2082,6 +2144,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
+            ...(familyOverrideId ? { _family_override_id: familyOverrideId } : {}),
           },
           status: "QUEUED",
         });
