@@ -1595,50 +1595,56 @@ function StepWinerimCatalog({
 
       {/* Missing price diagnostics */}
       {wines.length > 0 && pricingStats.nonReadyTotal > 0 && !fetchingCatalog && !enrichingMissing && (
-        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-accent/50 border border-accent">
-          <AlertTriangle className="h-4 w-4 text-accent-foreground shrink-0 mt-0.5" />
-          <div className="text-xs text-accent-foreground space-y-1">
-            <p><strong>{pricingStats.nonReadyTotal}</strong> wines currently non-ready</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5 text-muted-foreground">
-              <span>⚠️ Missing: <strong>{pricingStats.byStatus.MISSING || 0}</strong></span>
-              <span>⏳ Retrying: <strong>{pricingStats.byStatus.RETRYING || 0}</strong></span>
-              <span>❌ Failed: <strong>{pricingStats.byStatus.FAILED || 0}</strong></span>
-              <span>Total non-ready: <strong>{pricingStats.nonReadyTotal}</strong></span>
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-card border border-border">
+          <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
+          <div className="text-xs text-foreground space-y-1.5">
+            <p className="font-semibold text-sm"><span className="text-yellow-400">{pricingStats.nonReadyTotal}</span> wines currently non-ready</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80">
+              <span>⚠️ Missing: <strong className="text-foreground">{pricingStats.byStatus.MISSING || 0}</strong></span>
+              <span>⏳ Retrying: <strong className="text-foreground">{pricingStats.byStatus.RETRYING || 0}</strong></span>
+              <span>❌ Failed: <strong className="text-foreground">{pricingStats.byStatus.FAILED || 0}</strong></span>
+              <span>Total: <strong className="text-foreground">{pricingStats.nonReadyTotal}</strong></span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5 text-muted-foreground mt-1">
-              <span>Retryable: <strong>{pricingStats.retryable}</strong></span>
-              <span>Non-retryable: <strong>{pricingStats.nonRetryable}</strong></span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80 mt-1">
+              <span>🔄 Retryable: <strong className="text-blue-400">{pricingStats.retryable}</strong></span>
+              <span>🚫 Non-retryable: <strong className="text-red-400">{pricingStats.nonRetryable}</strong></span>
             </div>
-            <div className="mt-1">
-              <p className="text-muted-foreground">Stuck set by reason:</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground">
-                {PRICING_REASON_ORDER.map((reason) => (
-                  <span key={reason}>
-                    {reason}: <strong>{pricingStats.byReason[reason] || 0}</strong> {isRetryableReason(reason) ? "(retryable)" : "(non-retryable)"}
-                  </span>
-                ))}
+            <div className="mt-2 pt-2 border-t border-border/50">
+              <p className="text-foreground/70 font-medium mb-1">Stuck set by reason:</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
+                {PRICING_REASON_ORDER.map((reason) => {
+                  const count = pricingStats.byReason[reason] || 0;
+                  return (
+                    <span key={reason} className={count > 0 ? "text-foreground" : "text-foreground/40"}>
+                      {reason}: <strong>{count}</strong>{" "}
+                      <span className={`text-[10px] ${isRetryableReason(reason) ? "text-blue-400" : "text-red-400/70"}`}>
+                        {isRetryableReason(reason) ? "retryable" : "non-retryable"}
+                      </span>
+                    </span>
+                  );
+                })}
               </div>
             </div>
             {(pricingStats.byReason.unknown || 0) > 0 && (
-              <div className="mt-1 p-1.5 rounded bg-destructive/10 border border-destructive/20">
-                <p className="text-destructive text-[11px]">
-                  ⚠ <strong>{pricingStats.byReason.unknown}</strong> wines have "unknown" reason — the system failed to classify the missing-price cause. Click <strong>"Diagnose unknown reasons"</strong> to reclassify them. This count should be close to zero.
+              <div className="mt-2 p-2 rounded bg-red-500/10 border border-red-500/30">
+                <p className="text-red-300 text-[11px]">
+                  ⚠ <strong className="text-red-200">{pricingStats.byReason.unknown}</strong> wines have "unknown" reason — the system failed to classify the missing-price cause. Click <strong className="text-red-200">"Diagnose unknown reasons"</strong> to reclassify them. This count should be close to zero.
                 </p>
               </div>
             )}
             {diagnoseResult && (
-              <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
-                <p className="font-medium text-foreground text-[11px]">Diagnosis result:</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
-                  <span>Reclassified: <strong>{diagnoseResult.reclassified}</strong></span>
+              <div className="mt-2 p-2.5 rounded bg-secondary border border-border space-y-1.5">
+                <p className="font-semibold text-foreground text-xs">Diagnosis result:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
+                  <span>Reclassified: <strong className="text-foreground">{diagnoseResult.reclassified}</strong></span>
                   {Object.entries(diagnoseResult.results).map(([reason, count]) => (
-                    <span key={reason}>{reason}: <strong>{count}</strong></span>
+                    <span key={reason}>{reason}: <strong className="text-foreground">{count}</strong></span>
                   ))}
                 </div>
                 {diagnoseResult.debugSamples.length > 0 && (
                   <details className="mt-1">
-                    <summary className="text-muted-foreground cursor-pointer text-[11px]">Debug samples ({diagnoseResult.debugSamples.length})</summary>
-                    <pre className="mt-1 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-y-auto">
+                    <summary className="text-foreground/60 cursor-pointer text-[11px] hover:text-foreground/80">Debug samples ({diagnoseResult.debugSamples.length})</summary>
+                    <pre className="mt-1 text-[10px] font-mono text-foreground/70 bg-background/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-y-auto">
                       {JSON.stringify(diagnoseResult.debugSamples, null, 2)}
                     </pre>
                   </details>
@@ -1646,26 +1652,26 @@ function StepWinerimCatalog({
               </div>
             )}
             {enrichResult && (
-              <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
-                <p className="font-medium text-foreground text-[11px]">Last enrichment run:</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5">
-                  <span>Processed: <strong>{enrichResult.processed}</strong></span>
-                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-success" : ""}>{enrichResult.movedToReady}</strong></span>
-                  <span>Ready: {enrichResult.readyBefore} → <strong>{enrichResult.readyAfter}</strong></span>
-                  <span>Non-ready: {enrichResult.missingBefore} → <strong>{enrichResult.missingAfter}</strong></span>
+              <div className="mt-2 p-2.5 rounded bg-secondary border border-border space-y-1.5">
+                <p className="font-semibold text-foreground text-xs">Last enrichment run:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80">
+                  <span>Processed: <strong className="text-foreground">{enrichResult.processed}</strong></span>
+                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-green-400" : "text-foreground"}>{enrichResult.movedToReady}</strong></span>
+                  <span>Ready: {enrichResult.readyBefore} → <strong className="text-foreground">{enrichResult.readyAfter}</strong></span>
+                  <span>Non-ready: {enrichResult.missingBefore} → <strong className="text-foreground">{enrichResult.missingAfter}</strong></span>
                 </div>
                 {enrichResult.missingAfter > 0 && (
-                  <div className="mt-1">
-                    <p className="text-muted-foreground">Still pending by reason:</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5">
+                  <div className="mt-1.5 pt-1.5 border-t border-border/50">
+                    <p className="text-foreground/70 font-medium mb-1">Still pending by reason:</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
                       {PRICING_REASON_ORDER.map((reason) => (
-                        <span key={reason}>{reason}: <strong>{enrichResult.byReasonAfter[reason] || 0}</strong></span>
+                        <span key={reason}>{reason}: <strong className="text-foreground">{enrichResult.byReasonAfter[reason] || 0}</strong></span>
                       ))}
                     </div>
                   </div>
                 )}
                 {enrichResult.missingAfter > 0 && enrichResult.missingAfter === enrichResult.missingBefore && (
-                  <p className="text-destructive mt-1 font-medium">⚠ No net progress — same wines remain stuck. Check reasons above.</p>
+                  <p className="text-red-400 mt-1.5 font-semibold">⚠ No net progress — same wines remain stuck. Check reasons above.</p>
                 )}
               </div>
             )}
