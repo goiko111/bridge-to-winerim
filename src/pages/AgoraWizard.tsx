@@ -1214,6 +1214,13 @@ function StepWinerimCatalog({
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
   const [enrichingMissing, setEnrichingMissing] = useState(false);
+  const [diagnosingUnknown, setDiagnosingUnknown] = useState(false);
+  const [diagnoseResult, setDiagnoseResult] = useState<{
+    totalNonReady: number;
+    reclassified: number;
+    results: Record<string, number>;
+    debugSamples: any[];
+  } | null>(null);
   const [enrichResult, setEnrichResult] = useState<{
     processed: number;
     movedToReady: number;
@@ -1452,6 +1459,26 @@ function StepWinerimCatalog({
     } finally { setEnrichingMissing(false); }
   };
 
+  const diagnoseUnknownWines = async () => {
+    if (!connectionId) return;
+    setDiagnosingUnknown(true);
+    setDiagnoseResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "diagnose-unknown", connectionId },
+      });
+      if (error) throw error;
+      setDiagnoseResult(data);
+      await loadWines();
+      toast({
+        title: "Diagnosis complete",
+        description: `${data.reclassified} wines reclassified with explicit reasons`,
+      });
+    } catch (e: any) {
+      toast({ title: "Diagnosis error", description: e.message, variant: "destructive" });
+    } finally { setDiagnosingUnknown(false); }
+  };
+
   const handlePreviewXml = async () => {
     if (!connectionId || selectedIds.size === 0) return;
     setGeneratingXml(true);
@@ -1558,6 +1585,12 @@ function StepWinerimCatalog({
             {enrichingMissing ? "Enriching…" : `Re-enrich ${pricingStats.nonReadyTotal} non-ready wines`}
           </Button>
         )}
+        {wines.length > 0 && (pricingStats.byReason.unknown || 0) > 0 && (
+          <Button variant="outline" size="sm" onClick={diagnoseUnknownWines} disabled={diagnosingUnknown || fetchingCatalog}>
+            {diagnosingUnknown ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+            {diagnosingUnknown ? "Diagnosing…" : `Diagnose ${pricingStats.byReason.unknown} unknown reasons`}
+          </Button>
+        )}
       </div>
 
       {/* Missing price diagnostics */}
@@ -1586,6 +1619,32 @@ function StepWinerimCatalog({
                 ))}
               </div>
             </div>
+            {(pricingStats.byReason.unknown || 0) > 0 && (
+              <div className="mt-1 p-1.5 rounded bg-destructive/10 border border-destructive/20">
+                <p className="text-destructive text-[11px]">
+                  ⚠ <strong>{pricingStats.byReason.unknown}</strong> wines have "unknown" reason — the system failed to classify the missing-price cause. Click <strong>"Diagnose unknown reasons"</strong> to reclassify them. This count should be close to zero.
+                </p>
+              </div>
+            )}
+            {diagnoseResult && (
+              <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
+                <p className="font-medium text-foreground text-[11px]">Diagnosis result:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
+                  <span>Reclassified: <strong>{diagnoseResult.reclassified}</strong></span>
+                  {Object.entries(diagnoseResult.results).map(([reason, count]) => (
+                    <span key={reason}>{reason}: <strong>{count}</strong></span>
+                  ))}
+                </div>
+                {diagnoseResult.debugSamples.length > 0 && (
+                  <details className="mt-1">
+                    <summary className="text-muted-foreground cursor-pointer text-[11px]">Debug samples ({diagnoseResult.debugSamples.length})</summary>
+                    <pre className="mt-1 text-[10px] font-mono text-muted-foreground whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      {JSON.stringify(diagnoseResult.debugSamples, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )}
             {enrichResult && (
               <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
                 <p className="font-medium text-foreground text-[11px]">Last enrichment run:</p>
