@@ -862,6 +862,7 @@ function StepWineMatching({
   const [matchResult, setMatchResult] = useState<{ matched: number; skuMatched: number; fuzzyMatched: number; noMatch: number } | null>(null);
   const [aiResult, setAiResult] = useState<{ processed: number; updated: number } | null>(null);
   const [searchWinerim, setSearchWinerim] = useState("");
+  const [searchMappings, setSearchMappings] = useState("");
   const [editingMapping, setEditingMapping] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
@@ -949,9 +950,15 @@ function StepWineMatching({
     await loadData();
   };
 
-  const pendingMappings = mappings.filter(m => m.status === "PENDING");
-  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED");
-  const rejectedMappings = mappings.filter(m => m.status === "REJECTED" || m.status === "IGNORED");
+  const matchesSearch = (m: ProductMapping) => {
+    if (!searchMappings.trim()) return true;
+    const q = searchMappings.toLowerCase();
+    return m.provider_product_name.toLowerCase().includes(q) || (m.winerim_wine_name || "").toLowerCase().includes(q);
+  };
+
+  const pendingMappings = mappings.filter(m => m.status === "PENDING" && matchesSearch(m));
+  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED" && matchesSearch(m));
+  const rejectedMappings = mappings.filter(m => (m.status === "REJECTED" || m.status === "IGNORED") && matchesSearch(m));
 
   const filteredWines = searchWinerim
     ? winerimWines.filter(w => w.name.toLowerCase().includes(searchWinerim.toLowerCase()) || (w.winery || "").toLowerCase().includes(searchWinerim.toLowerCase()))
@@ -1042,6 +1049,12 @@ function StepWineMatching({
           </div>
         </div>
       ) : (
+        <>
+        {/* Search mappings */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search mappings…" value={searchMappings} onChange={(e) => setSearchMappings(e.target.value)} className="pl-10 bg-background" />
+        </div>
         <Tabs defaultValue="pending" className="space-y-3">
           <TabsList className="w-full">
             <TabsTrigger value="pending" className="flex-1">
@@ -1135,6 +1148,7 @@ function StepWineMatching({
             </TabsContent>
           ))}
         </Tabs>
+        </>
       )}
     </div>
   );
@@ -1995,6 +2009,7 @@ function StepOutboundSync({
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
+  const [searchOutbound, setSearchOutbound] = useState("");
   const wineNameMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const w of winerimWines) m[w.winerim_id] = w.name;
@@ -2004,12 +2019,30 @@ function StepOutboundSync({
   useEffect(() => { onLoadTasks(); }, [connectionId]);
 
   const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN";
-  const queuedTasks = outboundTasks.filter(t => t.status === "QUEUED");
-  const runningTasks = outboundTasks.filter(t => t.status === "RUNNING");
-  const successTasks = outboundTasks.filter(t => t.status === "SUCCESS");
-  const failedTasks = outboundTasks.filter(t => t.status === "FAILED");
-  const blockedTasks = outboundTasks.filter(t => t.status === "BLOCKED");
-  const canProcessQueue = canWrite || queuedTasks.length > 0;
+
+  const getTaskName = (t: OutboundTask) => {
+    const wid = (t.payload_json as any)?._winerim_wine_id;
+    return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type);
+  };
+
+  const filteredTasks = useMemo(() => {
+    if (!searchOutbound.trim()) return outboundTasks;
+    const q = searchOutbound.toLowerCase();
+    return outboundTasks.filter(t => getTaskName(t).toLowerCase().includes(q) || t.status.toLowerCase().includes(q));
+  }, [outboundTasks, searchOutbound, wineNameMap]);
+
+  const filteredWinerimWines = useMemo(() => {
+    if (!searchOutbound.trim()) return winerimWines;
+    const q = searchOutbound.toLowerCase();
+    return winerimWines.filter(w => w.name.toLowerCase().includes(q));
+  }, [winerimWines, searchOutbound]);
+
+  const queuedTasks = filteredTasks.filter(t => t.status === "QUEUED");
+  const runningTasks = filteredTasks.filter(t => t.status === "RUNNING");
+  const successTasks = filteredTasks.filter(t => t.status === "SUCCESS");
+  const failedTasks = filteredTasks.filter(t => t.status === "FAILED");
+  const blockedTasks = filteredTasks.filter(t => t.status === "BLOCKED");
+  const canProcessQueue = canWrite || outboundTasks.some(t => t.status === "QUEUED");
 
   const toggleWine = (id: string) => {
     setSelectedWineIds(prev => {
@@ -2030,6 +2063,12 @@ function StepOutboundSync({
               ? "Write not validated yet, but you can process queued tasks to validate XML import."
               : "Write not supported. Use export to create products in Agora manually."}
         </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search wines or tasks…" value={searchOutbound} onChange={(e) => setSearchOutbound(e.target.value)} className="pl-10 bg-background" />
       </div>
 
       {/* Stats */}
@@ -2075,7 +2114,7 @@ function StepOutboundSync({
         <div className="rounded-lg border border-border p-4 space-y-3">
           <p className="text-xs font-medium text-muted-foreground">Push Wines to Agora</p>
           <div className="max-h-48 overflow-y-auto divide-y divide-border rounded-lg border border-border">
-            {winerimWines.map(w => (
+            {filteredWinerimWines.map(w => (
               <label key={w.winerim_id} className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/30 cursor-pointer text-sm">
                 <input type="checkbox" checked={selectedWineIds.has(w.winerim_id)}
                   onChange={() => toggleWine(w.winerim_id)}
@@ -2100,7 +2139,7 @@ function StepOutboundSync({
       {/* Task list */}
       <Tabs defaultValue="all" className="space-y-3">
         <TabsList className="w-full">
-          <TabsTrigger value="all" className="flex-1">All ({outboundTasks.length})</TabsTrigger>
+          <TabsTrigger value="all" className="flex-1">All ({filteredTasks.length})</TabsTrigger>
           <TabsTrigger value="failed" className="flex-1">
             Failed ({failedTasks.length})
             {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
@@ -2111,7 +2150,7 @@ function StepOutboundSync({
         </TabsList>
 
         {[
-          { key: "all", items: outboundTasks },
+          { key: "all", items: filteredTasks },
           { key: "failed", items: failedTasks },
           { key: "blocked", items: blockedTasks },
         ].map(({ key, items }) => (
@@ -2124,7 +2163,7 @@ function StepOutboundSync({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {(() => { const wid = (t.payload_json as any)?._winerim_wine_id; return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type); })()}
+                        {getTaskName(t)}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                         <Badge variant={
