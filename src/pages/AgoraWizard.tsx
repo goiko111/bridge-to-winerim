@@ -1859,6 +1859,8 @@ function AgoraProductsPanel({ products, families }: {
 
   const familyGroups = useMemo(() => {
     const groups: Record<string, typeof products> = {};
+    // Seed all master-data families so they always appear
+    families.forEach(f => { groups[f.Id] = []; });
     products.forEach(p => {
       const fid = p.FamilyId || "none";
       if (!groups[fid]) groups[fid] = [];
@@ -1866,8 +1868,8 @@ function AgoraProductsPanel({ products, families }: {
     });
     return Object.entries(groups)
       .map(([id, items]) => ({ id, name: familyMap[id] || (id === "none" ? "Sin familia" : `Family ${id}`), items }))
-      .sort((a, b) => b.items.length - a.items.length);
-  }, [products, familyMap]);
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, families, familyMap]);
 
   const filtered = useMemo(() => {
     let list = products;
