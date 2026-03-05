@@ -6,7 +6,7 @@ import {
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
   Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
-  Server, Wrench, GlassWater,
+  Server, Wrench, GlassWater, BottleWine,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1506,13 +1506,13 @@ function StepWinerimCatalog({
                 </div>
                 <div className="flex items-center gap-3 shrink-0 text-[11px]">
                   {w.bottle_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3 w-3" /> €{Number(w.bottle_sale_price).toFixed(2)}</span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><BottleWine className="h-3.5 w-3.5" /> €{Number(w.bottle_sale_price).toFixed(2)}</span>
                   )}
                   {w.glass_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><GlassWater className="h-3.5 w-3.5" /> €{Number(w.glass_sale_price).toFixed(2)}</span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3.5 w-3.5" /> €{Number(w.glass_sale_price).toFixed(2)}</span>
                   )}
                   {w.magnum_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-4.5 w-4.5" /> €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><BottleWine className="h-5 w-5" /> €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
                   )}
                   {w.serve_by_glass && <Badge variant="outline" className="text-[10px]">Glass</Badge>}
                 </div>
