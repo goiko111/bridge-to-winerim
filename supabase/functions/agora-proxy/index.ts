@@ -2113,6 +2113,8 @@ serve(async (req) => {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
 
+      const familyOverrideId = payload.familyOverrideId || null;
+
       let queued = 0;
       for (const wineId of winerimWineIds) {
         const { data: existing } = await supabase
@@ -2133,6 +2135,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
+            ...(familyOverrideId ? { _family_override_id: familyOverrideId } : {}),
           },
           status: "QUEUED",
         });
