@@ -26,7 +26,7 @@ import {
 } from "@/hooks/useAgoraConnection";
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
-import PilotFamiliesPanel from "@/components/PilotFamiliesPanel";
+import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -2562,8 +2562,8 @@ function StepMasterData({
         )}
       </div>
 
-      {/* ── Pilot Families ── */}
-      <PilotFamiliesPanel
+      {/* ── Agora Family Manager ── */}
+      <AgoraFamilyManager
         connectionId={connectionId}
         families={masterData.families}
         onSyncMasterData={onSync}

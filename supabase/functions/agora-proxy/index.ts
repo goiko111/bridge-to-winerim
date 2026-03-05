@@ -1737,6 +1737,57 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── CREATE SINGLE FAMILY (manual) ──
+    if (action === "create-family") {
+      const familyName = payload.familyName;
+      const familyButtonText = payload.familyButtonText || familyName.substring(0, 20);
+      const familyColor = payload.familyColor || "#8B0000";
+      const familyOrder = payload.familyOrder || 100;
+      const familyShowInPos = payload.familyShowInPos !== false;
+      const familyParentId = payload.familyParentId || null;
+
+      if (!familyName) {
+        return new Response(JSON.stringify({ success: false, error: "familyName is required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const newId = stableFamilyId(familyName);
+
+      function escXml2(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+      xml += `    <Family Id="${newId}" Name="${escXml2(familyName)}" ShowInPos="${familyShowInPos}" ButtonText="${escXml2(familyButtonText)}" Color="${familyColor}" Order="${familyOrder}"`;
+      if (familyParentId) xml += ` ParentFamilyId="${familyParentId}"`;
+      xml += ` />\n`;
+      xml += `  </Families>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders2 = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders2, body: xml }, 30000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+
+        return new Response(JSON.stringify({
+          success: parsed.success,
+          familyId: newId,
+          familyName,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlSent: xml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
       const winerimWineIds = payload.winerimWineIds || [];
