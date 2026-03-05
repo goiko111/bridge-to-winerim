@@ -2009,6 +2009,7 @@ function StepOutboundSync({
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
+  const [searchOutbound, setSearchOutbound] = useState("");
   const wineNameMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const w of winerimWines) m[w.winerim_id] = w.name;
@@ -2018,12 +2019,30 @@ function StepOutboundSync({
   useEffect(() => { onLoadTasks(); }, [connectionId]);
 
   const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN";
-  const queuedTasks = outboundTasks.filter(t => t.status === "QUEUED");
-  const runningTasks = outboundTasks.filter(t => t.status === "RUNNING");
-  const successTasks = outboundTasks.filter(t => t.status === "SUCCESS");
-  const failedTasks = outboundTasks.filter(t => t.status === "FAILED");
-  const blockedTasks = outboundTasks.filter(t => t.status === "BLOCKED");
-  const canProcessQueue = canWrite || queuedTasks.length > 0;
+
+  const getTaskName = (t: OutboundTask) => {
+    const wid = (t.payload_json as any)?._winerim_wine_id;
+    return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type);
+  };
+
+  const filteredTasks = useMemo(() => {
+    if (!searchOutbound.trim()) return outboundTasks;
+    const q = searchOutbound.toLowerCase();
+    return outboundTasks.filter(t => getTaskName(t).toLowerCase().includes(q) || t.status.toLowerCase().includes(q));
+  }, [outboundTasks, searchOutbound, wineNameMap]);
+
+  const filteredWinerimWines = useMemo(() => {
+    if (!searchOutbound.trim()) return winerimWines;
+    const q = searchOutbound.toLowerCase();
+    return winerimWines.filter(w => w.name.toLowerCase().includes(q));
+  }, [winerimWines, searchOutbound]);
+
+  const queuedTasks = filteredTasks.filter(t => t.status === "QUEUED");
+  const runningTasks = filteredTasks.filter(t => t.status === "RUNNING");
+  const successTasks = filteredTasks.filter(t => t.status === "SUCCESS");
+  const failedTasks = filteredTasks.filter(t => t.status === "FAILED");
+  const blockedTasks = filteredTasks.filter(t => t.status === "BLOCKED");
+  const canProcessQueue = canWrite || outboundTasks.some(t => t.status === "QUEUED");
 
   const toggleWine = (id: string) => {
     setSelectedWineIds(prev => {
