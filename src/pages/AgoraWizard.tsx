@@ -26,6 +26,7 @@ import {
 } from "@/hooks/useAgoraConnection";
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
+import PilotFamiliesPanel from "@/components/PilotFamiliesPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -2354,6 +2355,14 @@ function StepMasterData({
           </div>
         )}
       </div>
+
+      {/* ── Pilot Families ── */}
+      <PilotFamiliesPanel
+        connectionId={connectionId}
+        families={masterData.families}
+        onSyncMasterData={onSync}
+        syncing={syncing}
+      />
 
       {sections.map(({ label, data, icon: Icon }) => (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">

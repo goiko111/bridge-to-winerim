@@ -365,7 +365,7 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
@@ -380,8 +380,38 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
-  function findFamilyId(wineType: string | null): { id: string; needsCreate: boolean; familyName: string } {
-    // First try connection default
+  function findFamilyId(wineType: string | null, formatType?: string): { id: string; needsCreate: boolean; familyName: string } {
+    // PRIORITY 1: Use custom family mappings if available
+    if (customFamilyMappings) {
+      // Try format-specific key first (e.g. "copa", "magnum")
+      if (formatType === "GLASS" && customFamilyMappings["copa"]) {
+        return { id: customFamilyMappings["copa"].id, needsCreate: false, familyName: customFamilyMappings["copa"].name };
+      }
+      if (formatType === "GLASS" && customFamilyMappings["glass"]) {
+        return { id: customFamilyMappings["glass"].id, needsCreate: false, familyName: customFamilyMappings["glass"].name };
+      }
+      // Try wine type key (e.g. "botella_tinto", "tinto")
+      if (wineType) {
+        const typeKey = wineType.toLowerCase();
+        // Try "botella_<type>" for bottles
+        if (formatType === "BOTTLE" || !formatType) {
+          const bottleKey = `botella_${typeKey}`;
+          if (customFamilyMappings[bottleKey]) {
+            return { id: customFamilyMappings[bottleKey].id, needsCreate: false, familyName: customFamilyMappings[bottleKey].name };
+          }
+        }
+        // Try just the type
+        if (customFamilyMappings[typeKey]) {
+          return { id: customFamilyMappings[typeKey].id, needsCreate: false, familyName: customFamilyMappings[typeKey].name };
+        }
+      }
+      // Try magnum key
+      if (formatType === "MAGNUM" && customFamilyMappings["magnum"]) {
+        return { id: customFamilyMappings["magnum"].id, needsCreate: false, familyName: customFamilyMappings["magnum"].name };
+      }
+    }
+
+    // PRIORITY 2: Connection default
     if (connection.default_family_id) {
       const found = families.find(f => f.Id === connection.default_family_id);
       if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
@@ -451,7 +481,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const isGlass = fmt === "GLASS";
       const productId = isGlass ? 700000 + winerimId : 500000 + winerimId;
 
-      const familyResult = findFamilyId(wineType);
+      const familyResult = findFamilyId(wineType, fmt);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
@@ -1604,11 +1634,116 @@ serve(async (req) => {
       );
     }
 
+    // ── Helper: Load custom family mappings for a connection ──
+    async function loadCustomFamilyMappings(connId: string): Promise<Record<string, { id: string; name: string }> | undefined> {
+      const { data: mappings } = await supabase
+        .from("wine_type_family_mappings")
+        .select("mapping_key, agora_family_id, agora_family_name")
+        .eq("connection_id", connId);
+      if (!mappings || mappings.length === 0) return undefined;
+      const result: Record<string, { id: string; name: string }> = {};
+      for (const m of mappings) {
+        if (m.agora_family_id && m.agora_family_name) {
+          result[m.mapping_key] = { id: m.agora_family_id, name: m.agora_family_name };
+        }
+      }
+      return Object.keys(result).length > 0 ? result : undefined;
+    }
+
+    // ── CREATE PILOT FAMILIES ──
+    if (action === "create-pilot-families") {
+      const PILOT_FAMILIES = [
+        { key: "copa", name: "COPAS WINERIM" },
+        { key: "botella_tinto", name: "TINTOS WINERIM" },
+        { key: "botella_blanco", name: "BLANCOS WINERIM" },
+        { key: "botella_espumoso", name: "ESPUMOSOS WINERIM" },
+        { key: "botella_fortificado", name: "FORTIFICADOS WINERIM" },
+        { key: "botella_postre", name: "POSTRE WINERIM" },
+        { key: "botella_rosado", name: "ROSADOS WINERIM" },
+        { key: "magnum", name: "MAGNUM WINERIM" },
+      ];
+
+      // Load current master data to check which families already exist
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("families_json").eq("connection_id", connectionId).single();
+      const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string }[];
+
+      const toCreate: { id: string; name: string; key: string }[] = [];
+      const alreadyExist: { id: string; name: string; key: string }[] = [];
+
+      for (const pf of PILOT_FAMILIES) {
+        const existing = existingFamilies.find(f => f.Name.toUpperCase() === pf.name.toUpperCase());
+        if (existing) {
+          alreadyExist.push({ id: existing.Id, name: existing.Name, key: pf.key });
+        } else {
+          const newId = stableFamilyId(pf.name);
+          toCreate.push({ id: newId, name: pf.name, key: pf.key });
+        }
+      }
+
+      let importSuccess = true;
+      let importError: string | null = null;
+
+      if (toCreate.length > 0) {
+        // Build XML for family creation only
+        function escXml(s: string): string {
+          return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+        }
+        let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+        for (const f of toCreate) {
+          xml += `    <Family Id="${f.id}" Name="${escXml(f.name)}" ShowInPos="true" ButtonText="${escXml(f.name.substring(0, 15))}" Color="#722F37" Order="200" />\n`;
+        }
+        xml += `  </Families>\n</Import>`;
+
+        // POST to Agora
+        const importUrl = `${baseUrlClean}/api/import/`;
+        const xmlHeaders = {
+          "Api-Token": apiTokenClean,
+          Accept: "application/xml",
+          "Content-Type": "application/xml; charset=utf-8",
+        };
+
+        try {
+          const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
+          const responseBody = await importRes.text().catch(() => "");
+          const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+          importSuccess = parsed.success;
+          if (!parsed.success) {
+            importError = parsed.errors.join("; ") || `HTTP ${importRes.status}`;
+          }
+        } catch (e) {
+          importSuccess = false;
+          importError = String(e);
+        }
+      }
+
+      // Save family mappings to DB (both existing and newly created)
+      const allMappings = [...alreadyExist, ...toCreate];
+      for (const m of allMappings) {
+        await supabase.from("wine_type_family_mappings").upsert({
+          connection_id: connectionId,
+          mapping_key: m.key,
+          agora_family_id: m.id,
+          agora_family_name: m.name,
+        }, { onConflict: "connection_id,mapping_key" });
+      }
+
+      return new Response(JSON.stringify({
+        success: importSuccess,
+        created: toCreate.map(f => ({ id: f.id, name: f.name, key: f.key })),
+        reused: alreadyExist.map(f => ({ id: f.id, name: f.name, key: f.key })),
+        error: importError,
+        totalMappings: allMappings.length,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
-      
+
+      const customFamilyMappings = await loadCustomFamilyMappings(connectionId);
+
       const { data: masterData } = await supabase
         .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
 
@@ -1627,7 +1762,7 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes);
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
 
       // PRIORITY 7: Include source data summary for preview transparency
       const sourceDataSummary = wines.map((w: any) => ({
@@ -1676,6 +1811,8 @@ serve(async (req) => {
         );
       }
 
+      const customFamilyMappings = await loadCustomFamilyMappings(connectionId);
+
       const { data: wines } = await supabase
         .from("winerim_wines").select("*").eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
@@ -1684,7 +1821,7 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes);
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
 
       if (dryRun) {
         return new Response(
@@ -1826,7 +1963,8 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes);
+        const customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings);
 
         // Check if any products were actually generated (validation may have skipped all)
         if (!xml.includes("<Product ")) {
