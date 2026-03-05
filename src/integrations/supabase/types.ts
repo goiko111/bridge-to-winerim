@@ -806,6 +806,44 @@ export type Database = {
           },
         ]
       }
+      wine_type_family_mappings: {
+        Row: {
+          agora_family_id: string | null
+          agora_family_name: string | null
+          connection_id: string
+          created_at: string
+          id: string
+          mapping_key: string
+          updated_at: string
+        }
+        Insert: {
+          agora_family_id?: string | null
+          agora_family_name?: string | null
+          connection_id: string
+          created_at?: string
+          id?: string
+          mapping_key: string
+          updated_at?: string
+        }
+        Update: {
+          agora_family_id?: string | null
+          agora_family_name?: string | null
+          connection_id?: string
+          created_at?: string
+          id?: string
+          mapping_key?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wine_type_family_mappings_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       winerim_wines: {
         Row: {
           bottle_purchase_price: number | null
