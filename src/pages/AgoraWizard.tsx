@@ -1148,6 +1148,8 @@ interface WinerimCatalogWine {
   bottle_purchase_price: number | null;
   glass_sale_price: number | null;
   glass_cost_price: number | null;
+  magnum_sale_price: number | null;
+  magnum_purchase_price: number | null;
   serve_by_glass: boolean;
   is_active: boolean;
   winery: string | null;
@@ -1190,7 +1192,7 @@ function StepWinerimCatalog({
     setLoading(true);
     const data = await fetchAllWinerimWines(
       connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active, winery, region, vintage, updated_at"
+      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at"
     );
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
@@ -1198,7 +1200,8 @@ function StepWinerimCatalog({
     const latestEnriched = rows
       .filter((w) =>
         (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) ||
-        (w.glass_sale_price != null && Number(w.glass_sale_price) > 0)
+        (w.glass_sale_price != null && Number(w.glass_sale_price) > 0) ||
+        (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0)
       )
       .map((w) => w.updated_at)
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
@@ -1389,11 +1392,12 @@ function StepWinerimCatalog({
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-        <div className="grid grid-cols-5 gap-4 text-xs">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 text-xs">
           <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
           <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
           <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">With Glass Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">With Magnum Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
         {lastEnrichedAt && (
@@ -1401,7 +1405,7 @@ function StepWinerimCatalog({
             Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
           </p>
         )}
-        {wines.length > 0 && wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length === 0 && (
+        {wines.length > 0 && wines.filter(w => (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) || (w.glass_sale_price != null && Number(w.glass_sale_price) > 0) || (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0)).length === 0 && (
           <div className="flex items-start gap-2 mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             <p className="text-xs text-destructive">
@@ -1506,6 +1510,9 @@ function StepWinerimCatalog({
                   )}
                   {w.glass_sale_price != null && (
                     <span className="font-mono text-foreground">🥂 €{Number(w.glass_sale_price).toFixed(2)}</span>
+                  )}
+                  {w.magnum_sale_price != null && (
+                    <span className="font-mono text-foreground">🍷 €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
                   )}
                   {w.serve_by_glass && <Badge variant="outline" className="text-[10px]">Glass</Badge>}
                 </div>
@@ -2006,7 +2013,7 @@ function StepMasterData({
     if (!connectionId) return;
     setLoadingStats(true);
     const data = await fetchAllWinerimWines(connectionId,
-      "bottle_sale_price, glass_sale_price, serve_by_glass, wine_type, is_active"
+      "bottle_sale_price, glass_sale_price, magnum_sale_price, serve_by_glass, wine_type, is_active"
     );
     if (data.length > 0) {
       setWineStats({
@@ -2015,7 +2022,7 @@ function StepMasterData({
         hasGlassPrice: data.filter((w: any) => w.glass_sale_price != null).length,
         serveByGlass: data.filter((w: any) => w.serve_by_glass).length,
         hasWineType: data.filter((w: any) => w.wine_type != null).length,
-        missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null).length,
+        missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null && w.magnum_sale_price == null).length,
         missingWineType: data.filter((w: any) => w.wine_type == null).length,
         inactive: data.filter((w: any) => w.is_active === false).length,
       });
