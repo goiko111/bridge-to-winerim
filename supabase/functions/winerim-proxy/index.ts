@@ -1194,6 +1194,7 @@ Respond ONLY with the JSON array, no other text.`;
 
       for (const wine of toReclassify) {
         const raw = (wine.raw_payload || {}) as Record<string, unknown>;
+        const rawPrices = Array.isArray(raw.prices) ? raw.prices as any[] : [];
         
         // Check if wine actually has pricing already (bottle, magnum, or glass)
         const hasBottlePrice = wine.bottle_sale_price != null && Number(wine.bottle_sale_price) > 0;
@@ -1210,8 +1211,7 @@ Respond ONLY with the JSON array, no other text.`;
         }
 
         // Also check raw_payload for magnum prices that may not have been written to columns
-        const raw = (wine.raw_payload || {}) as Record<string, unknown>;
-        const rawPrices = Array.isArray(raw.prices) ? raw.prices as any[] : [];
+        const magnumEntry = rawPrices.find((p: any) => p?.variant === "magnum");
         const magnumEntry = rawPrices.find((p: any) => p?.variant === "magnum");
         if (magnumEntry && Number(magnumEntry.price) > 0) {
           // Write the magnum price and mark READY
