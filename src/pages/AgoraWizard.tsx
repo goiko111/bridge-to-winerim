@@ -2114,7 +2114,7 @@ function StepOutboundSync({
         <div className="rounded-lg border border-border p-4 space-y-3">
           <p className="text-xs font-medium text-muted-foreground">Push Wines to Agora</p>
           <div className="max-h-48 overflow-y-auto divide-y divide-border rounded-lg border border-border">
-            {winerimWines.map(w => (
+            {filteredWinerimWines.map(w => (
               <label key={w.winerim_id} className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/30 cursor-pointer text-sm">
                 <input type="checkbox" checked={selectedWineIds.has(w.winerim_id)}
                   onChange={() => toggleWine(w.winerim_id)}
