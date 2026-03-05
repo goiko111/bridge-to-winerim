@@ -1161,6 +1161,28 @@ interface WinerimCatalogWine {
   pricing_missing_reason: string | null;
 }
 
+const PRICING_REASON_ORDER = [
+  "503_from_winerim",
+  "detail_fetch_failed",
+  "no_prices_array",
+  "prices_array_empty",
+  "format_not_recognized",
+  "sale_price_missing",
+  "parser_error",
+  "unknown",
+] as const;
+
+type PricingMissingReason = (typeof PRICING_REASON_ORDER)[number];
+
+const RETRYABLE_REASONS = new Set<PricingMissingReason>(["503_from_winerim"]);
+
+const normalizePricingReason = (reason: string | null | undefined): PricingMissingReason => {
+  if (!reason) return "unknown";
+  return (PRICING_REASON_ORDER as readonly string[]).includes(reason) ? (reason as PricingMissingReason) : "unknown";
+};
+
+const isRetryableReason = (reason: PricingMissingReason) => RETRYABLE_REASONS.has(reason);
+
 function StepWinerimCatalog({
   connectionId,
   onQueueProducts,
@@ -1186,6 +1208,8 @@ function StepWinerimCatalog({
   const [search, setSearch] = useState("");
   const [filterActive, setFilterActive] = useState(true);
   const [filterGlass, setFilterGlass] = useState(false);
+  const [filterNonReadyOnly, setFilterNonReadyOnly] = useState(false);
+  const [filterMissingReason, setFilterMissingReason] = useState<"all" | PricingMissingReason>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
@@ -1198,7 +1222,7 @@ function StepWinerimCatalog({
     missingBefore: number;
     missingAfter: number;
     byStatusAfter: Record<string, number>;
-    byReasonAfter: Record<string, number>;
+    byReasonAfter: Record<PricingMissingReason, number>;
   } | null>(null);
 
   const loadWines = useCallback(async () => {
@@ -1314,6 +1338,12 @@ function StepWinerimCatalog({
     let result = wines;
     if (filterActive) result = result.filter(w => w.is_active);
     if (filterGlass) result = result.filter(w => w.serve_by_glass);
+    if (filterNonReadyOnly || filterMissingReason !== "all") {
+      result = result.filter(w => (w.pricing_status || "MISSING") !== "READY");
+    }
+    if (filterMissingReason !== "all") {
+      result = result.filter(w => normalizePricingReason(w.pricing_missing_reason) === filterMissingReason);
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(w =>
@@ -1324,7 +1354,7 @@ function StepWinerimCatalog({
       );
     }
     return result;
-  }, [wines, search, filterActive, filterGlass]);
+  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason]);
 
   const toggleWine = (id: string) => {
     setSelectedIds(prev => {
@@ -1339,15 +1369,24 @@ function StepWinerimCatalog({
 
   const pricingStats = useMemo(() => {
     const byStatus: Record<string, number> = {};
-    const byReason: Record<string, number> = {};
+    const byReason = Object.fromEntries(PRICING_REASON_ORDER.map((reason) => [reason, 0])) as Record<PricingMissingReason, number>;
+    let nonReadyTotal = 0;
+    let retryable = 0;
+    let nonRetryable = 0;
+
     for (const w of wines) {
       const st = w.pricing_status || "MISSING";
       byStatus[st] = (byStatus[st] || 0) + 1;
-      if (st !== "READY" && w.pricing_missing_reason) {
-        byReason[w.pricing_missing_reason] = (byReason[w.pricing_missing_reason] || 0) + 1;
+      if (st !== "READY") {
+        nonReadyTotal += 1;
+        const reason = normalizePricingReason(w.pricing_missing_reason);
+        byReason[reason] = (byReason[reason] || 0) + 1;
+        if (isRetryableReason(reason)) retryable += 1;
+        else nonRetryable += 1;
       }
     }
-    return { byStatus, byReason, missing: (byStatus.MISSING || 0) + (byStatus.RETRYING || 0) + (byStatus.FAILED || 0) };
+
+    return { byStatus, byReason, nonReadyTotal, retryable, nonRetryable };
   }, [wines]);
 
   const enrichMissingPrices = async () => {
@@ -1380,12 +1419,13 @@ function StepWinerimCatalog({
 
       // Compute "after" stats from fresh data
       const byStatusAfter: Record<string, number> = {};
-      const byReasonAfter: Record<string, number> = {};
+      const byReasonAfter = Object.fromEntries(PRICING_REASON_ORDER.map((reason) => [reason, 0])) as Record<PricingMissingReason, number>;
       for (const w of freshWines) {
         const st = w.pricing_status || "MISSING";
         byStatusAfter[st] = (byStatusAfter[st] || 0) + 1;
-        if (st !== "READY" && w.pricing_missing_reason) {
-          byReasonAfter[w.pricing_missing_reason] = (byReasonAfter[w.pricing_missing_reason] || 0) + 1;
+        if (st !== "READY") {
+          const reason = normalizePricingReason(w.pricing_missing_reason);
+          byReasonAfter[reason] = (byReasonAfter[reason] || 0) + 1;
         }
       }
       const readyAfter = byStatusAfter.READY || 0;
@@ -1512,47 +1552,55 @@ function StepWinerimCatalog({
             ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
             : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
-        {wines.length > 0 && pricingStats.missing > 0 && (
+        {wines.length > 0 && pricingStats.nonReadyTotal > 0 && (
           <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing || fetchingCatalog}>
             {enrichingMissing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-            {enrichingMissing ? "Enriching…" : `Re-enrich ${pricingStats.missing} missing prices`}
+            {enrichingMissing ? "Enriching…" : `Re-enrich ${pricingStats.nonReadyTotal} non-ready wines`}
           </Button>
         )}
       </div>
 
       {/* Missing price diagnostics */}
-      {wines.length > 0 && pricingStats.missing > 0 && !fetchingCatalog && !enrichingMissing && (
+      {wines.length > 0 && pricingStats.nonReadyTotal > 0 && !fetchingCatalog && !enrichingMissing && (
         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-accent/50 border border-accent">
           <AlertTriangle className="h-4 w-4 text-accent-foreground shrink-0 mt-0.5" />
           <div className="text-xs text-accent-foreground space-y-1">
-            <p><strong>{pricingStats.missing}</strong> wines missing pricing:</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground">
-              {pricingStats.byStatus.RETRYING ? <span>⏳ Retrying (503): <strong>{pricingStats.byStatus.RETRYING}</strong></span> : null}
-              {pricingStats.byStatus.FAILED ? <span>❌ Failed: <strong>{pricingStats.byStatus.FAILED}</strong></span> : null}
-              {pricingStats.byStatus.MISSING ? <span>⚠️ Missing: <strong>{pricingStats.byStatus.MISSING}</strong></span> : null}
+            <p><strong>{pricingStats.nonReadyTotal}</strong> wines currently non-ready</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5 text-muted-foreground">
+              <span>⚠️ Missing: <strong>{pricingStats.byStatus.MISSING || 0}</strong></span>
+              <span>⏳ Retrying: <strong>{pricingStats.byStatus.RETRYING || 0}</strong></span>
+              <span>❌ Failed: <strong>{pricingStats.byStatus.FAILED || 0}</strong></span>
+              <span>Total non-ready: <strong>{pricingStats.nonReadyTotal}</strong></span>
             </div>
-            {Object.keys(pricingStats.byReason).length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground mt-1">
-                {Object.entries(pricingStats.byReason).map(([reason, count]) => (
-                  <span key={reason}>{reason}: <strong>{count}</strong></span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5 text-muted-foreground mt-1">
+              <span>Retryable: <strong>{pricingStats.retryable}</strong></span>
+              <span>Non-retryable: <strong>{pricingStats.nonRetryable}</strong></span>
+            </div>
+            <div className="mt-1">
+              <p className="text-muted-foreground">Stuck set by reason:</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground">
+                {PRICING_REASON_ORDER.map((reason) => (
+                  <span key={reason}>
+                    {reason}: <strong>{pricingStats.byReason[reason] || 0}</strong> {isRetryableReason(reason) ? "(retryable)" : "(non-retryable)"}
+                  </span>
                 ))}
               </div>
-            )}
+            </div>
             {enrichResult && (
               <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
                 <p className="font-medium text-foreground text-[11px]">Last enrichment run:</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5">
                   <span>Processed: <strong>{enrichResult.processed}</strong></span>
-                  <span>Newly priced: <strong className={enrichResult.movedToReady > 0 ? "text-emerald-600" : ""}>{enrichResult.movedToReady}</strong></span>
+                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-success" : ""}>{enrichResult.movedToReady}</strong></span>
                   <span>Ready: {enrichResult.readyBefore} → <strong>{enrichResult.readyAfter}</strong></span>
                   <span>Non-ready: {enrichResult.missingBefore} → <strong>{enrichResult.missingAfter}</strong></span>
                 </div>
-                {enrichResult.missingAfter > 0 && Object.keys(enrichResult.byReasonAfter).length > 0 && (
+                {enrichResult.missingAfter > 0 && (
                   <div className="mt-1">
                     <p className="text-muted-foreground">Still pending by reason:</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
-                      {Object.entries(enrichResult.byReasonAfter).sort(([,a],[,b]) => b - a).map(([reason, count]) => (
-                        <span key={reason}>{reason}: <strong>{count}</strong></span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-0.5">
+                      {PRICING_REASON_ORDER.map((reason) => (
+                        <span key={reason}>{reason}: <strong>{enrichResult.byReasonAfter[reason] || 0}</strong></span>
                       ))}
                     </div>
                   </div>
@@ -1601,11 +1649,32 @@ function StepWinerimCatalog({
             <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
               <Switch checked={filterGlass} onCheckedChange={setFilterGlass} /> Glass only
             </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterNonReadyOnly} onCheckedChange={setFilterNonReadyOnly} /> Non-ready only
+            </label>
+            <select
+              value={filterMissingReason}
+              onChange={(e) => setFilterMissingReason(e.target.value as "all" | PricingMissingReason)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All reasons</option>
+              {PRICING_REASON_ORDER.map((reason) => (
+                <option key={reason} value={reason}>{reason}</option>
+              ))}
+            </select>
           </div>
 
           {/* Selection actions */}
           <div className="flex gap-2 items-center flex-wrap">
             <Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-[11px]">Select All ({filteredWines.length})</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => w.pricing_status === "READY").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px]"
+            >
+              Select READY ({filteredWines.filter((w) => w.pricing_status === "READY").length})
+            </Button>
             {selectedIds.size > 0 && (() => {
               const pushableIds = Array.from(selectedIds).filter(id => {
                 const w = wines.find(x => x.winerim_id === id);
@@ -1630,7 +1699,7 @@ function StepWinerimCatalog({
               );
             })()}
             <span className="text-[11px] text-muted-foreground ml-auto">
-              Showing {filteredWines.length} of {wines.length}
+              Only READY wines are pushable · Showing {filteredWines.length} of {wines.length}
             </span>
           </div>
 
@@ -1646,12 +1715,18 @@ function StepWinerimCatalog({
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
                     {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
-                    {w.pricing_status === "READY" && <Badge variant="default" className="text-[10px] bg-emerald-600">✓ Priced</Badge>}
-                    {w.pricing_status === "RETRYING" && <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600">⏳ 503</Badge>}
-                    {(w.pricing_status === "FAILED" || w.pricing_status === "MISSING") && (
-                      <span className="text-[10px] text-destructive" title={`Reason: ${w.pricing_missing_reason || "unknown"}`}>
-                        ⚠ {w.pricing_missing_reason || "missing"}
-                      </span>
+                    {w.pricing_status === "READY" ? (
+                      <Badge variant="default" className="text-[10px]">✓ READY</Badge>
+                    ) : (
+                      <>
+                        <Badge variant="outline" className="text-[10px]">{w.pricing_status || "MISSING"}</Badge>
+                        <Badge variant="outline" className="text-[10px]" title={`Reason: ${normalizePricingReason(w.pricing_missing_reason)}`}>
+                          {normalizePricingReason(w.pricing_missing_reason)}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[10px]">
+                          {isRetryableReason(normalizePricingReason(w.pricing_missing_reason)) ? "Retryable" : "Non-retryable"}
+                        </Badge>
+                      </>
                     )}
                   </div>
                   <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
