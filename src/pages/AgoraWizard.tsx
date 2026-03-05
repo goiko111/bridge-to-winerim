@@ -1049,6 +1049,12 @@ function StepWineMatching({
           </div>
         </div>
       ) : (
+        <>
+        {/* Search mappings */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search mappings…" value={searchMappings} onChange={(e) => setSearchMappings(e.target.value)} className="pl-10 bg-background" />
+        </div>
         <Tabs defaultValue="pending" className="space-y-3">
           <TabsList className="w-full">
             <TabsTrigger value="pending" className="flex-1">
