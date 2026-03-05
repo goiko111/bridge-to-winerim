@@ -1771,6 +1771,26 @@ function StepWinerimCatalog({
             </span>
           </div>
 
+          {/* Family override at push time */}
+          {families.length > 0 && selectedIds.size > 0 && (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Family override:</span>
+              <select
+                value={familyOverrideId}
+                onChange={(e) => setFamilyOverrideId(e.target.value)}
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="">Use default mapping</option>
+                {families.map(f => (
+                  <option key={f.Id} value={f.Id}>{f.Id}: {f.Name}</option>
+                ))}
+              </select>
+              {familyOverrideId && (
+                <span className="text-[10px] text-primary font-medium">All selected wines will be sent to this family</span>
+              )}
+            </div>
+          )}
+
           {/* Wine list */}
           <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
             {filteredWines.length === 0 ? (
@@ -3014,8 +3034,9 @@ export default function AgoraWizard() {
           )}
           {currentStep === 9 && (
             <StepWinerimCatalog connectionId={connectionId}
-              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
-              queuingProducts={outbound.queuingProducts} />
+              onQueueProducts={(ids, fmts, familyOverride) => outbound.queueProducts(ids, fmts, familyOverride)}
+              queuingProducts={outbound.queuingProducts}
+              families={agoraMaster.masterData.families} />
           )}
           {currentStep === 10 && (
             <StepWriteSettings writeSettings={agoraMaster.writeSettings}
