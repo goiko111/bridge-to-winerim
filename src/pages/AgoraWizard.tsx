@@ -2421,6 +2421,8 @@ function StepMasterData({
     }
   }, [connectionId, loadWineStats]);
 
+  const [searchMaster, setSearchMaster] = useState("");
+
   const sections = [
     { label: "Families", data: masterData.families, icon: Grape },
     { label: "VATs", data: masterData.vats, icon: Tag },
@@ -2430,6 +2432,12 @@ function StepMasterData({
     { label: "Warehouses", data: masterData.warehouses, icon: Database },
   ];
 
+  const filterItems = (data: any[]) => {
+    if (!searchMaster.trim()) return data;
+    const q = searchMaster.toLowerCase();
+    return data.filter((item: any) => (item.Name || "").toLowerCase().includes(q) || (item.Id || "").toLowerCase().includes(q));
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -2437,6 +2445,12 @@ function StepMasterData({
         <p className="mt-1 text-sm text-muted-foreground">
           Fetch master data (families, VATs, price lists, etc.) from Agora via <code className="text-xs font-mono bg-secondary px-1 rounded">/api/export-master/</code>
         </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search master data…" value={searchMaster} onChange={(e) => setSearchMaster(e.target.value)} className="pl-10 bg-background" />
       </div>
 
       {/* Status badges */}
@@ -2640,14 +2654,17 @@ function StepMasterData({
         syncing={syncing}
       />
 
-      {sections.map(({ label, data, icon: Icon }) => (
+      {sections.map(({ label, data, icon: Icon }) => {
+        const filtered = filterItems(data);
+        if (searchMaster.trim() && filtered.length === 0) return null;
+        return (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
           <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5" /> {label} ({data.length})
+            <Icon className="h-3.5 w-3.5" /> {label} ({filtered.length}{searchMaster.trim() ? `/${data.length}` : ""})
           </p>
-          {data.length > 0 ? (
+          {filtered.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {data.map((item: any, i: number) => (
+              {filtered.map((item: any, i: number) => (
                 <Badge key={i} variant="outline" className="text-[10px] font-mono">
                   {item.Id}: {item.Name}{item.VatRate ? ` (${(Number(item.VatRate) * 100).toFixed(0)}%)` : ""}
                 </Badge>
@@ -2657,7 +2674,8 @@ function StepMasterData({
             <p className="text-[11px] text-muted-foreground italic">No data yet. Click sync above.</p>
           )}
         </div>
-      ))}
+        );
+      })}
       {masterData.productsSummary.length > 0 && (
         <AgoraProductsPanel products={masterData.productsSummary} families={masterData.families} />
       )}
