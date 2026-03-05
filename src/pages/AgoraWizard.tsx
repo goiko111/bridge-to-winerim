@@ -6,7 +6,7 @@ import {
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
   Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
-  Server, Wrench, GlassWater, BottleWine,
+  Server, Wrench, GlassWater,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1506,13 +1506,13 @@ function StepWinerimCatalog({
                 </div>
                 <div className="flex items-center gap-3 shrink-0 text-[11px]">
                   {w.bottle_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><BottleWine className="h-3.5 w-3.5" /> €{Number(w.bottle_sale_price).toFixed(2)}</span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg> €{Number(w.bottle_sale_price).toFixed(2)}</span>
                   )}
                   {w.glass_sale_price != null && (
                     <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3.5 w-3.5" /> €{Number(w.glass_sale_price).toFixed(2)}</span>
                   )}
                   {w.magnum_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><BottleWine className="h-5 w-5" /> €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
+                    <span className="font-mono text-foreground inline-flex items-center gap-1"><svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg> €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
                   )}
                   {w.serve_by_glass && <Badge variant="outline" className="text-[10px]">Glass</Badge>}
                 </div>
