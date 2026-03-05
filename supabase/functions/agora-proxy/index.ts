@@ -1018,6 +1018,84 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: "No catalog endpoint configured." }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+
+      // If derived catalog, delegate to the build-derived-catalog logic
+      if (endpoint === "DERIVED_FROM_INVOICES") {
+        const scanDaysBack = daysBack || 30;
+        const config = await loadConfig(supabase, connectionId);
+        const productMap = new Map<string, { name: string; family: string; format: string; vatRate: number; totalPrice: number; count: number }>();
+        let daysScanned = 0;
+        let totalInvoices = 0;
+
+        for (let i = 0; i < scanDaysBack; i++) {
+          const day = new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
+          daysScanned++;
+          try {
+            const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
+            const res = await fetch(url, { headers });
+            if (!res.ok) continue;
+            const body = await res.text();
+            if (!body.trim() || body.trim() === "{}" || body.trim() === "[]") continue;
+            const parsed = JSON.parse(body);
+            const invoices = parseInvoices(parsed);
+            totalInvoices += invoices.length;
+
+            for (const inv of invoices) {
+              for (const item of (inv.InvoiceItems || [])) {
+                for (const line of (item.Lines || [])) {
+                  const prodId = String(line.ProductId || "");
+                  if (!prodId) continue;
+                  const uPrice = Number(line.UnitPrice || 0);
+                  const existing = productMap.get(prodId);
+                  if (existing) {
+                    existing.totalPrice += uPrice;
+                    existing.count++;
+                  } else {
+                    productMap.set(prodId, {
+                      name: String(line.ProductName || ""), family: String(line.FamilyName || ""),
+                      format: String(line.SaleFormatName || ""), vatRate: Number(line.VatRate || 0),
+                      totalPrice: uPrice, count: 1,
+                    });
+                  }
+                }
+              }
+            }
+          } catch (_) { /* skip */ }
+        }
+
+        let upserted = 0;
+        let wineCandidateCount = 0;
+
+        for (const [prodId, p] of productMap) {
+          const avgPrice = p.count > 0 ? p.totalPrice / p.count : 0;
+          const cr = classifyProduct(p.family, p.name, p.format, avgPrice, config);
+          if (cr.classification === "WINE") wineCandidateCount++;
+
+          await supabase.from("provider_products").upsert({
+            connection_id: connectionId, provider_product_id: prodId,
+            name: p.name, family: p.family, vat_rate: p.vatRate, sale_format: p.format,
+            price: Math.round(avgPrice * 100) / 100,
+            is_wine_candidate: cr.classification === "WINE",
+            wine_score: cr.score, wine_reasons: cr.reasons,
+            classification_override: "AUTO",
+            last_score: cr.score, last_reasons: cr.reasons,
+            raw_payload: { derived: true, occurrences: p.count },
+          }, { onConflict: "connection_id,provider_product_id" });
+          upserted++;
+        }
+
+        await supabase.from("pos_connections").update({
+          last_catalog_sync_at: new Date().toISOString(),
+          catalog_product_count: upserted,
+          catalog_wine_candidate_count: wineCandidateCount,
+        }).eq("id", connectionId);
+
+        return new Response(
+          JSON.stringify({ success: true, totalProducts: upserted, wineCandidates: wineCandidateCount, daysScanned, totalInvoices, endpoint: "DERIVED_FROM_INVOICES" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const config = await loadConfig(supabase, connectionId);
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
       const res = await fetch(url, { headers });
