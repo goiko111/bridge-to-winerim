@@ -1148,6 +1148,7 @@ function StepWineMatching({
             </TabsContent>
           ))}
         </Tabs>
+        </>
       )}
     </div>
   );
