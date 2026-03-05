@@ -2421,6 +2421,8 @@ function StepMasterData({
     }
   }, [connectionId, loadWineStats]);
 
+  const [searchMaster, setSearchMaster] = useState("");
+
   const sections = [
     { label: "Families", data: masterData.families, icon: Grape },
     { label: "VATs", data: masterData.vats, icon: Tag },
@@ -2429,6 +2431,12 @@ function StepMasterData({
     { label: "Preparation Orders", data: masterData.preparationOrders, icon: Settings2 },
     { label: "Warehouses", data: masterData.warehouses, icon: Database },
   ];
+
+  const filterItems = (data: any[]) => {
+    if (!searchMaster.trim()) return data;
+    const q = searchMaster.toLowerCase();
+    return data.filter((item: any) => (item.Name || "").toLowerCase().includes(q) || (item.Id || "").toLowerCase().includes(q));
+  };
 
   return (
     <div className="space-y-5">
