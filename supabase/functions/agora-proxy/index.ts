@@ -2001,6 +2001,7 @@ serve(async (req) => {
         const taskPayload = task.payload_json as Record<string, unknown>;
         const winerimWineId = taskPayload._winerim_wine_id as string;
         const fmtTypes = (taskPayload._format_types as string[]) || ["BOTTLE"];
+        const familyOverrideId = taskPayload._family_override_id as string | undefined;
 
         const { data: wineArr } = await supabase
           .from("winerim_wines").select("*")
@@ -2014,7 +2015,15 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        const customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
+        let customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
+        // If family override is set, create an override mapping that takes priority
+        if (familyOverrideId) {
+          const overrideMapping: Record<string, { id: string; name: string }> = {};
+          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_postre", "magnum"]) {
+            overrideMapping[key] = { id: familyOverrideId, name: `Override Family ${familyOverrideId}` };
+          }
+          customFamilyMappings = overrideMapping;
+        }
         const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings);
 
         // Check if any products were actually generated (validation may have skipped all)
