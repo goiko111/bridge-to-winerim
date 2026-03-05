@@ -2139,7 +2139,7 @@ function StepOutboundSync({
       {/* Task list */}
       <Tabs defaultValue="all" className="space-y-3">
         <TabsList className="w-full">
-          <TabsTrigger value="all" className="flex-1">All ({outboundTasks.length})</TabsTrigger>
+          <TabsTrigger value="all" className="flex-1">All ({filteredTasks.length})</TabsTrigger>
           <TabsTrigger value="failed" className="flex-1">
             Failed ({failedTasks.length})
             {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
@@ -2150,7 +2150,7 @@ function StepOutboundSync({
         </TabsList>
 
         {[
-          { key: "all", items: outboundTasks },
+          { key: "all", items: filteredTasks },
           { key: "failed", items: failedTasks },
           { key: "blocked", items: blockedTasks },
         ].map(({ key, items }) => (
@@ -2163,7 +2163,7 @@ function StepOutboundSync({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {(() => { const wid = (t.payload_json as any)?._winerim_wine_id; return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type); })()}
+                        {getTaskName(t)}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                         <Badge variant={
