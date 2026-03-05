@@ -476,11 +476,12 @@ serve(async (req) => {
           let pricingMissingReason: string | null = "no_prices_array"; // default: list endpoint rarely has prices
           
           const listPrices = Array.isArray(w.prices) ? w.prices as unknown[] : [];
-          if (nf.bottleSalePrice != null) {
+          // A wine is READY if it has any usable price (bottle, glass, or magnum)
+          if (nf.bottleSalePrice != null || nf.magnumSalePrice != null || nf.glassSalePrice != null) {
             pricingStatus = "READY";
             pricingMissingReason = null;
           } else if (listPrices.length > 0) {
-            // Has prices array but no recognized bottle price
+            // Has prices array but no recognized price extracted
             const variants = listPrices.map((p: any) => p?.variant).filter(Boolean);
             const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
@@ -594,16 +595,17 @@ serve(async (req) => {
         }
 
         // Determine pricing status from parsed data
+        // A wine is READY if it has any usable price (bottle, glass, or magnum)
         const prices = Array.isArray(detail.prices) ? detail.prices as unknown[] : [];
         let pricingStatus = "READY";
         let pricingMissingReason: string | null = null;
 
-        if (nf.bottleSalePrice == null) {
+        if (nf.bottleSalePrice == null && nf.magnumSalePrice == null && nf.glassSalePrice == null) {
           pricingStatus = "MISSING";
           if (prices.length === 0) {
             pricingMissingReason = Array.isArray(detail.prices) ? "prices_array_empty" : "no_prices_array";
           } else {
-            // Had prices but none recognized as bottle
+            // Had prices but none had a valid sale price
             const variants = prices.map((p: any) => p?.variant).filter(Boolean);
             const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
@@ -1193,8 +1195,11 @@ Respond ONLY with the JSON array, no other text.`;
       for (const wine of toReclassify) {
         const raw = (wine.raw_payload || {}) as Record<string, unknown>;
         
-        // Check if wine actually has pricing already (shouldn't be non-ready)
-        if (wine.bottle_sale_price != null && Number(wine.bottle_sale_price) > 0) {
+        // Check if wine actually has pricing already (bottle, magnum, or glass)
+        const hasBottlePrice = wine.bottle_sale_price != null && Number(wine.bottle_sale_price) > 0;
+        const hasMagnumPrice = wine.magnum_sale_price != null && Number(wine.magnum_sale_price) > 0;
+        const hasGlassPrice = wine.glass_sale_price != null && Number(wine.glass_sale_price) > 0;
+        if (hasBottlePrice || hasMagnumPrice || hasGlassPrice) {
           await supabase.from("winerim_wines")
             .update({ pricing_status: "READY", pricing_missing_reason: null })
             .eq("connection_id", connectionId)
@@ -1204,8 +1209,27 @@ Respond ONLY with the JSON array, no other text.`;
           continue;
         }
 
+        // Also check raw_payload for magnum prices that may not have been written to columns
+        const raw = (wine.raw_payload || {}) as Record<string, unknown>;
+        const rawPrices = Array.isArray(raw.prices) ? raw.prices as any[] : [];
+        const magnumEntry = rawPrices.find((p: any) => p?.variant === "magnum");
+        if (magnumEntry && Number(magnumEntry.price) > 0) {
+          // Write the magnum price and mark READY
+          await supabase.from("winerim_wines")
+            .update({ 
+              pricing_status: "READY", 
+              pricing_missing_reason: null,
+              magnum_sale_price: Number(magnumEntry.price),
+            })
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", wine.winerim_id);
+          results["reclassified_to_ready"] = (results["reclassified_to_ready"] || 0) + 1;
+          reclassified++;
+          continue;
+        }
+
         // Diagnose why no price
-        const prices = Array.isArray(raw.prices) ? raw.prices as unknown[] : [];
+        const prices = rawPrices;
         let reason: string;
 
         if (!Array.isArray(raw.prices)) {
@@ -1214,9 +1238,8 @@ Respond ONLY with the JSON array, no other text.`;
           reason = "prices_array_empty";
         } else {
           const variants = prices.map((p: any) => p?.variant).filter(Boolean);
-          const hasBottle = variants.some((v: string) => ["botella", "botella-pequena", "media-botella"].includes(v));
-          if (hasBottle) {
-            // Had bottle variant but price was null/0
+          const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+          if (hasRecognized) {
             reason = "sale_price_missing";
           } else if (variants.length > 0) {
             reason = "format_not_recognized";
