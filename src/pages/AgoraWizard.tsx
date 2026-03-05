@@ -1910,40 +1910,40 @@ function AgoraProductsPanel({ products, families }: {
       </div>
 
       {viewMode === "families" ? (
-        <div className="space-y-2">
-          {/* Family filter chips */}
-          <div className="flex flex-wrap gap-1.5">
-            <button onClick={() => setSelectedFamily("ALL")}
-              className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium border transition-colors ${selectedFamily === "ALL" ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:border-primary/40"}`}>
-              All ({products.length})
-            </button>
-            {familyGroups.map(g => (
-              <button key={g.id} onClick={() => setSelectedFamily(g.id)}
-                className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium border transition-colors ${selectedFamily === g.id ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:border-primary/40"}`}>
-                {g.name} ({g.items.length})
-              </button>
-            ))}
-          </div>
-          {/* Product list for selected family */}
-          <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
-            <div className="grid grid-cols-[80px_1fr_100px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
-              <span>ID</span><span>Name</span><span>Family</span>
-            </div>
-            {shown.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground italic py-3 text-center">No products in this family.</p>
-            ) : shown.map((p) => (
-              <div key={p.Id} className="grid grid-cols-[80px_1fr_100px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
-                <span className="font-mono text-muted-foreground">{p.Id}</span>
-                <span className="text-foreground truncate">{p.Name}</span>
-                <span className="text-muted-foreground truncate">{familyMap[p.FamilyId || ""] || "—"}</span>
+        <div className="space-y-1">
+          {familyGroups.map(g => {
+            const isOpen = selectedFamily === g.id;
+            const groupFiltered = search.trim()
+              ? g.items.filter(p => p.Name.toLowerCase().includes(search.toLowerCase()) || p.Id.includes(search))
+              : g.items;
+            if (search.trim() && groupFiltered.length === 0) return null;
+            return (
+              <div key={g.id} className="rounded-md border border-border overflow-hidden">
+                <button
+                  onClick={() => setSelectedFamily(isOpen ? "ALL" : g.id)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                >
+                  <span className="flex items-center gap-2 text-foreground">
+                    <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+                    {g.name}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">{groupFiltered.length} products</span>
+                </button>
+                {isOpen && (
+                  <div className="max-h-60 overflow-y-auto border-t border-border divide-y divide-border">
+                    {groupFiltered.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground italic py-3 text-center">No products match.</p>
+                    ) : groupFiltered.map((p) => (
+                      <div key={p.Id} className="grid grid-cols-[80px_1fr] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+                        <span className="font-mono text-muted-foreground">{p.Id}</span>
+                        <span className="text-foreground truncate">{p.Name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-          {!expanded && filtered.length > 50 && (
-            <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(true)}>
-              Show all {filtered.length} products
-            </Button>
-          )}
+            );
+          })}
         </div>
       ) : (
         <>
