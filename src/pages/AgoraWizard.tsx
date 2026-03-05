@@ -1995,6 +1995,11 @@ function StepOutboundSync({
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
+  const wineNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of winerimWines) m.set(w.winerim_id, w.name);
+    return m;
+  }, [winerimWines]);
 
   useEffect(() => { onLoadTasks(); }, [connectionId]);
 
