@@ -1190,7 +1190,16 @@ function StepWinerimCatalog({
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
   const [enrichingMissing, setEnrichingMissing] = useState(false);
-  const [enrichResult, setEnrichResult] = useState<{ enriched: number; remaining: number } | null>(null);
+  const [enrichResult, setEnrichResult] = useState<{
+    processed: number;
+    movedToReady: number;
+    readyBefore: number;
+    readyAfter: number;
+    missingBefore: number;
+    missingAfter: number;
+    byStatusAfter: Record<string, number>;
+    byReasonAfter: Record<string, number>;
+  } | null>(null);
 
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
@@ -1345,7 +1354,12 @@ function StepWinerimCatalog({
     if (!connectionId) return;
     setEnrichingMissing(true);
     setEnrichResult(null);
-    let totalEnriched = 0;
+
+    // Capture "before" snapshot from current wines state
+    const readyBefore = wines.filter(w => w.pricing_status === "READY").length;
+    const missingBefore = wines.length - readyBefore;
+
+    let totalProcessed = 0;
     try {
       for (let i = 0; i < 5; i++) {
         const { data, error } = await supabase.functions.invoke("winerim-proxy", {
@@ -1353,14 +1367,45 @@ function StepWinerimCatalog({
         });
         if (error) throw error;
         if (!data?.success) break;
-        totalEnriched += data.enriched || 0;
+        totalProcessed += data.enriched || 0;
         if ((data.requested || 0) === 0) break;
       }
-      await loadWines();
-      setEnrichResult({ enriched: totalEnriched, remaining: pricingStats.missing });
+
+      // Re-fetch wines from DB to get fresh counts
+      const freshWines = await fetchAllWinerimWines(
+        connectionId,
+        "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
+      ) as WinerimCatalogWine[];
+      setWines(freshWines);
+
+      // Compute "after" stats from fresh data
+      const byStatusAfter: Record<string, number> = {};
+      const byReasonAfter: Record<string, number> = {};
+      for (const w of freshWines) {
+        const st = w.pricing_status || "MISSING";
+        byStatusAfter[st] = (byStatusAfter[st] || 0) + 1;
+        if (st !== "READY" && w.pricing_missing_reason) {
+          byReasonAfter[w.pricing_missing_reason] = (byReasonAfter[w.pricing_missing_reason] || 0) + 1;
+        }
+      }
+      const readyAfter = byStatusAfter.READY || 0;
+      const missingAfter = freshWines.length - readyAfter;
+      const movedToReady = readyAfter - readyBefore;
+
+      setEnrichResult({
+        processed: totalProcessed,
+        movedToReady,
+        readyBefore,
+        readyAfter,
+        missingBefore,
+        missingAfter,
+        byStatusAfter,
+        byReasonAfter,
+      });
+
       toast({
         title: "Pricing enrichment complete",
-        description: `${totalEnriched} wines enriched.`,
+        description: `${totalProcessed} processed · ${movedToReady} newly priced · ${missingAfter} still pending`,
       });
     } catch (e: any) {
       toast({ title: "Enrichment error", description: e.message, variant: "destructive" });
@@ -1494,7 +1539,28 @@ function StepWinerimCatalog({
               </div>
             )}
             {enrichResult && (
-              <p className="text-muted-foreground mt-1">Last run: {enrichResult.enriched} enriched, {enrichResult.remaining} still pending.</p>
+              <div className="mt-2 p-2 rounded bg-secondary/50 border border-border space-y-1">
+                <p className="font-medium text-foreground text-[11px]">Last enrichment run:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5">
+                  <span>Processed: <strong>{enrichResult.processed}</strong></span>
+                  <span>Newly priced: <strong className={enrichResult.movedToReady > 0 ? "text-emerald-600" : ""}>{enrichResult.movedToReady}</strong></span>
+                  <span>Ready: {enrichResult.readyBefore} → <strong>{enrichResult.readyAfter}</strong></span>
+                  <span>Non-ready: {enrichResult.missingBefore} → <strong>{enrichResult.missingAfter}</strong></span>
+                </div>
+                {enrichResult.missingAfter > 0 && Object.keys(enrichResult.byReasonAfter).length > 0 && (
+                  <div className="mt-1">
+                    <p className="text-muted-foreground">Still pending by reason:</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5">
+                      {Object.entries(enrichResult.byReasonAfter).sort(([,a],[,b]) => b - a).map(([reason, count]) => (
+                        <span key={reason}>{reason}: <strong>{count}</strong></span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {enrichResult.missingAfter > 0 && enrichResult.missingAfter === enrichResult.missingBefore && (
+                  <p className="text-destructive mt-1 font-medium">⚠ No net progress — same wines remain stuck. Check reasons above.</p>
+                )}
+              </div>
             )}
           </div>
         </div>
