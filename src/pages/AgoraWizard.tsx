@@ -1996,8 +1996,8 @@ function StepOutboundSync({
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const wineNameMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const w of winerimWines) m.set(w.winerim_id, w.name);
+    const m: Record<string, string> = {};
+    for (const w of winerimWines) m[w.winerim_id] = w.name;
     return m;
   }, [winerimWines]);
 
