@@ -1156,6 +1156,8 @@ interface WinerimCatalogWine {
   region: string | null;
   vintage: string | null;
   updated_at: string;
+  pricing_status: string;
+  pricing_missing_reason: string | null;
 }
 
 function StepWinerimCatalog({
@@ -1194,7 +1196,7 @@ function StepWinerimCatalog({
     setLoading(true);
     const data = await fetchAllWinerimWines(
       connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at"
+      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
     );
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
@@ -1325,7 +1327,18 @@ function StepWinerimCatalog({
   const selectAll = () => setSelectedIds(new Set(filteredWines.map(w => w.winerim_id)));
   const clearSelection = () => setSelectedIds(new Set());
 
-  const missingPriceCount = useMemo(() => wines.filter(w => w.bottle_sale_price == null || Number(w.bottle_sale_price) <= 0).length, [wines]);
+  const pricingStats = useMemo(() => {
+    const byStatus: Record<string, number> = {};
+    const byReason: Record<string, number> = {};
+    for (const w of wines) {
+      const st = w.pricing_status || "MISSING";
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      if (st !== "READY" && w.pricing_missing_reason) {
+        byReason[w.pricing_missing_reason] = (byReason[w.pricing_missing_reason] || 0) + 1;
+      }
+    }
+    return { byStatus, byReason, missing: (byStatus.MISSING || 0) + (byStatus.RETRYING || 0) + (byStatus.FAILED || 0) };
+  }, [wines]);
 
   const enrichMissingPrices = async () => {
     if (!connectionId) return;
@@ -1333,7 +1346,6 @@ function StepWinerimCatalog({
     setEnrichResult(null);
     let totalEnriched = 0;
     try {
-      // Run up to 5 batches of 100
       for (let i = 0; i < 5; i++) {
         const { data, error } = await supabase.functions.invoke("winerim-proxy", {
           body: { action: "fetch-wine-details", connectionId },
@@ -1341,14 +1353,13 @@ function StepWinerimCatalog({
         if (error) throw error;
         if (!data?.success) break;
         totalEnriched += data.enriched || 0;
-        if ((data.requested || 0) === 0) break; // no more to enrich
+        if ((data.requested || 0) === 0) break;
       }
       await loadWines();
-      const remaining = wines.filter(w => w.bottle_sale_price == null || Number(w.bottle_sale_price) <= 0).length;
-      setEnrichResult({ enriched: totalEnriched, remaining });
+      setEnrichResult({ enriched: totalEnriched, remaining: pricingStats.missing });
       toast({
         title: "Pricing enrichment complete",
-        description: `${totalEnriched} wines enriched. ${remaining} still missing (API unavailable).`,
+        description: `${totalEnriched} wines enriched.`,
       });
     } catch (e: any) {
       toast({ title: "Enrichment error", description: e.message, variant: "destructive" });
@@ -1455,25 +1466,34 @@ function StepWinerimCatalog({
             ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
             : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
-        {wines.length > 0 && missingPriceCount > 0 && (
+        {wines.length > 0 && pricingStats.missing > 0 && (
           <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing || fetchingCatalog}>
             {enrichingMissing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-            {enrichingMissing ? "Enriching…" : `Re-enrich ${missingPriceCount} missing prices`}
+            {enrichingMissing ? "Enriching…" : `Re-enrich ${pricingStats.missing} missing prices`}
           </Button>
         )}
       </div>
 
-      {/* Missing price warning */}
-      {wines.length > 0 && missingPriceCount > 0 && !fetchingCatalog && !enrichingMissing && (
+      {/* Missing price diagnostics */}
+      {wines.length > 0 && pricingStats.missing > 0 && !fetchingCatalog && !enrichingMissing && (
         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-accent/50 border border-accent">
           <AlertTriangle className="h-4 w-4 text-accent-foreground shrink-0 mt-0.5" />
-          <div className="text-xs text-accent-foreground">
-            <strong>{missingPriceCount}</strong> wines are missing bottle pricing. This is usually caused by temporary API errors (503) during enrichment.
-            Click <strong>"Re-enrich missing prices"</strong> to retry.
+          <div className="text-xs text-accent-foreground space-y-1">
+            <p><strong>{pricingStats.missing}</strong> wines missing pricing:</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground">
+              {pricingStats.byStatus.RETRYING ? <span>⏳ Retrying (503): <strong>{pricingStats.byStatus.RETRYING}</strong></span> : null}
+              {pricingStats.byStatus.FAILED ? <span>❌ Failed: <strong>{pricingStats.byStatus.FAILED}</strong></span> : null}
+              {pricingStats.byStatus.MISSING ? <span>⚠️ Missing: <strong>{pricingStats.byStatus.MISSING}</strong></span> : null}
+            </div>
+            {Object.keys(pricingStats.byReason).length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-0.5 text-muted-foreground mt-1">
+                {Object.entries(pricingStats.byReason).map(([reason, count]) => (
+                  <span key={reason}>{reason}: <strong>{count}</strong></span>
+                ))}
+              </div>
+            )}
             {enrichResult && (
-              <span className="block mt-1 text-muted-foreground">
-                Last run: {enrichResult.enriched} enriched, {enrichResult.remaining} still pending.
-              </span>
+              <p className="text-muted-foreground mt-1">Last run: {enrichResult.enriched} enriched, {enrichResult.remaining} still pending.</p>
             )}
           </div>
         </div>
@@ -1519,20 +1539,29 @@ function StepWinerimCatalog({
           {/* Selection actions */}
           <div className="flex gap-2 items-center flex-wrap">
             <Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-[11px]">Select All ({filteredWines.length})</Button>
-            {selectedIds.size > 0 && (
-              <>
-                <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
-                <Button variant="secondary" size="sm" onClick={() => { onQueueProducts(Array.from(selectedIds), ["BOTTLE", "GLASS"]); clearSelection(); }}
-                  disabled={queuingProducts} className="h-7 text-[11px]">
-                  {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
-                  Push {selectedIds.size} to Agora
-                </Button>
-                <Button variant="outline" size="sm" onClick={handlePreviewXml} disabled={generatingXml} className="h-7 text-[11px]">
-                  {generatingXml ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
-                  Preview XML
-                </Button>
-              </>
-            )}
+            {selectedIds.size > 0 && (() => {
+              const pushableIds = Array.from(selectedIds).filter(id => {
+                const w = wines.find(x => x.winerim_id === id);
+                return w && w.pricing_status === "READY";
+              });
+              const blockedCount = selectedIds.size - pushableIds.length;
+              return (
+                <>
+                  <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"]); clearSelection(); }}
+                    disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
+                    {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                    Push {pushableIds.length} to Agora
+                    {blockedCount > 0 && <span className="text-destructive ml-1">({blockedCount} blocked)</span>}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handlePreviewXml} disabled={generatingXml} className="h-7 text-[11px]">
+                    {generatingXml ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+                    Preview XML
+                  </Button>
+                </>
+              );
+            })()}
             <span className="text-[11px] text-muted-foreground ml-auto">
               Showing {filteredWines.length} of {wines.length}
             </span>
@@ -1550,6 +1579,13 @@ function StepWinerimCatalog({
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
                     {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
+                    {w.pricing_status === "READY" && <Badge variant="default" className="text-[10px] bg-emerald-600">✓ Priced</Badge>}
+                    {w.pricing_status === "RETRYING" && <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600">⏳ 503</Badge>}
+                    {(w.pricing_status === "FAILED" || w.pricing_status === "MISSING") && (
+                      <span className="text-[10px] text-destructive" title={`Reason: ${w.pricing_missing_reason || "unknown"}`}>
+                        ⚠ {w.pricing_missing_reason || "missing"}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
                     {w.wine_type && <span className="capitalize">{w.wine_type}</span>}

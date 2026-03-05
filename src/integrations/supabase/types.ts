@@ -823,6 +823,8 @@ export type Database = {
           magnum_sale_price: number | null
           name: string
           price: number | null
+          pricing_missing_reason: string | null
+          pricing_status: string
           raw_payload: Json | null
           region: string | null
           serve_by_glass: boolean
@@ -850,6 +852,8 @@ export type Database = {
           magnum_sale_price?: number | null
           name: string
           price?: number | null
+          pricing_missing_reason?: string | null
+          pricing_status?: string
           raw_payload?: Json | null
           region?: string | null
           serve_by_glass?: boolean
@@ -877,6 +881,8 @@ export type Database = {
           magnum_sale_price?: number | null
           name?: string
           price?: number | null
+          pricing_missing_reason?: string | null
+          pricing_status?: string
           raw_payload?: Json | null
           region?: string | null
           serve_by_glass?: boolean

@@ -177,13 +177,22 @@ async function fetchAllWines(headers: Record<string, string>): Promise<Record<st
   return allWines;
 }
 
+// Result from fetchWineDetail including failure reason
+interface WineDetailResult {
+  wine: Record<string, unknown> | null;
+  failureReason: string | null; // null = success, otherwise one of the pricing_missing_reason values
+  httpStatus: number | null;
+}
+
 // Fetch individual wine detail to get pricing fields
 // Tries multiple endpoint patterns and picks the richest payload (prefers one with prices)
+// Includes exponential backoff retry for 503 errors
 async function fetchWineDetail(
   wineId: string,
   headers: Record<string, string>,
   timeoutMs = 12000,
-): Promise<Record<string, unknown> | null> {
+  maxRetries = 3,
+): Promise<WineDetailResult> {
   const endpointsToTry = [
     `${WINERIM_BASE_URL}/wines/${wineId}`,
     `${WINERIM_BASE_URL}/wines/${wineId}?include=prices`,
@@ -218,56 +227,88 @@ async function fetchWineDetail(
 
   let bestWine: Record<string, unknown> | null = null;
   let bestScore = -1;
+  let last503 = false;
+  let lastHttpStatus: number | null = null;
 
   for (const url of endpointsToTry) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
-    try {
-      const res = await fetch(url, { headers, signal: controller.signal });
-      const body = await res.text();
-
-      if (!res.ok) {
-        console.log(`[winerim-proxy] wine detail ${wineId} (${url}): HTTP ${res.status}`);
-        continue;
-      }
-
+    let retryCount = 0;
+    while (retryCount <= maxRetries) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
       try {
-        const data = JSON.parse(body);
-        const wine = (data?.wine || data) as Record<string, unknown>;
-        const score = scorePayload(wine);
-        const pricesCount = Array.isArray(wine.prices) ? wine.prices.length : 0;
-        console.log(`[winerim-proxy] wine detail ${wineId} SUCCESS via ${url} score=${score} prices=${pricesCount}`);
+        const res = await fetch(url, { headers, signal: controller.signal });
+        lastHttpStatus = res.status;
 
-        if (score > bestScore) {
-          bestWine = wine;
-          bestScore = score;
-        }
-
-        // Good enough: if we found explicit prices, stop trying more endpoints
-        if (pricesCount > 0) {
+        if (res.status === 503) {
+          last503 = true;
+          retryCount++;
+          if (retryCount <= maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 8000);
+            console.log(`[winerim-proxy] wine detail ${wineId}: 503 from ${url}, retry ${retryCount}/${maxRetries} in ${delay}ms`);
+            clearTimeout(timeout);
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+          console.log(`[winerim-proxy] wine detail ${wineId}: 503 exhausted retries on ${url}`);
+          clearTimeout(timeout);
           break;
         }
-      } catch {
-        console.log(`[winerim-proxy] wine detail ${wineId}: non-JSON from ${url}`);
-        continue;
+
+        if (!res.ok) {
+          console.log(`[winerim-proxy] wine detail ${wineId} (${url}): HTTP ${res.status}`);
+          clearTimeout(timeout);
+          break; // try next endpoint
+        }
+
+        const body = await res.text();
+        try {
+          const data = JSON.parse(body);
+          const wine = (data?.wine || data) as Record<string, unknown>;
+          const score = scorePayload(wine);
+          const pricesCount = Array.isArray(wine.prices) ? wine.prices.length : 0;
+          console.log(`[winerim-proxy] wine detail ${wineId} SUCCESS via ${url} score=${score} prices=${pricesCount}`);
+
+          if (score > bestScore) {
+            bestWine = wine;
+            bestScore = score;
+          }
+
+          clearTimeout(timeout);
+          // Good enough: if we found explicit prices, stop trying more endpoints
+          if (pricesCount > 0) {
+            return { wine: bestWine, failureReason: null, httpStatus: res.status };
+          }
+          break; // try next endpoint for richer data
+        } catch {
+          console.log(`[winerim-proxy] wine detail ${wineId}: non-JSON from ${url}`);
+          clearTimeout(timeout);
+          break;
+        }
+      } catch (e: unknown) {
+        clearTimeout(timeout);
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout")) {
+          console.log(`[winerim-proxy] wine detail ${wineId} (${url}) timed out after ${timeoutMs}ms`);
+        } else {
+          console.log(`[winerim-proxy] wine detail ${wineId} (${url}) failed: ${msg}`);
+        }
+        break; // try next endpoint
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout")) {
-        console.log(`[winerim-proxy] wine detail ${wineId} (${url}) timed out after ${timeoutMs}ms`);
-      } else {
-        console.log(`[winerim-proxy] wine detail ${wineId} (${url}) failed: ${msg}`);
-      }
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
-  return bestWine;
+  if (bestWine) {
+    return { wine: bestWine, failureReason: null, httpStatus: lastHttpStatus };
+  }
+
+  // Determine failure reason
+  const failureReason = last503 ? "503_from_winerim" : "detail_fetch_failed";
+  return { wine: null, failureReason, httpStatus: lastHttpStatus };
 }
 
 interface FetchWineDetailsResult {
   details: Map<string, Record<string, unknown>>;
+  failures: Map<string, string>; // wineId -> failureReason
   attempted: number;
   succeeded: number;
   failed: number;
@@ -280,6 +321,7 @@ async function fetchWineDetails(
   concurrency = 5,
 ): Promise<FetchWineDetailsResult> {
   const details = new Map<string, Record<string, unknown>>();
+  const failures = new Map<string, string>();
   const attempted = wineIds.length;
   let succeeded = 0;
   let failed = 0;
@@ -290,11 +332,12 @@ async function fetchWineDetails(
     const batch = wineIds.slice(i, i + concurrency);
     await Promise.all(
       batch.map(async (id) => {
-        const detail = await fetchWineDetail(id, headers);
-        if (detail) {
-          details.set(id, detail);
+        const result = await fetchWineDetail(id, headers);
+        if (result.wine) {
+          details.set(id, result.wine);
           succeeded++;
         } else {
+          failures.set(id, result.failureReason || "unknown");
           failed++;
         }
       }),
@@ -313,7 +356,7 @@ async function fetchWineDetails(
     }
   }
 
-  return { details, attempted, succeeded, failed };
+  return { details, failures, attempted, succeeded, failed };
 }
 
 serve(async (req) => {
@@ -447,6 +490,8 @@ serve(async (req) => {
           if (nf.bottleSalePrice != null) {
             upsertPayload.bottle_sale_price = nf.bottleSalePrice;
             upsertPayload.price = nf.bottleSalePrice;
+            upsertPayload.pricing_status = "READY";
+            upsertPayload.pricing_missing_reason = null;
           }
           if (nf.bottlePurchasePrice != null) upsertPayload.bottle_purchase_price = nf.bottlePurchasePrice;
           if (nf.glassSalePrice != null) upsertPayload.glass_sale_price = nf.glassSalePrice;
@@ -495,7 +540,7 @@ serve(async (req) => {
 
       const detailsResult = batchWineIds.length > 0
         ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
-        : { details: new Map<string, Record<string, unknown>>(), attempted: 0, succeeded: 0, failed: 0 };
+        : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
 
       console.log(
         `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +
@@ -508,7 +553,17 @@ serve(async (req) => {
 
       for (const winerimId of batchWineIds) {
         const detail = detailsResult.details.get(winerimId);
-        if (!detail) continue;
+        if (!detail) {
+          // Mark failed wines with pricing status
+          const failureReason = detailsResult.failures.get(winerimId) || "detail_fetch_failed";
+          const pricingStatus = failureReason === "503_from_winerim" ? "RETRYING" : "FAILED";
+          await supabase
+            .from("winerim_wines")
+            .update({ pricing_status: pricingStatus, pricing_missing_reason: failureReason })
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", winerimId);
+          continue;
+        }
 
         const baseWine = baseWineMap.get(winerimId) || {};
         const mergedPayload = { ...baseWine, ...detail };
@@ -520,11 +575,30 @@ serve(async (req) => {
           grapeVariety = grapes.map(g => g.name).join(", ");
         }
 
+        // Determine pricing status from parsed data
+        const prices = Array.isArray(detail.prices) ? detail.prices as unknown[] : [];
+        let pricingStatus = "READY";
+        let pricingMissingReason: string | null = null;
+
+        if (nf.bottleSalePrice == null) {
+          pricingStatus = "MISSING";
+          if (prices.length === 0) {
+            pricingMissingReason = Array.isArray(detail.prices) ? "prices_array_empty" : "no_prices_array";
+          } else {
+            // Had prices but none recognized as bottle
+            const variants = prices.map((p: any) => p?.variant).filter(Boolean);
+            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
+          }
+        }
+
         const updateData: Record<string, unknown> = {
           raw_payload: mergedPayload,
           serve_by_glass: nf.serveByGlass,
           is_active: nf.isActive,
           grape_variety: grapeVariety,
+          pricing_status: pricingStatus,
+          pricing_missing_reason: pricingMissingReason,
         };
 
         if (detail.name || (baseWine as any).name) updateData.name = String(detail.name || (baseWine as any).name || "Unknown");
@@ -597,54 +671,38 @@ serve(async (req) => {
     if (action === "fetch-wine-details") {
       const { winerimWineIds } = body;
       
-      // If specific IDs provided, use those. Otherwise fetch all wines missing pricing.
+      // If specific IDs provided, use those. Otherwise fetch wines with non-READY pricing.
       let targetIds: string[] = winerimWineIds || [];
       
       if (targetIds.length === 0) {
-        // Find wines missing ANY important operational field (paginated)
-        const allMissingWines: any[] = [];
-        let mFrom = 0;
-        while (true) {
-          const { data: pageWines } = await supabase
-            .from("winerim_wines")
-            .select("winerim_id, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass")
-            .eq("connection_id", connectionId)
-            .range(mFrom, mFrom + 999);
-          if (!pageWines || pageWines.length === 0) break;
-          allMissingWines.push(...pageWines);
-          if (pageWines.length < 1000) break;
-          mFrom += 1000;
-        }
+        const { data: missingWines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, pricing_status")
+          .eq("connection_id", connectionId)
+          .in("pricing_status", ["MISSING", "RETRYING", "FAILED"])
+          .limit(100);
         
-        targetIds = allMissingWines.filter((w: any) => 
-          w.wine_type == null ||
-          w.bottle_sale_price == null ||
-          w.bottle_purchase_price == null ||
-          (w.serve_by_glass === true && w.glass_sale_price == null) ||
-          (w.serve_by_glass === true && w.glass_cost_price == null)
-        ).map((w: any) => w.winerim_id).slice(0, 100);
+        targetIds = (missingWines || []).map((w: any) => w.winerim_id);
       }
 
       if (targetIds.length === 0) {
         return new Response(
-          JSON.stringify({ success: true, enriched: 0, message: "All wines already have pricing data" }),
+          JSON.stringify({ success: true, enriched: 0, requested: 0, message: "All wines already have pricing data" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       console.log(`Fetching details for ${targetIds.length} wines...`);
       const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5);
-      const detailMap = detailsResult.details;
 
       let enriched = 0;
+      const failureReasons: Record<string, number> = {};
       const fieldsDiscovered: string[] = [];
 
-      for (const [winerimId, detail] of detailMap) {
-        // Log first detail to discover available fields
+      // Process successful details
+      for (const [winerimId, detail] of detailsResult.details) {
         if (enriched === 0) {
-          const keys = Object.keys(detail);
-          fieldsDiscovered.push(...keys);
-          console.log(`Wine detail fields discovered: ${keys.join(", ")}`);
+          fieldsDiscovered.push(...Object.keys(detail));
         }
 
         function toPositiveNumber(val: unknown): number | null {
@@ -653,17 +711,34 @@ serve(async (req) => {
           return n > 0 ? n : null;
         }
 
-        // Parse prices array from Winerim detail response
         const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
         const bottleEntry = prices.find((p: any) => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
         const glassEntry = prices.find((p: any) => p.variant === "copa");
         const magnumEntry = prices.find((p: any) => p.variant === "magnum");
 
+        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(detail.bottle_sale_price ?? detail.sale_price ?? detail.pvp ?? detail.price);
+
+        // Determine pricing status
+        let pricingStatus = "READY";
+        let pricingMissingReason: string | null = null;
+
+        if (bottleSalePrice == null) {
+          pricingStatus = "MISSING";
+          if (prices.length === 0) {
+            pricingMissingReason = Array.isArray(detail.prices) ? "prices_array_empty" : "no_prices_array";
+          } else {
+            const variants = prices.map((p: any) => p?.variant).filter(Boolean);
+            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
+          }
+          failureReasons[pricingMissingReason] = (failureReasons[pricingMissingReason] || 0) + 1;
+        }
+
         const rawType = detail.type || detail.wine_type || detail.category || detail.style || detail.color;
         const updateData: Record<string, unknown> = {
           raw_payload: detail,
           wine_type: rawType && typeof rawType === "string" ? String(rawType).toLowerCase() : undefined,
-          bottle_sale_price: toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(detail.bottle_sale_price ?? detail.sale_price ?? detail.pvp ?? detail.price),
+          bottle_sale_price: bottleSalePrice,
           bottle_purchase_price: toPositiveNumber(detail.bottle_purchase_price ?? detail.purchase_price ?? detail.cost_price ?? detail.cost),
           glass_sale_price: toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(detail.glass_sale_price ?? detail.glass_price),
           glass_cost_price: toPositiveNumber(detail.glass_cost_price ?? detail.glass_cost),
@@ -672,9 +747,10 @@ serve(async (req) => {
           serve_by_glass: !!glassEntry || detail.serve_by_glass === true || detail.by_glass === true || undefined,
           is_active: detail.active !== false && detail.is_active !== false ? true : false,
           stock_quantity: bottleEntry?.erpStock?.stock ?? undefined,
+          pricing_status: pricingStatus,
+          pricing_missing_reason: pricingMissingReason,
         };
 
-        // Remove undefined values
         for (const key of Object.keys(updateData)) {
           if (updateData[key] === undefined) delete updateData[key];
         }
@@ -683,7 +759,17 @@ serve(async (req) => {
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
-        enriched++;
+        if (pricingStatus === "READY") enriched++;
+      }
+
+      // Process failures - mark with reason
+      for (const [winerimId, reason] of detailsResult.failures) {
+        const pricingStatus = reason === "503_from_winerim" ? "RETRYING" : "FAILED";
+        failureReasons[reason] = (failureReasons[reason] || 0) + 1;
+        await supabase.from("winerim_wines")
+          .update({ pricing_status: pricingStatus, pricing_missing_reason: reason })
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
       }
 
       return new Response(
@@ -695,6 +781,7 @@ serve(async (req) => {
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,
           detailRequestsFailed: detailsResult.failed,
+          failureReasons,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
