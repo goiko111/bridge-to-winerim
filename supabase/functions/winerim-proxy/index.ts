@@ -178,7 +178,7 @@ async function fetchAllWines(headers: Record<string, string>): Promise<Record<st
 }
 
 // Fetch individual wine detail to get pricing fields
-// Tries multiple endpoint patterns since Winerim API may vary
+// Tries multiple endpoint patterns and picks the richest payload (prefers one with prices)
 async function fetchWineDetail(
   wineId: string,
   headers: Record<string, string>,
@@ -186,9 +186,38 @@ async function fetchWineDetail(
 ): Promise<Record<string, unknown> | null> {
   const endpointsToTry = [
     `${WINERIM_BASE_URL}/wines/${wineId}`,
+    `${WINERIM_BASE_URL}/wines/${wineId}?include=prices`,
     `${WINERIM_BASE_URL}/wine/${wineId}`,
     `${WINERIM_BASE_URL}/wines/${wineId}/detail`,
   ];
+
+  function toPositiveNumber(val: unknown): number | null {
+    if (val === null || val === undefined) return null;
+    const n = Number(val);
+    return n > 0 ? n : null;
+  }
+
+  function scorePayload(wine: Record<string, unknown>): number {
+    let score = 0;
+    const prices = Array.isArray(wine.prices) ? wine.prices as Array<Record<string, unknown>> : [];
+    if (prices.length > 0) {
+      score += 100;
+      if (prices.some((p) => toPositiveNumber(p?.price) != null)) score += 25;
+    }
+
+    if (toPositiveNumber(wine.bottle_sale_price ?? wine.sale_price ?? wine.pvp ?? wine.price) != null) score += 20;
+    if (toPositiveNumber(wine.glass_sale_price ?? wine.glass_price) != null) score += 12;
+    if (toPositiveNumber(wine.magnum_sale_price) != null) score += 12;
+
+    if (wine.showPrices !== undefined) score += 5;
+    if (wine.name) score += 2;
+    if (wine.type || wine.wine_type) score += 2;
+
+    return score;
+  }
+
+  let bestWine: Record<string, unknown> | null = null;
+  let bestScore = -1;
 
   for (const url of endpointsToTry) {
     const controller = new AbortController();
@@ -204,9 +233,20 @@ async function fetchWineDetail(
 
       try {
         const data = JSON.parse(body);
-        const wine = data?.wine || data;
-        console.log(`[winerim-proxy] wine detail ${wineId} SUCCESS via ${url}`);
-        return wine;
+        const wine = (data?.wine || data) as Record<string, unknown>;
+        const score = scorePayload(wine);
+        const pricesCount = Array.isArray(wine.prices) ? wine.prices.length : 0;
+        console.log(`[winerim-proxy] wine detail ${wineId} SUCCESS via ${url} score=${score} prices=${pricesCount}`);
+
+        if (score > bestScore) {
+          bestWine = wine;
+          bestScore = score;
+        }
+
+        // Good enough: if we found explicit prices, stop trying more endpoints
+        if (pricesCount > 0) {
+          break;
+        }
       } catch {
         console.log(`[winerim-proxy] wine detail ${wineId}: non-JSON from ${url}`);
         continue;
@@ -218,13 +258,12 @@ async function fetchWineDetail(
       } else {
         console.log(`[winerim-proxy] wine detail ${wineId} (${url}) failed: ${msg}`);
       }
-      continue;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  return null;
+  return bestWine;
 }
 
 interface FetchWineDetailsResult {
