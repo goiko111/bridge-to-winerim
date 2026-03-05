@@ -1186,6 +1186,8 @@ function StepWinerimCatalog({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewXml, setPreviewXml] = useState<string | null>(null);
   const [generatingXml, setGeneratingXml] = useState(false);
+  const [enrichingMissing, setEnrichingMissing] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<{ enriched: number; remaining: number } | null>(null);
 
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
@@ -1323,6 +1325,36 @@ function StepWinerimCatalog({
   const selectAll = () => setSelectedIds(new Set(filteredWines.map(w => w.winerim_id)));
   const clearSelection = () => setSelectedIds(new Set());
 
+  const missingPriceCount = useMemo(() => wines.filter(w => w.bottle_sale_price == null || Number(w.bottle_sale_price) <= 0).length, [wines]);
+
+  const enrichMissingPrices = async () => {
+    if (!connectionId) return;
+    setEnrichingMissing(true);
+    setEnrichResult(null);
+    let totalEnriched = 0;
+    try {
+      // Run up to 5 batches of 100
+      for (let i = 0; i < 5; i++) {
+        const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+          body: { action: "fetch-wine-details", connectionId },
+        });
+        if (error) throw error;
+        if (!data?.success) break;
+        totalEnriched += data.enriched || 0;
+        if ((data.requested || 0) === 0) break; // no more to enrich
+      }
+      await loadWines();
+      const remaining = wines.filter(w => w.bottle_sale_price == null || Number(w.bottle_sale_price) <= 0).length;
+      setEnrichResult({ enriched: totalEnriched, remaining });
+      toast({
+        title: "Pricing enrichment complete",
+        description: `${totalEnriched} wines enriched. ${remaining} still missing (API unavailable).`,
+      });
+    } catch (e: any) {
+      toast({ title: "Enrichment error", description: e.message, variant: "destructive" });
+    } finally { setEnrichingMissing(false); }
+  };
+
   const handlePreviewXml = async () => {
     if (!connectionId || selectedIds.size === 0) return;
     setGeneratingXml(true);
@@ -1423,7 +1455,29 @@ function StepWinerimCatalog({
             ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
             : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
+        {wines.length > 0 && missingPriceCount > 0 && (
+          <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing || fetchingCatalog}>
+            {enrichingMissing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+            {enrichingMissing ? "Enriching…" : `Re-enrich ${missingPriceCount} missing prices`}
+          </Button>
+        )}
       </div>
+
+      {/* Missing price warning */}
+      {wines.length > 0 && missingPriceCount > 0 && !fetchingCatalog && !enrichingMissing && (
+        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-accent/50 border border-accent">
+          <AlertTriangle className="h-4 w-4 text-accent-foreground shrink-0 mt-0.5" />
+          <div className="text-xs text-accent-foreground">
+            <strong>{missingPriceCount}</strong> wines are missing bottle pricing. This is usually caused by temporary API errors (503) during enrichment.
+            Click <strong>"Re-enrich missing prices"</strong> to retry.
+            {enrichResult && (
+              <span className="block mt-1 text-muted-foreground">
+                Last run: {enrichResult.enriched} enriched, {enrichResult.remaining} still pending.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {(fetchingCatalog || refreshDiagnostics) && (
         <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
