@@ -145,17 +145,9 @@ export function useAgoraMasterData(connectionId: string | null) {
       });
       if (error) throw error;
       if (data?.success) {
-        setMasterData({
-          families: data.masterData?.families || [],
-          vats: data.masterData?.vats || [],
-          priceLists: data.masterData?.priceLists || [],
-          preparationTypes: data.masterData?.preparationTypes || [],
-          preparationOrders: data.masterData?.preparationOrders || [],
-          warehouses: data.masterData?.warehouses || [],
-          productsSummary: [],
-          fetchedAt: new Date().toISOString(),
-        });
-        // After sync, capability goes to UNKNOWN (not YES)
+        // Reload from DB to get productsSummary and all cached data
+        await loadMasterData();
+        // Set capability to UNKNOWN (not YES) since only real POST proves write
         setWriteCapability("UNKNOWN");
       } else {
         setSyncError(data?.error || "Failed to sync master data");
