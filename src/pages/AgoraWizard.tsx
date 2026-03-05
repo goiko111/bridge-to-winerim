@@ -2119,7 +2119,7 @@ function StepOutboundSync({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {(t.payload_json as any)?.Name || (t.payload_json as any)?._winerim_wine_id ? `Wine ${(t.payload_json as any)?._winerim_wine_id}` : t.task_type}
+                        {(t.payload_json as any)?.Name || `Wine ${(t.payload_json as any)?._winerim_wine_id || "?"}`}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                         <Badge variant={
@@ -2135,8 +2135,11 @@ function StepOutboundSync({
                              (t.payload_json as any)._trigger_source}
                           </Badge>
                         )}
+                        {(t.payload_json as any)?._winerim_wine_id && (
+                          <span className="font-mono">Winerim: {(t.payload_json as any)._winerim_wine_id}</span>
+                        )}
+                        {t.external_id && <span className="font-mono">Agora: {t.external_id}</span>}
                         <span>Attempts: {t.attempts}/{t.max_attempts}</span>
-                        {t.external_id && <span className="font-mono">ID: {t.external_id}</span>}
                       </div>
                       {t.last_error && (
                         <p className="mt-1 text-[11px] text-destructive truncate">{t.last_error}</p>
