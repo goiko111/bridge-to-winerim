@@ -2124,7 +2124,7 @@ function StepOutboundSync({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">
-                        {(t.payload_json as any)?.Name || `Wine ${(t.payload_json as any)?._winerim_wine_id || "?"}`}
+                        {(() => { const wid = (t.payload_json as any)?._winerim_wine_id; return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type); })()}
                       </p>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
                         <Badge variant={
