@@ -3339,7 +3339,8 @@ export default function AgoraWizard() {
             <StepWinerimCatalog connectionId={connectionId}
               onQueueProducts={(ids, fmts, familyOverride) => outbound.queueProducts(ids, fmts, familyOverride)}
               queuingProducts={outbound.queuingProducts}
-              families={agoraMaster.masterData.families} />
+              families={agoraMaster.masterData.families}
+              priceListCount={agoraMaster.masterData.priceLists.length} />
           )}
           {currentStep === 10 && (
             <StepWriteSettings writeSettings={agoraMaster.writeSettings}
