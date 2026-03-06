@@ -2357,10 +2357,11 @@ function AgoraProductsPanel({ products, families }: {
 
 // ── Step 5: Master Data ──
 function StepMasterData({
-  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
+  masterData, syncing, syncError, syncTruncationWarnings, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
 }: {
   masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
   syncing: boolean; syncError: string | null;
+  syncTruncationWarnings: string[];
   onSync: () => void; onLoad: () => void;
   writeCapability: "UNKNOWN" | "YES" | "NO";
   writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
@@ -2424,10 +2425,23 @@ function StepMasterData({
   const [searchMaster, setSearchMaster] = useState("");
 
   // ── Sale Center / PriceList diagnostic ──
-  const centralCenter = masterData.saleCenters.find(
+  // Find all candidate central sale centers
+  const centralCandidates = masterData.saleCenters.filter(
     (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
   );
-  const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+  const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
+
+  // Determine active central: user selection > single candidate > first sale center
+  const activeCentralCenter = (() => {
+    if (selectedSaleCenterId) {
+      return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
+    }
+    if (centralCandidates.length === 1) return centralCandidates[0];
+    if (centralCandidates.length > 1) return null; // force selection
+    return null;
+  })();
+
+  const centralPriceListId = activeCentralCenter?.CurrentPriceListId || null;
   const centralPriceList = centralPriceListId
     ? masterData.priceLists.find((pl: any) => pl.Id === centralPriceListId)
     : null;
@@ -2443,7 +2457,11 @@ function StepMasterData({
     setVerifyResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "verify-products", connectionId },
+        body: { 
+          action: "verify-products", 
+          connectionId,
+          ...(selectedSaleCenterId ? { saleCenterId: selectedSaleCenterId } : {}),
+        },
       });
       if (error) throw error;
       setVerifyResult(data);
@@ -2452,7 +2470,7 @@ function StepMasterData({
     } finally {
       setVerifying(false);
     }
-  }, [connectionId]);
+  }, [connectionId, selectedSaleCenterId]);
 
   const backfillPrices = useCallback(async () => {
     if (!connectionId) return;
@@ -2616,6 +2634,16 @@ function StepMasterData({
         </div>
       )}
 
+      {/* ── Truncation Warning ── */}
+      {syncTruncationWarnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Possible data truncation</p>
+          {syncTruncationWarnings.map((w, i) => (
+            <p key={i} className="text-muted-foreground">{w}</p>
+          ))}
+        </div>
+      )}
+
       {/* ── Sale Center / PriceList Diagnostic ── */}
       {masterData.fetchedAt && (
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
@@ -2623,13 +2651,49 @@ function StepMasterData({
             <Server className="h-4 w-4 text-primary" />
             <p className="text-xs font-medium text-foreground">Sale Center Diagnostic</p>
           </div>
-          {centralCenter ? (
+
+          {/* Multiple candidates warning */}
+          {centralCandidates.length > 1 && !selectedSaleCenterId && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
+              <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 shrink-0" /> Multiple central sale centers detected ({centralCandidates.length}). Select which one to use for diagnostics:
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                {centralCandidates.map((sc: any) => (
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                    {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No candidates — manual selection */}
+          {centralCandidates.length === 0 && masterData.saleCenters.length > 0 && !selectedSaleCenterId && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
+              <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 shrink-0" /> No "Central" or default sale center detected. Select one manually:
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                {masterData.saleCenters.map((sc: any) => (
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                    {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeCentralCenter ? (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-lg border border-border bg-background p-3">
-                  <p className="text-[10px] text-muted-foreground">Central Sale Center</p>
-                  <p className="text-sm font-bold text-foreground">{centralCenter.Name}</p>
-                  <p className="text-[10px] text-muted-foreground font-mono">ID: {centralCenter.Id}</p>
+                  <p className="text-[10px] text-muted-foreground">Active Sale Center</p>
+                  <p className="text-sm font-bold text-foreground">{activeCentralCenter.Name}</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">ID: {activeCentralCenter.Id}</p>
+                  {selectedSaleCenterId && (
+                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => setSelectedSaleCenterId(null)}>Reset selection</Button>
+                  )}
                 </div>
                 <div className={`rounded-lg border p-3 ${centralPriceListId ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}`}>
                   <p className="text-[10px] text-muted-foreground">Current PriceList</p>
@@ -2642,7 +2706,7 @@ function StepMasterData({
               {!centralPriceListId && (
                 <div className="rounded-md bg-destructive/10 border border-destructive/20 p-2 text-[11px] text-destructive flex items-center gap-1.5">
                   <AlertTriangle className="h-3 w-3 shrink-0" />
-                  Central sale center has no CurrentPriceListId. Products without prices for this list will fail at sale.
+                  Selected sale center has no CurrentPriceListId. Products without prices for this list will fail at sale.
                 </div>
               )}
               <div className="flex gap-2">
@@ -2659,17 +2723,22 @@ function StepMasterData({
                 <div className="rounded-lg border border-border bg-background p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     {verifyResult.missingCentralPrice === 0 ? (
-                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have Central price</Badge>
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have correct prices</Badge>
                     ) : (
-                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} missing Central price</Badge>
+                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} price issues</Badge>
                     )}
-                    <span className="text-[10px] text-muted-foreground">{verifyResult.totalProducts} total</span>
+                    {verifyResult.summary && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed
+                      </span>
+                    )}
                   </div>
-                  {verifyResult.missingPrices && verifyResult.missingPrices.length > 0 && (
-                    <div className="max-h-32 overflow-auto space-y-1">
-                      {verifyResult.missingPrices.map((mp: any, i: number) => (
-                        <div key={i} className="text-[10px] text-destructive font-mono">
-                          {mp.format} {mp.name} (ID: {mp.productId}) — {mp.found ? "missing Central price" : "not found in Agora"}
+                  {verifyResult.missing_prices && verifyResult.missing_prices.length > 0 && (
+                    <div className="max-h-40 overflow-auto space-y-1">
+                      {verifyResult.missing_prices.map((mp: any, i: number) => (
+                        <div key={i} className="text-[10px] text-destructive font-mono flex items-center gap-2">
+                          <Badge variant="destructive" className="text-[8px] px-1 py-0">{mp.issue}</Badge>
+                          {mp.format} {mp.name} (Agora ID: {mp.agora_product_id})
                         </div>
                       ))}
                     </div>
@@ -2677,14 +2746,9 @@ function StepMasterData({
                 </div>
               )}
             </div>
-          ) : masterData.saleCenters.length > 0 ? (
-            <div className="text-[11px] text-muted-foreground">
-              <p>Sale centers found: {masterData.saleCenters.map((sc: any) => sc.Name).join(", ")}</p>
-              <p className="text-amber-600 mt-1">⚠️ No "Central" or default sale center detected.</p>
-            </div>
-          ) : (
+          ) : masterData.saleCenters.length === 0 ? (
             <p className="text-[11px] text-muted-foreground italic">No sale center data. Click "Sync Agora Master Data" to fetch.</p>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -3195,6 +3259,7 @@ export default function AgoraWizard() {
           {currentStep === 5 && (
             <StepMasterData masterData={agoraMaster.masterData}
               syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
+              syncTruncationWarnings={agoraMaster.syncTruncationWarnings}
               onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
               writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings}
               connectionId={connectionId} saveWriteSettings={agoraMaster.saveWriteSettings} />

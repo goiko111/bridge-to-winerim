@@ -87,6 +87,7 @@ export function useAgoraMasterData(connectionId: string | null) {
   const [masterData, setMasterData] = useState<AgoraMasterData>(EMPTY_MASTER);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncTruncationWarnings, setSyncTruncationWarnings] = useState<string[]>([]);
   const [writeSettings, setWriteSettings] = useState<WriteSettings>(DEFAULT_WRITE_SETTINGS);
 
   const [previewXml, setPreviewXml] = useState<string | null>(null);
@@ -152,6 +153,8 @@ export function useAgoraMasterData(connectionId: string | null) {
       if (data?.success) {
         // Reload from DB to get productsSummary and all cached data
         await loadMasterData();
+        // Capture truncation warnings
+        setSyncTruncationWarnings(data?.truncationWarnings || []);
         // Set capability to UNKNOWN (not YES) since only real POST proves write
         setWriteCapability("UNKNOWN");
       } else {
@@ -260,7 +263,7 @@ export function useAgoraMasterData(connectionId: string | null) {
   }, [connectionId]);
 
   return {
-    masterData, syncing, syncError,
+    masterData, syncing, syncError, syncTruncationWarnings,
     loadMasterData, syncMasterData,
     writeSettings, loadWriteSettings, saveWriteSettings,
     previewXml, previewing, previewImportXml, previewValidation, previewSourceData,
