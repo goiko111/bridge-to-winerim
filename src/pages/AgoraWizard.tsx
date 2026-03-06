@@ -2423,6 +2423,53 @@ function StepMasterData({
 
   const [searchMaster, setSearchMaster] = useState("");
 
+  // ── Sale Center / PriceList diagnostic ──
+  const centralCenter = masterData.saleCenters.find(
+    (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+  );
+  const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+  const centralPriceList = centralPriceListId
+    ? masterData.priceLists.find((pl: any) => pl.Id === centralPriceListId)
+    : null;
+
+  // ── Verify & Backfill ──
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<any>(null);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const verifyProducts = useCallback(async () => {
+    if (!connectionId) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "verify-products", connectionId },
+      });
+      if (error) throw error;
+      setVerifyResult(data);
+    } catch (e: any) {
+      console.error("Verify failed:", e);
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectionId]);
+
+  const backfillPrices = useCallback(async () => {
+    if (!connectionId) return;
+    setBackfilling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "backfill-prices", connectionId, formatTypes: ["BOTTLE", "GLASS"] },
+      });
+      if (error) throw error;
+      toast({ title: "Backfill queued", description: `${data?.queued || 0} products queued for re-push` });
+    } catch (e: any) {
+      console.error("Backfill failed:", e);
+    } finally {
+      setBackfilling(false);
+    }
+  }, [connectionId]);
+
   const sections = [
     { label: "Families", data: masterData.families, icon: Grape },
     { label: "VATs", data: masterData.vats, icon: Tag },
@@ -2430,6 +2477,8 @@ function StepMasterData({
     { label: "Preparation Types", data: masterData.preparationTypes, icon: Settings2 },
     { label: "Preparation Orders", data: masterData.preparationOrders, icon: Settings2 },
     { label: "Warehouses", data: masterData.warehouses, icon: Database },
+    { label: "Sale Points", data: masterData.salePoints, icon: Server },
+    { label: "Sale Centers", data: masterData.saleCenters, icon: Server },
   ];
 
   const filterItems = (data: any[]) => {
