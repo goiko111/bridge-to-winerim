@@ -153,6 +153,8 @@ export function useAgoraMasterData(connectionId: string | null) {
       if (data?.success) {
         // Reload from DB to get productsSummary and all cached data
         await loadMasterData();
+        // Capture truncation warnings
+        setSyncTruncationWarnings(data?.truncationWarnings || []);
         // Set capability to UNKNOWN (not YES) since only real POST proves write
         setWriteCapability("UNKNOWN");
       } else {
