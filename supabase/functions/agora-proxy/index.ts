@@ -1612,7 +1612,7 @@ serve(async (req) => {
     // ── SYNC AGORA MASTER DATA ──
     // FIX PRIORITY 2: Only proves export-master works; does NOT set can_write_products=YES
     if (action === "sync-master-data") {
-      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses`;
+      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses,SalePoints,SaleCenters`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml" };
       
       let res: Response;
@@ -1670,6 +1670,8 @@ serve(async (req) => {
       const prepOrders = extractElements(rawXml, "PreparationOrder");
       const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name);
       const products = extractElements(rawXml, "Product");
+      const salePoints = extractElements(rawXml, "SalePoint");
+      const saleCenters = extractElements(rawXml, "SaleCenter");
 
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
@@ -1680,6 +1682,7 @@ serve(async (req) => {
         families_json: families, vats_json: vats, price_lists_json: priceLists,
         preparation_types_json: prepTypes, preparation_orders_json: prepOrders,
         warehouses_json: warehouses, products_summary_json: productsSummary,
+        sale_points_json: salePoints, sale_centers_json: saleCenters,
         raw_xml_preview: rawXml.substring(0, 5000),
         fetched_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
@@ -1706,7 +1709,8 @@ serve(async (req) => {
           families: families.length, vats: vats.length, priceLists: priceLists.length,
           preparationTypes: prepTypes.length, preparationOrders: prepOrders.length,
           warehouses: warehouses.length, products: productsSummary.length,
-          masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses },
+          salePoints: salePoints.length, saleCenters: saleCenters.length,
+          masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses, salePoints, saleCenters },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -2026,6 +2030,68 @@ serve(async (req) => {
         }
       }
 
+      // ── POST-IMPORT VERIFICATION ──
+      let verificationResult: { verified: boolean; issues: string[] } = { verified: true, issues: [] };
+      if (parsedResponse.success) {
+        try {
+          // Re-fetch master data to get current products with prices
+          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products,SaleCenters,PriceLists`;
+          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          if (verifyRes.ok) {
+            const verifyXml = await verifyRes.text();
+
+            // Find Central's CurrentPriceListId
+            function extractVerifyElements(xml: string, tagName: string): Record<string, string>[] {
+              const results: Record<string, string>[] = [];
+              const regex = new RegExp(`<${tagName}\\s([^>]*?)[\\/]?>`, "gi");
+              let m;
+              while ((m = regex.exec(xml)) !== null) {
+                const attrs: Record<string, string> = {};
+                const ar = /(\w+)="([^"]*)"/g;
+                let am;
+                while ((am = ar.exec(m[1])) !== null) attrs[am[1]] = am[2];
+                if (!results.some(r => r.Id === attrs.Id)) results.push(attrs);
+              }
+              return results;
+            }
+            const verifySaleCenters = extractVerifyElements(verifyXml, "SaleCenter");
+            const centralCenter = verifySaleCenters.find(sc => 
+              (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+            );
+            const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+
+            if (centralPriceListId) {
+              // Check each created product has a Price entry for this PriceListId
+              for (const wine of wines) {
+                for (const fmt of formatTypes) {
+                  const productId = fmt === "GLASS" 
+                    ? String(700000 + Number(wine.winerim_id || 0))
+                    : String(500000 + Number(wine.winerim_id || 0));
+                  
+                  // Search for this product's Price entries in the verify XML
+                  const productRegex = new RegExp(`<Product[^>]*Id="${productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+                  const productMatch = verifyXml.match(productRegex);
+                  
+                  if (!productMatch) {
+                    verificationResult.verified = false;
+                    verificationResult.issues.push(`Product ${productId} (${fmt} ${wine.name}) not found in Agora after import`);
+                    continue;
+                  }
+                  
+                  const hasCentralPrice = productMatch[1].includes(`PriceListId="${centralPriceListId}"`);
+                  if (!hasCentralPrice) {
+                    verificationResult.verified = false;
+                    verificationResult.issues.push(`Product ${productId} missing price for Central PriceList ${centralPriceListId}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (verifyErr) {
+          verificationResult.issues.push(`Verification fetch failed: ${String(verifyErr).substring(0, 200)}`);
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: parsedResponse.success,
@@ -2035,6 +2101,7 @@ serve(async (req) => {
           xmlSent: xml.substring(0, 3000),
           winesProcessed: wines.length,
           formatsUsed: formatTypes,
+          verification: verificationResult,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -2260,6 +2327,118 @@ serve(async (req) => {
 
       return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── BACKFILL PRICES (re-push UPDATE for products missing PriceList entries) ──
+    if (action === "backfill-prices") {
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS"];
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
+
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "No master data. Run 'Sync Master Data' first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Get all confirmed mappings to find which products to re-push
+      let targetWineIds: string[] = winerimWineIds;
+      if (targetWineIds.length === 0) {
+        const { data: mappings } = await supabase
+          .from("product_mappings").select("winerim_wine_id")
+          .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+        if (mappings) {
+          targetWineIds = [...new Set(mappings.map((m: any) => m.winerim_wine_id).filter(Boolean))];
+        }
+      }
+
+      if (targetWineIds.length === 0) {
+        return new Response(JSON.stringify({ success: true, message: "No products to backfill", queued: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Queue them as outbound tasks for re-push
+      let queued = 0;
+      for (const wineId of targetWineIds) {
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wineId,
+            _format_types: formatTypes,
+            _write_mode: "XML_IMPORT",
+            _trigger_source: "BACKFILL_PRICES",
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── VERIFY PRODUCTS IN AGORA (check prices for Central PriceList) ──
+    if (action === "verify-products") {
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+
+      const saleCenters = ((masterData as any)?.sale_centers_json || []) as Record<string, string>[];
+      const centralCenter = saleCenters.find(sc => 
+        (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+      );
+      const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+
+      if (!centralPriceListId) {
+        return new Response(JSON.stringify({ 
+          success: false, error: "Cannot find Central sale center PriceListId. Sync master data first.",
+          saleCenters,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Re-fetch current products from Agora
+      const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+      const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+      
+      if (!verifyRes.ok) {
+        return new Response(JSON.stringify({ success: false, error: `Agora responded ${verifyRes.status}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const verifyXml = await verifyRes.text();
+      
+      // Get all WINERIM products (IDs 500000+ and 700000+)
+      const { data: mappings } = await supabase
+        .from("product_mappings").select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
+        .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+
+      const results: { productId: string; name: string; format: string; hasCentralPrice: boolean; found: boolean }[] = [];
+
+      for (const mapping of (mappings || [])) {
+        const productRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+        const productMatch = verifyXml.match(productRegex);
+        
+        if (!productMatch) {
+          results.push({ productId: mapping.provider_product_id, name: mapping.provider_product_name, format: mapping.format_type, hasCentralPrice: false, found: false });
+          continue;
+        }
+        
+        const hasCentralPrice = productMatch[1].includes(`PriceListId="${centralPriceListId}"`);
+        results.push({ productId: mapping.provider_product_id, name: mapping.provider_product_name, format: mapping.format_type, hasCentralPrice, found: true });
+      }
+
+      const missingPrices = results.filter(r => !r.hasCentralPrice);
+
+      return new Response(JSON.stringify({
+        success: true,
+        centralSaleCenter: centralCenter,
+        centralPriceListId,
+        totalProducts: results.length,
+        missingCentralPrice: missingPrices.length,
+        results,
+        missingPrices,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── DIAGNOSE (legacy) ──

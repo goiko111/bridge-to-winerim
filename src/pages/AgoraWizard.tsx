@@ -2423,6 +2423,53 @@ function StepMasterData({
 
   const [searchMaster, setSearchMaster] = useState("");
 
+  // ── Sale Center / PriceList diagnostic ──
+  const centralCenter = masterData.saleCenters.find(
+    (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+  );
+  const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+  const centralPriceList = centralPriceListId
+    ? masterData.priceLists.find((pl: any) => pl.Id === centralPriceListId)
+    : null;
+
+  // ── Verify & Backfill ──
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<any>(null);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const verifyProducts = useCallback(async () => {
+    if (!connectionId) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "verify-products", connectionId },
+      });
+      if (error) throw error;
+      setVerifyResult(data);
+    } catch (e: any) {
+      console.error("Verify failed:", e);
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectionId]);
+
+  const backfillPrices = useCallback(async () => {
+    if (!connectionId) return;
+    setBackfilling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "backfill-prices", connectionId, formatTypes: ["BOTTLE", "GLASS"] },
+      });
+      if (error) throw error;
+      toast({ title: "Backfill queued", description: `${data?.queued || 0} products queued for re-push` });
+    } catch (e: any) {
+      console.error("Backfill failed:", e);
+    } finally {
+      setBackfilling(false);
+    }
+  }, [connectionId]);
+
   const sections = [
     { label: "Families", data: masterData.families, icon: Grape },
     { label: "VATs", data: masterData.vats, icon: Tag },
@@ -2430,6 +2477,8 @@ function StepMasterData({
     { label: "Preparation Types", data: masterData.preparationTypes, icon: Settings2 },
     { label: "Preparation Orders", data: masterData.preparationOrders, icon: Settings2 },
     { label: "Warehouses", data: masterData.warehouses, icon: Database },
+    { label: "Sale Points", data: masterData.salePoints, icon: Server },
+    { label: "Sale Centers", data: masterData.saleCenters, icon: Server },
   ];
 
   const filterItems = (data: any[]) => {
@@ -2564,6 +2613,78 @@ function StepMasterData({
       {writeCapability === "UNKNOWN" && masterData.fetchedAt && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600">
           <p className="flex items-center gap-1.5"><AlertTriangle className="h-3 w-3" /> Master data synced but write not yet verified. Go to Write Settings and run a manual XML import to confirm write capability.</p>
+        </div>
+      )}
+
+      {/* ── Sale Center / PriceList Diagnostic ── */}
+      {masterData.fetchedAt && (
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Server className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium text-foreground">Sale Center Diagnostic</p>
+          </div>
+          {centralCenter ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-border bg-background p-3">
+                  <p className="text-[10px] text-muted-foreground">Central Sale Center</p>
+                  <p className="text-sm font-bold text-foreground">{centralCenter.Name}</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">ID: {centralCenter.Id}</p>
+                </div>
+                <div className={`rounded-lg border p-3 ${centralPriceListId ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}`}>
+                  <p className="text-[10px] text-muted-foreground">Current PriceList</p>
+                  <p className={`text-sm font-bold ${centralPriceListId ? "text-emerald-600" : "text-destructive"}`}>
+                    {centralPriceList ? `${centralPriceList.Name}` : centralPriceListId || "Not found"}
+                  </p>
+                  {centralPriceListId && <p className="text-[10px] text-muted-foreground font-mono">ID: {centralPriceListId}</p>}
+                </div>
+              </div>
+              {!centralPriceListId && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 p-2 text-[11px] text-destructive flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Central sale center has no CurrentPriceListId. Products without prices for this list will fail at sale.
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={verifyProducts} disabled={verifying}>
+                  {verifying ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+                  Verify Product Prices
+                </Button>
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={backfillPrices} disabled={backfilling}>
+                  {backfilling ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+                  Backfill Missing Prices
+                </Button>
+              </div>
+              {verifyResult && (
+                <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    {verifyResult.missingCentralPrice === 0 ? (
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have Central price</Badge>
+                    ) : (
+                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} missing Central price</Badge>
+                    )}
+                    <span className="text-[10px] text-muted-foreground">{verifyResult.totalProducts} total</span>
+                  </div>
+                  {verifyResult.missingPrices && verifyResult.missingPrices.length > 0 && (
+                    <div className="max-h-32 overflow-auto space-y-1">
+                      {verifyResult.missingPrices.map((mp: any, i: number) => (
+                        <div key={i} className="text-[10px] text-destructive font-mono">
+                          {mp.format} {mp.name} (ID: {mp.productId}) — {mp.found ? "missing Central price" : "not found in Agora"}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : masterData.saleCenters.length > 0 ? (
+            <div className="text-[11px] text-muted-foreground">
+              <p>Sale centers found: {masterData.saleCenters.map((sc: any) => sc.Name).join(", ")}</p>
+              <p className="text-amber-600 mt-1">⚠️ No "Central" or default sale center detected.</p>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground italic">No sale center data. Click "Sync Agora Master Data" to fetch.</p>
+          )}
         </div>
       )}
 
