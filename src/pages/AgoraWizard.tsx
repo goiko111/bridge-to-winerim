@@ -2684,6 +2684,22 @@ function StepMasterData({
             </div>
           )}
 
+          {/* Fetched counts summary */}
+          <div className="grid grid-cols-3 gap-2 text-[10px]">
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">SaleCenters</p>
+              <p className={`text-sm font-bold ${masterData.saleCenters.length > 0 ? "text-foreground" : "text-destructive"}`}>{masterData.saleCenters.length}</p>
+            </div>
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">SalePoints</p>
+              <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+            </div>
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">PriceLists</p>
+              <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
+            </div>
+          </div>
+
           {activeCentralCenter ? (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-3">
