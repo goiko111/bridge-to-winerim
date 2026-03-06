@@ -3259,6 +3259,7 @@ export default function AgoraWizard() {
           {currentStep === 5 && (
             <StepMasterData masterData={agoraMaster.masterData}
               syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
+              syncTruncationWarnings={agoraMaster.syncTruncationWarnings}
               onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
               writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings}
               connectionId={connectionId} saveWriteSettings={agoraMaster.saveWriteSettings} />
