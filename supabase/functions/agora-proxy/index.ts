@@ -1673,6 +1673,16 @@ serve(async (req) => {
       const salePoints = extractElements(rawXml, "SalePoint");
       const saleCenters = extractElements(rawXml, "SaleCenter");
 
+      // Truncation detection: check if XML was cut off (missing closing tag)
+      const truncationWarnings: string[] = [];
+      const xmlLength = rawXml.length;
+      const hasClosingTag = rawXml.trimEnd().endsWith(">");
+      if (!hasClosingTag) {
+        truncationWarnings.push(`XML response appears truncated (${xmlLength} bytes, no closing tag)`);
+      }
+      // Log fetched counts for diagnostics
+      console.log(`[sync-master-data] connection=${connectionId} fetched: families=${families.length} vats=${vats.length} priceLists=${priceLists.length} salePoints=${salePoints.length} saleCenters=${saleCenters.length} products=${products.length} xmlBytes=${xmlLength}`);
+
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
       }));
@@ -1710,6 +1720,8 @@ serve(async (req) => {
           preparationTypes: prepTypes.length, preparationOrders: prepOrders.length,
           warehouses: warehouses.length, products: productsSummary.length,
           salePoints: salePoints.length, saleCenters: saleCenters.length,
+          truncationWarnings,
+          xmlBytes: xmlLength,
           masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses, salePoints, saleCenters },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
