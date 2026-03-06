@@ -1612,7 +1612,7 @@ serve(async (req) => {
     // ── SYNC AGORA MASTER DATA ──
     // FIX PRIORITY 2: Only proves export-master works; does NOT set can_write_products=YES
     if (action === "sync-master-data") {
-      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses`;
+      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses,SalePoints,SaleCenters`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml" };
       
       let res: Response;
@@ -1670,6 +1670,8 @@ serve(async (req) => {
       const prepOrders = extractElements(rawXml, "PreparationOrder");
       const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name);
       const products = extractElements(rawXml, "Product");
+      const salePoints = extractElements(rawXml, "SalePoint");
+      const saleCenters = extractElements(rawXml, "SaleCenter");
 
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
@@ -1680,6 +1682,7 @@ serve(async (req) => {
         families_json: families, vats_json: vats, price_lists_json: priceLists,
         preparation_types_json: prepTypes, preparation_orders_json: prepOrders,
         warehouses_json: warehouses, products_summary_json: productsSummary,
+        sale_points_json: salePoints, sale_centers_json: saleCenters,
         raw_xml_preview: rawXml.substring(0, 5000),
         fetched_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
@@ -1706,7 +1709,8 @@ serve(async (req) => {
           families: families.length, vats: vats.length, priceLists: priceLists.length,
           preparationTypes: prepTypes.length, preparationOrders: prepOrders.length,
           warehouses: warehouses.length, products: productsSummary.length,
-          masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses },
+          salePoints: salePoints.length, saleCenters: saleCenters.length,
+          masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses, salePoints, saleCenters },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
