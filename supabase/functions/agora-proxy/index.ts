@@ -2118,124 +2118,144 @@ serve(async (req) => {
         }
       }
 
-      // ── POST-IMPORT VERIFICATION (hardened) ──
+      // ── POST-IMPORT VERIFICATION — ALL PRICELISTS ──
       interface MissingPriceEntry {
         product_erp_id: string;
         agora_product_id: string;
         price_list_id: string;
         price_list_name: string;
         issue: "missing" | "zero" | "invalid";
+        product_name?: string;
+        format?: string;
       }
       let verificationResult: {
         verified: boolean;
         issues: string[];
         missing_prices: MissingPriceEntry[];
         summary: { checked: number; ok: number; failed: number };
-      } = { verified: true, issues: [], missing_prices: [], summary: { checked: 0, ok: 0, failed: 0 } };
+        totalPriceListsChecked: number;
+      } = { verified: true, issues: [], missing_prices: [], summary: { checked: 0, ok: 0, failed: 0 }, totalPriceListsChecked: 0 };
 
       if (parsedResponse.success) {
         try {
-          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products,SaleCenters,PriceLists`;
+          // Fetch products separately to avoid truncation
+          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
-          if (verifyRes.ok) {
+          
+          // Also fetch PriceLists from master data cache
+          const { data: cachedMaster } = await supabase
+            .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", connectionId).single();
+          const allPriceLists = ((cachedMaster as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+          const allSaleCenters = ((cachedMaster as any)?.sale_centers_json || []) as Record<string, string>[];
+          
+          // Build PriceListId -> SaleCenter name map for UI
+          const priceListToSaleCenters: Record<string, string[]> = {};
+          for (const sc of allSaleCenters) {
+            const plId = sc.CurrentPriceListId;
+            if (plId) {
+              if (!priceListToSaleCenters[plId]) priceListToSaleCenters[plId] = [];
+              priceListToSaleCenters[plId].push(sc.Name || sc.Id);
+            }
+          }
+
+          verificationResult.totalPriceListsChecked = allPriceLists.length;
+
+          if (verifyRes.ok && allPriceLists.length > 0) {
             const verifyXml = await verifyRes.text();
 
-            function extractVerifyElements(xml: string, tagName: string): Record<string, string>[] {
-              const results: Record<string, string>[] = [];
-              const regex = new RegExp(`<${tagName}\\s([^>]*?)[\\/]?>`, "gi");
-              let m;
-              while ((m = regex.exec(xml)) !== null) {
-                const attrs: Record<string, string> = {};
-                const ar = /(\w+)="([^"]*)"/g;
-                let am;
-                while ((am = ar.exec(m[1])) !== null) attrs[am[1]] = am[2];
-                if (!results.some(r => r.Id === attrs.Id)) results.push(attrs);
-              }
-              return results;
-            }
+            for (const wine of wines) {
+              for (const fmt of formatTypes) {
+                const productId = fmt === "MAGNUM"
+                  ? String(900000 + Number(wine.winerim_id || 0))
+                  : fmt === "GLASS" 
+                  ? String(700000 + Number(wine.winerim_id || 0))
+                  : String(500000 + Number(wine.winerim_id || 0));
+                const productName = fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`;
+                const winerimRef = `${wine.winerim_id}:${fmt}`;
+                
+                verificationResult.summary.checked++;
 
-            const verifySaleCenters = extractVerifyElements(verifyXml, "SaleCenter");
-            const centralCenter = verifySaleCenters.find(sc => 
-              (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
-            );
-            const centralPriceListId = centralCenter?.CurrentPriceListId || null;
-            const verifyPriceLists = extractVerifyElements(verifyXml, "PriceList");
-
-            if (centralPriceListId) {
-              for (const wine of wines) {
-                for (const fmt of formatTypes) {
-                  const productId = fmt === "GLASS" 
-                    ? String(700000 + Number(wine.winerim_id || 0))
-                    : String(500000 + Number(wine.winerim_id || 0));
-                  const winerimRef = `${wine.winerim_id}:${fmt}`;
-                  
-                  verificationResult.summary.checked++;
-
-                  const productRegex = new RegExp(`<Product[^>]*Id="${productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
-                  const productMatch = verifyXml.match(productRegex);
-                  
-                  if (!productMatch) {
-                    verificationResult.verified = false;
-                    verificationResult.summary.failed++;
-                    verificationResult.issues.push(`Product ${productId} (${fmt} ${wine.name}) not found in Agora after import`);
+                const productRegex = new RegExp(`<Product[^>]*Id="${productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+                const productMatch = verifyXml.match(productRegex);
+                
+                if (!productMatch) {
+                  verificationResult.verified = false;
+                  verificationResult.summary.failed++;
+                  verificationResult.issues.push(`Product ${productId} (${fmt} ${wine.name}) not found in Agora after import`);
+                  // Add entry for ALL PriceLists since product doesn't exist
+                  for (const pl of allPriceLists) {
                     verificationResult.missing_prices.push({
                       product_erp_id: winerimRef,
                       agora_product_id: productId,
-                      price_list_id: centralPriceListId,
-                      price_list_name: centralCenter?.Name || "Central",
+                      price_list_id: pl.Id,
+                      price_list_name: pl.Name,
                       issue: "missing",
+                      product_name: productName,
+                      format: fmt,
                     });
-                    continue;
                   }
-                  
-                  // Check price for Central PriceList
-                  const centralPriceRegex = new RegExp(`<Price[^>]*PriceListId="${centralPriceListId}"[^>]*MainPrice="([^"]*)"`, "i");
-                  const centralPriceMatch = productMatch[1].match(centralPriceRegex);
+                  continue;
+                }
+                
+                // Check price for EVERY PriceList
+                let allPricesOk = true;
+                for (const pl of allPriceLists) {
+                  const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
+                  const priceMatch = productMatch[1].match(priceRegex);
 
-                  if (!centralPriceMatch) {
-                    verificationResult.verified = false;
-                    verificationResult.summary.failed++;
-                    verificationResult.issues.push(`Product ${productId} missing price for Central PriceList ${centralPriceListId}`);
+                  if (!priceMatch) {
+                    allPricesOk = false;
                     verificationResult.missing_prices.push({
                       product_erp_id: winerimRef,
                       agora_product_id: productId,
-                      price_list_id: centralPriceListId,
-                      price_list_name: centralCenter?.Name || "Central",
+                      price_list_id: pl.Id,
+                      price_list_name: pl.Name,
                       issue: "missing",
+                      product_name: productName,
+                      format: fmt,
                     });
                   } else {
-                    const priceVal = parseFloat(centralPriceMatch[1]);
+                    const priceVal = parseFloat(priceMatch[1]);
                     if (isNaN(priceVal)) {
-                      verificationResult.verified = false;
-                      verificationResult.summary.failed++;
-                      verificationResult.issues.push(`Product ${productId} has invalid price "${centralPriceMatch[1]}" for Central PriceList`);
+                      allPricesOk = false;
                       verificationResult.missing_prices.push({
                         product_erp_id: winerimRef,
                         agora_product_id: productId,
-                        price_list_id: centralPriceListId,
-                        price_list_name: centralCenter?.Name || "Central",
+                        price_list_id: pl.Id,
+                        price_list_name: pl.Name,
                         issue: "invalid",
+                        product_name: productName,
+                        format: fmt,
                       });
                     } else if (priceVal <= 0) {
-                      verificationResult.verified = false;
-                      verificationResult.summary.failed++;
-                      verificationResult.issues.push(`Product ${productId} has zero price for Central PriceList`);
+                      allPricesOk = false;
                       verificationResult.missing_prices.push({
                         product_erp_id: winerimRef,
                         agora_product_id: productId,
-                        price_list_id: centralPriceListId,
-                        price_list_name: centralCenter?.Name || "Central",
+                        price_list_id: pl.Id,
+                        price_list_name: pl.Name,
                         issue: "zero",
+                        product_name: productName,
+                        format: fmt,
                       });
-                    } else {
-                      verificationResult.summary.ok++;
                     }
                   }
                 }
+
+                if (allPricesOk) {
+                  verificationResult.summary.ok++;
+                } else {
+                  verificationResult.verified = false;
+                  verificationResult.summary.failed++;
+                  const missingPlIds = verificationResult.missing_prices
+                    .filter(mp => mp.agora_product_id === productId)
+                    .map(mp => mp.price_list_name);
+                  verificationResult.issues.push(`Product ${productId} (${fmt} ${wine.name}) missing/invalid prices in: ${missingPlIds.join(", ")}`);
+                }
               }
-            } else {
-              verificationResult.issues.push("Could not identify Central sale center PriceListId for verification");
             }
+          } else if (allPriceLists.length === 0) {
+            verificationResult.issues.push("No PriceLists in master data — cannot verify cross-center pricing");
           }
         } catch (verifyErr) {
           verificationResult.issues.push(`Verification fetch failed: ${String(verifyErr).substring(0, 200)}`);
@@ -2243,7 +2263,8 @@ serve(async (req) => {
 
         // If verification failed, mark outbound tasks as FAILED
         if (!verificationResult.verified && verificationResult.missing_prices.length > 0) {
-          const failMsg = `Post-import verification failed: ${verificationResult.summary.failed}/${verificationResult.summary.checked} products have price issues (${verificationResult.missing_prices.map(mp => mp.issue).join(", ")})`;
+          const uniquePlIds = [...new Set(verificationResult.missing_prices.map(mp => mp.price_list_id))];
+          const failMsg = `Post-import verification failed: ${verificationResult.summary.failed}/${verificationResult.summary.checked} products missing prices in ${uniquePlIds.length} PriceLists`;
           for (const wine of wines) {
             const wineId = wine.winerim_id;
             await supabase.from("outbound_tasks")
