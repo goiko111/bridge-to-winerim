@@ -2030,6 +2030,68 @@ serve(async (req) => {
         }
       }
 
+      // ── POST-IMPORT VERIFICATION ──
+      let verificationResult: { verified: boolean; issues: string[] } = { verified: true, issues: [] };
+      if (parsedResponse.success) {
+        try {
+          // Re-fetch master data to get current products with prices
+          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products,SaleCenters,PriceLists`;
+          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          if (verifyRes.ok) {
+            const verifyXml = await verifyRes.text();
+
+            // Find Central's CurrentPriceListId
+            function extractVerifyElements(xml: string, tagName: string): Record<string, string>[] {
+              const results: Record<string, string>[] = [];
+              const regex = new RegExp(`<${tagName}\\s([^>]*?)[\\/]?>`, "gi");
+              let m;
+              while ((m = regex.exec(xml)) !== null) {
+                const attrs: Record<string, string> = {};
+                const ar = /(\w+)="([^"]*)"/g;
+                let am;
+                while ((am = ar.exec(m[1])) !== null) attrs[am[1]] = am[2];
+                if (!results.some(r => r.Id === attrs.Id)) results.push(attrs);
+              }
+              return results;
+            }
+            const verifySaleCenters = extractVerifyElements(verifyXml, "SaleCenter");
+            const centralCenter = verifySaleCenters.find(sc => 
+              (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+            );
+            const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+
+            if (centralPriceListId) {
+              // Check each created product has a Price entry for this PriceListId
+              for (const wine of wines) {
+                for (const fmt of formatTypes) {
+                  const productId = fmt === "GLASS" 
+                    ? String(700000 + Number(wine.winerim_id || 0))
+                    : String(500000 + Number(wine.winerim_id || 0));
+                  
+                  // Search for this product's Price entries in the verify XML
+                  const productRegex = new RegExp(`<Product[^>]*Id="${productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+                  const productMatch = verifyXml.match(productRegex);
+                  
+                  if (!productMatch) {
+                    verificationResult.verified = false;
+                    verificationResult.issues.push(`Product ${productId} (${fmt} ${wine.name}) not found in Agora after import`);
+                    continue;
+                  }
+                  
+                  const hasCentralPrice = productMatch[1].includes(`PriceListId="${centralPriceListId}"`);
+                  if (!hasCentralPrice) {
+                    verificationResult.verified = false;
+                    verificationResult.issues.push(`Product ${productId} missing price for Central PriceList ${centralPriceListId}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (verifyErr) {
+          verificationResult.issues.push(`Verification fetch failed: ${String(verifyErr).substring(0, 200)}`);
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: parsedResponse.success,
@@ -2039,6 +2101,7 @@ serve(async (req) => {
           xmlSent: xml.substring(0, 3000),
           winesProcessed: wines.length,
           formatsUsed: formatTypes,
+          verification: verificationResult,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
