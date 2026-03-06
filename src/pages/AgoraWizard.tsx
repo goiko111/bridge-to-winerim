@@ -2357,10 +2357,11 @@ function AgoraProductsPanel({ products, families }: {
 
 // ── Step 5: Master Data ──
 function StepMasterData({
-  masterData, syncing, syncError, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
+  masterData, syncing, syncError, syncTruncationWarnings, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
 }: {
   masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
   syncing: boolean; syncError: string | null;
+  syncTruncationWarnings: string[];
   onSync: () => void; onLoad: () => void;
   writeCapability: "UNKNOWN" | "YES" | "NO";
   writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
