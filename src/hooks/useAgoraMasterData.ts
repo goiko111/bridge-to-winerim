@@ -14,6 +14,8 @@ export interface AgoraMasterData {
   preparationTypes: AgoraMasterItem[];
   preparationOrders: AgoraMasterItem[];
   warehouses: AgoraMasterItem[];
+  salePoints: AgoraMasterItem[];
+  saleCenters: (AgoraMasterItem & { CurrentPriceListId?: string; IsDefault?: string })[];
   productsSummary: { Id: string; Name: string; FamilyId?: string; VatId?: string }[];
   fetchedAt: string | null;
 }
@@ -58,7 +60,8 @@ export interface ParsedImportResponse {
 
 const EMPTY_MASTER: AgoraMasterData = {
   families: [], vats: [], priceLists: [], preparationTypes: [],
-  preparationOrders: [], warehouses: [], productsSummary: [], fetchedAt: null,
+  preparationOrders: [], warehouses: [], salePoints: [], saleCenters: [],
+  productsSummary: [], fetchedAt: null,
 };
 
 const DEFAULT_WRITE_SETTINGS: WriteSettings = {
@@ -112,6 +115,8 @@ export function useAgoraMasterData(connectionId: string | null) {
         preparationTypes: (data as any).preparation_types_json || [],
         preparationOrders: (data as any).preparation_orders_json || [],
         warehouses: (data as any).warehouses_json || [],
+        salePoints: (data as any).sale_points_json || [],
+        saleCenters: (data as any).sale_centers_json || [],
         productsSummary: (data as any).products_summary_json || [],
         fetchedAt: (data as any).fetched_at,
       });
