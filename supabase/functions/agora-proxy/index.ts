@@ -2096,14 +2096,17 @@ serve(async (req) => {
       // Update mappings
       for (const wine of wines) {
         for (const fmt of formatTypes) {
-          const agoraProductId = fmt === "GLASS" 
+          const agoraProductId = fmt === "MAGNUM"
+            ? String(900000 + Number(wine.winerim_id || 0))
+            : fmt === "GLASS" 
             ? String(700000 + Number(wine.winerim_id || 0))
             : String(500000 + Number(wine.winerim_id || 0));
+          const productName = fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`;
 
           await supabase.from("product_mappings").upsert({
             connection_id: connectionId,
             provider_product_id: agoraProductId,
-            provider_product_name: fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`,
+            provider_product_name: productName,
             winerim_wine_id: wine.winerim_id, winerim_wine_name: wine.name,
             match_method: "XML_IMPORT", match_score: 100,
             match_reasons: ["Created via XML import"],
