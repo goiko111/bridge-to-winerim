@@ -2423,7 +2423,6 @@ function StepMasterData({
   }, [connectionId, loadWineStats]);
 
   const [searchMaster, setSearchMaster] = useState("");
-  const [syncTruncationWarnings, setSyncTruncationWarnings] = useState<string[]>([]);
 
   // ── Sale Center / PriceList diagnostic ──
   // Find all candidate central sale centers
