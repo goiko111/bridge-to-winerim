@@ -1744,7 +1744,7 @@ serve(async (req) => {
         preparation_types_json: prepTypes, preparation_orders_json: prepOrders,
         warehouses_json: warehouses, products_summary_json: productsSummary,
         sale_points_json: salePoints, sale_centers_json: saleCenters,
-        raw_xml_preview: rawXml.substring(0, 5000),
+        raw_xml_preview: coreXml.substring(0, 5000),
         fetched_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
 
@@ -1772,7 +1772,11 @@ serve(async (req) => {
           warehouses: warehouses.length, products: productsSummary.length,
           salePoints: salePoints.length, saleCenters: saleCenters.length,
           truncationWarnings,
-          xmlBytes: xmlLength,
+          fetchedCounts: {
+            families: families.length, vats: vats.length, priceLists: priceLists.length,
+            salePoints: salePoints.length, saleCenters: saleCenters.length,
+            products: products.length, warehouses: warehouses.length,
+          },
           masterData: { families, vats, priceLists, preparationTypes: prepTypes, preparationOrders: prepOrders, warehouses, salePoints, saleCenters },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
