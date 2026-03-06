@@ -2422,12 +2422,26 @@ function StepMasterData({
   }, [connectionId, loadWineStats]);
 
   const [searchMaster, setSearchMaster] = useState("");
+  const [syncTruncationWarnings, setSyncTruncationWarnings] = useState<string[]>([]);
 
   // ── Sale Center / PriceList diagnostic ──
-  const centralCenter = masterData.saleCenters.find(
+  // Find all candidate central sale centers
+  const centralCandidates = masterData.saleCenters.filter(
     (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
   );
-  const centralPriceListId = centralCenter?.CurrentPriceListId || null;
+  const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
+
+  // Determine active central: user selection > single candidate > first sale center
+  const activeCentralCenter = (() => {
+    if (selectedSaleCenterId) {
+      return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
+    }
+    if (centralCandidates.length === 1) return centralCandidates[0];
+    if (centralCandidates.length > 1) return null; // force selection
+    return null;
+  })();
+
+  const centralPriceListId = activeCentralCenter?.CurrentPriceListId || null;
   const centralPriceList = centralPriceListId
     ? masterData.priceLists.find((pl: any) => pl.Id === centralPriceListId)
     : null;
@@ -2443,7 +2457,11 @@ function StepMasterData({
     setVerifyResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "verify-products", connectionId },
+        body: { 
+          action: "verify-products", 
+          connectionId,
+          ...(selectedSaleCenterId ? { saleCenterId: selectedSaleCenterId } : {}),
+        },
       });
       if (error) throw error;
       setVerifyResult(data);
@@ -2452,7 +2470,7 @@ function StepMasterData({
     } finally {
       setVerifying(false);
     }
-  }, [connectionId]);
+  }, [connectionId, selectedSaleCenterId]);
 
   const backfillPrices = useCallback(async () => {
     if (!connectionId) return;
