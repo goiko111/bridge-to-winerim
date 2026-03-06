@@ -240,7 +240,7 @@ interface WineValidationResult {
 }
 
 // deno-lint-ignore no-explicit-any
-function validateWineForAgora(wine: any, formatType: string, connection?: any): WineValidationResult {
+function validateWineForAgora(wine: any, formatType: string, connection?: any, priceLists?: { Id: string; Name: string }[]): WineValidationResult {
   const warnings: string[] = [];
   const missingFields: string[] = [];
 
@@ -259,6 +259,11 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any): 
     warnings.push("missing_wine_type_will_use_default_family");
   }
 
+  // Block if no PriceLists available — cannot guarantee cross-center pricing
+  if (priceLists && priceLists.length === 0) {
+    missingFields.push("no_pricelists_available");
+  }
+
   if (formatType === "BOTTLE") {
     const bottlePrice = extractBottleSalePrice(wine);
     if (!bottlePrice || bottlePrice <= 0) {
@@ -271,7 +276,6 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any): 
   }
 
   if (formatType === "GLASS") {
-    // PRIORITY 4: Glass eligibility requires serve_by_glass + glass_sale_price
     if (!wine.serve_by_glass) {
       missingFields.push("serve_by_glass_not_enabled");
     }
@@ -283,9 +287,19 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any): 
     if (!glassCost || glassCost <= 0) {
       warnings.push("missing_glass_cost_price_will_use_zero");
     } else if (!wine.glass_cost_price && wine.bottle_purchase_price) {
-      // Cost was estimated from bottle price
       const glassesPerBottle = connection?.estimated_glasses_per_bottle || 5;
       warnings.push(`glass_cost_estimated_from_bottle_price_divided_by_${glassesPerBottle}`);
+    }
+  }
+
+  if (formatType === "MAGNUM") {
+    const magnumPrice = wine.magnum_sale_price ? Number(wine.magnum_sale_price) : null;
+    if (!magnumPrice || magnumPrice <= 0) {
+      missingFields.push("missing_magnum_sale_price");
+    }
+    const magnumCost = wine.magnum_purchase_price ? Number(wine.magnum_purchase_price) : null;
+    if (!magnumCost || magnumCost <= 0) {
+      warnings.push("missing_magnum_cost_price_will_use_zero");
     }
   }
 
@@ -471,29 +485,33 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     const wineType = extractWineType(wine);
 
     for (const fmt of formatTypes) {
-      // Validate before generating (pass connection for glass cost fallback)
-      const validation = validateWineForAgora(wine, fmt, connection);
+      // Validate before generating (pass connection for glass cost fallback + priceLists emptiness check)
+      const validation = validateWineForAgora(wine, fmt, connection, priceLists);
       validationResults.push({ winerimId: String(winerimId), formatType: fmt, validation });
 
       // Skip formats with missing required fields
       if (!validation.valid) continue;
 
+      const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
-      const productId = isGlass ? 700000 + winerimId : 500000 + winerimId;
+      const productId = isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
       const familyResult = findFamilyId(wineType, fmt);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
 
-      const productName = isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
-      const buttonText = truncate(isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`, 20);
+      const productName = isMagnum ? `MAG. ${wineName}` : isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
+      const buttonText = truncate(productName, 20);
 
       // Use REAL prices from normalized fields, never invent
       let mainPrice: string;
       let costPrice: string;
 
-      if (isGlass) {
+      if (isMagnum) {
+        mainPrice = (Number(wine.magnum_sale_price) || 0).toFixed(2);
+        costPrice = (Number(wine.magnum_purchase_price) || 0).toFixed(2);
+      } else if (isGlass) {
         mainPrice = (extractGlassSalePrice(wine) || 0).toFixed(2);
         costPrice = (extractGlassCostPrice(wine, connection) || 0).toFixed(2);
       } else {
@@ -501,15 +519,15 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         costPrice = (extractBottleCostPrice(wine) || 0).toFixed(2);
       }
 
+      // Generate prices for ALL PriceLists (same price everywhere)
       const pricesXml = priceLists.map(pl =>
-        `        <Price PriceListId="${pl.Id}" MainPrice="${mainPrice}" AddinPrice="" MenuItemPrice="0.00" />`
+        `        <Price PriceListId="${pl.Id}" MainPrice="${mainPrice}" AddinPrice="0.00" MenuItemPrice="0.00" />`
       ).join("\n");
 
       const costPricesXml = warehouses.map(wh =>
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      // PRIORITY 6: Do NOT set BaseSaleFormatId — create standalone products
       productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
