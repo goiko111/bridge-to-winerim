@@ -2744,35 +2744,58 @@ function StepMasterData({
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={verifyProducts} disabled={verifying}>
                   {verifying ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
-                  Verify Product Prices
+                  Verify All PriceList Prices
                 </Button>
                 <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={backfillPrices} disabled={backfilling}>
                   {backfilling ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
-                  Backfill Missing Prices
+                  Fix Prices for All PriceLists
                 </Button>
               </div>
               {verifyResult && (
                 <div className="rounded-lg border border-border bg-background p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    {verifyResult.missingCentralPrice === 0 ? (
-                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have correct prices</Badge>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(verifyResult.missingCentralPrice || 0) === 0 ? (
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists</Badge>
                     ) : (
-                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} price issues</Badge>
+                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} products with price issues</Badge>
                     )}
                     {verifyResult.summary && (
                       <span className="text-[10px] text-muted-foreground">
-                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed
+                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.length} SaleCenters
                       </span>
                     )}
                   </div>
                   {verifyResult.missing_prices && verifyResult.missing_prices.length > 0 && (
-                    <div className="max-h-40 overflow-auto space-y-1">
-                      {verifyResult.missing_prices.map((mp: any, i: number) => (
-                        <div key={i} className="text-[10px] text-destructive font-mono flex items-center gap-2">
-                          <Badge variant="destructive" className="text-[8px] px-1 py-0">{mp.issue}</Badge>
-                          {mp.format} {mp.name} (Agora ID: {mp.agora_product_id})
-                        </div>
-                      ))}
+                    <div className="max-h-48 overflow-auto space-y-1">
+                      {/* Group by product */}
+                      {(() => {
+                        const byProduct: Record<string, { name: string; format: string; priceLists: { id: string; name: string; issue: string; saleCenters: string[] }[] }> = {};
+                        for (const mp of verifyResult.missing_prices) {
+                          const key = mp.agora_product_id;
+                          if (!byProduct[key]) byProduct[key] = { name: mp.name || mp.product_name || key, format: mp.format || "?", priceLists: [] };
+                          byProduct[key].priceLists.push({
+                            id: mp.price_list_id,
+                            name: mp.price_list_name || mp.price_list_id,
+                            issue: mp.issue,
+                            saleCenters: mp.affected_sale_centers || [],
+                          });
+                        }
+                        return Object.entries(byProduct).map(([productId, info]) => (
+                          <div key={productId} className="rounded border border-destructive/20 bg-destructive/5 p-2 space-y-1">
+                            <p className="text-[11px] font-medium text-destructive">
+                              <Badge variant="destructive" className="text-[8px] px-1 py-0 mr-1">{info.format}</Badge>
+                              {info.name} <span className="font-mono text-muted-foreground">(ID: {productId})</span>
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {info.priceLists.map((pl, i) => (
+                                <span key={i} className="text-[10px] font-mono text-destructive bg-destructive/10 rounded px-1.5 py-0.5">
+                                  {pl.issue}: {pl.name}{pl.saleCenters.length > 0 ? ` → ${pl.saleCenters.join(", ")}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
                     </div>
                   )}
                 </div>
