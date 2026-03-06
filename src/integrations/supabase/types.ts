@@ -26,6 +26,8 @@ export type Database = {
           price_lists_json: Json
           products_summary_json: Json
           raw_xml_preview: string | null
+          sale_centers_json: Json
+          sale_points_json: Json
           updated_at: string
           vats_json: Json
           warehouses_json: Json
@@ -41,6 +43,8 @@ export type Database = {
           price_lists_json?: Json
           products_summary_json?: Json
           raw_xml_preview?: string | null
+          sale_centers_json?: Json
+          sale_points_json?: Json
           updated_at?: string
           vats_json?: Json
           warehouses_json?: Json
@@ -56,6 +60,8 @@ export type Database = {
           price_lists_json?: Json
           products_summary_json?: Json
           raw_xml_preview?: string | null
+          sale_centers_json?: Json
+          sale_points_json?: Json
           updated_at?: string
           vats_json?: Json
           warehouses_json?: Json
