@@ -263,7 +263,7 @@ export function useAgoraMasterData(connectionId: string | null) {
   }, [connectionId]);
 
   return {
-    masterData, syncing, syncError,
+    masterData, syncing, syncError, syncTruncationWarnings,
     loadMasterData, syncMasterData,
     writeSettings, loadWriteSettings, saveWriteSettings,
     previewXml, previewing, previewImportXml, previewValidation, previewSourceData,
