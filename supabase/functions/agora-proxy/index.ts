@@ -2401,14 +2401,17 @@ serve(async (req) => {
 
         // Success - update mappings
         for (const fmt of fmtTypes) {
-          const agoraProductId = fmt === "GLASS"
+          const agoraProductId = fmt === "MAGNUM"
+            ? String(900000 + Number(winerimWineId || 0))
+            : fmt === "GLASS"
             ? String(700000 + Number(winerimWineId || 0))
             : String(500000 + Number(winerimWineId || 0));
+          const productName = fmt === "MAGNUM" ? `MAG. ${wineArr[0].name}` : fmt === "GLASS" ? `COPA ${wineArr[0].name}` : `BOT. ${wineArr[0].name}`;
 
           await supabase.from("product_mappings").upsert({
             connection_id: task.connection_id,
             provider_product_id: agoraProductId,
-            provider_product_name: fmt === "GLASS" ? `COPA ${wineArr[0].name}` : `BOT. ${wineArr[0].name}`,
+            provider_product_name: productName,
             winerim_wine_id: winerimWineId, winerim_wine_name: wineArr[0].name,
             match_method: "XML_IMPORT", match_score: 100,
             status: "CONFIRMED", format_type: fmt, agora_product_id: agoraProductId,
