@@ -1612,28 +1612,7 @@ serve(async (req) => {
     // ── SYNC AGORA MASTER DATA ──
     // FIX PRIORITY 2: Only proves export-master works; does NOT set can_write_products=YES
     if (action === "sync-master-data") {
-      const url = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Products,Warehouses,SalePoints,SaleCenters`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml" };
-      
-      let res: Response;
-      try {
-        res = await fetchWithRetry(url, { headers: xmlHeaders }, 30000);
-      } catch (e) {
-        return new Response(
-          JSON.stringify({ success: false, error: `Failed to reach Agora: ${e}` }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        return new Response(
-          JSON.stringify({ success: false, error: `Agora responded ${res.status}`, body: body.substring(0, 2048) }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const rawXml = await res.text();
       
       function extractElements(xml: string, tagName: string): Record<string, string>[] {
         const results: Record<string, string>[] = [];
@@ -1663,25 +1642,97 @@ serve(async (req) => {
         return results;
       }
 
-      const families = extractElements(rawXml, "Family");
-      const vats = extractElements(rawXml, "Vat");
-      const priceLists = extractElements(rawXml, "PriceList");
-      const prepTypes = extractElements(rawXml, "PreparationType");
-      const prepOrders = extractElements(rawXml, "PreparationOrder");
-      const warehouses = extractElements(rawXml, "Warehouse").filter(w => w.Name);
-      const products = extractElements(rawXml, "Product");
-      const salePoints = extractElements(rawXml, "SalePoint");
-      const saleCenters = extractElements(rawXml, "SaleCenter");
-
-      // Truncation detection: check if XML was cut off (missing closing tag)
       const truncationWarnings: string[] = [];
-      const xmlLength = rawXml.length;
-      const hasClosingTag = rawXml.trimEnd().endsWith(">");
-      if (!hasClosingTag) {
-        truncationWarnings.push(`XML response appears truncated (${xmlLength} bytes, no closing tag)`);
+
+      // ── Fetch 1: Core master data (without Products to reduce payload size) ──
+      const coreUrl = `${baseUrlClean}/api/export-master/?filter=Families,Vats,PriceLists,PreparationTypes,PreparationOrders,Warehouses`;
+      let coreXml = "";
+      try {
+        const coreRes = await fetchWithRetry(coreUrl, { headers: xmlHeaders }, 30000);
+        if (!coreRes.ok) {
+          const body = await coreRes.text().catch(() => "");
+          return new Response(
+            JSON.stringify({ success: false, error: `Agora responded ${coreRes.status} on core export`, body: body.substring(0, 2048) }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        coreXml = await coreRes.text();
+        if (!coreXml.trimEnd().endsWith(">")) {
+          truncationWarnings.push(`Core XML appears truncated (${coreXml.length} bytes)`);
+        }
+      } catch (e) {
+        return new Response(
+          JSON.stringify({ success: false, error: `Failed to reach Agora (core): ${e}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
+
+      // ── Fetch 2: Products separately (can be large) ──
+      const productsUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+      let productsXml = "";
+      try {
+        const prodRes = await fetchWithRetry(productsUrl, { headers: xmlHeaders }, 30000);
+        if (prodRes.ok) {
+          productsXml = await prodRes.text();
+          if (!productsXml.trimEnd().endsWith(">")) {
+            truncationWarnings.push(`Products XML appears truncated (${productsXml.length} bytes)`);
+          }
+        } else {
+          console.warn(`[sync-master-data] Products fetch returned ${prodRes.status}`);
+        }
+      } catch (e) {
+        console.warn(`[sync-master-data] Products fetch failed: ${e}`);
+      }
+
+      // ── Fetch 3: SalePoints separately ──
+      const spUrl = `${baseUrlClean}/api/export-master/?filter=SalePoints`;
+      let spXml = "";
+      try {
+        const spRes = await fetchWithRetry(spUrl, { headers: xmlHeaders }, 15000);
+        if (spRes.ok) {
+          spXml = await spRes.text();
+        } else {
+          console.warn(`[sync-master-data] SalePoints fetch returned ${spRes.status}`);
+        }
+      } catch (e) {
+        console.warn(`[sync-master-data] SalePoints fetch failed: ${e}`);
+      }
+
+      // ── Fetch 4: SaleCenters separately (critical for price diagnostics) ──
+      const scUrl = `${baseUrlClean}/api/export-master/?filter=SaleCenters`;
+      let scXml = "";
+      try {
+        const scRes = await fetchWithRetry(scUrl, { headers: xmlHeaders }, 15000);
+        if (scRes.ok) {
+          scXml = await scRes.text();
+          console.log(`[sync-master-data] SaleCenters dedicated fetch: ${scXml.length} bytes`);
+        } else {
+          console.warn(`[sync-master-data] SaleCenters fetch returned ${scRes.status}`);
+          truncationWarnings.push(`SaleCenters fetch failed with status ${scRes.status}`);
+        }
+      } catch (e) {
+        console.warn(`[sync-master-data] SaleCenters fetch failed: ${e}`);
+        truncationWarnings.push(`SaleCenters fetch error: ${e}`);
+      }
+
+      // ── Parse all responses ──
+      const families = extractElements(coreXml, "Family");
+      const vats = extractElements(coreXml, "Vat");
+      const priceLists = extractElements(coreXml, "PriceList");
+      const prepTypes = extractElements(coreXml, "PreparationType");
+      const prepOrders = extractElements(coreXml, "PreparationOrder");
+      const warehouses = extractElements(coreXml, "Warehouse").filter(w => w.Name);
+      const products = extractElements(productsXml, "Product");
+      const salePoints = extractElements(spXml, "SalePoint");
+      const saleCenters = extractElements(scXml, "SaleCenter");
+
+      // Warn if SaleCenters came back empty
+      if (saleCenters.length === 0) {
+        truncationWarnings.push("SaleCenters: 0 fetched — the installation may not expose SaleCenters via export-master");
+      }
+
       // Log fetched counts for diagnostics
-      console.log(`[sync-master-data] connection=${connectionId} fetched: families=${families.length} vats=${vats.length} priceLists=${priceLists.length} salePoints=${salePoints.length} saleCenters=${saleCenters.length} products=${products.length} xmlBytes=${xmlLength}`);
+      console.log(`[sync-master-data] connection=${connectionId} fetched: families=${families.length} vats=${vats.length} priceLists=${priceLists.length} salePoints=${salePoints.length} saleCenters=${saleCenters.length} products=${products.length}`);
 
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
