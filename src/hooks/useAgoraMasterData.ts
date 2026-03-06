@@ -87,6 +87,7 @@ export function useAgoraMasterData(connectionId: string | null) {
   const [masterData, setMasterData] = useState<AgoraMasterData>(EMPTY_MASTER);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncTruncationWarnings, setSyncTruncationWarnings] = useState<string[]>([]);
   const [writeSettings, setWriteSettings] = useState<WriteSettings>(DEFAULT_WRITE_SETTINGS);
 
   const [previewXml, setPreviewXml] = useState<string | null>(null);
