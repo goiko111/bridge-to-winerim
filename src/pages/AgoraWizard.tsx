@@ -2684,6 +2684,22 @@ function StepMasterData({
             </div>
           )}
 
+          {/* Fetched counts summary */}
+          <div className="grid grid-cols-3 gap-2 text-[10px]">
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">SaleCenters</p>
+              <p className={`text-sm font-bold ${masterData.saleCenters.length > 0 ? "text-foreground" : "text-destructive"}`}>{masterData.saleCenters.length}</p>
+            </div>
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">SalePoints</p>
+              <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+            </div>
+            <div className="rounded border border-border bg-background p-2 text-center">
+              <p className="text-muted-foreground">PriceLists</p>
+              <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
+            </div>
+          </div>
+
           {activeCentralCenter ? (
             <div className="space-y-2">
               <div className="grid grid-cols-2 gap-3">
@@ -2747,7 +2763,27 @@ function StepMasterData({
               )}
             </div>
           ) : masterData.saleCenters.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground italic">No sale center data. Click "Sync Agora Master Data" to fetch.</p>
+            <div className="space-y-2">
+              <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
+                <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 shrink-0" /> SaleCenters: 0 fetched. Click "Sync Agora Master Data" above to fetch. If this persists, the Agora installation may not expose SaleCenters via export-master.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SaleCenters</p>
+                  <p className="text-sm font-bold text-destructive">0</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SalePoints</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">PriceLists</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
+                </div>
+              </div>
+            </div>
           ) : null}
         </div>
       )}
