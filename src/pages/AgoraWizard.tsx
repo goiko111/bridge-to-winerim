@@ -1748,6 +1748,20 @@ function StepWinerimCatalog({
             </select>
           </div>
 
+          {/* PriceList coverage info */}
+          {priceListCount > 0 && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-[11px] text-foreground flex items-center gap-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span>Prices will be applied to: <strong>{priceListCount} PriceLists</strong> (same price everywhere — all SaleCenters covered).</span>
+            </div>
+          )}
+          {priceListCount === 0 && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-[11px] text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>No PriceLists in Master Data — push is blocked. Sync Master Data first.</span>
+            </div>
+          )}
+
           {/* Selection actions */}
           <div className="flex gap-2 items-center flex-wrap">
             <Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-[11px]">Select All ({filteredWines.length})</Button>
