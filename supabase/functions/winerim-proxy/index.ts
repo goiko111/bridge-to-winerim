@@ -1212,7 +1212,6 @@ Respond ONLY with the JSON array, no other text.`;
 
         // Also check raw_payload for magnum prices that may not have been written to columns
         const magnumEntry = rawPrices.find((p: any) => p?.variant === "magnum");
-        const magnumEntry = rawPrices.find((p: any) => p?.variant === "magnum");
         if (magnumEntry && Number(magnumEntry.price) > 0) {
           // Write the magnum price and mark READY
           await supabase.from("winerim_wines")
