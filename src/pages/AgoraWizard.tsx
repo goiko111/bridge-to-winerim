@@ -2034,7 +2034,9 @@ function StepOutboundSync({
 
   useEffect(() => { onLoadTasks(); }, [connectionId]);
 
-  const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN";
+  // Auto-detect write capability: if we have SUCCESS tasks, we can write
+  const hasSuccessTasks = outboundTasks.some(t => t.status === "SUCCESS");
+  const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN" || hasSuccessTasks;
 
   const getTaskName = (t: OutboundTask) => {
     const wid = (t.payload_json as any)?._winerim_wine_id;
