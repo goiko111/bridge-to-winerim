@@ -14,6 +14,7 @@ import SimphonyWizard from "./pages/SimphonyWizard";
 import CassaWizard from "./pages/CassaWizard";
 import RevoWizard from "./pages/RevoWizard";
 import BdpWizard from "./pages/BdpWizard";
+import IcgWizard from "./pages/IcgWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
@@ -40,6 +41,7 @@ const App = () => (
             <Route path="/integrations/cassa" element={<CassaWizard />} />
             <Route path="/integrations/revo" element={<RevoWizard />} />
             <Route path="/integrations/bdp" element={<BdpWizard />} />
+            <Route path="/integrations/icg" element={<IcgWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
