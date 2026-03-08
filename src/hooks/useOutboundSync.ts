@@ -194,6 +194,23 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadOutboundTasks]);
 
+  const fixMissingPrices = useCallback(async (winerimWineIds: string[], formatTypes?: string[]) => {
+    if (!connectionId) return;
+    setFixingPrices(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "backfill-prices", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS"] },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to fix missing prices:", e);
+    } finally {
+      setFixingPrices(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   return {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
@@ -203,5 +220,6 @@ export function useOutboundSync(connectionId: string | null) {
     exporting, exportProducts,
     retryTask,
     backfillingPreparation, backfillPreparation,
+    fixingPrices, fixMissingPrices,
   };
 }
