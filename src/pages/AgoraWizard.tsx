@@ -3259,7 +3259,7 @@ export default function AgoraWizard() {
 
   // Load master data + write settings when entering steps 3, 5 or 10
   useEffect(() => {
-    if ((currentStep === 3 || currentStep === 5 || currentStep === 10) && connectionId) {
+    if ((currentStep === 3 || currentStep === 5 || currentStep === 9 || currentStep === 10 || currentStep === 11) && connectionId) {
       agoraMaster.loadMasterData();
       agoraMaster.loadWriteSettings();
     }
