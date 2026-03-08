@@ -2024,7 +2024,7 @@ function StepOutboundSync({
   onRetry: (taskId: string) => void;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
-  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => Promise<any>;
   backfillingPreparation: boolean;
   onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
   fixingPrices: boolean;
@@ -2069,6 +2069,10 @@ function StepOutboundSync({
   const blockedTasks = filteredTasks.filter(t => t.status === "BLOCKED");
   const queuedTasksTotal = outboundTasks.filter(t => t.status === "QUEUED").length;
   const canProcessQueue = canWrite || queuedTasksTotal > 0;
+
+  // Create vs Update counters from _operation field
+  const createTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "CREATE");
+  const updateTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "UPDATE");
 
   const handleRefresh = async () => {
     const tasks = await onLoadTasks();
@@ -2130,10 +2134,9 @@ function StepOutboundSync({
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {[
           { label: "Queued", count: queuedTasks.length, color: "text-primary" },
-          { label: "Running", count: runningTasks.length, color: "text-primary" },
           { label: "Success", count: successTasks.length, color: "text-success" },
           { label: "Failed", count: failedTasks.length, color: "text-destructive" },
           { label: "Blocked", count: blockedTasks.length, color: "text-amber-500" },
@@ -2144,6 +2147,24 @@ function StepOutboundSync({
           </div>
         ))}
       </div>
+      {(createTasks.length > 0 || updateTasks.length > 0) && (
+        <div className="flex gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            {createTasks.length} CREATE ({createTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+            {updateTasks.length} UPDATE ({updateTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          {outboundTasks.length - createTasks.length - updateTasks.length > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
+              {outboundTasks.length - createTasks.length - updateTasks.length} legacy (no type)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
@@ -2196,7 +2217,17 @@ function StepOutboundSync({
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
-              onClick={() => { onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]); setSelectedWineIds(new Set()); }}>
+              onClick={async () => {
+                const result = await onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]);
+                const r = result as any;
+                if (r) {
+                  toast({
+                    title: "Queued for Agora",
+                    description: `${r.queuedCreate || 0} CREATE · ${r.queuedUpdate || 0} UPDATE · ${r.skippedDuplicate || 0} already queued`,
+                  });
+                }
+                setSelectedWineIds(new Set());
+              }}>
               {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               Push {selectedWineIds.size} to Agora
             </Button>
@@ -2276,6 +2307,11 @@ function StepOutboundSync({
                           t.status === "BLOCKED" ? "outline" :
                           "secondary"
                         } className="text-[10px]">{t.status}</Badge>
+                        {(t.payload_json as any)?._operation && (
+                          <Badge variant="outline" className={`text-[10px] ${(t.payload_json as any)._operation === "CREATE" ? "border-emerald-500 text-emerald-600" : "border-blue-500 text-blue-600"}`}>
+                            {(t.payload_json as any)._operation === "CREATE" ? "➕ CREATE" : "✏️ UPDATE"}
+                          </Badge>
+                        )}
                         {(t.payload_json as any)?._trigger_source && (
                           <Badge variant="outline" className="text-[10px]">
                             {(t.payload_json as any)._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :

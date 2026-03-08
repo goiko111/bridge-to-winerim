@@ -2497,16 +2497,22 @@ serve(async (req) => {
       }
     }
 
-    // ── QUEUE XML OUTBOUND TASKS ──
+    // ── QUEUE XML OUTBOUND TASKS (with idempotent CREATE/UPDATE guard) ──
     if (action === "queue-xml-outbound") {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
-
       const familyOverrideId = payload.familyOverrideId || null;
 
-      let queued = 0;
+      // Load master data to check which products already exist in Agora
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("products_summary_json").eq("connection_id", connectionId).single();
+      const existingProducts = (masterData?.products_summary_json || []) as { Id: string; Name: string }[];
+      const existingProductIds = new Set(existingProducts.map((p: any) => String(p.Id)));
+
+      let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
       for (const wineId of winerimWineIds) {
-        const { data: existing } = await supabase
+        // Skip if already queued/running
+        const { data: alreadyQueued } = await supabase
           .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
@@ -2514,7 +2520,20 @@ serve(async (req) => {
           .in("status", ["QUEUED", "RUNNING"])
           .limit(1);
 
-        if (existing && existing.length > 0) continue;
+        if (alreadyQueued && alreadyQueued.length > 0) {
+          skippedDuplicate++;
+          continue;
+        }
+
+        // Determine CREATE vs UPDATE per format by checking existing Agora products
+        const winerimIdNum = Number(wineId || 0);
+        const formatProductIds: Record<string, string> = {
+          BOTTLE: String(500000 + winerimIdNum),
+          GLASS: String(700000 + winerimIdNum),
+          MAGNUM: String(900000 + winerimIdNum),
+        };
+        const existsInAgora = formatTypes.some((fmt: string) => existingProductIds.has(formatProductIds[fmt] || ""));
+        const operationType = existsInAgora ? "UPDATE" : "CREATE";
 
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
@@ -2524,15 +2543,21 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
+            _operation: operationType,
             ...(familyOverrideId ? { _family_override_id: familyOverrideId } : {}),
           },
           status: "QUEUED",
         });
-        queued++;
+        if (operationType === "CREATE") queuedCreate++; else queuedUpdate++;
       }
 
-      return new Response(JSON.stringify({ success: true, queued }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({
+        success: true,
+        queued: queuedCreate + queuedUpdate,
+        queuedCreate,
+        queuedUpdate,
+        skippedDuplicate,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── PROCESS XML OUTBOUND QUEUE (batch) ──
