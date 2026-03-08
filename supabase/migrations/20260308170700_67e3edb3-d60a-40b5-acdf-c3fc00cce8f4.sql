@@ -1,0 +1,1 @@
+ALTER TABLE public.pos_connections ADD COLUMN IF NOT EXISTS provider_config jsonb DEFAULT '{}'::jsonb;

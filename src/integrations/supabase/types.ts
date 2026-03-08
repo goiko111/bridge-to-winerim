@@ -218,6 +218,7 @@ export type Database = {
           last_sync_at: string | null
           location_name: string
           provider: string
+          provider_config: Json | null
           require_manual_review_before_push: boolean
           selected_sale_center_ids: string[]
           sync_frequency_minutes: number
@@ -260,6 +261,7 @@ export type Database = {
           last_sync_at?: string | null
           location_name: string
           provider?: string
+          provider_config?: Json | null
           require_manual_review_before_push?: boolean
           selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
@@ -302,6 +304,7 @@ export type Database = {
           last_sync_at?: string | null
           location_name?: string
           provider?: string
+          provider_config?: Json | null
           require_manual_review_before_push?: boolean
           selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
