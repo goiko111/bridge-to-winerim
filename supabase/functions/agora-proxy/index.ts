@@ -2567,7 +2567,67 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── VERIFY PRODUCTS IN AGORA — ALL PRICELISTS ──
+    // ── BACKFILL PREPARATION FIELDS (fix both empty to prevent TPV crash) ──
+    if (action === "backfill-preparation") {
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS", "MAGNUM"];
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
+
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "No master data. Run 'Sync Master Data' first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Get target wine IDs: either provided or all confirmed XML imports
+      let targetWineIds: string[] = winerimWineIds;
+      if (targetWineIds.length === 0) {
+        const { data: mappings } = await supabase
+          .from("product_mappings").select("winerim_wine_id")
+          .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+        if (mappings) {
+          targetWineIds = [...new Set(mappings.map((m: any) => m.winerim_wine_id).filter(Boolean))];
+        }
+      }
+
+      if (targetWineIds.length === 0) {
+        return new Response(JSON.stringify({ success: true, message: "No products to fix", queued: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Queue UPDATE tasks with a special flag to force empty preparation fields
+      let queued = 0;
+      for (const wineId of targetWineIds) {
+        // Skip if already queued
+        const { data: existing } = await supabase
+          .from("outbound_tasks").select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "BACKFILL_PREPARATION" })
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wineId,
+            _format_types: formatTypes,
+            _write_mode: "XML_IMPORT",
+            _trigger_source: "BACKFILL_PREPARATION",
+            _force_empty_preparation: true,
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "verify-products") {
       const { data: masterData } = await supabase
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
