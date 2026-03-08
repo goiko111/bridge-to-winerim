@@ -432,7 +432,7 @@ export function useAgoraConnection() {
     connectionId, setConnectionId,
     testStatus, testError, testConnection,
     saveConnection, updateConnection, loadConnection,
-    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats, lastClosedDay,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
