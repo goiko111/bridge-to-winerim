@@ -2010,6 +2010,7 @@ function StepOutboundSync({
   onLoadTasks, onProcessQueue, onRetry, onExport,
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
+  fixingPrices, onFixMissingPrices,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2026,6 +2027,8 @@ function StepOutboundSync({
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
   backfillingPreparation: boolean;
   onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
+  fixingPrices: boolean;
+  onFixMissingPrices: (winerimWineIds: string[], formatTypes?: string[]) => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
