@@ -410,6 +410,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
   
+  // Pre-declare validationResults so prep guard can push warnings
+  const validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] = [];
+
   // HARDENED: Prevent TPV crash — PreparationTypeId and PreparationOrderId must ALWAYS be both empty or both set.
   let defaultPrepTypeId: string;
   let defaultPrepOrderId: string;
@@ -425,7 +428,6 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       // MISMATCH: one is set and the other is not — force BOTH empty to prevent crash
       defaultPrepTypeId = "";
       defaultPrepOrderId = "";
-      // Add validation warning to all products
       validationResults.push({
         winerimId: "_CONNECTION_CONFIG",
         formatType: "ALL",
