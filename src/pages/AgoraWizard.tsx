@@ -2024,7 +2024,7 @@ function StepOutboundSync({
   onRetry: (taskId: string) => void;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
-  onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => Promise<any>;
   backfillingPreparation: boolean;
   onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
   fixingPrices: boolean;
