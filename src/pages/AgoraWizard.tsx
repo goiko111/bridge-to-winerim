@@ -2162,6 +2162,19 @@ function StepOutboundSync({
         <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
         </Button>
+        <Button variant="outline" size="sm"
+          onClick={async () => {
+            const ids = selectedWineIds.size > 0 ? Array.from(selectedWineIds) : undefined;
+            const result = await onBackfillPreparation(ids);
+            toast({
+              title: "Preparation Fix Queued",
+              description: `${result?.queued || 0} tasks queued to fix PreparationType/Order fields.`,
+            });
+          }}
+          disabled={backfillingPreparation}>
+          {backfillingPreparation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wrench className="mr-2 h-4 w-4" />}
+          Fix Preparation Fields {selectedWineIds.size > 0 ? `(${selectedWineIds.size})` : "(all)"}
+        </Button>
       </div>
 
       {/* Queue wines */}
