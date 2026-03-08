@@ -2400,6 +2400,52 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // Success - post-import verification for preparation field consistency
+        let prepVerificationFailed = false;
+        let prepVerificationMsg = "";
+        try {
+          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          if (verifyRes.ok) {
+            const verifyXml = await verifyRes.text();
+            for (const fmt of fmtTypes) {
+              const productId = fmt === "MAGNUM"
+                ? String(900000 + Number(winerimWineId || 0))
+                : fmt === "GLASS"
+                ? String(700000 + Number(winerimWineId || 0))
+                : String(500000 + Number(winerimWineId || 0));
+
+              const productRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)`, "i");
+              const productMatch = verifyXml.match(productRegex);
+              if (productMatch) {
+                const attrs = productMatch[1];
+                const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+                const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+                const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+                const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+                const typeEmpty = !prepTypeVal || prepTypeVal === "";
+                const orderEmpty = !prepOrderVal || prepOrderVal === "";
+                if (typeEmpty !== orderEmpty) {
+                  prepVerificationFailed = true;
+                  prepVerificationMsg = `Product ${productId} (${fmt}): PreparationTypeId="${prepTypeVal}" and PreparationOrderId="${prepOrderVal}" are inconsistent — both must be empty or both set. This causes TPV crash.`;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (_verifyErr) {
+          // Non-blocking: verification is best-effort
+        }
+
+        if (prepVerificationFailed) {
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED",
+            last_error: prepVerificationMsg.substring(0, 500),
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED", error: prepVerificationMsg }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
         // Success - update mappings
         for (const fmt of fmtTypes) {
           const agoraProductId = fmt === "MAGNUM"
