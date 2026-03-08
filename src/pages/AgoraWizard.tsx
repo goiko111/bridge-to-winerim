@@ -3242,6 +3242,33 @@ function StepWriteSettings({
         <SelectDropdown label="Preparation Order" value={writeSettings.default_preparation_order_id}
           options={prepOrders.map((p: any) => ({ id: p.Id, label: p.Name }))}
           onChange={(v) => onSave({ default_preparation_order_id: v || null })} />
+
+        {/* Preparation Type/Order mismatch warning */}
+        {(() => {
+          const typeSet = !!writeSettings.default_preparation_type_id;
+          const orderSet = !!writeSettings.default_preparation_order_id;
+          if (typeSet !== orderSet) {
+            return (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  PreparationType and PreparationOrder must both be set or both empty — a mismatch causes TPV crash.
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Currently: Type = <span className="font-mono">{writeSettings.default_preparation_type_id || "(empty)"}</span>,
+                  Order = <span className="font-mono">{writeSettings.default_preparation_order_id || "(empty)"}</span>.
+                  The XML generator will force both empty if this state is saved.
+                </p>
+                <Button variant="destructive" size="sm" className="h-7 text-[11px]"
+                  onClick={() => onSave({ default_preparation_type_id: null, default_preparation_order_id: null })}>
+                  Clear Both
+                </Button>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
         <SelectDropdown label="Default Warehouse" value={writeSettings.default_warehouse_id}
           options={warehouses.map((w: any) => ({ id: w.Id, label: w.Name }))}
           onChange={(v) => onSave({ default_warehouse_id: v || null })} />
