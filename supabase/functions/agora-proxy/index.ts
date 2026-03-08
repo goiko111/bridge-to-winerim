@@ -2332,6 +2332,7 @@ serve(async (req) => {
         const winerimWineId = taskPayload._winerim_wine_id as string;
         const fmtTypes = (taskPayload._format_types as string[]) || ["BOTTLE"];
         const familyOverrideId = taskPayload._family_override_id as string | undefined;
+        const forceEmptyPreparation = taskPayload._force_empty_preparation === true;
 
         const { data: wineArr } = await supabase
           .from("winerim_wines").select("*")
@@ -2354,7 +2355,7 @@ serve(async (req) => {
           }
           customFamilyMappings = overrideMapping;
         }
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings);
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
 
         // Check if any products were actually generated (validation may have skipped all)
         if (!xml.includes("<Product ")) {
