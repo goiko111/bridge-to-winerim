@@ -2903,6 +2903,34 @@ function StepMasterData({
                   )}
                 </div>
               )}
+              {/* PriceList ↔ SaleCenter mapping */}
+              {masterData.priceLists.length > 0 && masterData.saleCenters.length > 0 && (
+                <details className="rounded-lg border border-border bg-background">
+                  <summary className="px-3 py-2 text-[11px] font-medium text-muted-foreground cursor-pointer hover:text-foreground">
+                    PriceList → SaleCenter mapping ({masterData.priceLists.length} lists)
+                  </summary>
+                  <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
+                    {masterData.priceLists.map((pl: any) => {
+                      const linkedCenters = masterData.saleCenters.filter(
+                        (sc: any) => sc.CurrentPriceListId === pl.Id
+                      );
+                      return (
+                        <div key={pl.Id} className="flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0">
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0 font-mono">{pl.Id}</Badge>
+                          <span className="font-medium text-foreground min-w-[80px]">{pl.Name}</span>
+                          {linkedCenters.length > 0 ? (
+                            <span className="text-muted-foreground">
+                              → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground italic">No linked SaleCenter</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
             </div>
           ) : masterData.saleCenters.length === 0 ? (
             <div className="space-y-2">
