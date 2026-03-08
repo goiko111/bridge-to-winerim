@@ -325,11 +325,16 @@ export default function Integrations() {
                           </div>
                           <div>
                             <h3 className="text-sm font-semibold text-foreground">{c.name}</h3>
-                            <div className="mt-0.5 flex items-center gap-1.5">
+                            <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
                               <Icon className={`h-3 w-3 ${color}`} />
                               <Badge variant={badge.variant} className="text-[10px] px-1.5 py-0">
                                 {badge.label}
                               </Badge>
+                              {c.maturity && (
+                                <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[10px] font-medium leading-4 ${maturityMeta[c.maturity].className}`}>
+                                  {maturityMeta[c.maturity].label}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
