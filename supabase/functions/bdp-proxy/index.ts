@@ -6,6 +6,149 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function ok(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+function err(body: unknown, status = 400) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/** Build auth headers for BDP */
+function bdpHeaders(userKey: string, password: string): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (userKey && password) {
+    h["Authorization"] = `Basic ${btoa(`${userKey}:${password}`)}`;
+  }
+  return h;
+}
+
+/** Fetch with 30s timeout */
+async function bdpFetch(url: string, headers: Record<string, string>, method = "GET") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const resp = await fetch(url, { method, headers, signal: controller.signal });
+    clearTimeout(timeout);
+    return resp;
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+}
+
+/**
+ * Parse BDP export documents into canonical SalesEvent + LineItems.
+ * BDP Weblink REST returns an array of "documents", each with header, lines, payments.
+ * We normalise into our canonical schema.
+ */
+interface BdpLine {
+  line_index: number;
+  provider_product_id: string;
+  name: string;
+  family: string | null;
+  format: string | null;
+  quantity: number;
+  unit_price: number;
+  total_amount: number;
+  vat_rate: number;
+}
+
+interface CanonicalEvent {
+  provider_doc_id: string;
+  business_day: string; // closure day (YYYY-MM-DD)
+  ticket_time: string | null; // actual ticket timestamp
+  doc_type: string;
+  total_amount: number;
+  total_tax: number;
+  total_net: number;
+  line_count: number;
+  lines: BdpLine[];
+  raw_json: unknown;
+}
+
+function parseBdpDocuments(rawDocuments: any[]): CanonicalEvent[] {
+  const events: CanonicalEvent[] = [];
+
+  for (const doc of rawDocuments) {
+    const header = doc.header || doc.Header || doc;
+    const lines = doc.lines || doc.Lines || doc.details || doc.Details || [];
+    const payments = doc.payments || doc.Payments || [];
+
+    // BDP may use "ClosureDate" or "BusinessDay" for the closure day
+    // and "Date" or "TicketDate" for the actual ticket time
+    const closureDay = header.ClosureDate || header.closure_date || header.BusinessDay || header.business_day || null;
+    const ticketTime = header.Date || header.date || header.TicketDate || header.ticket_date || null;
+
+    // Derive business_day: prefer closure day, fall back to ticket date
+    let businessDay = "";
+    if (closureDay) {
+      businessDay = String(closureDay).substring(0, 10);
+    } else if (ticketTime) {
+      businessDay = String(ticketTime).substring(0, 10);
+    } else {
+      businessDay = new Date().toISOString().substring(0, 10);
+    }
+
+    const docId = String(
+      header.DocumentId || header.document_id || header.Id || header.id || header.Number || header.number || `bdp_${Date.now()}_${Math.random()}`
+    );
+    const docType = header.DocumentType || header.document_type || header.Type || header.type || "Sale";
+
+    // Parse lines
+    const parsedLines: BdpLine[] = [];
+    let totalAmount = 0;
+    let totalTax = 0;
+
+    lines.forEach((line: any, idx: number) => {
+      const qty = Number(line.Quantity || line.quantity || line.Qty || line.qty || 1);
+      const unitPrice = Number(line.UnitPrice || line.unit_price || line.Price || line.price || 0);
+      const lineTotal = Number(line.TotalAmount || line.total_amount || line.Total || line.total || qty * unitPrice);
+      const vatRate = Number(line.VatRate || line.vat_rate || line.Tax || line.tax || 0);
+      const lineTax = vatRate > 0 ? lineTotal - lineTotal / (1 + vatRate / 100) : 0;
+
+      totalAmount += lineTotal;
+      totalTax += lineTax;
+
+      parsedLines.push({
+        line_index: idx,
+        provider_product_id: String(line.ProductId || line.product_id || line.ArticleId || line.article_id || `line_${idx}`),
+        name: String(line.ProductName || line.product_name || line.Description || line.description || line.Name || line.name || "Unknown"),
+        family: line.Family || line.family || line.Category || line.category || null,
+        format: line.Format || line.format || line.Unit || line.unit || null,
+        quantity: qty,
+        unit_price: unitPrice,
+        total_amount: lineTotal,
+        vat_rate: vatRate,
+      });
+    });
+
+    // Override totals if header has them
+    const hdrTotal = Number(header.TotalAmount || header.total_amount || header.Total || header.total || totalAmount);
+    const hdrTax = Number(header.TotalTax || header.total_tax || header.Tax || header.tax || totalTax);
+    const hdrNet = Number(header.TotalNet || header.total_net || header.Net || header.net || hdrTotal - hdrTax);
+
+    events.push({
+      provider_doc_id: docId,
+      business_day: businessDay,
+      ticket_time: ticketTime ? String(ticketTime) : null,
+      doc_type: docType,
+      total_amount: hdrTotal,
+      total_tax: hdrTax,
+      total_net: hdrNet,
+      line_count: parsedLines.length,
+      lines: parsedLines,
+      raw_json: doc,
+    });
+  }
+
+  return events;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -20,10 +163,7 @@ serve(async (req) => {
     const { action, connectionId } = payload;
 
     if (!connectionId) {
-      return new Response(JSON.stringify({ success: false, message: "Missing connectionId" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return err({ success: false, message: "Missing connectionId" });
     }
 
     // Load connection
@@ -34,136 +174,439 @@ serve(async (req) => {
       .single();
 
     if (connErr || !conn) {
-      return new Response(JSON.stringify({ success: false, message: "Connection not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return err({ success: false, message: "Connection not found" }, 404);
     }
 
-    // Extract BDP-specific config from provider_config
     const config = (conn.provider_config || {}) as Record<string, unknown>;
     const baseUrl = (conn.base_url || "").replace(/\/+$/, "");
     const port = config.port ? String(config.port) : "";
     const userKey = config.user_key ? String(config.user_key) : "";
     const password = config.password ? String(config.password) : "";
     const exportProfileCode = config.export_profile_code ? String(config.export_profile_code) : "";
-
-    // Build the full host with port
     const host = port ? `${baseUrl}:${port}` : baseUrl;
+    const headers = bdpHeaders(userKey, password);
 
     // ── ACTION: test ──
     if (action === "test") {
       try {
-        // BDP NET Weblink Rest API: lightweight GET to check connectivity
-        // Try common BDP endpoints — adjust based on actual API docs
         const testUrl = `${host}/api/v1/status`;
-        
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        
-        // BDP uses user_key/password for Basic or custom auth
-        if (userKey && password) {
-          headers["Authorization"] = `Basic ${btoa(`${userKey}:${password}`)}`;
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-
-        const resp = await fetch(testUrl, {
-          method: "GET",
-          headers,
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
+        const resp = await bdpFetch(testUrl, headers);
         const bodyText = await resp.text();
-        const preview = bodyText.substring(0, 2048);
-
-        return new Response(JSON.stringify({
+        return ok({
           success: resp.ok,
           status: resp.status,
           statusText: resp.statusText,
           contentType: resp.headers.get("content-type") || "unknown",
-          bodyPreview: preview,
+          bodyPreview: bodyText.substring(0, 2048),
           message: resp.ok ? "Connection successful" : `HTTP ${resp.status}: ${resp.statusText}`,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
-        return new Response(JSON.stringify({
-          success: false,
-          status: 0,
-          statusText: "Network Error",
-          contentType: null,
-          bodyPreview: null,
-          message: msg.includes("abort") ? "Connection timed out (15s)" : msg,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return ok({
+          success: false, status: 0, statusText: "Network Error",
+          contentType: null, bodyPreview: null,
+          message: msg.includes("abort") ? "Connection timed out (30s)" : msg,
         });
       }
     }
 
     // ── ACTION: test-custom ──
-    // Allows testing any endpoint path with the configured credentials
     if (action === "test-custom") {
       const { path, method: httpMethod } = payload;
       const testUrl = `${host}${path || "/"}`;
-      
       try {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (userKey && password) {
-          headers["Authorization"] = `Basic ${btoa(`${userKey}:${password}`)}`;
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-
-        const resp = await fetch(testUrl, {
-          method: (httpMethod || "GET").toUpperCase(),
-          headers,
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
+        const resp = await bdpFetch(testUrl, headers, (httpMethod || "GET").toUpperCase());
         const bodyText = await resp.text();
-        const preview = bodyText.substring(0, 2048);
-
-        return new Response(JSON.stringify({
-          success: resp.ok,
-          status: resp.status,
-          statusText: resp.statusText,
+        return ok({
+          success: resp.ok, status: resp.status, statusText: resp.statusText,
           contentType: resp.headers.get("content-type") || "unknown",
-          bodyPreview: preview,
-          url: testUrl,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          bodyPreview: bodyText.substring(0, 2048), url: testUrl,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
-        return new Response(JSON.stringify({
-          success: false,
-          status: 0,
-          message: msg.includes("abort") ? "Connection timed out (15s)" : msg,
-          url: testUrl,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return ok({
+          success: false, status: 0, url: testUrl,
+          message: msg.includes("abort") ? "Connection timed out (30s)" : msg,
         });
       }
     }
 
-    return new Response(JSON.stringify({ success: false, message: `Unknown action: ${action}` }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // ── ACTION: fetch-sales ──
+    // Fetch documents for a given day (or date range) from BDP export endpoint
+    if (action === "fetch-sales") {
+      const { businessDay, dateFrom, dateTo } = payload;
+      const from = dateFrom || businessDay;
+      const to = dateTo || businessDay;
+
+      if (!from) {
+        return err({ success: false, message: "Missing businessDay or dateFrom" });
+      }
+
+      try {
+        // BDP Weblink REST export endpoint pattern:
+        // /api/v1/export/{profileCode}?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
+        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const resp = await bdpFetch(exportUrl, headers);
+        const bodyText = await resp.text();
+
+        if (!resp.ok) {
+          return ok({
+            success: false,
+            message: `BDP returned HTTP ${resp.status}: ${resp.statusText}`,
+            bodyPreview: bodyText.substring(0, 2048),
+          });
+        }
+
+        // Parse response — BDP may return JSON array or wrapped object
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          return ok({
+            success: false,
+            message: "BDP response is not valid JSON",
+            bodyPreview: bodyText.substring(0, 2048),
+          });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+
+        return ok({
+          success: true,
+          salesEvents,
+          totalDocuments: rawDocuments.length,
+          totalParsedEvents: salesEvents.length,
+          dateRange: { from, to },
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg.includes("abort") ? "Request timed out (30s)" : msg });
+      }
+    }
+
+    // ── ACTION: save-sales ──
+    // Fetch + parse + upsert into sales_events and sales_line_items with idempotency
+    if (action === "save-sales") {
+      const { businessDay, dateFrom, dateTo } = payload;
+      const from = dateFrom || businessDay;
+      const to = dateTo || businessDay;
+
+      if (!from) {
+        return err({ success: false, message: "Missing businessDay or dateFrom" });
+      }
+
+      try {
+        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const resp = await bdpFetch(exportUrl, headers);
+        const bodyText = await resp.text();
+
+        if (!resp.ok) {
+          return ok({ success: false, message: `BDP HTTP ${resp.status}` });
+        }
+
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          return ok({ success: false, message: "Invalid JSON from BDP" });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+        let savedEvents = 0;
+        let savedLines = 0;
+        const errors: string[] = [];
+
+        for (const evt of salesEvents) {
+          // Idempotency key: provider_doc_id + connection_id
+          const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+          // Upsert sales_event
+          const { data: eventRow, error: evtErr } = await supabase
+            .from("sales_events")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_doc_id: idempotencyId,
+                business_day: evt.business_day,
+                doc_type: evt.doc_type,
+                total_amount: evt.total_amount,
+                total_tax: evt.total_tax,
+                total_net: evt.total_net,
+                line_count: evt.line_count,
+                raw_json: evt.raw_json,
+              },
+              { onConflict: "connection_id,provider_doc_id" }
+            )
+            .select("id")
+            .single();
+
+          if (evtErr) {
+            errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            continue;
+          }
+          savedEvents++;
+
+          // Upsert line items with idempotency key: provider_doc_id + line_index
+          for (const line of evt.lines) {
+            const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+
+            const { error: lineErr } = await supabase
+              .from("sales_line_items")
+              .upsert(
+                {
+                  sales_event_id: eventRow.id,
+                  connection_id: connectionId,
+                  provider_product_id: lineProviderId,
+                  name: line.name,
+                  family: line.family,
+                  format: line.format,
+                  quantity: line.quantity,
+                  unit_price: line.unit_price,
+                  total_amount: line.total_amount,
+                  vat_rate: line.vat_rate,
+                  is_wine_candidate: false,
+                  mapped: false,
+                },
+                { onConflict: "sales_event_id,provider_product_id" }
+              );
+
+            if (lineErr) {
+              errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
+            } else {
+              savedLines++;
+            }
+          }
+        }
+
+        // Update last sync timestamp
+        await supabase
+          .from("pos_connections")
+          .update({ last_sync_at: new Date().toISOString(), last_business_day_synced: to })
+          .eq("id", connectionId);
+
+        return ok({ success: true, savedEvents, savedLines, totalParsed: salesEvents.length, errors });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: backfill ──
+    // Save sales for last N days
+    if (action === "backfill") {
+      const daysBack = Number(payload.daysBack || 30);
+      let totalSaved = 0;
+      let totalLines = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < daysBack; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const day = d.toISOString().substring(0, 10);
+
+        try {
+          const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${day}&dateTo=${day}`;
+          const resp = await bdpFetch(exportUrl, headers);
+
+          if (!resp.ok) {
+            errors.push(`${day}: HTTP ${resp.status}`);
+            continue;
+          }
+
+          const bodyText = await resp.text();
+          let rawDocuments: any[];
+          try {
+            const parsed = JSON.parse(bodyText);
+            rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+          } catch {
+            errors.push(`${day}: Invalid JSON`);
+            continue;
+          }
+
+          // Skip empty days
+          if (rawDocuments.length === 0) continue;
+
+          const salesEvents = parseBdpDocuments(rawDocuments);
+
+          for (const evt of salesEvents) {
+            const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+            const { data: eventRow, error: evtErr } = await supabase
+              .from("sales_events")
+              .upsert(
+                {
+                  connection_id: connectionId,
+                  provider_doc_id: idempotencyId,
+                  business_day: evt.business_day,
+                  doc_type: evt.doc_type,
+                  total_amount: evt.total_amount,
+                  total_tax: evt.total_tax,
+                  total_net: evt.total_net,
+                  line_count: evt.line_count,
+                  raw_json: evt.raw_json,
+                },
+                { onConflict: "connection_id,provider_doc_id" }
+              )
+              .select("id")
+              .single();
+
+            if (evtErr) {
+              errors.push(`${day} doc ${evt.provider_doc_id}: ${evtErr.message}`);
+              continue;
+            }
+            totalSaved++;
+
+            for (const line of evt.lines) {
+              const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+
+              const { error: lineErr } = await supabase
+                .from("sales_line_items")
+                .upsert(
+                  {
+                    sales_event_id: eventRow.id,
+                    connection_id: connectionId,
+                    provider_product_id: lineProviderId,
+                    name: line.name,
+                    family: line.family,
+                    format: line.format,
+                    quantity: line.quantity,
+                    unit_price: line.unit_price,
+                    total_amount: line.total_amount,
+                    vat_rate: line.vat_rate,
+                    is_wine_candidate: false,
+                    mapped: false,
+                  },
+                  { onConflict: "sales_event_id,provider_product_id" }
+                );
+
+              if (lineErr) {
+                errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
+              } else {
+                totalLines++;
+              }
+            }
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Unknown error";
+          errors.push(`${day}: ${msg}`);
+        }
+      }
+
+      // Update sync markers
+      await supabase
+        .from("pos_connections")
+        .update({ last_sync_at: new Date().toISOString() })
+        .eq("id", connectionId);
+
+      return ok({ success: true, totalSaved, totalLines, daysProcessed: daysBack, errors });
+    }
+
+    // ── ACTION: incremental-sync ──
+    // Fetch from last_business_day_synced until today
+    if (action === "incremental-sync") {
+      const lastSynced = conn.last_business_day_synced;
+      const today = new Date().toISOString().substring(0, 10);
+      const from = lastSynced || today;
+
+      try {
+        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${today}`;
+        const resp = await bdpFetch(exportUrl, headers);
+
+        if (!resp.ok) {
+          return ok({ success: false, message: `BDP HTTP ${resp.status}` });
+        }
+
+        const bodyText = await resp.text();
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          return ok({ success: false, message: "Invalid JSON from BDP" });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+        let savedEvents = 0;
+        let savedLines = 0;
+        const errors: string[] = [];
+
+        for (const evt of salesEvents) {
+          const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+          const { data: eventRow, error: evtErr } = await supabase
+            .from("sales_events")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_doc_id: idempotencyId,
+                business_day: evt.business_day,
+                doc_type: evt.doc_type,
+                total_amount: evt.total_amount,
+                total_tax: evt.total_tax,
+                total_net: evt.total_net,
+                line_count: evt.line_count,
+                raw_json: evt.raw_json,
+              },
+              { onConflict: "connection_id,provider_doc_id" }
+            )
+            .select("id")
+            .single();
+
+          if (evtErr) {
+            errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            continue;
+          }
+          savedEvents++;
+
+          for (const line of evt.lines) {
+            const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+
+            const { error: lineErr } = await supabase
+              .from("sales_line_items")
+              .upsert(
+                {
+                  sales_event_id: eventRow.id,
+                  connection_id: connectionId,
+                  provider_product_id: lineProviderId,
+                  name: line.name,
+                  family: line.family,
+                  format: line.format,
+                  quantity: line.quantity,
+                  unit_price: line.unit_price,
+                  total_amount: line.total_amount,
+                  vat_rate: line.vat_rate,
+                  is_wine_candidate: false,
+                  mapped: false,
+                },
+                { onConflict: "sales_event_id,provider_product_id" }
+              );
+
+            if (lineErr) errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
+            else savedLines++;
+          }
+        }
+
+        await supabase
+          .from("pos_connections")
+          .update({ last_sync_at: new Date().toISOString(), last_business_day_synced: today })
+          .eq("id", connectionId);
+
+        return ok({
+          success: true, savedEvents, savedLines,
+          dateRange: { from, to: today },
+          totalParsed: salesEvents.length, errors,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    return err({ success: false, message: `Unknown action: ${action}` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
-    return new Response(JSON.stringify({ success: false, message: msg }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return err({ success: false, message: msg }, 500);
   }
 });

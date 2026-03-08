@@ -4,18 +4,20 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Link2,
   Power, Server, Eye, Send, HelpCircle, ChevronDown, ChevronUp,
+  Calendar, Download, RefreshCw, Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { useBdpConnection, BdpTestResult } from "@/hooks/useBdpConnection";
+import { useBdpConnection, BdpTestResult, BdpSalesEvent } from "@/hooks/useBdpConnection";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Diagnostics", icon: Server },
-  { id: 3, label: "Go Live", icon: Power },
+  { id: 3, label: "Sales Sync", icon: Database },
+  { id: 4, label: "Go Live", icon: Power },
 ];
 
 // ── Step 1: Connection ──
@@ -61,7 +63,7 @@ function StepConnection({
         </p>
       </div>
 
-      {/* ── Helper Panel: How to obtain values ── */}
+      {/* Helper Panel */}
       <div className="rounded-lg border border-border bg-muted/20">
         <button
           onClick={() => setShowHelper(!showHelper)}
@@ -76,34 +78,23 @@ function StepConnection({
         {showHelper && (
           <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
             <ol className="list-decimal list-inside space-y-2.5 text-xs text-muted-foreground leading-relaxed">
-              <li>
-                Open <span className="font-semibold text-foreground">BDP NET → Configuración → Servicio Web</span> and enable the REST API service.
-              </li>
-              <li>
-                In the <span className="font-semibold text-foreground">Weblink Rest API</span> section, note the <span className="font-mono text-foreground">Base URL</span> (server IP) and <span className="font-mono text-foreground">Port</span> configured.
-              </li>
-              <li>
-                Create or verify a <span className="font-semibold text-foreground">User Key</span> and <span className="font-semibold text-foreground">Password</span> with read permissions in the Web Service users panel.
-              </li>
-              <li>
-                Go to <span className="font-semibold text-foreground">Configuración → Exportación → Plantillas</span> and create (or locate) an export template named <span className="font-mono text-foreground">WEBLINK</span>.
-              </li>
-              <li>
-                Copy the template <span className="font-semibold text-foreground">Code</span> (e.g. <span className="font-mono text-foreground">WINERIM_EXPORT</span>) and paste it in the <em>Export Profile Code</em> field below.
-              </li>
+              <li>Open <span className="font-semibold text-foreground">BDP NET → Configuración → Servicio Web</span> and enable the REST API service.</li>
+              <li>In the <span className="font-semibold text-foreground">Weblink Rest API</span> section, note the <span className="font-mono text-foreground">Base URL</span> and <span className="font-mono text-foreground">Port</span>.</li>
+              <li>Create or verify a <span className="font-semibold text-foreground">User Key</span> and <span className="font-semibold text-foreground">Password</span> with read permissions.</li>
+              <li>Go to <span className="font-semibold text-foreground">Configuración → Exportación → Plantillas</span> and create an export template named <span className="font-mono text-foreground">WEBLINK</span>.</li>
+              <li>Copy the template <span className="font-semibold text-foreground">Code</span> and paste it below.</li>
             </ol>
-
             <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
               <p className="text-[11px] text-primary font-medium mb-0.5">💡 Tip</p>
               <p className="text-[11px] text-muted-foreground">
-                If connecting from the cloud, ensure the BDP server's port is forwarded/exposed and the firewall allows external access. Use "IP ANY" in the service config to allow any origin IP.
+                Ensure the BDP server port is forwarded and the firewall allows external access. Use "IP ANY" to allow any origin IP.
               </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* ── Pre-flight Checklist ── */}
+      {/* Pre-flight Checklist */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Pre-flight Checklist</p>
         <div className="space-y-2">
@@ -114,11 +105,7 @@ function StepConnection({
             { key: "exportTemplateExists" as const, label: "Export template (WEBLINK) exists in BDP" },
           ]).map((item) => (
             <label key={item.key} className="flex items-start gap-2.5 cursor-pointer group">
-              <Checkbox
-                checked={checks[item.key]}
-                onCheckedChange={() => toggleCheck(item.key)}
-                className="mt-0.5"
-              />
+              <Checkbox checked={checks[item.key]} onCheckedChange={() => toggleCheck(item.key)} className="mt-0.5" />
               <span className={`text-xs leading-relaxed transition-colors ${checks[item.key] ? "text-foreground" : "text-muted-foreground"}`}>
                 {item.label}
               </span>
@@ -133,7 +120,7 @@ function StepConnection({
         )}
       </div>
 
-      {/* ── Form fields ── */}
+      {/* Form fields */}
       <div className="space-y-4">
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Location Name</label>
@@ -173,7 +160,6 @@ function StepConnection({
           {testStatus === "error" && (testError ? testError.substring(0, 60) : "Connection Failed")}
         </Button>
 
-        {/* Raw diagnostics panel */}
         {testResult && (
           <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
             <div className="flex items-center gap-2 text-xs font-medium text-foreground">
@@ -250,12 +236,7 @@ function StepDiagnostics({
           <option>GET</option>
           <option>POST</option>
         </select>
-        <Input
-          placeholder="/api/v1/..."
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          className="bg-background font-mono text-sm flex-1"
-        />
+        <Input placeholder="/api/v1/..." value={path} onChange={(e) => setPath(e.target.value)} className="bg-background font-mono text-sm flex-1" />
         <Button onClick={run} disabled={loading || !connectionId} size="sm">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </Button>
@@ -281,15 +262,204 @@ function StepDiagnostics({
   );
 }
 
-// ── Step 3: Go Live ──
+// ── Step 3: Sales Sync ──
+function StepSalesSync({
+  connectionId,
+  salesEvents, loadingSales, fetchSales,
+  savingSales, saveResult, saveSalesToDb,
+  backfilling, backfillResult, runBackfill,
+  incrementalSyncing, incrementalResult, runIncrementalSync,
+}: {
+  connectionId: string | null;
+  salesEvents: BdpSalesEvent[];
+  loadingSales: boolean;
+  fetchSales: (day: string) => Promise<void>;
+  savingSales: boolean;
+  saveResult: { savedEvents: number; savedLines: number; errors: string[] } | null;
+  saveSalesToDb: (day: string) => Promise<void>;
+  backfilling: boolean;
+  backfillResult: { totalSaved: number; totalLines: number; daysProcessed: number; errors: string[] } | null;
+  runBackfill: (days?: number) => Promise<void>;
+  incrementalSyncing: boolean;
+  incrementalResult: { savedEvents: number; savedLines: number; dateRange: { from: string; to: string }; errors: string[] } | null;
+  runIncrementalSync: () => Promise<void>;
+}) {
+  const today = new Date().toISOString().substring(0, 10);
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [backfillDays, setBackfillDays] = useState("30");
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Sales Sync</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Fetch and persist BDP sales documents. BDP uses the <strong>closure day</strong> (cierre) as business day — the actual ticket timestamp is preserved when available.
+        </p>
+      </div>
+
+      {/* Info: business day vs ticket time */}
+      <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-1">
+        <p className="text-[11px] text-primary font-semibold">📅 Business Day vs Ticket Time</p>
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          BDP groups sales by <strong>closure day</strong> (ClosureDate). A ticket created at 23:45 may belong to the next day's closure.
+          The raw ticket timestamp is stored separately so you can always reconcile.
+        </p>
+      </div>
+
+      {/* ── Fetch & Preview single day ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <Calendar className="h-3.5 w-3.5" />
+          Fetch Day Preview
+        </p>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="text-xs text-muted-foreground mb-1 block">Business Day</label>
+            <Input type="date" value={selectedDay} onChange={(e) => setSelectedDay(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+          <Button onClick={() => fetchSales(selectedDay)} disabled={loadingSales || !connectionId} variant="secondary" size="sm">
+            {loadingSales ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+            <span className="ml-1.5">Preview</span>
+          </Button>
+          <Button onClick={() => saveSalesToDb(selectedDay)} disabled={savingSales || !connectionId} size="sm">
+            {savingSales ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            <span className="ml-1.5">Save</span>
+          </Button>
+        </div>
+
+        {/* Preview results */}
+        {salesEvents.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">{salesEvents.length} document(s) found</p>
+            <div className="max-h-64 overflow-auto space-y-2">
+              {salesEvents.map((evt) => (
+                <div key={evt.provider_doc_id} className="rounded border border-border bg-card p-3 space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-mono font-medium text-foreground">{evt.provider_doc_id}</span>
+                    <Badge variant="secondary" className="text-[10px]">{evt.doc_type}</Badge>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-muted-foreground">Business Day</span>
+                      <p className="font-mono text-foreground">{evt.business_day}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Ticket Time</span>
+                      <p className="font-mono text-foreground">{evt.ticket_time || "—"}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Total</span>
+                      <p className="font-mono font-semibold text-foreground">€{evt.total_amount.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Lines</span>
+                      <p className="font-mono text-foreground">{evt.line_count}</p>
+                    </div>
+                  </div>
+                  {evt.lines.length > 0 && (
+                    <div className="border-t border-border pt-1.5 mt-1.5">
+                      <table className="w-full text-[10px]">
+                        <thead>
+                          <tr className="text-muted-foreground text-left">
+                            <th className="py-0.5">Product</th>
+                            <th className="py-0.5 text-right">Qty</th>
+                            <th className="py-0.5 text-right">Price</th>
+                            <th className="py-0.5 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {evt.lines.slice(0, 5).map((l) => (
+                            <tr key={l.line_index} className="text-foreground">
+                              <td className="py-0.5 truncate max-w-[140px]">{l.name}</td>
+                              <td className="py-0.5 text-right font-mono">{l.quantity}</td>
+                              <td className="py-0.5 text-right font-mono">€{l.unit_price.toFixed(2)}</td>
+                              <td className="py-0.5 text-right font-mono">€{l.total_amount.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                          {evt.lines.length > 5 && (
+                            <tr><td colSpan={4} className="text-muted-foreground text-center py-0.5">+{evt.lines.length - 5} more lines</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {saveResult && (
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground">
+            ✅ Saved {saveResult.savedEvents} events, {saveResult.savedLines} lines
+            {saveResult.errors.length > 0 && (
+              <p className="text-destructive mt-1">{saveResult.errors.length} error(s): {saveResult.errors[0]}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Backfill ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <Download className="h-3.5 w-3.5" />
+          Backfill Historical Data
+        </p>
+        <div className="flex gap-2 items-end">
+          <div className="w-28">
+            <label className="text-xs text-muted-foreground mb-1 block">Days Back</label>
+            <Input type="number" value={backfillDays} onChange={(e) => setBackfillDays(e.target.value)} min="1" max="365" className="bg-background font-mono text-sm" />
+          </div>
+          <Button onClick={() => runBackfill(Number(backfillDays) || 30)} disabled={backfilling || !connectionId} variant="secondary">
+            {backfilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {backfilling ? "Backfilling…" : "Run Backfill"}
+          </Button>
+        </div>
+        {backfillResult && (
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
+            <p>✅ {backfillResult.totalSaved} events, {backfillResult.totalLines} lines across {backfillResult.daysProcessed} days</p>
+            {backfillResult.errors.length > 0 && (
+              <p className="text-destructive">{backfillResult.errors.length} error(s)</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Incremental Sync ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <RefreshCw className="h-3.5 w-3.5" />
+          Incremental Sync
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Fetches all documents since the last synced business day until today.
+        </p>
+        <Button onClick={runIncrementalSync} disabled={incrementalSyncing || !connectionId} variant="secondary">
+          {incrementalSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {incrementalSyncing ? "Syncing…" : "Sync Now"}
+        </Button>
+        {incrementalResult && (
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
+            <p>✅ {incrementalResult.savedEvents} events, {incrementalResult.savedLines} lines</p>
+            <p className="text-muted-foreground">Range: {incrementalResult.dateRange.from} → {incrementalResult.dateRange.to}</p>
+            {incrementalResult.errors.length > 0 && (
+              <p className="text-destructive">{incrementalResult.errors.length} error(s)</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 4: Go Live ──
 function StepGoLive({ connectionId }: { connectionId: string | null }) {
   return (
     <div className="space-y-5 text-center py-8">
       <CheckCircle2 className="h-12 w-12 text-success mx-auto" />
       <h2 className="text-lg font-semibold text-foreground">BDP NET Connected</h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        Your BDP NET connection is saved. Once the full integration is built out,
-        sales pull and catalog sync will be available from this wizard.
+        Your BDP NET connection is configured with sales sync. Enable automatic sync or continue using manual backfill/incremental sync.
       </p>
       {connectionId && (
         <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
@@ -305,6 +475,10 @@ export default function BdpWizard() {
     connectionId, testStatus, testError, testResult,
     testConnection, testCustomEndpoint, loadExistingConnection,
     updateConnection,
+    salesEvents, loadingSales, fetchSales,
+    savingSales, saveResult, saveSalesToDb,
+    backfilling, backfillResult, runBackfill,
+    incrementalSyncing, incrementalResult, runIncrementalSync,
   } = useBdpConnection();
 
   const [step, setStep] = useState(1);
@@ -315,7 +489,6 @@ export default function BdpWizard() {
   const [password, setPassword] = useState("");
   const [exportProfileCode, setExportProfileCode] = useState("");
 
-  // Load existing BDP connection on mount
   useEffect(() => {
     loadExistingConnection().then((conn) => {
       if (conn) {
@@ -338,7 +511,6 @@ export default function BdpWizard() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" onClick={() => navigate("/integrations")}>
           <ArrowLeft className="h-4 w-4" />
@@ -349,7 +521,6 @@ export default function BdpWizard() {
         </div>
       </div>
 
-      {/* Step indicators */}
       <div className="flex items-center gap-1">
         {steps.map((s) => {
           const Icon = s.icon;
@@ -374,7 +545,6 @@ export default function BdpWizard() {
         })}
       </div>
 
-      {/* Content */}
       <div className="rounded-xl border border-border bg-card shadow-card p-6">
         <AnimatePresence mode="wait">
           <motion.div
@@ -400,13 +570,21 @@ export default function BdpWizard() {
               <StepDiagnostics connectionId={connectionId} testCustomEndpoint={testCustomEndpoint} />
             )}
             {step === 3 && (
+              <StepSalesSync
+                connectionId={connectionId}
+                salesEvents={salesEvents} loadingSales={loadingSales} fetchSales={fetchSales}
+                savingSales={savingSales} saveResult={saveResult} saveSalesToDb={saveSalesToDb}
+                backfilling={backfilling} backfillResult={backfillResult} runBackfill={runBackfill}
+                incrementalSyncing={incrementalSyncing} incrementalResult={incrementalResult} runIncrementalSync={runIncrementalSync}
+              />
+            )}
+            {step === 4 && (
               <StepGoLive connectionId={connectionId} />
             )}
           </motion.div>
         </AnimatePresence>
       </div>
 
-      {/* Navigation */}
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => step > 1 ? setStep(step - 1) : navigate("/integrations")}>
           <ArrowLeft className="mr-2 h-4 w-4" />
