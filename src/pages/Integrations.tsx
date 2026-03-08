@@ -38,9 +38,9 @@ const connectors: Connector[] = [
   {
     id: "icg",
     name: "ICG FrontRest",
-    description: "On-prem POS. Integration via DB/server access or partners (Sinqro/Ordatic).",
+    description: "On-prem POS via SQL Server direct access. Sales, catalog and stock sync.",
     logo: "I",
-    status: "coming_soon",
+    status: "disconnected",
     country: "España",
   },
   {
@@ -289,6 +289,7 @@ export default function Integrations() {
                       if (c.id === "simphony") navigate("/integrations/simphony");
                       if (c.id === "cassa") navigate("/integrations/cassa");
                       if (c.id === "bdp") navigate("/integrations/bdp");
+                      if (c.id === "icg") navigate("/integrations/icg");
                     }}
                   >
                     <div className="p-5">
@@ -349,6 +350,7 @@ export default function Integrations() {
                             if (c.id === "simphony") navigate("/integrations/simphony");
                             if (c.id === "cassa") navigate("/integrations/cassa");
                             if (c.id === "bdp") navigate("/integrations/bdp");
+                            if (c.id === "icg") navigate("/integrations/icg");
                           }}
                         >
                           Connect
