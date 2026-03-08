@@ -177,6 +177,26 @@ function suggestFamilyClassification(familyName: string): { suggestedWine: boole
   return { suggestedWine: false, confidence: "low" };
 }
 
+// ── NORMALIZE FORMAT: detect BOT / COPA / MAGNUM from ProductName prefix or SaleFormatName ──
+function normalizeLineFormat(productName: string, saleFormatName: string): string {
+  const pn = (productName || "").toUpperCase().trim();
+  const sf = (saleFormatName || "").toUpperCase().trim();
+
+  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …")
+  if (pn.startsWith("BOT.") || pn.startsWith("BOT ")) return "BOT";
+  if (pn.startsWith("COPA ") || pn.startsWith("COPA.")) return "COPA";
+  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM")) return "MAGNUM";
+
+  // Fallback to SaleFormatName
+  if (sf.includes("COPA") || sf.includes("GLASS") || sf.includes("VERRE")) return "COPA";
+  if (sf.includes("MAG") || sf.includes("MAGNUM")) return "MAGNUM";
+  if (sf.includes("BOT") || sf.includes("BOTTLE") || sf.includes("75CL") || sf.includes("BOTELLA")) return "BOT";
+
+  // If SaleFormatName is non-empty, keep as-is normalized
+  if (saleFormatName.trim()) return saleFormatName.trim();
+  return "";
+}
+
 // deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
