@@ -2921,6 +2921,128 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── DEBUG BUNDLE (for support) ──
+    if (action === "debug-bundle") {
+      // 1. Master data: SaleCenters + PriceLists
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("sale_centers_json, price_lists_json, families_json, vats_json, warehouses_json, preparation_types_json, preparation_orders_json, products_summary_json")
+        .eq("connection_id", connectionId).single();
+
+      const saleCenters = (masterData as any)?.sale_centers_json || [];
+      const priceLists = (masterData as any)?.price_lists_json || [];
+      const families = (masterData as any)?.families_json || [];
+
+      // 2. Selected SaleCenter IDs from connection
+      const selectedSaleCenterIds = connection.selected_sale_center_ids || [];
+
+      // 3. Last 20 outbound tasks (sanitized)
+      const { data: recentTasks } = await supabase
+        .from("outbound_tasks").select("id, task_type, status, attempts, max_attempts, last_error, blocked_reason, external_id, payload_json, created_at, updated_at")
+        .eq("connection_id", connectionId)
+        .order("created_at", { ascending: false }).limit(20);
+
+      // 4. Verification: missing_prices from last verify-products run
+      //    Re-run a lightweight version inline
+      const { data: mappings } = await supabase
+        .from("product_mappings").select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
+        .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT").limit(100);
+
+      let missingPrices: unknown[] = [];
+      let sampleXml = "";
+
+      try {
+        // Quick verification scan
+        const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+        const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 20000);
+        if (verifyRes.ok) {
+          const verifyXml = await verifyRes.text();
+          for (const m of (mappings || []).slice(0, 50)) {
+            const prodRegex = new RegExp(`<Product[^>]*Id="${m.provider_product_id}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+            const prodMatch = verifyXml.match(prodRegex);
+            for (const pl of priceLists) {
+              if (!prodMatch) {
+                missingPrices.push({ agora_id: m.provider_product_id, name: m.provider_product_name, price_list: (pl as any).Name, issue: "product_not_found" });
+              } else {
+                const prRegex = new RegExp(`<Price[^>]*PriceListId="${(pl as any).Id}"[^>]*MainPrice="([^"]*)"`, "i");
+                const prMatch = prodMatch[1].match(prRegex);
+                if (!prMatch) {
+                  missingPrices.push({ agora_id: m.provider_product_id, name: m.provider_product_name, price_list: (pl as any).Name, issue: "missing" });
+                } else if (parseFloat(prMatch[1]) <= 0) {
+                  missingPrices.push({ agora_id: m.provider_product_id, name: m.provider_product_name, price_list: (pl as any).Name, issue: "zero", value: prMatch[1] });
+                }
+              }
+            }
+          }
+        }
+      } catch (_) { /* best-effort */ }
+
+      // 5. Generate sample XML for one wine
+      try {
+        const sampleMapping = (mappings || [])[0];
+        if (sampleMapping?.winerim_wine_id && masterData) {
+          const { data: sampleWines } = await supabase
+            .from("winerim_wines").select("*")
+            .eq("connection_id", connectionId).eq("winerim_id", sampleMapping.winerim_wine_id).limit(1);
+          if (sampleWines && sampleWines.length > 0) {
+            const customMappings = await loadCustomFamilyMappings(connectionId);
+            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings);
+            sampleXml = xml;
+          }
+        }
+      } catch (_) { /* best-effort */ }
+
+      // 6. Connection settings (sanitized: no tokens)
+      const sanitizedConnection = {
+        id: connection.id,
+        location_name: connection.location_name,
+        provider: connection.provider,
+        write_mode: connection.write_mode,
+        sync_mode: connection.sync_mode,
+        write_bottle: connection.write_bottle,
+        write_glass: connection.write_glass,
+        auto_create_families: connection.auto_create_families,
+        auto_push_on_create: connection.auto_push_on_create,
+        auto_push_on_update: connection.auto_push_on_update,
+        auto_push_verified_ready: connection.auto_push_verified_ready,
+        default_family_id: connection.default_family_id,
+        default_vat_id: connection.default_vat_id,
+        default_bottle_format_name: connection.default_bottle_format_name,
+        default_glass_format_name: connection.default_glass_format_name,
+        default_preparation_type_id: connection.default_preparation_type_id,
+        default_preparation_order_id: connection.default_preparation_order_id,
+        default_warehouse_id: connection.default_warehouse_id,
+        selected_sale_center_ids: selectedSaleCenterIds,
+        estimated_glasses_per_bottle: connection.estimated_glasses_per_bottle,
+        last_business_day_synced: connection.last_business_day_synced,
+        last_sync_at: connection.last_sync_at,
+      };
+
+      const bundle = {
+        _generated_at: new Date().toISOString(),
+        _version: "1.0",
+        connection: sanitizedConnection,
+        sale_centers: saleCenters,
+        price_lists: priceLists,
+        families_count: (families as unknown[]).length,
+        selected_sale_center_ids: selectedSaleCenterIds,
+        missing_prices: missingPrices,
+        sample_xml: sampleXml,
+        recent_tasks: (recentTasks || []).map((t: any) => ({
+          ...t,
+          // Sanitize payload: remove any token-like fields
+          payload_json: (() => {
+            const p = { ...(t.payload_json || {}) };
+            delete p.api_token; delete p.token; delete p.secret;
+            return p;
+          })(),
+        })),
+      };
+
+      return new Response(JSON.stringify(bundle, null, 2),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── DIAGNOSE (legacy) ──
     if (action === "diagnose" || action === "export") {
       const day = businessDay || new Date().toISOString().split("T")[0];
