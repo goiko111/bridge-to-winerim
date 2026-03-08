@@ -4,6 +4,8 @@ import { CheckCircle2, AlertTriangle, Clock, ArrowRight, Plug, Globe } from "luc
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+type MaturityLevel = "production" | "pilot" | "beta" | "experimental";
+
 interface Connector {
   id: string;
   name: string;
@@ -13,7 +15,15 @@ interface Connector {
   country: string;
   locations?: number;
   lastSync?: string;
+  maturity?: MaturityLevel;
 }
+
+const maturityMeta: Record<MaturityLevel, { label: string; className: string }> = {
+  production: { label: "Production-ready", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  pilot: { label: "Pilot-ready", className: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" },
+  beta: { label: "Beta", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  experimental: { label: "Experimental", className: "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30" },
+};
 
 const connectors: Connector[] = [
   // España
