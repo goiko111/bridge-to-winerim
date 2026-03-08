@@ -69,10 +69,10 @@ const connectors: Connector[] = [
   },
   {
     id: "bdp",
-    name: "BDP",
-    description: "TPV system for hospitality. Integration via partner or export.",
+    name: "BDP NET",
+    description: "Weblink Rest API integration. Configurable base URL, port, user credentials and export profile.",
     logo: "B",
-    status: "coming_soon",
+    status: "disconnected",
     country: "España",
   },
   // Italia
@@ -288,6 +288,7 @@ export default function Integrations() {
                       if (c.id === "square") navigate("/integrations/square");
                       if (c.id === "simphony") navigate("/integrations/simphony");
                       if (c.id === "cassa") navigate("/integrations/cassa");
+                      if (c.id === "bdp") navigate("/integrations/bdp");
                     }}
                   >
                     <div className="p-5">
@@ -347,6 +348,7 @@ export default function Integrations() {
                             if (c.id === "square") navigate("/integrations/square");
                             if (c.id === "simphony") navigate("/integrations/simphony");
                             if (c.id === "cassa") navigate("/integrations/cassa");
+                            if (c.id === "bdp") navigate("/integrations/bdp");
                           }}
                         >
                           Connect
