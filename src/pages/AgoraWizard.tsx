@@ -2196,7 +2196,17 @@ function StepOutboundSync({
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
-              onClick={() => { onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]); setSelectedWineIds(new Set()); }}>
+              onClick={async () => {
+                const result = await onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]);
+                const r = result as any;
+                if (r) {
+                  toast({
+                    title: "Queued for Agora",
+                    description: `${r.queuedCreate || 0} CREATE · ${r.queuedUpdate || 0} UPDATE · ${r.skippedDuplicate || 0} already queued`,
+                  });
+                }
+                setSelectedWineIds(new Set());
+              }}>
               {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               Push {selectedWineIds.size} to Agora
             </Button>
