@@ -3443,7 +3443,9 @@ export default function AgoraWizard() {
               winerimWines={winerimWinesForPush}
               onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               backfillingPreparation={outbound.backfillingPreparation}
-              onBackfillPreparation={outbound.backfillPreparation} />
+              onBackfillPreparation={outbound.backfillPreparation}
+              fixingPrices={outbound.fixingPrices}
+              onFixMissingPrices={outbound.fixMissingPrices} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
