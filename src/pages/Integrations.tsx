@@ -145,9 +145,9 @@ const connectors: Connector[] = [
   {
     id: "toast",
     name: "Toast POS",
-    description: "OAuth2 auth, Orders API with webhooks, Menus V3. Standard API (read-only) or full partner access.",
+    description: "Standard API access: orders polling, business date sync, Menus V2, webhooks, and circuit breaker resilience.",
     logo: "T",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
