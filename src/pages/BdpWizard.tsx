@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Link2,
-  Settings2, Power, Server, Eye, Send, HelpCircle, ChevronDown, ChevronUp,
-  Square, CheckSquare,
+  Power, Server, Eye, Send, HelpCircle, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +38,20 @@ function StepConnection({
   testStatus: string; testError: string | null; testResult: BdpTestResult | null;
   onTest: () => void;
 }) {
+  const [showHelper, setShowHelper] = useState(false);
+  const [checks, setChecks] = useState({
+    portOpen: false,
+    ipAny: false,
+    loginRequired: false,
+    exportTemplateExists: false,
+  });
+
+  const toggleCheck = (key: keyof typeof checks) => {
+    setChecks((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const allChecked = Object.values(checks).every(Boolean);
+
   return (
     <div className="space-y-5">
       <div>
@@ -47,6 +60,80 @@ function StepConnection({
           Enter your BDP NET Weblink Rest API credentials and endpoint.
         </p>
       </div>
+
+      {/* ── Helper Panel: How to obtain values ── */}
+      <div className="rounded-lg border border-border bg-muted/20">
+        <button
+          onClick={() => setShowHelper(!showHelper)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <HelpCircle className="h-4 w-4 text-primary" />
+            How to obtain these values
+          </div>
+          {showHelper ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </button>
+        {showHelper && (
+          <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
+            <ol className="list-decimal list-inside space-y-2.5 text-xs text-muted-foreground leading-relaxed">
+              <li>
+                Open <span className="font-semibold text-foreground">BDP NET → Configuración → Servicio Web</span> and enable the REST API service.
+              </li>
+              <li>
+                In the <span className="font-semibold text-foreground">Weblink Rest API</span> section, note the <span className="font-mono text-foreground">Base URL</span> (server IP) and <span className="font-mono text-foreground">Port</span> configured.
+              </li>
+              <li>
+                Create or verify a <span className="font-semibold text-foreground">User Key</span> and <span className="font-semibold text-foreground">Password</span> with read permissions in the Web Service users panel.
+              </li>
+              <li>
+                Go to <span className="font-semibold text-foreground">Configuración → Exportación → Plantillas</span> and create (or locate) an export template named <span className="font-mono text-foreground">WEBLINK</span>.
+              </li>
+              <li>
+                Copy the template <span className="font-semibold text-foreground">Code</span> (e.g. <span className="font-mono text-foreground">WINERIM_EXPORT</span>) and paste it in the <em>Export Profile Code</em> field below.
+              </li>
+            </ol>
+
+            <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+              <p className="text-[11px] text-primary font-medium mb-0.5">💡 Tip</p>
+              <p className="text-[11px] text-muted-foreground">
+                If connecting from the cloud, ensure the BDP server's port is forwarded/exposed and the firewall allows external access. Use "IP ANY" in the service config to allow any origin IP.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Pre-flight Checklist ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Pre-flight Checklist</p>
+        <div className="space-y-2">
+          {([
+            { key: "portOpen" as const, label: "Port is open in firewall (accessible from outside)" },
+            { key: "ipAny" as const, label: 'IP filter set to "ANY" (or Winerim IP whitelisted)' },
+            { key: "loginRequired" as const, label: "User Key & Password created with read permissions" },
+            { key: "exportTemplateExists" as const, label: "Export template (WEBLINK) exists in BDP" },
+          ]).map((item) => (
+            <label key={item.key} className="flex items-start gap-2.5 cursor-pointer group">
+              <Checkbox
+                checked={checks[item.key]}
+                onCheckedChange={() => toggleCheck(item.key)}
+                className="mt-0.5"
+              />
+              <span className={`text-xs leading-relaxed transition-colors ${checks[item.key] ? "text-foreground" : "text-muted-foreground"}`}>
+                {item.label}
+              </span>
+            </label>
+          ))}
+        </div>
+        {allChecked && (
+          <div className="flex items-center gap-1.5 text-[11px] text-success font-medium">
+            <CheckCircle2 className="h-3 w-3" />
+            All prerequisites verified
+          </div>
+        )}
+      </div>
+
+      {/* ── Form fields ── */}
       <div className="space-y-4">
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Location Name</label>
