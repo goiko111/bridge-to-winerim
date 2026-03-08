@@ -44,7 +44,6 @@ const connectors: Connector[] = [
     logo: "R",
     status: "disconnected",
     country: "España",
-    maturity: "experimental",
     maturity: "pilot",
   },
   {
