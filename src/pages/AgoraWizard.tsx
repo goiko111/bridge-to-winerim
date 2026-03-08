@@ -2192,6 +2192,10 @@ function StepOutboundSync({
       <Tabs defaultValue="all" className="space-y-3">
         <TabsList className="w-full">
           <TabsTrigger value="all" className="flex-1">All ({filteredTasks.length})</TabsTrigger>
+          <TabsTrigger value="pending" className="flex-1">
+            Pending ({pendingTasks.length})
+            {pendingTasks.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{pendingTasks.length}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="failed" className="flex-1">
             Failed ({failedTasks.length})
             {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
@@ -2203,6 +2207,7 @@ function StepOutboundSync({
 
         {[
           { key: "all", items: filteredTasks },
+          { key: "pending", items: pendingTasks },
           { key: "failed", items: failedTasks },
           { key: "blocked", items: blockedTasks },
         ].map(({ key, items }) => (
