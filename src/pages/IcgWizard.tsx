@@ -188,8 +188,8 @@ export default function IcgWizard() {
       </Button>
 
       {icg.testStatus === "success" && (
-        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 space-y-2">
-          <div className="flex items-center gap-2 text-green-600 font-medium text-sm">
+        <div className="rounded-lg border border-primary/30 bg-primary/10 p-4 space-y-2">
+          <div className="flex items-center gap-2 text-primary font-medium text-sm">
             <CheckCircle2 className="h-4 w-4" /> Connection successful
           </div>
           {icg.testResult?.version && (
