@@ -3,11 +3,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Link2,
-  Settings2, Power, Server, Eye, Send,
+  Settings2, Power, Server, Eye, Send, HelpCircle, ChevronDown, ChevronUp,
+  Square, CheckSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { useBdpConnection, BdpTestResult } from "@/hooks/useBdpConnection";
 
