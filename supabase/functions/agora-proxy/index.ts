@@ -409,8 +409,39 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const existingProducts = (masterData.products_summary_json || []) as { Id: string; Name: string }[];
 
   const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
-  const defaultPrepTypeId = forceEmptyPreparation ? "" : (connection.default_preparation_type_id || "");
-  const defaultPrepOrderId = forceEmptyPreparation ? "" : (connection.default_preparation_order_id || "");
+  
+  // Pre-declare validationResults so prep guard can push warnings
+  const validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] = [];
+
+  // HARDENED: Prevent TPV crash — PreparationTypeId and PreparationOrderId must ALWAYS be both empty or both set.
+  let defaultPrepTypeId: string;
+  let defaultPrepOrderId: string;
+  if (forceEmptyPreparation) {
+    defaultPrepTypeId = "";
+    defaultPrepOrderId = "";
+  } else {
+    const rawPrepType = connection.default_preparation_type_id || "";
+    const rawPrepOrder = connection.default_preparation_order_id || "";
+    const typeSet = rawPrepType.length > 0;
+    const orderSet = rawPrepOrder.length > 0;
+    if (typeSet !== orderSet) {
+      // MISMATCH: one is set and the other is not — force BOTH empty to prevent crash
+      defaultPrepTypeId = "";
+      defaultPrepOrderId = "";
+      validationResults.push({
+        winerimId: "_CONNECTION_CONFIG",
+        formatType: "ALL",
+        validation: {
+          valid: true,
+          warnings: [`PreparationTypeId="${rawPrepType}" and PreparationOrderId="${rawPrepOrder}" are inconsistent — both forced empty to prevent TPV crash.`],
+          missingFields: [],
+        },
+      });
+    } else {
+      defaultPrepTypeId = rawPrepType;
+      defaultPrepOrderId = rawPrepOrder;
+    }
+  }
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
@@ -497,7 +528,6 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   const newFamilies: { id: string; name: string }[] = [];
   const productXmls: string[] = [];
-  const validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] = [];
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
