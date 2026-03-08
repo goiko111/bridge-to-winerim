@@ -1,13 +1,16 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-export type HioposIngestionMode = "MANUAL_UPLOAD" | "SFTP_DROP";
+export type HioposIntegrationMode = "FILES" | "PORTALREST_ORDERS_API";
+export type HioposIngestionMode = "MANUAL_UPLOAD" | "SFTP_PULL";
 
 export interface HioposSalesImportResult {
   success: boolean;
   totalEvents: number;
   totalLines: number;
   duplicatesSkipped: number;
+  rowsFailed?: number;
+  failReasons?: string[];
   message: string;
 }
 
@@ -27,12 +30,26 @@ export interface HioposExportResult {
   message: string;
 }
 
-export interface PendingWrite {
-  id: string;
-  task_type: string;
-  status: string;
-  payload_json: any;
-  created_at: string;
+export interface SftpPullStatus {
+  lastFilePulled: string | null;
+  lastSuccessfulImport: string | null;
+  failures: number;
+  lastError: string | null;
+}
+
+export interface PortalRestDiscoveryResult {
+  success: boolean;
+  endpoints: { path: string; status: number; snippet: string }[];
+  message: string;
+}
+
+export interface PricingDiagnostics {
+  total: number;
+  ready: number;
+  missing: number;
+  bottleCoverage: number;
+  glassCoverage: number;
+  magnumCoverage: number;
 }
 
 export function useHioposConnection() {
@@ -57,26 +74,49 @@ export function useHioposConnection() {
   const [hiofficeMode, setHiofficeMode] = useState(false);
   const [bundleStatus, setBundleStatus] = useState<"idle" | "generating" | "ready" | "sent">("idle");
 
+  // SFTP pull status
+  const [sftpPullStatus, setSftpPullStatus] = useState<SftpPullStatus | null>(null);
+  const [sftpPulling, setSftpPulling] = useState(false);
+
+  // PortalRest
+  const [portalRestDiscovery, setPortalRestDiscovery] = useState<PortalRestDiscoveryResult | null>(null);
+  const [portalRestDiscovering, setPortalRestDiscovering] = useState(false);
+  const [portalRestSalesResult, setPortalRestSalesResult] = useState<HioposSalesImportResult | null>(null);
+  const [portalRestFetching, setPortalRestFetching] = useState(false);
+
+  // Pricing diagnostics
+  const [pricingDiagnostics, setPricingDiagnostics] = useState<PricingDiagnostics | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(false);
+
   const saveConnection = async (data: {
     locationName: string;
+    integrationMode: HioposIntegrationMode;
     ingestionMode: HioposIngestionMode;
     storeId?: string;
     timezone: string;
+    businessDayCloseHour?: number;
     sftpHost?: string;
     sftpPort?: string;
     sftpUser?: string;
     sftpPassword?: string;
     sftpPath?: string;
     useHioffice?: boolean;
+    portalrestBaseUrl?: string;
+    portalrestAccountId?: string;
+    portalrestLocationId?: string;
+    portalrestApiKey?: string;
+    portalrestApiSecret?: string;
   }) => {
     const providerConfig: Record<string, unknown> = {
-      integration_mode: "EXPORT_FILES",
+      integration_mode: data.integrationMode === "PORTALREST_ORDERS_API" ? "PORTALREST_ORDERS_API" : "EXPORT_FILES",
       ingestion_mode: data.ingestionMode,
       store_id: data.storeId || null,
       timezone: data.timezone,
+      business_day_close_hour: data.businessDayCloseHour ?? 6,
       use_hioffice: data.useHioffice || false,
     };
-    if (data.ingestionMode === "SFTP_DROP") {
+
+    if (data.ingestionMode === "SFTP_PULL") {
       providerConfig.sftp = {
         host: data.sftpHost,
         port: data.sftpPort || "22",
@@ -86,15 +126,25 @@ export function useHioposConnection() {
       };
     }
 
+    if (data.integrationMode === "PORTALREST_ORDERS_API") {
+      providerConfig.portalrest = {
+        base_url: data.portalrestBaseUrl,
+        account_id: data.portalrestAccountId,
+        location_id: data.portalrestLocationId,
+        api_key: data.portalrestApiKey,
+        api_secret: data.portalrestApiSecret,
+      };
+    }
+
     const { data: row, error } = await supabase
       .from("pos_connections")
       .insert({
         location_name: data.locationName,
-        base_url: "file://local",
-        api_token: "none",
+        base_url: data.integrationMode === "PORTALREST_ORDERS_API" ? (data.portalrestBaseUrl || "file://local") : "file://local",
+        api_token: data.portalrestApiKey || "none",
         provider: "hiopos",
-        sync_mode: "PULL_ONLY",
-        sync_frequency_minutes: 0,
+        sync_mode: data.integrationMode === "PORTALREST_ORDERS_API" ? "PULL_ONLY" : "PULL_ONLY",
+        sync_frequency_minutes: data.ingestionMode === "SFTP_PULL" ? 60 : 0,
         backfill_days: 30,
         provider_config: providerConfig,
       } as any)
@@ -104,7 +154,6 @@ export function useHioposConnection() {
     if (error) throw error;
     setConnectionId(row.id);
 
-    // Create capabilities
     await supabase.from("provider_capabilities").insert({
       connection_id: row.id,
       provider: "HIOPOS",
@@ -139,7 +188,6 @@ export function useHioposConnection() {
   const testConnection = async () => {
     setTestStatus("testing");
     setTestError(null);
-    // For file-based provider, "test" just validates config exists
     if (!connectionId) {
       setTestStatus("error");
       setTestError("No connection saved yet");
@@ -161,7 +209,7 @@ export function useHioposConnection() {
     }
   };
 
-  // ── Sales import ──
+  // ── Sales import (file) ──
   const uploadSalesFile = useCallback(async (file: File, dateFrom?: string, dateTo?: string, store?: string, register?: string) => {
     if (!connectionId) return;
     setSalesImporting(true);
@@ -172,16 +220,7 @@ export function useHioposConnection() {
       if (uploadErr) throw uploadErr;
 
       const { data, error } = await supabase.functions.invoke("hiopos-proxy", {
-        body: {
-          action: "import-sales",
-          connectionId,
-          filePath,
-          fileName: file.name,
-          dateFrom,
-          dateTo,
-          store,
-          register,
-        },
+        body: { action: "import-sales", connectionId, filePath, fileName: file.name, dateFrom, dateTo, store, register },
       });
       if (error) throw error;
       setSalesImportResult(data);
@@ -236,6 +275,86 @@ export function useHioposConnection() {
 
   const markBundleSent = useCallback(() => setBundleStatus("sent"), []);
 
+  // ── SFTP Pull (trigger manual pull for SFTP_PULL connections) ──
+  const triggerSftpPull = useCallback(async () => {
+    if (!connectionId) return;
+    setSftpPulling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("hiopos-proxy", {
+        body: { action: "sftp-pull", connectionId },
+      });
+      if (error) throw error;
+      setSftpPullStatus(data?.pullStatus || null);
+      if (data?.importResult) setSalesImportResult(data.importResult);
+    } catch (e: any) {
+      setSftpPullStatus({ lastFilePulled: null, lastSuccessfulImport: null, failures: 1, lastError: e.message });
+    } finally {
+      setSftpPulling(false);
+    }
+  }, [connectionId]);
+
+  // ── PortalRest API discovery ──
+  const discoverPortalRestEndpoints = useCallback(async () => {
+    if (!connectionId) return;
+    setPortalRestDiscovering(true);
+    setPortalRestDiscovery(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hiopos-proxy", {
+        body: { action: "portalrest-discover", connectionId },
+      });
+      if (error) throw error;
+      setPortalRestDiscovery(data);
+    } catch (e: any) {
+      setPortalRestDiscovery({ success: false, endpoints: [], message: e.message });
+    } finally {
+      setPortalRestDiscovering(false);
+    }
+  }, [connectionId]);
+
+  // ── PortalRest API fetch sales ──
+  const fetchPortalRestSales = useCallback(async (hoursBack = 24) => {
+    if (!connectionId) return;
+    setPortalRestFetching(true);
+    setPortalRestSalesResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("hiopos-proxy", {
+        body: { action: "portalrest-fetch-sales", connectionId, hoursBack },
+      });
+      if (error) throw error;
+      setPortalRestSalesResult(data);
+    } catch (e: any) {
+      setPortalRestSalesResult({ success: false, totalEvents: 0, totalLines: 0, duplicatesSkipped: 0, message: e.message });
+    } finally {
+      setPortalRestFetching(false);
+    }
+  }, [connectionId]);
+
+  // ── Pricing diagnostics ──
+  const loadPricingDiagnostics = useCallback(async () => {
+    if (!connectionId) return;
+    setPricingLoading(true);
+    try {
+      const { data: wines, error } = await supabase
+        .from("winerim_wines")
+        .select("pricing_status, bottle_sale_price, glass_sale_price, magnum_sale_price")
+        .eq("connection_id", connectionId)
+        .eq("is_active", true);
+      if (error) throw error;
+      if (!wines) { setPricingDiagnostics(null); return; }
+      const total = wines.length;
+      const ready = wines.filter(w => w.pricing_status === "READY").length;
+      const missing = total - ready;
+      const bottleCoverage = total > 0 ? Math.round((wines.filter(w => w.bottle_sale_price && w.bottle_sale_price > 0).length / total) * 100) : 0;
+      const glassCoverage = total > 0 ? Math.round((wines.filter(w => w.glass_sale_price && w.glass_sale_price > 0).length / total) * 100) : 0;
+      const magnumCoverage = total > 0 ? Math.round((wines.filter(w => w.magnum_sale_price && w.magnum_sale_price > 0).length / total) * 100) : 0;
+      setPricingDiagnostics({ total, ready, missing, bottleCoverage, glassCoverage, magnumCoverage });
+    } catch (e: any) {
+      console.error("Pricing diagnostics error:", e);
+    } finally {
+      setPricingLoading(false);
+    }
+  }, [connectionId]);
+
   const enableSync = async () => {
     if (!connectionId) return;
     await updateConnection(connectionId, { enabled: true });
@@ -253,6 +372,13 @@ export function useHioposConnection() {
     exporting, exportResult, generateImportFile,
     // HiOffice
     hiofficeMode, setHiofficeMode, bundleStatus, setBundleStatus, markBundleSent,
+    // SFTP
+    sftpPullStatus, sftpPulling, triggerSftpPull,
+    // PortalRest
+    portalRestDiscovery, portalRestDiscovering, discoverPortalRestEndpoints,
+    portalRestSalesResult, portalRestFetching, fetchPortalRestSales,
+    // Pricing
+    pricingDiagnostics, pricingLoading, loadPricingDiagnostics,
     enableSync,
   };
 }
