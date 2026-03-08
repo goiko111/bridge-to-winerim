@@ -16,6 +16,7 @@ import RevoWizard from "./pages/RevoWizard";
 import BdpWizard from "./pages/BdpWizard";
 import IcgWizard from "./pages/IcgWizard";
 import HioposWizard from "./pages/HioposWizard";
+import TouchBistroWizard from "./pages/TouchBistroWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";

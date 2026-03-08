@@ -193,9 +193,9 @@ const connectors: Connector[] = [
   {
     id: "touchbistro",
     name: "TouchBistro",
-    description: "No public API docs. Integrations via marketplace/partners — request credentials from support.",
+    description: "CSV report imports (Menu Item Sales, Bills, Payments, Items) + optional Private API for approved partners.",
     logo: "T",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
