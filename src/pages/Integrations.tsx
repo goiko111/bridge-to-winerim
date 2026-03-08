@@ -292,6 +292,7 @@ export default function Integrations() {
                       if (c.id === "icg") navigate("/integrations/icg");
                       if (c.id === "hiopos") navigate("/integrations/hiopos");
                       if (c.id === "touchbistro") navigate("/integrations/touchbistro");
+                      if (c.id === "toast") navigate("/integrations/toast");
                     }}
                   >
                     <div className="p-5">
