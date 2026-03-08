@@ -383,10 +383,14 @@ export type Database = {
           created_at: string
           id: string
           last_checked_at: string | null
+          last_verified_at: string | null
           provider: string
+          readiness_status: string
           updated_at: string
+          webhook_supported: boolean
           write_endpoint: string | null
           write_endpoints_json: Json | null
+          write_mode: string
         }
         Insert: {
           can_read_catalog?: boolean
@@ -396,10 +400,14 @@ export type Database = {
           created_at?: string
           id?: string
           last_checked_at?: string | null
+          last_verified_at?: string | null
           provider?: string
+          readiness_status?: string
           updated_at?: string
+          webhook_supported?: boolean
           write_endpoint?: string | null
           write_endpoints_json?: Json | null
+          write_mode?: string
         }
         Update: {
           can_read_catalog?: boolean
@@ -409,10 +417,14 @@ export type Database = {
           created_at?: string
           id?: string
           last_checked_at?: string | null
+          last_verified_at?: string | null
           provider?: string
+          readiness_status?: string
           updated_at?: string
+          webhook_supported?: boolean
           write_endpoint?: string | null
           write_endpoints_json?: Json | null
+          write_mode?: string
         }
         Relationships: [
           {
