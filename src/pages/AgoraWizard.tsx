@@ -2779,7 +2779,7 @@ function StepMasterData({
               </p>
               <div className="flex gap-2 flex-wrap">
                 {centralCandidates.map((sc: any) => (
-                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
                 ))}
@@ -2795,7 +2795,7 @@ function StepMasterData({
               </p>
               <div className="flex gap-2 flex-wrap">
                 {masterData.saleCenters.map((sc: any) => (
-                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
                 ))}
@@ -2827,7 +2827,7 @@ function StepMasterData({
                   <p className="text-sm font-bold text-foreground">{activeCentralCenter.Name}</p>
                   <p className="text-[10px] text-muted-foreground font-mono">ID: {activeCentralCenter.Id}</p>
                   {selectedSaleCenterId && (
-                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => setSelectedSaleCenterId(null)}>Reset selection</Button>
+                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => handleSelectSaleCenter(null)}>Reset selection</Button>
                   )}
                 </div>
                 <div className={`rounded-lg border p-3 ${centralPriceListId ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}`}>
