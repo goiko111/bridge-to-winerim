@@ -2017,8 +2017,8 @@ function StepOutboundSync({
   processingQueue: boolean;
   queuingProducts: boolean;
   exporting: boolean;
-  onLoadTasks: () => void;
-  onProcessQueue: () => void;
+  onLoadTasks: () => Promise<OutboundTask[]>;
+  onProcessQueue: () => Promise<{ success: boolean; processed: number; succeeded: number; failed: number } | undefined>;
   onRetry: (taskId: string) => void;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
@@ -2057,10 +2057,44 @@ function StepOutboundSync({
 
   const queuedTasks = filteredTasks.filter(t => t.status === "QUEUED");
   const runningTasks = filteredTasks.filter(t => t.status === "RUNNING");
+  const pendingTasks = filteredTasks.filter(t => t.status === "QUEUED" || t.status === "RUNNING");
   const successTasks = filteredTasks.filter(t => t.status === "SUCCESS");
   const failedTasks = filteredTasks.filter(t => t.status === "FAILED");
   const blockedTasks = filteredTasks.filter(t => t.status === "BLOCKED");
-  const canProcessQueue = canWrite || outboundTasks.some(t => t.status === "QUEUED");
+  const queuedTasksTotal = outboundTasks.filter(t => t.status === "QUEUED").length;
+  const canProcessQueue = canWrite || queuedTasksTotal > 0;
+
+  const handleRefresh = async () => {
+    const tasks = await onLoadTasks();
+    const total = tasks.length;
+    const queued = tasks.filter(t => t.status === "QUEUED").length;
+    const running = tasks.filter(t => t.status === "RUNNING").length;
+    toast({
+      title: "Cola actualizada",
+      description: `${total} tareas · ${queued} en cola · ${running} en ejecución`,
+    });
+  };
+
+  const handleProcessQueue = async () => {
+    const result = await onProcessQueue();
+    if (!result) {
+      toast({ title: "No se pudo procesar la cola", variant: "destructive" });
+      return;
+    }
+
+    if (result.processed === 0) {
+      toast({
+        title: "No hay pendientes en cola",
+        description: "Primero encola vinos desde 'Push Wines to Agora'.",
+      });
+      return;
+    }
+
+    toast({
+      title: "Cola procesada",
+      description: `Procesadas ${result.processed} · OK ${result.succeeded} · Fallidas ${result.failed}`,
+    });
+  };
 
   const toggleWine = (id: string) => {
     setSelectedWineIds(prev => {
@@ -2109,10 +2143,10 @@ function StepOutboundSync({
       <div className="flex gap-2 flex-wrap">
         {canProcessQueue && (
           <>
-            <Button variant="secondary" size="sm" onClick={onProcessQueue}
-              disabled={processingQueue || queuedTasks.length === 0}>
+            <Button variant="secondary" size="sm" onClick={handleProcessQueue}
+              disabled={processingQueue || queuedTasksTotal === 0}>
               {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              Process Queue ({queuedTasks.length})
+              Process Queue ({queuedTasksTotal})
             </Button>
           </>
         )}
@@ -2122,7 +2156,7 @@ function StepOutboundSync({
         <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
           <FileText className="mr-2 h-4 w-4" /> Export CSV
         </Button>
-        <Button variant="ghost" size="sm" onClick={onLoadTasks} disabled={loadingTasks}>
+        <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
         </Button>
       </div>
@@ -2158,6 +2192,10 @@ function StepOutboundSync({
       <Tabs defaultValue="all" className="space-y-3">
         <TabsList className="w-full">
           <TabsTrigger value="all" className="flex-1">All ({filteredTasks.length})</TabsTrigger>
+          <TabsTrigger value="pending" className="flex-1">
+            Pending ({pendingTasks.length})
+            {pendingTasks.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{pendingTasks.length}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="failed" className="flex-1">
             Failed ({failedTasks.length})
             {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
@@ -2169,6 +2207,7 @@ function StepOutboundSync({
 
         {[
           { key: "all", items: filteredTasks },
+          { key: "pending", items: pendingTasks },
           { key: "failed", items: failedTasks },
           { key: "blocked", items: blockedTasks },
         ].map(({ key, items }) => (

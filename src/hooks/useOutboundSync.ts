@@ -66,17 +66,28 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadCapabilities]);
 
-  const loadOutboundTasks = useCallback(async () => {
-    if (!connectionId) return;
+  const loadOutboundTasks = useCallback(async (): Promise<OutboundTask[]> => {
+    if (!connectionId) return [];
     setLoadingTasks(true);
-    const { data } = await supabase
-      .from("outbound_tasks")
-      .select("*")
-      .eq("connection_id", connectionId)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (data) setOutboundTasks(data as unknown as OutboundTask[]);
-    setLoadingTasks(false);
+    try {
+      const { data, error } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (error) throw error;
+
+      const tasks = (data ?? []) as unknown as OutboundTask[];
+      setOutboundTasks(tasks);
+      return tasks;
+    } catch (e) {
+      console.error("Failed to load outbound tasks:", e);
+      return [];
+    } finally {
+      setLoadingTasks(false);
+    }
   }, [connectionId]);
 
   const queueProducts = useCallback(async (winerimWineIds: string[], formatTypes?: string[], familyOverrideId?: string) => {
