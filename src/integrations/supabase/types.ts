@@ -219,6 +219,7 @@ export type Database = {
           location_name: string
           provider: string
           require_manual_review_before_push: boolean
+          selected_sale_center_ids: string[]
           sync_frequency_minutes: number
           sync_mode: string
           updated_at: string
@@ -260,6 +261,7 @@ export type Database = {
           location_name: string
           provider?: string
           require_manual_review_before_push?: boolean
+          selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string
@@ -301,6 +303,7 @@ export type Database = {
           location_name?: string
           provider?: string
           require_manual_review_before_push?: boolean
+          selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
           sync_mode?: string
           updated_at?: string

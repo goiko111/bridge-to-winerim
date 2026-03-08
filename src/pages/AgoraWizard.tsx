@@ -2535,13 +2535,28 @@ function StepMasterData({
   );
   const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
 
-  // Determine active central: user selection > single candidate > first sale center
+  // Initialize from persisted settings
+  useEffect(() => {
+    if (writeSettings.selected_sale_center_ids && writeSettings.selected_sale_center_ids.length > 0) {
+      setSelectedSaleCenterId(writeSettings.selected_sale_center_ids[0]);
+    }
+  }, [writeSettings.selected_sale_center_ids]);
+
+  // Persist selection to DB
+  const handleSelectSaleCenter = useCallback((id: string | null) => {
+    setSelectedSaleCenterId(id);
+    saveWriteSettings({ selected_sale_center_ids: id ? [id] : [] } as any);
+  }, [saveWriteSettings]);
+
+  // Determine active central: persisted selection > single candidate > first sale center
   const activeCentralCenter = (() => {
     if (selectedSaleCenterId) {
       return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
     }
     if (centralCandidates.length === 1) return centralCandidates[0];
     if (centralCandidates.length > 1) return null; // force selection
+    // Default: pick first sale center if none selected
+    if (masterData.saleCenters.length > 0) return masterData.saleCenters[0];
     return null;
   })();
 
@@ -2764,7 +2779,7 @@ function StepMasterData({
               </p>
               <div className="flex gap-2 flex-wrap">
                 {centralCandidates.map((sc: any) => (
-                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
                 ))}
@@ -2780,7 +2795,7 @@ function StepMasterData({
               </p>
               <div className="flex gap-2 flex-wrap">
                 {masterData.saleCenters.map((sc: any) => (
-                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setSelectedSaleCenterId(sc.Id)}>
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
                 ))}
@@ -2812,7 +2827,7 @@ function StepMasterData({
                   <p className="text-sm font-bold text-foreground">{activeCentralCenter.Name}</p>
                   <p className="text-[10px] text-muted-foreground font-mono">ID: {activeCentralCenter.Id}</p>
                   {selectedSaleCenterId && (
-                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => setSelectedSaleCenterId(null)}>Reset selection</Button>
+                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => handleSelectSaleCenter(null)}>Reset selection</Button>
                   )}
                 </div>
                 <div className={`rounded-lg border p-3 ${centralPriceListId ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}`}>
@@ -2887,6 +2902,34 @@ function StepMasterData({
                     </div>
                   )}
                 </div>
+              )}
+              {/* PriceList ↔ SaleCenter mapping */}
+              {masterData.priceLists.length > 0 && masterData.saleCenters.length > 0 && (
+                <details className="rounded-lg border border-border bg-background">
+                  <summary className="px-3 py-2 text-[11px] font-medium text-muted-foreground cursor-pointer hover:text-foreground">
+                    PriceList → SaleCenter mapping ({masterData.priceLists.length} lists)
+                  </summary>
+                  <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
+                    {masterData.priceLists.map((pl: any) => {
+                      const linkedCenters = masterData.saleCenters.filter(
+                        (sc: any) => sc.CurrentPriceListId === pl.Id
+                      );
+                      return (
+                        <div key={pl.Id} className="flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0">
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0 font-mono">{pl.Id}</Badge>
+                          <span className="font-medium text-foreground min-w-[80px]">{pl.Name}</span>
+                          {linkedCenters.length > 0 ? (
+                            <span className="text-muted-foreground">
+                              → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground italic">No linked SaleCenter</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
               )}
             </div>
           ) : masterData.saleCenters.length === 0 ? (

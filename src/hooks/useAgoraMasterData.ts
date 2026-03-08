@@ -37,6 +37,7 @@ export interface WriteSettings {
   require_manual_review_before_push: boolean;
   auto_push_verified_ready: boolean;
   estimated_glasses_per_bottle: number;
+  selected_sale_center_ids: string[];
 }
 
 export interface ValidationResult {
@@ -81,6 +82,7 @@ const DEFAULT_WRITE_SETTINGS: WriteSettings = {
   require_manual_review_before_push: true,
   auto_push_verified_ready: false,
   estimated_glasses_per_bottle: 5,
+  selected_sale_center_ids: [],
 };
 
 export function useAgoraMasterData(connectionId: string | null) {
@@ -128,7 +130,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     if (!connectionId) return;
     const { data } = await supabase
       .from("pos_connections")
-      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass, auto_push_on_create, auto_push_on_update, auto_push_bottle, auto_push_glass, require_manual_review_before_push, auto_push_verified_ready, estimated_glasses_per_bottle")
+      .select("write_mode, default_family_id, default_vat_id, default_preparation_type_id, default_preparation_order_id, default_warehouse_id, auto_create_families, write_bottle, write_glass, auto_push_on_create, auto_push_on_update, auto_push_bottle, auto_push_glass, require_manual_review_before_push, auto_push_verified_ready, estimated_glasses_per_bottle, selected_sale_center_ids")
       .eq("id", connectionId).single();
     if (data) {
       setWriteSettings(data as unknown as WriteSettings);
