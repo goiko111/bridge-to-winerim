@@ -2070,6 +2070,10 @@ function StepOutboundSync({
   const queuedTasksTotal = outboundTasks.filter(t => t.status === "QUEUED").length;
   const canProcessQueue = canWrite || queuedTasksTotal > 0;
 
+  // Create vs Update counters from _operation field
+  const createTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "CREATE");
+  const updateTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "UPDATE");
+
   const handleRefresh = async () => {
     const tasks = await onLoadTasks();
     const total = tasks.length;
