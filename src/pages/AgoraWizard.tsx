@@ -3314,7 +3314,7 @@ export default function AgoraWizard() {
   const {
     connectionId, setConnectionId,
     testStatus, testError, testConnection, updateConnection, loadConnection,
-    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats, lastClosedDay,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb, enableSync, saveFamilyRules,
     catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
@@ -3522,7 +3522,8 @@ export default function AgoraWizard() {
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               catalogProducts={catalogProducts}
               onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
-              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
+              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult}
+              lastClosedDay={lastClosedDay} />
           )}
           {currentStep === 8 && (
             <StepWineMatching connectionId={connectionId} />
