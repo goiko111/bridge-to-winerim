@@ -32,6 +32,36 @@ export interface BdpSalesEvent {
   }[];
 }
 
+export interface BdpCatalogResult {
+  success: boolean;
+  totalProducts: number;
+  upserted: number;
+  totalFamilies: number;
+  families: { id: string; name: string }[];
+  rawProductsPreview?: string;
+  errors: string[];
+  message?: string;
+}
+
+export interface BdpWriteResult {
+  success: boolean;
+  method?: string;
+  status?: number;
+  bodyPreview?: string;
+  product?: any;
+  message?: string;
+}
+
+export interface BdpVerifyResult {
+  success: boolean;
+  exists?: boolean;
+  priceValid?: boolean;
+  price?: number;
+  name?: string;
+  message?: string;
+  raw?: any;
+}
+
 export function useBdpConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
@@ -49,6 +79,18 @@ export function useBdpConnection() {
   const [incrementalSyncing, setIncrementalSyncing] = useState(false);
   const [incrementalResult, setIncrementalResult] = useState<{ savedEvents: number; savedLines: number; dateRange: { from: string; to: string }; errors: string[] } | null>(null);
 
+  // Catalog state
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
+  const [catalogResult, setCatalogResult] = useState<BdpCatalogResult | null>(null);
+
+  // Write state
+  const [writingProduct, setWritingProduct] = useState(false);
+  const [writeResult, setWriteResult] = useState<BdpWriteResult | null>(null);
+
+  // Verify state
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<BdpVerifyResult | null>(null);
+
   const saveConnection = async (data: {
     locationName: string;
     baseUrl: string;
@@ -56,12 +98,16 @@ export function useBdpConnection() {
     userKey: string;
     password: string;
     exportProfileCode: string;
+    catalogProfileCode?: string;
+    importProfileCode?: string;
   }) => {
     const providerConfig = {
       port: data.port,
       user_key: data.userKey,
       password: data.password,
       export_profile_code: data.exportProfileCode,
+      catalog_profile_code: data.catalogProfileCode || "",
+      import_profile_code: data.importProfileCode || "",
     };
 
     let baseUrl = data.baseUrl.trim().replace(/\/+$/, "");
@@ -134,25 +180,11 @@ export function useBdpConnection() {
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: { action: "test", connectionId: connId },
       });
-      if (error) {
-        setTestStatus("error");
-        setTestError(error.message);
-        return false;
-      }
+      if (error) { setTestStatus("error"); setTestError(error.message); return false; }
       setTestResult(data as BdpTestResult);
-      if (data?.success) {
-        setTestStatus("success");
-        return true;
-      } else {
-        setTestStatus("error");
-        setTestError(data?.message || "Connection failed");
-        return false;
-      }
-    } catch (e: any) {
-      setTestStatus("error");
-      setTestError(e.message);
-      return false;
-    }
+      if (data?.success) { setTestStatus("success"); return true; }
+      setTestStatus("error"); setTestError(data?.message || "Connection failed"); return false;
+    } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
   };
 
   const testCustomEndpoint = async (path: string, method = "GET") => {
@@ -166,84 +198,106 @@ export function useBdpConnection() {
 
   const fetchSales = useCallback(async (day: string) => {
     if (!connectionId) return;
-    setLoadingSales(true);
-    setSalesEvents([]);
+    setLoadingSales(true); setSalesEvents([]);
     try {
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: { action: "fetch-sales", connectionId, businessDay: day },
       });
       if (error) throw error;
       setSalesEvents(data?.salesEvents || []);
-    } catch (e) {
-      console.error("Failed to fetch BDP sales:", e);
-    } finally {
-      setLoadingSales(false);
-    }
+    } catch (e) { console.error("Failed to fetch BDP sales:", e); }
+    finally { setLoadingSales(false); }
   }, [connectionId]);
 
   const saveSalesToDb = useCallback(async (day: string) => {
     if (!connectionId) return;
-    setSavingSales(true);
-    setSaveResult(null);
+    setSavingSales(true); setSaveResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: { action: "save-sales", connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSaveResult({
-        savedEvents: data?.savedEvents || 0,
-        savedLines: data?.savedLines || 0,
-        errors: data?.errors || [],
-      });
-    } catch (e) {
-      console.error("Failed to save BDP sales:", e);
-    } finally {
-      setSavingSales(false);
-    }
+      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0, errors: data?.errors || [] });
+    } catch (e) { console.error("Failed to save BDP sales:", e); }
+    finally { setSavingSales(false); }
   }, [connectionId]);
 
   const runBackfill = useCallback(async (daysBack = 30) => {
     if (!connectionId) return;
-    setBackfilling(true);
-    setBackfillResult(null);
+    setBackfilling(true); setBackfillResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: { action: "backfill", connectionId, daysBack },
       });
       if (error) throw error;
-      setBackfillResult({
-        totalSaved: data?.totalSaved || 0,
-        totalLines: data?.totalLines || 0,
-        daysProcessed: data?.daysProcessed || daysBack,
-        errors: data?.errors || [],
-      });
-    } catch (e) {
-      console.error("Failed BDP backfill:", e);
-    } finally {
-      setBackfilling(false);
-    }
+      setBackfillResult({ totalSaved: data?.totalSaved || 0, totalLines: data?.totalLines || 0, daysProcessed: data?.daysProcessed || daysBack, errors: data?.errors || [] });
+    } catch (e) { console.error("Failed BDP backfill:", e); }
+    finally { setBackfilling(false); }
   }, [connectionId]);
 
   const runIncrementalSync = useCallback(async () => {
     if (!connectionId) return;
-    setIncrementalSyncing(true);
-    setIncrementalResult(null);
+    setIncrementalSyncing(true); setIncrementalResult(null);
     try {
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: { action: "incremental-sync", connectionId },
       });
       if (error) throw error;
-      setIncrementalResult({
-        savedEvents: data?.savedEvents || 0,
-        savedLines: data?.savedLines || 0,
-        dateRange: data?.dateRange || { from: "?", to: "?" },
-        errors: data?.errors || [],
+      setIncrementalResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0, dateRange: data?.dateRange || { from: "?", to: "?" }, errors: data?.errors || [] });
+    } catch (e) { console.error("Failed BDP incremental sync:", e); }
+    finally { setIncrementalSyncing(false); }
+  }, [connectionId]);
+
+  // ── Catalog ──
+  const syncCatalog = useCallback(async () => {
+    if (!connectionId) return;
+    setSyncingCatalog(true); setCatalogResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: "sync-catalog", connectionId },
       });
-    } catch (e) {
-      console.error("Failed BDP incremental sync:", e);
-    } finally {
-      setIncrementalSyncing(false);
-    }
+      if (error) throw error;
+      setCatalogResult(data as BdpCatalogResult);
+    } catch (e) { console.error("Failed BDP catalog sync:", e); }
+    finally { setSyncingCatalog(false); }
+  }, [connectionId]);
+
+  // ── Write Product ──
+  const writeProduct = useCallback(async (product: {
+    provider_product_id?: string;
+    name: string;
+    price: number;
+    vat_rate?: number;
+    family?: string;
+    format?: string;
+    code?: string;
+  }) => {
+    if (!connectionId) return;
+    setWritingProduct(true); setWriteResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: "write-product", connectionId, product },
+      });
+      if (error) throw error;
+      setWriteResult(data as BdpWriteResult);
+      return data as BdpWriteResult;
+    } catch (e) { console.error("Failed BDP write:", e); return null; }
+    finally { setWritingProduct(false); }
+  }, [connectionId]);
+
+  // ── Verify Product ──
+  const verifyProduct = useCallback(async (productId: string) => {
+    if (!connectionId) return;
+    setVerifying(true); setVerifyResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: "verify-product", connectionId, productId },
+      });
+      if (error) throw error;
+      setVerifyResult(data as BdpVerifyResult);
+      return data as BdpVerifyResult;
+    } catch (e) { console.error("Failed BDP verify:", e); return null; }
+    finally { setVerifying(false); }
   }, [connectionId]);
 
   const loadExistingConnection = async () => {
@@ -262,29 +316,19 @@ export function useBdpConnection() {
   };
 
   return {
-    connectionId,
-    testStatus,
-    testError,
-    testResult,
-    saving,
-    saveConnection,
-    updateConnection,
-    testConnection,
-    testCustomEndpoint,
-    loadExistingConnection,
-    setConnectionId,
+    connectionId, testStatus, testError, testResult, saving,
+    saveConnection, updateConnection, testConnection, testCustomEndpoint,
+    loadExistingConnection, setConnectionId,
     // Sales
-    salesEvents,
-    loadingSales,
-    fetchSales,
-    savingSales,
-    saveResult,
-    saveSalesToDb,
-    backfilling,
-    backfillResult,
-    runBackfill,
-    incrementalSyncing,
-    incrementalResult,
-    runIncrementalSync,
+    salesEvents, loadingSales, fetchSales,
+    savingSales, saveResult, saveSalesToDb,
+    backfilling, backfillResult, runBackfill,
+    incrementalSyncing, incrementalResult, runIncrementalSync,
+    // Catalog
+    syncingCatalog, catalogResult, syncCatalog,
+    // Write
+    writingProduct, writeResult, writeProduct,
+    // Verify
+    verifying, verifyResult, verifyProduct,
   };
 }

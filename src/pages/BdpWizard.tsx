@@ -4,20 +4,24 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Link2,
   Power, Server, Eye, Send, HelpCircle, ChevronDown, ChevronUp,
-  Calendar, Download, RefreshCw, Database,
+  Calendar, Download, RefreshCw, Database, Package, Upload, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import { useBdpConnection, BdpTestResult, BdpSalesEvent } from "@/hooks/useBdpConnection";
+import {
+  useBdpConnection, BdpTestResult, BdpSalesEvent,
+  BdpCatalogResult, BdpWriteResult, BdpVerifyResult,
+} from "@/hooks/useBdpConnection";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
   { id: 2, label: "Diagnostics", icon: Server },
   { id: 3, label: "Sales Sync", icon: Database },
-  { id: 4, label: "Go Live", icon: Power },
+  { id: 4, label: "Catalog & Write", icon: Package },
+  { id: 5, label: "Go Live", icon: Power },
 ];
 
 // ── Step 1: Connection ──
@@ -28,6 +32,8 @@ function StepConnection({
   userKey, setUserKey,
   password, setPassword,
   exportProfileCode, setExportProfileCode,
+  catalogProfileCode, setCatalogProfileCode,
+  importProfileCode, setImportProfileCode,
   testStatus, testError, testResult,
   onTest,
 }: {
@@ -37,10 +43,13 @@ function StepConnection({
   userKey: string; setUserKey: (v: string) => void;
   password: string; setPassword: (v: string) => void;
   exportProfileCode: string; setExportProfileCode: (v: string) => void;
+  catalogProfileCode: string; setCatalogProfileCode: (v: string) => void;
+  importProfileCode: string; setImportProfileCode: (v: string) => void;
   testStatus: string; testError: string | null; testResult: BdpTestResult | null;
   onTest: () => void;
 }) {
   const [showHelper, setShowHelper] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [checks, setChecks] = useState({
     portOpen: false,
     ipAny: false,
@@ -65,10 +74,7 @@ function StepConnection({
 
       {/* Helper Panel */}
       <div className="rounded-lg border border-border bg-muted/20">
-        <button
-          onClick={() => setShowHelper(!showHelper)}
-          className="flex w-full items-center justify-between px-4 py-3 text-left"
-        >
+        <button onClick={() => setShowHelper(!showHelper)} className="flex w-full items-center justify-between px-4 py-3 text-left">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <HelpCircle className="h-4 w-4 text-primary" />
             How to obtain these values
@@ -80,14 +86,14 @@ function StepConnection({
             <ol className="list-decimal list-inside space-y-2.5 text-xs text-muted-foreground leading-relaxed">
               <li>Open <span className="font-semibold text-foreground">BDP NET → Configuración → Servicio Web</span> and enable the REST API service.</li>
               <li>In the <span className="font-semibold text-foreground">Weblink Rest API</span> section, note the <span className="font-mono text-foreground">Base URL</span> and <span className="font-mono text-foreground">Port</span>.</li>
-              <li>Create or verify a <span className="font-semibold text-foreground">User Key</span> and <span className="font-semibold text-foreground">Password</span> with read permissions.</li>
-              <li>Go to <span className="font-semibold text-foreground">Configuración → Exportación → Plantillas</span> and create an export template named <span className="font-mono text-foreground">WEBLINK</span>.</li>
-              <li>Copy the template <span className="font-semibold text-foreground">Code</span> and paste it below.</li>
+              <li>Create or verify a <span className="font-semibold text-foreground">User Key</span> and <span className="font-semibold text-foreground">Password</span> with read/write permissions.</li>
+              <li>Go to <span className="font-semibold text-foreground">Configuración → Exportación → Plantillas</span> and create export templates as needed.</li>
+              <li>Optionally create an <strong>import template</strong> for writing products back to BDP.</li>
             </ol>
             <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
               <p className="text-[11px] text-primary font-medium mb-0.5">💡 Tip</p>
               <p className="text-[11px] text-muted-foreground">
-                Ensure the BDP server port is forwarded and the firewall allows external access. Use "IP ANY" to allow any origin IP.
+                You can use separate template codes for sales export, catalog export, and product import. If left blank, the main Export Profile Code is used as fallback.
               </p>
             </div>
           </div>
@@ -101,21 +107,18 @@ function StepConnection({
           {([
             { key: "portOpen" as const, label: "Port is open in firewall (accessible from outside)" },
             { key: "ipAny" as const, label: 'IP filter set to "ANY" (or Winerim IP whitelisted)' },
-            { key: "loginRequired" as const, label: "User Key & Password created with read permissions" },
+            { key: "loginRequired" as const, label: "User Key & Password created with read/write permissions" },
             { key: "exportTemplateExists" as const, label: "Export template (WEBLINK) exists in BDP" },
           ]).map((item) => (
             <label key={item.key} className="flex items-start gap-2.5 cursor-pointer group">
               <Checkbox checked={checks[item.key]} onCheckedChange={() => toggleCheck(item.key)} className="mt-0.5" />
-              <span className={`text-xs leading-relaxed transition-colors ${checks[item.key] ? "text-foreground" : "text-muted-foreground"}`}>
-                {item.label}
-              </span>
+              <span className={`text-xs leading-relaxed transition-colors ${checks[item.key] ? "text-foreground" : "text-muted-foreground"}`}>{item.label}</span>
             </label>
           ))}
         </div>
         {allChecked && (
           <div className="flex items-center gap-1.5 text-[11px] text-success font-medium">
-            <CheckCircle2 className="h-3 w-3" />
-            All prerequisites verified
+            <CheckCircle2 className="h-3 w-3" /> All prerequisites verified
           </div>
         )}
       </div>
@@ -145,9 +148,31 @@ function StepConnection({
           <Input type="password" placeholder="BDP password" value={password} onChange={(e) => setPassword(e.target.value)} className="bg-background font-mono text-sm" />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Export Profile Code</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Export Profile Code (Sales)</label>
           <Input placeholder="e.g. WINERIM_EXPORT" value={exportProfileCode} onChange={(e) => setExportProfileCode(e.target.value)} className="bg-background font-mono text-sm" />
-          <p className="mt-1 text-[11px] text-muted-foreground">Profile code configured in BDP for data export.</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">Primary template for sales document export.</p>
+        </div>
+
+        {/* Additional template codes */}
+        <div className="rounded-lg border border-border bg-muted/20">
+          <button onClick={() => setShowTemplates(!showTemplates)} className="flex w-full items-center justify-between px-4 py-2.5 text-left">
+            <span className="text-xs font-medium text-foreground">Additional Template Codes (optional)</span>
+            {showTemplates ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+          </button>
+          {showTemplates && (
+            <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Catalog Profile Code</label>
+                <Input placeholder="Defaults to Export Profile Code" value={catalogProfileCode} onChange={(e) => setCatalogProfileCode(e.target.value)} className="bg-background font-mono text-sm" />
+                <p className="mt-1 text-[11px] text-muted-foreground">Template for fetching articles/products catalog.</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Import Profile Code</label>
+                <Input placeholder="Defaults to Export Profile Code" value={importProfileCode} onChange={(e) => setImportProfileCode(e.target.value)} className="bg-background font-mono text-sm" />
+                <p className="mt-1 text-[11px] text-muted-foreground">Template for writing/importing products back to BDP.</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <Button onClick={onTest} disabled={testStatus === "testing" || !baseUrl || !userKey} variant="secondary" className="w-full">
@@ -163,15 +188,12 @@ function StepConnection({
         {testResult && (
           <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
             <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-              <Eye className="h-3.5 w-3.5" />
-              Raw Response Diagnostics
+              <Eye className="h-3.5 w-3.5" /> Raw Response Diagnostics
             </div>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="rounded border border-border bg-card p-2">
                 <span className="text-muted-foreground">Status</span>
-                <p className={`font-mono font-bold ${testResult.success ? "text-success" : "text-destructive"}`}>
-                  {testResult.status} {testResult.statusText}
-                </p>
+                <p className={`font-mono font-bold ${testResult.success ? "text-success" : "text-destructive"}`}>{testResult.status} {testResult.statusText}</p>
               </div>
               <div className="rounded border border-border bg-card p-2">
                 <span className="text-muted-foreground">Content-Type</span>
@@ -179,17 +201,13 @@ function StepConnection({
               </div>
               <div className="rounded border border-border bg-card p-2">
                 <span className="text-muted-foreground">Result</span>
-                <Badge variant={testResult.success ? "default" : "destructive"} className="text-[10px]">
-                  {testResult.success ? "OK" : "FAIL"}
-                </Badge>
+                <Badge variant={testResult.success ? "default" : "destructive"} className="text-[10px]">{testResult.success ? "OK" : "FAIL"}</Badge>
               </div>
             </div>
             {testResult.bodyPreview && (
               <div>
                 <span className="text-[11px] text-muted-foreground">Body Preview (first 2 KB)</span>
-                <pre className="mt-1 max-h-48 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">
-                  {testResult.bodyPreview}
-                </pre>
+                <pre className="mt-1 max-h-48 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{testResult.bodyPreview}</pre>
               </div>
             )}
           </div>
@@ -212,36 +230,28 @@ function StepDiagnostics({
   const [result, setResult] = useState<any>(null);
 
   const run = async () => {
-    setLoading(true);
-    setResult(null);
+    setLoading(true); setResult(null);
     const r = await testCustomEndpoint(path, method);
-    setResult(r);
-    setLoading(false);
+    setResult(r); setLoading(false);
   };
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">API Diagnostics</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Test any BDP endpoint to explore the API and verify access.
-        </p>
+        <p className="mt-1 text-sm text-muted-foreground">Test any BDP endpoint to explore the API and verify access.</p>
       </div>
       <div className="flex gap-2">
-        <select
-          value={method}
-          onChange={(e) => setMethod(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-        >
+        <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-md border border-input bg-background px-3 py-2 text-sm font-mono">
           <option>GET</option>
           <option>POST</option>
+          <option>PUT</option>
         </select>
         <Input placeholder="/api/v1/..." value={path} onChange={(e) => setPath(e.target.value)} className="bg-background font-mono text-sm flex-1" />
         <Button onClick={run} disabled={loading || !connectionId} size="sm">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </Button>
       </div>
-
       {result && (
         <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
           <div className="flex items-center gap-3 text-xs">
@@ -249,13 +259,9 @@ function StepDiagnostics({
             <span className="font-mono text-muted-foreground truncate">{result.url || ""}</span>
           </div>
           {result.bodyPreview && (
-            <pre className="max-h-64 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">
-              {result.bodyPreview}
-            </pre>
+            <pre className="max-h-64 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{result.bodyPreview}</pre>
           )}
-          {result.message && !result.bodyPreview && (
-            <p className="text-sm text-destructive">{result.message}</p>
-          )}
+          {result.message && !result.bodyPreview && <p className="text-sm text-destructive">{result.message}</p>}
         </div>
       )}
     </div>
@@ -293,11 +299,10 @@ function StepSalesSync({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales Sync</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Fetch and persist BDP sales documents. BDP uses the <strong>closure day</strong> (cierre) as business day — the actual ticket timestamp is preserved when available.
+          Fetch and persist BDP sales documents. BDP uses the <strong>closure day</strong> (cierre) as business day.
         </p>
       </div>
 
-      {/* Info: business day vs ticket time */}
       <div className="rounded-md border border-primary/20 bg-primary/5 p-3 space-y-1">
         <p className="text-[11px] text-primary font-semibold">📅 Business Day vs Ticket Time</p>
         <p className="text-[11px] text-muted-foreground leading-relaxed">
@@ -306,11 +311,10 @@ function StepSalesSync({
         </p>
       </div>
 
-      {/* ── Fetch & Preview single day ── */}
+      {/* Fetch & Preview */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
-          <Calendar className="h-3.5 w-3.5" />
-          Fetch Day Preview
+          <Calendar className="h-3.5 w-3.5" /> Fetch Day Preview
         </p>
         <div className="flex gap-2 items-end">
           <div className="flex-1">
@@ -326,8 +330,6 @@ function StepSalesSync({
             <span className="ml-1.5">Save</span>
           </Button>
         </div>
-
-        {/* Preview results */}
         {salesEvents.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs text-muted-foreground">{salesEvents.length} document(s) found</p>
@@ -339,34 +341,17 @@ function StepSalesSync({
                     <Badge variant="secondary" className="text-[10px]">{evt.doc_type}</Badge>
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-[11px]">
-                    <div>
-                      <span className="text-muted-foreground">Business Day</span>
-                      <p className="font-mono text-foreground">{evt.business_day}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Ticket Time</span>
-                      <p className="font-mono text-foreground">{evt.ticket_time || "—"}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Total</span>
-                      <p className="font-mono font-semibold text-foreground">€{evt.total_amount.toFixed(2)}</p>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Lines</span>
-                      <p className="font-mono text-foreground">{evt.line_count}</p>
-                    </div>
+                    <div><span className="text-muted-foreground">Business Day</span><p className="font-mono text-foreground">{evt.business_day}</p></div>
+                    <div><span className="text-muted-foreground">Ticket Time</span><p className="font-mono text-foreground">{evt.ticket_time || "—"}</p></div>
+                    <div><span className="text-muted-foreground">Total</span><p className="font-mono font-semibold text-foreground">€{evt.total_amount.toFixed(2)}</p></div>
+                    <div><span className="text-muted-foreground">Lines</span><p className="font-mono text-foreground">{evt.line_count}</p></div>
                   </div>
                   {evt.lines.length > 0 && (
                     <div className="border-t border-border pt-1.5 mt-1.5">
                       <table className="w-full text-[10px]">
-                        <thead>
-                          <tr className="text-muted-foreground text-left">
-                            <th className="py-0.5">Product</th>
-                            <th className="py-0.5 text-right">Qty</th>
-                            <th className="py-0.5 text-right">Price</th>
-                            <th className="py-0.5 text-right">Total</th>
-                          </tr>
-                        </thead>
+                        <thead><tr className="text-muted-foreground text-left">
+                          <th className="py-0.5">Product</th><th className="py-0.5 text-right">Qty</th><th className="py-0.5 text-right">Price</th><th className="py-0.5 text-right">Total</th>
+                        </tr></thead>
                         <tbody>
                           {evt.lines.slice(0, 5).map((l) => (
                             <tr key={l.line_index} className="text-foreground">
@@ -376,9 +361,7 @@ function StepSalesSync({
                               <td className="py-0.5 text-right font-mono">€{l.total_amount.toFixed(2)}</td>
                             </tr>
                           ))}
-                          {evt.lines.length > 5 && (
-                            <tr><td colSpan={4} className="text-muted-foreground text-center py-0.5">+{evt.lines.length - 5} more lines</td></tr>
-                          )}
+                          {evt.lines.length > 5 && <tr><td colSpan={4} className="text-muted-foreground text-center py-0.5">+{evt.lines.length - 5} more</td></tr>}
                         </tbody>
                       </table>
                     </div>
@@ -388,23 +371,17 @@ function StepSalesSync({
             </div>
           </div>
         )}
-
         {saveResult && (
           <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground">
             ✅ Saved {saveResult.savedEvents} events, {saveResult.savedLines} lines
-            {saveResult.errors.length > 0 && (
-              <p className="text-destructive mt-1">{saveResult.errors.length} error(s): {saveResult.errors[0]}</p>
-            )}
+            {saveResult.errors.length > 0 && <p className="text-destructive mt-1">{saveResult.errors.length} error(s): {saveResult.errors[0]}</p>}
           </div>
         )}
       </div>
 
-      {/* ── Backfill ── */}
+      {/* Backfill */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
-          <Download className="h-3.5 w-3.5" />
-          Backfill Historical Data
-        </p>
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5"><Download className="h-3.5 w-3.5" /> Backfill Historical Data</p>
         <div className="flex gap-2 items-end">
           <div className="w-28">
             <label className="text-xs text-muted-foreground mb-1 block">Days Back</label>
@@ -418,22 +395,15 @@ function StepSalesSync({
         {backfillResult && (
           <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
             <p>✅ {backfillResult.totalSaved} events, {backfillResult.totalLines} lines across {backfillResult.daysProcessed} days</p>
-            {backfillResult.errors.length > 0 && (
-              <p className="text-destructive">{backfillResult.errors.length} error(s)</p>
-            )}
+            {backfillResult.errors.length > 0 && <p className="text-destructive">{backfillResult.errors.length} error(s)</p>}
           </div>
         )}
       </div>
 
-      {/* ── Incremental Sync ── */}
+      {/* Incremental */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
-          <RefreshCw className="h-3.5 w-3.5" />
-          Incremental Sync
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Fetches all documents since the last synced business day until today.
-        </p>
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> Incremental Sync</p>
+        <p className="text-xs text-muted-foreground">Fetches all documents since the last synced business day until today.</p>
         <Button onClick={runIncrementalSync} disabled={incrementalSyncing || !connectionId} variant="secondary">
           {incrementalSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
           {incrementalSyncing ? "Syncing…" : "Sync Now"}
@@ -442,8 +412,220 @@ function StepSalesSync({
           <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
             <p>✅ {incrementalResult.savedEvents} events, {incrementalResult.savedLines} lines</p>
             <p className="text-muted-foreground">Range: {incrementalResult.dateRange.from} → {incrementalResult.dateRange.to}</p>
-            {incrementalResult.errors.length > 0 && (
-              <p className="text-destructive">{incrementalResult.errors.length} error(s)</p>
+            {incrementalResult.errors.length > 0 && <p className="text-destructive">{incrementalResult.errors.length} error(s)</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 4: Catalog & Write ──
+function StepCatalogWrite({
+  connectionId,
+  syncingCatalog, catalogResult, syncCatalog,
+  writingProduct, writeResult, writeProduct,
+  verifying, verifyResult, verifyProduct,
+}: {
+  connectionId: string | null;
+  syncingCatalog: boolean;
+  catalogResult: BdpCatalogResult | null;
+  syncCatalog: () => Promise<void>;
+  writingProduct: boolean;
+  writeResult: BdpWriteResult | null;
+  writeProduct: (p: any) => Promise<BdpWriteResult | null>;
+  verifying: boolean;
+  verifyResult: BdpVerifyResult | null;
+  verifyProduct: (id: string) => Promise<BdpVerifyResult | null>;
+}) {
+  // Write form
+  const [wName, setWName] = useState("");
+  const [wPrice, setWPrice] = useState("");
+  const [wVat, setWVat] = useState("10");
+  const [wFamily, setWFamily] = useState("");
+  const [wFormat, setWFormat] = useState("");
+  const [wId, setWId] = useState("");
+
+  // Verify
+  const [verifyId, setVerifyId] = useState("");
+
+  const handleWrite = async () => {
+    if (!wName || !wPrice) return;
+    const result = await writeProduct({
+      provider_product_id: wId || undefined,
+      name: wName,
+      price: Number(wPrice),
+      vat_rate: Number(wVat) || 0,
+      family: wFamily || undefined,
+      format: wFormat || undefined,
+    });
+    if (result?.success) {
+      toast({ title: "Product written", description: `${wName} sent to BDP successfully.` });
+      // Auto-verify after write
+      if (wId) {
+        setTimeout(() => verifyProduct(wId), 1500);
+        setVerifyId(wId);
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Catalog & Write</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Sync the BDP product catalog and push new/updated products with price propagation and verification.
+        </p>
+      </div>
+
+      {/* ── Catalog Sync ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <Package className="h-3.5 w-3.5" /> Catalog Sync
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Fetches articles/products and departments/families from BDP. Uses the catalog profile code if configured, otherwise falls back to the export profile.
+        </p>
+        <Button onClick={syncCatalog} disabled={syncingCatalog || !connectionId} variant="secondary">
+          {syncingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {syncingCatalog ? "Syncing Catalog…" : "Sync Catalog"}
+        </Button>
+        {catalogResult && (
+          <div className="space-y-2">
+            <div className={`rounded border p-2 text-xs ${catalogResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+              {catalogResult.success ? (
+                <>✅ {catalogResult.totalProducts} products synced ({catalogResult.upserted} upserted), {catalogResult.totalFamilies} families found</>
+              ) : (
+                <>❌ {catalogResult.message || "Catalog sync failed"}</>
+              )}
+              {catalogResult.errors.length > 0 && <p className="text-destructive mt-1">{catalogResult.errors.length} error(s)</p>}
+            </div>
+            {catalogResult.families.length > 0 && (
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Families / Departments:</p>
+                <div className="flex flex-wrap gap-1">
+                  {catalogResult.families.map((f) => (
+                    <Badge key={f.id} variant="secondary" className="text-[10px]">{f.name || f.id}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {catalogResult.rawProductsPreview && (
+              <div>
+                <p className="text-[11px] text-muted-foreground">Raw Preview (first 2 KB)</p>
+                <pre className="mt-1 max-h-32 overflow-auto rounded border border-border bg-card p-2 text-[10px] font-mono text-foreground whitespace-pre-wrap break-all">
+                  {catalogResult.rawProductsPreview}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Write Product ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <Upload className="h-3.5 w-3.5" /> Write / Update Product
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Create or update a product in BDP. Prices are propagated directly. Uses import profile code if configured.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Product ID (blank = new)</label>
+            <Input placeholder="e.g. ART001" value={wId} onChange={(e) => setWId(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Name *</label>
+            <Input placeholder="e.g. Rioja Reserva 2019" value={wName} onChange={(e) => setWName(e.target.value)} className="bg-background text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Price (€) *</label>
+            <Input type="number" step="0.01" placeholder="25.00" value={wPrice} onChange={(e) => setWPrice(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">VAT %</label>
+            <Input type="number" placeholder="10" value={wVat} onChange={(e) => setWVat(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Family / Department</label>
+            <Input placeholder="e.g. Vinos Tintos" value={wFamily} onChange={(e) => setWFamily(e.target.value)} className="bg-background text-sm" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Format</label>
+            <Input placeholder="e.g. BOT" value={wFormat} onChange={(e) => setWFormat(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+        </div>
+        <Button onClick={handleWrite} disabled={writingProduct || !connectionId || !wName || !wPrice}>
+          {writingProduct ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+          {writingProduct ? "Writing…" : wId ? "Update Product" : "Create Product"}
+        </Button>
+        {writeResult && (
+          <div className={`rounded border p-2 text-xs ${writeResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+            {writeResult.success ? (
+              <>✅ Product {writeResult.method === "create" ? "created" : writeResult.method === "import" ? "imported" : "updated"} — HTTP {writeResult.status}</>
+            ) : (
+              <>❌ {writeResult.message || `Write failed (HTTP ${writeResult.status})`}</>
+            )}
+            {writeResult.bodyPreview && (
+              <pre className="mt-1 max-h-24 overflow-auto rounded border border-border bg-card p-1.5 text-[10px] font-mono whitespace-pre-wrap break-all">{writeResult.bodyPreview}</pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Verify Product ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <ShieldCheck className="h-3.5 w-3.5" /> Post-Write Verification
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Confirm a product exists in BDP and has a valid price (&gt; 0), similar to Agora verification.
+        </p>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="text-xs text-muted-foreground mb-1 block">Product ID to verify</label>
+            <Input placeholder="e.g. ART001" value={verifyId} onChange={(e) => setVerifyId(e.target.value)} className="bg-background font-mono text-sm" />
+          </div>
+          <Button onClick={() => verifyProduct(verifyId)} disabled={verifying || !connectionId || !verifyId} variant="secondary" size="sm">
+            {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+            <span className="ml-1.5">Verify</span>
+          </Button>
+        </div>
+        {verifyResult && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded border border-border bg-card p-2">
+                <span className="text-muted-foreground">Exists</span>
+                <p className={`font-bold ${verifyResult.exists ? "text-success" : "text-destructive"}`}>
+                  {verifyResult.exists ? "YES" : "NO"}
+                </p>
+              </div>
+              <div className="rounded border border-border bg-card p-2">
+                <span className="text-muted-foreground">Price Valid</span>
+                <p className={`font-bold ${verifyResult.priceValid ? "text-success" : "text-destructive"}`}>
+                  {verifyResult.priceValid ? `€${verifyResult.price?.toFixed(2)}` : verifyResult.exists ? "€0.00 ⚠️" : "—"}
+                </p>
+              </div>
+              <div className="rounded border border-border bg-card p-2">
+                <span className="text-muted-foreground">Name</span>
+                <p className="font-mono truncate text-foreground">{verifyResult.name || "—"}</p>
+              </div>
+            </div>
+            {verifyResult.exists && !verifyResult.priceValid && (
+              <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                ⚠️ Product exists but price is 0 or missing. Update the price in BDP or re-push with a valid price.
+              </div>
+            )}
+            {!verifyResult.exists && (
+              <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                ⚠️ Product not found in BDP. The write may have failed or the product ID doesn't match.
+              </div>
+            )}
+            {verifyResult.exists && verifyResult.priceValid && (
+              <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground">
+                ✅ Product verified: exists with valid price.
+              </div>
             )}
           </div>
         )}
@@ -452,14 +634,15 @@ function StepSalesSync({
   );
 }
 
-// ── Step 4: Go Live ──
+// ── Step 5: Go Live ──
 function StepGoLive({ connectionId }: { connectionId: string | null }) {
   return (
     <div className="space-y-5 text-center py-8">
       <CheckCircle2 className="h-12 w-12 text-success mx-auto" />
-      <h2 className="text-lg font-semibold text-foreground">BDP NET Connected</h2>
+      <h2 className="text-lg font-semibold text-foreground">BDP NET Fully Connected</h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        Your BDP NET connection is configured with sales sync. Enable automatic sync or continue using manual backfill/incremental sync.
+        Your BDP NET connection is configured with sales sync, catalog sync, and product write capabilities.
+        Enable automatic sync or continue using manual operations.
       </p>
       {connectionId && (
         <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
@@ -479,6 +662,9 @@ export default function BdpWizard() {
     savingSales, saveResult, saveSalesToDb,
     backfilling, backfillResult, runBackfill,
     incrementalSyncing, incrementalResult, runIncrementalSync,
+    syncingCatalog, catalogResult, syncCatalog,
+    writingProduct, writeResult, writeProduct,
+    verifying, verifyResult, verifyProduct,
   } = useBdpConnection();
 
   const [step, setStep] = useState(1);
@@ -488,6 +674,8 @@ export default function BdpWizard() {
   const [userKey, setUserKey] = useState("");
   const [password, setPassword] = useState("");
   const [exportProfileCode, setExportProfileCode] = useState("");
+  const [catalogProfileCode, setCatalogProfileCode] = useState("");
+  const [importProfileCode, setImportProfileCode] = useState("");
 
   useEffect(() => {
     loadExistingConnection().then((conn) => {
@@ -499,12 +687,28 @@ export default function BdpWizard() {
         setUserKey(cfg.user_key || "");
         setPassword(cfg.password || "");
         setExportProfileCode(cfg.export_profile_code || "");
+        setCatalogProfileCode(cfg.catalog_profile_code || "");
+        setImportProfileCode(cfg.import_profile_code || "");
       }
     });
   }, []);
 
   const handleTest = () => {
     testConnection({ locationName, baseUrl, port, userKey, password, exportProfileCode });
+  };
+
+  // Save template codes when advancing past step 1
+  const handleAdvance = async () => {
+    if (step === 1 && connectionId) {
+      const cfg = {
+        port, user_key: userKey, password,
+        export_profile_code: exportProfileCode,
+        catalog_profile_code: catalogProfileCode,
+        import_profile_code: importProfileCode,
+      };
+      await updateConnection(connectionId, { provider_config: cfg });
+    }
+    setStep(step + 1);
   };
 
   const canAdvance = step === 1 ? testStatus === "success" : true;
@@ -521,7 +725,7 @@ export default function BdpWizard() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 flex-wrap">
         {steps.map((s) => {
           const Icon = s.icon;
           const active = s.id === step;
@@ -531,10 +735,8 @@ export default function BdpWizard() {
               key={s.id}
               onClick={() => { if (done || active) setStep(s.id); }}
               className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
-                active
-                  ? "bg-primary text-primary-foreground"
-                  : done
-                  ? "bg-primary/10 text-primary cursor-pointer"
+                active ? "bg-primary text-primary-foreground"
+                  : done ? "bg-primary/10 text-primary cursor-pointer"
                   : "bg-secondary text-muted-foreground"
               }`}
             >
@@ -562,6 +764,8 @@ export default function BdpWizard() {
                 userKey={userKey} setUserKey={setUserKey}
                 password={password} setPassword={setPassword}
                 exportProfileCode={exportProfileCode} setExportProfileCode={setExportProfileCode}
+                catalogProfileCode={catalogProfileCode} setCatalogProfileCode={setCatalogProfileCode}
+                importProfileCode={importProfileCode} setImportProfileCode={setImportProfileCode}
                 testStatus={testStatus} testError={testError} testResult={testResult}
                 onTest={handleTest}
               />
@@ -579,8 +783,14 @@ export default function BdpWizard() {
               />
             )}
             {step === 4 && (
-              <StepGoLive connectionId={connectionId} />
+              <StepCatalogWrite
+                connectionId={connectionId}
+                syncingCatalog={syncingCatalog} catalogResult={catalogResult} syncCatalog={syncCatalog}
+                writingProduct={writingProduct} writeResult={writeResult} writeProduct={writeProduct}
+                verifying={verifying} verifyResult={verifyResult} verifyProduct={verifyProduct}
+              />
             )}
+            {step === 5 && <StepGoLive connectionId={connectionId} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -591,7 +801,7 @@ export default function BdpWizard() {
           {step === 1 ? "Back to Integrations" : "Previous"}
         </Button>
         {step < steps.length && (
-          <Button onClick={() => setStep(step + 1)} disabled={!canAdvance}>
+          <Button onClick={handleAdvance} disabled={!canAdvance}>
             Next
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>

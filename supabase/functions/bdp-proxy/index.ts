@@ -604,6 +604,308 @@ serve(async (req) => {
       }
     }
 
+    // ── ACTION: sync-catalog ──
+    // Fetch products/articles + departments/families from BDP
+    if (action === "sync-catalog") {
+      const catalogProfileCode = config.catalog_profile_code
+        ? String(config.catalog_profile_code)
+        : exportProfileCode;
+
+      try {
+        // Try fetching articles/products
+        const productsUrl = `${host}/api/v1/articles`;
+        let products: any[] = [];
+        let families: any[] = [];
+        let rawProductsPreview = "";
+
+        try {
+          const pResp = await bdpFetch(productsUrl, headers);
+          if (pResp.ok) {
+            const pText = await pResp.text();
+            rawProductsPreview = pText.substring(0, 2048);
+            const parsed = JSON.parse(pText);
+            products = Array.isArray(parsed)
+              ? parsed
+              : (parsed.articles || parsed.Articles || parsed.products || parsed.Products || parsed.data || []);
+          }
+        } catch { /* endpoint may not exist */ }
+
+        // Try fetching departments/families
+        try {
+          const fResp = await bdpFetch(`${host}/api/v1/departments`, headers);
+          if (fResp.ok) {
+            const fText = await fResp.text();
+            const parsed = JSON.parse(fText);
+            families = Array.isArray(parsed)
+              ? parsed
+              : (parsed.departments || parsed.Departments || parsed.families || parsed.Families || parsed.data || []);
+          }
+        } catch { /* endpoint may not exist */ }
+
+        // If articles endpoint didn't work, try export endpoint with catalog profile
+        if (products.length === 0 && catalogProfileCode) {
+          try {
+            const catalogUrl = `${host}/api/v1/export/${encodeURIComponent(catalogProfileCode)}?type=articles`;
+            const cResp = await bdpFetch(catalogUrl, headers);
+            if (cResp.ok) {
+              const cText = await cResp.text();
+              rawProductsPreview = cText.substring(0, 2048);
+              const parsed = JSON.parse(cText);
+              products = Array.isArray(parsed)
+                ? parsed
+                : (parsed.articles || parsed.Articles || parsed.products || parsed.Products || parsed.data || []);
+            }
+          } catch { /* */ }
+        }
+
+        // Normalize products into provider_products
+        const normalized = products.map((p: any) => {
+          const id = String(p.Id || p.id || p.ArticleId || p.article_id || p.Code || p.code || "");
+          const name = String(p.Name || p.name || p.Description || p.description || "Unknown");
+          const family = p.Department || p.department || p.Family || p.family || p.Category || p.category || null;
+          const price = Number(p.Price || p.price || p.SalePrice || p.sale_price || p.PVP || p.pvp || 0);
+          const vatRate = Number(p.VatRate || p.vat_rate || p.Tax || p.tax || p.IVA || p.iva || 0);
+          const format = p.Format || p.format || p.Unit || p.unit || null;
+
+          return {
+            provider_product_id: id,
+            name,
+            family: family ? String(family) : null,
+            price,
+            vat_rate: vatRate,
+            sale_format: format ? String(format) : null,
+            raw_payload: p,
+          };
+        });
+
+        // Upsert into provider_products
+        let upserted = 0;
+        const errors: string[] = [];
+
+        for (const prod of normalized) {
+          if (!prod.provider_product_id) continue;
+          const { error: upErr } = await supabase
+            .from("provider_products")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_product_id: prod.provider_product_id,
+                name: prod.name,
+                family: prod.family,
+                price: prod.price,
+                vat_rate: prod.vat_rate,
+                sale_format: prod.sale_format,
+                raw_payload: prod.raw_payload,
+                last_synced_at: new Date().toISOString(),
+                sync_status: "SYNCED",
+              },
+              { onConflict: "connection_id,provider_product_id" }
+            );
+          if (upErr) {
+            errors.push(`${prod.provider_product_id}: ${upErr.message}`);
+          } else {
+            upserted++;
+          }
+        }
+
+        // Update connection catalog metadata
+        await supabase
+          .from("pos_connections")
+          .update({
+            last_catalog_sync_at: new Date().toISOString(),
+            catalog_product_count: normalized.length,
+          })
+          .eq("id", connectionId);
+
+        return ok({
+          success: true,
+          totalProducts: normalized.length,
+          upserted,
+          totalFamilies: families.length,
+          families: families.slice(0, 50).map((f: any) => ({
+            id: String(f.Id || f.id || f.Code || f.code || ""),
+            name: String(f.Name || f.name || f.Description || f.description || ""),
+          })),
+          rawProductsPreview,
+          errors,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: write-product ──
+    // Create or update a product in BDP
+    if (action === "write-product") {
+      const { product } = payload;
+      if (!product) return err({ success: false, message: "Missing product payload" });
+
+      const importProfileCode = config.import_profile_code
+        ? String(config.import_profile_code)
+        : exportProfileCode;
+
+      try {
+        // Try direct article endpoint first (PUT for update, POST for create)
+        const articleId = product.provider_product_id || product.id;
+        const articlePayload = {
+          Id: articleId || undefined,
+          Code: product.code || articleId || undefined,
+          Name: product.name,
+          Description: product.description || product.name,
+          Department: product.family || product.department || undefined,
+          Price: product.price || 0,
+          SalePrice: product.price || 0,
+          PVP: product.price || 0,
+          VatRate: product.vat_rate || 0,
+          IVA: product.vat_rate || 0,
+          Format: product.format || undefined,
+          Unit: product.format || undefined,
+        };
+
+        let writeResp: Response;
+        let writeUrl: string;
+
+        if (articleId) {
+          // Update existing
+          writeUrl = `${host}/api/v1/articles/${encodeURIComponent(articleId)}`;
+          writeResp = await bdpFetch(writeUrl, { ...headers, "Content-Type": "application/json" }, "PUT");
+          // If PUT not supported, try POST
+          if (writeResp.status === 405 || writeResp.status === 404) {
+            writeUrl = `${host}/api/v1/articles`;
+            const bodyStr = JSON.stringify(articlePayload);
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), 30000);
+            writeResp = await fetch(writeUrl, {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: bodyStr,
+              signal: controller2.signal,
+            });
+            clearTimeout(timeout2);
+          }
+        } else {
+          writeUrl = `${host}/api/v1/articles`;
+          const bodyStr = JSON.stringify(articlePayload);
+          const controller3 = new AbortController();
+          const timeout3 = setTimeout(() => controller3.abort(), 30000);
+          writeResp = await fetch(writeUrl, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: bodyStr,
+            signal: controller3.signal,
+          });
+          clearTimeout(timeout3);
+        }
+
+        const writeBody = await writeResp.text();
+
+        // If direct API didn't work, try import endpoint
+        if (!writeResp.ok && importProfileCode) {
+          const importUrl = `${host}/api/v1/import/${encodeURIComponent(importProfileCode)}`;
+          const importPayload = JSON.stringify({ articles: [articlePayload] });
+          const controller4 = new AbortController();
+          const timeout4 = setTimeout(() => controller4.abort(), 30000);
+          const importResp = await fetch(importUrl, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: importPayload,
+            signal: controller4.signal,
+          });
+          clearTimeout(timeout4);
+          const importBody = await importResp.text();
+
+          return ok({
+            success: importResp.ok,
+            method: "import",
+            status: importResp.status,
+            bodyPreview: importBody.substring(0, 2048),
+            product: articlePayload,
+          });
+        }
+
+        return ok({
+          success: writeResp.ok,
+          method: articleId ? "update" : "create",
+          status: writeResp.status,
+          bodyPreview: writeBody.substring(0, 2048),
+          product: articlePayload,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: verify-product ──
+    // Confirm product exists in BDP and has price > 0
+    if (action === "verify-product") {
+      const { productId } = payload;
+      if (!productId) return err({ success: false, message: "Missing productId" });
+
+      try {
+        // Try fetching the specific article
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        if (!resp.ok) {
+          // Try listing all and filter
+          const allUrl = `${host}/api/v1/articles`;
+          const allResp = await bdpFetch(allUrl, headers);
+          if (allResp.ok) {
+            const allText = await allResp.text();
+            const allParsed = JSON.parse(allText);
+            const allProducts = Array.isArray(allParsed) ? allParsed : (allParsed.articles || allParsed.Articles || allParsed.data || []);
+            const found = allProducts.find((p: any) =>
+              String(p.Id || p.id || p.Code || p.code) === String(productId)
+            );
+
+            if (found) {
+              const price = Number(found.Price || found.price || found.SalePrice || found.sale_price || found.PVP || 0);
+              return ok({
+                success: true,
+                exists: true,
+                priceValid: price > 0,
+                price,
+                name: String(found.Name || found.name || found.Description || ""),
+                raw: found,
+              });
+            }
+          }
+
+          return ok({
+            success: true,
+            exists: false,
+            priceValid: false,
+            message: `Product ${productId} not found in BDP`,
+          });
+        }
+
+        const bodyText = await resp.text();
+        let product: any;
+        try {
+          product = JSON.parse(bodyText);
+        } catch {
+          return ok({ success: false, message: "Invalid JSON response from BDP verify" });
+        }
+
+        const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+        const name = String(product.Name || product.name || product.Description || "");
+
+        return ok({
+          success: true,
+          exists: true,
+          priceValid: price > 0,
+          price,
+          name,
+          raw: product,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
     return err({ success: false, message: `Unknown action: ${action}` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
