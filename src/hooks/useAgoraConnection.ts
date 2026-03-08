@@ -102,6 +102,7 @@ export function useAgoraConnection() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [loadingDays, setLoadingDays] = useState(false);
   const [scanStats, setScanStats] = useState<{ totalScanned: number; totalInvoicesFound: number } | null>(null);
+  const [lastClosedDay, setLastClosedDay] = useState<string | null>(null);
 
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [detectedFamilies, setDetectedFamilies] = useState<DetectedFamily[]>([]);
