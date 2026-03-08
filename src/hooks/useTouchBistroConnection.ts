@@ -146,7 +146,7 @@ export function useTouchBistroConnection() {
       location_name: fields.locationName,
       base_url: fields.apiBaseUrl || "csv-mode",
       api_token: fields.apiKey || "csv-mode",
-      provider_config: providerConfig,
+      provider_config: providerConfig as unknown as Record<string, never>,
     };
 
     if (connectionId) {
