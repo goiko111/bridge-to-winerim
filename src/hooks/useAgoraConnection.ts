@@ -186,6 +186,7 @@ export function useAgoraConnection() {
       const days: string[] = data?.daysWithSales || [];
       setDaysWithSales(days);
       setScanStats({ totalScanned: data?.totalScanned || 0, totalInvoicesFound: data?.totalInvoicesFound || 0 });
+      setLastClosedDay(data?.lastClosedDay || (days.length > 0 ? days[0] : null));
       if (days.length > 0 && !selectedDay) setSelectedDay(days[0]);
     } catch (e) { console.error("Failed to find business days:", e); }
     finally { setLoadingDays(false); }
