@@ -4,6 +4,8 @@ import { CheckCircle2, AlertTriangle, Clock, ArrowRight, Plug, Globe } from "luc
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+type MaturityLevel = "production" | "pilot" | "beta" | "experimental";
+
 interface Connector {
   id: string;
   name: string;
@@ -13,7 +15,15 @@ interface Connector {
   country: string;
   locations?: number;
   lastSync?: string;
+  maturity?: MaturityLevel;
 }
+
+const maturityMeta: Record<MaturityLevel, { label: string; className: string }> = {
+  production: { label: "Production-ready", className: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30" },
+  pilot: { label: "Pilot-ready", className: "bg-sky-500/15 text-sky-700 dark:text-sky-400 border-sky-500/30" },
+  beta: { label: "Beta", className: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30" },
+  experimental: { label: "Experimental", className: "bg-purple-500/15 text-purple-700 dark:text-purple-400 border-purple-500/30" },
+};
 
 const connectors: Connector[] = [
   // España
@@ -25,7 +35,7 @@ const connectors: Connector[] = [
     status: "connected",
     country: "España",
     locations: 2,
-    lastSync: "3 min ago",
+    maturity: "production",
   },
   {
     id: "revo",
@@ -34,6 +44,7 @@ const connectors: Connector[] = [
     logo: "R",
     status: "disconnected",
     country: "España",
+    maturity: "pilot",
   },
   {
     id: "icg",
@@ -42,6 +53,7 @@ const connectors: Connector[] = [
     logo: "I",
     status: "disconnected",
     country: "España",
+    maturity: "beta",
   },
   {
     id: "glop",
@@ -58,6 +70,7 @@ const connectors: Connector[] = [
     logo: "H",
     status: "disconnected",
     country: "España",
+    maturity: "beta",
   },
   {
     id: "turbopos",
@@ -149,6 +162,7 @@ const connectors: Connector[] = [
     logo: "T",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "clover",
@@ -189,6 +203,7 @@ const connectors: Connector[] = [
     logo: "N",
     status: "coming_soon",
     country: "USA",
+    maturity: "experimental",
   },
   {
     id: "touchbistro",
@@ -197,6 +212,7 @@ const connectors: Connector[] = [
     logo: "T",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "simphony",
@@ -309,11 +325,16 @@ export default function Integrations() {
                           </div>
                           <div>
                             <h3 className="text-sm font-semibold text-foreground">{c.name}</h3>
-                            <div className="mt-0.5 flex items-center gap-1.5">
+                            <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
                               <Icon className={`h-3 w-3 ${color}`} />
                               <Badge variant={badge.variant} className="text-[10px] px-1.5 py-0">
                                 {badge.label}
                               </Badge>
+                              {c.maturity && (
+                                <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[10px] font-medium leading-4 ${maturityMeta[c.maturity].className}`}>
+                                  {maturityMeta[c.maturity].label}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
