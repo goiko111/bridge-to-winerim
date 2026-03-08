@@ -45,6 +45,7 @@ const App = () => (
             <Route path="/integrations/bdp" element={<BdpWizard />} />
             <Route path="/integrations/icg" element={<IcgWizard />} />
             <Route path="/integrations/hiopos" element={<HioposWizard />} />
+            <Route path="/integrations/touchbistro" element={<TouchBistroWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
