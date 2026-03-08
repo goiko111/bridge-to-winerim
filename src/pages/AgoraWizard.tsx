@@ -2229,8 +2229,36 @@ function StepOutboundSync({
           { key: "pending", items: pendingTasks },
           { key: "failed", items: failedTasks },
           { key: "blocked", items: blockedTasks },
-        ].map(({ key, items }) => (
+        ].map(({ key, items }) => {
+          // Detect failed tasks with price-related errors
+          const priceFailedTasks = key === "failed" ? items.filter(t =>
+            t.last_error && /missing prices|PriceList/i.test(t.last_error)
+          ) : [];
+          const priceFailedWineIds = [...new Set(priceFailedTasks.map(t => (t.payload_json as any)?._winerim_wine_id).filter(Boolean))];
+
+          return (
           <TabsContent key={key} value={key}>
+            {/* Auto-fix prices banner for failed tab */}
+            {key === "failed" && priceFailedWineIds.length > 0 && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+                <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                <span className="text-xs text-destructive flex-1">
+                  {priceFailedWineIds.length} product(s) failed due to missing PriceList prices.
+                </span>
+                <Button variant="destructive" size="sm" className="h-7 text-xs"
+                  disabled={fixingPrices}
+                  onClick={async () => {
+                    const result = await onFixMissingPrices(priceFailedWineIds);
+                    toast({
+                      title: "Price Fix Queued",
+                      description: `${result?.queued || 0} tasks queued to fix missing prices for ${priceFailedWineIds.length} product(s).`,
+                    });
+                  }}>
+                  {fixingPrices ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Wrench className="mr-1 h-3.5 w-3.5" />}
+                  Auto-fix prices ({priceFailedWineIds.length})
+                </Button>
+              </div>
+            )}
             <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
               {items.length === 0 ? (
                 <div className="text-center py-8 text-sm text-muted-foreground">No tasks.</div>
@@ -2278,7 +2306,7 @@ function StepOutboundSync({
               ))}
             </div>
           </TabsContent>
-        ))}
+        );})}
       </Tabs>
     </div>
   );
