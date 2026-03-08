@@ -3438,7 +3438,9 @@ export default function AgoraWizard() {
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
               onRetry={outbound.retryTask} onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
-              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)} />
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
+              backfillingPreparation={outbound.backfillingPreparation}
+              onBackfillPreparation={outbound.backfillPreparation} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
