@@ -379,7 +379,7 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
@@ -389,8 +389,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const existingProducts = (masterData.products_summary_json || []) as { Id: string; Name: string }[];
 
   const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
-  const defaultPrepTypeId = connection.default_preparation_type_id || (prepTypes.length > 0 ? prepTypes[0].Id : "1");
-  const defaultPrepOrderId = connection.default_preparation_order_id || (prepOrders.length > 0 ? prepOrders[0].Id : "1");
+  const defaultPrepTypeId = forceEmptyPreparation ? "" : (connection.default_preparation_type_id || "");
+  const defaultPrepOrderId = forceEmptyPreparation ? "" : (connection.default_preparation_order_id || "");
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
@@ -2332,6 +2332,7 @@ serve(async (req) => {
         const winerimWineId = taskPayload._winerim_wine_id as string;
         const fmtTypes = (taskPayload._format_types as string[]) || ["BOTTLE"];
         const familyOverrideId = taskPayload._family_override_id as string | undefined;
+        const forceEmptyPreparation = taskPayload._force_empty_preparation === true;
 
         const { data: wineArr } = await supabase
           .from("winerim_wines").select("*")
@@ -2354,7 +2355,7 @@ serve(async (req) => {
           }
           customFamilyMappings = overrideMapping;
         }
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings);
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
 
         // Check if any products were actually generated (validation may have skipped all)
         if (!xml.includes("<Product ")) {
@@ -2396,6 +2397,52 @@ serve(async (req) => {
           }
 
           return new Response(JSON.stringify({ success: false, status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"), parsedResponse }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        // Success - post-import verification for preparation field consistency
+        let prepVerificationFailed = false;
+        let prepVerificationMsg = "";
+        try {
+          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          if (verifyRes.ok) {
+            const verifyXml = await verifyRes.text();
+            for (const fmt of fmtTypes) {
+              const productId = fmt === "MAGNUM"
+                ? String(900000 + Number(winerimWineId || 0))
+                : fmt === "GLASS"
+                ? String(700000 + Number(winerimWineId || 0))
+                : String(500000 + Number(winerimWineId || 0));
+
+              const productRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)`, "i");
+              const productMatch = verifyXml.match(productRegex);
+              if (productMatch) {
+                const attrs = productMatch[1];
+                const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+                const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+                const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+                const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+                const typeEmpty = !prepTypeVal || prepTypeVal === "";
+                const orderEmpty = !prepOrderVal || prepOrderVal === "";
+                if (typeEmpty !== orderEmpty) {
+                  prepVerificationFailed = true;
+                  prepVerificationMsg = `Product ${productId} (${fmt}): PreparationTypeId="${prepTypeVal}" and PreparationOrderId="${prepOrderVal}" are inconsistent — both must be empty or both set. This causes TPV crash.`;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (_verifyErr) {
+          // Non-blocking: verification is best-effort
+        }
+
+        if (prepVerificationFailed) {
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED",
+            last_error: prepVerificationMsg.substring(0, 500),
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED", error: prepVerificationMsg }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -2567,7 +2614,67 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── VERIFY PRODUCTS IN AGORA — ALL PRICELISTS ──
+    // ── BACKFILL PREPARATION FIELDS (fix both empty to prevent TPV crash) ──
+    if (action === "backfill-preparation") {
+      const winerimWineIds = payload.winerimWineIds || [];
+      const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS", "MAGNUM"];
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
+
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "No master data. Run 'Sync Master Data' first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Get target wine IDs: either provided or all confirmed XML imports
+      let targetWineIds: string[] = winerimWineIds;
+      if (targetWineIds.length === 0) {
+        const { data: mappings } = await supabase
+          .from("product_mappings").select("winerim_wine_id")
+          .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+        if (mappings) {
+          targetWineIds = [...new Set(mappings.map((m: any) => m.winerim_wine_id).filter(Boolean))];
+        }
+      }
+
+      if (targetWineIds.length === 0) {
+        return new Response(JSON.stringify({ success: true, message: "No products to fix", queued: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Queue UPDATE tasks with a special flag to force empty preparation fields
+      let queued = 0;
+      for (const wineId of targetWineIds) {
+        // Skip if already queued
+        const { data: existing } = await supabase
+          .from("outbound_tasks").select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "BACKFILL_PREPARATION" })
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wineId,
+            _format_types: formatTypes,
+            _write_mode: "XML_IMPORT",
+            _trigger_source: "BACKFILL_PREPARATION",
+            _force_empty_preparation: true,
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "verify-products") {
       const { data: masterData } = await supabase
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();

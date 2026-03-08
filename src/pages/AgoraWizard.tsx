@@ -2009,6 +2009,7 @@ function StepOutboundSync({
   processingQueue, queuingProducts, exporting,
   onLoadTasks, onProcessQueue, onRetry, onExport,
   winerimWines, onQueueProducts,
+  backfillingPreparation, onBackfillPreparation,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2023,6 +2024,8 @@ function StepOutboundSync({
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  backfillingPreparation: boolean;
+  onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
@@ -2158,6 +2161,19 @@ function StepOutboundSync({
         </Button>
         <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
+        </Button>
+        <Button variant="outline" size="sm"
+          onClick={async () => {
+            const ids = selectedWineIds.size > 0 ? Array.from(selectedWineIds) : undefined;
+            const result = await onBackfillPreparation(ids);
+            toast({
+              title: "Preparation Fix Queued",
+              description: `${result?.queued || 0} tasks queued to fix PreparationType/Order fields.`,
+            });
+          }}
+          disabled={backfillingPreparation}>
+          {backfillingPreparation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wrench className="mr-2 h-4 w-4" />}
+          Fix Preparation Fields {selectedWineIds.size > 0 ? `(${selectedWineIds.size})` : "(all)"}
         </Button>
       </div>
 
@@ -3422,7 +3438,9 @@ export default function AgoraWizard() {
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
               onRetry={outbound.retryTask} onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
-              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)} />
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
+              backfillingPreparation={outbound.backfillingPreparation}
+              onBackfillPreparation={outbound.backfillPreparation} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}

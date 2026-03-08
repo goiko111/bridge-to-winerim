@@ -36,7 +36,7 @@ export function useOutboundSync(connectionId: string | null) {
   const [processingQueue, setProcessingQueue] = useState(false);
   const [queuingProducts, setQueuingProducts] = useState(false);
   const [exporting, setExporting] = useState(false);
-
+  const [backfillingPreparation, setBackfillingPreparation] = useState(false);
   const loadCapabilities = useCallback(async () => {
     if (!connectionId) return;
     const { data } = await supabase
@@ -177,6 +177,23 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId]);
 
+  const backfillPreparation = useCallback(async (winerimWineIds?: string[]) => {
+    if (!connectionId) return;
+    setBackfillingPreparation(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "backfill-preparation", connectionId, winerimWineIds: winerimWineIds || [] },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to backfill preparation:", e);
+    } finally {
+      setBackfillingPreparation(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   return {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
@@ -185,5 +202,6 @@ export function useOutboundSync(connectionId: string | null) {
     queuingProducts, queueProducts,
     exporting, exportProducts,
     retryTask,
+    backfillingPreparation, backfillPreparation,
   };
 }
