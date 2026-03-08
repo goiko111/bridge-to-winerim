@@ -2134,10 +2134,9 @@ function StepOutboundSync({
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-5 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {[
           { label: "Queued", count: queuedTasks.length, color: "text-primary" },
-          { label: "Running", count: runningTasks.length, color: "text-primary" },
           { label: "Success", count: successTasks.length, color: "text-success" },
           { label: "Failed", count: failedTasks.length, color: "text-destructive" },
           { label: "Blocked", count: blockedTasks.length, color: "text-amber-500" },
@@ -2148,6 +2147,24 @@ function StepOutboundSync({
           </div>
         ))}
       </div>
+      {(createTasks.length > 0 || updateTasks.length > 0) && (
+        <div className="flex gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            {createTasks.length} CREATE ({createTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+            {updateTasks.length} UPDATE ({updateTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          {outboundTasks.length - createTasks.length - updateTasks.length > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
+              {outboundTasks.length - createTasks.length - updateTasks.length} legacy (no type)
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2 flex-wrap">
