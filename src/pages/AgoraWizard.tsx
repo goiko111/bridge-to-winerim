@@ -2009,6 +2009,7 @@ function StepOutboundSync({
   processingQueue, queuingProducts, exporting,
   onLoadTasks, onProcessQueue, onRetry, onExport,
   winerimWines, onQueueProducts,
+  backfillingPreparation, onBackfillPreparation,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2023,6 +2024,8 @@ function StepOutboundSync({
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
   onQueueProducts: (ids: string[], formatTypes?: string[]) => void;
+  backfillingPreparation: boolean;
+  onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
