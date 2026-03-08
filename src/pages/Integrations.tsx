@@ -35,7 +35,7 @@ const connectors: Connector[] = [
     status: "connected",
     country: "España",
     locations: 2,
-    lastSync: "3 min ago",
+    maturity: "production",
   },
   {
     id: "revo",
@@ -44,6 +44,8 @@ const connectors: Connector[] = [
     logo: "R",
     status: "disconnected",
     country: "España",
+    maturity: "experimental",
+    maturity: "pilot",
   },
   {
     id: "icg",
@@ -52,6 +54,7 @@ const connectors: Connector[] = [
     logo: "I",
     status: "disconnected",
     country: "España",
+    maturity: "beta",
   },
   {
     id: "glop",
@@ -68,6 +71,7 @@ const connectors: Connector[] = [
     logo: "H",
     status: "disconnected",
     country: "España",
+    maturity: "beta",
   },
   {
     id: "turbopos",
@@ -159,6 +163,7 @@ const connectors: Connector[] = [
     logo: "T",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "clover",
@@ -199,6 +204,7 @@ const connectors: Connector[] = [
     logo: "N",
     status: "coming_soon",
     country: "USA",
+    maturity: "experimental",
   },
   {
     id: "touchbistro",
@@ -207,6 +213,7 @@ const connectors: Connector[] = [
     logo: "T",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "simphony",
