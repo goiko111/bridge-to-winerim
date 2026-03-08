@@ -145,9 +145,9 @@ const connectors: Connector[] = [
   {
     id: "toast",
     name: "Toast POS",
-    description: "OAuth2 auth, Orders API with webhooks, Menus V3. Standard API (read-only) or full partner access.",
+    description: "Standard API access: orders polling, business date sync, Menus V2, webhooks, and circuit breaker resilience.",
     logo: "T",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
@@ -292,6 +292,7 @@ export default function Integrations() {
                       if (c.id === "icg") navigate("/integrations/icg");
                       if (c.id === "hiopos") navigate("/integrations/hiopos");
                       if (c.id === "touchbistro") navigate("/integrations/touchbistro");
+                      if (c.id === "toast") navigate("/integrations/toast");
                     }}
                   >
                     <div className="p-5">
@@ -355,6 +356,7 @@ export default function Integrations() {
                              if (c.id === "icg") navigate("/integrations/icg");
                              if (c.id === "hiopos") navigate("/integrations/hiopos");
                              if (c.id === "touchbistro") navigate("/integrations/touchbistro");
+                             if (c.id === "toast") navigate("/integrations/toast");
                            }}
                          >
                           Connect
