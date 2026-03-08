@@ -3265,11 +3265,13 @@ export default function AgoraWizard() {
     }
   }, [currentStep, connectionId]);
 
-  // Load winerim wines when entering step 11
+  // Load winerim wines and outbound tasks when entering step 11
   useEffect(() => {
     if (currentStep === 11 && connectionId) {
       fetchAllWinerimWines(connectionId, "winerim_id, name")
         .then((data) => { setWinerimWinesForPush(data as any); });
+      outbound.loadOutboundTasks();
+      outbound.loadCapabilities();
     }
   }, [currentStep, connectionId]);
 
