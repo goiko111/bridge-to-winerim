@@ -751,8 +751,11 @@ serve(async (req) => {
         if (consecutiveEmpty >= 10 && daysWithSales.length > 0) break;
       }
 
+      // lastClosedDay = most recent day with sales (cash closure completed)
+      const lastClosedDay = daysWithSales.length > 0 ? daysWithSales[0] : null;
+
       return new Response(
-        JSON.stringify({ daysWithSales, totalScanned, totalInvoicesFound }),
+        JSON.stringify({ daysWithSales, totalScanned, totalInvoicesFound, lastClosedDay }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
