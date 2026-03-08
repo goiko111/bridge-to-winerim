@@ -64,6 +64,19 @@ export interface PilotStep {
   detail?: string;
 }
 
+export interface DiscoveredLocation {
+  locRef: string;
+  name: string;
+  revenueCenters: { rvcRef: string; name: string }[];
+}
+
+export interface WebhookStatus {
+  registered: boolean;
+  callbackUrl: string;
+  lastEventAt: string | null;
+  eventCount: number;
+}
+
 export function useSimphonyConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
@@ -82,20 +95,35 @@ export function useSimphonyConnection() {
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
 
-  // S3: Preflight
+  // Preflight
   const [preflightChecks, setPreflightChecks] = useState<PreflightCheck[]>([]);
   const [preflightRunning, setPreflightRunning] = useState(false);
 
-  // S5: Catalog
+  // Catalog
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogWritePreview, setCatalogWritePreview] = useState<CatalogWritePreview[]>([]);
   const [catalogWriteResult, setCatalogWriteResult] = useState<{ created: number; updated: number } | null>(null);
   const [catalogWriting, setCatalogWriting] = useState(false);
 
-  // S7: Pilot
+  // Pilot
   const [pilotSteps, setPilotSteps] = useState<PilotStep[]>([]);
   const [pilotRunning, setPilotRunning] = useState(false);
+
+  // S2: OIDC token acquisition
+  const [oidcAcquiring, setOidcAcquiring] = useState(false);
+  const [oidcResult, setOidcResult] = useState<{ success: boolean; message: string; expiresAt?: string } | null>(null);
+
+  // S3: Organizations discovery
+  const [discoveredLocations, setDiscoveredLocations] = useState<DiscoveredLocation[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+
+  // S6: Webhooks
+  const [webhookStatus, setWebhookStatus] = useState<WebhookStatus | null>(null);
+  const [webhookRegistering, setWebhookRegistering] = useState(false);
+
+  // S9: Multi-RVC
+  const [selectedRvcs, setSelectedRvcs] = useState<string[]>([]);
 
   const saveConnection = async (data: {
     locationName: string;
@@ -109,12 +137,14 @@ export function useSimphonyConnection() {
     ccBaseUrl?: string;
     clientId?: string;
     clientSecret?: string;
+    selectedRvcs?: string[];
   }) => {
     const providerConfig: Record<string, unknown> = {};
     if (data.oidcBaseUrl) providerConfig.oidc_base_url = data.oidcBaseUrl;
     if (data.ccBaseUrl) providerConfig.cc_base_url = data.ccBaseUrl;
     if (data.clientId) providerConfig.client_id = data.clientId;
     if (data.clientSecret) providerConfig.client_secret = data.clientSecret;
+    if (data.selectedRvcs && data.selectedRvcs.length > 0) providerConfig.selected_rvcs = data.selectedRvcs;
 
     const { data: row, error } = await supabase
       .from("pos_connections")
@@ -154,6 +184,7 @@ export function useSimphonyConnection() {
           locationName, baseUrl, apiToken, winerimApiToken,
           syncMode: "PULL_ONLY", syncFrequency: 15, backfillDays: 30,
           oidcBaseUrl, ccBaseUrl, clientId, clientSecret,
+          selectedRvcs: selectedRvcs.length > 0 ? selectedRvcs : undefined,
         });
       } catch (e: any) {
         setTestStatus("error");
@@ -166,6 +197,7 @@ export function useSimphonyConnection() {
       if (ccBaseUrl) providerConfig.cc_base_url = ccBaseUrl;
       if (clientId) providerConfig.client_id = clientId;
       if (clientSecret) providerConfig.client_secret = clientSecret;
+      if (selectedRvcs.length > 0) providerConfig.selected_rvcs = selectedRvcs;
       await updateConnection(connId, {
         base_url: baseUrl, api_token: apiToken, location_name: locationName,
         winerim_api_token: winerimApiToken || null,
@@ -194,7 +226,43 @@ export function useSimphonyConnection() {
     }
   };
 
-  // S2+S3: Preflight checks
+  // S2: Acquire OIDC token via client_credentials
+  const acquireOidcToken = useCallback(async () => {
+    if (!connectionId) return;
+    setOidcAcquiring(true);
+    setOidcResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "oidc-acquire", connectionId },
+      });
+      if (error) throw error;
+      setOidcResult(data);
+    } catch (e: any) {
+      setOidcResult({ success: false, message: e.message });
+    } finally {
+      setOidcAcquiring(false);
+    }
+  }, [connectionId]);
+
+  // S3: Discover organizations/locations/RVCs
+  const discoverLocations = useCallback(async () => {
+    if (!connectionId) return;
+    setDiscovering(true);
+    setDiscoveredLocations([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "discover-locations", connectionId },
+      });
+      if (error) throw error;
+      setDiscoveredLocations(data?.locations || []);
+    } catch (e: any) {
+      console.error("Discovery failed:", e);
+    } finally {
+      setDiscovering(false);
+    }
+  }, [connectionId]);
+
+  // Preflight
   const runPreflight = useCallback(async () => {
     if (!connectionId) return;
     setPreflightRunning(true);
@@ -202,7 +270,9 @@ export function useSimphonyConnection() {
       { id: "sts", label: "STS Gen2 reachable", status: "pending" },
       { id: "rvc74", label: "RVC Option 74 (STS Gen2 enabled)", status: "pending" },
       { id: "oidc", label: "OIDC token valid", status: "pending" },
+      { id: "workstation", label: "POS API Client workstation", status: "pending" },
       { id: "cc", label: "Config & Content API (optional)", status: "pending" },
+      { id: "notifications", label: "Notifications API (optional)", status: "pending" },
     ]);
     try {
       const { data, error } = await supabase.functions.invoke("simphony-proxy", {
@@ -264,7 +334,7 @@ export function useSimphonyConnection() {
     finally { setSaving(false); }
   }, [connectionId]);
 
-  // S5: Catalog read
+  // Catalog
   const fetchCatalog = useCallback(async () => {
     if (!connectionId) return;
     setCatalogLoading(true);
@@ -279,7 +349,6 @@ export function useSimphonyConnection() {
     finally { setCatalogLoading(false); }
   }, [connectionId]);
 
-  // S5: Catalog write preview
   const previewCatalogWrite = useCallback(async () => {
     if (!connectionId) return;
     setCatalogWritePreview([]);
@@ -292,7 +361,6 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Write preview failed:", e); }
   }, [connectionId]);
 
-  // S5: Catalog write execute
   const executeCatalogWrite = useCallback(async (dryRun = true) => {
     if (!connectionId) return;
     setCatalogWriting(true);
@@ -307,7 +375,6 @@ export function useSimphonyConnection() {
     finally { setCatalogWriting(false); }
   }, [connectionId]);
 
-  // S6: Import/Export bulk
   const generateImportExport = useCallback(async (format: "json" | "csv" = "json") => {
     if (!connectionId) return null;
     try {
@@ -319,7 +386,32 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Import/Export generation failed:", e); return null; }
   }, [connectionId]);
 
-  // S7: Pilot flow
+  // S6: Register webhook
+  const registerWebhook = useCallback(async () => {
+    if (!connectionId) return;
+    setWebhookRegistering(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "register-webhook", connectionId },
+      });
+      if (error) throw error;
+      setWebhookStatus(data?.webhookStatus || null);
+    } catch (e) { console.error("Webhook registration failed:", e); }
+    finally { setWebhookRegistering(false); }
+  }, [connectionId]);
+
+  const fetchWebhookStatus = useCallback(async () => {
+    if (!connectionId) return;
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "webhook-status", connectionId },
+      });
+      if (error) throw error;
+      setWebhookStatus(data?.webhookStatus || null);
+    } catch (e) { console.error("Webhook status failed:", e); }
+  }, [connectionId]);
+
+  // Pilot
   const runPilot = useCallback(async () => {
     if (!connectionId) return;
     setPilotRunning(true);
@@ -359,6 +451,8 @@ export function useSimphonyConnection() {
     const { data, error } = await supabase.from("pos_connections").select("*").eq("id", id).single();
     if (error || !data) return null;
     setConnectionId(data.id);
+    const cfg = data.provider_config as Record<string, any> | null;
+    if (cfg?.selected_rvcs) setSelectedRvcs(cfg.selected_rvcs);
     return data;
   }, []);
 
@@ -370,15 +464,23 @@ export function useSimphonyConnection() {
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
-    // S3: Preflight
+    // Preflight
     preflightChecks, preflightRunning, runPreflight,
-    // S5: Catalog
+    // Catalog
     catalogItems, catalogLoading, fetchCatalog,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
-    // S6: Import/Export
+    // Import/Export
     generateImportExport,
-    // S7: Pilot
+    // Pilot
     pilotSteps, pilotRunning, runPilot,
+    // S2: OIDC
+    oidcAcquiring, oidcResult, acquireOidcToken,
+    // S3: Discovery
+    discoveredLocations, discovering, discoverLocations,
+    // S6: Webhooks
+    webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
+    // S9: Multi-RVC
+    selectedRvcs, setSelectedRvcs,
   };
 }

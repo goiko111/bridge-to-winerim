@@ -5,12 +5,14 @@ import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle,
   Search, Link2, Settings2, Map, Power, Wine, Calendar,
   Download, Filter, Grape, ShieldCheck, BookOpen, FlaskConical,
-  AlertTriangle, Eye, FileJson, Upload,
+  AlertTriangle, Eye, FileJson, Upload, Radio, Compass,
+  Bell, Layers, Key,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   useSimphonyConnection,
   SalesLineItem,
@@ -21,13 +23,16 @@ import {
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
-  { id: 2, label: "Preflight", icon: ShieldCheck },
-  { id: 3, label: "Sync Settings", icon: Settings2 },
-  { id: 4, label: "Families", icon: Grape },
-  { id: 5, label: "Sales & Mapping", icon: Map },
-  { id: 6, label: "Catalog", icon: BookOpen },
-  { id: 7, label: "Pilot", icon: FlaskConical },
-  { id: 8, label: "Go Live", icon: Power },
+  { id: 2, label: "Auth & Token", icon: Key },
+  { id: 3, label: "Discover", icon: Compass },
+  { id: 4, label: "Preflight", icon: ShieldCheck },
+  { id: 5, label: "Sync Settings", icon: Settings2 },
+  { id: 6, label: "Families", icon: Grape },
+  { id: 7, label: "Sales & Mapping", icon: Map },
+  { id: 8, label: "Catalog", icon: BookOpen },
+  { id: 9, label: "Webhooks", icon: Bell },
+  { id: 10, label: "Pilot", icon: FlaskConical },
+  { id: 11, label: "Go Live", icon: Power },
 ];
 
 export default function SimphonyWizard() {
@@ -35,7 +40,7 @@ export default function SimphonyWizard() {
   const [searchParams] = useSearchParams();
   const [currentStep, setCurrentStep] = useState(1);
 
-  // Connection fields (S1)
+  // Connection fields
   const [hostUrl, setHostUrl] = useState("");
   const [orgShortName, setOrgShortName] = useState("");
   const [locRef, setLocRef] = useState("");
@@ -72,6 +77,14 @@ export default function SimphonyWizard() {
     catalogWriteResult, catalogWriting, executeCatalogWrite,
     generateImportExport,
     pilotSteps, pilotRunning, runPilot,
+    // S2
+    oidcAcquiring, oidcResult, acquireOidcToken,
+    // S3
+    discoveredLocations, discovering, discoverLocations,
+    // S6
+    webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
+    // S9
+    selectedRvcs, setSelectedRvcs,
   } = useSimphonyConnection();
 
   useEffect(() => {
@@ -98,38 +111,42 @@ export default function SimphonyWizard() {
             setClientId(cfg.client_id || "");
             setClientSecret(cfg.client_secret || "");
           }
-          setCurrentStep(5);
+          setCurrentStep(7);
         }
       });
     }
   }, [searchParams]);
 
   useEffect(() => {
-    if (currentStep === 2 && connectionId && preflightChecks.length === 0 && !preflightRunning) runPreflight();
+    if (currentStep === 4 && connectionId && preflightChecks.length === 0 && !preflightRunning) runPreflight();
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if ((currentStep === 4 || currentStep === 5) && connectionId && daysWithSales.length === 0 && !loadingDays) findDaysWithSales(60);
+    if ((currentStep === 6 || currentStep === 7) && connectionId && daysWithSales.length === 0 && !loadingDays) findDaysWithSales(60);
   }, [currentStep, connectionId]);
 
   useEffect(() => {
-    if (selectedDay && (currentStep === 4 || currentStep === 5)) fetchSalesForDay(selectedDay);
+    if (selectedDay && (currentStep === 6 || currentStep === 7)) fetchSalesForDay(selectedDay);
   }, [selectedDay]);
 
+  useEffect(() => {
+    if (currentStep === 9 && connectionId) fetchWebhookStatus();
+  }, [currentStep, connectionId]);
+
   const handleNext = async () => {
-    if (currentStep === 3 && connectionId) {
+    if (currentStep === 5 && connectionId) {
       await updateConnection(connectionId, {
         sync_mode: syncMode, sync_frequency_minutes: frequency,
         backfill_days: backfill, location_name: locationName,
       });
     }
-    if (currentStep === 4) {
+    if (currentStep === 6) {
       const families = detectedFamilies.map((f) => ({
         name: f.name, isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(8, s + 1));
+    setCurrentStep((s) => Math.min(11, s + 1));
   };
 
   const canNext = () => {
@@ -185,7 +202,7 @@ export default function SimphonyWizard() {
     return <div className="h-4 w-4 rounded-full border-2 border-border" />;
   };
 
-  const preflightAllPass = preflightChecks.length > 0 && preflightChecks.filter((c) => c.id !== "cc").every((c) => c.status === "pass");
+  const preflightAllPass = preflightChecks.length > 0 && preflightChecks.filter((c) => !["cc", "notifications"].includes(c.id)).every((c) => c.status === "pass");
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -197,22 +214,25 @@ export default function SimphonyWizard() {
         <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-lg">O</div>
         <div>
           <h1 className="text-xl font-bold text-foreground">Connect Oracle MICROS Simphony</h1>
-          <p className="text-sm text-muted-foreground">STS Gen2 + OIDC + Config&Content + BI integration.</p>
+          <p className="text-sm text-muted-foreground">STS Gen2 + OIDC + C&C API + Notifications + Multi-RVC.</p>
         </div>
       </div>
 
       {/* Step indicator */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5 overflow-x-auto pb-1">
         {steps.map((step, i) => {
           const isActive = step.id === currentStep;
           const isDone = step.id < currentStep;
           return (
-            <div key={step.id} className="flex items-center gap-1 flex-1">
-              <div className={`flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-semibold transition-all ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
-                {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : step.id}
-              </div>
-              <span className={`text-[10px] font-medium hidden lg:block ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
-              {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
+            <div key={step.id} className="flex items-center gap-0.5 flex-1 min-w-0">
+              <button
+                onClick={() => step.id <= currentStep && setCurrentStep(step.id)}
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all shrink-0 ${isDone ? "bg-success text-success-foreground cursor-pointer" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
+              >
+                {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.id}
+              </button>
+              <span className={`text-[9px] font-medium hidden xl:block truncate ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{step.label}</span>
+              {i < steps.length - 1 && <div className={`h-px flex-1 min-w-1 ${isDone ? "bg-success" : "bg-border"}`} />}
             </div>
           );
         })}
@@ -221,14 +241,12 @@ export default function SimphonyWizard() {
       <AnimatePresence mode="wait">
         <motion.div key={currentStep} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }} className="rounded-xl border border-border bg-card p-6 shadow-card">
 
-          {/* ── Step 1: Connection (S1) ── */}
+          {/* ── Step 1: Connection ── */}
           {currentStep === 1 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Connection Details</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Enter Simphony credentials. Create API accounts in Reporting & Analytics → Administration → API Accounts.
-                </p>
+                <p className="mt-1 text-sm text-muted-foreground">Enter Simphony API credentials from Reporting & Analytics → Administration → API Accounts.</p>
               </div>
               <div className="space-y-4">
                 <div>
@@ -248,6 +266,7 @@ export default function SimphonyWizard() {
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Location Ref</label>
                     <Input placeholder="LOC001" value={locRef} onChange={(e) => setLocRef(e.target.value)} className="bg-background font-mono text-sm" />
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">Or use Discover step</p>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1.5 block">RVC Ref</label>
@@ -257,7 +276,6 @@ export default function SimphonyWizard() {
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">OIDC Base URL (OpenID Connect)</label>
                   <Input placeholder="https://login.oracleindustry.com" value={oidcBaseUrl} onChange={(e) => setOidcBaseUrl(e.target.value)} className="bg-background font-mono text-sm" />
-                  <p className="mt-1 text-[11px] text-muted-foreground">EMC → Enterprise Parameters → Applications → OpenID Connect Provider URL</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -270,19 +288,19 @@ export default function SimphonyWizard() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">ID Token (Bearer)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">ID Token (Bearer) <Badge variant="secondary" className="text-[9px] ml-1">Or use auto-acquire in step 2</Badge></label>
                   <Input type="password" placeholder="OIDC id_token" value={idToken} onChange={(e) => setIdToken(e.target.value)} className="bg-background font-mono text-sm" />
-                  <p className="mt-1 text-[11px] text-muted-foreground">Obtained via OIDC PKCE flow. Valid ~14 days; refresh before expiry.</p>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Config & Content API URL <Badge variant="secondary" className="text-[9px] ml-1">Optional</Badge></label>
                   <Input placeholder="https://myorg-cc.oracleindustry.com" value={ccBaseUrl} onChange={(e) => setCcBaseUrl(e.target.value)} className="bg-background font-mono text-sm" />
+                  <p className="mt-1 text-[11px] text-muted-foreground">EMC → Enterprise Parameters → Applications → CCAPI URL</p>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Winerim API Token</label>
                   <Input type="password" placeholder="Winerim API v2 token" value={winerimApiToken} onChange={(e) => setWinerimApiToken(e.target.value)} className="bg-background font-mono text-sm" />
                 </div>
-                <Button onClick={() => testConnection(hostUrl, idToken, locationName, winerimApiToken, oidcBaseUrl, ccBaseUrl, clientId, clientSecret)} disabled={testStatus === "testing" || !hostUrl || !idToken || !orgShortName || !locRef || !rvcRef} variant="secondary" className="w-full">
+                <Button onClick={() => testConnection(hostUrl, idToken, locationName, winerimApiToken, oidcBaseUrl, ccBaseUrl, clientId, clientSecret)} disabled={testStatus === "testing" || !hostUrl || !orgShortName || !locRef || !rvcRef || (!idToken && !clientId)} variant="secondary" className="w-full">
                   {testStatus === "testing" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {testStatus === "success" && <CheckCircle2 className="mr-2 h-4 w-4 text-success" />}
                   {testStatus === "error" && <XCircle className="mr-2 h-4 w-4 text-destructive" />}
@@ -295,12 +313,140 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 2: Preflight (S3) ── */}
+          {/* ── Step 2: Auth & Token (S2) ── */}
           {currentStep === 2 && (
             <div className="space-y-5">
               <div>
+                <h2 className="text-lg font-semibold text-foreground">OIDC Token Management</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Acquire and refresh tokens automatically via client_credentials flow.</p>
+              </div>
+              <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Key className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">Client Credentials</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div><span className="text-muted-foreground">OIDC URL</span><p className="font-mono text-foreground truncate">{oidcBaseUrl || "Not set"}</p></div>
+                  <div><span className="text-muted-foreground">Client ID</span><p className="font-mono text-foreground truncate">{clientId || "Not set"}</p></div>
+                </div>
+              </div>
+
+              <Button onClick={acquireOidcToken} disabled={oidcAcquiring || !oidcBaseUrl || !clientId || !clientSecret} variant="secondary" className="w-full">
+                {oidcAcquiring ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Key className="mr-2 h-4 w-4" />}
+                {oidcAcquiring ? "Acquiring Token…" : "Acquire OIDC Token"}
+              </Button>
+
+              {oidcResult && (
+                <div className={`rounded-lg border p-3 text-xs ${oidcResult.success ? "border-success/30 bg-success/5 text-success" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+                  {oidcResult.success ? <CheckCircle2 className="inline h-3.5 w-3.5 mr-1" /> : <XCircle className="inline h-3.5 w-3.5 mr-1" />}
+                  {oidcResult.message}
+                  {oidcResult.expiresAt && <p className="mt-1 font-mono">Expires: {oidcResult.expiresAt}</p>}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-border bg-card p-3 text-[11px] text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground text-xs">How OIDC works:</p>
+                <p>1. POST to <code className="text-primary">{`{OIDC_URL}/oidc-provider/v1/oauth2/token`}</code></p>
+                <p>2. With <code>grant_type=client_credentials</code>, client_id, client_secret</p>
+                <p>3. Returns id_token (valid ~14 days) used as Bearer for STS Gen2</p>
+                <p>4. Token is stored and auto-refreshed before expiry</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 3: Discover Locations & RVCs (S3 + S9) ── */}
+          {currentStep === 3 && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Discover Locations & Revenue Centers</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Auto-discover from Organizations API to avoid manual entry errors.</p>
+              </div>
+
+              <Button onClick={discoverLocations} disabled={discovering || !connectionId} variant="secondary" className="w-full">
+                {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Compass className="mr-2 h-4 w-4" />}
+                {discovering ? "Discovering…" : "Discover Locations"}
+              </Button>
+
+              {discoveredLocations.length > 0 && (
+                <div className="space-y-3">
+                  {discoveredLocations.map((loc) => (
+                    <div key={loc.locRef} className="rounded-lg border border-border overflow-hidden">
+                      <div className="px-4 py-3 bg-secondary/30 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{loc.name}</p>
+                          <p className="text-[11px] font-mono text-muted-foreground">locRef: {loc.locRef}</p>
+                        </div>
+                        <Button size="sm" variant="outline" onClick={() => setLocRef(loc.locRef)}>
+                          {locRef === loc.locRef ? <CheckCircle2 className="mr-1 h-3 w-3 text-success" /> : null}
+                          {locRef === loc.locRef ? "Selected" : "Use"}
+                        </Button>
+                      </div>
+                      {loc.revenueCenters.length > 0 && (
+                        <div className="divide-y divide-border">
+                          {loc.revenueCenters.map((rvc) => {
+                            const isSelected = selectedRvcs.includes(rvc.rvcRef);
+                            return (
+                              <div key={rvc.rvcRef} className="flex items-center justify-between px-4 py-2.5 bg-card">
+                                <div className="flex items-center gap-3">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={(checked) => {
+                                      if (checked) {
+                                        setSelectedRvcs([...selectedRvcs, rvc.rvcRef]);
+                                        if (!rvcRef) setRvcRef(rvc.rvcRef);
+                                      } else {
+                                        setSelectedRvcs(selectedRvcs.filter((r) => r !== rvc.rvcRef));
+                                      }
+                                    }}
+                                  />
+                                  <div>
+                                    <p className="text-sm text-foreground">{rvc.name}</p>
+                                    <p className="text-[11px] font-mono text-muted-foreground">rvcRef: {rvc.rvcRef}</p>
+                                  </div>
+                                </div>
+                                {rvc.rvcRef === rvcRef && <Badge variant="default" className="text-[9px]">Primary</Badge>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {selectedRvcs.length > 1 && (
+                    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
+                      <Layers className="inline h-3.5 w-3.5 mr-1" />
+                      Multi-RVC mode: {selectedRvcs.length} revenue centers selected. Sales will be fetched from all and deduplicated by checkRef.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {discoveredLocations.length === 0 && !discovering && (
+                <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground space-y-2">
+                  <p className="font-medium text-foreground text-sm">Manual entry</p>
+                  <p>If discovery fails, enter locRef and rvcRef manually from EMC → Setup → Locations / Revenue Centers.</p>
+                  <div className="grid grid-cols-2 gap-3 mt-2">
+                    <div>
+                      <label className="text-[11px] text-muted-foreground mb-1 block">Location Ref</label>
+                      <Input value={locRef} onChange={(e) => setLocRef(e.target.value)} className="bg-background font-mono text-sm" placeholder="LOC001" />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-muted-foreground mb-1 block">Primary RVC Ref</label>
+                      <Input value={rvcRef} onChange={(e) => setRvcRef(e.target.value)} className="bg-background font-mono text-sm" placeholder="RVC001" />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 4: Preflight (S8 enhanced) ── */}
+          {currentStep === 4 && (
+            <div className="space-y-5">
+              <div>
                 <h2 className="text-lg font-semibold text-foreground">Preflight Checks</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Verifying STS Gen2 activation, OIDC token, and optional C&C API access.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Verifying STS Gen2, OIDC, workstation, C&C API, and Notifications.</p>
               </div>
               {preflightRunning && (
                 <div className="flex items-center justify-center py-12">
@@ -323,9 +469,14 @@ export default function SimphonyWizard() {
                 </div>
               )}
               {!preflightRunning && !preflightAllPass && (
-                <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning">
-                  <AlertTriangle className="inline h-3.5 w-3.5 mr-1" />
-                  Some checks failed. You can continue setup but "Go Live" may be blocked. Fix issues and re-run.
+                <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning space-y-2">
+                  <div><AlertTriangle className="inline h-3.5 w-3.5 mr-1" />Some checks failed. Fix and re-run before Go Live.</div>
+                  <div className="text-[11px] space-y-1">
+                    <p className="font-medium">Common fixes:</p>
+                    <p>• <strong>Option 74</strong>: EMC → Setup → RVC Parameters → Options → #74 Enable STS Gen2</p>
+                    <p>• <strong>Workstation</strong>: EMC → Setup → Workstations → New → Type: POS API Client</p>
+                    <p>• <strong>CAPS Host</strong>: Set CAPS Service Host on the POS API Client workstation</p>
+                  </div>
                 </div>
               )}
               {!preflightRunning && (
@@ -334,8 +485,8 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 3: Sync Settings ── */}
-          {currentStep === 3 && (
+          {/* ── Step 5: Sync Settings ── */}
+          {currentStep === 5 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Sync Settings</h2>
@@ -369,12 +520,18 @@ export default function SimphonyWizard() {
                     ))}
                   </div>
                 </div>
+                {selectedRvcs.length > 1 && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
+                    <Layers className="inline h-3.5 w-3.5 mr-1" />
+                    Multi-RVC: syncing across {selectedRvcs.length} revenue centers ({selectedRvcs.join(", ")})
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* ── Step 4: Families ── */}
-          {currentStep === 4 && (
+          {/* ── Step 6: Families ── */}
+          {currentStep === 6 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
@@ -416,12 +573,12 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 5: Sales & Mapping (S4 BI sales) ── */}
-          {currentStep === 5 && (
+          {/* ── Step 7: Sales & Mapping ── */}
+          {currentStep === 7 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Review checks fetched via STS Gen2 / BI API.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Review checks fetched via STS Gen2{selectedRvcs.length > 1 ? ` across ${selectedRvcs.length} RVCs` : ""}.</p>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-2 block"><Calendar className="inline h-3.5 w-3.5 mr-1" />Business Day</label>
@@ -482,15 +639,14 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 6: Catalog (S5 C&C + S6 Import/Export) ── */}
-          {currentStep === 6 && (
+          {/* ── Step 8: Catalog & Write ── */}
+          {currentStep === 8 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Catalog & Write</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Read menu items via Config & Content API and optionally push Winerim wines.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Read menu items via C&C API and push Winerim wines (gated).</p>
               </div>
 
-              {/* Read catalog */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-foreground">Menu Items (C&C API)</h3>
@@ -514,7 +670,6 @@ export default function SimphonyWizard() {
                 )}
               </div>
 
-              {/* Write preview */}
               <div className="space-y-3 border-t border-border pt-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-foreground">Push Wines to Simphony</h3>
@@ -555,10 +710,9 @@ export default function SimphonyWizard() {
                 )}
               </div>
 
-              {/* Import/Export fallback (S6) */}
               <div className="space-y-3 border-t border-border pt-4">
                 <h3 className="text-sm font-medium text-foreground">Bulk Import/Export <Badge variant="secondary" className="text-[9px] ml-1">Plan B</Badge></h3>
-                <p className="text-[11px] text-muted-foreground">Generate a file for Simphony's Import/Export web service if C&C write is unavailable.</p>
+                <p className="text-[11px] text-muted-foreground">Generate a file for Simphony's Import/Export if C&C write is unavailable.</p>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={async () => {
                     const result = await generateImportExport("json");
@@ -587,8 +741,53 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 7: Pilot (S7) ── */}
-          {currentStep === 7 && (
+          {/* ── Step 9: Webhooks (S6) ── */}
+          {currentStep === 9 && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Notifications & Webhooks</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Register for near real-time check events via Simphony Notifications API.</p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">Webhook Status</span>
+                </div>
+                {webhookStatus ? (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <span className="text-muted-foreground">Registered</span>
+                    <span className="font-medium text-foreground">{webhookStatus.registered ? "Yes" : "No"}</span>
+                    <span className="text-muted-foreground">Callback URL</span>
+                    <span className="font-mono text-foreground truncate text-[10px]">{webhookStatus.callbackUrl}</span>
+                    <span className="text-muted-foreground">Last event</span>
+                    <span className="font-mono text-foreground">{webhookStatus.lastEventAt || "Never"}</span>
+                    <span className="text-muted-foreground">Total events</span>
+                    <span className="font-mono text-foreground">{webhookStatus.eventCount}</span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No webhook registered yet.</p>
+                )}
+              </div>
+
+              <Button onClick={registerWebhook} disabled={webhookRegistering || !connectionId} variant="secondary" className="w-full">
+                {webhookRegistering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}
+                {webhookRegistering ? "Registering…" : "Register Webhook"}
+              </Button>
+
+              <div className="rounded-lg border border-border bg-card p-3 text-[11px] text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground text-xs">How Notifications work:</p>
+                <p>1. We register a callback URL for CHECK_CLOSED / CHECK_OPENED events</p>
+                <p>2. Simphony sends POST to our endpoint when events occur</p>
+                <p>3. We validate and queue for async processing</p>
+                <p>4. Updated checks are fetched and upserted as SalesEvents</p>
+                <p className="text-warning mt-2"><AlertTriangle className="inline h-3 w-3 mr-1" />Notifications API may require partner enablement in your Simphony installation.</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Step 10: Pilot ── */}
+          {currentStep === 10 && (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Minimal Pilot (1 Location)</h2>
@@ -625,13 +824,13 @@ export default function SimphonyWizard() {
             </div>
           )}
 
-          {/* ── Step 8: Go Live ── */}
-          {currentStep === 8 && (
+          {/* ── Step 11: Go Live ── */}
+          {currentStep === 11 && (
             <div className="space-y-6 text-center py-4">
               <div className="flex justify-center"><div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10"><Power className="h-8 w-8 text-primary" /></div></div>
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
-                <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Simphony integration fully configured with STS Gen2 + OIDC.</p>
+                <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Simphony integration fully configured with STS Gen2 + OIDC + C&C + Notifications.</p>
               </div>
               {!preflightAllPass && (
                 <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning max-w-sm mx-auto">
@@ -644,7 +843,9 @@ export default function SimphonyWizard() {
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine families</span><span className="font-medium text-foreground">{wineCount}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">RVCs</span><span className="font-medium text-foreground">{selectedRvcs.length > 1 ? `${selectedRvcs.length} (multi)` : rvcRef || "1"}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">C&C API</span><span className="font-medium text-foreground">{ccBaseUrl ? "Configured" : "Not set"}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Webhooks</span><span className="font-medium text-foreground">{webhookStatus?.registered ? "Active" : "Not set"}</span></div>
               </div>
               <Button size="lg" onClick={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 1500); }} className="shadow-glow">
                 {enabled ? <><CheckCircle2 className="mr-2 h-4 w-4" /> Sync Enabled — Redirecting…</> : "Enable Sync"}
@@ -654,7 +855,7 @@ export default function SimphonyWizard() {
         </motion.div>
       </AnimatePresence>
 
-      {currentStep < 8 && (
+      {currentStep < 11 && (
         <div className="flex justify-between">
           <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Back
