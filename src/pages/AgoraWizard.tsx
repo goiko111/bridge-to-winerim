@@ -622,6 +622,7 @@ function StepSalesMapping({
   salesEvents, loadingSales, onFetchDay, onSaveSales,
   saving, saveResult, familyOverrides, detectedFamilies,
   catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
+  lastClosedDay,
 }: {
   daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
   loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
@@ -633,6 +634,7 @@ function StepSalesMapping({
   onBulkOverride: (ids: string[], override: "WINE" | "NOT_WINE") => void;
   recomputing: boolean; onRecompute: () => void;
   recomputeResult: { wine: number; notWine: number; needsReview: number } | null;
+  lastClosedDay?: string | null;
 }) {
   const [searchMapping, setSearchMapping] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
