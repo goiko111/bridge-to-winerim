@@ -54,9 +54,9 @@ const connectors: Connector[] = [
   {
     id: "hiopos",
     name: "Hiopos / Hioffice",
-    description: "Module/partner-oriented POS. No public API — requires integration contract.",
+    description: "Export/Import file-based integration. Upload CSV/XML sales & articles, generate import files for HIOPOS.",
     logo: "H",
-    status: "coming_soon",
+    status: "disconnected",
     country: "España",
   },
   {
@@ -290,6 +290,7 @@ export default function Integrations() {
                       if (c.id === "cassa") navigate("/integrations/cassa");
                       if (c.id === "bdp") navigate("/integrations/bdp");
                       if (c.id === "icg") navigate("/integrations/icg");
+                      if (c.id === "hiopos") navigate("/integrations/hiopos");
                     }}
                   >
                     <div className="p-5">
@@ -349,10 +350,11 @@ export default function Integrations() {
                             if (c.id === "square") navigate("/integrations/square");
                             if (c.id === "simphony") navigate("/integrations/simphony");
                             if (c.id === "cassa") navigate("/integrations/cassa");
-                            if (c.id === "bdp") navigate("/integrations/bdp");
-                            if (c.id === "icg") navigate("/integrations/icg");
-                          }}
-                        >
+                             if (c.id === "bdp") navigate("/integrations/bdp");
+                             if (c.id === "icg") navigate("/integrations/icg");
+                             if (c.id === "hiopos") navigate("/integrations/hiopos");
+                           }}
+                         >
                           Connect
                         </Button>
                       )}
