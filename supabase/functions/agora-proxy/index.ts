@@ -177,6 +177,26 @@ function suggestFamilyClassification(familyName: string): { suggestedWine: boole
   return { suggestedWine: false, confidence: "low" };
 }
 
+// ── NORMALIZE FORMAT: detect BOT / COPA / MAGNUM from ProductName prefix or SaleFormatName ──
+function normalizeLineFormat(productName: string, saleFormatName: string): string {
+  const pn = (productName || "").toUpperCase().trim();
+  const sf = (saleFormatName || "").toUpperCase().trim();
+
+  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …")
+  if (pn.startsWith("BOT.") || pn.startsWith("BOT ")) return "BOT";
+  if (pn.startsWith("COPA ") || pn.startsWith("COPA.")) return "COPA";
+  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM")) return "MAGNUM";
+
+  // Fallback to SaleFormatName
+  if (sf.includes("COPA") || sf.includes("GLASS") || sf.includes("VERRE")) return "COPA";
+  if (sf.includes("MAG") || sf.includes("MAGNUM")) return "MAGNUM";
+  if (sf.includes("BOT") || sf.includes("BOTTLE") || sf.includes("75CL") || sf.includes("BOTELLA")) return "BOT";
+
+  // If SaleFormatName is non-empty, keep as-is normalized
+  if (saleFormatName.trim()) return saleFormatName.trim();
+  return "";
+}
+
 // deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
@@ -731,8 +751,11 @@ serve(async (req) => {
         if (consecutiveEmpty >= 10 && daysWithSales.length > 0) break;
       }
 
+      // lastClosedDay = most recent day with sales (cash closure completed)
+      const lastClosedDay = daysWithSales.length > 0 ? daysWithSales[0] : null;
+
       return new Response(
-        JSON.stringify({ daysWithSales, totalScanned, totalInvoicesFound }),
+        JSON.stringify({ daysWithSales, totalScanned, totalInvoicesFound, lastClosedDay }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -784,10 +807,11 @@ serve(async (req) => {
             docTotal += lineTotal;
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
+            const normalizedFormat = normalizeLineFormat(productName, formatName);
             const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lines.push({
               provider_product_id: String(line.ProductId || ""),
-              name: productName, format: formatName, family,
+              name: productName, format: normalizedFormat, family,
               quantity: qty, unit_price: uPrice, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
               is_wine_candidate: wineResult.candidate, wine_score: wineResult.score, wine_reasons: wineResult.reasons,
@@ -863,11 +887,12 @@ serve(async (req) => {
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
+            const normalizedFmt = normalizeLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lineData.push({
               provider_product_id: String(line.ProductId || ""),
-              name: pName, format: fName, family: fam,
+              name: pName, format: normalizedFmt, family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
             });

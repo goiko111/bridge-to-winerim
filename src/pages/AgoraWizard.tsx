@@ -622,6 +622,7 @@ function StepSalesMapping({
   salesEvents, loadingSales, onFetchDay, onSaveSales,
   saving, saveResult, familyOverrides, detectedFamilies,
   catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
+  lastClosedDay,
 }: {
   daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
   loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
@@ -633,6 +634,7 @@ function StepSalesMapping({
   onBulkOverride: (ids: string[], override: "WINE" | "NOT_WINE") => void;
   recomputing: boolean; onRecompute: () => void;
   recomputeResult: { wine: number; notWine: number; needsReview: number } | null;
+  lastClosedDay?: string | null;
 }) {
   const [searchMapping, setSearchMapping] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -728,6 +730,52 @@ function StepSalesMapping({
         </p>
         {useCatalog && <Badge variant="outline" className="mt-1 text-[10px]"><Package className="mr-1 h-3 w-3" /> Catalog ({catalogProducts.length})</Badge>}
       </div>
+
+      {/* Last closed day banner */}
+      {lastClosedDay && (
+        <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+          <Calendar className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-xs text-foreground">
+            Data available up to last closed day: <span className="font-mono font-semibold text-primary">{lastClosedDay}</span>
+          </span>
+        </div>
+      )}
+
+      {/* BOT / COPA / MAGNUM format breakdown */}
+      {salesEvents.length > 0 && (() => {
+        const allLines = salesEvents.flatMap(e => e.lines);
+        const botLines = allLines.filter(l => l.format === "BOT");
+        const copaLines = allLines.filter(l => l.format === "COPA");
+        const magnumLines = allLines.filter(l => l.format === "MAGNUM");
+        const otherLines = allLines.filter(l => l.format !== "BOT" && l.format !== "COPA" && l.format !== "MAGNUM");
+        const botQty = botLines.reduce((s, l) => s + l.quantity, 0);
+        const copaQty = copaLines.reduce((s, l) => s + l.quantity, 0);
+        const magnumQty = magnumLines.reduce((s, l) => s + l.quantity, 0);
+        return (
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{botLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">BOT lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {botQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{copaLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">COPA lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {copaQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{magnumLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">MAGNUM lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {magnumQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{otherLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">Other</p>
+              <p className="text-[10px] font-mono text-muted-foreground">{allLines.length} total</p>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Day selector for invoice-based */}
       {!useCatalog && (
@@ -3314,7 +3362,7 @@ export default function AgoraWizard() {
   const {
     connectionId, setConnectionId,
     testStatus, testError, testConnection, updateConnection, loadConnection,
-    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats, lastClosedDay,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb, enableSync, saveFamilyRules,
     catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
@@ -3522,7 +3570,8 @@ export default function AgoraWizard() {
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               catalogProducts={catalogProducts}
               onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
-              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult} />
+              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult}
+              lastClosedDay={lastClosedDay} />
           )}
           {currentStep === 8 && (
             <StepWineMatching connectionId={connectionId} />

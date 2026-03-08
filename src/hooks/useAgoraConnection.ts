@@ -102,6 +102,7 @@ export function useAgoraConnection() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [loadingDays, setLoadingDays] = useState(false);
   const [scanStats, setScanStats] = useState<{ totalScanned: number; totalInvoicesFound: number } | null>(null);
+  const [lastClosedDay, setLastClosedDay] = useState<string | null>(null);
 
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [detectedFamilies, setDetectedFamilies] = useState<DetectedFamily[]>([]);
@@ -185,6 +186,7 @@ export function useAgoraConnection() {
       const days: string[] = data?.daysWithSales || [];
       setDaysWithSales(days);
       setScanStats({ totalScanned: data?.totalScanned || 0, totalInvoicesFound: data?.totalInvoicesFound || 0 });
+      setLastClosedDay(data?.lastClosedDay || (days.length > 0 ? days[0] : null));
       if (days.length > 0 && !selectedDay) setSelectedDay(days[0]);
     } catch (e) { console.error("Failed to find business days:", e); }
     finally { setLoadingDays(false); }
@@ -430,7 +432,7 @@ export function useAgoraConnection() {
     connectionId, setConnectionId,
     testStatus, testError, testConnection,
     saveConnection, updateConnection, loadConnection,
-    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats, lastClosedDay,
     salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
