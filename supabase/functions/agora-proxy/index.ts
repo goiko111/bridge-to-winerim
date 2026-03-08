@@ -884,11 +884,12 @@ serve(async (req) => {
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
+            const normalizedFmt = normalizeLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lineData.push({
               provider_product_id: String(line.ProductId || ""),
-              name: pName, format: fName, family: fam,
+              name: pName, format: normalizedFmt, family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
             });
