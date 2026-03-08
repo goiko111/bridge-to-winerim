@@ -2286,6 +2286,11 @@ function StepOutboundSync({
                           t.status === "BLOCKED" ? "outline" :
                           "secondary"
                         } className="text-[10px]">{t.status}</Badge>
+                        {(t.payload_json as any)?._operation && (
+                          <Badge variant="outline" className={`text-[10px] ${(t.payload_json as any)._operation === "CREATE" ? "border-emerald-500 text-emerald-600" : "border-blue-500 text-blue-600"}`}>
+                            {(t.payload_json as any)._operation === "CREATE" ? "➕ CREATE" : "✏️ UPDATE"}
+                          </Badge>
+                        )}
                         {(t.payload_json as any)?._trigger_source && (
                           <Badge variant="outline" className="text-[10px]">
                             {(t.payload_json as any)._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :
