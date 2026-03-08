@@ -2535,13 +2535,28 @@ function StepMasterData({
   );
   const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
 
-  // Determine active central: user selection > single candidate > first sale center
+  // Initialize from persisted settings
+  useEffect(() => {
+    if (writeSettings.selected_sale_center_ids && writeSettings.selected_sale_center_ids.length > 0) {
+      setSelectedSaleCenterId(writeSettings.selected_sale_center_ids[0]);
+    }
+  }, [writeSettings.selected_sale_center_ids]);
+
+  // Persist selection to DB
+  const handleSelectSaleCenter = useCallback((id: string | null) => {
+    setSelectedSaleCenterId(id);
+    saveWriteSettings({ selected_sale_center_ids: id ? [id] : [] } as any);
+  }, [saveWriteSettings]);
+
+  // Determine active central: persisted selection > single candidate > first sale center
   const activeCentralCenter = (() => {
     if (selectedSaleCenterId) {
       return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
     }
     if (centralCandidates.length === 1) return centralCandidates[0];
     if (centralCandidates.length > 1) return null; // force selection
+    // Default: pick first sale center if none selected
+    if (masterData.saleCenters.length > 0) return masterData.saleCenters[0];
     return null;
   })();
 
