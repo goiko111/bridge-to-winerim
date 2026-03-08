@@ -16,6 +16,7 @@ import RevoWizard from "./pages/RevoWizard";
 import BdpWizard from "./pages/BdpWizard";
 import IcgWizard from "./pages/IcgWizard";
 import HioposWizard from "./pages/HioposWizard";
+import TouchBistroWizard from "./pages/TouchBistroWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
@@ -44,6 +45,7 @@ const App = () => (
             <Route path="/integrations/bdp" element={<BdpWizard />} />
             <Route path="/integrations/icg" element={<IcgWizard />} />
             <Route path="/integrations/hiopos" element={<HioposWizard />} />
+            <Route path="/integrations/touchbistro" element={<TouchBistroWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />

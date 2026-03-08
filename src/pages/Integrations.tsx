@@ -193,9 +193,9 @@ const connectors: Connector[] = [
   {
     id: "touchbistro",
     name: "TouchBistro",
-    description: "No public API docs. Integrations via marketplace/partners — request credentials from support.",
+    description: "CSV report imports (Menu Item Sales, Bills, Payments, Items) + optional Private API for approved partners.",
     logo: "T",
-    status: "coming_soon",
+    status: "disconnected",
     country: "USA",
   },
   {
@@ -291,6 +291,7 @@ export default function Integrations() {
                       if (c.id === "bdp") navigate("/integrations/bdp");
                       if (c.id === "icg") navigate("/integrations/icg");
                       if (c.id === "hiopos") navigate("/integrations/hiopos");
+                      if (c.id === "touchbistro") navigate("/integrations/touchbistro");
                     }}
                   >
                     <div className="p-5">
@@ -353,6 +354,7 @@ export default function Integrations() {
                              if (c.id === "bdp") navigate("/integrations/bdp");
                              if (c.id === "icg") navigate("/integrations/icg");
                              if (c.id === "hiopos") navigate("/integrations/hiopos");
+                             if (c.id === "touchbistro") navigate("/integrations/touchbistro");
                            }}
                          >
                           Connect
