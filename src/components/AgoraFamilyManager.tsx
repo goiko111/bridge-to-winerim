@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, CheckCircle2, XCircle, Grape, Plus, HelpCircle, Palette, Hash, Eye, EyeOff,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -239,6 +240,7 @@ function ManualFamilyCreator({ connectionId, syncing, onSyncMasterData }: Pick<P
 function FamilyMappingSection({ connectionId, families, mappingsVersion }: { connectionId: string | null; families: AgoraMasterItem[]; mappingsVersion: number }) {
   const [mappings, setMappings] = useState<FamilyMapping[]>([]);
   const [loadingMappings, setLoadingMappings] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
 
   const loadMappings = useCallback(async () => {
     if (!connectionId) return;
@@ -268,6 +270,25 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
       }
       return [...prev, { mapping_key: mappingKey, agora_family_id: familyId, agora_family_name: familyName }];
     });
+  };
+
+  const handleReassign = async () => {
+    if (!connectionId) return;
+    setReassigning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "reassign-families", connectionId },
+      });
+      if (error) throw error;
+      toast({
+        title: "Reassign queued",
+        description: `${data?.queued || 0} UPDATE tasks queued to reassign products to mapped families. Process them in Outbound Sync (Step 11).`,
+      });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setReassigning(false);
+    }
   };
 
   const getMappingValue = (key: string) => mappings.find(m => m.mapping_key === key)?.agora_family_id || "";
@@ -319,6 +340,13 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
             Wines pushed from Winerim will use these family assignments.
           </p>
         </div>
+      )}
+      {hasAnyMapping && (
+        <Button variant="outline" size="sm" className="h-7 text-[11px]"
+          onClick={handleReassign} disabled={reassigning}>
+          {reassigning ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+          Reassign existing pushed products to mapping
+        </Button>
       )}
     </div>
   );

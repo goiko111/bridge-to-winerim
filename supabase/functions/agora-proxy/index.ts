@@ -2675,6 +2675,65 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── REASSIGN FAMILIES (re-push products with current family mappings) ──
+    if (action === "reassign-families") {
+      const winerimWineIds = payload.winerimWineIds || [];
+
+      // Get all confirmed XML_IMPORT mappings to find which products exist
+      let targetWineIds: string[] = winerimWineIds;
+      if (targetWineIds.length === 0) {
+        const { data: mappings } = await supabase
+          .from("product_mappings").select("winerim_wine_id, format_type")
+          .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+        if (mappings) {
+          targetWineIds = [...new Set(mappings.map((m: any) => m.winerim_wine_id).filter(Boolean))];
+        }
+      }
+
+      if (targetWineIds.length === 0) {
+        return new Response(JSON.stringify({ success: true, message: "No pushed products to reassign", queued: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Get connection write settings for format types
+      const { data: connSettings } = await supabase
+        .from("pos_connections").select("write_bottle, write_glass")
+        .eq("id", connectionId).single();
+      const formatTypes: string[] = [];
+      if (connSettings?.write_bottle !== false) formatTypes.push("BOTTLE");
+      if (connSettings?.write_glass) formatTypes.push("GLASS");
+      if (formatTypes.length === 0) formatTypes.push("BOTTLE");
+
+      let queued = 0;
+      for (const wineId of targetWineIds) {
+        // Skip if already queued
+        const { data: existing } = await supabase
+          .from("outbound_tasks").select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "REASSIGN_FAMILIES" })
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          payload_json: {
+            _winerim_wine_id: wineId,
+            _format_types: formatTypes,
+            _write_mode: "XML_IMPORT",
+            _trigger_source: "REASSIGN_FAMILIES",
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "verify-products") {
       const { data: masterData } = await supabase
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
