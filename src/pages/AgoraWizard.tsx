@@ -2247,6 +2247,29 @@ function StepOutboundSync({
           {backfillingPreparation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wrench className="mr-2 h-4 w-4" />}
           Fix Preparation Fields {selectedWineIds.size > 0 ? `(${selectedWineIds.size})` : "(all)"}
         </Button>
+        <Button variant="ghost" size="sm"
+          onClick={async () => {
+            if (!connectionId) return;
+            toast({ title: "Generating debug bundle…" });
+            try {
+              const { data, error } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "debug-bundle", connectionId },
+              });
+              if (error) throw error;
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `debug-bundle-${connectionId?.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast({ title: "Debug bundle downloaded" });
+            } catch (e: any) {
+              toast({ title: "Failed to generate bundle", description: e.message, variant: "destructive" });
+            }
+          }}>
+          <Download className="mr-2 h-4 w-4" /> Export Debug Bundle
+        </Button>
       </div>
 
       {/* Queue wines */}
