@@ -379,7 +379,7 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
@@ -389,8 +389,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const existingProducts = (masterData.products_summary_json || []) as { Id: string; Name: string }[];
 
   const defaultVatId = connection.default_vat_id || findVatIdByRate(vats, connection.default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
-  const defaultPrepTypeId = connection.default_preparation_type_id || "";
-  const defaultPrepOrderId = connection.default_preparation_order_id || "";
+  const defaultPrepTypeId = forceEmptyPreparation ? "" : (connection.default_preparation_type_id || "");
+  const defaultPrepOrderId = forceEmptyPreparation ? "" : (connection.default_preparation_order_id || "");
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
