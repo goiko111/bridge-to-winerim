@@ -804,10 +804,11 @@ serve(async (req) => {
             docTotal += lineTotal;
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
+            const normalizedFormat = normalizeLineFormat(productName, formatName);
             const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lines.push({
               provider_product_id: String(line.ProductId || ""),
-              name: productName, format: formatName, family,
+              name: productName, format: normalizedFormat, family,
               quantity: qty, unit_price: uPrice, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
               is_wine_candidate: wineResult.candidate, wine_score: wineResult.score, wine_reasons: wineResult.reasons,
