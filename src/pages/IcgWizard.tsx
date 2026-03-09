@@ -493,6 +493,8 @@ export default function IcgWizard() {
         <p className="text-sm text-muted-foreground mt-1">Review and enable sync.</p>
       </div>
 
+      <ProviderReadinessPanel connectionId={icg.connectionId} provider="icg" />
+
       {/* Checklist */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">Pre-flight Checklist</h3>

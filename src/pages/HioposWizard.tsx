@@ -688,6 +688,8 @@ export default function HioposWizard() {
             <p className="text-sm text-muted-foreground">No data yet. Click "Refresh Diagnostics" to load.</p>
           )}
 
+          <ProviderReadinessPanel connectionId={hiopos.connectionId} provider="hiopos" />
+
           <div className="flex justify-between pt-4 border-t">
             <Button variant="outline" onClick={() => setStep(6)}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
             <Button 
