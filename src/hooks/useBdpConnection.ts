@@ -400,6 +400,24 @@ export function useBdpConnection() {
     return adaptVerificationResult(raw);
   }, [verifyProduct]);
 
+  // ── Repair action (generic) ──
+  const runRepairAction = useCallback(async (repairAction: string) => {
+    if (!connectionId) return null;
+    setRepairing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: repairAction, connectionId },
+      });
+      if (error) throw error;
+      return data;
+    } catch (e) {
+      console.error("Failed BDP repair action:", e);
+      return null;
+    } finally {
+      setRepairing(false);
+    }
+  }, [connectionId]);
+
   const loadExistingConnection = async () => {
     const { data } = await supabase
       .from("pos_connections")
@@ -434,5 +452,7 @@ export function useBdpConnection() {
     verifying, verifyResult, verifyProduct,
     verifyProductShared,
     verifyProductV2,
+    // Repair
+    repairing, runRepairAction,
   };
 }
