@@ -1020,11 +1020,41 @@ export default function SimphonyWizard() {
                 </div>
               )}
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
+                {/* Location & RVCs */}
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Location</span>
+                  <span className="font-medium text-foreground">
+                    {(() => {
+                      const loc = discoveredLocations.find((l) => l.locRef === locRef);
+                      return loc ? `${loc.name} (${locRef})` : locRef || "Not set";
+                    })()}
+                  </span>
+                </div>
+                <div className="text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Revenue Centers</span>
+                    <span className="font-medium text-foreground">{selectedRvcs.length > 1 ? `${selectedRvcs.length} (multi-RVC)` : rvcRef || "Not set"}</span>
+                  </div>
+                  {selectedRvcs.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1 justify-end">
+                      {selectedRvcs.map((r) => {
+                        const loc = discoveredLocations.find((l) => l.locRef === locRef);
+                        const rvcInfo = loc?.revenueCenters.find((rv) => rv.rvcRef === r);
+                        return (
+                          <Badge key={r} variant="secondary" className="text-[9px] font-mono">
+                            {rvcInfo ? rvcInfo.name : r}
+                            {r === rvcRef && <span className="ml-0.5 text-primary">★</span>}
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="border-t border-border my-1" />
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only (STS)" : "Bidirectional (STS+CCAPI)"}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine families</span><span className="font-medium text-foreground">{wineCount}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">RVCs</span><span className="font-medium text-foreground">{selectedRvcs.length > 1 ? `${selectedRvcs.length} (multi)` : rvcRef || "1"}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">C&C API</span><span className="font-medium text-foreground">{ccBaseUrl ? "Configured" : "Not set"}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Webhooks</span><span className="font-medium text-foreground">{webhookStatus?.registered ? "Active" : "Not set"}</span></div>
               </div>
