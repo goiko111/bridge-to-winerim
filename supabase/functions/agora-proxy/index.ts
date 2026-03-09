@@ -2316,6 +2316,45 @@ serve(async (req) => {
           verificationResult.issues.push(`Verification fetch failed: ${String(verifyErr).substring(0, 200)}`);
         }
 
+        // ── POST-IMPORT VERIFICATION — PREPARATION FIELDS CONSISTENCY ──
+        // Re-fetch export XML to verify PreparationTypeId / PreparationOrderId consistency
+        try {
+          const prepVerifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+          const prepVerifyRes = await fetchWithRetry(prepVerifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          if (prepVerifyRes.ok) {
+            const prepVerifyXml = await prepVerifyRes.text();
+            for (const wine of wines) {
+              for (const fmt of formatTypes) {
+                const productId = fmt === "MAGNUM"
+                  ? String(900000 + Number(wine.winerim_id || 0))
+                  : fmt === "GLASS"
+                  ? String(700000 + Number(wine.winerim_id || 0))
+                  : String(500000 + Number(wine.winerim_id || 0));
+                const productRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)`, "i");
+                const productMatch = prepVerifyXml.match(productRegex);
+                if (productMatch) {
+                  const attrs = productMatch[1];
+                  const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+                  const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+                  const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+                  const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+                  const typeEmpty = !prepTypeVal || prepTypeVal === "";
+                  const orderEmpty = !prepOrderVal || prepOrderVal === "";
+                  if (typeEmpty !== orderEmpty) {
+                    verificationResult.verified = false;
+                    verificationResult.summary.failed++;
+                    verificationResult.issues.push(
+                      `Product ${productId} (${fmt} ${wine.name}): PreparationTypeId="${prepTypeVal}" / PreparationOrderId="${prepOrderVal}" MISMATCH — causes TPV crash`
+                    );
+                  }
+                }
+              }
+            }
+          }
+        } catch (_prepVerifyErr) {
+          // Non-blocking: best-effort
+        }
+
         // If verification failed, mark outbound tasks as FAILED
         if (!verificationResult.verified && verificationResult.missing_prices.length > 0) {
           const uniquePlIds = [...new Set(verificationResult.missing_prices.map(mp => mp.price_list_id))];
