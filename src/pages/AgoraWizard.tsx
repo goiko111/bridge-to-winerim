@@ -27,6 +27,7 @@ import {
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
@@ -2231,6 +2232,7 @@ function StepOutboundSync({
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
+  reassigningFamilies, onReassignFamilies,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2249,6 +2251,8 @@ function StepOutboundSync({
   onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
   fixingPrices: boolean;
   onFixMissingPrices: (winerimWineIds: string[], formatTypes?: string[]) => Promise<any>;
+  reassigningFamilies: boolean;
+  onReassignFamilies: (winerimWineIds?: string[]) => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
@@ -2406,19 +2410,6 @@ function StepOutboundSync({
         <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
         </Button>
-        <Button variant="outline" size="sm"
-          onClick={async () => {
-            const ids = selectedWineIds.size > 0 ? Array.from(selectedWineIds) : undefined;
-            const result = await onBackfillPreparation(ids);
-            toast({
-              title: "Preparation Fix Queued",
-              description: `${result?.queued || 0} tasks queued to fix PreparationType/Order fields.`,
-            });
-          }}
-          disabled={backfillingPreparation}>
-          {backfillingPreparation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wrench className="mr-2 h-4 w-4" />}
-          Fix Preparation Fields {selectedWineIds.size > 0 ? `(${selectedWineIds.size})` : "(all)"}
-        </Button>
         <Button variant="ghost" size="sm"
           onClick={async () => {
             if (!connectionId) return;
@@ -2479,6 +2470,21 @@ function StepOutboundSync({
             }}>Select All</Button>
           </div>
         </div>
+      )}
+
+      {/* Repair Actions Panel */}
+      {canWrite && (
+        <AgoraRepairActionsPanel
+          connectionId={connectionId}
+          backfillingPreparation={backfillingPreparation}
+          onBackfillPreparation={onBackfillPreparation}
+          fixingPrices={fixingPrices}
+          onFixMissingPrices={onFixMissingPrices}
+          reassigningFamilies={reassigningFamilies}
+          onReassignFamilies={onReassignFamilies}
+          onProcessQueue={onProcessQueue}
+          processingQueue={processingQueue}
+        />
       )}
 
       {/* Task list */}
@@ -3843,7 +3849,9 @@ export default function AgoraWizard() {
               backfillingPreparation={outbound.backfillingPreparation}
               onBackfillPreparation={outbound.backfillPreparation}
               fixingPrices={outbound.fixingPrices}
-              onFixMissingPrices={outbound.fixMissingPrices} />
+              onFixMissingPrices={outbound.fixMissingPrices}
+              reassigningFamilies={outbound.reassigningFamilies}
+              onReassignFamilies={outbound.reassignFamilies} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}

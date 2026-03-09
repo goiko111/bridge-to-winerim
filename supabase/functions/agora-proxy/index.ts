@@ -2865,9 +2865,19 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Queue them as outbound tasks for re-push
+      // Queue them as outbound tasks for re-push (idempotent: skip already queued)
       let queued = 0;
+      let skipped = 0;
       for (const wineId of targetWineIds) {
+        const { data: existing } = await supabase
+          .from("outbound_tasks").select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "BACKFILL_PRICES" })
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing && existing.length > 0) { skipped++; continue; }
+
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "AGORA_XML_UPSERT_PRODUCT",
@@ -2882,7 +2892,7 @@ serve(async (req) => {
         queued++;
       }
 
-      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets: targetWineIds.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -2917,6 +2927,7 @@ serve(async (req) => {
 
       // Queue UPDATE tasks with a special flag to force empty preparation fields
       let queued = 0;
+      let skipped = 0;
       for (const wineId of targetWineIds) {
         // Skip if already queued
         const { data: existing } = await supabase
@@ -2926,7 +2937,7 @@ serve(async (req) => {
           .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "BACKFILL_PREPARATION" })
           .in("status", ["QUEUED", "RUNNING"])
           .limit(1);
-        if (existing && existing.length > 0) continue;
+        if (existing && existing.length > 0) { skipped++; continue; }
 
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
@@ -2943,7 +2954,7 @@ serve(async (req) => {
         queued++;
       }
 
-      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets: targetWineIds.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -2977,6 +2988,7 @@ serve(async (req) => {
       if (formatTypes.length === 0) formatTypes.push("BOTTLE");
 
       let queued = 0;
+      let skipped = 0;
       for (const wineId of targetWineIds) {
         // Skip if already queued
         const { data: existing } = await supabase
@@ -2986,7 +2998,7 @@ serve(async (req) => {
           .contains("payload_json", { _winerim_wine_id: wineId, _trigger_source: "REASSIGN_FAMILIES" })
           .in("status", ["QUEUED", "RUNNING"])
           .limit(1);
-        if (existing && existing.length > 0) continue;
+        if (existing && existing.length > 0) { skipped++; continue; }
 
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
@@ -3002,7 +3014,7 @@ serve(async (req) => {
         queued++;
       }
 
-      return new Response(JSON.stringify({ success: true, queued, totalTargets: targetWineIds.length }),
+      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets: targetWineIds.length }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
