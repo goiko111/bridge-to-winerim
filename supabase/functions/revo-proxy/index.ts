@@ -1222,6 +1222,128 @@ serve(async (req) => {
       return json({ products: wines });
     }
 
+    // ── Helper: verify price contexts for an item ──
+    async function verifyPriceContexts(
+      itemId: string,
+      itemData: any,
+      errors: any[],
+      warnings: any[],
+    ): Promise<{ verified: boolean; contexts: any[] }> {
+      const contexts: any[] = [];
+      const basePrice = Number(itemData.price || itemData.sellingPrice || 0);
+
+      // 1) Check selling formats on the item (some Revo setups embed them)
+      const sellingFormats = itemData.sellingFormats || itemData.selling_formats || [];
+      if (Array.isArray(sellingFormats) && sellingFormats.length > 0) {
+        for (const sf of sellingFormats) {
+          const sfName = String(sf.name || sf.format || "unknown");
+          const sfPrice = Number(sf.price || sf.sellingPrice || 0);
+          contexts.push({ context: `format:${sfName}`, price: sfPrice });
+          if (sfPrice <= 0) {
+            errors.push({
+              code: "PRICE_ZERO_IN_FORMAT",
+              message: `Price is ${sfPrice} in selling format "${sfName}". Product is not sellable in this format.`,
+              field: "price",
+              context: { format: sfName, price: sfPrice },
+            });
+          }
+        }
+      }
+
+      // 2) Try fetching selling formats endpoint for the item
+      try {
+        const sfRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items/${itemId}/sellingFormats`, revoHeaders, connectionId,
+        );
+        if (sfRes.ok) {
+          const sfJson = await sfRes.json();
+          const formats = Array.isArray(sfJson) ? sfJson : sfJson.data || [];
+          for (const sf of formats) {
+            const sfName = String(sf.name || sf.format || "unknown");
+            const sfPrice = Number(sf.price || sf.sellingPrice || 0);
+            // Avoid duplicates from embedded formats
+            if (!contexts.some((c) => c.context === `format:${sfName}`)) {
+              contexts.push({ context: `format:${sfName}`, price: sfPrice });
+              if (sfPrice <= 0) {
+                errors.push({
+                  code: "PRICE_ZERO_IN_FORMAT",
+                  message: `Price is ${sfPrice} in selling format "${sfName}". Product is not sellable in this format.`,
+                  field: "price",
+                  context: { format: sfName, price: sfPrice },
+                });
+              }
+            }
+          }
+        }
+      } catch (_e) { /* endpoint may not exist — non-blocking */ }
+
+      // 3) Try fetching price lists for the item
+      try {
+        const plRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items/${itemId}/priceLists`, revoHeaders, connectionId,
+        );
+        if (plRes.ok) {
+          const plJson = await plRes.json();
+          const lists = Array.isArray(plJson) ? plJson : plJson.data || [];
+          for (const pl of lists) {
+            const plName = String(pl.name || pl.priceListName || `priceList:${pl.id || "?"}`);
+            const plPrice = Number(pl.price || pl.amount || 0);
+            contexts.push({ context: `priceList:${plName}`, price: plPrice });
+            if (plPrice <= 0) {
+              errors.push({
+                code: "PRICE_ZERO_IN_PRICELIST",
+                message: `Price is ${plPrice} in price list "${plName}". Product is not sellable in this context.`,
+                field: "price",
+                context: { priceList: plName, price: plPrice },
+              });
+            }
+          }
+        }
+      } catch (_e) { /* endpoint may not exist — non-blocking */ }
+
+      // 4) Check base price (always required)
+      contexts.push({ context: "base", price: basePrice });
+      const baseFailed = basePrice <= 0;
+      if (baseFailed) {
+        // Only add if not already reported
+        if (!errors.some((e: any) => e.code === "PRICE_ZERO")) {
+          errors.push({
+            code: "PRICE_ZERO",
+            message: `Base price is ${basePrice}. Product must have price > 0 to be sellable.`,
+            field: "price",
+            context: { actual: basePrice },
+          });
+        }
+      }
+
+      // 5) If there are rooms, verify the item's category is reachable from at least one room
+      try {
+        const roomsRes = await revoFetch(`${REVO_BASE}/v2/rooms`, revoHeaders, connectionId);
+        if (roomsRes.ok) {
+          const roomsJson = await roomsRes.json();
+          const rooms = Array.isArray(roomsJson) ? roomsJson : roomsJson.data || [];
+          if (rooms.length > 0) {
+            const catId = String(itemData.category_id || itemData.categoryId || "");
+            // Some Revo setups restrict categories per room via price lists or menus
+            // If rooms exist and no price lists were found, emit a warning
+            if (contexts.filter((c) => c.context.startsWith("priceList:")).length === 0 && rooms.length > 1) {
+              warnings.push({
+                code: "MULTI_ROOM_NO_PRICELISTS",
+                message: `${rooms.length} rooms detected but no price lists found for this item. Verify the product is available in all required rooms/contexts.`,
+                field: "price",
+                context: { roomCount: rooms.length, rooms: rooms.map((r: any) => r.name || r.id).slice(0, 5) },
+              });
+            }
+          }
+        }
+      } catch (_e) { /* non-blocking */ }
+
+      const allPricesOk = !baseFailed && !errors.some((e: any) =>
+        e.code === "PRICE_ZERO_IN_FORMAT" || e.code === "PRICE_ZERO_IN_PRICELIST"
+      );
+      return { verified: allPricesOk, contexts };
+    }
+
     // ── VERIFY-WRITE (Post-write verification – strict) ──
     if (action === "verify-write") {
       const {
@@ -1241,6 +1363,7 @@ serve(async (req) => {
         verified_scope: false,
         verified_family: false,
         verified_tax: false,
+        price_contexts: [] as any[],
         errors: [] as Issue[],
         warnings: [] as Issue[],
       };
@@ -1275,25 +1398,20 @@ serve(async (req) => {
           const item = await itemRes.json();
           const itemData = item.data || item;
 
-          // 3) Verify price > 0
-          const actualPrice = Number(itemData.price || itemData.sellingPrice || 0);
+          // 3) Verify prices across all contexts
           const expected = Number(expectedPrice || price || 0);
-          if (actualPrice > 0) {
-            result.verified_prices = true;
-            if (expected > 0 && Math.abs(actualPrice - expected) > 0.01) {
-              result.warnings.push({
-                code: "PRICE_MISMATCH",
-                message: `Expected price ${expected}, found ${actualPrice}`,
-                field: "price",
-                context: { expected, actual: actualPrice },
-              });
-            }
-          } else {
-            result.errors.push({
-              code: "PRICE_ZERO",
-              message: `Item exists but price is ${actualPrice}. Expected > 0.`,
+          const priceCheck = await verifyPriceContexts(itemId, itemData, result.errors, result.warnings);
+          result.price_contexts = priceCheck.contexts;
+          result.verified_prices = priceCheck.verified;
+
+          // Check expected price match on base
+          const actualPrice = Number(itemData.price || itemData.sellingPrice || 0);
+          if (actualPrice > 0 && expected > 0 && Math.abs(actualPrice - expected) > 0.01) {
+            result.warnings.push({
+              code: "PRICE_MISMATCH",
+              message: `Expected price ${expected}, found ${actualPrice}`,
               field: "price",
-              context: { actual: actualPrice, expected },
+              context: { expected, actual: actualPrice },
             });
           }
 
@@ -1308,7 +1426,6 @@ serve(async (req) => {
               field: "category_id",
             });
           } else {
-            // Category is assigned — check it optionally matches expected
             if (expectedCatId && actualCategoryId !== expectedCatId) {
               result.warnings.push({
                 code: "CATEGORY_MISMATCH",
@@ -1317,7 +1434,6 @@ serve(async (req) => {
                 context: { expected: expectedCatId, actual: actualCategoryId },
               });
             }
-            // Verify the category has a parent group (item is reachable in POS menu)
             try {
               const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
               if (catRes.ok) {
