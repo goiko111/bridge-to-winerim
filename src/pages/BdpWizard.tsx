@@ -882,7 +882,7 @@ function StepCatalogWrite({
           <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Post-Write Verification
         </p>
         <p className="text-xs text-muted-foreground">
-          Verify a product exists in BDP with a valid price after create/update. Returns the shared verification contract (exists, price, scope).
+          Verify a product exists in BDP with valid price, family, and tax mapping. Returns the strict verification contract.
         </p>
         <div className="flex gap-2 items-end">
           <div className="flex-1">

@@ -280,10 +280,10 @@ export function useBdpConnection() {
     }
   }, [connectionId]);
 
-  const verifyProductV2 = useCallback(async (productId: string) => {
+  const verifyProductV2 = useCallback(async (productId: string, expectedFamily?: string, expectedVatRate?: number) => {
     if (!connectionId) return null;
     const { data, error } = await supabase.functions.invoke("bdp-proxy", {
-      body: { action: "verify-product-v2", connectionId, productId },
+      body: { action: "verify-product-v2", connectionId, productId, expectedFamily, expectedVatRate },
     });
     if (error) return null;
     return data;
