@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import BdpFamilyMapping from "@/components/BdpFamilyMapping";
+import BdpRepairActionsPanel from "@/components/BdpRepairActionsPanel";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -986,6 +987,7 @@ export default function BdpWizard() {
     writingProduct, writeResult, writeProduct,
     verifying, verifyResult, verifyProduct,
     verifyProductV2,
+    repairing, runRepairAction,
   } = useBdpConnection();
 
   const [step, setStep] = useState(1);
