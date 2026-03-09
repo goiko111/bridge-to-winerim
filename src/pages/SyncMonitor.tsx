@@ -333,7 +333,7 @@ export default function SyncMonitor() {
                                 <ArrowDownToLine className={`h-3.5 w-3.5 ${syncingStock === conn.id ? "animate-bounce" : ""}`} />
                               </Button>
                             )}
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/integrations/agora?connection=${conn.id}`)}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/integrations/${conn.provider}?connection=${conn.id}`)}>
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDelete(conn)} disabled={deleting === conn.id}>
@@ -474,7 +474,7 @@ export default function SyncMonitor() {
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             className="rounded-xl border border-border bg-card shadow-card overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground">Outbound Tasks (Winerim → Agora)</h2>
+              <h2 className="text-sm font-semibold text-foreground">Outbound Tasks (Winerim → POS)</h2>
               <div className="flex gap-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-success" /> {outboundTasks.filter((t: any) => t.status === "SUCCESS").length}</span>
                 <span className="flex items-center gap-1"><Clock className="h-3 w-3 text-warning" /> {outboundTasks.filter((t: any) => t.status === "QUEUED").length}</span>
