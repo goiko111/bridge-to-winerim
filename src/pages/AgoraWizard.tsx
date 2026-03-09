@@ -1701,86 +1701,239 @@ function StepWinerimCatalog({
         )}
       </div>
 
-      {/* Missing price diagnostics */}
-      {wines.length > 0 && pricingStats.nonReadyTotal > 0 && !fetchingCatalog && !enrichingMissing && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-card border border-border">
-          <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
-          <div className="text-xs text-foreground space-y-1.5">
-            <p className="font-semibold text-sm"><span className="text-yellow-400">{pricingStats.nonReadyTotal}</span> wines currently non-ready</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80">
-              <span>⚠️ Missing: <strong className="text-foreground">{pricingStats.byStatus.MISSING || 0}</strong></span>
-              <span>⏳ Retrying: <strong className="text-foreground">{pricingStats.byStatus.RETRYING || 0}</strong></span>
-              <span>❌ Failed: <strong className="text-foreground">{pricingStats.byStatus.FAILED || 0}</strong></span>
-              <span>Total: <strong className="text-foreground">{pricingStats.nonReadyTotal}</strong></span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80 mt-1">
-              <span>🔄 Retryable: <strong className="text-blue-400">{pricingStats.retryable}</strong></span>
-              <span>🚫 Non-retryable: <strong className="text-red-400">{pricingStats.nonRetryable}</strong></span>
-            </div>
-            <div className="mt-2 pt-2 border-t border-border/50">
-              <p className="text-foreground/70 font-medium mb-1">Stuck set by reason:</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
-                {PRICING_REASON_ORDER.map((reason) => {
-                  const count = pricingStats.byReason[reason] || 0;
-                  return (
-                    <span key={reason} className={count > 0 ? "text-foreground" : "text-foreground/40"}>
-                      {reason}: <strong>{count}</strong>{" "}
-                      <span className={`text-[10px] ${isRetryableReason(reason) ? "text-blue-400" : "text-red-400/70"}`}>
-                        {isRetryableReason(reason) ? "retryable" : "non-retryable"}
-                      </span>
+      {/* ── Grouped Pricing Dashboard ── */}
+      {wines.length > 0 && !fetchingCatalog && (
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          {/* Dashboard Tabs */}
+          <div className="flex border-b border-border bg-secondary/30 overflow-x-auto">
+            {[
+              { key: "ALL", label: `All (${wines.length})`, icon: "📋" },
+              { key: "READY", label: `✅ READY (${pricingStats.byStatus.READY || 0})`, color: "text-success" },
+              { key: "MISSING", label: `⚠️ MISSING (${pricingStats.byStatus.MISSING || 0})`, color: "text-amber-500" },
+              { key: "RETRYING", label: `⏳ RETRYING (${pricingStats.byStatus.RETRYING || 0})`, color: "text-blue-400" },
+              { key: "FAILED", label: `❌ FAILED (${pricingStats.byStatus.FAILED || 0})`, color: "text-destructive" },
+              { key: "BY_REASON", label: "📊 By Reason", color: "text-muted-foreground" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setStatusTab(tab.key as typeof statusTab)}
+                className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                  statusTab === tab.key
+                    ? "bg-background border-b-2 border-primary text-foreground"
+                    : `hover:bg-secondary/50 ${tab.color || "text-foreground"}`
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          <div className="p-4 space-y-4">
+            {statusTab === "ALL" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Overview of all {wines.length} wines in the catalog.</p>
+                {/* Summary cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-success">{pricingStats.byStatus.READY || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">READY</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      🍾 {pricingStats.withBottle} bot · 🍷 {pricingStats.withGlass} glass · 🍾 {pricingStats.withMagnum} mag
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-amber-500">{pricingStats.byStatus.MISSING || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">MISSING</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-blue-400">{pricingStats.byStatus.RETRYING || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">RETRYING</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-destructive">{pricingStats.byStatus.FAILED || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">FAILED</p>
+                  </div>
+                </div>
+                {/* Retryability summary */}
+                {pricingStats.nonReadyTotal > 0 && (
+                  <div className="flex gap-4 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+                      {pricingStats.retryable} retryable
                     </span>
-                  );
-                })}
-              </div>
-            </div>
-            {(pricingStats.byReason.unknown || 0) > 0 && (
-              <div className="mt-2 p-2 rounded bg-red-500/10 border border-red-500/30">
-                <p className="text-red-300 text-[11px]">
-                  ⚠ <strong className="text-red-200">{pricingStats.byReason.unknown}</strong> wines have "unknown" reason — the system failed to classify the missing-price cause. Click <strong className="text-red-200">"Diagnose unknown reasons"</strong> to reclassify them. This count should be close to zero.
-                </p>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-destructive" />
+                      {pricingStats.nonRetryable} non-retryable
+                    </span>
+                  </div>
+                )}
               </div>
             )}
+
+            {statusTab === "READY" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-success">{pricingStats.byStatus.READY || 0}</strong> wines are ready to push.
+                  These have at least one valid price format (Bottle, Glass, or Magnum).
+                </p>
+                {/* Variant breakdown */}
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <svg className="h-5 w-5 mx-auto mb-1 text-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg>
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withBottle}</p>
+                    <p className="text-[10px] text-muted-foreground">Bottles</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <Wine className="h-5 w-5 mx-auto mb-1 text-foreground" />
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withGlass}</p>
+                    <p className="text-[10px] text-muted-foreground">By Glass</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <svg className="h-6 w-6 mx-auto mb-1 text-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg>
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withMagnum}</p>
+                    <p className="text-[10px] text-muted-foreground">Magnums</p>
+                  </div>
+                </div>
+                {/* READY wine list */}
+                {winesByStatus.READY.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-primary cursor-pointer hover:underline">View {winesByStatus.READY.length} READY wines</summary>
+                    <div className="mt-2 max-h-48 overflow-y-auto divide-y divide-border border border-border rounded-lg">
+                      {winesByStatus.READY.slice(0, 50).map((w) => (
+                        <div key={w.winerim_id} className="px-3 py-2 text-xs flex items-center justify-between bg-card">
+                          <span className="truncate">{w.name}</span>
+                          <div className="flex gap-2 shrink-0 text-[10px] font-mono">
+                            {w.bottle_sale_price != null && <span>🍾 €{Number(w.bottle_sale_price).toFixed(2)}</span>}
+                            {w.glass_sale_price != null && <span>🍷 €{Number(w.glass_sale_price).toFixed(2)}</span>}
+                            {w.magnum_sale_price != null && <span>🍾M €{Number(w.magnum_sale_price).toFixed(2)}</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {winesByStatus.READY.length > 50 && (
+                        <p className="px-3 py-2 text-[10px] text-muted-foreground">…and {winesByStatus.READY.length - 50} more</p>
+                      )}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {(statusTab === "MISSING" || statusTab === "RETRYING" || statusTab === "FAILED") && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  <strong className={statusTab === "MISSING" ? "text-amber-500" : statusTab === "RETRYING" ? "text-blue-400" : "text-destructive"}>
+                    {pricingStats.byStatus[statusTab] || 0}
+                  </strong> wines in {statusTab} status.
+                </p>
+                {/* Reason breakdown for this status */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {PRICING_REASON_ORDER.map((reason) => {
+                    const count = winesByStatus[statusTab]?.filter((w) => normalizePricingReason(w.pricing_missing_reason) === reason).length || 0;
+                    if (count === 0) return null;
+                    return (
+                      <div key={reason} className="rounded border border-border bg-secondary/30 p-2 text-center">
+                        <p className="text-sm font-bold text-foreground">{count}</p>
+                        <p className="text-[9px] text-muted-foreground truncate" title={reason}>{reason}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Wine list */}
+                {winesByStatus[statusTab]?.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto divide-y divide-border border border-border rounded-lg">
+                    {winesByStatus[statusTab].slice(0, 30).map((w) => (
+                      <div key={w.winerim_id} className="px-3 py-2 text-xs flex items-center justify-between bg-card">
+                        <span className="truncate flex-1 mr-2">{w.name}</span>
+                        <Badge variant="outline" className="text-[9px] shrink-0">{normalizePricingReason(w.pricing_missing_reason)}</Badge>
+                      </div>
+                    ))}
+                    {winesByStatus[statusTab].length > 30 && (
+                      <p className="px-3 py-2 text-[10px] text-muted-foreground">…and {winesByStatus[statusTab].length - 30} more</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {statusTab === "BY_REASON" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Wines grouped by missing-price reason (non-READY only).</p>
+                <div className="grid gap-3">
+                  {PRICING_REASON_ORDER.map((reason) => {
+                    const wines = winesByReason[reason];
+                    if (wines.length === 0) return null;
+                    return (
+                      <div key={reason} className="rounded-lg border border-border bg-secondary/30 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-secondary/50">
+                          <span className="text-xs font-medium text-foreground">{reason}</span>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={isRetryableReason(reason) ? "default" : "secondary"} className="text-[9px]">
+                              {isRetryableReason(reason) ? "retryable" : "non-retryable"}
+                            </Badge>
+                            <span className="text-xs font-bold text-foreground">{wines.length}</span>
+                          </div>
+                        </div>
+                        <details>
+                          <summary className="px-3 py-1.5 text-[10px] text-primary cursor-pointer hover:underline bg-card">Show wines</summary>
+                          <div className="divide-y divide-border max-h-32 overflow-y-auto">
+                            {wines.slice(0, 20).map((w) => (
+                              <div key={w.winerim_id} className="px-3 py-1.5 text-xs text-foreground/80 bg-card">{w.name}</div>
+                            ))}
+                            {wines.length > 20 && (
+                              <p className="px-3 py-1.5 text-[10px] text-muted-foreground">…and {wines.length - 20} more</p>
+                            )}
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Enrichment actions */}
+            {pricingStats.nonReadyTotal > 0 && !enrichingMissing && (
+              <div className="flex gap-2 flex-wrap pt-2 border-t border-border">
+                <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing} className="text-xs">
+                  <Zap className="mr-1 h-3 w-3" />
+                  Re-enrich {pricingStats.nonReadyTotal} non-ready
+                </Button>
+                {(pricingStats.byReason.unknown || 0) > 0 && (
+                  <Button variant="outline" size="sm" onClick={diagnoseUnknownWines} disabled={diagnosingUnknown} className="text-xs">
+                    <Search className="mr-1 h-3 w-3" />
+                    Diagnose {pricingStats.byReason.unknown} unknown
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Enrichment result */}
+            {enrichResult && (
+              <div className="p-2.5 rounded bg-secondary border border-border space-y-1.5">
+                <p className="font-semibold text-foreground text-xs">Last enrichment run:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-foreground/80">
+                  <span>Processed: <strong className="text-foreground">{enrichResult.processed}</strong></span>
+                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-success" : "text-foreground"}>{enrichResult.movedToReady}</strong></span>
+                  <span>Ready: {enrichResult.readyBefore} → <strong className="text-foreground">{enrichResult.readyAfter}</strong></span>
+                  <span>Non-ready: {enrichResult.missingBefore} → <strong className="text-foreground">{enrichResult.missingAfter}</strong></span>
+                </div>
+                {enrichResult.missingAfter > 0 && enrichResult.missingAfter === enrichResult.missingBefore && (
+                  <p className="text-destructive mt-1.5 font-semibold text-xs">⚠ No net progress — same wines remain stuck.</p>
+                )}
+              </div>
+            )}
+
+            {/* Diagnose result */}
             {diagnoseResult && (
-              <div className="mt-2 p-2.5 rounded bg-secondary border border-border space-y-1.5">
+              <div className="p-2.5 rounded bg-secondary border border-border space-y-1.5">
                 <p className="font-semibold text-foreground text-xs">Diagnosis result:</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-foreground/80">
                   <span>Reclassified: <strong className="text-foreground">{diagnoseResult.reclassified}</strong></span>
                   {Object.entries(diagnoseResult.results).map(([reason, count]) => (
                     <span key={reason}>{reason}: <strong className="text-foreground">{count}</strong></span>
                   ))}
                 </div>
-                {diagnoseResult.debugSamples.length > 0 && (
-                  <details className="mt-1">
-                    <summary className="text-foreground/60 cursor-pointer text-[11px] hover:text-foreground/80">Debug samples ({diagnoseResult.debugSamples.length})</summary>
-                    <pre className="mt-1 text-[10px] font-mono text-foreground/70 bg-background/50 p-2 rounded whitespace-pre-wrap max-h-40 overflow-y-auto">
-                      {JSON.stringify(diagnoseResult.debugSamples, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            )}
-            {enrichResult && (
-              <div className="mt-2 p-2.5 rounded bg-secondary border border-border space-y-1.5">
-                <p className="font-semibold text-foreground text-xs">Last enrichment run:</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-foreground/80">
-                  <span>Processed: <strong className="text-foreground">{enrichResult.processed}</strong></span>
-                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-green-400" : "text-foreground"}>{enrichResult.movedToReady}</strong></span>
-                  <span>Ready: {enrichResult.readyBefore} → <strong className="text-foreground">{enrichResult.readyAfter}</strong></span>
-                  <span>Non-ready: {enrichResult.missingBefore} → <strong className="text-foreground">{enrichResult.missingAfter}</strong></span>
-                </div>
-                {enrichResult.missingAfter > 0 && (
-                  <div className="mt-1.5 pt-1.5 border-t border-border/50">
-                    <p className="text-foreground/70 font-medium mb-1">Still pending by reason:</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-foreground/80">
-                      {PRICING_REASON_ORDER.map((reason) => (
-                        <span key={reason}>{reason}: <strong className="text-foreground">{enrichResult.byReasonAfter[reason] || 0}</strong></span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {enrichResult.missingAfter > 0 && enrichResult.missingAfter === enrichResult.missingBefore && (
-                  <p className="text-red-400 mt-1.5 font-semibold">⚠ No net progress — same wines remain stuck. Check reasons above.</p>
-                )}
               </div>
             )}
           </div>
