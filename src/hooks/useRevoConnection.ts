@@ -57,6 +57,9 @@ export function useRevoConnection() {
   const [writeVerification, setWriteVerification] = useState<RevoWriteVerificationResult | null>(null);
   const [verifying, setVerifying] = useState(false);
 
+  const [depValidation, setDepValidation] = useState<{ valid: boolean; missing: { dep: string; message: string; guidance: string }[] } | null>(null);
+  const [validatingDeps, setValidatingDeps] = useState(false);
+
   // Compound token: "tenant|access_token|client_token|webhook_secret"
   const buildToken = (tenant: string, accessToken: string, clientToken: string, webhookSecret: string) =>
     `${tenant}|${accessToken}|${clientToken}|${webhookSecret}`;
@@ -210,6 +213,26 @@ export function useRevoConnection() {
     }
   }, [connectionId]);
 
+  const validateWriteDeps = useCallback(async (itemData: Record<string, unknown>) => {
+    if (!connectionId) return null;
+    setValidatingDeps(true);
+    setDepValidation(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("revo-proxy", {
+        body: { action: "validate-write-deps", connectionId, itemData },
+      });
+      if (error) throw error;
+      setDepValidation(data);
+      return data;
+    } catch (e: any) {
+      const fail = { valid: false, missing: [{ dep: "error", message: e.message, guidance: "Check connection." }] };
+      setDepValidation(fail);
+      return fail;
+    } finally {
+      setValidatingDeps(false);
+    }
+  }, [connectionId]);
+
   return {
     connectionId, setConnectionId,
     testStatus, testError, testConnection,
@@ -219,6 +242,7 @@ export function useRevoConnection() {
     syncingCatalog, catalogSyncResult, syncCatalog,
     backfilling, backfillResult, runBackfill,
     writeVerification, verifying, verifyWrite,
+    depValidation, validatingDeps, validateWriteDeps,
     enableSync,
   };
 }
