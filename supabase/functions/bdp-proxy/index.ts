@@ -648,7 +648,7 @@ serve(async (req) => {
     }
 
     // ── ACTION: save-sales ──
-    // Fetch + parse + upsert into sales_events and sales_line_items with idempotency
+    // Fetch + parse + upsert with retry, enriched response, cursor protection
     if (action === "save-sales") {
       const { businessDay, dateFrom, dateTo } = payload;
       const from = dateFrom || businessDay;
@@ -658,36 +658,49 @@ serve(async (req) => {
         return err({ success: false, message: "Missing businessDay or dateFrom" });
       }
 
+      const syncMeta = {
+        mode: "save-sales",
+        profile_code: exportProfileCode,
+        date_range: { from, to },
+        started_at: new Date().toISOString(),
+      };
+
       try {
         const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
         const salesBase = resolveUrl("sales", defaultSalesPath);
         const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
-        const resp = await bdpFetch(exportUrl, headers);
-        const bodyText = await resp.text();
-        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
 
-        if (!resp.ok) {
-          return ok({ success: false, message: `BDP HTTP ${resp.status}` });
+        // Fetch with retry for transient failures
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp?.ok ? undefined : (lastError || `HTTP ${resp?.status}`));
+
+        if (!resp || !resp.ok) {
+          // Persist sync failure without touching cursor
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: lastError || `HTTP ${resp?.status}`, attempts };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: `BDP HTTP ${resp?.status || 0}: ${lastError || "Network error"}`, syncMeta: failMeta });
         }
 
+        const bodyText = await resp.text();
         let rawDocuments: any[];
         try {
           const parsed = JSON.parse(bodyText);
           rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
         } catch {
-          return ok({ success: false, message: "Invalid JSON from BDP" });
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: "Invalid JSON from BDP", raw_preview: bodyText.substring(0, 2048) };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: "Invalid JSON from BDP", syncMeta: failMeta });
         }
 
         const salesEvents = parseBdpDocuments(rawDocuments);
         let savedEvents = 0;
         let savedLines = 0;
+        let skippedRows = 0;
         const errors: string[] = [];
 
         for (const evt of salesEvents) {
-          // Idempotency key: provider_doc_id + connection_id
           const idempotencyId = `bdp_${evt.provider_doc_id}`;
 
-          // Upsert sales_event
           const { data: eventRow, error: evtErr } = await supabase
             .from("sales_events")
             .upsert(
@@ -709,14 +722,13 @@ serve(async (req) => {
 
           if (evtErr) {
             errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            skippedRows++;
             continue;
           }
           savedEvents++;
 
-          // Upsert line items with idempotency key: provider_doc_id + line_index
           for (const line of evt.lines) {
             const lineProviderId = `${idempotencyId}_L${line.line_index}`;
-
             const { error: lineErr } = await supabase
               .from("sales_line_items")
               .upsert(
@@ -737,34 +749,50 @@ serve(async (req) => {
                 { onConflict: "sales_event_id,provider_product_id" }
               );
 
-            if (lineErr) {
-              errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
-            } else {
-              savedLines++;
-            }
+            if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); skippedRows++; }
+            else { savedLines++; }
           }
         }
 
-        // Update last sync timestamp
-        await supabase
-          .from("pos_connections")
-          .update({ last_sync_at: new Date().toISOString(), last_business_day_synced: to })
-          .eq("id", connectionId);
+        // Only update cursor on success
+        const successMeta = {
+          ...syncMeta, finished_at: new Date().toISOString(), success: true,
+          documents_read: rawDocuments.length, events_saved: savedEvents,
+          lines_saved: savedLines, rows_skipped: skippedRows, attempts,
+          raw_preview: bodyText.substring(0, 2048),
+        };
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          last_business_day_synced: to,
+          provider_config: { ...config, last_sync_result: successMeta },
+        } as any).eq("id", connectionId);
 
-        return ok({ success: true, savedEvents, savedLines, totalParsed: salesEvents.length, errors });
+        return ok({ success: true, savedEvents, savedLines, totalParsed: salesEvents.length, skippedRows, errors, syncMeta: successMeta });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
-        return ok({ success: false, message: msg });
+        const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: msg };
+        await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+        return ok({ success: false, message: msg, syncMeta: failMeta });
       }
     }
 
     // ── ACTION: backfill ──
-    // Save sales for last N days
+    // Save sales for last N days with retry per day
     if (action === "backfill") {
       const daysBack = Number(payload.daysBack || 30);
       let totalSaved = 0;
       let totalLines = 0;
+      let totalSkipped = 0;
+      let totalDocsRead = 0;
       const errors: string[] = [];
+      const previousCursor = conn.last_business_day_synced;
+
+      const syncMeta = {
+        mode: "backfill",
+        profile_code: exportProfileCode,
+        days_requested: daysBack,
+        started_at: new Date().toISOString(),
+      };
 
       for (let i = 0; i < daysBack; i++) {
         const d = new Date();
@@ -775,10 +803,11 @@ serve(async (req) => {
           const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
           const salesBase = resolveUrl("sales", defaultSalesPath);
           const exportUrl = `${salesBase}?dateFrom=${day}&dateTo=${day}`;
-          const resp = await bdpFetch(exportUrl, headers);
 
-          if (!resp.ok) {
-            errors.push(`${day}: HTTP ${resp.status}`);
+          const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+
+          if (!resp || !resp.ok) {
+            errors.push(`${day}: HTTP ${resp?.status || 0} (${attempts} attempts${lastError ? `, ${lastError}` : ""})`);
             continue;
           }
 
@@ -792,8 +821,8 @@ serve(async (req) => {
             continue;
           }
 
-          // Skip empty days
           if (rawDocuments.length === 0) continue;
+          totalDocsRead += rawDocuments.length;
 
           const salesEvents = parseBdpDocuments(rawDocuments);
 
@@ -821,13 +850,13 @@ serve(async (req) => {
 
             if (evtErr) {
               errors.push(`${day} doc ${evt.provider_doc_id}: ${evtErr.message}`);
+              totalSkipped++;
               continue;
             }
             totalSaved++;
 
             for (const line of evt.lines) {
               const lineProviderId = `${idempotencyId}_L${line.line_index}`;
-
               const { error: lineErr } = await supabase
                 .from("sales_line_items")
                 .upsert(
@@ -848,11 +877,8 @@ serve(async (req) => {
                   { onConflict: "sales_event_id,provider_product_id" }
                 );
 
-              if (lineErr) {
-                errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
-              } else {
-                totalLines++;
-              }
+              if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); totalSkipped++; }
+              else { totalLines++; }
             }
           }
         } catch (e: unknown) {
@@ -861,31 +887,55 @@ serve(async (req) => {
         }
       }
 
-      // Update sync markers
-      await supabase
-        .from("pos_connections")
-        .update({ last_sync_at: new Date().toISOString() })
-        .eq("id", connectionId);
+      // Update sync markers only if we saved something
+      const resultMeta = {
+        ...syncMeta, finished_at: new Date().toISOString(), success: errors.length === 0,
+        documents_read: totalDocsRead, events_saved: totalSaved,
+        lines_saved: totalLines, rows_skipped: totalSkipped, days_processed: daysBack,
+      };
+      if (totalSaved > 0) {
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          provider_config: { ...config, last_sync_result: resultMeta },
+        } as any).eq("id", connectionId);
+      } else {
+        // Don't touch cursor — preserve previous valid state
+        await supabase.from("pos_connections").update({
+          provider_config: { ...config, last_sync_result: resultMeta },
+        } as any).eq("id", connectionId);
+      }
 
-      return ok({ success: true, totalSaved, totalLines, daysProcessed: daysBack, errors });
+      return ok({ success: true, totalSaved, totalLines, totalSkipped, totalDocsRead, daysProcessed: daysBack, errors, syncMeta: resultMeta });
     }
 
     // ── ACTION: incremental-sync ──
-    // Fetch from last_business_day_synced until today
+    // Fetch from last_business_day_synced until today with retry
     if (action === "incremental-sync") {
       const lastSynced = conn.last_business_day_synced;
       const today = new Date().toISOString().substring(0, 10);
       const from = lastSynced || today;
 
+      const syncMeta = {
+        mode: "incremental",
+        profile_code: exportProfileCode,
+        date_range: { from, to: today },
+        previous_cursor: lastSynced,
+        started_at: new Date().toISOString(),
+      };
+
       try {
         const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
         const salesBase = resolveUrl("sales", defaultSalesPath);
         const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${today}`;
-        const resp = await bdpFetch(exportUrl, headers);
-        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : `HTTP ${resp.status}`);
 
-        if (!resp.ok) {
-          return ok({ success: false, message: `BDP HTTP ${resp.status}` });
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp?.ok ? undefined : (lastError || `HTTP ${resp?.status}`));
+
+        if (!resp || !resp.ok) {
+          // Don't touch cursor on failure
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: lastError || `HTTP ${resp?.status}`, attempts };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: `BDP HTTP ${resp?.status || 0}`, syncMeta: failMeta });
         }
 
         const bodyText = await resp.text();
@@ -894,12 +944,15 @@ serve(async (req) => {
           const parsed = JSON.parse(bodyText);
           rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
         } catch {
-          return ok({ success: false, message: "Invalid JSON from BDP" });
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: "Invalid JSON", raw_preview: bodyText.substring(0, 2048) };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: "Invalid JSON from BDP", syncMeta: failMeta });
         }
 
         const salesEvents = parseBdpDocuments(rawDocuments);
         let savedEvents = 0;
         let savedLines = 0;
+        let skippedRows = 0;
         const errors: string[] = [];
 
         for (const evt of salesEvents) {
@@ -926,13 +979,13 @@ serve(async (req) => {
 
           if (evtErr) {
             errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            skippedRows++;
             continue;
           }
           savedEvents++;
 
           for (const line of evt.lines) {
             const lineProviderId = `${idempotencyId}_L${line.line_index}`;
-
             const { error: lineErr } = await supabase
               .from("sales_line_items")
               .upsert(
@@ -953,24 +1006,34 @@ serve(async (req) => {
                 { onConflict: "sales_event_id,provider_product_id" }
               );
 
-            if (lineErr) errors.push(`Line ${lineProviderId}: ${lineErr.message}`);
-            else savedLines++;
+            if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); skippedRows++; }
+            else { savedLines++; }
           }
         }
 
-        await supabase
-          .from("pos_connections")
-          .update({ last_sync_at: new Date().toISOString(), last_business_day_synced: today })
-          .eq("id", connectionId);
+        // Update cursor only on success
+        const successMeta = {
+          ...syncMeta, finished_at: new Date().toISOString(), success: true,
+          documents_read: rawDocuments.length, events_saved: savedEvents,
+          lines_saved: savedLines, rows_skipped: skippedRows, attempts,
+          raw_preview: bodyText.substring(0, 2048),
+        };
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          last_business_day_synced: today,
+          provider_config: { ...config, last_sync_result: successMeta },
+        } as any).eq("id", connectionId);
 
         return ok({
-          success: true, savedEvents, savedLines,
+          success: true, savedEvents, savedLines, skippedRows,
           dateRange: { from, to: today },
-          totalParsed: salesEvents.length, errors,
+          totalParsed: salesEvents.length, errors, syncMeta: successMeta,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
-        return ok({ success: false, message: msg });
+        const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: msg };
+        await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+        return ok({ success: false, message: msg, syncMeta: failMeta });
       }
     }
 
