@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getToastConfig, type ToastConfig } from "../_shared/providerConfig.ts";
 
 // HMAC SHA-256 using built-in Web Crypto (no external deps)
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
@@ -64,8 +65,8 @@ function parseToastCredentials(cred: any): ToastCredentials | null {
 }
 
 async function getAuthToken(conn: any): Promise<string> {
-  const cfg = conn.provider_config as any;
-  const hostname = (cfg?.api_hostname || conn.base_url || "https://ws-api.toasttab.com").replace(/\/+$/, "");
+  const cfg = getToastConfig(conn.provider_config);
+  const hostname = cfg.api_hostname.replace(/\/+$/, "");
   const connId = conn.id;
 
   // Check in-memory cache
@@ -200,9 +201,9 @@ async function handleStoreCredentials(connId: string, clientId: string, clientSe
 // ═══════════════════════════════════════════════════════
 async function handlePreflight(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const hostname = (cfg?.api_hostname || conn.base_url || "").replace(/\/+$/, "");
-  const guid = cfg?.restaurant_guid;
+  const cfg = getToastConfig(conn.provider_config);
+  const hostname = cfg.api_hostname.replace(/\/+$/, "");
+  const guid = cfg.restaurant_guid;
   if (!guid) return json({ success: false, message: "Missing restaurant GUID" });
 
   let token: string;
@@ -247,9 +248,9 @@ async function handlePreflight(connId: string) {
 // ═══════════════════════════════════════════════════════
 async function handleCheckScopes(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const hostname = (cfg?.api_hostname || conn.base_url || "").replace(/\/+$/, "");
-  const guid = cfg?.restaurant_guid;
+  const cfg = getToastConfig(conn.provider_config);
+  const hostname = cfg.api_hostname.replace(/\/+$/, "");
+  const guid = cfg.restaurant_guid;
 
   let token: string;
   try { token = await getAuthToken(conn); } catch { return json({ scopes: [] }); }
@@ -288,9 +289,9 @@ function classifyFormat(name: string): string | null {
 // ═══════════════════════════════════════════════════════
 async function handleSyncSales(connId: string, mode: string, params: any) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const hostname = (cfg?.api_hostname || conn.base_url || "").replace(/\/+$/, "");
-  const guid = cfg?.restaurant_guid;
+  const cfg = getToastConfig(conn.provider_config);
+  const hostname = cfg.api_hostname.replace(/\/+$/, "");
+  const guid = cfg.restaurant_guid;
   const tz = cfg?.timezone || "America/New_York";
   const closeoutHour = cfg?.closeout_hour ?? 4;
 
@@ -442,9 +443,9 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
 // ═══════════════════════════════════════════════════════
 async function handleSyncMenus(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const hostname = (cfg?.api_hostname || conn.base_url || "").replace(/\/+$/, "");
-  const guid = cfg?.restaurant_guid;
+  const cfg = getToastConfig(conn.provider_config);
+  const hostname = cfg.api_hostname.replace(/\/+$/, "");
+  const guid = cfg.restaurant_guid;
 
   let token: string;
   try { token = await getAuthToken(conn); } catch (e: any) {
@@ -510,9 +511,9 @@ async function handleSyncMenus(connId: string) {
 // ═══════════════════════════════════════════════════════
 async function handleSyncStatus(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const cb = cfg?.circuit_breaker || {};
-  const cursor = cfg?.last_orders_sync_cursor || null;
+  const cfg = getToastConfig(conn.provider_config);
+  const cb = cfg.circuit_breaker || {};
+  const cursor = cfg.last_orders_sync_cursor || null;
   const webhookDiag = cfg?.webhook_diagnostics || {};
 
   const { count: ordersCount } = await sb().from("sales_events")
