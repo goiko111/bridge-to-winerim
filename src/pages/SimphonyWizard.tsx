@@ -18,6 +18,7 @@ import {
   SalesLineItem,
   PreflightCheck,
   CatalogWritePreview,
+  WriteVerificationResult,
   PilotStep,
 } from "@/hooks/useSimphonyConnection";
 
@@ -75,6 +76,7 @@ export default function SimphonyWizard() {
     catalogItems, catalogLoading, fetchCatalog,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
+    writeVerification, verifying, verifyWrite,
     generateImportExport,
     pilotSteps, pilotRunning, runPilot,
     // S2
@@ -711,6 +713,62 @@ export default function SimphonyWizard() {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Post-write verification */}
+                {catalogWritePreview.length > 0 && (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Post-Write Verification
+                      </h4>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        const first = catalogWritePreview[0];
+                        if (first) verifyWrite({ winerim_id: first.winerimId, format: first.format, expectedPrice: first.price });
+                      }} disabled={verifying}>
+                        {verifying ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3 w-3" />}
+                        Verify First Item
+                      </Button>
+                    </div>
+                    {writeVerification && (
+                      <div className={`rounded-lg border p-3 text-xs space-y-2 ${writeVerification.success ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                        <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-1.5">
+                            {writeVerification.verified_exists ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                            <span className={writeVerification.verified_exists ? "text-success" : "text-destructive"}>Exists</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {writeVerification.verified_prices ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                            <span className={writeVerification.verified_prices ? "text-success" : "text-destructive"}>Price &gt; 0</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            {writeVerification.verified_scope ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                            <span className={writeVerification.verified_scope ? "text-success" : "text-destructive"}>Scope</span>
+                          </div>
+                        </div>
+                        {writeVerification.errors.length > 0 && (
+                          <div className="space-y-1">
+                            {writeVerification.errors.map((e, i) => (
+                              <div key={i} className="flex items-start gap-1.5 text-destructive">
+                                <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                                <span><code className="bg-destructive/10 px-1 rounded text-[10px]">{e.code}</code> {e.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {writeVerification.warnings.length > 0 && (
+                          <div className="space-y-1">
+                            {writeVerification.warnings.map((w, i) => (
+                              <div key={i} className="flex items-start gap-1.5 text-warning">
+                                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                                <span><code className="bg-warning/10 px-1 rounded text-[10px]">{w.code}</code> {w.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 

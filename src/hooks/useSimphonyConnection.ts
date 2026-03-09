@@ -58,6 +58,15 @@ export interface CatalogWritePreview {
   format: string;
 }
 
+export interface WriteVerificationResult {
+  success: boolean;
+  verified_exists: boolean;
+  verified_prices: boolean;
+  verified_scope: boolean;
+  errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+  warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+}
+
 export interface PilotStep {
   id: string;
   label: string;
@@ -106,6 +115,8 @@ export function useSimphonyConnection() {
   const [catalogWritePreview, setCatalogWritePreview] = useState<CatalogWritePreview[]>([]);
   const [catalogWriteResult, setCatalogWriteResult] = useState<{ created: number; updated: number } | null>(null);
   const [catalogWriting, setCatalogWriting] = useState(false);
+  const [writeVerification, setWriteVerification] = useState<WriteVerificationResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   // Pilot
   const [pilotSteps, setPilotSteps] = useState<PilotStep[]>([]);
@@ -389,6 +400,29 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Import/Export generation failed:", e); return null; }
   }, [connectionId]);
 
+  const verifyWrite = useCallback(async (params: { externalId?: string; winerim_id?: string; format?: string; expectedPrice?: number }) => {
+    if (!connectionId) return null;
+    setVerifying(true);
+    setWriteVerification(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "verify-write", connectionId, ...params },
+      });
+      if (error) throw error;
+      setWriteVerification(data);
+      return data;
+    } catch (e: any) {
+      const failResult: WriteVerificationResult = {
+        success: false, verified_exists: false, verified_prices: false, verified_scope: false,
+        errors: [{ code: "VERIFY_CALL_FAILED", message: e.message }], warnings: [],
+      };
+      setWriteVerification(failResult);
+      return failResult;
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectionId]);
+
   // S6: Register webhook
   const registerWebhook = useCallback(async () => {
     if (!connectionId) return;
@@ -473,6 +507,8 @@ export function useSimphonyConnection() {
     catalogItems, catalogLoading, fetchCatalog,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
+    // Post-write verification
+    writeVerification, verifying, verifyWrite,
     // Import/Export
     generateImportExport,
     // Pilot
