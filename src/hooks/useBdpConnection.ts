@@ -71,6 +71,17 @@ export interface BdpCatalogResult {
   sampleProducts?: { id: string; name: string; family: string | null; price: number; vat_rate: number; format: string | null }[];
 }
 
+export interface BdpWriteVerification {
+  success: boolean;
+  verified_exists: boolean;
+  verified_prices: boolean;
+  verified_family: boolean;
+  verified_tax: boolean;
+  verified_scope: boolean;
+  errors: { code: string; message: string; field?: string; context?: any }[];
+  warnings: { code: string; message: string; field?: string; context?: any }[];
+}
+
 export interface BdpWriteResult {
   success: boolean;
   method?: string;
@@ -78,6 +89,7 @@ export interface BdpWriteResult {
   bodyPreview?: string;
   product?: any;
   message?: string;
+  verification?: BdpWriteVerification | null;
 }
 
 export interface BdpVerifyResult {
@@ -268,10 +280,10 @@ export function useBdpConnection() {
     }
   }, [connectionId]);
 
-  const verifyProductV2 = useCallback(async (productId: string) => {
+  const verifyProductV2 = useCallback(async (productId: string, expectedFamily?: string, expectedVatRate?: number) => {
     if (!connectionId) return null;
     const { data, error } = await supabase.functions.invoke("bdp-proxy", {
-      body: { action: "verify-product-v2", connectionId, productId },
+      body: { action: "verify-product-v2", connectionId, productId, expectedFamily, expectedVatRate },
     });
     if (error) return null;
     return data;

@@ -663,12 +663,15 @@ function StepCatalogWrite({
       family: wFamily || undefined,
       format: wFormat || undefined,
     });
-    if (result?.success && wId) {
-      toast({ title: "Product written", description: `${wName} sent to BDP successfully. Verifying…` });
-      setVerifyId(wId);
-      setTimeout(() => handleVerify(wId), 1500);
-    } else if (result?.success) {
-      toast({ title: "Product created", description: `${wName} sent to BDP. Enter the new ID to verify.` });
+    if (result?.success) {
+      if (result.verification?.success) {
+        toast({ title: "✅ Producto verificado", description: `${wName} escrito y verificado en BDP correctamente.` });
+      } else if (result.verification && !result.verification.success) {
+        toast({ title: "⚠️ Verificación fallida", description: `${wName} escrito en BDP pero la verificación ha fallado.`, variant: "destructive" });
+      } else if (!wId) {
+        toast({ title: "Product created", description: `${wName} sent to BDP. Enter the new ID to verify.` });
+      }
+      if (wId) setVerifyId(wId);
     }
   };
 
@@ -851,14 +854,23 @@ function StepCatalogWrite({
           {writingProduct ? "Writing…" : wId ? "Update Product" : "Create Product"}
         </Button>
         {writeResult && (
-          <div className={`rounded border p-2 text-xs ${writeResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
-            {writeResult.success ? (
-              <>✅ Product {writeResult.method === "create" ? "created" : writeResult.method === "import" ? "imported" : "updated"} — HTTP {writeResult.status}</>
-            ) : (
-              <>❌ {writeResult.message || `Write failed (HTTP ${writeResult.status})`}</>
+          <div className="space-y-2">
+            <div className={`rounded border p-2 text-xs ${writeResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+              {writeResult.method && (
+                <span>
+                  {writeResult.success ? "✅" : "❌"} Product {writeResult.method === "create" ? "created" : writeResult.method === "import" ? "imported" : "updated"} — HTTP {writeResult.status}
+                </span>
+              )}
+              {!writeResult.method && writeResult.message && (
+                <span>❌ {writeResult.message}</span>
+              )}
+            </div>
+            {/* Auto-verification result */}
+            {writeResult.verification && (
+              <PostWriteVerificationDisplay result={writeResult.verification as any} provider="bdp" />
             )}
-            {writeResult.bodyPreview && (
-              <pre className="mt-1 max-h-24 overflow-auto rounded border border-border bg-card p-1.5 text-[10px] font-mono whitespace-pre-wrap break-all">{writeResult.bodyPreview}</pre>
+            {writeResult.bodyPreview && !writeResult.verification && (
+              <pre className="max-h-24 overflow-auto rounded border border-border bg-card p-1.5 text-[10px] font-mono whitespace-pre-wrap break-all">{writeResult.bodyPreview}</pre>
             )}
           </div>
         )}
@@ -870,7 +882,7 @@ function StepCatalogWrite({
           <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Post-Write Verification
         </p>
         <p className="text-xs text-muted-foreground">
-          Verify a product exists in BDP with a valid price after create/update. Returns the shared verification contract (exists, price, scope).
+          Verify a product exists in BDP with valid price, family, and tax mapping. Returns the strict verification contract.
         </p>
         <div className="flex gap-2 items-end">
           <div className="flex-1">
