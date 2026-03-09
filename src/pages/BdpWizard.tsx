@@ -873,7 +873,7 @@ export default function BdpWizard() {
                 verifying={verifying} verifyResult={verifyResult} verifyProduct={verifyProduct}
               />
             )}
-            {step === 5 && <StepGoLive connectionId={connectionId} />}
+            {step === 5 && <StepGoLive connectionId={connectionId} onEnable={async () => { if (connectionId) await updateConnection(connectionId, { enabled: true }); }} />}
           </motion.div>
         </AnimatePresence>
       </div>
