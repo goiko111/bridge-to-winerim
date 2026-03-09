@@ -18,9 +18,9 @@ import { useTouchBistroConnection, TBIntegrationMode, TBIngestionMethod, TBDetec
 const STEPS = [
   "Connection", "Export Guide", "Upload & Detect", "Sales Import",
   "Bills & Payments", "Catalog Items", "Automation", "Format Rules",
-  "Private API", "Debug Bundle",
+  "Private API", "Debug Bundle", "Go Live",
 ];
-const STEP_ICONS = [Settings2, HelpCircle, Upload, FileText, Globe, Package, Server, BarChart3, Zap, Bug];
+const STEP_ICONS = [Settings2, HelpCircle, Upload, FileText, Globe, Package, Server, BarChart3, Zap, Bug, CheckCircle2];
 
 export default function TouchBistroWizard() {
   const navigate = useNavigate();
@@ -541,6 +541,56 @@ export default function TouchBistroWizard() {
               </p>
               <Button onClick={() => tb.exportDebugBundle()} disabled={!tb.connectionId}>
                 <Download className="h-4 w-4 mr-2" /> Export Debug Bundle (JSON)
+              </Button>
+            </div>
+          </div>
+        );
+
+      // ── Step 10: Go Live ──
+      case 10:
+        return (
+          <div className="space-y-6">
+            <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-primary" /> Go Live Checklist
+              </h3>
+              <div className="space-y-2">
+                {[
+                  { label: "Connection saved", pass: !!tb.connectionId },
+                  { label: "Connection tested", pass: tb.testStatus === "success" },
+                  { label: "Sales data imported", pass: !!tb.salesImportResult?.success },
+                  { label: "Catalog imported (optional)", pass: !!tb.catalogImportResult?.success, optional: true },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center gap-2 text-sm">
+                    {item.pass ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    ) : item.optional ? (
+                      <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/50" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className={item.pass ? "text-foreground" : "text-muted-foreground"}>
+                      {item.label}{item.optional && !item.pass ? " (skipped)" : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {tb.pricingDiagnostics && (
+                <div className="rounded-lg border p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground">Pricing coverage:</p>
+                  <div className="flex gap-4 text-xs">
+                    <span>Bottle: {tb.pricingDiagnostics.bottleCoverage}%</span>
+                    <span>Glass: {tb.pricingDiagnostics.glassCoverage}%</span>
+                    <span>Magnum: {tb.pricingDiagnostics.magnumCoverage}%</span>
+                  </div>
+                </div>
+              )}
+              <Button 
+                onClick={() => tb.enableSync()} 
+                disabled={!tb.connectionId || tb.testStatus !== "success"}
+                className="w-full"
+              >
+                <CheckCircle2 className="h-4 w-4 mr-2" /> Enable Sync
               </Button>
             </div>
           </div>
