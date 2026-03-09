@@ -368,6 +368,9 @@ export default function RevoWizard() {
                 </p>
               </div>
 
+              {/* Repair Actions for existing pushed products */}
+              <RevoRepairActionsPanel connectionId={connectionId} />
+
               {/* Pre-write dependency validation */}
               <div className="space-y-3 border-t border-border pt-4">
                 <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
