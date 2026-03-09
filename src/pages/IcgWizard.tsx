@@ -48,7 +48,7 @@ export default function IcgWizard() {
       if (conn) {
         setLocationName(conn.location_name || "");
         const cfg = getIcgConfig(conn.provider_config);
-        setMode(cfg.connection_mode || "SQL_SERVER");
+        setMode((cfg.connection_mode as any) || "SQL_SERVER");
         setHost(cfg.host || "");
         setPort(cfg.port || "1433");
         setDatabase(cfg.database || "FrontRest");
