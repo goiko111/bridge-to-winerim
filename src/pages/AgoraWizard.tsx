@@ -2737,26 +2737,13 @@ function StepMasterData({
         <Input placeholder="Search master data…" value={searchMaster} onChange={(e) => setSearchMaster(e.target.value)} className="pl-10 bg-background" />
       </div>
 
-      {/* Status badges */}
-      <div className="flex gap-2 flex-wrap">
-        {masterData.fetchedAt ? (
-          <Badge variant="default" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" /> Master data synced</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px]"><AlertTriangle className="mr-1 h-3 w-3" /> Not synced</Badge>
-        )}
-        {writeCapability === "YES" ? (
-          <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> XML import validated</Badge>
-        ) : writeCapability === "UNKNOWN" ? (
-          <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> XML import not verified</Badge>
-        ) : (
-          <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> XML import not supported</Badge>
-        )}
-        {writeSettings.auto_push_verified_ready ? (
-          <Badge variant="default" className="text-[10px]"><Zap className="mr-1 h-3 w-3" /> Auto-push ready</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px]">Auto-push not verified</Badge>
-        )}
-      </div>
+      {/* Status badges — unified readiness model */}
+      <ReadinessBadgeRow dimensions={{
+        writeMode: writeSettings.write_mode,
+        canWrite: writeCapability,
+        masterDataFetchedAt: masterData.fetchedAt,
+        autoPushVerifiedReady: writeSettings.auto_push_verified_ready,
+      }} />
 
       {/* ── Auto-push verification gate ── */}
       <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
