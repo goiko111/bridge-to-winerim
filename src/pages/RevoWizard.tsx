@@ -349,6 +349,9 @@ export default function RevoWizard() {
                   </div>
                 </div>
               )}
+              {/* Dependency Diagnostics Panel */}
+              <RevoDependencyDiagnostics connectionId={connectionId} />
+
               <div className="rounded-lg border border-border p-3">
                 <p className="text-xs text-muted-foreground">
                   <strong>Important:</strong> In Revo, Items depend on Categories and Groups. 
