@@ -220,6 +220,7 @@ export type Database = {
           provider: string
           provider_config: Json | null
           require_manual_review_before_push: boolean
+          restaurant_guid: string | null
           selected_sale_center_ids: string[]
           sync_frequency_minutes: number
           sync_mode: string
@@ -263,6 +264,7 @@ export type Database = {
           provider?: string
           provider_config?: Json | null
           require_manual_review_before_push?: boolean
+          restaurant_guid?: string | null
           selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
           sync_mode?: string
@@ -306,6 +308,7 @@ export type Database = {
           provider?: string
           provider_config?: Json | null
           require_manual_review_before_push?: boolean
+          restaurant_guid?: string | null
           selected_sale_center_ids?: string[]
           sync_frequency_minutes?: number
           sync_mode?: string
