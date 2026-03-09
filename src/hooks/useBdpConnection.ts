@@ -221,11 +221,23 @@ export function useBdpConnection() {
 
   const runDiscover = useCallback(async () => {
     if (!connectionId) return null;
-    const { data, error } = await supabase.functions.invoke("bdp-proxy", {
-      body: { action: "discover", connectionId },
-    });
-    if (error) return { success: false, message: error.message };
-    return data;
+    setDiscovering(true);
+    setDiscoveryResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: "discover", connectionId },
+      });
+      if (error) {
+        setDiscovering(false);
+        return { success: false, message: error.message };
+      }
+      setDiscoveryResult(data as BdpDiscoveryResult);
+      setDiscovering(false);
+      return data;
+    } catch (e: any) {
+      setDiscovering(false);
+      return { success: false, message: e.message };
+    }
   }, [connectionId]);
 
   const verifyProductV2 = useCallback(async (productId: string) => {
