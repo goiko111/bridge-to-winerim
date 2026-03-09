@@ -319,8 +319,6 @@ export default function SimphonyWizard() {
 
           {/* ── Step 2: Auth & Token (S2) ── */}
           {currentStep === 2 && (() => {
-            const cfg = connectionId ? getSimphonyConfig(undefined) : getSimphonyConfig(undefined);
-            // We read diagnostics from oidcResult since it now includes them
             const diag = (oidcResult as any)?.diagnostics || {};
             return (
             <div className="space-y-5">
