@@ -68,6 +68,22 @@ function classify(
   return { isWine: score >= 40, score, reasons };
 }
 
+// ── Format normalizer: map Revo selling format names to canonical types ──
+function normalizeFormat(rawFormat: string, name: string): string {
+  const f = (rawFormat || "").toLowerCase().trim();
+  const n = (name || "").toLowerCase();
+  // Exact / prefix matches on selling format
+  if (/^bot(\.|\b|ella)/i.test(f) || f === "bot" || f === "botella" || f === "bottle") return "BOTTLE";
+  if (/^copa/i.test(f) || f === "glass" || f === "cup") return "GLASS";
+  if (/^magn/i.test(f) || f === "magnum" || f === "mag") return "MAGNUM";
+  // Fallback: infer from product name
+  if (/\b(bot\.?|botella|bottle)\b/i.test(n) || /\b75\s?cl\b/i.test(n)) return "BOTTLE";
+  if (/\b(copa|glass|cup)\b/i.test(n)) return "GLASS";
+  if (/\b(magnum|mag\.?|150\s?cl)\b/i.test(n)) return "MAGNUM";
+  // Return raw if no match
+  return rawFormat || "";
+}
+
 // ── Fetch with rate-limit + retry on 429 ──
 async function revoFetch(
   url: string,
