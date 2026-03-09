@@ -3,6 +3,14 @@ import { supabase } from "@/integrations/supabase/client";
 import type { PostWriteVerificationResult } from "@/types/postWriteVerification";
 import { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 
+export interface BdpTestCheck {
+  ok: boolean;
+  status: number;
+  label: string;
+  message: string;
+  bodyPreview?: string;
+}
+
 export interface BdpTestResult {
   success: boolean;
   status: number;
@@ -10,6 +18,8 @@ export interface BdpTestResult {
   contentType: string | null;
   bodyPreview: string | null;
   message: string;
+  checks?: Record<string, BdpTestCheck>;
+  failureReason?: string | null;
 }
 
 export interface BdpSalesEvent {
