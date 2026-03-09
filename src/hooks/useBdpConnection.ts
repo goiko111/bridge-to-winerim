@@ -53,6 +53,22 @@ export interface BdpCatalogResult {
   rawProductsPreview?: string;
   errors: string[];
   message?: string;
+  fieldCoverage?: {
+    products: number;
+    with_price: number;
+    with_family: number;
+    with_name: number;
+    with_vat: number;
+    with_format: number;
+    with_id: number;
+    unique_families: number;
+    avg_price: number;
+    min_price: number;
+    max_price: number;
+  };
+  warnings?: { code: string; message: string; count: number }[];
+  catalogHealth?: "complete" | "partial" | "incomplete";
+  sampleProducts?: { id: string; name: string; family: string | null; price: number; vat_rate: number; format: string | null }[];
 }
 
 export interface BdpWriteResult {

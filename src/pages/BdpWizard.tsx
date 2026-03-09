@@ -694,18 +694,102 @@ function StepCatalogWrite({
           {syncingCatalog ? "Syncing Catalog…" : "Sync Catalog"}
         </Button>
         {catalogResult && (
-          <div className="space-y-2">
-            <div className={`rounded border p-2 text-xs ${catalogResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
-              {catalogResult.success ? (
-                <>✅ {catalogResult.totalProducts} products synced ({catalogResult.upserted} upserted), {catalogResult.totalFamilies} families found</>
+          <div className="space-y-3">
+            {/* Health banner */}
+            <div className={`rounded border p-3 text-xs ${
+              catalogResult.catalogHealth === "complete"
+                ? "border-success/30 bg-success/5 text-foreground"
+                : catalogResult.catalogHealth === "incomplete"
+                ? "border-destructive/30 bg-destructive/5 text-foreground"
+                : catalogResult.success
+                ? "border-amber-500/30 bg-amber-500/5 text-foreground"
+                : "border-destructive/30 bg-destructive/5 text-destructive"
+            }`}>
+              {!catalogResult.success ? (
+                <div className="flex items-center gap-1.5">
+                  <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                  <span>{catalogResult.message || "Catalog sync failed"}</span>
+                </div>
+              ) : catalogResult.catalogHealth === "complete" ? (
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  <span>Catálogo completo — {catalogResult.totalProducts} productos, {catalogResult.totalFamilies} familias</span>
+                </div>
               ) : (
-                <>❌ {catalogResult.message || "Catalog sync failed"}</>
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                  <span>Catálogo {catalogResult.catalogHealth === "incomplete" ? "incompleto" : "parcial"} — {catalogResult.totalProducts} productos, {catalogResult.upserted} guardados</span>
+                </div>
               )}
-              {catalogResult.errors.length > 0 && <p className="text-destructive mt-1">{catalogResult.errors.length} error(s)</p>}
             </div>
+
+            {/* Warnings */}
+            {catalogResult.warnings && catalogResult.warnings.length > 0 && (
+              <div className="space-y-1.5">
+                {catalogResult.warnings.map((w) => (
+                  <div key={w.code} className="flex items-center gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-[11px]">
+                    <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+                    <span className="text-foreground">{w.message}</span>
+                    {w.count > 0 && <Badge variant="outline" className="ml-auto text-[9px] border-amber-500/30 text-amber-600 dark:text-amber-400">{w.count}/{catalogResult.totalProducts}</Badge>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Field coverage grid */}
+            {catalogResult.fieldCoverage && (
+              <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                <p className="text-[11px] font-medium text-foreground">Cobertura de campos</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Con precio", value: catalogResult.fieldCoverage.with_price, total: catalogResult.fieldCoverage.products },
+                    { label: "Con familia", value: catalogResult.fieldCoverage.with_family, total: catalogResult.fieldCoverage.products },
+                    { label: "Con IVA", value: catalogResult.fieldCoverage.with_vat, total: catalogResult.fieldCoverage.products },
+                    { label: "Con nombre", value: catalogResult.fieldCoverage.with_name, total: catalogResult.fieldCoverage.products },
+                    { label: "Con formato", value: catalogResult.fieldCoverage.with_format, total: catalogResult.fieldCoverage.products },
+                    { label: "Familias únicas", value: catalogResult.fieldCoverage.unique_families, total: null },
+                  ].map((item) => {
+                    const pct = item.total ? Math.round((item.value / item.total) * 100) : null;
+                    return (
+                      <div key={item.label} className="rounded border border-border bg-background px-2.5 py-1.5 text-center">
+                        <p className="text-[10px] text-muted-foreground">{item.label}</p>
+                        <p className={`text-sm font-semibold font-mono ${pct !== null && pct < 50 ? "text-destructive" : pct !== null && pct < 100 ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>
+                          {item.value}{item.total !== null && <span className="text-[10px] text-muted-foreground font-normal">/{item.total}</span>}
+                        </p>
+                        {pct !== null && <p className="text-[9px] text-muted-foreground">{pct}%</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {catalogResult.fieldCoverage.avg_price > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Precio medio: €{catalogResult.fieldCoverage.avg_price.toFixed(2)} · Rango: €{catalogResult.fieldCoverage.min_price.toFixed(2)} – €{catalogResult.fieldCoverage.max_price.toFixed(2)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Sample products */}
+            {catalogResult.sampleProducts && catalogResult.sampleProducts.length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                <p className="text-[11px] font-medium text-foreground">Muestra de datos recibidos</p>
+                <div className="space-y-1.5">
+                  {catalogResult.sampleProducts.map((p) => (
+                    <div key={p.id} className="rounded border border-border bg-background px-2.5 py-1.5 text-[10px] grid grid-cols-5 gap-2">
+                      <span className="font-mono text-foreground truncate">{p.id}</span>
+                      <span className="text-foreground truncate col-span-2">{p.name}</span>
+                      <span className="text-muted-foreground">{p.family || "—"}</span>
+                      <span className={`font-mono text-right ${p.price > 0 ? "text-foreground" : "text-destructive"}`}>€{p.price.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Families */}
             {catalogResult.families.length > 0 && (
               <div>
-                <p className="text-[11px] text-muted-foreground mb-1">Families / Departments:</p>
+                <p className="text-[11px] text-muted-foreground mb-1">Familias / Departamentos:</p>
                 <div className="flex flex-wrap gap-1">
                   {catalogResult.families.map((f) => (
                     <Badge key={f.id} variant="secondary" className="text-[10px]">{f.name || f.id}</Badge>
@@ -713,6 +797,9 @@ function StepCatalogWrite({
                 </div>
               </div>
             )}
+
+            {catalogResult.errors.length > 0 && <p className="text-[11px] text-destructive">{catalogResult.errors.length} error(s): {catalogResult.errors[0]}</p>}
+
             {catalogResult.rawProductsPreview && (
               <div>
                 <p className="text-[11px] text-muted-foreground">Raw Preview (first 2 KB)</p>
