@@ -1090,6 +1090,116 @@ async function handleRvcDiagnostics(conn: any, connectionId: string) {
 }
 
 // ════════════════════════════════════════════════════════
+// ACTION: verify-write (post-write verification)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleVerifyWrite(conn: any, connectionId: string, payload: any) {
+  const cc = ccBaseUrl(conn);
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  const locRefParam = parts[2] || "";
+  const rvcRefParam = parts[3] || "";
+  const externalId = payload.externalId || payload.external_id || "";
+  const expectedPrice = Number(payload.expectedPrice || payload.price || 0);
+  const format = payload.format || "BOT";
+
+  const result = {
+    success: false,
+    verified_exists: false,
+    verified_prices: false,
+    verified_scope: false,
+    errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+    warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+  };
+
+  // ── 1) Verify scope: can we still reach C&C API? ──
+  if (!cc) {
+    result.errors.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot verify." });
+    return json(result);
+  }
+
+  try {
+    const scopeRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
+      headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+    });
+    if (scopeRes.ok) {
+      result.verified_scope = true;
+      // Check if our location is in the response
+      const scopeBody = await scopeRes.json();
+      const locs = Array.isArray(scopeBody) ? scopeBody : (scopeBody.items || scopeBody.locations || []);
+      const matchedLoc = locs.find((l: any) => String(l.locRef || l.locationRef || l.id || "") === locRefParam);
+      if (!matchedLoc && locRefParam) {
+        result.warnings.push({ code: "LOC_NOT_IN_SCOPE", message: `Location ${locRefParam} not found in C&C API response. Item may not be visible at this location.`, context: { locRef: locRefParam, availableLocs: locs.length } });
+      }
+    } else if (scopeRes.status === 401 || scopeRes.status === 403) {
+      result.errors.push({ code: "SCOPE_EXPIRED", message: `C&C API returned ${scopeRes.status}. Token may be expired or permissions revoked.` });
+      return json(result);
+    } else {
+      result.warnings.push({ code: "SCOPE_UNKNOWN", message: `C&C API returned ${scopeRes.status}. Scope could not be verified.` });
+      result.verified_scope = true; // non-blocking
+    }
+  } catch (e: any) {
+    result.errors.push({ code: "SCOPE_ERROR", message: `Scope check failed: ${e.message}` });
+    return json(result);
+  }
+
+  // ── 2) Verify item exists ──
+  const objectNum = externalId || `WINERIM_${payload.winerim_id}_${format}`;
+  try {
+    // Try fetching by objectNum search
+    const searchRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?filter=objectNum eq '${objectNum}'&limit=10`, {
+      headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+    });
+    if (searchRes.ok) {
+      const searchBody = await searchRes.json();
+      const items = Array.isArray(searchBody) ? searchBody : (searchBody.items || searchBody.menuItems || []);
+      const matched = items.find((it: any) => String(it.objectNum || it.menuItemId || "") === objectNum);
+      if (matched) {
+        result.verified_exists = true;
+        // ── 3) Verify price ──
+        const actualPrice = Number(matched.price || matched.defaultPrice || 0);
+        if (actualPrice > 0) {
+          result.verified_prices = true;
+          if (expectedPrice > 0 && Math.abs(actualPrice - expectedPrice) > 0.01) {
+            result.warnings.push({ code: "PRICE_MISMATCH", message: `Expected price ${expectedPrice}, found ${actualPrice}`, field: "price", context: { expected: expectedPrice, actual: actualPrice } });
+          }
+        } else {
+          result.errors.push({ code: "PRICE_ZERO", message: `Item exists but price is ${actualPrice}. Expected > 0.`, field: "price", context: { actual: actualPrice, expected: expectedPrice } });
+        }
+
+        // Check location/RVC assignment if available
+        const locAssignments = matched.locations || matched.locationAssignments || [];
+        if (Array.isArray(locAssignments) && locAssignments.length > 0 && locRefParam) {
+          const locMatch = locAssignments.some((la: any) => String(la.locRef || la.locationRef || "") === locRefParam);
+          if (!locMatch) {
+            result.warnings.push({ code: "LOC_NOT_ASSIGNED", message: `Item exists but not assigned to location ${locRefParam}.`, context: { locRef: locRefParam, assignedLocs: locAssignments.length } });
+          }
+          if (rvcRefParam) {
+            const rvcMatch = locAssignments.some((la: any) => {
+              const rvcs = la.revenueCenters || la.rvcs || [];
+              return rvcs.some((r: any) => String(r.rvcRef || r.revenueCenterRef || "") === rvcRefParam);
+            });
+            if (!rvcMatch) {
+              result.warnings.push({ code: "RVC_NOT_ASSIGNED", message: `Item exists but not assigned to RVC ${rvcRefParam}.`, context: { rvcRef: rvcRefParam } });
+            }
+          }
+        }
+      } else {
+        result.errors.push({ code: "NOT_FOUND", message: `Menu item with objectNum "${objectNum}" not found in C&C API after write.`, context: { objectNum, searchResultCount: items.length } });
+      }
+    } else {
+      // Fallback: try direct menuItem endpoint if search doesn't work
+      result.warnings.push({ code: "SEARCH_FAILED", message: `C&C menuItems search returned ${searchRes.status}. Item existence could not be verified.` });
+    }
+  } catch (e: any) {
+    result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+  }
+
+  result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+  return json(result);
+}
+
+// ════════════════════════════════════════════════════════
 // ROUTER
 // ════════════════════════════════════════════════════════
 Deno.serve(async (req) => {
@@ -1120,6 +1230,7 @@ Deno.serve(async (req) => {
       case "webhook-status": return await handleWebhookStatus(connectionId);
       case "pilot-run": return await handlePilotRun(conn, connectionId);
       case "rvc-diagnostics": return await handleRvcDiagnostics(conn, connectionId);
+      case "verify-write": return await handleVerifyWrite(conn, connectionId, payload);
       default: return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (e: any) {
