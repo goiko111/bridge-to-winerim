@@ -276,6 +276,7 @@ export function useSimphonyConnection() {
     if (!connectionId) return;
     setPreflightRunning(true);
     setPreflightChecks([
+      { id: "base_urls", label: "Required base URLs & refs", status: "pending", required: true },
       { id: "sts", label: "STS Gen2 connectivity", status: "pending", required: true },
       { id: "oidc", label: "OIDC authentication", status: "pending", required: true },
       { id: "locations", label: "Locations discovered", status: "pending", required: true },
