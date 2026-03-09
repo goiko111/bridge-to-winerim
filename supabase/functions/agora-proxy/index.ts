@@ -2196,6 +2196,7 @@ serve(async (req) => {
         warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
         summary: { checked: number; ok: number; failed: number; totalPriceListsChecked: number };
         missing_prices: MissingPriceEntry[];
+        affected_sale_centers: string[];
       }
 
       interface MissingPriceEntry {
@@ -2206,6 +2207,7 @@ serve(async (req) => {
         issue: "missing" | "zero" | "invalid";
         product_name?: string;
         format?: string;
+        affected_sale_centers?: string[];
       }
 
       const verification: PostImportVerification = {
@@ -2218,6 +2220,7 @@ serve(async (req) => {
         warnings: [],
         summary: { checked: 0, ok: 0, failed: 0, totalPriceListsChecked: 0 },
         missing_prices: [],
+        affected_sale_centers: [],
       };
 
       if (parsedResponse.success) {
@@ -2228,7 +2231,18 @@ serve(async (req) => {
           const { data: cachedMaster } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", connectionId).single();
           const allPriceLists = ((cachedMaster as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+          const allSaleCenters = ((cachedMaster as any)?.sale_centers_json || []) as Record<string, string>[];
           verification.summary.totalPriceListsChecked = allPriceLists.length;
+
+          // Build PriceListId -> SaleCenter names map
+          const plToSc: Record<string, string[]> = {};
+          for (const sc of allSaleCenters) {
+            const plId = sc.CurrentPriceListId;
+            if (plId) {
+              if (!plToSc[plId]) plToSc[plId] = [];
+              plToSc[plId].push(sc.Name || sc.Id);
+            }
+          }
 
           // Extract expected familyIds from the sent XML
           const expectedFamilies: Record<string, string> = {};
@@ -2267,11 +2281,16 @@ serve(async (req) => {
                     context: { productId, format: fmt, wineName: wine.name },
                   });
                   for (const pl of allPriceLists) {
+                    const scNames = plToSc[pl.Id] || [];
                     verification.missing_prices.push({
                       product_erp_id: winerimRef, agora_product_id: productId,
                       price_list_id: pl.Id, price_list_name: pl.Name,
                       issue: "missing", product_name: productName, format: fmt,
+                      affected_sale_centers: scNames,
                     });
+                    for (const s of scNames) {
+                      if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                    }
                   }
                   continue;
                 }
@@ -2288,22 +2307,32 @@ serve(async (req) => {
                     if (!priceMatch) {
                       verification.verified_prices = false;
                       productOk = false;
+                      const scNames = plToSc[pl.Id] || [];
                       verification.missing_prices.push({
                         product_erp_id: winerimRef, agora_product_id: productId,
                         price_list_id: pl.Id, price_list_name: pl.Name,
                         issue: "missing", product_name: productName, format: fmt,
+                        affected_sale_centers: scNames,
                       });
+                      for (const s of scNames) {
+                        if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                      }
                     } else {
                       const priceVal = parseFloat(priceMatch[1]);
                       if (isNaN(priceVal) || priceVal <= 0) {
                         verification.verified_prices = false;
                         productOk = false;
+                        const scNames = plToSc[pl.Id] || [];
                         verification.missing_prices.push({
                           product_erp_id: winerimRef, agora_product_id: productId,
                           price_list_id: pl.Id, price_list_name: pl.Name,
                           issue: isNaN(priceVal) ? "invalid" : "zero",
                           product_name: productName, format: fmt,
+                          affected_sale_centers: scNames,
                         });
+                        for (const s of scNames) {
+                          if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                        }
                       }
                     }
                   }
