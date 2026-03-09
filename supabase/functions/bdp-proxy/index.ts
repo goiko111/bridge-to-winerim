@@ -27,18 +27,47 @@ function bdpHeaders(userKey: string, password: string): Record<string, string> {
   return h;
 }
 
-/** Fetch with 30s timeout */
-async function bdpFetch(url: string, headers: Record<string, string>, method = "GET") {
+/** Fetch with 30s timeout and optional retry with backoff */
+async function bdpFetch(url: string, headers: Record<string, string>, method = "GET", body?: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    const resp = await fetch(url, { method, headers, signal: controller.signal });
+    const opts: RequestInit = { method, headers, signal: controller.signal };
+    if (body) opts.body = body;
+    const resp = await fetch(url, opts);
     clearTimeout(timeout);
     return resp;
   } catch (e) {
     clearTimeout(timeout);
     throw e;
   }
+}
+
+/** Fetch with retry + exponential backoff (for discovery probes) */
+async function bdpFetchWithRetry(
+  url: string, headers: Record<string, string>, method = "GET",
+  { retries = 2, baseDelayMs = 1000 } = {},
+): Promise<{ resp: Response | null; attempts: number; lastError?: string }> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      const resp = await bdpFetch(url, headers, method);
+      // Retry on 502/503/504
+      if ((resp.status === 502 || resp.status === 503 || resp.status === 504) && attempt <= retries) {
+        lastError = `HTTP ${resp.status}`;
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt - 1)));
+        continue;
+      }
+      return { resp, attempts: attempt };
+    } catch (e: any) {
+      lastError = e.message || "Network error";
+      if (attempt <= retries) {
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt - 1)));
+        continue;
+      }
+    }
+  }
+  return { resp: null, attempts: retries + 1, lastError };
 }
 
 /**
