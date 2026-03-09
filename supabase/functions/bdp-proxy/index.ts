@@ -240,46 +240,86 @@ serve(async (req) => {
     }
 
     // ── ACTION: discover ──
-    // Probe multiple endpoints to detect capabilities
+    // Probe endpoints with retry/backoff. Persist discovered routes per connection.
     if (action === "discover") {
+      const today = new Date().toISOString().substring(0, 10);
       const endpoints = [
-        { key: "status",      path: "/api/v1/status",      critical: true },
-        { key: "articles",    path: "/api/v1/articles",     critical: false },
-        { key: "departments", path: "/api/v1/departments",  critical: false },
-        { key: "export",      path: `/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${new Date().toISOString().substring(0,10)}&dateTo=${new Date().toISOString().substring(0,10)}`, critical: true },
+        { key: "auth",        label: "Auth / Status",   path: "/api/v1/status",      critical: true,  role: "auth" },
+        { key: "articles",    label: "Catalog (Articles)", path: "/api/v1/articles",  critical: false, role: "catalog" },
+        { key: "departments", label: "Departments",     path: "/api/v1/departments",  critical: false, role: "catalog" },
+        { key: "export",      label: "Sales Export",    path: `/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${today}&dateTo=${today}`, critical: true, role: "sales" },
       ];
 
-      // Add import endpoint if configured
       const importCode = config.import_profile_code ? String(config.import_profile_code) : "";
       if (importCode) {
-        endpoints.push({ key: "import", path: `/api/v1/import/${encodeURIComponent(importCode)}`, critical: false });
+        endpoints.push({ key: "import", label: "Write (Import)", path: `/api/v1/import/${encodeURIComponent(importCode)}`, critical: false, role: "write" });
       }
 
-      const results: Record<string, { ok: boolean; status: number; critical: boolean; bodyPreview?: string }> = {};
+      // Also probe direct write via PUT/POST articles
+      endpoints.push({ key: "articles_write", label: "Write (REST)", path: "/api/v1/articles", critical: false, role: "write" });
 
+      const results: Record<string, {
+        ok: boolean; status: number; critical: boolean; role: string;
+        label: string; path: string; bodyPreview?: string;
+        attempts: number; lastError?: string;
+      }> = {};
+
+      // Probe all endpoints with retry
       for (const ep of endpoints) {
-        try {
-          const resp = await bdpFetch(`${host}${ep.path}`, headers);
+        const fullUrl = `${host}${ep.path}`;
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(fullUrl, headers, "GET", { retries: 2, baseDelayMs: 1500 });
+        if (resp) {
           const body = await resp.text();
-          results[ep.key] = { ok: resp.ok || resp.status === 405, status: resp.status, critical: ep.critical, bodyPreview: body.substring(0, 512) };
-        } catch {
-          results[ep.key] = { ok: false, status: 0, critical: ep.critical };
+          const isOk = resp.ok || resp.status === 405; // 405 = method not allowed but endpoint exists
+          results[ep.key] = {
+            ok: isOk, status: resp.status, critical: ep.critical, role: ep.role,
+            label: ep.label, path: ep.path,
+            bodyPreview: isOk ? undefined : body.substring(0, 1024), // Only show body on failures
+            attempts,
+          };
+        } else {
+          results[ep.key] = {
+            ok: false, status: 0, critical: ep.critical, role: ep.role,
+            label: ep.label, path: ep.path,
+            bodyPreview: undefined, attempts, lastError,
+          };
         }
       }
 
       const canReadSales = results.export?.ok ?? false;
       const canReadCatalog = results.articles?.ok ?? false;
-      const canWrite = importCode ? (results.import?.ok ?? false) : (results.articles?.ok ?? false);
+      const canWriteImport = importCode ? (results.import?.ok ?? false) : false;
+      const canWriteRest = results.articles_write?.ok ?? false;
+      const canWrite = canWriteImport || canWriteRest;
       const allCriticalPass = Object.values(results).filter(r => r.critical).every(r => r.ok);
 
+      const writeMode = canWriteImport ? "IMPORT_PROFILE" : (canWriteRest ? "REST" : "NONE");
+
+      // Build persisted discovered_routes map
+      const discoveredRoutes: Record<string, { path: string; status: number; verified_at: string }> = {};
+      for (const [key, val] of Object.entries(results)) {
+        if (val.ok) {
+          discoveredRoutes[key] = { path: val.path, status: val.status, verified_at: new Date().toISOString() };
+        }
+      }
+
+      // Persist routes into provider_config
+      const updatedConfig = { ...config, discovered_routes: discoveredRoutes, last_discovery_at: new Date().toISOString() };
+      await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
+
       // Upsert provider_capabilities
+      const writeEndpointsJson: Record<string, unknown> = {};
+      if (canWriteImport) writeEndpointsJson.import = { path: `/api/v1/import/${encodeURIComponent(importCode)}`, mode: "IMPORT_PROFILE" };
+      if (canWriteRest) writeEndpointsJson.rest = { path: "/api/v1/articles", mode: "REST" };
+
       await supabase.from("provider_capabilities").upsert({
         connection_id: connectionId,
         provider: "BDP_NET",
         can_read_sales: canReadSales,
         can_read_catalog: canReadCatalog,
         can_write_products: canWrite ? "YES" : "NO",
-        write_mode: importCode ? "IMPORT_PROFILE" : (canWrite ? "REST" : "NONE"),
+        write_mode: writeMode,
+        write_endpoints_json: writeEndpointsJson,
         webhook_supported: false,
         readiness_status: allCriticalPass ? "CONNECTED" : "PARTIAL",
         last_checked_at: new Date().toISOString(),
@@ -288,7 +328,8 @@ serve(async (req) => {
       return ok({
         success: allCriticalPass,
         endpoints: results,
-        capabilities: { canReadSales, canReadCatalog, canWrite, writeMode: importCode ? "IMPORT_PROFILE" : (canWrite ? "REST" : "NONE") },
+        discoveredRoutes,
+        capabilities: { canReadSales, canReadCatalog, canWrite, writeMode },
       });
     }
 
