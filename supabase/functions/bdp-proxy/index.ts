@@ -333,16 +333,37 @@ serve(async (req) => {
 
       const writeMode = canWriteImport ? "IMPORT_PROFILE" : (canWriteRest ? "REST" : "NONE");
 
-      // Build persisted discovered_routes map
-      const discoveredRoutes: Record<string, { path: string; status: number; verified_at: string }> = {};
+      // Build persisted endpoint records with rich metadata
+      const discoveredEndpoints: Record<string, BdpEndpointRecord> = {};
       for (const [key, val] of Object.entries(results)) {
+        const ep: BdpEndpointRecord = {
+          path: val.path,
+          role: val.role as BdpEndpointRecord["role"],
+          verified_at: new Date().toISOString(),
+        };
         if (val.ok) {
-          discoveredRoutes[key] = { path: val.path, status: val.status, verified_at: new Date().toISOString() };
+          ep.last_success_at = new Date().toISOString();
+          ep.last_success_status = val.status;
+        } else {
+          ep.last_error_at = new Date().toISOString();
+          ep.last_error_status = val.status;
+          ep.last_error_body = (val.bodyPreview || val.lastError || "").substring(0, 2048);
         }
+        discoveredEndpoints[key] = ep;
       }
 
-      // Persist routes into provider_config
-      const updatedConfig = { ...config, discovered_routes: discoveredRoutes, last_discovery_at: new Date().toISOString() };
+      // Persist to provider_config
+      const updatedConfig = {
+        ...config,
+        discovered_endpoints: discoveredEndpoints,
+        last_discovery_at: new Date().toISOString(),
+        // Keep legacy for backward compat
+        discovered_routes: Object.fromEntries(
+          Object.entries(discoveredEndpoints)
+            .filter(([, v]) => v.last_success_at)
+            .map(([k, v]) => [k, { path: v.path, status: v.last_success_status, verified_at: v.verified_at }])
+        ),
+      };
       await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
 
       // Upsert provider_capabilities
@@ -366,7 +387,7 @@ serve(async (req) => {
       return ok({
         success: allCriticalPass,
         endpoints: results,
-        discoveredRoutes,
+        discoveredEndpoints,
         capabilities: { canReadSales, canReadCatalog, canWrite, writeMode },
       });
     }
