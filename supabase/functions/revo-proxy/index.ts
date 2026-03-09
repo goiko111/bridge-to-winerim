@@ -949,6 +949,219 @@ serve(async (req) => {
       return json({ success: true, queued });
     }
 
+    // ── REPAIR: FIX PRICES ──
+    if (action === "repair-fix-prices") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        // Check for existing pending repair
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        // Fetch latest price from winerim_wines
+        let price = payload.price || 0;
+        if (payload.winerim_id) {
+          const { data: wine } = await supabase
+            .from("winerim_wines")
+            .select("bottle_sale_price, glass_sale_price, price")
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", payload.winerim_id)
+            .single();
+          if (wine) price = wine.bottle_sale_price || wine.price || price;
+        }
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, price, repair_action: "fix_prices" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: REASSIGN CATEGORY ──
+    if (action === "repair-reassign-category") {
+      const { categoryOverride } = reqBody;
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      // Load mappings if no override
+      let mappingLookup: Map<string, string> | null = null;
+      if (!categoryOverride) {
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_id")
+          .eq("connection_id", connectionId);
+        if (mappings?.length) {
+          mappingLookup = new Map(mappings.map((m: any) => [m.mapping_key, m.agora_family_id]));
+        }
+      }
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        let catId = categoryOverride || null;
+        if (!catId && mappingLookup && payload.wine_type) {
+          const wt = String(payload.wine_type).toLowerCase();
+          for (const key of [`bottle_${wt}`, "bottle", "glass"]) {
+            if (mappingLookup.has(key)) { catId = mappingLookup.get(key) || null; break; }
+          }
+        }
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, category_id: catId, repair_action: "reassign_category" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: FIX TAX/VAT ──
+    if (action === "repair-fix-tax") {
+      const { taxRate } = reqBody;
+      const targetTax = Number(taxRate || connection.default_vat_rate || 10);
+
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, tax: targetTax, repair_action: "fix_tax" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: RE-VERIFY ALL ──
+    if (action === "repair-reverify") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("id, external_id, payload_json")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ verified: 0, passed: 0, failed: 0, totalTargets: 0 });
+
+      let verified = 0, passed = 0, failed = 0;
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) continue;
+        seen.add(extId);
+
+        try {
+          const itemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${extId}`, revoHeaders, connectionId);
+          if (!itemRes.ok) {
+            results.push({ external_id: extId, success: false, error: `HTTP ${itemRes.status}` });
+            failed++;
+          } else {
+            const item = await itemRes.json();
+            const d = item.data || item;
+            const vPrice = Number(d.price || 0) > 0;
+            const vCat = !!(d.category_id || d.categoryId);
+            const vTax = Number(d.tax || d.taxPercentage || 0) > 0;
+            const ok = vPrice && vCat && vTax;
+            results.push({
+              external_id: extId,
+              name: d.name,
+              success: ok,
+              verified_prices: vPrice,
+              verified_family: vCat,
+              verified_tax: vTax,
+            });
+            if (ok) passed++; else failed++;
+          }
+          verified++;
+        } catch (e: any) {
+          results.push({ external_id: extId, success: false, error: e.message });
+          failed++;
+          verified++;
+        }
+      }
+      return json({ success: true, verified, passed, failed, totalTargets: tasks.length, results });
+    }
+
     // ── DETECT CAPABILITIES ──
     if (action === "detect-capabilities") {
       const results: { endpoint: string; status: number; writable: boolean }[] = [];
