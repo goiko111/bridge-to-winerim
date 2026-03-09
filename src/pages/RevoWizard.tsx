@@ -20,6 +20,7 @@ import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 import RevoFamilyMapping from "@/components/RevoFamilyMapping";
 import RevoPushPanel from "@/components/RevoPushPanel";
 import RevoRepairActionsPanel from "@/components/RevoRepairActionsPanel";
+import RevoPilotRun from "@/components/RevoPilotRun";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -473,6 +474,7 @@ export default function RevoWizard() {
                   Enable sync to start ingesting sales data from Revo XEF.
                 </p>
               </div>
+              <RevoPilotRun connectionId={connectionId} />
               <RevoHealthPanel connectionId={connectionId} />
               <ProviderReadinessPanel connectionId={connectionId} provider="revo" />
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
