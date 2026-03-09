@@ -31,14 +31,12 @@ async function getConnection(connId: string) {
   return data;
 }
 
-// ── Credential field mapping (Item 8 — Explicit typed columns) ──
-// New explicit columns:
-//   toast_client_id     = client_id
-//   toast_client_secret = client_secret  
-//   toast_access_token  = access_token (JWT)
-//   toast_refresh_token = refresh_token (if applicable)
-//   toast_expires_at    = token expiry
-// Legacy fallback: merchant_id / refresh_token_enc / access_token_enc / expires_at
+// ── Credential helpers — explicit typed columns only ──
+// Columns on provider_credentials:
+//   toast_client_id, toast_client_secret, toast_access_token,
+//   toast_refresh_token, toast_expires_at
+// Columns on pos_connections:
+//   base_url (= api_hostname), restaurant_guid
 
 const tokenCache: Record<string, { token: string; expiresAt: number }> = {};
 
@@ -53,20 +51,18 @@ interface ToastCredentials {
 
 function parseToastCredentials(cred: any): ToastCredentials | null {
   if (!cred) return null;
-  // Prefer new explicit columns, fall back to legacy
   return {
-    clientId: cred.toast_client_id || cred.merchant_id || "",
-    clientSecret: cred.toast_client_secret || cred.refresh_token_enc || "",
-    accessToken: cred.toast_access_token || (cred.access_token_enc !== "pending" ? cred.access_token_enc : null) || null,
+    clientId: cred.toast_client_id || "",
+    clientSecret: cred.toast_client_secret || "",
+    accessToken: cred.toast_access_token || null,
     refreshToken: cred.toast_refresh_token || null,
-    expiresAt: cred.toast_expires_at || cred.expires_at || null,
+    expiresAt: cred.toast_expires_at || null,
     status: cred.status || "PENDING",
   };
 }
 
 async function getAuthToken(conn: any): Promise<string> {
-  const cfg = getToastConfig(conn.provider_config);
-  const hostname = cfg.api_hostname.replace(/\/+$/, "");
+  const hostname = (conn.base_url || "").replace(/\/+$/, "");
   const connId = conn.id;
 
   // Check in-memory cache
@@ -76,7 +72,8 @@ async function getAuthToken(conn: any): Promise<string> {
 
   // Check DB cache
   const { data: cred } = await sb().from("provider_credentials")
-    .select("*").eq("connection_id", connId).maybeSingle();
+    .select("id, toast_client_id, toast_client_secret, toast_access_token, toast_refresh_token, toast_expires_at, status")
+    .eq("connection_id", connId).maybeSingle();
 
   const parsed = parseToastCredentials(cred);
 
@@ -88,8 +85,7 @@ async function getAuthToken(conn: any): Promise<string> {
     }
   }
 
-  // Read credentials from parsed or fallback to conn.api_token
-  const clientId = parsed?.clientId || conn.api_token;
+  const clientId = parsed?.clientId;
   const clientSecret = parsed?.clientSecret;
   if (!clientId || !clientSecret) throw new Error("Missing Toast credentials (client_id / client_secret). Re-enter them in the Connection step.");
 
@@ -113,19 +109,19 @@ async function getAuthToken(conn: any): Promise<string> {
   const expiresAt = Date.now() + expiresIn * 1000;
   if (!token) throw new Error("No token in auth response");
 
-  // Persist token using new explicit columns (primary) + legacy for backward compat
+  const cfg = getToastConfig(conn.provider_config);
+
+  // Persist token using explicit columns only
   const credRow = {
     connection_id: connId,
-    // Explicit Toast columns (primary)
     toast_client_id: clientId,
     toast_client_secret: clientSecret,
     toast_access_token: token,
-    toast_refresh_token: null, // Toast uses client credentials, no refresh token
+    toast_refresh_token: null,
     toast_expires_at: new Date(expiresAt).toISOString(),
-    // Legacy columns (backward compat)
+    // Required non-null columns for provider_credentials table
     merchant_id: clientId,
     access_token_enc: token,
-    refresh_token_enc: clientSecret,
     expires_at: new Date(expiresAt).toISOString(),
     status: "ACTIVE",
     scopes: cfg?.scopes_expected || [],
@@ -165,25 +161,22 @@ async function fetchWithRetry(url: string, opts: RequestInit, maxRetries = 3): P
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: store-credentials (explicit typed columns)
+// ACTION: store-credentials (explicit typed columns only)
 // ═══════════════════════════════════════════════════════
 async function handleStoreCredentials(connId: string, clientId: string, clientSecret: string) {
   const { data: existing } = await sb().from("provider_credentials")
     .select("id").eq("connection_id", connId).maybeSingle();
 
-  // Use new explicit columns + legacy for backward compat
   const row = {
     connection_id: connId,
-    // Explicit Toast columns (primary)
     toast_client_id: clientId,
     toast_client_secret: clientSecret,
-    toast_access_token: null, // Will be set after first auth
+    toast_access_token: null,
     toast_refresh_token: null,
     toast_expires_at: null,
-    // Legacy columns (backward compat)
+    // Required non-null columns
     merchant_id: clientId,
     access_token_enc: "pending",
-    refresh_token_enc: clientSecret,
     status: "PENDING",
     scopes: [],
   };
@@ -202,8 +195,8 @@ async function handleStoreCredentials(connId: string, clientId: string, clientSe
 async function handlePreflight(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getToastConfig(conn.provider_config);
-  const hostname = cfg.api_hostname.replace(/\/+$/, "");
-  const guid = cfg.restaurant_guid;
+  const hostname = (conn.base_url || cfg.api_hostname || "").replace(/\/+$/, "");
+  const guid = conn.restaurant_guid || cfg.restaurant_guid;
   if (!guid) return json({ success: false, message: "Missing restaurant GUID" });
 
   let token: string;
@@ -249,8 +242,8 @@ async function handlePreflight(connId: string) {
 async function handleCheckScopes(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getToastConfig(conn.provider_config);
-  const hostname = cfg.api_hostname.replace(/\/+$/, "");
-  const guid = cfg.restaurant_guid;
+  const hostname = (conn.base_url || cfg.api_hostname || "").replace(/\/+$/, "");
+  const guid = conn.restaurant_guid || cfg.restaurant_guid;
 
   let token: string;
   try { token = await getAuthToken(conn); } catch { return json({ scopes: [] }); }
@@ -285,13 +278,13 @@ function classifyFormat(name: string): string | null {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-sales (with diagnostics — Item 10)
+// ACTION: sync-sales
 // ═══════════════════════════════════════════════════════
 async function handleSyncSales(connId: string, mode: string, params: any) {
   const conn = await getConnection(connId);
   const cfg = getToastConfig(conn.provider_config);
-  const hostname = cfg.api_hostname.replace(/\/+$/, "");
-  const guid = cfg.restaurant_guid;
+  const hostname = (conn.base_url || cfg.api_hostname || "").replace(/\/+$/, "");
+  const guid = conn.restaurant_guid || cfg.restaurant_guid;
   const tz = cfg?.timezone || "America/New_York";
   const closeoutHour = cfg?.closeout_hour ?? 4;
 
@@ -411,7 +404,6 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
       },
     }).eq("id", connId);
 
-    // Item 10: return full diagnostics
     const diagnostics = {
       mode,
       timezone: tz,
@@ -444,8 +436,8 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
 async function handleSyncMenus(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getToastConfig(conn.provider_config);
-  const hostname = cfg.api_hostname.replace(/\/+$/, "");
-  const guid = cfg.restaurant_guid;
+  const hostname = (conn.base_url || cfg.api_hostname || "").replace(/\/+$/, "");
+  const guid = conn.restaurant_guid || cfg.restaurant_guid;
 
   let token: string;
   try { token = await getAuthToken(conn); } catch (e: any) {
@@ -507,7 +499,7 @@ async function handleSyncMenus(connId: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-status (extended with webhook diagnostics)
+// ACTION: sync-status
 // ═══════════════════════════════════════════════════════
 async function handleSyncStatus(connId: string) {
   const conn = await getConnection(connId);
@@ -523,7 +515,6 @@ async function handleSyncStatus(connId: string) {
     .select("id", { count: "exact", head: true }).eq("connection_id", connId)
     .gte("created_at", new Date(Date.now() - 3600000).toISOString());
 
-  // Webhook event stats
   const { data: lastWebhook } = await sb().from("webhook_events")
     .select("created_at, event_type, status")
     .eq("provider", "TOAST").eq("connection_id", connId)
@@ -551,7 +542,6 @@ async function handleSyncStatus(connId: string) {
     lastCursor: cursor,
     timezone: cfg?.timezone || null,
     closeoutHour: cfg?.closeout_hour ?? null,
-    // Webhook diagnostics (hardened)
     webhook: {
       lastEvent: lastWebhook ? `${lastWebhook.event_type} — ${lastWebhook.created_at}` : null,
       lastStatus: lastWebhook?.status || null,
@@ -567,10 +557,10 @@ async function handleSyncStatus(connId: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: webhook-ingest (hardened with retry-safe processing)
+// ACTION: webhook-ingest
 // ═══════════════════════════════════════════════════════
-const MAX_WEBHOOK_BODY_SIZE = 2 * 1024 * 1024; // 2 MB
-const WEBHOOK_PROCESSING_TIMEOUT = 5000; // 5s max for inline processing
+const MAX_WEBHOOK_BODY_SIZE = 2 * 1024 * 1024;
+const WEBHOOK_PROCESSING_TIMEOUT = 5000;
 
 interface WebhookDiagnostics {
   lastSignatureFailure?: string;
@@ -592,14 +582,11 @@ async function updateWebhookDiagnostics(connId: string, updates: Partial<Webhook
 async function handleWebhookIngest(req: Request) {
   const now = new Date().toISOString();
 
-  // ── Payload size guard (check header first) ──
   const contentLength = parseInt(req.headers.get("content-length") || "0");
   if (contentLength > MAX_WEBHOOK_BODY_SIZE) {
-    console.warn(`[Webhook] Payload too large from header: ${contentLength} bytes`);
     return json({ error: "Payload too large", maxBytes: MAX_WEBHOOK_BODY_SIZE }, 413);
   }
 
-  // ── Read body with size limit ──
   let body: string;
   try {
     const reader = req.body?.getReader();
@@ -613,7 +600,6 @@ async function handleWebhookIngest(req: Request) {
       totalSize += value.length;
       if (totalSize > MAX_WEBHOOK_BODY_SIZE) {
         reader.cancel();
-        console.warn(`[Webhook] Payload exceeded limit during read: ${totalSize} bytes`);
         return json({ error: "Payload too large", maxBytes: MAX_WEBHOOK_BODY_SIZE }, 413);
       }
       chunks.push(value);
@@ -626,16 +612,13 @@ async function handleWebhookIngest(req: Request) {
     }
     body = new TextDecoder().decode(combined);
   } catch (e: any) {
-    console.error("[Webhook] Body read error:", e.message);
     return json({ error: "Failed to read body" }, 400);
   }
 
-  // ── Parse JSON ──
   let payload: any;
   try {
     payload = JSON.parse(body);
   } catch (e: any) {
-    console.error("[Webhook] JSON parse failure, preview:", body.slice(0, 300));
     await sb().from("webhook_events").insert({
       provider: "TOAST",
       event_id: `PARSE_FAIL_${Date.now()}`,
@@ -646,25 +629,20 @@ async function handleWebhookIngest(req: Request) {
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  // ── Find connection by restaurantGuid ──
+  // Find connection by restaurant_guid — use explicit column
   const guid = payload.restaurantGuid || payload.restaurant?.guid;
   if (!guid) {
-    console.warn("[Webhook] Missing restaurantGuid in payload");
     return json({ error: "Missing restaurantGuid" }, 400);
   }
 
-  const { data: connections } = await sb().from("pos_connections")
+  const { data: match } = await sb().from("pos_connections")
     .select("id, provider_config")
     .eq("provider", "toast")
-    .limit(100);
-
-  const match = (connections || []).find((c: any) => {
-    const ccfg = getToastConfig(c.provider_config);
-    return ccfg.restaurant_guid === guid;
-  });
+    .eq("restaurant_guid", guid)
+    .limit(1)
+    .maybeSingle();
 
   if (!match) {
-    console.warn(`[Webhook] No matching connection for guid: ${guid}`);
     return json({ error: "No matching connection for restaurant" }, 404);
   }
 
@@ -673,12 +651,11 @@ async function handleWebhookIngest(req: Request) {
   const webhookSecret = matchCfg.webhook_secret;
   const strictMode = matchCfg.webhook_signature_strict === true;
 
-  // ── Signature verification (enforcement based on config) ──
+  // Signature verification
   const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature") || "";
 
   if (webhookSecret) {
     if (!sig) {
-      console.warn(`[Webhook] Missing signature header for conn ${connId}`);
       await updateWebhookDiagnostics(connId, { lastSignatureFailure: now });
       await sb().from("webhook_events").insert({
         provider: "TOAST",
@@ -689,15 +666,12 @@ async function handleWebhookIngest(req: Request) {
         status: "REJECTED",
       });
       if (strictMode) return json({ error: "Missing signature" }, 401);
-      // Permissive mode: log but continue
-      console.warn("[Webhook] Permissive mode: allowing unsigned request");
     } else {
       try {
         const expectedSig = await hmacSha256Hex(webhookSecret, body);
         const sigValue = sig.startsWith("sha256=") ? sig.slice(7) : sig;
 
         if (sigValue.toLowerCase() !== expectedSig.toLowerCase()) {
-          console.warn(`[Webhook] Signature mismatch for conn ${connId}`);
           await updateWebhookDiagnostics(connId, { lastSignatureFailure: now });
           await sb().from("webhook_events").insert({
             provider: "TOAST",
@@ -708,36 +682,30 @@ async function handleWebhookIngest(req: Request) {
             status: "REJECTED",
           });
           if (strictMode) return json({ error: "Invalid signature" }, 401);
-          console.warn("[Webhook] Permissive mode: allowing mismatched signature");
         }
       } catch (e: any) {
-        console.error("[Webhook] HMAC verification error:", e.message);
         // Allow through if HMAC lib fails but log it
       }
     }
   }
 
-  // ── Strong dedupe: eventGuid + orderGuid ──
+  // Strong dedupe
   const eventGuid = payload.eventGuid || payload.guid || "";
   const orderGuid = payload.orderGuid || payload.order?.guid || "";
   const eventType = payload.eventType || "ORDER_UPDATE";
   const timestamp = payload.timestamp || payload.createdDate || Date.now();
 
-  // Build deterministic dedupe key
   const dedupeKey = eventGuid
     ? `TOAST_EVT_${eventGuid}`
     : `TOAST_${guid}_${orderGuid}_${eventType}_${timestamp}`;
 
-  // Check for existing event (atomic dedupe)
   const { data: existingEvt } = await sb().from("webhook_events")
     .select("id, status").eq("event_id", dedupeKey).limit(1);
 
   if (existingEvt && existingEvt.length > 0) {
-    console.log(`[Webhook] Duplicate event: ${dedupeKey}`);
     return json({ ok: true, message: "Duplicate event", eventId: dedupeKey });
   }
 
-  // ── Store event for retry-safe async processing ──
   const { data: inserted, error: insertErr } = await sb().from("webhook_events").insert({
     provider: "TOAST",
     connection_id: connId,
@@ -756,19 +724,15 @@ async function handleWebhookIngest(req: Request) {
   }).select("id").single();
 
   if (insertErr) {
-    // 23505 = unique violation (concurrent dedupe race)
     if (insertErr.code === "23505") {
       return json({ ok: true, message: "Duplicate event (concurrent)", eventId: dedupeKey });
     }
-    console.error("[Webhook] Insert error:", insertErr);
     return json({ error: "Failed to queue event" }, 500);
   }
 
-  // ── Inline processing attempt (retry-safe: if this fails, event is still PENDING) ──
   try {
-    // Only process order events inline
     if (eventType.includes("ORDER") && orderGuid) {
-      const processed = await processOrderWebhook(connId, cfg, payload, orderGuid);
+      const processed = await processOrderWebhook(connId, payload, orderGuid);
       if (processed) {
         await sb().from("webhook_events").update({
           status: "PROCESSED",
@@ -777,14 +741,12 @@ async function handleWebhookIngest(req: Request) {
         await updateWebhookDiagnostics(connId, { lastSuccessfulEvent: now, lastEventId: dedupeKey });
       }
     } else {
-      // Non-order events: mark as processed (logged)
       await sb().from("webhook_events").update({
         status: "PROCESSED",
         processed_at: new Date().toISOString(),
       }).eq("id", inserted.id);
     }
   } catch (e: any) {
-    console.error(`[Webhook] Processing error for ${dedupeKey}:`, e.message);
     // Leave as PENDING for retry
   }
 
@@ -797,23 +759,20 @@ async function handleWebhookIngest(req: Request) {
 }
 
 // ── Process order webhook into sales_events ──
-async function processOrderWebhook(connId: string, cfg: any, payload: any, orderGuid: string): Promise<boolean> {
+async function processOrderWebhook(connId: string, payload: any, orderGuid: string): Promise<boolean> {
   const businessDate = payload.businessDate
     ? `${String(payload.businessDate).slice(0, 4)}-${String(payload.businessDate).slice(4, 6)}-${String(payload.businessDate).slice(6, 8)}`
     : (payload.openedDate || new Date().toISOString()).slice(0, 10);
 
   const docId = `TOAST_${orderGuid}`;
 
-  // Dedupe against sales_events
   const { data: existing } = await sb().from("sales_events")
     .select("id").eq("connection_id", connId).eq("provider_doc_id", docId).limit(1);
 
   if (existing && existing.length > 0) {
-    console.log(`[Webhook] Order already exists: ${docId}`);
-    return true; // Already processed
+    return true;
   }
 
-  // Extract line items
   let totalAmount = 0, totalTax = 0, lineCount = 0;
   const checks = payload.checks || [];
   const lineItems: any[] = [];
@@ -849,7 +808,6 @@ async function processOrderWebhook(connId: string, cfg: any, payload: any, order
     }
   }
 
-  // Insert sales event
   const { data: evt } = await sb().from("sales_events").insert({
     connection_id: connId,
     provider_doc_id: docId,
@@ -870,7 +828,6 @@ async function processOrderWebhook(connId: string, cfg: any, payload: any, order
   }
   return false;
 }
-
 
 // ═══════════════════════════════════════════════════════
 // ROUTER

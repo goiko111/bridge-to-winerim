@@ -3,15 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 
 export type ToastSyncMode = "DATE_RANGE" | "BUSINESS_DATE";
 
-export interface ToastSyncCursor {
-  mode: ToastSyncMode;
-  startDate?: string;
-  endDate?: string;
-  businessDate?: string;
-  page: number;
-  lastModified?: string;
-}
-
 export interface ToastPreflightResult {
   success: boolean;
   restaurantName?: string;
@@ -121,8 +112,6 @@ export function useToastConnection() {
     webhookSecret?: string;
   }) => {
     const providerConfig = {
-      api_hostname: fields.apiHostname,
-      restaurant_guid: fields.restaurantGuid,
       timezone: fields.timezone,
       closeout_hour: fields.closeoutHour,
       sync_mode: fields.syncMode,
@@ -134,21 +123,21 @@ export function useToastConnection() {
       provider: "toast" as const,
       location_name: fields.locationName,
       base_url: fields.apiHostname,
-      api_token: fields.clientId, // clientId stored here; clientSecret in provider_config encrypted
+      api_token: fields.clientId,
+      restaurant_guid: fields.restaurantGuid,
       provider_config: providerConfig,
     };
 
     if (connectionId) {
-      const { error } = await supabase.from("pos_connections").update(row).eq("id", connectionId);
+      const { error } = await supabase.from("pos_connections").update(row as any).eq("id", connectionId);
       if (error) throw error;
-      // Store secret separately
       await callProxy("store-credentials", {
         connection_id: connectionId,
         client_id: fields.clientId,
         client_secret: fields.clientSecret,
       });
     } else {
-      const { data, error } = await supabase.from("pos_connections").insert(row).select().single();
+      const { data, error } = await supabase.from("pos_connections").insert(row as any).select().single();
       if (error) throw error;
       setConnectionId(data.id);
       await callProxy("store-credentials", {

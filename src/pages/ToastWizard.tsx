@@ -48,9 +48,9 @@ export default function ToastWizard() {
     toast.loadExistingConnection().then((conn) => {
       if (conn) {
         setLocationName(conn.location_name || "");
+        setApiHostname(conn.base_url || "https://ws-api.toasttab.com");
+        setRestaurantGuid((conn as any).restaurant_guid || "");
         const cfg = getToastConfig(conn.provider_config);
-        setApiHostname(cfg.api_hostname || "https://ws-api.toasttab.com");
-        setRestaurantGuid(cfg.restaurant_guid || "");
         setTimezone(cfg.timezone || "America/New_York");
         setCloseoutHour(cfg.closeout_hour ?? 4);
         setSyncMode(cfg.sync_mode || "DATE_RANGE");
