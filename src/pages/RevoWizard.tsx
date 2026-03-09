@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Link2, Settings2,
   Power, Calendar, RefreshCw, Package, Download, Zap, ExternalLink, ShieldCheck,
-  Webhook,
+  Webhook, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,8 +47,11 @@ export default function RevoWizard() {
     saving, saveResult, saveSalesToDb,
     syncingCatalog, catalogSyncResult, syncCatalog,
     backfilling, backfillResult, runBackfill,
+    writeVerification, verifying, verifyWrite,
     enableSync,
   } = useRevoConnection();
+
+  const [verifyItemId, setVerifyItemId] = useState("");
 
   const outbound = useOutboundSync(connectionId);
 
@@ -345,6 +348,64 @@ export default function RevoWizard() {
                   <strong>Important:</strong> In Revo, Items depend on Categories and Groups. 
                   To write products (Winerim → Revo), ensure the target Group/Category exist first.
                 </p>
+              </div>
+
+              {/* Post-write verification */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-primary" /> Post-Write Verification
+                </h3>
+                <p className="text-[11px] text-muted-foreground">Verify a created/updated item exists with correct price and category.</p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Revo Item ID (from upsert result)"
+                    value={verifyItemId}
+                    onChange={(e) => setVerifyItemId(e.target.value)}
+                    className="bg-background text-sm flex-1 font-mono"
+                  />
+                  <Button size="sm" variant="outline" onClick={() => verifyWrite({ revo_item_id: verifyItemId })} disabled={verifying || !verifyItemId}>
+                    {verifying ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3 w-3" />}
+                    Verify
+                  </Button>
+                </div>
+                {writeVerification && (
+                  <div className={`rounded-lg border p-3 text-xs space-y-2 ${writeVerification.success ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-1.5">
+                        {writeVerification.verified_exists ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                        <span className={writeVerification.verified_exists ? "text-success" : "text-destructive"}>Exists</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {writeVerification.verified_prices ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                        <span className={writeVerification.verified_prices ? "text-success" : "text-destructive"}>Price &gt; 0</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {writeVerification.verified_scope ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                        <span className={writeVerification.verified_scope ? "text-success" : "text-destructive"}>Scope</span>
+                      </div>
+                    </div>
+                    {writeVerification.errors.length > 0 && (
+                      <div className="space-y-1">
+                        {writeVerification.errors.map((e, i) => (
+                          <div key={i} className="flex items-start gap-1.5 text-destructive">
+                            <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <span><code className="bg-destructive/10 px-1 rounded text-[10px]">{e.code}</code> {e.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {writeVerification.warnings.length > 0 && (
+                      <div className="space-y-1">
+                        {writeVerification.warnings.map((w, i) => (
+                          <div key={i} className="flex items-start gap-1.5 text-warning">
+                            <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                            <span><code className="bg-warning/10 px-1 rounded text-[10px]">{w.code}</code> {w.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
