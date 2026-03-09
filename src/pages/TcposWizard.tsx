@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useTcposConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@/hooks/useTcposConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const steps = [
   { id: 1, label: "Connessione", icon: Link2 },

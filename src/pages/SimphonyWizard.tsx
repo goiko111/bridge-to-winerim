@@ -21,6 +21,7 @@ import {
   WriteVerificationResult,
   PilotStep,
 } from "@/hooks/useSimphonyConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },

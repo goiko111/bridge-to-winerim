@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToastConnection, ToastSyncMode } from "@/hooks/useToastConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = [
   "Connection", "Preflight", "Scopes", "Sales Sync",

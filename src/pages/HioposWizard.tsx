@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useHioposConnection, HioposIngestionMode, HioposIntegrationMode } from "@/hooks/useHioposConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = ["Connection", "Sales Import", "SFTP Pull", "Catalog Import", "Generate Export", "HiOffice", "PortalRest API", "Pricing Quality"];
 const STEP_ICONS = [Settings2, Upload, Server, Package, Download, Globe, Zap, BarChart3];

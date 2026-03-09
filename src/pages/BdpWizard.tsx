@@ -16,6 +16,7 @@ import {
   useBdpConnection, BdpTestResult, BdpSalesEvent,
   BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -874,6 +875,7 @@ function StepGoLive({ connectionId, onEnable }: { connectionId: string | null; o
         Your BDP NET connection is configured with sales sync, catalog sync, and product write capabilities.
         Enable automatic sync to start processing data.
       </p>
+      <ProviderReadinessPanel connectionId={connectionId} provider="bdp" />
       {connectionId && (
         <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
       )}

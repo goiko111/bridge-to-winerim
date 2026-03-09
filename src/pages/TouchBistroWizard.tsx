@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTouchBistroConnection, TBIntegrationMode, TBIngestionMethod, TBDetectedFile } from "@/hooks/useTouchBistroConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = [
   "Connection", "Export Guide", "Upload & Detect", "Sales Import",

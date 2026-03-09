@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useSquareConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@/hooks/useSquareConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const ENVIRONMENTS = [
   { label: "Production", base: "https://connect.squareup.com/v2" },

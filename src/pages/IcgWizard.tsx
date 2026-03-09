@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useIcgConnection, IcgConnectionMode } from "@/hooks/useIcgConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = ["Connection Mode", "Credentials", "Test & Save", "Sales Sync", "Catalog & Write", "Go Live"];
 

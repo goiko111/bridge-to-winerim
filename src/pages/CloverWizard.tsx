@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useCloverConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@/hooks/useCloverConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const REGIONS = [
   { label: "Europe (EU)", base: "https://api.eu.clover.com" },

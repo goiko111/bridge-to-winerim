@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { useCassaConnection, CassaSalesPoint } from "@/hooks/useCassaConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },

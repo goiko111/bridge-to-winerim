@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useRevoConnection } from "@/hooks/useRevoConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import { useOutboundSync } from "@/hooks/useOutboundSync";
 
 const steps = [
