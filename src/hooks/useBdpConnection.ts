@@ -110,6 +110,10 @@ export function useBdpConnection() {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<BdpVerifyResult | null>(null);
 
+  // Discovery state
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryResult, setDiscoveryResult] = useState<BdpDiscoveryResult | null>(null);
+
   const saveConnection = async (data: {
     locationName: string;
     baseUrl: string;
