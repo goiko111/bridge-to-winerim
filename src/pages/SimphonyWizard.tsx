@@ -117,6 +117,7 @@ export default function SimphonyWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
+          setWriteMode((conn.write_mode || "NONE") as "NONE" | "GATED");
           const cfg = getSimphonyConfig(conn.provider_config);
           setOidcBaseUrl(cfg.oidc_base_url || "");
           setCcBaseUrl(cfg.cc_base_url || "");
