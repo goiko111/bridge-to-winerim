@@ -17,6 +17,7 @@ import {
   BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -813,42 +814,7 @@ function StepCatalogWrite({
           </Button>
         </div>
         {verification && (
-          <div className={`rounded-lg border p-3 text-xs space-y-2 ${verification.success ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1.5">
-                {verification.verified_exists ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
-                <span className={verification.verified_exists ? "text-success" : "text-destructive"}>Exists</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {verification.verified_prices ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
-                <span className={verification.verified_prices ? "text-success" : "text-destructive"}>Price &gt; 0</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                {verification.verified_scope ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
-                <span className={verification.verified_scope ? "text-success" : "text-destructive"}>Scope</span>
-              </div>
-            </div>
-            {verification.errors.length > 0 && (
-              <div className="space-y-1">
-                {verification.errors.map((e, i) => (
-                  <div key={i} className="flex items-start gap-1.5 text-destructive">
-                    <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span><code className="bg-destructive/10 px-1 rounded text-[10px]">{e.code}</code> {e.message}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {verification.warnings.length > 0 && (
-              <div className="space-y-1">
-                {verification.warnings.map((w, i) => (
-                  <div key={i} className="flex items-start gap-1.5 text-warning">
-                    <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span><code className="bg-warning/10 px-1 rounded text-[10px]">{w.code}</code> {w.message}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <PostWriteVerificationDisplay result={verification} provider="bdp" />
         )}
       </div>
     </div>

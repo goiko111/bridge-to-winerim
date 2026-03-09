@@ -1087,6 +1087,90 @@ serve(async (req) => {
       }
     }
 
+    // ── ACTION: verify-write (shared PostWriteVerification contract) ──
+    if (action === "verify-write") {
+      const productId = payload.productId || payload.externalId || payload.external_id || "";
+      if (!productId) return err({ success: false, verified_exists: false, verified_prices: false, verified_scope: true, errors: [{ code: "NO_ID", message: "Missing productId for verification" }], warnings: [] });
+
+      const result = {
+        success: false,
+        verified_exists: false,
+        verified_prices: false,
+        verified_scope: true, // BDP doesn't have scope/auth expiry concept
+        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+      };
+
+      // 1) Scope: verify connectivity
+      try {
+        const testUrl = `${host}/api/v1/articles?limit=1`;
+        const testResp = await bdpFetch(testUrl, headers);
+        if (testResp.status === 401 || testResp.status === 403) {
+          result.verified_scope = false;
+          result.errors.push({ code: "SCOPE_EXPIRED", message: `BDP returned ${testResp.status}. Credentials may be invalid.` });
+          return ok(result);
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "SCOPE_ERROR", message: `BDP connectivity check failed: ${e.message}` });
+        return ok(result);
+      }
+
+      // 2) Verify product exists
+      try {
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        let product: any = null;
+        if (resp.ok) {
+          const bodyText = await resp.text();
+          try { product = JSON.parse(bodyText); } catch { /* invalid JSON */ }
+        }
+
+        if (!product) {
+          // Fallback: list all and search
+          const allUrl = `${host}/api/v1/articles`;
+          const allResp = await bdpFetch(allUrl, headers);
+          if (allResp.ok) {
+            const allText = await allResp.text();
+            const allParsed = JSON.parse(allText);
+            const allProducts = Array.isArray(allParsed) ? allParsed : (allParsed.articles || allParsed.Articles || allParsed.data || []);
+            product = allProducts.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(productId));
+          }
+        }
+
+        if (!product) {
+          result.errors.push({ code: "NOT_FOUND", message: `Product ${productId} not found in BDP after write`, context: { productId } });
+          return ok(result);
+        }
+
+        result.verified_exists = true;
+
+        // 3) Verify price
+        const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+        if (price > 0) {
+          result.verified_prices = true;
+          // Check expected price if provided
+          const expected = Number(payload.expectedPrice || 0);
+          if (expected > 0 && Math.abs(price - expected) > 0.01) {
+            result.warnings.push({ code: "PRICE_MISMATCH", message: `Expected price ${expected}, found ${price}`, field: "price", context: { expected, actual: price } });
+          }
+        } else {
+          result.errors.push({ code: "PRICE_ZERO", message: `Product exists but price is ${price}. Expected > 0.`, field: "price", context: { actual: price } });
+        }
+
+        // Provider-specific: check department/family
+        const dept = product.Department || product.department || "";
+        if (!dept) {
+          result.warnings.push({ code: "NO_DEPARTMENT", message: "Product has no department/family assigned.", field: "department" });
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+      }
+
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+      return ok(result);
+    }
+
     return err({ success: false, message: `Unknown action: ${action}` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";

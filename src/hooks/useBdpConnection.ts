@@ -1,5 +1,7 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { PostWriteVerificationResult } from "@/types/postWriteVerification";
+import { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 
 export interface BdpTestResult {
   success: boolean;
@@ -338,7 +340,7 @@ export function useBdpConnection() {
     finally { setWritingProduct(false); }
   }, [connectionId]);
 
-  // ── Verify Product ──
+  // ── Verify Product (legacy shape) ──
   const verifyProduct = useCallback(async (productId: string) => {
     if (!connectionId) return;
     setVerifying(true); setVerifyResult(null);
@@ -352,6 +354,13 @@ export function useBdpConnection() {
     } catch (e) { console.error("Failed BDP verify:", e); return null; }
     finally { setVerifying(false); }
   }, [connectionId]);
+
+  // ── Verify Product (shared contract) ──
+  const verifyProductShared = useCallback(async (productId: string): Promise<PostWriteVerificationResult | null> => {
+    const raw = await verifyProduct(productId);
+    if (!raw) return null;
+    return adaptVerificationResult(raw);
+  }, [verifyProduct]);
 
   const loadExistingConnection = async () => {
     const { data } = await supabase
@@ -385,6 +394,7 @@ export function useBdpConnection() {
     writingProduct, writeResult, writeProduct,
     // Verify
     verifying, verifyResult, verifyProduct,
+    verifyProductShared,
     verifyProductV2,
   };
 }

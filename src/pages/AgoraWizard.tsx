@@ -27,6 +27,7 @@ import {
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
   ReadinessBadgeRow, OverallReadinessBadge,
@@ -2572,6 +2573,24 @@ function StepOutboundSync({
                       )}
                       {t.blocked_reason && (
                         <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
+                      )}
+                      {(t.status === "SUCCESS" || t.status === "FAILED") && t.last_error?.includes("verification") && (
+                        <div className="mt-1.5">
+                          <PostWriteVerificationDisplay
+                            compact
+                            provider="agora"
+                            result={adaptVerificationResult({
+                              success: t.status === "SUCCESS",
+                              verified_exists: !t.last_error?.includes("NOT_FOUND"),
+                              verified_prices: !t.last_error?.includes("PRICE"),
+                              verified_scope: true,
+                              errors: t.status === "FAILED" && t.last_error
+                                ? [{ code: "POST_IMPORT", message: t.last_error.substring(0, 200) }]
+                                : [],
+                              warnings: [],
+                            })}
+                          />
+                        </div>
                       )}
                     </div>
                     {(t.status === "FAILED" || t.status === "BLOCKED") && (
