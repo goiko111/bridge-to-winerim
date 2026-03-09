@@ -461,7 +461,7 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Import/Export generation failed:", e); return null; }
   }, [connectionId]);
 
-  const verifyWrite = useCallback(async (params: { externalId?: string; winerim_id?: string; format?: string; expectedPrice?: number }) => {
+  const verifyWrite = useCallback(async (params: { externalId?: string; winerim_id?: string; format?: string; expectedPrice?: number; verifyMode?: "ccapi" | "import" | "auto" }) => {
     if (!connectionId) return null;
     setVerifying(true);
     setWriteVerification(null);

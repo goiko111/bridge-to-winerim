@@ -1395,63 +1395,85 @@ async function handleRvcDiagnostics(conn: any, connectionId: string) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: verify-write (post-write verification)
+// ACTION: verify-write (strict post-write verification for CCAPI / import-export)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleVerifyWrite(conn: any, connectionId: string, payload: any) {
+  // Auto-refresh token before verification
+  try { await ensureValidToken(conn); } catch { /* proceed with current token */ }
+
   const cc = ccBaseUrl(conn);
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
   const locRefParam = parts[2] || "";
   const rvcRefParam = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const allSelectedRvcs = cfg.selected_rvcs || (rvcRefParam ? [rvcRefParam] : []);
+
   const externalId = payload.externalId || payload.external_id || "";
   const expectedPrice = Number(payload.expectedPrice || payload.price || 0);
   const format = payload.format || "BOT";
+  const winerimId = payload.winerim_id || payload.winerimId || "";
+  const verifyMode: "ccapi" | "import" | "auto" = payload.verifyMode || "auto";
 
   const result = {
     success: false,
     verified_exists: false,
     verified_prices: false,
     verified_scope: false,
+    verified_config: false,
     errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
     warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
   };
 
   // ── 1) Verify scope: can we still reach C&C API? ──
   if (!cc) {
-    result.errors.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot verify." });
+    if (verifyMode === "import") {
+      // Import-export mode: no C&C API needed, just check STS
+      result.verified_scope = true;
+      result.warnings.push({ code: "NO_CCAPI", message: "No C&C API configured. Verification limited to STS check endpoint." });
+
+      // Try to find item via STS checks (limited verification)
+      const objectNum = externalId || `WINERIM_${winerimId}_${format}`;
+      result.warnings.push({ code: "IMPORT_MODE", message: `Import-export mode: item "${objectNum}" must be verified manually via EMC or STS checks after POS reload.` });
+      result.verified_exists = false;
+      result.verified_prices = false;
+      result.verified_config = false;
+      result.success = false;
+      return json(result);
+    }
+    result.errors.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot verify writes." });
     return json(result);
   }
 
+  // Scope check: verify C&C API reachable and location is in scope
   try {
     const scopeRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
       headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
     });
     if (scopeRes.ok) {
       result.verified_scope = true;
-      // Check if our location is in the response
       const scopeBody = await scopeRes.json();
       const locs = Array.isArray(scopeBody) ? scopeBody : (scopeBody.items || scopeBody.locations || []);
       const matchedLoc = locs.find((l: any) => String(l.locRef || l.locationRef || l.id || "") === locRefParam);
       if (!matchedLoc && locRefParam) {
-        result.warnings.push({ code: "LOC_NOT_IN_SCOPE", message: `Location ${locRefParam} not found in C&C API response. Item may not be visible at this location.`, context: { locRef: locRefParam, availableLocs: locs.length } });
+        result.warnings.push({ code: "LOC_NOT_IN_SCOPE", message: `Location ${locRefParam} not found in C&C API scope. Item may not be visible.`, context: { locRef: locRefParam, availableLocs: locs.length } });
       }
     } else if (scopeRes.status === 401 || scopeRes.status === 403) {
       result.errors.push({ code: "SCOPE_EXPIRED", message: `C&C API returned ${scopeRes.status}. Token may be expired or permissions revoked.` });
       return json(result);
     } else {
-      result.warnings.push({ code: "SCOPE_UNKNOWN", message: `C&C API returned ${scopeRes.status}. Scope could not be verified.` });
-      result.verified_scope = true; // non-blocking
+      result.warnings.push({ code: "SCOPE_UNKNOWN", message: `C&C API returned ${scopeRes.status}. Scope could not be fully verified.` });
+      result.verified_scope = true; // non-blocking for non-auth errors
     }
   } catch (e: any) {
     result.errors.push({ code: "SCOPE_ERROR", message: `Scope check failed: ${e.message}` });
     return json(result);
   }
 
-  // ── 2) Verify item exists ──
-  const objectNum = externalId || `WINERIM_${payload.winerim_id}_${format}`;
+  // ── 2) Verify item exists + price + config fields + location/RVC assignment ──
+  const objectNum = externalId || `WINERIM_${winerimId}_${format}`;
   try {
-    // Try fetching by objectNum search
     const searchRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?filter=objectNum eq '${objectNum}'&limit=10`, {
       headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
     });
@@ -1459,9 +1481,11 @@ async function handleVerifyWrite(conn: any, connectionId: string, payload: any) 
       const searchBody = await searchRes.json();
       const items = Array.isArray(searchBody) ? searchBody : (searchBody.items || searchBody.menuItems || []);
       const matched = items.find((it: any) => String(it.objectNum || it.menuItemId || "") === objectNum);
+
       if (matched) {
         result.verified_exists = true;
-        // ── 3) Verify price ──
+
+        // ── 3) Verify price > 0 ──
         const actualPrice = Number(matched.price || matched.defaultPrice || 0);
         if (actualPrice > 0) {
           result.verified_prices = true;
@@ -1469,38 +1493,79 @@ async function handleVerifyWrite(conn: any, connectionId: string, payload: any) 
             result.warnings.push({ code: "PRICE_MISMATCH", message: `Expected price ${expectedPrice}, found ${actualPrice}`, field: "price", context: { expected: expectedPrice, actual: actualPrice } });
           }
         } else {
-          result.errors.push({ code: "PRICE_ZERO", message: `Item exists but price is ${actualPrice}. Expected > 0.`, field: "price", context: { actual: actualPrice, expected: expectedPrice } });
+          result.errors.push({ code: "PRICE_ZERO", message: `Item exists but price is ${actualPrice}. A write is only successful if price > 0.`, field: "price", context: { actual: actualPrice, expected: expectedPrice } });
         }
 
-        // Check location/RVC assignment if available
+        // ── 4) Verify location/RVC scope assignment ──
         const locAssignments = matched.locations || matched.locationAssignments || [];
         if (Array.isArray(locAssignments) && locAssignments.length > 0 && locRefParam) {
           const locMatch = locAssignments.some((la: any) => String(la.locRef || la.locationRef || "") === locRefParam);
           if (!locMatch) {
-            result.warnings.push({ code: "LOC_NOT_ASSIGNED", message: `Item exists but not assigned to location ${locRefParam}.`, context: { locRef: locRefParam, assignedLocs: locAssignments.length } });
+            // Promote to error: item not usable at this location
+            result.errors.push({ code: "LOC_NOT_ASSIGNED", message: `Item exists but is NOT assigned to location ${locRefParam}. It will not appear on the POS.`, context: { locRef: locRefParam, assignedLocs: locAssignments.length } });
+            result.verified_scope = false;
           }
-          if (rvcRefParam) {
+          // Check each selected RVC
+          const missingRvcs: string[] = [];
+          for (const rvc of allSelectedRvcs) {
             const rvcMatch = locAssignments.some((la: any) => {
               const rvcs = la.revenueCenters || la.rvcs || [];
-              return rvcs.some((r: any) => String(r.rvcRef || r.revenueCenterRef || "") === rvcRefParam);
+              return rvcs.some((r: any) => String(r.rvcRef || r.revenueCenterRef || "") === rvc);
             });
-            if (!rvcMatch) {
-              result.warnings.push({ code: "RVC_NOT_ASSIGNED", message: `Item exists but not assigned to RVC ${rvcRefParam}.`, context: { rvcRef: rvcRefParam } });
-            }
+            if (!rvcMatch) missingRvcs.push(rvc);
+          }
+          if (missingRvcs.length > 0) {
+            result.errors.push({
+              code: "RVC_NOT_ASSIGNED",
+              message: `Item not assigned to ${missingRvcs.length} RVC(s): ${missingRvcs.join(", ")}. It will not appear on those terminals.`,
+              context: { missingRvcs, totalSelectedRvcs: allSelectedRvcs.length },
+            });
+            result.verified_scope = false;
+          }
+        } else if (locRefParam && (!Array.isArray(locAssignments) || locAssignments.length === 0)) {
+          result.warnings.push({ code: "NO_LOC_DATA", message: "C&C API did not return location assignment data. Cannot verify scope." });
+        }
+
+        // ── 5) Verify required configuration fields ──
+        const configIssues: { field: string; issue: string }[] = [];
+        const itemName = String(matched.name || matched.longDescriptor || "");
+        if (!itemName || itemName.trim().length === 0) {
+          configIssues.push({ field: "name", issue: "Item name is empty" });
+        }
+        const familyGroup = String(matched.familyGroupName || matched.majorGroupName || matched.familyGroup || "");
+        if (!familyGroup || familyGroup.trim().length === 0) {
+          configIssues.push({ field: "familyGroup", issue: "No family/major group assigned" });
+        }
+        if (matched.active === false) {
+          configIssues.push({ field: "active", issue: "Item is marked inactive — it will not appear on POS" });
+        }
+        // Check for a valid menu item class/type
+        const itemClass = matched.menuItemClass || matched.type || matched.class || null;
+        if (itemClass !== null && itemClass !== undefined) {
+          const classStr = String(itemClass).toLowerCase();
+          if (classStr === "modifier" || classStr === "condiment") {
+            configIssues.push({ field: "menuItemClass", issue: `Item class is "${classStr}" — expected a regular menu item` });
+          }
+        }
+
+        if (configIssues.length === 0) {
+          result.verified_config = true;
+        } else {
+          for (const ci of configIssues) {
+            result.errors.push({ code: "CONFIG_MISSING", message: ci.issue, field: ci.field });
           }
         }
       } else {
         result.errors.push({ code: "NOT_FOUND", message: `Menu item with objectNum "${objectNum}" not found in C&C API after write.`, context: { objectNum, searchResultCount: items.length } });
       }
     } else {
-      // Fallback: try direct menuItem endpoint if search doesn't work
       result.warnings.push({ code: "SEARCH_FAILED", message: `C&C menuItems search returned ${searchRes.status}. Item existence could not be verified.` });
     }
   } catch (e: any) {
     result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
   }
 
-  result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+  result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.verified_config && result.errors.length === 0;
   return json(result);
 }
 
