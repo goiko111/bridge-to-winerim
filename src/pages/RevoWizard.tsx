@@ -17,6 +17,7 @@ import { useOutboundSync } from "@/hooks/useOutboundSync";
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
 import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 import RevoFamilyMapping from "@/components/RevoFamilyMapping";
+import RevoPushPanel from "@/components/RevoPushPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -355,6 +356,9 @@ export default function RevoWizard() {
 
               {/* Wine Type → Revo Category Mapping */}
               <RevoFamilyMapping connectionId={connectionId} />
+
+              {/* Push Wines with Category Override */}
+              <RevoPushPanel connectionId={connectionId} />
 
               <div className="rounded-lg border border-border p-3">
                 <p className="text-xs text-muted-foreground">

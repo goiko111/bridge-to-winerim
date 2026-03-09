@@ -887,7 +887,7 @@ serve(async (req) => {
 
     // ── QUEUE OUTBOUND PRODUCTS ──
     if (action === "queue-outbound") {
-      const { winerimWineIds } = reqBody;
+      const { winerimWineIds, categoryOverride } = reqBody;
       if (!winerimWineIds?.length) return json({ error: "winerimWineIds required" }, 400);
 
       const { data: wines } = await supabase
@@ -898,16 +898,49 @@ serve(async (req) => {
 
       if (!wines?.length) return json({ queued: 0 });
 
+      // If no override, try to resolve from saved mappings
+      let mappingLookup: Map<string, string> | null = null;
+      if (!categoryOverride) {
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_id")
+          .eq("connection_id", connectionId);
+        if (mappings?.length) {
+          mappingLookup = new Map(mappings.map((m: any) => [m.mapping_key, m.agora_family_id]));
+        }
+      }
+
       let queued = 0;
       for (const wine of wines) {
+        // Resolve category: override > saved mapping > null
+        let resolvedCategoryId: string | null = categoryOverride || null;
+        if (!resolvedCategoryId && mappingLookup && wine.wine_type) {
+          // Try to match wine_type to a mapping key (e.g. "Red" → "bottle_red")
+          const wt = String(wine.wine_type).toLowerCase();
+          const fmt = String(wine.format || "bottle").toLowerCase();
+          const candidates = [
+            `${fmt}_${wt}`,
+            `bottle_${wt}`,
+            fmt,
+          ];
+          for (const key of candidates) {
+            if (mappingLookup.has(key)) {
+              resolvedCategoryId = mappingLookup.get(key) || null;
+              break;
+            }
+          }
+        }
+
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "REVO_UPSERT_ITEM",
           payload_json: {
             name: wine.name,
-            price: wine.price || 0,
+            price: wine.bottle_sale_price || wine.price || 0,
             winerim_id: wine.winerim_id,
-            category_id: null, // User must configure
+            category_id: resolvedCategoryId,
+            wine_type: wine.wine_type,
+            ...(categoryOverride ? { category_override: categoryOverride } : {}),
           },
           status: "QUEUED",
         });
