@@ -18,6 +18,7 @@ import {
   SalesLineItem,
   PreflightCheck,
   CatalogWritePreview,
+  WriteVerificationResult,
   PilotStep,
 } from "@/hooks/useSimphonyConnection";
 
@@ -75,6 +76,7 @@ export default function SimphonyWizard() {
     catalogItems, catalogLoading, fetchCatalog,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
+    writeVerification, verifying, verifyWrite,
     generateImportExport,
     pilotSteps, pilotRunning, runPilot,
     // S2
