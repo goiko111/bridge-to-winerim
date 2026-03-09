@@ -24,6 +24,15 @@ export interface RevoSalesEvent {
   }[];
 }
 
+export interface RevoWriteVerificationResult {
+  success: boolean;
+  verified_exists: boolean;
+  verified_prices: boolean;
+  verified_scope: boolean;
+  errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+  warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+}
+
 export function useRevoConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
@@ -44,6 +53,9 @@ export function useRevoConnection() {
   const [backfillResult, setBackfillResult] = useState<{
     totalSaved: number; totalLines: number; errors: string[];
   } | null>(null);
+
+  const [writeVerification, setWriteVerification] = useState<RevoWriteVerificationResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   // Compound token: "tenant|access_token|client_token|webhook_secret"
   const buildToken = (tenant: string, accessToken: string, clientToken: string, webhookSecret: string) =>
@@ -175,6 +187,29 @@ export function useRevoConnection() {
     return data;
   }, []);
 
+  const verifyWrite = useCallback(async (params: { externalId?: string; revo_item_id?: string; expectedPrice?: number; expectedCategory?: string }) => {
+    if (!connectionId) return null;
+    setVerifying(true);
+    setWriteVerification(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("revo-proxy", {
+        body: { action: "verify-write", connectionId, ...params },
+      });
+      if (error) throw error;
+      setWriteVerification(data);
+      return data;
+    } catch (e: any) {
+      const fail: RevoWriteVerificationResult = {
+        success: false, verified_exists: false, verified_prices: false, verified_scope: false,
+        errors: [{ code: "VERIFY_CALL_FAILED", message: e.message }], warnings: [],
+      };
+      setWriteVerification(fail);
+      return fail;
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectionId]);
+
   return {
     connectionId, setConnectionId,
     testStatus, testError, testConnection,
@@ -183,6 +218,7 @@ export function useRevoConnection() {
     saving, saveResult, saveSalesToDb,
     syncingCatalog, catalogSyncResult, syncCatalog,
     backfilling, backfillResult, runBackfill,
+    writeVerification, verifying, verifyWrite,
     enableSync,
   };
 }

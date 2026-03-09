@@ -685,13 +685,13 @@ serve(async (req) => {
 
     // ── EXPORT PRODUCTS ──
     if (action === "export-products") {
-      const { format, winerimWineIds } = reqBody;
+      const { format: expFormat, winerimWineIds } = reqBody;
       let query = supabase.from("winerim_wines").select("*").eq("connection_id", connectionId);
       if (winerimWineIds?.length) query = query.in("winerim_id", winerimWineIds);
       const { data: wines } = await query;
       if (!wines) return json({ products: [] });
 
-      if (format === "csv") {
+      if (expFormat === "csv") {
         const header = "name,winerim_id,price,format,grape_variety,region,winery,vintage\n";
         const rows = wines.map((w: any) =>
           `"${w.name}","${w.winerim_id}","${w.price || ""}","${w.format || ""}","${w.grape_variety || ""}","${w.region || ""}","${w.winery || ""}","${w.vintage || ""}"`
@@ -699,6 +699,126 @@ serve(async (req) => {
         return new Response(header + rows, { headers: { ...corsHeaders, "Content-Type": "text/csv" } });
       }
       return json({ products: wines });
+    }
+
+    // ── VERIFY-WRITE (Post-write verification) ──
+    if (action === "verify-write") {
+      const { externalId, external_id, revo_item_id, expectedPrice, price, expectedCategory, category_id } = reqBody;
+      const itemId = externalId || external_id || revo_item_id || "";
+
+      const result = {
+        success: false,
+        verified_exists: false,
+        verified_prices: false,
+        verified_scope: false,
+        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+      };
+
+      // 1) Verify scope: can we still reach the catalog API?
+      try {
+        const scopeRes = await revoFetch(`${REVO_BASE}/v2/catalog/items?per_page=1`, revoHeaders, connectionId);
+        if (scopeRes.ok) {
+          result.verified_scope = true;
+        } else if (scopeRes.status === 401 || scopeRes.status === 403) {
+          result.errors.push({ code: "SCOPE_EXPIRED", message: `Catalog API returned ${scopeRes.status}. Token may be expired or permissions revoked.` });
+          return json(result);
+        } else {
+          result.warnings.push({ code: "SCOPE_UNKNOWN", message: `Catalog API returned ${scopeRes.status}. Scope could not be fully verified.` });
+          result.verified_scope = true;
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "SCOPE_ERROR", message: `Scope check failed: ${e.message}` });
+        return json(result);
+      }
+
+      // 2) Verify item exists
+      if (!itemId) {
+        result.errors.push({ code: "NO_ITEM_ID", message: "No item ID provided for verification. Pass externalId or revo_item_id." });
+        return json(result);
+      }
+
+      try {
+        const itemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${itemId}`, revoHeaders, connectionId);
+        if (itemRes.ok) {
+          result.verified_exists = true;
+          const item = await itemRes.json();
+          const itemData = item.data || item;
+
+          // 3) Verify price > 0
+          const actualPrice = Number(itemData.price || itemData.sellingPrice || 0);
+          const expected = Number(expectedPrice || price || 0);
+          if (actualPrice > 0) {
+            result.verified_prices = true;
+            if (expected > 0 && Math.abs(actualPrice - expected) > 0.01) {
+              result.warnings.push({
+                code: "PRICE_MISMATCH",
+                message: `Expected price ${expected}, found ${actualPrice}`,
+                field: "price",
+                context: { expected, actual: actualPrice },
+              });
+            }
+          } else {
+            result.errors.push({
+              code: "PRICE_ZERO",
+              message: `Item exists but price is ${actualPrice}. Expected > 0.`,
+              field: "price",
+              context: { actual: actualPrice, expected },
+            });
+          }
+
+          // 4) Verify family/category assignment
+          const actualCategoryId = String(itemData.category_id || itemData.categoryId || "");
+          const expectedCatId = String(expectedCategory || category_id || "");
+          if (expectedCatId && actualCategoryId) {
+            if (actualCategoryId !== expectedCatId) {
+              result.warnings.push({
+                code: "CATEGORY_MISMATCH",
+                message: `Expected category ${expectedCatId}, found ${actualCategoryId}`,
+                field: "category_id",
+                context: { expected: expectedCatId, actual: actualCategoryId },
+              });
+            }
+          } else if (!actualCategoryId) {
+            result.warnings.push({
+              code: "NO_CATEGORY",
+              message: "Item has no category assigned. It may not appear in the correct menu section.",
+              field: "category_id",
+            });
+          }
+
+          // Check family/group if available
+          const groupName = String(itemData.groupName || itemData.group_name || "");
+          const categoryName = String(itemData.categoryName || itemData.category_name || "");
+          if (groupName || categoryName) {
+            result.warnings.push({
+              code: "FAMILY_INFO",
+              message: `Assigned to: ${[groupName, categoryName].filter(Boolean).join(" → ")}`,
+              field: "family",
+              context: { group: groupName, category: categoryName },
+            });
+            // Reclassify as info, not a real warning — remove from warnings if all is fine
+          }
+        } else if (itemRes.status === 404) {
+          result.errors.push({
+            code: "NOT_FOUND",
+            message: `Item ${itemId} not found in Revo catalog after write.`,
+            context: { itemId },
+          });
+        } else {
+          const errText = await itemRes.text();
+          result.errors.push({
+            code: "FETCH_ERROR",
+            message: `Revo returned ${itemRes.status} when verifying item ${itemId}: ${errText.substring(0, 200)}`,
+            context: { itemId, status: itemRes.status },
+          });
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+      }
+
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+      return json(result);
     }
 
     return json({ error: `Unknown action: ${action}` }, 400);
