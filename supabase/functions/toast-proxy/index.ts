@@ -870,14 +870,6 @@ async function processOrderWebhook(connId: string, cfg: any, payload: any, order
   return false;
 }
 
-// ── Format classification helper ──
-function classifyFormat(name: string): string | null {
-  const n = name.trim().toUpperCase();
-  if (n.startsWith("BOT.") || n.startsWith("BOT ")) return "BOTTLE";
-  if (n.startsWith("COPA") || n.startsWith("GLASS")) return "GLASS";
-  if (n.startsWith("MAGNUM") || n.startsWith("MAG.")) return "MAGNUM";
-  return null;
-}
 
 // ═══════════════════════════════════════════════════════
 // ROUTER
