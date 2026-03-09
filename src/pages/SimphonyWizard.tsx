@@ -1124,38 +1124,116 @@ export default function SimphonyWizard() {
                 <p className="mt-1 text-sm text-muted-foreground">Register for near real-time check events via Simphony Notifications API.</p>
               </div>
 
-              <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground">Webhook Status</span>
+              {/* Webhook Health Panel */}
+              <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium text-foreground">Webhook Health</span>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={fetchWebhookStatus} className="text-xs h-7">
+                    <Loader2 className={`mr-1 h-3 w-3 ${false ? "animate-spin" : ""}`} /> Refresh
+                  </Button>
                 </div>
                 {webhookStatus ? (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    <span className="text-muted-foreground">Registered</span>
-                    <span className="font-medium text-foreground">{webhookStatus.registered ? "Yes" : "No"}</span>
-                    <span className="text-muted-foreground">Callback URL</span>
-                    <span className="font-mono text-foreground truncate text-[10px]">{webhookStatus.callbackUrl}</span>
-                    <span className="text-muted-foreground">Last event</span>
-                    <span className="font-mono text-foreground">{webhookStatus.lastEventAt || "Never"}</span>
-                    <span className="text-muted-foreground">Total events</span>
-                    <span className="font-mono text-foreground">{webhookStatus.eventCount}</span>
+                  <div className="space-y-3">
+                    {/* Status indicator */}
+                    <div className="flex items-center gap-2">
+                      <div className={`h-2.5 w-2.5 rounded-full ${webhookStatus.registered ? ((webhookStatus as any).failedCount > 0 ? "bg-yellow-500" : "bg-emerald-500") : "bg-muted-foreground"}`} />
+                      <span className="text-xs font-medium text-foreground">
+                        {webhookStatus.registered
+                          ? ((webhookStatus as any).failedCount > 0 ? "Registered (with failures)" : "Healthy")
+                          : "Not registered"}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                      <span className="text-muted-foreground">Callback URL</span>
+                      <span className="font-mono text-foreground truncate text-[10px]">{webhookStatus.callbackUrl}</span>
+
+                      <span className="text-muted-foreground">Total events</span>
+                      <span className="font-mono text-foreground">{webhookStatus.eventCount}</span>
+
+                      <span className="text-muted-foreground">Pending</span>
+                      <span className="font-mono text-foreground">{(webhookStatus as any).pendingCount ?? "—"}</span>
+
+                      <span className="text-muted-foreground">Duplicates skipped</span>
+                      <span className="font-mono text-foreground">{(webhookStatus as any).duplicateCount ?? "—"}</span>
+                    </div>
+
+                    {/* Last Event / Success / Failure */}
+                    <div className="border-t border-border pt-2 space-y-2">
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                        <span className="text-muted-foreground">Last event received</span>
+                        <span className="font-mono text-foreground">
+                          {webhookStatus.lastEventAt
+                            ? `${new Date(webhookStatus.lastEventAt).toLocaleString()} (${(webhookStatus as any).lastEventType || ""})`
+                            : "Never"}
+                        </span>
+
+                        <span className="text-muted-foreground">Last success</span>
+                        <span className="font-mono text-emerald-600">
+                          {(webhookStatus as any).lastSuccessAt
+                            ? `${new Date((webhookStatus as any).lastSuccessAt).toLocaleString()} (${(webhookStatus as any).lastSuccessType || ""})`
+                            : "—"}
+                        </span>
+
+                        <span className="text-muted-foreground">Last failure</span>
+                        <span className="font-mono text-destructive">
+                          {(webhookStatus as any).lastFailureAt
+                            ? `${new Date((webhookStatus as any).lastFailureAt).toLocaleString()} (${(webhookStatus as any).lastFailureType || ""})`
+                            : "—"}
+                        </span>
+                      </div>
+
+                      {(webhookStatus as any).lastFailureReason && (
+                        <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-[11px] text-destructive">
+                          <AlertTriangle className="inline h-3 w-3 mr-1" />
+                          {(webhookStatus as any).lastFailureReason}
+                        </div>
+                      )}
+
+                      {(webhookStatus as any).failedCount > 0 && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-destructive">
+                          <XCircle className="h-3 w-3" />
+                          <span><strong>{(webhookStatus as any).failedCount}</strong> event(s) failed processing</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No webhook registered yet.</p>
+                  <p className="text-xs text-muted-foreground">No webhook data yet. Register or refresh to check status.</p>
                 )}
               </div>
 
               <Button onClick={registerWebhook} disabled={webhookRegistering || !connectionId} variant="secondary" className="w-full">
                 {webhookRegistering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}
-                {webhookRegistering ? "Registering…" : "Register Webhook"}
+                {webhookRegistering ? "Registering…" : webhookStatus?.registered ? "Re-register Webhook" : "Register Webhook"}
               </Button>
+
+              {/* Polling fallback */}
+              <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-medium text-foreground">Polling Fallback</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  If Notifications API is unavailable, the system falls back to polling STS Gen2 every <strong className="text-foreground">{frequency} min</strong>.
+                  Webhooks provide near-real-time delivery but polling ensures no data is missed.
+                </p>
+                <div className="flex items-center gap-1.5 text-[11px] text-primary">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Polling is always active as a safety net regardless of webhook status.
+                </div>
+              </div>
 
               <div className="rounded-lg border border-border bg-card p-3 text-[11px] text-muted-foreground space-y-1">
                 <p className="font-medium text-foreground text-xs">How Notifications work:</p>
                 <p>1. We register a callback URL for CHECK_CLOSED / CHECK_OPENED events</p>
                 <p>2. Simphony sends POST to our endpoint when events occur</p>
-                <p>3. We validate and queue for async processing</p>
-                <p>4. Updated checks are fetched and upserted as SalesEvents</p>
+                <p>3. We deduplicate by event ID and return fast 200</p>
+                <p>4. Events are processed asynchronously: check is fetched and upserted as a SalesEvent</p>
+                <p>5. Health diagnostics track success/failure/duplicates</p>
                 <p className="text-warning mt-2"><AlertTriangle className="inline h-3 w-3 mr-1" />Notifications API may require partner enablement in your Simphony installation.</p>
               </div>
             </div>
