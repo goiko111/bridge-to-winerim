@@ -1240,6 +1240,17 @@ serve(async (req) => {
       return ok(result);
     }
 
+    // ── ACTION: get-endpoints ──
+    // Return persisted endpoint status for diagnostics UI
+    if (action === "get-endpoints") {
+      return ok({
+        success: true,
+        discoveredEndpoints: persistedEndpoints,
+        lastDiscoveryAt: config.last_discovery_at || null,
+        host,
+      });
+    }
+
     return err({ success: false, message: `Unknown action: ${action}` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unknown error";
