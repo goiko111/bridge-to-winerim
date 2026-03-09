@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 
 import { toast } from "@/hooks/use-toast";
 import {
-  useBdpConnection, BdpTestResult, BdpSalesEvent,
+  useBdpConnection, BdpTestResult, BdpTestCheck, BdpSalesEvent,
   BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
