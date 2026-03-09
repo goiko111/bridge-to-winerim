@@ -353,7 +353,69 @@ export default function RevoWizard() {
                 </p>
               </div>
 
-              {/* Post-write verification */}
+              {/* Pre-write dependency validation */}
+              <div className="space-y-3 border-t border-border pt-4">
+                <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                  <AlertTriangle className="h-4 w-4 text-warning" /> Pre-Write Dependency Check
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Verify that required dependencies (category, tax, price, format) exist before creating items.
+                  Writes are blocked if any required dependency is missing.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    placeholder="Category ID (e.g. 42)"
+                    value={depCheckCategoryId}
+                    onChange={(e) => setDepCheckCategoryId(e.target.value)}
+                    className="bg-background text-sm font-mono"
+                  />
+                  <Input
+                    placeholder="Price (e.g. 25.00)"
+                    value={depCheckPrice}
+                    onChange={(e) => setDepCheckPrice(e.target.value)}
+                    className="bg-background text-sm font-mono"
+                  />
+                </div>
+                <Button
+                  size="sm" variant="outline" className="w-full"
+                  onClick={() => validateWriteDeps({
+                    category_id: depCheckCategoryId || undefined,
+                    price: depCheckPrice ? Number(depCheckPrice) : 0,
+                    tax: 10,
+                    name: "Test Wine",
+                  })}
+                  disabled={validatingDeps}
+                >
+                  {validatingDeps ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3 w-3" />}
+                  Validate Dependencies
+                </Button>
+                {depValidation && (
+                  <div className={`rounded-lg border p-3 text-xs space-y-2 ${depValidation.valid ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                    {depValidation.valid ? (
+                      <div className="flex items-center gap-1.5 text-success">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span className="font-medium">All dependencies satisfied — writes are allowed.</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-1.5 text-destructive">
+                          <XCircle className="h-3.5 w-3.5" />
+                          <span className="font-medium">Writes blocked — {depValidation.missing.length} missing {depValidation.missing.length === 1 ? "dependency" : "dependencies"}</span>
+                        </div>
+                        {depValidation.missing.map((m, i) => (
+                          <div key={i} className="rounded border border-destructive/20 bg-destructive/5 p-2 space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <code className="bg-destructive/10 px-1 rounded text-[10px] text-destructive">{m.dep}</code>
+                              <span className="text-destructive">{m.message}</span>
+                            </div>
+                            <p className="text-muted-foreground pl-4 text-[10px]">💡 {m.guidance}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="space-y-3 border-t border-border pt-4">
                 <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4 text-primary" /> Post-Write Verification
