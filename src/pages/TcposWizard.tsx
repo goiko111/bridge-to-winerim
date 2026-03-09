@@ -713,6 +713,7 @@ export default function TcposWizard() {
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/sync-monitor"), 1000); }}
               enabled={enabled}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
+              connectionId={connectionId}
             />
           )}
         </motion.div>

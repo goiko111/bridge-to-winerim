@@ -775,6 +775,7 @@ export default function CloverWizard() {
               enabled={enabled}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               merchantName={merchantName}
+              connectionId={connectionId}
             />
           )}
         </motion.div>
