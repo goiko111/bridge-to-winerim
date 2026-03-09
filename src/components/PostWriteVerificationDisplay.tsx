@@ -53,6 +53,8 @@ export default function PostWriteVerificationDisplay({
         <DimensionChip ok={result.verified_exists} icon={<Package className="h-3 w-3" />} label="Exists in POS" />
         <DimensionChip ok={result.verified_prices} icon={<DollarSign className="h-3 w-3" />} label="Prices valid" />
         <DimensionChip ok={result.verified_scope} icon={<Lock className="h-3 w-3" />} label="Scope valid" />
+        {"verified_family" in result && <DimensionChip ok={(result as any).verified_family} icon={<Package className="h-3 w-3" />} label="Family" />}
+        {"verified_preparation" in result && <DimensionChip ok={(result as any).verified_preparation} icon={<Shield className="h-3 w-3" />} label="Preparation" />}
       </div>
 
       {/* Errors */}

@@ -2196,6 +2196,7 @@ serve(async (req) => {
         warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
         summary: { checked: number; ok: number; failed: number; totalPriceListsChecked: number };
         missing_prices: MissingPriceEntry[];
+        affected_sale_centers: string[];
       }
 
       interface MissingPriceEntry {
@@ -2206,6 +2207,7 @@ serve(async (req) => {
         issue: "missing" | "zero" | "invalid";
         product_name?: string;
         format?: string;
+        affected_sale_centers?: string[];
       }
 
       const verification: PostImportVerification = {
@@ -2218,6 +2220,7 @@ serve(async (req) => {
         warnings: [],
         summary: { checked: 0, ok: 0, failed: 0, totalPriceListsChecked: 0 },
         missing_prices: [],
+        affected_sale_centers: [],
       };
 
       if (parsedResponse.success) {
@@ -2228,7 +2231,18 @@ serve(async (req) => {
           const { data: cachedMaster } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", connectionId).single();
           const allPriceLists = ((cachedMaster as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+          const allSaleCenters = ((cachedMaster as any)?.sale_centers_json || []) as Record<string, string>[];
           verification.summary.totalPriceListsChecked = allPriceLists.length;
+
+          // Build PriceListId -> SaleCenter names map
+          const plToSc: Record<string, string[]> = {};
+          for (const sc of allSaleCenters) {
+            const plId = sc.CurrentPriceListId;
+            if (plId) {
+              if (!plToSc[plId]) plToSc[plId] = [];
+              plToSc[plId].push(sc.Name || sc.Id);
+            }
+          }
 
           // Extract expected familyIds from the sent XML
           const expectedFamilies: Record<string, string> = {};
@@ -2267,11 +2281,16 @@ serve(async (req) => {
                     context: { productId, format: fmt, wineName: wine.name },
                   });
                   for (const pl of allPriceLists) {
+                    const scNames = plToSc[pl.Id] || [];
                     verification.missing_prices.push({
                       product_erp_id: winerimRef, agora_product_id: productId,
                       price_list_id: pl.Id, price_list_name: pl.Name,
                       issue: "missing", product_name: productName, format: fmt,
+                      affected_sale_centers: scNames,
                     });
+                    for (const s of scNames) {
+                      if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                    }
                   }
                   continue;
                 }
@@ -2288,22 +2307,32 @@ serve(async (req) => {
                     if (!priceMatch) {
                       verification.verified_prices = false;
                       productOk = false;
+                      const scNames = plToSc[pl.Id] || [];
                       verification.missing_prices.push({
                         product_erp_id: winerimRef, agora_product_id: productId,
                         price_list_id: pl.Id, price_list_name: pl.Name,
                         issue: "missing", product_name: productName, format: fmt,
+                        affected_sale_centers: scNames,
                       });
+                      for (const s of scNames) {
+                        if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                      }
                     } else {
                       const priceVal = parseFloat(priceMatch[1]);
                       if (isNaN(priceVal) || priceVal <= 0) {
                         verification.verified_prices = false;
                         productOk = false;
+                        const scNames = plToSc[pl.Id] || [];
                         verification.missing_prices.push({
                           product_erp_id: winerimRef, agora_product_id: productId,
                           price_list_id: pl.Id, price_list_name: pl.Name,
                           issue: isNaN(priceVal) ? "invalid" : "zero",
                           product_name: productName, format: fmt,
+                          affected_sale_centers: scNames,
                         });
+                        for (const s of scNames) {
+                          if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
+                        }
                       }
                     }
                   }
@@ -2529,6 +2558,8 @@ serve(async (req) => {
           verified_preparation: true, // provider-specific
           errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
           warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+          missing_prices: [] as { product_erp_id: string; agora_product_id: string; price_list_id: string; price_list_name: string; issue: string; format: string; affected_sale_centers: string[] }[],
+          affected_sale_centers: [] as string[],
         };
 
         // Extract expected familyIds from sent XML
@@ -2543,10 +2574,21 @@ serve(async (req) => {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
 
-          // Load PriceLists for price verification
+          // Load PriceLists + SaleCenters for price verification
           const { data: cachedMaster2 } = await supabase
-            .from("agora_master_data").select("price_lists_json").eq("connection_id", task.connection_id).single();
+            .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
           const taskPriceLists = ((cachedMaster2 as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+          const taskSaleCenters = ((cachedMaster2 as any)?.sale_centers_json || []) as Record<string, string>[];
+
+          // Build PriceListId -> SaleCenter names map
+          const taskPlToSc: Record<string, string[]> = {};
+          for (const sc of taskSaleCenters) {
+            const plId = sc.CurrentPriceListId;
+            if (plId) {
+              if (!taskPlToSc[plId]) taskPlToSc[plId] = [];
+              taskPlToSc[plId].push(sc.Name || sc.Id);
+            }
+          }
 
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
@@ -2579,14 +2621,25 @@ serve(async (req) => {
               for (const pl of taskPriceLists) {
                 const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
                 const priceMatch = innerXml.match(priceRegex);
-                if (!priceMatch || parseFloat(priceMatch[1]) <= 0 || isNaN(parseFloat(priceMatch[1]))) {
+                const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
+                if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
                   taskVerification.verified_prices = false;
                   taskVerification.success = false;
+                  const scNames = taskPlToSc[pl.Id] || [];
+                  const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
+                  taskVerification.missing_prices.push({
+                    product_erp_id: winerimWineId || "", agora_product_id: productId,
+                    price_list_id: pl.Id, price_list_name: pl.Name,
+                    issue, format: fmt, affected_sale_centers: scNames,
+                  });
+                  for (const s of scNames) {
+                    if (!taskVerification.affected_sale_centers.includes(s)) taskVerification.affected_sale_centers.push(s);
+                  }
                   taskVerification.errors.push({
                     code: "PRICE_MISSING",
-                    message: `Product ${productId} (${fmt}): missing/zero price in PriceList "${pl.Name}"`,
+                    message: `Product ${productId} (${fmt}): ${issue} price in PriceList "${pl.Name}"`,
                     field: "prices",
-                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name },
+                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name, affectedSaleCenters: scNames },
                   });
                 }
               }
@@ -3003,89 +3056,137 @@ serve(async (req) => {
       }
 
       const missing_prices: VerifyMissingPrice[] = [];
-      let checked = 0, ok = 0, failed = 0;
+      const verifyResult = {
+        success: true,
+        verified_exists: true,
+        verified_prices: true,
+        verified_family: true,
+        verified_preparation: true,
+        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        missing_prices: [] as VerifyMissingPrice[],
+        affected_sale_centers: [] as string[],
+        summary: { checked: 0, ok: 0, failed: 0 },
+        totalPriceLists: allPriceLists.length,
+        totalSaleCenters: allSaleCenters.length,
+        priceListToSaleCenters,
+      };
+
+      // Load expected families from last outbound XML (from mappings + winerim_wines wine_type)
+      // For verify-products we compare against whatever FamilyId is currently in the connection defaults
+      // (no "expected" family available here — skip family check unless mapping has agora_product_id)
 
       for (const mapping of (mappings || [])) {
-        checked++;
-        const productRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
-        const productMatch = verifyXml.match(productRegex);
-        
+        verifyResult.summary.checked++;
+        const productFullRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
+        const productMatch = verifyXml.match(productFullRegex);
+
         if (!productMatch) {
-          failed++;
+          verifyResult.summary.failed++;
+          verifyResult.verified_exists = false;
+          verifyResult.success = false;
+          verifyResult.errors.push({
+            code: "NOT_FOUND",
+            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) not found in Agora`,
+            context: { productId: mapping.provider_product_id, format: mapping.format_type },
+          });
           for (const pl of allPriceLists) {
-            missing_prices.push({
+            const scNames = priceListToSaleCenters[pl.Id] || [];
+            verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id,
-              price_list_name: pl.Name,
-              issue: "missing",
-              name: mapping.provider_product_name,
-              format: mapping.format_type,
-              affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
+              price_list_id: pl.Id, price_list_name: pl.Name,
+              issue: "missing", name: mapping.provider_product_name, format: mapping.format_type,
+              affected_sale_centers: scNames,
             });
+            for (const s of scNames) {
+              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
+            }
           }
           continue;
         }
-        
-        // Check ALL PriceLists
-        let allOk = true;
+
+        const attrs = productMatch[1];
+        const innerXml = productMatch[2];
+        let productOk = true;
+
+        // CHECK: PRICES
         for (const pl of allPriceLists) {
           const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
-          const priceMatch = productMatch[1].match(priceRegex);
+          const priceMatch = innerXml.match(priceRegex);
+          const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
 
-          if (!priceMatch) {
-            allOk = false;
-            missing_prices.push({
+          if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
+            productOk = false;
+            verifyResult.verified_prices = false;
+            const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
+            const scNames = priceListToSaleCenters[pl.Id] || [];
+            verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id,
-              price_list_name: pl.Name,
-              issue: "missing",
-              name: mapping.provider_product_name,
-              format: mapping.format_type,
-              affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
+              price_list_id: pl.Id, price_list_name: pl.Name,
+              issue, name: mapping.provider_product_name, format: mapping.format_type,
+              affected_sale_centers: scNames,
             });
-          } else {
-            const priceVal = parseFloat(priceMatch[1]);
-            if (isNaN(priceVal)) {
-              allOk = false;
-              missing_prices.push({
-                product_erp_id: mapping.winerim_wine_id || "",
-                agora_product_id: mapping.provider_product_id,
-                price_list_id: pl.Id,
-                price_list_name: pl.Name,
-                issue: "invalid",
-                name: mapping.provider_product_name,
-                format: mapping.format_type,
-                affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
-              });
-            } else if (priceVal <= 0) {
-              allOk = false;
-              missing_prices.push({
-                product_erp_id: mapping.winerim_wine_id || "",
-                agora_product_id: mapping.provider_product_id,
-                price_list_id: pl.Id,
-                price_list_name: pl.Name,
-                issue: "zero",
-                name: mapping.provider_product_name,
-                format: mapping.format_type,
-                affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
-              });
+            for (const s of scNames) {
+              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
             }
           }
         }
 
-        if (allOk) ok++; else failed++;
+        // CHECK: PREPARATION FIELDS
+        const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+        const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+        const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+        const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+        if ((!prepTypeVal) !== (!prepOrderVal)) {
+          productOk = false;
+          verifyResult.verified_preparation = false;
+          verifyResult.errors.push({
+            code: "INVALID_PREPARATION_PAIR",
+            message: `Preparation Type and Order must both be empty or both set (Product ${mapping.provider_product_id}, ${mapping.format_type}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
+            field: "PreparationTypeId,PreparationOrderId",
+            context: { productId: mapping.provider_product_id, format: mapping.format_type, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
+          });
+        }
+
+        // CHECK: FAMILY (compare against FamilyId in attrs — warn if empty)
+        const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
+        const actualFamilyId = familyMatch ? familyMatch[1] : "";
+        if (!actualFamilyId) {
+          productOk = false;
+          verifyResult.verified_family = false;
+          verifyResult.warnings.push({
+            code: "FAMILY_EMPTY",
+            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) has no FamilyId assigned`,
+            field: "FamilyId",
+            context: { productId: mapping.provider_product_id, format: mapping.format_type },
+          });
+        }
+
+        if (productOk) {
+          verifyResult.summary.ok++;
+        } else {
+          verifyResult.success = false;
+          verifyResult.summary.failed++;
+        }
       }
 
       return new Response(JSON.stringify({
-        success: true,
-        totalPriceLists: allPriceLists.length,
-        totalSaleCenters: allSaleCenters.length,
-        totalProducts: checked,
-        missingCentralPrice: failed,
-        summary: { checked, ok, failed },
-        missing_prices,
+        success: verifyResult.success,
+        verified_exists: verifyResult.verified_exists,
+        verified_prices: verifyResult.verified_prices,
+        verified_family: verifyResult.verified_family,
+        verified_preparation: verifyResult.verified_preparation,
+        errors: verifyResult.errors,
+        warnings: verifyResult.warnings,
+        missing_prices: verifyResult.missing_prices,
+        affected_sale_centers: verifyResult.affected_sale_centers,
+        totalPriceLists: verifyResult.totalPriceLists,
+        totalSaleCenters: verifyResult.totalSaleCenters,
+        totalProducts: verifyResult.summary.checked,
+        missingCentralPrice: verifyResult.summary.failed,
+        summary: verifyResult.summary,
         priceListToSaleCenters,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
