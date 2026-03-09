@@ -48,10 +48,13 @@ export default function RevoWizard() {
     syncingCatalog, catalogSyncResult, syncCatalog,
     backfilling, backfillResult, runBackfill,
     writeVerification, verifying, verifyWrite,
+    depValidation, validatingDeps, validateWriteDeps,
     enableSync,
   } = useRevoConnection();
 
   const [verifyItemId, setVerifyItemId] = useState("");
+  const [depCheckCategoryId, setDepCheckCategoryId] = useState("");
+  const [depCheckPrice, setDepCheckPrice] = useState("");
 
   const outbound = useOutboundSync(connectionId);
 
