@@ -283,16 +283,21 @@ export function useSimphonyConnection() {
     // Read current config, merge in discovery data
     const { data: conn } = await supabase.from("pos_connections").select("provider_config").eq("id", connectionId).single();
     const cfg = getSimphonyConfig(conn?.provider_config);
+    const discoveredForJson = allDiscovered.map((loc) => ({
+      locRef: loc.locRef,
+      name: loc.name,
+      revenueCenters: loc.revenueCenters.map((rvc) => ({ rvcRef: rvc.rvcRef, name: rvc.name })),
+    }));
     const updatedCfg = {
       ...cfg,
       selected_rvcs: rvcs,
-      discovered_locations: allDiscovered,
+      discovered_locations: discoveredForJson,
       selected_location_ref: selectedLocRef,
       selected_location_name: selectedLocName,
       discovery_completed_at: new Date().toISOString(),
     };
     await supabase.from("pos_connections").update({
-      provider_config: updatedCfg,
+      provider_config: updatedCfg as any,
     }).eq("id", connectionId);
   }, [connectionId]);
 
