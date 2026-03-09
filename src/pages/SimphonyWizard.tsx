@@ -760,6 +760,32 @@ export default function SimphonyWizard() {
                     {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
                     {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines` : "Save to DB"}
                   </Button>
+                  {/* Sync diagnostics panel */}
+                  {saveResult?.diagnostics && (
+                    <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-1.5">
+                      <p className="text-xs font-semibold text-primary flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5" /> Sync Diagnostics</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                        <span className="text-muted-foreground">Business date</span><span className="font-mono text-foreground">{saveResult.diagnostics.business_day}</span>
+                        <span className="text-muted-foreground">Checks fetched</span><span className="font-mono text-foreground">{saveResult.diagnostics.checks_fetched}</span>
+                        <span className="text-muted-foreground">Batches processed</span><span className="font-mono text-foreground">{saveResult.diagnostics.batches_processed}</span>
+                        <span className="text-muted-foreground">Line items saved</span><span className="font-mono text-foreground">{saveResult.diagnostics.line_items_saved}</span>
+                        <span className="text-muted-foreground">Retries</span><span className="font-mono text-foreground">{saveResult.diagnostics.retries > 0 ? <span className="text-warning">{saveResult.diagnostics.retries}</span> : "0"}</span>
+                        <span className="text-muted-foreground">Duration</span><span className="font-mono text-foreground">{(saveResult.diagnostics.duration_ms / 1000).toFixed(1)}s</span>
+                        <span className="text-muted-foreground">Synced at</span><span className="font-mono text-foreground">{new Date(saveResult.diagnostics.synced_at).toLocaleTimeString()}</span>
+                      </div>
+                      {saveResult.diagnostics.per_rvc && Object.keys(saveResult.diagnostics.per_rvc).length > 1 && (
+                        <div className="mt-2 border-t border-border pt-2 space-y-1">
+                          <p className="text-[10px] font-medium text-muted-foreground">Per-RVC breakdown</p>
+                          {Object.entries(saveResult.diagnostics.per_rvc).map(([rvc, d]) => (
+                            <div key={rvc} className="flex items-center justify-between text-[10px] font-mono">
+                              <span className="text-muted-foreground">{rvc}</span>
+                              <span className="text-foreground">{d.saved} checks · {d.lines} lines · {d.wine} wine{d.duplicates_skipped > 0 ? ` · ${d.duplicates_skipped} dedup` : ""}{d.last_cursor ? ` · cursor: ${d.last_cursor.slice(11, 19)}` : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               {loadingSales && <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}

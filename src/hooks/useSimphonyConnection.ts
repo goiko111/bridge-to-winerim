@@ -100,7 +100,20 @@ export function useSimphonyConnection() {
   const [loadingSales, setLoadingSales] = useState(false);
 
   const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
+  const [saveResult, setSaveResult] = useState<{
+    savedEvents: number; savedLines: number;
+    diagnostics?: {
+      business_day: string;
+      checks_fetched: number;
+      batches_processed: number;
+      line_items_saved: number;
+      payments_saved: number;
+      retries: number;
+      duration_ms: number;
+      synced_at: string;
+      per_rvc?: Record<string, { saved: number; lines: number; wine: number; duplicates_skipped: number; errors: number; last_cursor?: string }>;
+    };
+  } | null>(null);
 
   // Preflight
   const [preflightChecks, setPreflightChecks] = useState<PreflightCheck[]>([]);
@@ -371,7 +384,11 @@ export function useSimphonyConnection() {
         body: { action: "save-sales", connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 });
+      setSaveResult({
+        savedEvents: data?.savedEvents || 0,
+        savedLines: data?.savedLines || 0,
+        diagnostics: data?.diagnostics || undefined,
+      });
     } catch (e) { console.error("Failed to save sales:", e); }
     finally { setSaving(false); }
   }, [connectionId]);
