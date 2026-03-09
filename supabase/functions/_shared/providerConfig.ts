@@ -45,8 +45,18 @@ export interface SimphonyConfig {
   client_id?: string;
   client_secret?: string;
   oidc_token_expires_at?: string;
+  oidc_refresh_token?: string;
   selected_rvcs?: string[];
   rvc_cursors?: Record<string, { last_business_day?: string; synced_at?: string }>;
+  // Auth diagnostics (never contains raw tokens/secrets)
+  auth_diagnostics?: {
+    last_auth_success_at?: string;
+    last_auth_failure_at?: string;
+    last_auth_failure_reason?: string;
+    token_expires_at?: string;
+    endpoint_used?: string;
+    attempts_last_acquire?: number;
+  };
 }
 
 export function getSimphonyConfig(raw: RawConfig): SimphonyConfig {

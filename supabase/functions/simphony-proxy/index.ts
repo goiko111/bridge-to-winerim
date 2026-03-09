@@ -110,6 +110,167 @@ async function getConnection(connId: string) {
   return data;
 }
 
+// ── Centralized OIDC token manager ──
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before expiry
+const MAX_RETRY_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 1000;
+
+// deno-lint-ignore no-explicit-any
+function maskToken(token: string): string {
+  if (!token || token.length < 12) return "***";
+  return `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface TokenResult {
+  token: string;
+  expiresAt: string;
+  fromCache: boolean;
+  attempts: number;
+  endpointUsed: string;
+}
+
+// deno-lint-ignore no-explicit-any
+async function acquireOidcTokenInternal(conn: any): Promise<TokenResult> {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const oidcBase = cfg.oidc_base_url;
+  const clientId = cfg.client_id;
+  const clientSecret = cfg.client_secret;
+
+  if (!oidcBase || !clientId || !clientSecret) {
+    throw new Error("OIDC base URL, Client ID, and Client Secret are required");
+  }
+
+  const tokenUrl = `${oidcBase.replace(/\/+$/, "")}/oidc-provider/v1/oauth2/token`;
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const body = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: "openid",
+      });
+
+      const res = await fetch(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        lastError = `OIDC ${res.status}: ${errText.slice(0, 200)}`;
+        // Only retry on 5xx or network-like errors
+        if (res.status >= 500 && attempt < MAX_RETRY_ATTEMPTS) {
+          console.log(`[simphony-oidc] Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} failed (${res.status}), retrying…`);
+          await sleep(BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+          continue;
+        }
+        throw new Error(lastError);
+      }
+
+      const tokenData = await res.json();
+      const idToken = tokenData.id_token || tokenData.access_token;
+      const expiresIn = tokenData.expires_in || 3600;
+      const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+      if (!idToken) {
+        throw new Error("Token response did not contain id_token or access_token");
+      }
+
+      // Never log the raw token
+      console.log(`[simphony-oidc] Token acquired (${maskToken(idToken)}), expires ${expiresAt}, attempt ${attempt}`);
+
+      return { token: idToken, expiresAt, fromCache: false, attempts: attempt, endpointUsed: tokenUrl };
+    } catch (e: any) {
+      lastError = e.message || String(e);
+      if (attempt < MAX_RETRY_ATTEMPTS && (lastError.includes("fetch") || lastError.includes("network") || lastError.includes("OIDC 5"))) {
+        console.log(`[simphony-oidc] Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} error: ${lastError.slice(0, 100)}, retrying…`);
+        await sleep(BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error(`OIDC token acquisition failed after ${MAX_RETRY_ATTEMPTS} attempts: ${lastError}`);
+}
+
+/**
+ * Ensure a valid OIDC token exists for the connection.
+ * Returns the token. If cached token is still valid, returns it.
+ * Otherwise acquires a new one, stores it, and updates diagnostics.
+ */
+// deno-lint-ignore no-explicit-any
+async function ensureValidToken(conn: any): Promise<string> {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const expiresAt = cfg.oidc_token_expires_at;
+
+  // Check if current token is still valid (with margin)
+  if (conn.api_token && expiresAt) {
+    const expiryDate = new Date(expiresAt);
+    if (expiryDate.getTime() - Date.now() > TOKEN_REFRESH_MARGIN_MS) {
+      return conn.api_token; // cached, still valid
+    }
+  }
+
+  // If no OIDC credentials, just return whatever token is set (manual token)
+  if (!cfg.oidc_base_url || !cfg.client_id || !cfg.client_secret) {
+    if (conn.api_token) return conn.api_token;
+    throw new Error("No OIDC credentials and no manual token set");
+  }
+
+  // Acquire fresh token
+  try {
+    const result = await acquireOidcTokenInternal(conn);
+
+    const updatedCfg = {
+      ...cfg,
+      oidc_token_expires_at: result.expiresAt,
+      auth_diagnostics: {
+        ...(cfg.auth_diagnostics || {}),
+        last_auth_success_at: new Date().toISOString(),
+        token_expires_at: result.expiresAt,
+        endpoint_used: result.endpointUsed,
+        attempts_last_acquire: result.attempts,
+      },
+    };
+
+    await sb().from("pos_connections").update({
+      api_token: result.token,
+      provider_config: updatedCfg,
+    }).eq("id", conn.id);
+
+    // Update in-memory conn for subsequent use in same request
+    conn.api_token = result.token;
+    conn.provider_config = updatedCfg;
+
+    return result.token;
+  } catch (e: any) {
+    // Store failure diagnostics
+    const updatedCfg = {
+      ...cfg,
+      auth_diagnostics: {
+        ...(cfg.auth_diagnostics || {}),
+        last_auth_failure_at: new Date().toISOString(),
+        last_auth_failure_reason: e.message?.slice(0, 300),
+        endpoint_used: `${(cfg.oidc_base_url || "").replace(/\/+$/, "")}/oidc-provider/v1/oauth2/token`,
+      },
+    };
+
+    await sb().from("pos_connections").update({
+      provider_config: updatedCfg,
+    }).eq("id", conn.id);
+
+    conn.provider_config = updatedCfg;
+    throw e;
+  }
+}
+
 // ── Helper: STS headers (supports multi-RVC via override) ──
 // deno-lint-ignore no-explicit-any
 function stsHeaders(conn: any, rvcOverride?: string) {
@@ -154,10 +315,15 @@ async function getWineFamilies(connectionId: string) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: test
+// ACTION: test (auto-refreshes token before testing)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleTest(conn: any) {
+  try {
+    await ensureValidToken(conn);
+  } catch (e: any) {
+    return json({ success: false, message: `Auth failed: ${e.message}` });
+  }
   const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
   const res = await fetch(url, { headers: stsHeaders(conn) });
   if (res.ok) {
@@ -170,62 +336,42 @@ async function handleTest(conn: any) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: oidc-acquire (S2)
+// ACTION: oidc-acquire (S2) — uses centralized token manager
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleOidcAcquire(conn: any) {
   const cfg = getSimphonyConfig(conn.provider_config);
-  const oidcBase = cfg.oidc_base_url;
-  const clientId = cfg.client_id;
-  const clientSecret = cfg?.client_secret;
-
-  if (!oidcBase || !clientId || !clientSecret) {
+  if (!cfg.oidc_base_url || !cfg.client_id || !cfg.client_secret) {
     return json({ success: false, message: "OIDC base URL, Client ID, and Client Secret are required" });
   }
 
-  const tokenUrl = `${oidcBase.replace(/\/+$/, "")}/oidc-provider/v1/oauth2/token`;
-
   try {
-    const body = new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret,
-      scope: "openid",
-    });
-
-    const res = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body.toString(),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return json({ success: false, message: `OIDC token endpoint returned ${res.status}: ${errText.slice(0, 300)}` });
-    }
-
-    const tokenData = await res.json();
-    const idToken = tokenData.id_token || tokenData.access_token;
-    const expiresIn = tokenData.expires_in || 3600;
-    const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
-
-    if (!idToken) {
-      return json({ success: false, message: "Token response did not contain id_token or access_token" });
-    }
-
-    // Store the new token on the connection
-    await sb().from("pos_connections").update({
-      api_token: idToken,
-      provider_config: {
-        ...(cfg || {}),
-        oidc_token_expires_at: expiresAt,
-        oidc_refresh_token: tokenData.refresh_token || null,
+    const token = await ensureValidToken(conn);
+    const updatedCfg = getSimphonyConfig(conn.provider_config);
+    const diag = updatedCfg.auth_diagnostics || {};
+    return json({
+      success: true,
+      message: `Token acquired, expires ${diag.token_expires_at || updatedCfg.oidc_token_expires_at}`,
+      expiresAt: diag.token_expires_at || updatedCfg.oidc_token_expires_at,
+      diagnostics: {
+        lastAuthSuccessAt: diag.last_auth_success_at,
+        tokenExpiresAt: diag.token_expires_at,
+        endpointUsed: diag.endpoint_used,
+        attemptsLastAcquire: diag.attempts_last_acquire,
       },
-    }).eq("id", conn.id);
-
-    return json({ success: true, message: `Token acquired, expires ${expiresAt}`, expiresAt });
+    });
   } catch (e: any) {
-    return json({ success: false, message: `OIDC request failed: ${e.message}` });
+    const updatedCfg = getSimphonyConfig(conn.provider_config);
+    const diag = updatedCfg.auth_diagnostics || {};
+    return json({
+      success: false,
+      message: `OIDC token acquisition failed: ${e.message}`,
+      diagnostics: {
+        lastAuthFailureAt: diag.last_auth_failure_at,
+        lastAuthFailureReason: diag.last_auth_failure_reason,
+        endpointUsed: diag.endpoint_used,
+      },
+    });
   }
 }
 
@@ -234,6 +380,8 @@ async function handleOidcAcquire(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleDiscoverLocations(conn: any) {
+  // Auto-refresh token before discovery
+  try { await ensureValidToken(conn); } catch { /* proceed with current token */ }
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
 
@@ -307,6 +455,8 @@ async function handleDiscoverLocations(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handlePreflight(conn: any) {
+  // Auto-refresh token before preflight
+  try { await ensureValidToken(conn); } catch { /* preflight will detect auth failures */ }
   const checks: { id: string; label: string; status: string; detail?: string; required: boolean }[] = [];
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
@@ -483,6 +633,8 @@ async function handlePreflight(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleFindDays(conn: any, daysBack: number) {
+  // Auto-refresh token before scanning
+  await ensureValidToken(conn);
   const scanDays = daysBack || 60;
   const rvcs = getSelectedRvcs(conn);
   const globalDays = new Set<string>();

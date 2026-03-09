@@ -65,8 +65,17 @@ export interface SimphonyConfig {
   oidc_base_url?: string;
   cc_base_url?: string;
   oidc_token_expires_at?: string;
+  oidc_refresh_token?: string;
   selected_rvcs?: string[];
   rvc_cursors?: Record<string, { last_business_day?: string; synced_at?: string }>;
+  auth_diagnostics?: {
+    last_auth_success_at?: string;
+    last_auth_failure_at?: string;
+    last_auth_failure_reason?: string;
+    token_expires_at?: string;
+    endpoint_used?: string;
+    attempts_last_acquire?: number;
+  };
 }
 
 export interface BdpConfig {

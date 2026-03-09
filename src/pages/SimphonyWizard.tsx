@@ -318,11 +318,13 @@ export default function SimphonyWizard() {
           )}
 
           {/* ── Step 2: Auth & Token (S2) ── */}
-          {currentStep === 2 && (
+          {currentStep === 2 && (() => {
+            const diag = (oidcResult as any)?.diagnostics || {};
+            return (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">OIDC Token Management</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Acquire and refresh tokens automatically via client_credentials flow.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Acquire and refresh tokens automatically via client_credentials flow. Tokens are cached and auto-refreshed 5 min before expiry.</p>
               </div>
               <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
                 <div className="flex items-center gap-2">
@@ -341,10 +343,57 @@ export default function SimphonyWizard() {
               </Button>
 
               {oidcResult && (
-                <div className={`rounded-lg border p-3 text-xs ${oidcResult.success ? "border-success/30 bg-success/5 text-success" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
-                  {oidcResult.success ? <CheckCircle2 className="inline h-3.5 w-3.5 mr-1" /> : <XCircle className="inline h-3.5 w-3.5 mr-1" />}
-                  {oidcResult.message}
-                  {oidcResult.expiresAt && <p className="mt-1 font-mono">Expires: {oidcResult.expiresAt}</p>}
+                <div className={`rounded-lg border p-3 text-xs space-y-2 ${oidcResult.success ? "border-success/30 bg-success/5 text-success" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+                  <div>
+                    {oidcResult.success ? <CheckCircle2 className="inline h-3.5 w-3.5 mr-1" /> : <XCircle className="inline h-3.5 w-3.5 mr-1" />}
+                    {oidcResult.message}
+                  </div>
+                  {oidcResult.expiresAt && <p className="font-mono">Expires: {oidcResult.expiresAt}</p>}
+                </div>
+              )}
+
+              {/* Auth diagnostics panel */}
+              {oidcResult && (diag.lastAuthSuccessAt || diag.lastAuthFailureAt || diag.endpointUsed) && (
+                <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                  <p className="text-xs font-semibold text-foreground flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5 text-primary" /> Auth Diagnostics</p>
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    {diag.lastAuthSuccessAt && (
+                      <div>
+                        <span className="text-muted-foreground">Last success</span>
+                        <p className="font-mono text-success">{new Date(diag.lastAuthSuccessAt).toLocaleString()}</p>
+                      </div>
+                    )}
+                    {diag.lastAuthFailureAt && (
+                      <div>
+                        <span className="text-muted-foreground">Last failure</span>
+                        <p className="font-mono text-destructive">{new Date(diag.lastAuthFailureAt).toLocaleString()}</p>
+                      </div>
+                    )}
+                    {diag.tokenExpiresAt && (
+                      <div>
+                        <span className="text-muted-foreground">Token expiry</span>
+                        <p className="font-mono text-foreground">{new Date(diag.tokenExpiresAt).toLocaleString()}</p>
+                      </div>
+                    )}
+                    {diag.endpointUsed && (
+                      <div>
+                        <span className="text-muted-foreground">Endpoint</span>
+                        <p className="font-mono text-foreground truncate">{diag.endpointUsed}</p>
+                      </div>
+                    )}
+                    {diag.attemptsLastAcquire && (
+                      <div>
+                        <span className="text-muted-foreground">Attempts</span>
+                        <p className="font-mono text-foreground">{diag.attemptsLastAcquire}</p>
+                      </div>
+                    )}
+                    {diag.lastAuthFailureReason && (
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">Failure reason</span>
+                        <p className="font-mono text-destructive text-[10px] break-all">{diag.lastAuthFailureReason}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -353,10 +402,13 @@ export default function SimphonyWizard() {
                 <p>1. POST to <code className="text-primary">{`{OIDC_URL}/oidc-provider/v1/oauth2/token`}</code></p>
                 <p>2. With <code>grant_type=client_credentials</code>, client_id, client_secret</p>
                 <p>3. Returns id_token (valid ~14 days) used as Bearer for STS Gen2</p>
-                <p>4. Token is stored and auto-refreshed before expiry</p>
+                <p>4. Token is cached and auto-refreshed 5 min before expiry</p>
+                <p>5. Transient failures (5xx, network) retry up to 3× with exponential backoff</p>
+                <p>6. Secrets and raw tokens are never logged</p>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* ── Step 3: Discover Locations & RVCs (S3 + S9) ── */}
           {currentStep === 3 && (
