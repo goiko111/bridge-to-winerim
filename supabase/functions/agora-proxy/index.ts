@@ -3056,89 +3056,137 @@ serve(async (req) => {
       }
 
       const missing_prices: VerifyMissingPrice[] = [];
-      let checked = 0, ok = 0, failed = 0;
+      const verifyResult = {
+        success: true,
+        verified_exists: true,
+        verified_prices: true,
+        verified_family: true,
+        verified_preparation: true,
+        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        missing_prices: [] as VerifyMissingPrice[],
+        affected_sale_centers: [] as string[],
+        summary: { checked: 0, ok: 0, failed: 0 },
+        totalPriceLists: allPriceLists.length,
+        totalSaleCenters: allSaleCenters.length,
+        priceListToSaleCenters,
+      };
+
+      // Load expected families from last outbound XML (from mappings + winerim_wines wine_type)
+      // For verify-products we compare against whatever FamilyId is currently in the connection defaults
+      // (no "expected" family available here — skip family check unless mapping has agora_product_id)
 
       for (const mapping of (mappings || [])) {
-        checked++;
-        const productRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
-        const productMatch = verifyXml.match(productRegex);
-        
+        verifyResult.summary.checked++;
+        const productFullRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
+        const productMatch = verifyXml.match(productFullRegex);
+
         if (!productMatch) {
-          failed++;
+          verifyResult.summary.failed++;
+          verifyResult.verified_exists = false;
+          verifyResult.success = false;
+          verifyResult.errors.push({
+            code: "NOT_FOUND",
+            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) not found in Agora`,
+            context: { productId: mapping.provider_product_id, format: mapping.format_type },
+          });
           for (const pl of allPriceLists) {
-            missing_prices.push({
+            const scNames = priceListToSaleCenters[pl.Id] || [];
+            verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id,
-              price_list_name: pl.Name,
-              issue: "missing",
-              name: mapping.provider_product_name,
-              format: mapping.format_type,
-              affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
+              price_list_id: pl.Id, price_list_name: pl.Name,
+              issue: "missing", name: mapping.provider_product_name, format: mapping.format_type,
+              affected_sale_centers: scNames,
             });
+            for (const s of scNames) {
+              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
+            }
           }
           continue;
         }
-        
-        // Check ALL PriceLists
-        let allOk = true;
+
+        const attrs = productMatch[1];
+        const innerXml = productMatch[2];
+        let productOk = true;
+
+        // CHECK: PRICES
         for (const pl of allPriceLists) {
           const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
-          const priceMatch = productMatch[1].match(priceRegex);
+          const priceMatch = innerXml.match(priceRegex);
+          const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
 
-          if (!priceMatch) {
-            allOk = false;
-            missing_prices.push({
+          if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
+            productOk = false;
+            verifyResult.verified_prices = false;
+            const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
+            const scNames = priceListToSaleCenters[pl.Id] || [];
+            verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id,
-              price_list_name: pl.Name,
-              issue: "missing",
-              name: mapping.provider_product_name,
-              format: mapping.format_type,
-              affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
+              price_list_id: pl.Id, price_list_name: pl.Name,
+              issue, name: mapping.provider_product_name, format: mapping.format_type,
+              affected_sale_centers: scNames,
             });
-          } else {
-            const priceVal = parseFloat(priceMatch[1]);
-            if (isNaN(priceVal)) {
-              allOk = false;
-              missing_prices.push({
-                product_erp_id: mapping.winerim_wine_id || "",
-                agora_product_id: mapping.provider_product_id,
-                price_list_id: pl.Id,
-                price_list_name: pl.Name,
-                issue: "invalid",
-                name: mapping.provider_product_name,
-                format: mapping.format_type,
-                affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
-              });
-            } else if (priceVal <= 0) {
-              allOk = false;
-              missing_prices.push({
-                product_erp_id: mapping.winerim_wine_id || "",
-                agora_product_id: mapping.provider_product_id,
-                price_list_id: pl.Id,
-                price_list_name: pl.Name,
-                issue: "zero",
-                name: mapping.provider_product_name,
-                format: mapping.format_type,
-                affected_sale_centers: priceListToSaleCenters[pl.Id] || [],
-              });
+            for (const s of scNames) {
+              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
             }
           }
         }
 
-        if (allOk) ok++; else failed++;
+        // CHECK: PREPARATION FIELDS
+        const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+        const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+        const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+        const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+        if ((!prepTypeVal) !== (!prepOrderVal)) {
+          productOk = false;
+          verifyResult.verified_preparation = false;
+          verifyResult.errors.push({
+            code: "INVALID_PREPARATION_PAIR",
+            message: `Preparation Type and Order must both be empty or both set (Product ${mapping.provider_product_id}, ${mapping.format_type}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
+            field: "PreparationTypeId,PreparationOrderId",
+            context: { productId: mapping.provider_product_id, format: mapping.format_type, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
+          });
+        }
+
+        // CHECK: FAMILY (compare against FamilyId in attrs — warn if empty)
+        const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
+        const actualFamilyId = familyMatch ? familyMatch[1] : "";
+        if (!actualFamilyId) {
+          productOk = false;
+          verifyResult.verified_family = false;
+          verifyResult.warnings.push({
+            code: "FAMILY_EMPTY",
+            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) has no FamilyId assigned`,
+            field: "FamilyId",
+            context: { productId: mapping.provider_product_id, format: mapping.format_type },
+          });
+        }
+
+        if (productOk) {
+          verifyResult.summary.ok++;
+        } else {
+          verifyResult.success = false;
+          verifyResult.summary.failed++;
+        }
       }
 
       return new Response(JSON.stringify({
-        success: true,
-        totalPriceLists: allPriceLists.length,
-        totalSaleCenters: allSaleCenters.length,
-        totalProducts: checked,
-        missingCentralPrice: failed,
-        summary: { checked, ok, failed },
-        missing_prices,
+        success: verifyResult.success,
+        verified_exists: verifyResult.verified_exists,
+        verified_prices: verifyResult.verified_prices,
+        verified_family: verifyResult.verified_family,
+        verified_preparation: verifyResult.verified_preparation,
+        errors: verifyResult.errors,
+        warnings: verifyResult.warnings,
+        missing_prices: verifyResult.missing_prices,
+        affected_sale_centers: verifyResult.affected_sale_centers,
+        totalPriceLists: verifyResult.totalPriceLists,
+        totalSaleCenters: verifyResult.totalSaleCenters,
+        totalProducts: verifyResult.summary.checked,
+        missingCentralPrice: verifyResult.summary.failed,
+        summary: verifyResult.summary,
         priceListToSaleCenters,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
