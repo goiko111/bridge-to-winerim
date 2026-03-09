@@ -447,7 +447,7 @@ export default function SimphonyWizard() {
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Preflight Checks</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Verifying STS Gen2, OIDC, workstation, C&C API, and Notifications.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Verifying STS Gen2 connectivity, OIDC auth, locations, RVC, Option 74, and workstation.</p>
               </div>
               {preflightRunning && (
                 <div className="flex items-center justify-center py-12">
@@ -464,7 +464,10 @@ export default function SimphonyWizard() {
                         <p className="text-sm font-medium text-foreground">{check.label}</p>
                         {check.detail && <p className="text-[11px] text-muted-foreground mt-0.5">{check.detail}</p>}
                       </div>
-                      <Badge variant={check.status === "pass" ? "default" : check.status === "fail" ? "destructive" : "secondary"} className="text-[10px] shrink-0">{check.status}</Badge>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {check.required !== false && <Badge variant="outline" className="text-[9px]">Required</Badge>}
+                        <Badge variant={check.status === "pass" ? "default" : check.status === "fail" ? "destructive" : "secondary"} className="text-[10px]">{check.status}</Badge>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -834,9 +837,12 @@ export default function SimphonyWizard() {
                 <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Simphony integration fully configured with STS Gen2 + OIDC + C&C + Notifications.</p>
               </div>
               {!preflightAllPass && (
-                <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning max-w-sm mx-auto">
-                  <AlertTriangle className="inline h-3.5 w-3.5 mr-1" />
-                  Some preflight checks did not pass. Sync may not work correctly.
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive max-w-sm mx-auto space-y-2">
+                  <div className="flex items-center gap-2 font-semibold"><XCircle className="h-4 w-4" /> Required preflight checks not passed</div>
+                  <p className="text-xs text-destructive/80">Go back to step 4 (Preflight) and resolve all required checks before enabling sync.</p>
+                  <Button variant="outline" size="sm" onClick={() => setCurrentStep(4)} className="text-xs">
+                    <ArrowLeft className="mr-1 h-3 w-3" /> Go to Preflight
+                  </Button>
                 </div>
               )}
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
@@ -848,7 +854,7 @@ export default function SimphonyWizard() {
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">C&C API</span><span className="font-medium text-foreground">{ccBaseUrl ? "Configured" : "Not set"}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Webhooks</span><span className="font-medium text-foreground">{webhookStatus?.registered ? "Active" : "Not set"}</span></div>
               </div>
-              <Button size="lg" onClick={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 1500); }} className="shadow-glow">
+              <Button size="lg" onClick={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 1500); }} disabled={!preflightAllPass} className="shadow-glow">
                 {enabled ? <><CheckCircle2 className="mr-2 h-4 w-4" /> Sync Enabled — Redirecting…</> : "Enable Sync"}
               </Button>
             </div>
