@@ -56,20 +56,8 @@ function StepConnection({
 }) {
   const [showHelper, setShowHelper] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [checks, setChecks] = useState({
-    portOpen: false,
-    ipAny: false,
-    loginRequired: false,
-    exportTemplateExists: false,
-  });
-
-  const toggleCheck = (key: keyof typeof checks) => {
-    setChecks((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const allChecked = Object.values(checks).every(Boolean);
-
-  const [showSetupGuide, setShowSetupGuide] = useState(true);
+  const [firewallConfirmed, setFirewallConfirmed] = useState(false);
+  const [weblinkConfirmed, setWeblinkConfirmed] = useState(false);
 
   return (
     <div className="space-y-5">
@@ -80,84 +68,22 @@ function StepConnection({
         </p>
       </div>
 
-      {/* ── Guided Setup: What to ask the restaurant ── */}
-      <div className="rounded-lg border border-primary/30 bg-primary/5">
-        <button onClick={() => setShowSetupGuide(!showSetupGuide)} className="flex w-full items-center justify-between px-4 py-3 text-left">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <Send className="h-4 w-4 text-primary" />
-            📋 What to ask the restaurant
-          </div>
-          {showSetupGuide ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-        </button>
-        {showSetupGuide && (
-          <div className="border-t border-primary/20 px-4 pb-4 pt-3 space-y-3">
-            <p className="text-[11px] text-muted-foreground">
-              Send this list to the restaurant IT contact or BDP reseller. All items are required for the integration to work.
-            </p>
+      {/* ── Unified Setup Checklist ── */}
+      <BdpSetupChecklist
+        baseUrl={baseUrl}
+        port={port}
+        userKey={userKey}
+        password={password}
+        exportProfileCode={exportProfileCode}
+        firewallConfirmed={firewallConfirmed}
+        weblinkConfirmed={weblinkConfirmed}
+        testStatus={testStatus as any}
+        testError={testError}
+        onToggleFirewall={() => setFirewallConfirmed((v) => !v)}
+        onToggleWeblink={() => setWeblinkConfirmed((v) => !v)}
+      />
 
-            <div className="space-y-2.5">
-              {[
-                {
-                  num: "1",
-                  title: "Base URL / DDNS address",
-                  ask: "\"What is the public URL or DDNS address of the BDP server?\"",
-                  detail: "This is the IP address, domain, or DDNS hostname where the BDP Weblink REST API is accessible from outside the restaurant network. Example: myrestaurant.ddns.net or 85.123.45.67",
-                  example: "http://myrestaurant.ddns.net",
-                },
-                {
-                  num: "2",
-                  title: "User Key & Password",
-                  ask: "\"What are the API credentials (User Key and Password) for the Weblink service?\"",
-                  detail: "Created in BDP NET → Configuración → Servicio Web → Users. Must have read permissions for sales/catalog and write permissions if product push is needed.",
-                  example: "User Key: WINERIM / Password: ••••••",
-                },
-                {
-                  num: "3",
-                  title: "Export Profile Code",
-                  ask: "\"What is the name/code of the export template configured in BDP?\"",
-                  detail: "Found in BDP NET → Configuración → Exportación → Plantillas. This template defines which sales data fields are exported. A template named WEBLINK or WINERIM_EXPORT is typical.",
-                  example: "WINERIM_EXPORT",
-                },
-                {
-                  num: "4",
-                  title: "Firewall / Port open",
-                  ask: "\"Is the API port (usually 8080 or 443) open in the firewall and accessible from the internet?\"",
-                  detail: "The BDP server's API port must accept inbound connections from our servers. Ask the IT contact to verify that the port is forwarded on the router and not blocked by any firewall rule.",
-                  example: "Port 8080 open, NAT rule configured",
-                },
-                {
-                  num: "5",
-                  title: "Weblink service enabled",
-                  ask: "\"Is the Weblink REST API service running and enabled in BDP?\"",
-                  detail: "In BDP NET → Configuración → Servicio Web, the REST API toggle must be ON. The service should start automatically with the POS. If it stops, sales sync will fail until restarted.",
-                  example: "Weblink REST API = Enabled / Auto-start = Yes",
-                },
-              ].map((item) => (
-                <div key={item.num} className="rounded-md border border-border bg-background p-3 space-y-1.5">
-                  <div className="flex items-start gap-2">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-bold">{item.num}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-foreground">{item.title}</p>
-                      <p className="text-[11px] text-primary font-medium mt-0.5 italic">{item.ask}</p>
-                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">{item.detail}</p>
-                      <p className="text-[10px] text-muted-foreground/70 mt-1 font-mono">Example: {item.example}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
-              <p className="text-[11px] text-primary font-medium mb-0.5">💡 Optional extras</p>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                If you plan to push products back to BDP, also ask for a <strong>Catalog Profile Code</strong> and an <strong>Import Profile Code</strong>. These can be configured later in the "Additional Template Codes" section below.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Helper Panel */}
+      {/* Helper Panel (technical) */}
       <div className="rounded-lg border border-border bg-muted/20">
         <button onClick={() => setShowHelper(!showHelper)} className="flex w-full items-center justify-between px-4 py-3 text-left">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -181,29 +107,6 @@ function StepConnection({
                 You can use separate template codes for sales export, catalog export, and product import. If left blank, the main Export Profile Code is used as fallback.
               </p>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* Pre-flight Checklist */}
-      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Pre-flight Checklist</p>
-        <div className="space-y-2">
-          {([
-            { key: "portOpen" as const, label: "Port is open in firewall (accessible from outside)" },
-            { key: "ipAny" as const, label: 'IP filter set to "ANY" (or Winerim IP whitelisted)' },
-            { key: "loginRequired" as const, label: "User Key & Password created with read/write permissions" },
-            { key: "exportTemplateExists" as const, label: "Export template (WEBLINK) exists in BDP" },
-          ]).map((item) => (
-            <label key={item.key} className="flex items-start gap-2.5 cursor-pointer group">
-              <Checkbox checked={checks[item.key]} onCheckedChange={() => toggleCheck(item.key)} className="mt-0.5" />
-              <span className={`text-xs leading-relaxed transition-colors ${checks[item.key] ? "text-foreground" : "text-muted-foreground"}`}>{item.label}</span>
-            </label>
-          ))}
-        </div>
-        {allChecked && (
-          <div className="flex items-center gap-1.5 text-[11px] text-success font-medium">
-            <CheckCircle2 className="h-3 w-3" /> All prerequisites verified
           </div>
         )}
       </div>
