@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getBdpConfig } from "../_shared/providerConfig.ts";
+import { getBdpConfig, type BdpEndpointRecord } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -216,6 +216,43 @@ serve(async (req) => {
     const host = port ? `${baseUrl}:${port}` : baseUrl;
     const headers = bdpHeaders(userKey, password);
 
+    // ── Persisted endpoint resolution ──
+    const persistedEndpoints = config.discovered_endpoints || {};
+
+    /** Resolve a URL: use persisted endpoint if available, otherwise default path */
+    function resolveUrl(role: string, defaultPath: string): string {
+      // Find the best persisted endpoint for this role
+      for (const [, ep] of Object.entries(persistedEndpoints)) {
+        if (ep.role === role && ep.path && ep.last_success_at) {
+          return `${host}${ep.path}`;
+        }
+      }
+      return `${host}${defaultPath}`;
+    }
+
+    /** Track endpoint success/error in config and persist */
+    async function trackEndpoint(
+      key: string, role: "auth" | "sales" | "catalog" | "write",
+      path: string, resp: Response | null, errorMsg?: string,
+    ) {
+      const record: BdpEndpointRecord = persistedEndpoints[key] || { path, role };
+      record.path = path;
+      record.role = role;
+      if (resp && resp.ok) {
+        record.last_success_at = new Date().toISOString();
+        record.last_success_status = resp.status;
+      } else {
+        record.last_error_at = new Date().toISOString();
+        record.last_error_status = resp?.status || 0;
+        if (errorMsg) record.last_error_body = errorMsg.substring(0, 2048);
+      }
+      persistedEndpoints[key] = record;
+      // Persist back to provider_config (non-blocking)
+      const updatedConfig = { ...config, discovered_endpoints: persistedEndpoints };
+      supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId)
+        .then(() => {});
+    }
+
     // ── ACTION: test ──
     if (action === "test") {
       try {
@@ -296,16 +333,37 @@ serve(async (req) => {
 
       const writeMode = canWriteImport ? "IMPORT_PROFILE" : (canWriteRest ? "REST" : "NONE");
 
-      // Build persisted discovered_routes map
-      const discoveredRoutes: Record<string, { path: string; status: number; verified_at: string }> = {};
+      // Build persisted endpoint records with rich metadata
+      const discoveredEndpoints: Record<string, BdpEndpointRecord> = {};
       for (const [key, val] of Object.entries(results)) {
+        const ep: BdpEndpointRecord = {
+          path: val.path,
+          role: val.role as BdpEndpointRecord["role"],
+          verified_at: new Date().toISOString(),
+        };
         if (val.ok) {
-          discoveredRoutes[key] = { path: val.path, status: val.status, verified_at: new Date().toISOString() };
+          ep.last_success_at = new Date().toISOString();
+          ep.last_success_status = val.status;
+        } else {
+          ep.last_error_at = new Date().toISOString();
+          ep.last_error_status = val.status;
+          ep.last_error_body = (val.bodyPreview || val.lastError || "").substring(0, 2048);
         }
+        discoveredEndpoints[key] = ep;
       }
 
-      // Persist routes into provider_config
-      const updatedConfig = { ...config, discovered_routes: discoveredRoutes, last_discovery_at: new Date().toISOString() };
+      // Persist to provider_config
+      const updatedConfig = {
+        ...config,
+        discovered_endpoints: discoveredEndpoints,
+        last_discovery_at: new Date().toISOString(),
+        // Keep legacy for backward compat
+        discovered_routes: Object.fromEntries(
+          Object.entries(discoveredEndpoints)
+            .filter(([, v]) => v.last_success_at)
+            .map(([k, v]) => [k, { path: v.path, status: v.last_success_status, verified_at: v.verified_at }])
+        ),
+      };
       await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
 
       // Upsert provider_capabilities
@@ -329,7 +387,7 @@ serve(async (req) => {
       return ok({
         success: allCriticalPass,
         endpoints: results,
-        discoveredRoutes,
+        discoveredEndpoints,
         capabilities: { canReadSales, canReadCatalog, canWrite, writeMode },
       });
     }
@@ -425,11 +483,12 @@ serve(async (req) => {
       }
 
       try {
-        // BDP Weblink REST export endpoint pattern:
-        // /api/v1/export/{profileCode}?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
         const resp = await bdpFetch(exportUrl, headers);
         const bodyText = await resp.text();
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
 
         if (!resp.ok) {
           return ok({
@@ -479,9 +538,12 @@ serve(async (req) => {
       }
 
       try {
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
         const resp = await bdpFetch(exportUrl, headers);
         const bodyText = await resp.text();
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
 
         if (!resp.ok) {
           return ok({ success: false, message: `BDP HTTP ${resp.status}` });
@@ -589,7 +651,9 @@ serve(async (req) => {
         const day = d.toISOString().substring(0, 10);
 
         try {
-          const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${day}&dateTo=${day}`;
+          const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+          const salesBase = resolveUrl("sales", defaultSalesPath);
+          const exportUrl = `${salesBase}?dateFrom=${day}&dateTo=${day}`;
           const resp = await bdpFetch(exportUrl, headers);
 
           if (!resp.ok) {
@@ -693,8 +757,11 @@ serve(async (req) => {
       const from = lastSynced || today;
 
       try {
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${today}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${today}`;
         const resp = await bdpFetch(exportUrl, headers);
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : `HTTP ${resp.status}`);
 
         if (!resp.ok) {
           return ok({ success: false, message: `BDP HTTP ${resp.status}` });
@@ -794,14 +861,15 @@ serve(async (req) => {
         : exportProfileCode;
 
       try {
-        // Try fetching articles/products
-        const productsUrl = `${host}/api/v1/articles`;
+        // Try fetching articles/products (use persisted catalog endpoint)
+        const productsUrl = resolveUrl("catalog", "/api/v1/articles");
         let products: any[] = [];
         let families: any[] = [];
         let rawProductsPreview = "";
 
         try {
           const pResp = await bdpFetch(productsUrl, headers);
+          await trackEndpoint("articles", "catalog", "/api/v1/articles", pResp, pResp.ok ? undefined : `HTTP ${pResp.status}`);
           if (pResp.ok) {
             const pText = await pResp.text();
             rawProductsPreview = pText.substring(0, 2048);
@@ -1170,6 +1238,17 @@ serve(async (req) => {
 
       result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
       return ok(result);
+    }
+
+    // ── ACTION: get-endpoints ──
+    // Return persisted endpoint status for diagnostics UI
+    if (action === "get-endpoints") {
+      return ok({
+        success: true,
+        discoveredEndpoints: persistedEndpoints,
+        lastDiscoveryAt: config.last_discovery_at || null,
+        host,
+      });
     }
 
     return err({ success: false, message: `Unknown action: ${action}` });

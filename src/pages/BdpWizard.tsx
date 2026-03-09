@@ -8,6 +8,7 @@ import {
   Calendar, Download, RefreshCw, Database, Package, Upload, ShieldCheck,
   AlertTriangle, RotateCcw,
 } from "lucide-react";
+import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -446,6 +447,9 @@ function StepDiagnostics({
           </div>
         )}
       </div>
+
+      {/* Persisted Endpoint Status */}
+      <BdpEndpointDiagnostics connectionId={connectionId} />
 
       {/* Manual endpoint test */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
