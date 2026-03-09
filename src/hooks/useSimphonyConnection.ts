@@ -38,6 +38,7 @@ export interface PreflightCheck {
   label: string;
   status: "pending" | "pass" | "fail" | "warn";
   detail?: string;
+  required?: boolean;
 }
 
 export interface CatalogItem {
@@ -267,12 +268,14 @@ export function useSimphonyConnection() {
     if (!connectionId) return;
     setPreflightRunning(true);
     setPreflightChecks([
-      { id: "sts", label: "STS Gen2 reachable", status: "pending" },
-      { id: "rvc74", label: "RVC Option 74 (STS Gen2 enabled)", status: "pending" },
-      { id: "oidc", label: "OIDC token valid", status: "pending" },
-      { id: "workstation", label: "POS API Client workstation", status: "pending" },
-      { id: "cc", label: "Config & Content API (optional)", status: "pending" },
-      { id: "notifications", label: "Notifications API (optional)", status: "pending" },
+      { id: "sts", label: "STS Gen2 connectivity", status: "pending", required: true },
+      { id: "oidc", label: "OIDC authentication", status: "pending", required: true },
+      { id: "locations", label: "Locations discovered", status: "pending", required: true },
+      { id: "rvc", label: "Revenue Center (RVC) discovered", status: "pending", required: true },
+      { id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "pending", required: true },
+      { id: "workstation", label: "POS API Client workstation", status: "pending", required: true },
+      { id: "cc", label: "Config & Content API", status: "pending", required: false },
+      { id: "notifications", label: "Notifications API", status: "pending", required: false },
     ]);
     try {
       const { data, error } = await supabase.functions.invoke("simphony-proxy", {

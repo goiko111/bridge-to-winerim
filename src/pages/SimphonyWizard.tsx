@@ -202,7 +202,8 @@ export default function SimphonyWizard() {
     return <div className="h-4 w-4 rounded-full border-2 border-border" />;
   };
 
-  const preflightAllPass = preflightChecks.length > 0 && preflightChecks.filter((c) => !["cc", "notifications"].includes(c.id)).every((c) => c.status === "pass");
+  const requiredCheckIds = ["sts", "oidc", "locations", "rvc", "rvc74", "workstation"];
+  const preflightAllPass = preflightChecks.length > 0 && preflightChecks.filter((c) => c.required !== false && requiredCheckIds.includes(c.id)).every((c) => c.status === "pass");
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
