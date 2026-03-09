@@ -514,15 +514,17 @@ serve(async (req) => {
     }
 
     // ── ACTION: verify-product-v2 ──
-    // Returns shared PostWriteVerificationResult contract
+    // Returns shared PostWriteVerificationResult contract with family + tax checks
     if (action === "verify-product-v2") {
-      const { productId } = payload;
+      const { productId, expectedFamily, expectedVatRate } = payload;
       if (!productId) return err({ success: false, message: "Missing productId" });
 
-      const errors: { code: string; message: string; field?: string }[] = [];
-      const warnings: { code: string; message: string; field?: string }[] = [];
+      const errors: { code: string; message: string; field?: string; context?: any }[] = [];
+      const warnings: { code: string; message: string; field?: string; context?: any }[] = [];
       let exists = false;
       let priceValid = false;
+      let familyValid = true;
+      let taxValid = true;
 
       try {
         // Try direct article fetch
@@ -546,18 +548,51 @@ serve(async (req) => {
           errors.push({ code: "NOT_FOUND", message: `Product ${productId} not found in BDP` });
         } else {
           exists = true;
+
+          // Price check
           const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
           if (price > 0) {
             priceValid = true;
           } else {
-            errors.push({ code: "PRICE_ZERO", message: "Price is 0 or missing", field: "price" });
+            errors.push({ code: "PRICE_ZERO", message: "Price is 0 or missing", field: "price", context: { actual: price } });
+          }
+
+          // Family check
+          const actualFamily = String(product.Department || product.department || product.Family || product.family || product.Category || product.category || "").trim();
+          if (expectedFamily) {
+            const expected = String(expectedFamily).trim().toLowerCase();
+            if (!actualFamily) {
+              familyValid = false;
+              errors.push({ code: "FAMILY_MISSING", message: `Product has no family/department, expected "${expectedFamily}"`, field: "family", context: { expected: expectedFamily, actual: null } });
+            } else if (actualFamily.toLowerCase() !== expected) {
+              familyValid = false;
+              warnings.push({ code: "FAMILY_MISMATCH", message: `Family is "${actualFamily}", expected "${expectedFamily}"`, field: "family", context: { expected: expectedFamily, actual: actualFamily } });
+            }
+          } else if (!actualFamily) {
+            warnings.push({ code: "FAMILY_EMPTY", message: "Product has no family/department assigned", field: "family" });
+          }
+
+          // Tax/VAT check
+          const actualVat = Number(product.VatRate || product.vat_rate || product.Tax || product.tax || product.IVA || product.iva || 0);
+          if (expectedVatRate !== undefined && expectedVatRate !== null) {
+            const expectedVat = Number(expectedVatRate);
+            if (actualVat !== expectedVat) {
+              taxValid = false;
+              errors.push({ code: "TAX_MISMATCH", message: `VAT is ${actualVat}%, expected ${expectedVat}%`, field: "vat_rate", context: { expected: expectedVat, actual: actualVat } });
+            }
+          } else if (actualVat === 0) {
+            warnings.push({ code: "TAX_ZERO", message: "VAT rate is 0% — may be intentional or missing", field: "vat_rate" });
           }
         }
 
+        const success = exists && priceValid && familyValid && taxValid;
+
         return ok({
-          success: exists && priceValid,
+          success,
           verified_exists: exists,
           verified_prices: priceValid,
+          verified_family: familyValid,
+          verified_tax: taxValid,
           verified_scope: true,
           errors,
           warnings,
@@ -565,7 +600,7 @@ serve(async (req) => {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
         return ok({
-          success: false, verified_exists: false, verified_prices: false, verified_scope: true,
+          success: false, verified_exists: false, verified_prices: false, verified_family: false, verified_tax: false, verified_scope: true,
           errors: [{ code: "NETWORK_ERROR", message: msg }], warnings: [],
         });
       }
@@ -1244,9 +1279,9 @@ serve(async (req) => {
     }
 
     // ── ACTION: write-product ──
-    // Create or update a product in BDP
+    // Create or update a product in BDP, then auto-verify
     if (action === "write-product") {
-      const { product } = payload;
+      const { product, autoVerify = true } = payload;
       if (!product) return err({ success: false, message: "Missing product payload" });
 
       const importProfileCode = config.import_profile_code
@@ -1273,11 +1308,13 @@ serve(async (req) => {
 
         let writeResp: Response;
         let writeUrl: string;
+        let writeMethod = "create";
 
         if (articleId) {
           // Update existing
           writeUrl = `${host}/api/v1/articles/${encodeURIComponent(articleId)}`;
           writeResp = await bdpFetch(writeUrl, { ...headers, "Content-Type": "application/json" }, "PUT");
+          writeMethod = "update";
           // If PUT not supported, try POST
           if (writeResp.status === 405 || writeResp.status === 404) {
             writeUrl = `${host}/api/v1/articles`;
@@ -1307,6 +1344,10 @@ serve(async (req) => {
         }
 
         const writeBody = await writeResp.text();
+        let writeOk = writeResp.ok;
+        let finalMethod = writeMethod;
+        let finalStatus = writeResp.status;
+        let finalBody = writeBody;
 
         // If direct API didn't work, try import endpoint
         if (!writeResp.ok && importProfileCode) {
@@ -1321,23 +1362,103 @@ serve(async (req) => {
             signal: controller4.signal,
           });
           clearTimeout(timeout4);
-          const importBody = await importResp.text();
+          finalBody = await importResp.text();
+          writeOk = importResp.ok;
+          finalMethod = "import";
+          finalStatus = importResp.status;
+        }
 
-          return ok({
-            success: importResp.ok,
-            method: "import",
-            status: importResp.status,
-            bodyPreview: importBody.substring(0, 2048),
-            product: articlePayload,
-          });
+        // Auto-verify after successful write
+        let verification = null;
+        const verifyId = articleId || null;
+        if (writeOk && autoVerify && verifyId) {
+          // Small delay to let BDP commit
+          await new Promise(r => setTimeout(r, 1000));
+
+          const vErrors: { code: string; message: string; field?: string; context?: any }[] = [];
+          const vWarnings: { code: string; message: string; field?: string; context?: any }[] = [];
+          let vExists = false, vPrice = false, vFamily = true, vTax = true;
+
+          try {
+            let foundProduct: any = null;
+            const vUrl = `${host}/api/v1/articles/${encodeURIComponent(verifyId)}`;
+            const vResp = await bdpFetch(vUrl, headers);
+            if (vResp.ok) {
+              foundProduct = JSON.parse(await vResp.text());
+            } else {
+              const allResp = await bdpFetch(`${host}/api/v1/articles`, headers);
+              if (allResp.ok) {
+                const all = JSON.parse(await allResp.text());
+                const arr = Array.isArray(all) ? all : (all.articles || all.Articles || all.data || []);
+                foundProduct = arr.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(verifyId));
+              }
+            }
+
+            if (!foundProduct) {
+              vErrors.push({ code: "NOT_FOUND", message: `Product ${verifyId} not found after write` });
+            } else {
+              vExists = true;
+              const actualPrice = Number(foundProduct.Price || foundProduct.price || foundProduct.SalePrice || foundProduct.PVP || 0);
+              if (actualPrice > 0) { vPrice = true; } else {
+                vErrors.push({ code: "PRICE_ZERO", message: "Price is 0 after write", field: "price", context: { actual: actualPrice } });
+              }
+
+              // Family
+              const actualFam = String(foundProduct.Department || foundProduct.department || foundProduct.Family || foundProduct.family || "").trim();
+              const expectedFam = String(product.family || "").trim();
+              if (expectedFam && actualFam.toLowerCase() !== expectedFam.toLowerCase()) {
+                vFamily = false;
+                vErrors.push({ code: "FAMILY_MISMATCH", message: `Family is "${actualFam || "(empty)"}", expected "${expectedFam}"`, field: "family" });
+              } else if (!actualFam) {
+                vWarnings.push({ code: "FAMILY_EMPTY", message: "No family assigned after write", field: "family" });
+              }
+
+              // Tax
+              const actualVat = Number(foundProduct.VatRate || foundProduct.vat_rate || foundProduct.IVA || 0);
+              const expectedVat = Number(product.vat_rate || 0);
+              if (expectedVat > 0 && actualVat !== expectedVat) {
+                vTax = false;
+                vErrors.push({ code: "TAX_MISMATCH", message: `VAT is ${actualVat}%, expected ${expectedVat}%`, field: "vat_rate" });
+              }
+            }
+
+            const vSuccess = vExists && vPrice && vFamily && vTax;
+            verification = {
+              success: vSuccess,
+              verified_exists: vExists,
+              verified_prices: vPrice,
+              verified_family: vFamily,
+              verified_tax: vTax,
+              verified_scope: true,
+              errors: vErrors,
+              warnings: vWarnings,
+            };
+
+            // If verification failed, mark any related outbound task as FAILED
+            if (!vSuccess) {
+              const failReason = vErrors.map(e => `[${e.code}] ${e.message}`).join("; ");
+              await supabase.from("outbound_tasks")
+                .update({ status: "FAILED", last_error: `Post-write verification failed: ${failReason}` } as any)
+                .eq("connection_id", connectionId)
+                .eq("status", "RUNNING")
+                .eq("task_type", "BDP_UPSERT_PRODUCT");
+            }
+          } catch (ve: unknown) {
+            const vmsg = ve instanceof Error ? ve.message : "Verification error";
+            verification = {
+              success: false, verified_exists: false, verified_prices: false, verified_family: false, verified_tax: false, verified_scope: true,
+              errors: [{ code: "VERIFY_ERROR", message: vmsg }], warnings: [],
+            };
+          }
         }
 
         return ok({
-          success: writeResp.ok,
-          method: articleId ? "update" : "create",
-          status: writeResp.status,
-          bodyPreview: writeBody.substring(0, 2048),
+          success: writeOk && (verification ? verification.success : true),
+          method: finalMethod,
+          status: finalStatus,
+          bodyPreview: finalBody.substring(0, 2048),
           product: articlePayload,
+          verification,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
