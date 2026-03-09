@@ -914,7 +914,7 @@ export default function BdpWizard() {
               />
             )}
             {step === 2 && (
-              <StepDiagnostics connectionId={connectionId} testCustomEndpoint={testCustomEndpoint} runDiscover={runDiscover} />
+              <StepDiagnostics connectionId={connectionId} testCustomEndpoint={testCustomEndpoint} runDiscover={runDiscover} discovering={discovering} discoveryResult={discoveryResult} />
             )}
             {step === 3 && (
               <StepSalesSync
