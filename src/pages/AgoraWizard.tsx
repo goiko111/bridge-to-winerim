@@ -3650,7 +3650,13 @@ export default function AgoraWizard() {
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
-              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus} />
+              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus}
+              readinessDimensions={{
+                writeMode: agoraMaster.writeSettings.write_mode,
+                canWrite: agoraMaster.writeCapability,
+                masterDataFetchedAt: agoraMaster.masterData.fetchedAt,
+                autoPushVerifiedReady: agoraMaster.writeSettings.auto_push_verified_ready,
+              }} />
           )}
         </motion.div>
       </AnimatePresence>
