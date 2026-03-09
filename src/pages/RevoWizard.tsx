@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useRevoConnection } from "@/hooks/useRevoConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import RevoHealthPanel from "@/components/RevoHealthPanel";
 import { useOutboundSync } from "@/hooks/useOutboundSync";
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
 import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
@@ -472,6 +473,7 @@ export default function RevoWizard() {
                   Enable sync to start ingesting sales data from Revo XEF.
                 </p>
               </div>
+              <RevoHealthPanel connectionId={connectionId} />
               <ProviderReadinessPanel connectionId={connectionId} provider="revo" />
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "WEBHOOKS" ? "Webhooks + Nightly" : "Nightly Reports"}</span></div>
