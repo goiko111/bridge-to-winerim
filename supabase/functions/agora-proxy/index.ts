@@ -257,6 +257,7 @@ interface WineValidationResult {
   valid: boolean;
   warnings: string[];
   missingFields: string[];
+  error?: { code: string; message: string };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -2351,8 +2352,8 @@ serve(async (req) => {
                   verification.success = false;
                   productOk = false;
                   verification.errors.push({
-                    code: "PREPARATION_MISMATCH",
-                    message: `Product ${productId} (${fmt} ${wine.name}): PreparationTypeId="${prepTypeVal}" / PreparationOrderId="${prepOrderVal}" — MISMATCH causes TPV crash`,
+                    code: "INVALID_PREPARATION_PAIR",
+                    message: `Preparation Type and Order must both be empty or both set (Product ${productId}, ${fmt} ${wine.name}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
                     field: "PreparationTypeId,PreparationOrderId",
                     context: { productId, format: fmt, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
                   });
@@ -2614,8 +2615,8 @@ serve(async (req) => {
                 taskVerification.verified_preparation = false;
                 taskVerification.success = false;
                 taskVerification.errors.push({
-                  code: "PREPARATION_MISMATCH",
-                  message: `Product ${productId} (${fmt}): PreparationTypeId="${prepTypeVal}" / PreparationOrderId="${prepOrderVal}" — MISMATCH causes TPV crash`,
+                  code: "INVALID_PREPARATION_PAIR",
+                  message: `Preparation Type and Order must both be empty or both set (Product ${productId}, ${fmt}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
                   field: "PreparationTypeId,PreparationOrderId",
                   context: { productId, format: fmt, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
                 });
