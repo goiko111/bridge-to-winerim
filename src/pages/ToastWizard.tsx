@@ -226,17 +226,26 @@ export default function ToastWizard() {
                   </div>
                 </div>
               )}
-              {/* Item 10: Polling diagnostics */}
+              {/* Polling sync diagnostics */}
               {toast.salesDiagnostics && (
-                <div className="rounded border border-border/50 p-3 text-xs space-y-1">
+                <div className="rounded border border-border/50 p-3 text-xs space-y-2">
                   <p className="font-semibold text-foreground flex items-center gap-1.5"><BarChart3 className="h-3 w-3 text-primary" /> Sync Diagnostics</p>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
                     <span>Mode:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.mode}</span>
                     <span>Timezone:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.timezone}</span>
                     <span>Closeout Hour:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.closeoutHour}:00</span>
+                    {toast.salesDiagnostics.startDate && <><span>Start Date:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.startDate}</span></>}
+                    {toast.salesDiagnostics.endDate && <><span>End Date:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.endDate}</span></>}
+                    {toast.salesDiagnostics.businessDate && <><span>Business Date:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.businessDate}</span></>}
                     <span>Pages Processed:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.pagesProcessed}</span>
                     <span>Orders Fetched:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.totalOrdersFetched}</span>
                   </div>
+                  {toast.salesDiagnostics.cursorSaved && (
+                    <div className="mt-1 pt-1 border-t border-border/30">
+                      <p className="text-muted-foreground mb-0.5">Last Cursor Saved:</p>
+                      <pre className="bg-secondary/50 rounded p-1.5 text-[10px] text-foreground overflow-x-auto">{JSON.stringify(toast.salesDiagnostics.cursorSaved, null, 2)}</pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -267,6 +276,34 @@ export default function ToastWizard() {
               {toast.salesResult && (
                 <div className={`rounded p-3 text-xs ${toast.salesResult.success ? "bg-success/10" : "bg-destructive/10"}`}>
                   <p className="font-medium">{toast.salesResult.message}</p>
+                  {toast.salesResult.success && (
+                    <div className="grid grid-cols-4 gap-2 mt-2 text-foreground">
+                      <div><span className="font-semibold">{toast.salesResult.totalOrders}</span> orders</div>
+                      <div><span className="font-semibold">{toast.salesResult.totalLines}</span> lines</div>
+                      <div><span className="font-semibold">{toast.salesResult.duplicatesSkipped}</span> dupes</div>
+                      <div><span className="font-semibold">{toast.salesResult.pagesProcessed}</span> pages</div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Polling sync diagnostics for business date mode */}
+              {toast.salesDiagnostics && (
+                <div className="rounded border border-border/50 p-3 text-xs space-y-2">
+                  <p className="font-semibold text-foreground flex items-center gap-1.5"><BarChart3 className="h-3 w-3 text-primary" /> Sync Diagnostics</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
+                    <span>Mode:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.mode}</span>
+                    <span>Timezone:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.timezone}</span>
+                    <span>Closeout Hour:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.closeoutHour}:00</span>
+                    {toast.salesDiagnostics.businessDate && <><span>Business Date:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.businessDate}</span></>}
+                    <span>Pages Processed:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.pagesProcessed}</span>
+                    <span>Orders Fetched:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.totalOrdersFetched}</span>
+                  </div>
+                  {toast.salesDiagnostics.cursorSaved && (
+                    <div className="mt-1 pt-1 border-t border-border/30">
+                      <p className="text-muted-foreground mb-0.5">Last Cursor Saved:</p>
+                      <pre className="bg-secondary/50 rounded p-1.5 text-[10px] text-foreground overflow-x-auto">{JSON.stringify(toast.salesDiagnostics.cursorSaved, null, 2)}</pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
