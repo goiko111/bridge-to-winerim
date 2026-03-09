@@ -725,7 +725,7 @@ export default function BdpWizard() {
   const {
     connectionId, testStatus, testError, testResult,
     testConnection, testCustomEndpoint, loadExistingConnection,
-    updateConnection,
+    updateConnection, runDiscover,
     salesEvents, loadingSales, fetchSales,
     savingSales, saveResult, saveSalesToDb,
     backfilling, backfillResult, runBackfill,
@@ -733,6 +733,7 @@ export default function BdpWizard() {
     syncingCatalog, catalogResult, syncCatalog,
     writingProduct, writeResult, writeProduct,
     verifying, verifyResult, verifyProduct,
+    verifyProductV2,
   } = useBdpConnection();
 
   const [step, setStep] = useState(1);
@@ -839,7 +840,7 @@ export default function BdpWizard() {
               />
             )}
             {step === 2 && (
-              <StepDiagnostics connectionId={connectionId} testCustomEndpoint={testCustomEndpoint} />
+              <StepDiagnostics connectionId={connectionId} testCustomEndpoint={testCustomEndpoint} runDiscover={runDiscover} />
             )}
             {step === 3 && (
               <StepSalesSync
