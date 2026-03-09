@@ -954,7 +954,7 @@ export default function SimphonyWizard() {
                       </h4>
                       <Button size="sm" variant="outline" onClick={() => {
                         const first = catalogWritePreview[0];
-                        if (first) verifyWrite({ winerim_id: first.winerimId, format: first.format, expectedPrice: first.price });
+                        if (first) verifyWrite({ winerim_id: first.winerimId, format: first.format, expectedPrice: first.price, verifyMode: "ccapi" });
                       }} disabled={verifying}>
                         {verifying ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3 w-3" />}
                         Verify First Item
