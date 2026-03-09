@@ -619,6 +619,7 @@ function StepCatalogWrite({
   syncingCatalog, catalogResult, syncCatalog,
   writingProduct, writeResult, writeProduct,
   verifyProductV2,
+  repairing, onRepairAction,
 }: {
   connectionId: string | null;
   syncingCatalog: boolean;
@@ -628,6 +629,8 @@ function StepCatalogWrite({
   writeResult: BdpWriteResult | null;
   writeProduct: (p: any) => Promise<BdpWriteResult | null>;
   verifyProductV2: (id: string) => Promise<any>;
+  repairing: boolean;
+  onRepairAction: (action: string) => Promise<any>;
 }) {
   // Write form
   const [wName, setWName] = useState("");
