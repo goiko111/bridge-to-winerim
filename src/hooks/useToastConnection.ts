@@ -5,6 +5,8 @@ export type ToastSyncMode = "DATE_RANGE" | "BUSINESS_DATE";
 
 export interface ToastPreflightResult {
   success: boolean;
+  authOk?: boolean;
+  restaurantLookupOk?: boolean;
   restaurantName?: string;
   timezone?: string;
   closeoutHour?: number;

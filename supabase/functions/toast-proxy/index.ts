@@ -197,11 +197,15 @@ async function handlePreflight(connId: string) {
   const cfg = getToastConfig(conn.provider_config);
   const hostname = (conn.base_url || cfg.api_hostname || "").replace(/\/+$/, "");
   const guid = conn.restaurant_guid || cfg.restaurant_guid;
-  if (!guid) return json({ success: false, message: "Missing restaurant GUID" });
+  if (!guid) {
+    return json({ success: false, authOk: false, restaurantLookupOk: false, message: "Missing restaurant GUID" });
+  }
 
   let token: string;
-  try { token = await getAuthToken(conn); } catch (e: any) {
-    return json({ success: false, message: `Auth failed: ${e.message}` });
+  try {
+    token = await getAuthToken(conn);
+  } catch (e: any) {
+    return json({ success: false, authOk: false, restaurantLookupOk: false, message: `Auth failed: ${e.message}` });
   }
 
   try {
@@ -211,7 +215,12 @@ async function handlePreflight(connId: string) {
     );
     if (!res.ok) {
       const body = await res.text();
-      return json({ success: false, message: `Restaurant API error (${res.status}): ${body.slice(0, 300)}` });
+      return json({
+        success: false,
+        authOk: true,
+        restaurantLookupOk: false,
+        message: `Restaurant API error (${res.status}): ${body.slice(0, 300)}`,
+      });
     }
     const data = await res.json();
     const tz = data.general?.timeZone || cfg?.timezone || "America/New_York";
@@ -226,13 +235,20 @@ async function handlePreflight(connId: string) {
 
     return json({
       success: true,
+      authOk: true,
+      restaurantLookupOk: true,
       restaurantName: name,
       timezone: tz,
       closeoutHour,
       message: `Connected to "${name}" (${tz}, closeout ${closeoutHour}:00)`,
     });
   } catch (e: any) {
-    return json({ success: false, message: `Preflight failed: ${e.message}` });
+    return json({
+      success: false,
+      authOk: true,
+      restaurantLookupOk: false,
+      message: `Preflight failed: ${e.message}`,
+    });
   }
 }
 
