@@ -823,18 +823,27 @@ serve(async (req) => {
       return json({ products: wines });
     }
 
-    // ── VERIFY-WRITE (Post-write verification) ──
+    // ── VERIFY-WRITE (Post-write verification – strict) ──
     if (action === "verify-write") {
-      const { externalId, external_id, revo_item_id, expectedPrice, price, expectedCategory, category_id } = reqBody;
+      const {
+        externalId, external_id, revo_item_id,
+        expectedPrice, price,
+        expectedCategory, category_id,
+        expectedTax, tax, vat_rate,
+        expectedFormat, selling_format,
+      } = reqBody;
       const itemId = externalId || external_id || revo_item_id || "";
 
+      type Issue = { code: string; message: string; field?: string; context?: Record<string, unknown> };
       const result = {
         success: false,
         verified_exists: false,
         verified_prices: false,
         verified_scope: false,
-        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        verified_family: false,
+        verified_tax: false,
+        errors: [] as Issue[],
+        warnings: [] as Issue[],
       };
 
       // 1) Verify scope: can we still reach the catalog API?
@@ -889,11 +898,28 @@ serve(async (req) => {
             });
           }
 
-          // 4) Verify family/category assignment
+          // 4) Verify family/category assignment (strict)
           const actualCategoryId = String(itemData.category_id || itemData.categoryId || "");
           const expectedCatId = String(expectedCategory || category_id || "");
-          if (expectedCatId && actualCategoryId) {
-            if (actualCategoryId !== expectedCatId) {
+
+          if (!actualCategoryId) {
+            result.errors.push({
+              code: "NO_CATEGORY",
+              message: "Item has no category assigned. It will not appear in Revo POS menus.",
+              field: "category_id",
+            });
+          } else {
+            // Category exists — try to resolve its group
+            let groupOk = false;
+            try {
+              const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
+              if (catRes.ok) {
+                const catData = (await catRes.json()).data || (await catRes.json());
+                const parsedCat = catRes.ok ? (item._catCache || await (async () => { const c = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId); return c.ok ? ((await c.json()).data || await c.json()) : null; })()) : null;
+                // Re-fetch avoided: we already have catRes — parse once
+              } catch (_e) { /* handled below */ }
+            // Simplified: just validate category is assigned and optionally matches
+            if (expectedCatId && actualCategoryId !== expectedCatId) {
               result.warnings.push({
                 code: "CATEGORY_MISMATCH",
                 message: `Expected category ${expectedCatId}, found ${actualCategoryId}`,
@@ -901,26 +927,52 @@ serve(async (req) => {
                 context: { expected: expectedCatId, actual: actualCategoryId },
               });
             }
-          } else if (!actualCategoryId) {
-            result.warnings.push({
-              code: "NO_CATEGORY",
-              message: "Item has no category assigned. It may not appear in the correct menu section.",
-              field: "category_id",
+            result.verified_family = true;
+          }
+
+          // 5) Verify tax/VAT mapping is present
+          const actualTax = Number(itemData.tax || itemData.taxPercentage || itemData.vat || 0);
+          const expectedTaxVal = Number(expectedTax || tax || vat_rate || 0);
+          if (actualTax > 0) {
+            result.verified_tax = true;
+            if (expectedTaxVal > 0 && Math.abs(actualTax - expectedTaxVal) > 0.5) {
+              result.warnings.push({
+                code: "TAX_MISMATCH",
+                message: `Expected tax ${expectedTaxVal}%, found ${actualTax}%`,
+                field: "tax",
+                context: { expected: expectedTaxVal, actual: actualTax },
+              });
+            }
+          } else {
+            result.errors.push({
+              code: "TAX_MISSING",
+              message: `Item has no VAT/tax rate assigned (${actualTax}%). Required for invoicing.`,
+              field: "tax",
+              context: { actual: actualTax },
             });
           }
 
-          // Check family/group if available
-          const groupName = String(itemData.groupName || itemData.group_name || "");
-          const categoryName = String(itemData.categoryName || itemData.category_name || "");
-          if (groupName || categoryName) {
-            result.warnings.push({
-              code: "FAMILY_INFO",
-              message: `Assigned to: ${[groupName, categoryName].filter(Boolean).join(" → ")}`,
-              field: "family",
-              context: { group: groupName, category: categoryName },
-            });
-            // Reclassify as info, not a real warning — remove from warnings if all is fine
+          // 6) Verify selling format if applicable
+          const actualFormat = String(itemData.sellingFormatName || itemData.selling_format || itemData.format || "");
+          const expectedFmt = String(expectedFormat || selling_format || "");
+          if (expectedFmt) {
+            if (!actualFormat) {
+              result.errors.push({
+                code: "FORMAT_MISSING",
+                message: `Expected selling format "${expectedFmt}" but item has none assigned.`,
+                field: "selling_format",
+                context: { expected: expectedFmt },
+              });
+            } else if (actualFormat.toLowerCase() !== expectedFmt.toLowerCase()) {
+              result.warnings.push({
+                code: "FORMAT_MISMATCH",
+                message: `Expected format "${expectedFmt}", found "${actualFormat}"`,
+                field: "selling_format",
+                context: { expected: expectedFmt, actual: actualFormat },
+              });
+            }
           }
+
         } else if (itemRes.status === 404) {
           result.errors.push({
             code: "NOT_FOUND",
@@ -939,7 +991,8 @@ serve(async (req) => {
         result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
       }
 
-      result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope
+        && result.verified_family && result.verified_tax && result.errors.length === 0;
       return json(result);
     }
 
