@@ -263,12 +263,37 @@ export function useSimphonyConnection() {
         body: { action: "discover-locations", connectionId },
       });
       if (error) throw error;
-      setDiscoveredLocations(data?.locations || []);
+      const locs = data?.locations || [];
+      setDiscoveredLocations(locs);
     } catch (e: any) {
       console.error("Discovery failed:", e);
     } finally {
       setDiscovering(false);
     }
+  }, [connectionId]);
+
+  // Persist selected location + RVCs to provider_config
+  const saveDiscoverySelection = useCallback(async (
+    selectedLocRef: string,
+    selectedLocName: string,
+    rvcs: string[],
+    allDiscovered: DiscoveredLocation[],
+  ) => {
+    if (!connectionId) return;
+    // Read current config, merge in discovery data
+    const { data: conn } = await supabase.from("pos_connections").select("provider_config").eq("id", connectionId).single();
+    const cfg = getSimphonyConfig(conn?.provider_config);
+    const updatedCfg = {
+      ...cfg,
+      selected_rvcs: rvcs,
+      discovered_locations: allDiscovered,
+      selected_location_ref: selectedLocRef,
+      selected_location_name: selectedLocName,
+      discovery_completed_at: new Date().toISOString(),
+    };
+    await supabase.from("pos_connections").update({
+      provider_config: updatedCfg,
+    }).eq("id", connectionId);
   }, [connectionId]);
 
   // Preflight
@@ -488,6 +513,10 @@ export function useSimphonyConnection() {
     setConnectionId(data.id);
     const cfg = getSimphonyConfig(data.provider_config);
     if (cfg.selected_rvcs) setSelectedRvcs(cfg.selected_rvcs);
+    // Restore discovered locations from persisted config
+    if ((cfg as any).discovered_locations) {
+      setDiscoveredLocations((cfg as any).discovered_locations);
+    }
     return data;
   }, []);
 
@@ -514,7 +543,7 @@ export function useSimphonyConnection() {
     // S2: OIDC
     oidcAcquiring, oidcResult, acquireOidcToken,
     // S3: Discovery
-    discoveredLocations, discovering, discoverLocations,
+    discoveredLocations, discovering, discoverLocations, saveDiscoverySelection,
     // S6: Webhooks
     webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
     // S9: Multi-RVC
