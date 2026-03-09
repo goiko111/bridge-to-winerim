@@ -643,13 +643,49 @@ serve(async (req) => {
         const result = await res.json();
         const newId = String(result.id || result.data?.id || revoItemId || "");
 
+        // ── Auto post-write verification ──
+        let verification = null;
+        try {
+          const vItemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${newId}`, revoHeaders, connectionId);
+          if (vItemRes.ok) {
+            const vItem = await vItemRes.json();
+            const vData = vItem.data || vItem;
+            const vPrice = Number(vData.price || vData.sellingPrice || 0);
+            const vTax = Number(vData.tax || vData.taxPercentage || 0);
+            const vCat = String(vData.category_id || vData.categoryId || "");
+            const vFmt = String(vData.sellingFormatName || vData.format || "");
+            const vErrors: any[] = [];
+            const vWarnings: any[] = [];
+
+            if (vPrice <= 0) vErrors.push({ code: "PRICE_ZERO", message: `Price is ${vPrice}`, field: "price" });
+            if (vTax <= 0) vErrors.push({ code: "TAX_MISSING", message: `Tax is ${vTax}%`, field: "tax" });
+            if (!vCat) vErrors.push({ code: "NO_CATEGORY", message: "No category assigned", field: "category_id" });
+            if (itemData.selling_format && !vFmt) vWarnings.push({ code: "FORMAT_MISSING", message: "No selling format", field: "selling_format" });
+
+            verification = {
+              success: vErrors.length === 0,
+              verified_exists: true,
+              verified_prices: vPrice > 0,
+              verified_family: !!vCat,
+              verified_tax: vTax > 0,
+              verified_scope: true,
+              errors: vErrors,
+              warnings: vWarnings,
+            };
+          }
+        } catch (_e) { /* non-blocking */ }
+
         if (taskId) {
+          const taskStatus = verification && !verification.success ? "FAILED" : "SUCCESS";
           await supabase.from("outbound_tasks").update({
-            status: "SUCCESS", external_id: newId,
+            status: taskStatus, external_id: newId,
+            last_error: verification && !verification.success
+              ? `Post-write verification failed: ${verification.errors.map((e: any) => e.code).join(", ")}`
+              : null,
           }).eq("id", taskId);
         }
 
-        return json({ success: true, revoItemId: newId });
+        return json({ success: true, revoItemId: newId, verification });
       } catch (e) {
         if (taskId) {
           await supabase.from("outbound_tasks").update({
@@ -823,18 +859,27 @@ serve(async (req) => {
       return json({ products: wines });
     }
 
-    // ── VERIFY-WRITE (Post-write verification) ──
+    // ── VERIFY-WRITE (Post-write verification – strict) ──
     if (action === "verify-write") {
-      const { externalId, external_id, revo_item_id, expectedPrice, price, expectedCategory, category_id } = reqBody;
+      const {
+        externalId, external_id, revo_item_id,
+        expectedPrice, price,
+        expectedCategory, category_id,
+        expectedTax, tax, vat_rate,
+        expectedFormat, selling_format,
+      } = reqBody;
       const itemId = externalId || external_id || revo_item_id || "";
 
+      type Issue = { code: string; message: string; field?: string; context?: Record<string, unknown> };
       const result = {
         success: false,
         verified_exists: false,
         verified_prices: false,
         verified_scope: false,
-        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        verified_family: false,
+        verified_tax: false,
+        errors: [] as Issue[],
+        warnings: [] as Issue[],
       };
 
       // 1) Verify scope: can we still reach the catalog API?
@@ -889,11 +934,19 @@ serve(async (req) => {
             });
           }
 
-          // 4) Verify family/category assignment
+          // 4) Verify family/category assignment (strict)
           const actualCategoryId = String(itemData.category_id || itemData.categoryId || "");
           const expectedCatId = String(expectedCategory || category_id || "");
-          if (expectedCatId && actualCategoryId) {
-            if (actualCategoryId !== expectedCatId) {
+
+          if (!actualCategoryId) {
+            result.errors.push({
+              code: "NO_CATEGORY",
+              message: "Item has no category assigned. It will not appear in Revo POS menus.",
+              field: "category_id",
+            });
+          } else {
+            // Category is assigned — check it optionally matches expected
+            if (expectedCatId && actualCategoryId !== expectedCatId) {
               result.warnings.push({
                 code: "CATEGORY_MISMATCH",
                 message: `Expected category ${expectedCatId}, found ${actualCategoryId}`,
@@ -901,26 +954,67 @@ serve(async (req) => {
                 context: { expected: expectedCatId, actual: actualCategoryId },
               });
             }
-          } else if (!actualCategoryId) {
-            result.warnings.push({
-              code: "NO_CATEGORY",
-              message: "Item has no category assigned. It may not appear in the correct menu section.",
-              field: "category_id",
+            // Verify the category has a parent group (item is reachable in POS menu)
+            try {
+              const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
+              if (catRes.ok) {
+                const catJson = await catRes.json();
+                const catData = catJson.data || catJson;
+                if (!catData.group_id) {
+                  result.warnings.push({
+                    code: "NO_GROUP",
+                    message: `Category ${actualCategoryId} has no parent group. Item may not be visible in POS menu.`,
+                    field: "category_id",
+                  });
+                }
+              }
+            } catch (_e) { /* non-blocking */ }
+            result.verified_family = true;
+          }
+
+          // 5) Verify tax/VAT mapping is present
+          const actualTax = Number(itemData.tax || itemData.taxPercentage || itemData.vat || 0);
+          const expectedTaxVal = Number(expectedTax || tax || vat_rate || 0);
+          if (actualTax > 0) {
+            result.verified_tax = true;
+            if (expectedTaxVal > 0 && Math.abs(actualTax - expectedTaxVal) > 0.5) {
+              result.warnings.push({
+                code: "TAX_MISMATCH",
+                message: `Expected tax ${expectedTaxVal}%, found ${actualTax}%`,
+                field: "tax",
+                context: { expected: expectedTaxVal, actual: actualTax },
+              });
+            }
+          } else {
+            result.errors.push({
+              code: "TAX_MISSING",
+              message: `Item has no VAT/tax rate assigned (${actualTax}%). Required for invoicing.`,
+              field: "tax",
+              context: { actual: actualTax },
             });
           }
 
-          // Check family/group if available
-          const groupName = String(itemData.groupName || itemData.group_name || "");
-          const categoryName = String(itemData.categoryName || itemData.category_name || "");
-          if (groupName || categoryName) {
-            result.warnings.push({
-              code: "FAMILY_INFO",
-              message: `Assigned to: ${[groupName, categoryName].filter(Boolean).join(" → ")}`,
-              field: "family",
-              context: { group: groupName, category: categoryName },
-            });
-            // Reclassify as info, not a real warning — remove from warnings if all is fine
+          // 6) Verify selling format if applicable
+          const actualFormat = String(itemData.sellingFormatName || itemData.selling_format || itemData.format || "");
+          const expectedFmt = String(expectedFormat || selling_format || "");
+          if (expectedFmt) {
+            if (!actualFormat) {
+              result.errors.push({
+                code: "FORMAT_MISSING",
+                message: `Expected selling format "${expectedFmt}" but item has none assigned.`,
+                field: "selling_format",
+                context: { expected: expectedFmt },
+              });
+            } else if (actualFormat.toLowerCase() !== expectedFmt.toLowerCase()) {
+              result.warnings.push({
+                code: "FORMAT_MISMATCH",
+                message: `Expected format "${expectedFmt}", found "${actualFormat}"`,
+                field: "selling_format",
+                context: { expected: expectedFmt, actual: actualFormat },
+              });
+            }
           }
+
         } else if (itemRes.status === 404) {
           result.errors.push({
             code: "NOT_FOUND",
@@ -939,7 +1033,8 @@ serve(async (req) => {
         result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
       }
 
-      result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope
+        && result.verified_family && result.verified_tax && result.errors.length === 0;
       return json(result);
     }
 

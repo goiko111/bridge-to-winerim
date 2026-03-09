@@ -186,7 +186,11 @@ export function useRevoConnection() {
     return data;
   }, []);
 
-  const verifyWrite = useCallback(async (params: { externalId?: string; revo_item_id?: string; expectedPrice?: number; expectedCategory?: string }) => {
+  const verifyWrite = useCallback(async (params: {
+    externalId?: string; revo_item_id?: string;
+    expectedPrice?: number; expectedCategory?: string;
+    expectedTax?: number; expectedFormat?: string;
+  }) => {
     if (!connectionId) return null;
     setVerifying(true);
     setWriteVerification(null);
