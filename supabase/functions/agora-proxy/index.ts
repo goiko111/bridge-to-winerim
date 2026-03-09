@@ -2507,14 +2507,37 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // Success - post-import verification for preparation field consistency
-        let prepVerificationFailed = false;
-        let prepVerificationMsg = "";
+        // ── UNIFIED POST-IMPORT VERIFICATION (queue task) ──
+        const taskVerification = {
+          success: true,
+          verified_exists: true,
+          verified_prices: true,
+          verified_family: true,
+          verified_preparation: true,
+          errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+          warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        };
+
+        // Extract expected familyIds from sent XML
+        const expectedFamilies: Record<string, string> = {};
+        const famRegex = /<Product[^>]*Id="(\d+)"[^>]*FamilyId="([^"]*)"/g;
+        let fm;
+        while ((fm = famRegex.exec(xml)) !== null) {
+          expectedFamilies[fm[1]] = fm[2];
+        }
+
         try {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+
+          // Load PriceLists for price verification
+          const { data: cachedMaster2 } = await supabase
+            .from("agora_master_data").select("price_lists_json").eq("connection_id", task.connection_id).single();
+          const taskPriceLists = ((cachedMaster2 as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
+
             for (const fmt of fmtTypes) {
               const productId = fmt === "MAGNUM"
                 ? String(900000 + Number(winerimWineId || 0))
@@ -2522,34 +2545,85 @@ serve(async (req) => {
                 ? String(700000 + Number(winerimWineId || 0))
                 : String(500000 + Number(winerimWineId || 0));
 
-              const productRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)`, "i");
-              const productMatch = verifyXml.match(productRegex);
-              if (productMatch) {
-                const attrs = productMatch[1];
-                const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
-                const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
-                const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
-                const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
-                const typeEmpty = !prepTypeVal || prepTypeVal === "";
-                const orderEmpty = !prepOrderVal || prepOrderVal === "";
-                if (typeEmpty !== orderEmpty) {
-                  prepVerificationFailed = true;
-                  prepVerificationMsg = `Product ${productId} (${fmt}): PreparationTypeId="${prepTypeVal}" and PreparationOrderId="${prepOrderVal}" are inconsistent — both must be empty or both set. This causes TPV crash.`;
-                  break;
+              // CHECK 1: EXISTS
+              const productFullRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
+              const productMatch = verifyXml.match(productFullRegex);
+              if (!productMatch) {
+                taskVerification.success = false;
+                taskVerification.verified_exists = false;
+                taskVerification.errors.push({
+                  code: "NOT_FOUND",
+                  message: `Product ${productId} (${fmt}) not found in Agora after import`,
+                  context: { productId, format: fmt },
+                });
+                continue;
+              }
+
+              const attrs = productMatch[1];
+              const innerXml = productMatch[2];
+
+              // CHECK 2: PRICES
+              for (const pl of taskPriceLists) {
+                const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
+                const priceMatch = innerXml.match(priceRegex);
+                if (!priceMatch || parseFloat(priceMatch[1]) <= 0 || isNaN(parseFloat(priceMatch[1]))) {
+                  taskVerification.verified_prices = false;
+                  taskVerification.success = false;
+                  taskVerification.errors.push({
+                    code: "PRICE_MISSING",
+                    message: `Product ${productId} (${fmt}): missing/zero price in PriceList "${pl.Name}"`,
+                    field: "prices",
+                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name },
+                  });
                 }
+              }
+
+              // CHECK 3: FAMILY
+              const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
+              const actualFamilyId = familyMatch ? familyMatch[1] : "";
+              const expectedFamilyId = expectedFamilies[productId] || "";
+              if (expectedFamilyId && actualFamilyId !== expectedFamilyId) {
+                taskVerification.verified_family = false;
+                taskVerification.success = false;
+                taskVerification.errors.push({
+                  code: "FAMILY_MISMATCH",
+                  message: `Product ${productId} (${fmt}): expected FamilyId="${expectedFamilyId}", got "${actualFamilyId}"`,
+                  field: "FamilyId",
+                  context: { productId, format: fmt, expected: expectedFamilyId, actual: actualFamilyId },
+                });
+              }
+
+              // CHECK 4: PREPARATION FIELDS
+              const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
+              const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
+              const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
+              const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
+              if ((!prepTypeVal) !== (!prepOrderVal)) {
+                taskVerification.verified_preparation = false;
+                taskVerification.success = false;
+                taskVerification.errors.push({
+                  code: "PREPARATION_MISMATCH",
+                  message: `Product ${productId} (${fmt}): PreparationTypeId="${prepTypeVal}" / PreparationOrderId="${prepOrderVal}" — MISMATCH causes TPV crash`,
+                  field: "PreparationTypeId,PreparationOrderId",
+                  context: { productId, format: fmt, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
+                });
               }
             }
           }
         } catch (_verifyErr) {
-          // Non-blocking: verification is best-effort
+          taskVerification.warnings.push({
+            code: "VERIFY_EXCEPTION",
+            message: `Verification fetch failed: ${String(_verifyErr).substring(0, 200)}`,
+          });
         }
 
-        if (prepVerificationFailed) {
+        if (!taskVerification.success) {
+          const failMsg = `Post-import verification failed: ${taskVerification.errors.map(e => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 500);
           await supabase.from("outbound_tasks").update({
             status: "FAILED",
-            last_error: prepVerificationMsg.substring(0, 500),
+            last_error: failMsg,
           }).eq("id", task.id);
-          return new Response(JSON.stringify({ success: false, status: "FAILED", error: prepVerificationMsg }),
+          return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -2590,7 +2664,7 @@ serve(async (req) => {
 
         // auto_push_verified_ready is NOT set here — manual verification required
 
-        return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse }),
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (e) {
