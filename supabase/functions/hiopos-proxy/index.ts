@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getHioposConfig } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -68,7 +69,7 @@ function escapeXml(s: string): string {
 // ═══════════════════════════════════════════════════════
 async function handleTest(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
+  const cfg = getHioposConfig(conn.provider_config);
   if (!cfg?.integration_mode) {
     return json({ success: false, message: "Missing integration_mode in config" });
   }
@@ -287,7 +288,7 @@ async function handleGenerateImportFile(payload: any) {
 // ═══════════════════════════════════════════════════════
 async function handleSftpPull(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
+  const cfg = getHioposConfig(conn.provider_config);
   if (cfg?.ingestion_mode !== "SFTP_PULL" || !cfg?.sftp?.host) {
     return json({ success: false, message: "SFTP not configured for this connection" });
   }
@@ -314,7 +315,7 @@ async function handleSftpPull(connId: string) {
 // ═══════════════════════════════════════════════════════
 async function handlePortalRestDiscover(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
+  const cfg = getHioposConfig(conn.provider_config);
   const pr = cfg?.portalrest;
   if (!pr?.base_url) {
     return json({ success: false, endpoints: [], message: "PortalRest base_url not configured" });
@@ -360,7 +361,7 @@ async function handlePortalRestDiscover(connId: string) {
 async function handlePortalRestFetchSales(payload: any) {
   const { connectionId, hoursBack } = payload;
   const conn = await getConnection(connectionId);
-  const cfg = conn.provider_config as any;
+  const cfg = getHioposConfig(conn.provider_config);
   const pr = cfg?.portalrest;
   if (!pr?.base_url) {
     return json({ success: false, totalEvents: 0, totalLines: 0, duplicatesSkipped: 0, message: "PortalRest not configured" });

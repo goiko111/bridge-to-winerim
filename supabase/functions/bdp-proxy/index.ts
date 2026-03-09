@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getBdpConfig } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -206,7 +207,7 @@ serve(async (req) => {
       return err({ success: false, message: "Connection not found" }, 404);
     }
 
-    const config = (conn.provider_config || {}) as Record<string, unknown>;
+    const config = getBdpConfig(conn.provider_config);
     const baseUrl = (conn.base_url || "").replace(/\/+$/, "");
     const port = config.port ? String(config.port) : "";
     const userKey = config.user_key ? String(config.user_key) : "";
