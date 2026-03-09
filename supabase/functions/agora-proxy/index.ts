@@ -1435,7 +1435,7 @@ serve(async (req) => {
             body: JSON.stringify({ product_id: (line as any).winerim_product_id, quantity_change: -Math.abs(Number((line as any).quantity)) }),
           });
           const responseBody = await res.text();
-          let parsed; try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody }; }
+          let parsed; try { parsed = JSON.parse(responseBody); } catch (_) { parsed = { raw: responseBody }; }
 
           if (res.ok) {
             await supabase.from("stock_sync_log").update({ status: "SUCCESS", winerim_response: parsed, synced_at: new Date().toISOString() }).eq("id", logEntry?.id);
