@@ -729,7 +729,7 @@ serve(async (req) => {
           }).eq("id", task.id);
         }
       }
-      return json({ success: true, processed });
+      return json({ success: true, processed, blocked });
     }
 
     // ── QUEUE OUTBOUND PRODUCTS ──
