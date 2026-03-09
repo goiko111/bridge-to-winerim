@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, XCircle, Loader2,
   Settings2, ShieldCheck, Globe, Download, Utensils, Bell,
-  HelpCircle, Activity, BarChart3, Zap,
+  HelpCircle, Activity, BarChart3, Zap, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,8 @@ const STEPS = [
 ];
 const STEP_ICONS = [Settings2, ShieldCheck, ShieldCheck, Download, Globe, Utensils, Bell, HelpCircle, Activity];
 
+type HealthLevel = "green" | "amber" | "red";
+
 export default function ToastWizard() {
   const navigate = useNavigate();
   const toast = useToastConnection();
@@ -38,6 +40,8 @@ export default function ToastWizard() {
   const [closeoutHour, setCloseoutHour] = useState(4);
   const [syncMode, setSyncMode] = useState<ToastSyncMode>("DATE_RANGE");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookConfigured, setWebhookConfigured] = useState(false);
+  const [healthChecking, setHealthChecking] = useState(false);
 
   // Sync params
   const [startDate, setStartDate] = useState(() => new Date(Date.now() - 86400000).toISOString().slice(0, 10));
@@ -54,6 +58,7 @@ export default function ToastWizard() {
         setTimezone(cfg.timezone || "America/New_York");
         setCloseoutHour(cfg.closeout_hour ?? 4);
         setSyncMode(cfg.sync_mode || "DATE_RANGE");
+        setWebhookConfigured(Boolean(cfg.webhook_secret));
       }
     });
   }, []);
@@ -68,7 +73,32 @@ export default function ToastWizard() {
       locationName, apiHostname, restaurantGuid,
       clientId, clientSecret, timezone, closeoutHour, syncMode, webhookSecret,
     });
+    setWebhookConfigured(Boolean(webhookSecret));
     await toast.testConnection();
+  };
+
+  const runHealthChecks = async () => {
+    if (!toast.connectionId) return;
+    setHealthChecking(true);
+    try {
+      await toast.testConnection();
+      await toast.checkScopes();
+      await toast.loadSyncStatus();
+    } finally {
+      setHealthChecking(false);
+    }
+  };
+
+  const levelStyles = (level: HealthLevel) => {
+    if (level === "green") return "border-success/30 bg-success/10 text-success";
+    if (level === "red") return "border-destructive/30 bg-destructive/10 text-destructive";
+    return "border-warning/30 bg-warning/10 text-warning";
+  };
+
+  const StatusIcon = ({ level }: { level: HealthLevel }) => {
+    if (level === "green") return <CheckCircle2 className="h-4 w-4" />;
+    if (level === "red") return <XCircle className="h-4 w-4" />;
+    return <AlertTriangle className="h-4 w-4" />;
   };
 
   const renderStep = () => {
@@ -155,9 +185,84 @@ export default function ToastWizard() {
         );
 
       // ── Step 2: Scopes (T5) ──
-      case 2:
+      case 2: {
+        const byScope = (name: string) => toast.scopeChecks.find((s) => s.scope === name);
+        const requiredScopes = ["orders:read", "restaurants:read"];
+        const requiredEntries = requiredScopes.map(byScope).filter(Boolean) as { scope: string; status: "ok" | "missing" | "unknown"; required: boolean }[];
+
+        const authLevel: HealthLevel = !toast.preflight ? "amber" : toast.preflight.authOk ? "green" : "red";
+        const restaurantLevel: HealthLevel = !toast.preflight ? "amber" : toast.preflight.restaurantLookupOk ? "green" : "red";
+
+        const requiredScopesLevel: HealthLevel = requiredEntries.length === 0
+          ? "amber"
+          : requiredEntries.every((s) => s.status === "ok")
+            ? "green"
+            : requiredEntries.some((s) => s.status === "missing")
+              ? "red"
+              : "amber";
+
+        const ordersScope = byScope("orders:read");
+        const ordersLevel: HealthLevel = !ordersScope
+          ? "amber"
+          : ordersScope.status === "ok"
+            ? "green"
+            : ordersScope.status === "missing"
+              ? "red"
+              : "amber";
+
+        const menusScope = byScope("menus:read");
+        const menusLevel: HealthLevel = !menusScope
+          ? "amber"
+          : menusScope.status === "ok"
+            ? "green"
+            : "amber";
+
+        const webhookEvents = toast.syncStatus?.webhook?.totalEvents || 0;
+        const webhookLevel: HealthLevel = webhookConfigured || webhookEvents > 0 ? "green" : "amber";
+
+        const checks = [
+          { key: "auth", label: "Auth", level: authLevel, note: authLevel === "red" ? (toast.preflight?.message || "Authentication failed") : "Machine credentials validation" },
+          { key: "restaurant", label: "Restaurant lookup", level: restaurantLevel, note: restaurantLevel === "red" ? (toast.preflight?.message || "Restaurant lookup failed") : "Restaurant metadata reachable" },
+          { key: "required-scopes", label: "Required scopes", level: requiredScopesLevel, note: "orders:read + restaurants:read" },
+          { key: "orders", label: "Orders access", level: ordersLevel, note: "orders/v2/ordersBulk" },
+          { key: "menus", label: "Menus access (optional)", level: menusLevel, note: "menus/v2/menus" },
+          { key: "webhook", label: "Webhook configured (optional)", level: webhookLevel, note: webhookConfigured ? "Webhook secret saved" : "No webhook secret configured yet" },
+        ];
+
+        const scopeHint = (scope: string) => {
+          if (scope === "orders:read") return "Add orders:read to Toast API credentials to enable Orders sync.";
+          if (scope === "restaurants:read") return "Add restaurants:read so preflight can load timezone and closeout hour.";
+          if (scope === "menus:read") return "Optional: add menus:read to sync menu items for matching.";
+          return "Update Toast credentials and re-run scope checks.";
+        };
+
         return (
           <div className="space-y-6">
+            <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Connection Health & Scope Verification</h3>
+                  <p className="text-xs text-muted-foreground">Run all diagnostics to see exactly why a connection works or fails.</p>
+                </div>
+                <Button onClick={runHealthChecks} disabled={!toast.connectionId || healthChecking}>
+                  {healthChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldCheck className="h-4 w-4 mr-2" />}
+                  Run Health Checks
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {checks.map((check) => (
+                  <div key={check.key} className={`rounded border p-3 ${levelStyles(check.level)}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold">{check.label}</p>
+                      <StatusIcon level={check.level} />
+                    </div>
+                    <p className="mt-1 text-[11px] opacity-90">{check.note}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground">Scopes Checklist</h3>
               <p className="text-xs text-muted-foreground">Verify your credentials have the required API scopes.</p>
@@ -167,21 +272,26 @@ export default function ToastWizard() {
               {toast.scopeChecks.length > 0 && (
                 <div className="space-y-2">
                   {toast.scopeChecks.map((s, i) => (
-                    <div key={i} className="flex items-center justify-between rounded border border-border/50 p-2 text-xs">
-                      <div className="flex items-center gap-2">
-                        <code className="bg-secondary px-1.5 rounded">{s.scope}</code>
-                        {s.required && <Badge variant="outline" className="text-[10px]">Required</Badge>}
+                    <div key={i} className="rounded border border-border/50 p-2 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <code className="bg-secondary px-1.5 rounded">{s.scope}</code>
+                          {s.required && <Badge variant="outline" className="text-[10px]">Required</Badge>}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {s.status === "ok" && <><CheckCircle2 className="h-3 w-3 text-success" /><span className="text-success">OK</span></>}
+                          {s.status === "missing" && <><XCircle className="h-3 w-3 text-destructive" /><span className="text-destructive">403 Missing</span></>}
+                          {s.status === "unknown" && <><AlertTriangle className="h-3 w-3 text-warning" /><span className="text-warning">Unknown</span></>}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        {s.status === "ok" && <><CheckCircle2 className="h-3 w-3 text-success" /><span className="text-success">OK</span></>}
-                        {s.status === "missing" && <><XCircle className="h-3 w-3 text-destructive" /><span className="text-destructive">Missing</span></>}
-                        {s.status === "unknown" && <span className="text-muted-foreground">Unknown</span>}
-                      </div>
+                      {s.status === "missing" && (
+                        <p className="text-[11px] text-destructive">Hint: {scopeHint(s.scope)}</p>
+                      )}
                     </div>
                   ))}
                   {toast.scopeChecks.some((s) => s.status === "missing" && s.required) && (
                     <div className="rounded bg-destructive/10 p-2 text-xs text-destructive">
-                      Missing required scopes. Update your Toast API credentials to include them.
+                      Missing required scopes. Update your Toast API credentials and run checks again.
                     </div>
                   )}
                 </div>
@@ -196,6 +306,7 @@ export default function ToastWizard() {
             </div>
           </div>
         );
+      }
 
       // ── Step 3: Sales Sync by Date Range (T6) ──
       case 3:
