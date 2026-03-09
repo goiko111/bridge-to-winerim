@@ -1687,18 +1687,9 @@ function StepWinerimCatalog({
             ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
             : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
         </Button>
-        {wines.length > 0 && pricingStats.nonReadyTotal > 0 && (
-          <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing || fetchingCatalog}>
-            {enrichingMissing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-            {enrichingMissing ? "Enriching…" : `Re-enrich ${pricingStats.nonReadyTotal} non-ready wines`}
-          </Button>
-        )}
-        {wines.length > 0 && (pricingStats.byReason.unknown || 0) > 0 && (
-          <Button variant="outline" size="sm" onClick={diagnoseUnknownWines} disabled={diagnosingUnknown || fetchingCatalog}>
-            {diagnosingUnknown ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-            {diagnosingUnknown ? "Diagnosing…" : `Diagnose ${pricingStats.byReason.unknown} unknown reasons`}
-          </Button>
-        )}
+        <Button variant="ghost" size="sm" onClick={loadWines} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload List
+        </Button>
       </div>
 
       {/* ── Grouped Pricing Dashboard ── */}
