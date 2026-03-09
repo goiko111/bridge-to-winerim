@@ -440,6 +440,42 @@ function StepSalesSync({
   const [selectedDay, setSelectedDay] = useState(today);
   const [backfillDays, setBackfillDays] = useState("30");
 
+  const [syncMetaExpanded, setSyncMetaExpanded] = useState(false);
+
+  // Helper to render sync metadata
+  const SyncMetaPanel = ({ meta }: { meta: any }) => {
+    if (!meta) return null;
+    return (
+      <div className="rounded-md border border-border bg-muted/20 p-2.5 space-y-1.5 text-[11px]">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-foreground">Detalles de sincronización</span>
+          <button onClick={() => setSyncMetaExpanded(!syncMetaExpanded)} className="text-[10px] text-primary hover:underline">
+            {syncMetaExpanded ? "Ocultar" : "Ver más"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+          <span>Modo: <span className="text-foreground font-mono">{meta.mode}</span></span>
+          <span>Perfil: <span className="text-foreground font-mono">{meta.profile_code}</span></span>
+          {meta.date_range && <span>Rango: <span className="text-foreground font-mono">{meta.date_range.from} → {meta.date_range.to}</span></span>}
+          {meta.documents_read != null && <span>Docs leídos: <span className="text-foreground font-mono">{meta.documents_read}</span></span>}
+          {meta.events_saved != null && <span>Eventos: <span className="text-foreground font-mono">{meta.events_saved}</span></span>}
+          {meta.lines_saved != null && <span>Líneas: <span className="text-foreground font-mono">{meta.lines_saved}</span></span>}
+          {meta.rows_skipped != null && meta.rows_skipped > 0 && <span className="text-destructive">Omitidas: <span className="font-mono">{meta.rows_skipped}</span></span>}
+          {meta.attempts != null && meta.attempts > 1 && <span>Reintentos: <span className="text-foreground font-mono">{meta.attempts}</span></span>}
+        </div>
+        {syncMetaExpanded && meta.raw_preview && (
+          <div className="mt-1">
+            <span className="text-[10px] text-muted-foreground">Payload bruto (2 KB)</span>
+            <pre className="mt-1 max-h-32 overflow-auto rounded border border-border bg-card p-2 text-[10px] font-mono text-foreground whitespace-pre-wrap break-all">{meta.raw_preview}</pre>
+          </div>
+        )}
+        {syncMetaExpanded && meta.error && (
+          <p className="text-destructive text-[10px] font-mono mt-1">Error: {meta.error}</p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
