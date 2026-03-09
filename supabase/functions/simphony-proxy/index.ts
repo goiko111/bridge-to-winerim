@@ -1032,7 +1032,7 @@ async function handleCcReadCatalog(conn: any) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: cc-write-preview (S7)
+// ACTION: cc-write-preview (S7 — enhanced with location/RVC context)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleCcWritePreview(conn: any, connectionId: string) {
@@ -1052,6 +1052,20 @@ async function handleCcWritePreview(conn: any, connectionId: string) {
     if (m.winerim_wine_id) mappingMap.set(`${m.winerim_wine_id}_${m.format_type}`, m.provider_product_id);
   }
 
+  // Build target context for UI
+  const parts = (conn.location_name || "").split("|");
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs || (parts[3] ? [parts[3]] : []);
+  const targetContext = {
+    locationLabel: parts[0] || "",
+    orgShortName: parts[1] || "",
+    locRef: parts[2] || "",
+    rvcs,
+    writeMode: conn.write_mode || "NONE",
+    writeEnabled: conn.write_mode !== "NONE",
+    ccBaseUrl: cfg.cc_base_url || null,
+  };
+
   // deno-lint-ignore no-explicit-any
   const preview: any[] = [];
   for (const w of wines) {
@@ -1068,14 +1082,18 @@ async function handleCcWritePreview(conn: any, connectionId: string) {
       preview.push({ action: mappingMap.has(key) ? "update" : "create", winerimId: w.winerim_id, wineName: w.name, menuItemName: `${w.name} (Magnum)`, price: w.magnum_sale_price, format: "MAG" });
     }
   }
-  return json({ preview });
+  return json({ preview, targetContext });
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: cc-write-execute (S7 — with post-write verification)
+// ACTION: cc-write-execute (S7 — gated behind write_mode)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleCcWriteExecute(conn: any, connectionId: string, dryRun: boolean) {
+  // Gate: writes must be explicitly enabled
+  if (conn.write_mode === "NONE") {
+    return json({ created: 0, updated: 0, message: "Writes are disabled for this connection. Enable write mode in Sync Settings before executing writes.", blocked: true });
+  }
   const cc = ccBaseUrl(conn);
   if (!cc) return json({ created: 0, updated: 0, message: "C&C API URL not configured" });
 
