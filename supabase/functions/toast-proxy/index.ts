@@ -1,5 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { hmac } from "https://deno.land/x/hmac@v2.0.1/mod.ts";
+
+// HMAC SHA-256 using built-in Web Crypto (no external deps)
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -576,7 +585,7 @@ async function handleWebhookIngest(req: Request) {
     }
 
     try {
-      const expectedSig = hmac("sha256", webhookSecret, body, "utf8", "hex");
+      const expectedSig = await hmacSha256Hex(webhookSecret, body);
       const sigValue = sig.startsWith("sha256=") ? sig.slice(7) : sig;
       if (sigValue.toLowerCase() !== expectedSig.toLowerCase()) {
         console.warn("Webhook signature mismatch.");
