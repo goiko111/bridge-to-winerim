@@ -154,6 +154,9 @@ export function useBdpConnection() {
   const [discovering, setDiscovering] = useState(false);
   const [discoveryResult, setDiscoveryResult] = useState<BdpDiscoveryResult | null>(null);
 
+  // Repair state
+  const [repairing, setRepairing] = useState(false);
+
   const saveConnection = async (data: {
     locationName: string;
     baseUrl: string;
