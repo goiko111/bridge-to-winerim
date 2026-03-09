@@ -39,6 +39,7 @@ export function useOutboundSync(connectionId: string | null) {
   const [backfillingPreparation, setBackfillingPreparation] = useState(false);
   const [fixingPrices, setFixingPrices] = useState(false);
   const [reassigningFamilies, setReassigningFamilies] = useState(false);
+  const [clearingQueue, setClearingQueue] = useState(false);
   const loadCapabilities = useCallback(async () => {
     if (!connectionId) return;
     const { data } = await supabase
@@ -230,6 +231,25 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadOutboundTasks]);
 
+  const clearQueue = useCallback(async (statusFilter?: "FAILED" | "BLOCKED") => {
+    if (!connectionId) return;
+    setClearingQueue(true);
+    try {
+      let query = supabase.from("outbound_tasks").delete().eq("connection_id", connectionId);
+      if (statusFilter === "FAILED") {
+        query = query.in("status", ["FAILED", "BLOCKED"]);
+      }
+      const { error } = await query;
+      if (error) throw error;
+      await loadOutboundTasks();
+      return { success: true };
+    } catch (e) {
+      console.error("Failed to clear queue:", e);
+    } finally {
+      setClearingQueue(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   return {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
@@ -241,5 +261,6 @@ export function useOutboundSync(connectionId: string | null) {
     backfillingPreparation, backfillPreparation,
     fixingPrices, fixMissingPrices,
     reassigningFamilies, reassignFamilies,
+    clearingQueue, clearQueue,
   };
 }
