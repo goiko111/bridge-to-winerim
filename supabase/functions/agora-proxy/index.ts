@@ -432,9 +432,20 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         winerimId: "_CONNECTION_CONFIG",
         formatType: "ALL",
         validation: {
-          valid: true,
-          warnings: [`PreparationTypeId="${rawPrepType}" and PreparationOrderId="${rawPrepOrder}" are inconsistent — both forced empty to prevent TPV crash.`],
+          valid: false,
+          warnings: [],
+          missingFields: ["PreparationTypeId", "PreparationOrderId"],
+        },
+      });
+      // Emit the canonical error so callers can detect it
+      validationResults.push({
+        winerimId: "_CONNECTION_CONFIG",
+        formatType: "ALL",
+        validation: {
+          valid: false,
+          warnings: [`Configured PreparationTypeId="${rawPrepType}" / PreparationOrderId="${rawPrepOrder}" are inconsistent — both forced empty.`],
           missingFields: [],
+          error: { code: "INVALID_PREPARATION_PAIR", message: "Preparation Type and Order must both be empty or both set" },
         },
       });
     } else {
