@@ -417,10 +417,22 @@ export default function ToastWizard() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
                         <span>Last Event:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.lastEvent || "None"}</span>
                         <span>Last Status:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.lastStatus || "—"}</span>
-                        <span>Rejected (sig/parse):</span>
-                        <span className={`font-medium ${toast.syncStatus.webhook.rejectedCount > 0 ? "text-destructive" : "text-foreground"}`}>
-                          {toast.syncStatus.webhook.rejectedCount}
+                        <span>Total Events:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.totalEvents}</span>
+                        <span>Processed:</span><span className="text-success font-medium">{toast.syncStatus.webhook.processedEvents}</span>
+                        <span>Rejected:</span>
+                        <span className={`font-medium ${toast.syncStatus.webhook.rejectedEvents > 0 ? "text-destructive" : "text-foreground"}`}>
+                          {toast.syncStatus.webhook.rejectedEvents}
                         </span>
+                        <span>Signature Mode:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.signatureEnforcement}</span>
+                        {toast.syncStatus.webhook.lastSignatureFailure && (
+                          <><span>Last Sig Failure:</span><span className="text-destructive font-medium">{new Date(toast.syncStatus.webhook.lastSignatureFailure).toLocaleString()}</span></>
+                        )}
+                        {toast.syncStatus.webhook.lastParseFailure && (
+                          <><span>Last Parse Failure:</span><span className="text-destructive font-medium">{new Date(toast.syncStatus.webhook.lastParseFailure).toLocaleString()}</span></>
+                        )}
+                        {toast.syncStatus.webhook.lastSuccessfulEvent && (
+                          <><span>Last Success:</span><span className="text-success font-medium">{new Date(toast.syncStatus.webhook.lastSuccessfulEvent).toLocaleString()}</span></>
+                        )}
                       </div>
                     </div>
                   )}

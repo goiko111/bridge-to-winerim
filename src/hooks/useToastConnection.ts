@@ -57,7 +57,13 @@ export interface ToastSyncDiagnostics {
 export interface ToastWebhookDiagnostics {
   lastEvent: string | null;
   lastStatus: string | null;
-  rejectedCount: number;
+  totalEvents: number;
+  processedEvents: number;
+  rejectedEvents: number;
+  lastSignatureFailure: string | null;
+  lastParseFailure: string | null;
+  lastSuccessfulEvent: string | null;
+  signatureEnforcement: "STRICT" | "PERMISSIVE";
 }
 
 export interface ToastSyncStatus {

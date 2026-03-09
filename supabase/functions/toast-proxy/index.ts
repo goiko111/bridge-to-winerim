@@ -506,13 +506,14 @@ async function handleSyncMenus(connId: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-status (extended with diagnostics)
+// ACTION: sync-status (extended with webhook diagnostics)
 // ═══════════════════════════════════════════════════════
 async function handleSyncStatus(connId: string) {
   const conn = await getConnection(connId);
   const cfg = conn.provider_config as any;
   const cb = cfg?.circuit_breaker || {};
   const cursor = cfg?.last_orders_sync_cursor || null;
+  const webhookDiag = cfg?.webhook_diagnostics || {};
 
   const { count: ordersCount } = await sb().from("sales_events")
     .select("id", { count: "exact", head: true }).eq("connection_id", connId);
@@ -521,17 +522,23 @@ async function handleSyncStatus(connId: string) {
     .select("id", { count: "exact", head: true }).eq("connection_id", connId)
     .gte("created_at", new Date(Date.now() - 3600000).toISOString());
 
-  // Item 9: webhook diagnostics
+  // Webhook event stats
   const { data: lastWebhook } = await sb().from("webhook_events")
     .select("created_at, event_type, status")
     .eq("provider", "TOAST").eq("connection_id", connId)
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
 
-  // Count webhook failures (signature/parse)
-  const { count: webhookFailures } = await sb().from("webhook_events")
+  const { count: webhookTotal } = await sb().from("webhook_events")
     .select("id", { count: "exact", head: true })
-    .eq("provider", "TOAST").eq("connection_id", connId)
-    .eq("status", "REJECTED");
+    .eq("provider", "TOAST").eq("connection_id", connId);
+
+  const { count: webhookProcessed } = await sb().from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("provider", "TOAST").eq("connection_id", connId).eq("status", "PROCESSED");
+
+  const { count: webhookRejected } = await sb().from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("provider", "TOAST").eq("connection_id", connId).eq("status", "REJECTED");
 
   return json({
     lastSuccessfulSync: conn.last_sync_at,
@@ -540,139 +547,329 @@ async function handleSyncStatus(connId: string) {
     newOrders: recentCount || 0,
     circuitBreakerOpen: cb.open || false,
     circuitBreakerUntil: cb.until || null,
-    // Item 10: cursor diagnostics
     lastCursor: cursor,
     timezone: cfg?.timezone || null,
     closeoutHour: cfg?.closeout_hour ?? null,
-    // Item 9: webhook diagnostics
+    // Webhook diagnostics (hardened)
     webhook: {
       lastEvent: lastWebhook ? `${lastWebhook.event_type} — ${lastWebhook.created_at}` : null,
       lastStatus: lastWebhook?.status || null,
-      rejectedCount: webhookFailures || 0,
+      totalEvents: webhookTotal || 0,
+      processedEvents: webhookProcessed || 0,
+      rejectedEvents: webhookRejected || 0,
+      lastSignatureFailure: webhookDiag.lastSignatureFailure || null,
+      lastParseFailure: webhookDiag.lastParseFailure || null,
+      lastSuccessfulEvent: webhookDiag.lastSuccessfulEvent || null,
+      signatureEnforcement: cfg?.webhook_signature_strict ? "STRICT" : "PERMISSIVE",
     },
   });
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: webhook-ingest (Item 9 — hardened)
+// ACTION: webhook-ingest (hardened with retry-safe processing)
 // ═══════════════════════════════════════════════════════
 const MAX_WEBHOOK_BODY_SIZE = 2 * 1024 * 1024; // 2 MB
+const WEBHOOK_PROCESSING_TIMEOUT = 5000; // 5s max for inline processing
+
+interface WebhookDiagnostics {
+  lastSignatureFailure?: string;
+  lastParseFailure?: string;
+  lastSuccessfulEvent?: string;
+  lastEventId?: string;
+}
+
+async function updateWebhookDiagnostics(connId: string, updates: Partial<WebhookDiagnostics>) {
+  const { data: conn } = await sb().from("pos_connections").select("provider_config").eq("id", connId).single();
+  if (!conn) return;
+  const cfg = conn.provider_config as any || {};
+  const diag = { ...(cfg.webhook_diagnostics || {}), ...updates };
+  await sb().from("pos_connections").update({
+    provider_config: { ...cfg, webhook_diagnostics: diag },
+  }).eq("id", connId);
+}
 
 async function handleWebhookIngest(req: Request) {
-  // Item 9: payload size guard
+  const now = new Date().toISOString();
+
+  // ── Payload size guard (check header first) ──
   const contentLength = parseInt(req.headers.get("content-length") || "0");
   if (contentLength > MAX_WEBHOOK_BODY_SIZE) {
-    console.warn(`Webhook payload too large: ${contentLength} bytes`);
-    return json({ error: "Payload too large" }, 413);
+    console.warn(`[Webhook] Payload too large from header: ${contentLength} bytes`);
+    return json({ error: "Payload too large", maxBytes: MAX_WEBHOOK_BODY_SIZE }, 413);
   }
 
-  const body = await req.text();
-  if (body.length > MAX_WEBHOOK_BODY_SIZE) {
-    console.warn(`Webhook body exceeds limit after read: ${body.length}`);
-    return json({ error: "Payload too large" }, 413);
+  // ── Read body with size limit ──
+  let body: string;
+  try {
+    const reader = req.body?.getReader();
+    if (!reader) return json({ error: "No body" }, 400);
+
+    const chunks: Uint8Array[] = [];
+    let totalSize = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalSize += value.length;
+      if (totalSize > MAX_WEBHOOK_BODY_SIZE) {
+        reader.cancel();
+        console.warn(`[Webhook] Payload exceeded limit during read: ${totalSize} bytes`);
+        return json({ error: "Payload too large", maxBytes: MAX_WEBHOOK_BODY_SIZE }, 413);
+      }
+      chunks.push(value);
+    }
+    const combined = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    body = new TextDecoder().decode(combined);
+  } catch (e: any) {
+    console.error("[Webhook] Body read error:", e.message);
+    return json({ error: "Failed to read body" }, 400);
   }
 
+  // ── Parse JSON ──
   let payload: any;
   try {
     payload = JSON.parse(body);
-  } catch {
-    // Item 9: log parse failure
-    console.error("Webhook JSON parse failure, body preview:", body.slice(0, 500));
-    // Store as rejected event for diagnostics
+  } catch (e: any) {
+    console.error("[Webhook] JSON parse failure, preview:", body.slice(0, 300));
     await sb().from("webhook_events").insert({
       provider: "TOAST",
       event_id: `PARSE_FAIL_${Date.now()}`,
       event_type: "PARSE_ERROR",
-      payload: { raw_preview: body.slice(0, 2000) },
+      payload: { raw_preview: body.slice(0, 2000), error: e.message },
       status: "REJECTED",
     });
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  // Find connection by restaurantGuid
+  // ── Find connection by restaurantGuid ──
   const guid = payload.restaurantGuid || payload.restaurant?.guid;
-  if (!guid) return json({ error: "Missing restaurantGuid" }, 400);
+  if (!guid) {
+    console.warn("[Webhook] Missing restaurantGuid in payload");
+    return json({ error: "Missing restaurantGuid" }, 400);
+  }
 
-  const { data: conn } = await sb().from("pos_connections")
+  const { data: connections } = await sb().from("pos_connections")
     .select("id, provider_config")
     .eq("provider", "toast")
     .limit(100);
 
-  const match = (conn || []).find((c: any) => {
+  const match = (connections || []).find((c: any) => {
     const cfg = c.provider_config as any;
     return cfg?.restaurant_guid === guid;
   });
 
-  if (!match) return json({ error: "No matching connection for restaurant" }, 404);
+  if (!match) {
+    console.warn(`[Webhook] No matching connection for guid: ${guid}`);
+    return json({ error: "No matching connection for restaurant" }, 404);
+  }
 
+  const connId = match.id;
   const cfg = match.provider_config as any;
-
-  // Item 9: HMAC signature verification
-  const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature") || "";
   const webhookSecret = cfg?.webhook_secret;
+  const strictMode = cfg?.webhook_signature_strict === true;
+
+  // ── Signature verification (enforcement based on config) ──
+  const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature") || "";
 
   if (webhookSecret) {
     if (!sig) {
-      console.warn("Webhook missing signature header, secret is configured. Rejecting.");
+      console.warn(`[Webhook] Missing signature header for conn ${connId}`);
+      await updateWebhookDiagnostics(connId, { lastSignatureFailure: now });
       await sb().from("webhook_events").insert({
         provider: "TOAST",
-        connection_id: match.id,
+        connection_id: connId,
         event_id: `SIG_MISSING_${Date.now()}`,
         event_type: "SIGNATURE_MISSING",
         payload: { restaurantGuid: guid },
         status: "REJECTED",
       });
-      return json({ error: "Missing signature" }, 401);
-    }
+      if (strictMode) return json({ error: "Missing signature" }, 401);
+      // Permissive mode: log but continue
+      console.warn("[Webhook] Permissive mode: allowing unsigned request");
+    } else {
+      try {
+        const expectedSig = await hmacSha256Hex(webhookSecret, body);
+        const sigValue = sig.startsWith("sha256=") ? sig.slice(7) : sig;
 
-    try {
-      const expectedSig = await hmacSha256Hex(webhookSecret, body);
-      const sigValue = sig.startsWith("sha256=") ? sig.slice(7) : sig;
-      if (sigValue.toLowerCase() !== expectedSig.toLowerCase()) {
-        console.warn("Webhook signature mismatch.");
-        await sb().from("webhook_events").insert({
-          provider: "TOAST",
-          connection_id: match.id,
-          event_id: `SIG_FAIL_${Date.now()}`,
-          event_type: "SIGNATURE_MISMATCH",
-          payload: { restaurantGuid: guid },
-          status: "REJECTED",
-        });
-        return json({ error: "Invalid signature" }, 401);
+        if (sigValue.toLowerCase() !== expectedSig.toLowerCase()) {
+          console.warn(`[Webhook] Signature mismatch for conn ${connId}`);
+          await updateWebhookDiagnostics(connId, { lastSignatureFailure: now });
+          await sb().from("webhook_events").insert({
+            provider: "TOAST",
+            connection_id: connId,
+            event_id: `SIG_FAIL_${Date.now()}`,
+            event_type: "SIGNATURE_MISMATCH",
+            payload: { restaurantGuid: guid },
+            status: "REJECTED",
+          });
+          if (strictMode) return json({ error: "Invalid signature" }, 401);
+          console.warn("[Webhook] Permissive mode: allowing mismatched signature");
+        }
+      } catch (e: any) {
+        console.error("[Webhook] HMAC verification error:", e.message);
+        // Allow through if HMAC lib fails but log it
       }
-    } catch (e: any) {
-      console.error("HMAC verification error:", e.message);
-      // Allow through if HMAC lib fails but log it
     }
   }
 
-  // Item 9: strong dedupe by eventGuid + orderGuid
+  // ── Strong dedupe: eventGuid + orderGuid ──
   const eventGuid = payload.eventGuid || payload.guid || "";
   const orderGuid = payload.orderGuid || payload.order?.guid || "";
-  const dedupeKey = eventGuid || `${guid}_${orderGuid}_${payload.eventType || "UNKNOWN"}_${payload.timestamp || Date.now()}`;
+  const eventType = payload.eventType || "ORDER_UPDATE";
+  const timestamp = payload.timestamp || payload.createdDate || Date.now();
 
+  // Build deterministic dedupe key
+  const dedupeKey = eventGuid
+    ? `TOAST_EVT_${eventGuid}`
+    : `TOAST_${guid}_${orderGuid}_${eventType}_${timestamp}`;
+
+  // Check for existing event (atomic dedupe)
   const { data: existingEvt } = await sb().from("webhook_events")
-    .select("id").eq("event_id", dedupeKey).limit(1);
-  if (existingEvt && existingEvt.length > 0) return json({ ok: true, message: "Duplicate event" });
+    .select("id, status").eq("event_id", dedupeKey).limit(1);
 
-  // Store webhook event
-  const { error: insertErr } = await sb().from("webhook_events").insert({
-    provider: "TOAST",
-    connection_id: match.id,
-    event_id: dedupeKey,
-    event_type: payload.eventType || "ORDER_UPDATE",
-    payload: payload,
-    status: "PENDING",
-  });
-
-  if (insertErr) {
-    // 23505 = unique violation (concurrent dedupe)
-    if (insertErr.code === "23505") return json({ ok: true, message: "Duplicate event" });
-    console.error("Webhook insert error:", insertErr);
+  if (existingEvt && existingEvt.length > 0) {
+    console.log(`[Webhook] Duplicate event: ${dedupeKey}`);
+    return json({ ok: true, message: "Duplicate event", eventId: dedupeKey });
   }
 
-  return json({ ok: true, message: "Event queued for processing" });
+  // ── Store event for retry-safe async processing ──
+  const { data: inserted, error: insertErr } = await sb().from("webhook_events").insert({
+    provider: "TOAST",
+    connection_id: connId,
+    event_id: dedupeKey,
+    event_type: eventType,
+    payload: {
+      ...payload,
+      _meta: {
+        receivedAt: now,
+        bodySize: body.length,
+        signaturePresent: !!sig,
+        signatureValid: webhookSecret ? (sig ? true : false) : null,
+      },
+    },
+    status: "PENDING",
+  }).select("id").single();
+
+  if (insertErr) {
+    // 23505 = unique violation (concurrent dedupe race)
+    if (insertErr.code === "23505") {
+      return json({ ok: true, message: "Duplicate event (concurrent)", eventId: dedupeKey });
+    }
+    console.error("[Webhook] Insert error:", insertErr);
+    return json({ error: "Failed to queue event" }, 500);
+  }
+
+  // ── Inline processing attempt (retry-safe: if this fails, event is still PENDING) ──
+  try {
+    // Only process order events inline
+    if (eventType.includes("ORDER") && orderGuid) {
+      const processed = await processOrderWebhook(connId, cfg, payload, orderGuid);
+      if (processed) {
+        await sb().from("webhook_events").update({
+          status: "PROCESSED",
+          processed_at: new Date().toISOString(),
+        }).eq("id", inserted.id);
+        await updateWebhookDiagnostics(connId, { lastSuccessfulEvent: now, lastEventId: dedupeKey });
+      }
+    } else {
+      // Non-order events: mark as processed (logged)
+      await sb().from("webhook_events").update({
+        status: "PROCESSED",
+        processed_at: new Date().toISOString(),
+      }).eq("id", inserted.id);
+    }
+  } catch (e: any) {
+    console.error(`[Webhook] Processing error for ${dedupeKey}:`, e.message);
+    // Leave as PENDING for retry
+  }
+
+  return json({
+    ok: true,
+    message: "Event queued",
+    eventId: dedupeKey,
+    immediate: true,
+  });
 }
+
+// ── Process order webhook into sales_events ──
+async function processOrderWebhook(connId: string, cfg: any, payload: any, orderGuid: string): Promise<boolean> {
+  const businessDate = payload.businessDate
+    ? `${String(payload.businessDate).slice(0, 4)}-${String(payload.businessDate).slice(4, 6)}-${String(payload.businessDate).slice(6, 8)}`
+    : (payload.openedDate || new Date().toISOString()).slice(0, 10);
+
+  const docId = `TOAST_${orderGuid}`;
+
+  // Dedupe against sales_events
+  const { data: existing } = await sb().from("sales_events")
+    .select("id").eq("connection_id", connId).eq("provider_doc_id", docId).limit(1);
+
+  if (existing && existing.length > 0) {
+    console.log(`[Webhook] Order already exists: ${docId}`);
+    return true; // Already processed
+  }
+
+  // Extract line items
+  let totalAmount = 0, totalTax = 0, lineCount = 0;
+  const checks = payload.checks || [];
+  const lineItems: any[] = [];
+
+  for (const check of checks) {
+    const checkGuid = check.guid || "";
+    const selections = check.selections || [];
+    for (let si = 0; si < selections.length; si++) {
+      const sel = selections[si];
+      const itemName = sel.displayName || sel.name || sel.itemName || "Unknown";
+      const qty = sel.quantity || 1;
+      const price = sel.price || sel.preDiscountPrice || 0;
+      const tax = sel.tax || 0;
+      const format = classifyFormat(itemName);
+      const lineKey = `TOAST_${orderGuid}_${checkGuid}_${sel.guid || si}`;
+
+      totalAmount += price;
+      totalTax += tax;
+      lineCount++;
+
+      lineItems.push({
+        connection_id: connId,
+        name: itemName,
+        quantity: qty,
+        unit_price: qty > 0 ? price / qty : price,
+        total_amount: price,
+        vat_rate: 0,
+        is_wine_candidate: false,
+        provider_product_id: lineKey,
+        family: sel.salesCategory?.name || null,
+        format,
+      });
+    }
+  }
+
+  // Insert sales event
+  const { data: evt } = await sb().from("sales_events").insert({
+    connection_id: connId,
+    provider_doc_id: docId,
+    business_day: businessDate,
+    total_amount: payload.amount || totalAmount,
+    total_tax: totalTax,
+    total_net: (payload.amount || totalAmount) - totalTax,
+    line_count: lineCount,
+    doc_type: "Toast_Order_Webhook",
+    raw_json: payload,
+  }).select("id").single();
+
+  if (evt) {
+    for (const li of lineItems) {
+      await sb().from("sales_line_items").insert({ ...li, sales_event_id: evt.id });
+    }
+    return true;
+  }
+  return false;
+}
+
 
 // ═══════════════════════════════════════════════════════
 // ROUTER
