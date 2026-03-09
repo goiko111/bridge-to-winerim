@@ -2621,14 +2621,25 @@ serve(async (req) => {
               for (const pl of taskPriceLists) {
                 const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
                 const priceMatch = innerXml.match(priceRegex);
-                if (!priceMatch || parseFloat(priceMatch[1]) <= 0 || isNaN(parseFloat(priceMatch[1]))) {
+                const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
+                if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
                   taskVerification.verified_prices = false;
                   taskVerification.success = false;
+                  const scNames = taskPlToSc[pl.Id] || [];
+                  const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
+                  taskVerification.missing_prices.push({
+                    product_erp_id: winerimWineId || "", agora_product_id: productId,
+                    price_list_id: pl.Id, price_list_name: pl.Name,
+                    issue, format: fmt, affected_sale_centers: scNames,
+                  });
+                  for (const s of scNames) {
+                    if (!taskVerification.affected_sale_centers.includes(s)) taskVerification.affected_sale_centers.push(s);
+                  }
                   taskVerification.errors.push({
                     code: "PRICE_MISSING",
-                    message: `Product ${productId} (${fmt}): missing/zero price in PriceList "${pl.Name}"`,
+                    message: `Product ${productId} (${fmt}): ${issue} price in PriceList "${pl.Name}"`,
                     field: "prices",
-                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name },
+                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name, affectedSaleCenters: scNames },
                   });
                 }
               }
