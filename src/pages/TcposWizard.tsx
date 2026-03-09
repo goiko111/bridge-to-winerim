@@ -516,11 +516,13 @@ function StepGoLive({
   salesEvents, selectedDay,
   onEnable, enabled,
   familyOverrides, detectedFamilies,
+  connectionId,
 }: {
   syncMode: string; frequency: number; backfill: number;
   salesEvents: SalesEvent[]; selectedDay: string | null;
   onEnable: () => void; enabled: boolean;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
+  connectionId: string | null;
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
@@ -538,6 +540,7 @@ function StepGoLive({
           L'integrazione TCPOS è configurata. Attiva la sync per iniziare a importare vendite ogni {frequency} minuti.
         </p>
       </div>
+      <ProviderReadinessPanel connectionId={connectionId} provider="tcpos" />
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Modalità</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Solo Pull" : "Bidirezionale"}</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequenza</span><span className="font-medium text-foreground">Ogni {frequency} min</span></div>
