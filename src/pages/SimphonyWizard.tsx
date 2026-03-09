@@ -890,6 +890,33 @@ export default function SimphonyWizard() {
                 <p className="mt-1 text-sm text-muted-foreground">Read menu items via C&C API and push Winerim wines (gated).</p>
               </div>
 
+              {/* Write Mode Gate */}
+              <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Write Mode</p>
+                      <p className="text-[11px] text-muted-foreground">Writes are OFF by default. Enable to allow catalog changes.</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={writeMode === "GATED"}
+                    onCheckedChange={async (checked) => {
+                      const newMode = checked ? "GATED" : "NONE";
+                      setWriteMode(newMode);
+                      if (connectionId) await updateConnection(connectionId, { write_mode: newMode });
+                    }}
+                  />
+                </div>
+                {writeMode === "GATED" && (
+                  <div className="flex items-center gap-2 text-[11px] text-primary">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Writes enabled with manual approval. All changes require dry-run preview first.
+                  </div>
+                )}
+              </div>
+
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-foreground">Menu Items (C&C API)</h3>
@@ -916,33 +943,117 @@ export default function SimphonyWizard() {
               <div className="space-y-3 border-t border-border pt-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-foreground">Push Wines to Simphony</h3>
-                  <Button size="sm" variant="outline" onClick={previewCatalogWrite}>
+                  <Button size="sm" variant="outline" onClick={async () => {
+                    await previewCatalogWrite();
+                    // Fetch target context from the preview response (stored via hook enhancement below)
+                  }}>
                     <Eye className="mr-2 h-3.5 w-3.5" /> Preview Changes
                   </Button>
                 </div>
+
                 {catalogWritePreview.length > 0 && (
                   <>
-                    <div className="rounded-lg border border-border overflow-hidden max-h-48 overflow-y-auto divide-y divide-border">
-                      {catalogWritePreview.map((p, i) => (
-                        <div key={i} className="flex items-center justify-between px-4 py-2 bg-card text-xs">
-                          <div className="flex items-center gap-2">
-                            <Badge variant={p.action === "create" ? "default" : "secondary"} className="text-[9px]">{p.action}</Badge>
-                            <span className="font-medium text-foreground">{p.menuItemName}</span>
-                          </div>
-                          <span className="font-mono text-foreground">${p.price.toFixed(2)}</span>
+                    {/* Target Context Banner */}
+                    <div className="rounded-lg border border-border bg-muted/50 p-3 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <MapPin className="h-3 w-3 text-primary" /> Write Target
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                        <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span className="font-medium text-foreground">{locationLabel || locRef || "—"}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Org</span><span className="font-medium text-foreground">{orgShortName || "—"}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Loc Ref</span><span className="font-mono text-foreground">{locRef || "—"}</span></div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">RVCs</span>
+                          <span className="font-mono text-foreground">{selectedRvcs.length > 0 ? selectedRvcs.join(", ") : rvcRef || "—"}</span>
                         </div>
-                      ))}
+                      </div>
                     </div>
+
+                    {/* Enhanced Preview Table */}
+                    <div className="rounded-lg border border-border overflow-hidden max-h-64 overflow-y-auto">
+                      <div className="grid grid-cols-[auto_1fr_80px_60px_60px] gap-x-3 px-4 py-2 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">
+                        <span>Action</span><span>Menu Item</span><span>Price</span><span>Format</span><span>Wine ID</span>
+                      </div>
+                      <div className="divide-y divide-border">
+                        {catalogWritePreview.map((p, i) => (
+                          <div key={i} className="grid grid-cols-[auto_1fr_80px_60px_60px] gap-x-3 items-center px-4 py-2 bg-card text-xs">
+                            <Badge variant={p.action === "create" ? "default" : "secondary"} className="text-[9px] w-fit">{p.action}</Badge>
+                            <span className="font-medium text-foreground truncate">{p.menuItemName}</span>
+                            <span className="font-mono text-foreground">${p.price.toFixed(2)}</span>
+                            <Badge variant="outline" className="text-[9px]">{p.format}</Badge>
+                            <span className="font-mono text-muted-foreground text-[10px] truncate">{p.winerimId}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Summary */}
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                      <span><strong className="text-foreground">{catalogWritePreview.filter(p => p.action === "create").length}</strong> create</span>
+                      <span><strong className="text-foreground">{catalogWritePreview.filter(p => p.action === "update").length}</strong> update</span>
+                      <span><strong className="text-foreground">{catalogWritePreview.length}</strong> total</span>
+                    </div>
+
+                    {/* Write Controls */}
                     <div className="flex items-center gap-3">
                       <label className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Switch checked={catalogDryRun} onCheckedChange={setCatalogDryRun} />
                         Dry-run mode
                       </label>
-                      <Button size="sm" onClick={() => executeCatalogWrite(catalogDryRun)} disabled={catalogWriting}>
-                        {catalogWriting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-2 h-3.5 w-3.5" />}
-                        {catalogDryRun ? "Simulate Write" : "Execute Write"}
-                      </Button>
+                      {catalogDryRun ? (
+                        <Button size="sm" onClick={() => executeCatalogWrite(true)} disabled={catalogWriting}>
+                          {catalogWriting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Eye className="mr-2 h-3.5 w-3.5" />}
+                          Simulate Write
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant={writeMode === "NONE" ? "secondary" : "default"}
+                          onClick={() => {
+                            if (writeMode === "NONE") return;
+                            setWriteApprovalOpen(true);
+                          }}
+                          disabled={catalogWriting || writeMode === "NONE"}
+                        >
+                          {catalogWriting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-2 h-3.5 w-3.5" />}
+                          {writeMode === "NONE" ? "Writes Disabled" : "Execute Write…"}
+                        </Button>
+                      )}
                     </div>
+
+                    {/* Approval Confirmation Dialog */}
+                    {writeApprovalOpen && (
+                      <div className="rounded-lg border-2 border-destructive/50 bg-destructive/5 p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-destructive" />
+                          <h4 className="text-sm font-semibold text-destructive">Confirm Write Execution</h4>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          This will enqueue <strong className="text-foreground">{catalogWritePreview.length}</strong> menu item(s)
+                          for approval at <strong className="text-foreground">{locationLabel || locRef}</strong>
+                          {selectedRvcs.length > 0 && <> across <strong className="text-foreground">{selectedRvcs.length}</strong> RVC(s)</>}.
+                          Items will be created/updated via C&C API.
+                        </p>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setWriteApprovalOpen(false)}>Cancel</Button>
+                          <Button size="sm" variant="destructive" onClick={async () => {
+                            setWriteApprovalOpen(false);
+                            await executeCatalogWrite(false);
+                          }} disabled={catalogWriting}>
+                            {catalogWriting ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="mr-2 h-3.5 w-3.5" />}
+                            Approve & Execute
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {writeMode === "NONE" && !catalogDryRun && (
+                      <div className="rounded-lg border border-muted bg-muted/30 p-3 text-xs text-muted-foreground flex items-center gap-2">
+                        <Lock className="h-3.5 w-3.5 shrink-0" />
+                        Write mode is OFF. Enable it above to execute writes.
+                      </div>
+                    )}
+
                     {catalogWriteResult && (
                       <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs text-success">
                         <CheckCircle2 className="inline h-3.5 w-3.5 mr-1" />
