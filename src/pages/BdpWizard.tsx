@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import {
   useBdpConnection, BdpTestResult, BdpSalesEvent,
-  BdpCatalogResult, BdpWriteResult, BdpVerifyResult,
+  BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
 
 const steps = [
@@ -553,7 +553,7 @@ function StepCatalogWrite({
   connectionId,
   syncingCatalog, catalogResult, syncCatalog,
   writingProduct, writeResult, writeProduct,
-  verifying, verifyResult, verifyProduct,
+  verifyProductV2,
 }: {
   connectionId: string | null;
   syncingCatalog: boolean;
@@ -562,9 +562,7 @@ function StepCatalogWrite({
   writingProduct: boolean;
   writeResult: BdpWriteResult | null;
   writeProduct: (p: any) => Promise<BdpWriteResult | null>;
-  verifying: boolean;
-  verifyResult: BdpVerifyResult | null;
-  verifyProduct: (id: string) => Promise<BdpVerifyResult | null>;
+  verifyProductV2: (id: string) => Promise<any>;
 }) {
   // Write form
   const [wName, setWName] = useState("");
@@ -576,6 +574,21 @@ function StepCatalogWrite({
 
   // Verify
   const [verifyId, setVerifyId] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verification, setVerification] = useState<{
+    success: boolean; verified_exists: boolean; verified_prices: boolean; verified_scope: boolean;
+    errors: { code: string; message: string; field?: string }[];
+    warnings: { code: string; message: string; field?: string }[];
+  } | null>(null);
+
+  const handleVerify = async (id: string) => {
+    if (!id) return;
+    setVerifying(true);
+    setVerification(null);
+    const result = await verifyProductV2(id);
+    setVerification(result);
+    setVerifying(false);
+  };
 
   const handleWrite = async () => {
     if (!wName || !wPrice) return;
@@ -587,13 +600,12 @@ function StepCatalogWrite({
       family: wFamily || undefined,
       format: wFormat || undefined,
     });
-    if (result?.success) {
-      toast({ title: "Product written", description: `${wName} sent to BDP successfully.` });
-      // Auto-verify after write
-      if (wId) {
-        setTimeout(() => verifyProduct(wId), 1500);
-        setVerifyId(wId);
-      }
+    if (result?.success && wId) {
+      toast({ title: "Product written", description: `${wName} sent to BDP successfully. Verifying…` });
+      setVerifyId(wId);
+      setTimeout(() => handleVerify(wId), 1500);
+    } else if (result?.success) {
+      toast({ title: "Product created", description: `${wName} sent to BDP. Enter the new ID to verify.` });
     }
   };
 
@@ -702,57 +714,58 @@ function StepCatalogWrite({
         )}
       </div>
 
-      {/* ── Verify Product ── */}
+      {/* ── Post-Write Verification (shared contract) ── */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
-          <ShieldCheck className="h-3.5 w-3.5" /> Post-Write Verification
+          <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Post-Write Verification
         </p>
         <p className="text-xs text-muted-foreground">
-          Confirm a product exists in BDP and has a valid price (&gt; 0), similar to Agora verification.
+          Verify a product exists in BDP with a valid price after create/update. Returns the shared verification contract (exists, price, scope).
         </p>
         <div className="flex gap-2 items-end">
           <div className="flex-1">
             <label className="text-xs text-muted-foreground mb-1 block">Product ID to verify</label>
             <Input placeholder="e.g. ART001" value={verifyId} onChange={(e) => setVerifyId(e.target.value)} className="bg-background font-mono text-sm" />
           </div>
-          <Button onClick={() => verifyProduct(verifyId)} disabled={verifying || !connectionId || !verifyId} variant="secondary" size="sm">
-            {verifying ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            <span className="ml-1.5">Verify</span>
+          <Button onClick={() => handleVerify(verifyId)} disabled={verifying || !connectionId || !verifyId} variant="outline" size="sm">
+            {verifying ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <ShieldCheck className="mr-1.5 h-3 w-3" />}
+            Verify
           </Button>
         </div>
-        {verifyResult && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Exists</span>
-                <p className={`font-bold ${verifyResult.exists ? "text-success" : "text-destructive"}`}>
-                  {verifyResult.exists ? "YES" : "NO"}
-                </p>
+        {verification && (
+          <div className={`rounded-lg border p-3 text-xs space-y-2 ${verification.success ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                {verification.verified_exists ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                <span className={verification.verified_exists ? "text-success" : "text-destructive"}>Exists</span>
               </div>
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Price Valid</span>
-                <p className={`font-bold ${verifyResult.priceValid ? "text-success" : "text-destructive"}`}>
-                  {verifyResult.priceValid ? `€${verifyResult.price?.toFixed(2)}` : verifyResult.exists ? "€0.00 ⚠️" : "—"}
-                </p>
+              <div className="flex items-center gap-1.5">
+                {verification.verified_prices ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                <span className={verification.verified_prices ? "text-success" : "text-destructive"}>Price &gt; 0</span>
               </div>
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Name</span>
-                <p className="font-mono truncate text-foreground">{verifyResult.name || "—"}</p>
+              <div className="flex items-center gap-1.5">
+                {verification.verified_scope ? <CheckCircle2 className="h-3 w-3 text-success" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                <span className={verification.verified_scope ? "text-success" : "text-destructive"}>Scope</span>
               </div>
             </div>
-            {verifyResult.exists && !verifyResult.priceValid && (
-              <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
-                ⚠️ Product exists but price is 0 or missing. Update the price in BDP or re-push with a valid price.
+            {verification.errors.length > 0 && (
+              <div className="space-y-1">
+                {verification.errors.map((e, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-destructive">
+                    <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span><code className="bg-destructive/10 px-1 rounded text-[10px]">{e.code}</code> {e.message}</span>
+                  </div>
+                ))}
               </div>
             )}
-            {!verifyResult.exists && (
-              <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
-                ⚠️ Product not found in BDP. The write may have failed or the product ID doesn't match.
-              </div>
-            )}
-            {verifyResult.exists && verifyResult.priceValid && (
-              <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground">
-                ✅ Product verified: exists with valid price.
+            {verification.warnings.length > 0 && (
+              <div className="space-y-1">
+                {verification.warnings.map((w, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-warning">
+                    <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span><code className="bg-warning/10 px-1 rounded text-[10px]">{w.code}</code> {w.message}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -930,7 +943,7 @@ export default function BdpWizard() {
                 connectionId={connectionId}
                 syncingCatalog={syncingCatalog} catalogResult={catalogResult} syncCatalog={syncCatalog}
                 writingProduct={writingProduct} writeResult={writeResult} writeProduct={writeProduct}
-                verifying={verifying} verifyResult={verifyResult} verifyProduct={verifyProduct}
+                verifyProductV2={verifyProductV2}
               />
             )}
             {step === 5 && <StepGoLive connectionId={connectionId} onEnable={async () => { if (connectionId) await updateConnection(connectionId, { enabled: true }); }} />}
