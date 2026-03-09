@@ -483,11 +483,12 @@ serve(async (req) => {
       }
 
       try {
-        // BDP Weblink REST export endpoint pattern:
-        // /api/v1/export/{profileCode}?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
         const resp = await bdpFetch(exportUrl, headers);
         const bodyText = await resp.text();
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
 
         if (!resp.ok) {
           return ok({
@@ -537,9 +538,12 @@ serve(async (req) => {
       }
 
       try {
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${to}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
         const resp = await bdpFetch(exportUrl, headers);
         const bodyText = await resp.text();
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
 
         if (!resp.ok) {
           return ok({ success: false, message: `BDP HTTP ${resp.status}` });
@@ -647,7 +651,9 @@ serve(async (req) => {
         const day = d.toISOString().substring(0, 10);
 
         try {
-          const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${day}&dateTo=${day}`;
+          const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+          const salesBase = resolveUrl("sales", defaultSalesPath);
+          const exportUrl = `${salesBase}?dateFrom=${day}&dateTo=${day}`;
           const resp = await bdpFetch(exportUrl, headers);
 
           if (!resp.ok) {
@@ -751,8 +757,11 @@ serve(async (req) => {
       const from = lastSynced || today;
 
       try {
-        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode)}?dateFrom=${from}&dateTo=${today}`;
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${today}`;
         const resp = await bdpFetch(exportUrl, headers);
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : `HTTP ${resp.status}`);
 
         if (!resp.ok) {
           return ok({ success: false, message: `BDP HTTP ${resp.status}` });
