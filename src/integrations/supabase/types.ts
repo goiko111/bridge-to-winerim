@@ -449,6 +449,11 @@ export type Database = {
           refresh_token_enc: string | null
           scopes: string[]
           status: string
+          toast_access_token: string | null
+          toast_client_id: string | null
+          toast_client_secret: string | null
+          toast_expires_at: string | null
+          toast_refresh_token: string | null
           updated_at: string
         }
         Insert: {
@@ -463,6 +468,11 @@ export type Database = {
           refresh_token_enc?: string | null
           scopes?: string[]
           status?: string
+          toast_access_token?: string | null
+          toast_client_id?: string | null
+          toast_client_secret?: string | null
+          toast_expires_at?: string | null
+          toast_refresh_token?: string | null
           updated_at?: string
         }
         Update: {
@@ -477,6 +487,11 @@ export type Database = {
           refresh_token_enc?: string | null
           scopes?: string[]
           status?: string
+          toast_access_token?: string | null
+          toast_client_id?: string | null
+          toast_client_secret?: string | null
+          toast_expires_at?: string | null
+          toast_refresh_token?: string | null
           updated_at?: string
         }
         Relationships: [

@@ -30,13 +30,38 @@ async function getConnection(connId: string) {
   return data;
 }
 
-// ── Credential field mapping (Item 8) ──
-// merchant_id       = client_id
-// refresh_token_enc = client_secret
-// access_token_enc  = access_token (JWT)
-// expires_at        = token expiry
+// ── Credential field mapping (Item 8 — Explicit typed columns) ──
+// New explicit columns:
+//   toast_client_id     = client_id
+//   toast_client_secret = client_secret  
+//   toast_access_token  = access_token (JWT)
+//   toast_refresh_token = refresh_token (if applicable)
+//   toast_expires_at    = token expiry
+// Legacy fallback: merchant_id / refresh_token_enc / access_token_enc / expires_at
 
 const tokenCache: Record<string, { token: string; expiresAt: number }> = {};
+
+interface ToastCredentials {
+  clientId: string;
+  clientSecret: string;
+  accessToken: string | null;
+  refreshToken: string | null;
+  expiresAt: string | null;
+  status: string;
+}
+
+function parseToastCredentials(cred: any): ToastCredentials | null {
+  if (!cred) return null;
+  // Prefer new explicit columns, fall back to legacy
+  return {
+    clientId: cred.toast_client_id || cred.merchant_id || "",
+    clientSecret: cred.toast_client_secret || cred.refresh_token_enc || "",
+    accessToken: cred.toast_access_token || (cred.access_token_enc !== "pending" ? cred.access_token_enc : null) || null,
+    refreshToken: cred.toast_refresh_token || null,
+    expiresAt: cred.toast_expires_at || cred.expires_at || null,
+    status: cred.status || "PENDING",
+  };
+}
 
 async function getAuthToken(conn: any): Promise<string> {
   const cfg = conn.provider_config as any;
@@ -52,17 +77,19 @@ async function getAuthToken(conn: any): Promise<string> {
   const { data: cred } = await sb().from("provider_credentials")
     .select("*").eq("connection_id", connId).maybeSingle();
 
-  if (cred?.access_token_enc && cred?.expires_at) {
-    const expiresAt = new Date(cred.expires_at).getTime();
+  const parsed = parseToastCredentials(cred);
+
+  if (parsed?.accessToken && parsed?.expiresAt) {
+    const expiresAt = new Date(parsed.expiresAt).getTime();
     if (Date.now() < expiresAt - 30000) {
-      tokenCache[connId] = { token: cred.access_token_enc, expiresAt };
-      return cred.access_token_enc;
+      tokenCache[connId] = { token: parsed.accessToken, expiresAt };
+      return parsed.accessToken;
     }
   }
 
-  // Read credentials: client_id = merchant_id, client_secret = refresh_token_enc
-  const clientId = cred?.merchant_id || conn.api_token;
-  const clientSecret = cred?.refresh_token_enc;
+  // Read credentials from parsed or fallback to conn.api_token
+  const clientId = parsed?.clientId || conn.api_token;
+  const clientSecret = parsed?.clientSecret;
   if (!clientId || !clientSecret) throw new Error("Missing Toast credentials (client_id / client_secret). Re-enter them in the Connection step.");
 
   const res = await fetch(`${hostname}/authentication/v1/authentication/login`, {
@@ -85,9 +112,16 @@ async function getAuthToken(conn: any): Promise<string> {
   const expiresAt = Date.now() + expiresIn * 1000;
   if (!token) throw new Error("No token in auth response");
 
-  // Persist token back (access_token_enc = JWT, merchant_id = client_id, refresh_token_enc = client_secret)
+  // Persist token using new explicit columns (primary) + legacy for backward compat
   const credRow = {
     connection_id: connId,
+    // Explicit Toast columns (primary)
+    toast_client_id: clientId,
+    toast_client_secret: clientSecret,
+    toast_access_token: token,
+    toast_refresh_token: null, // Toast uses client credentials, no refresh token
+    toast_expires_at: new Date(expiresAt).toISOString(),
+    // Legacy columns (backward compat)
     merchant_id: clientId,
     access_token_enc: token,
     refresh_token_enc: clientSecret,
@@ -130,15 +164,22 @@ async function fetchWithRetry(url: string, opts: RequestInit, maxRetries = 3): P
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: store-credentials (normalised field mapping)
+// ACTION: store-credentials (explicit typed columns)
 // ═══════════════════════════════════════════════════════
 async function handleStoreCredentials(connId: string, clientId: string, clientSecret: string) {
   const { data: existing } = await sb().from("provider_credentials")
     .select("id").eq("connection_id", connId).maybeSingle();
 
-  // merchant_id = client_id, refresh_token_enc = client_secret
+  // Use new explicit columns + legacy for backward compat
   const row = {
     connection_id: connId,
+    // Explicit Toast columns (primary)
+    toast_client_id: clientId,
+    toast_client_secret: clientSecret,
+    toast_access_token: null, // Will be set after first auth
+    toast_refresh_token: null,
+    toast_expires_at: null,
+    // Legacy columns (backward compat)
     merchant_id: clientId,
     access_token_enc: "pending",
     refresh_token_enc: clientSecret,
