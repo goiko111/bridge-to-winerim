@@ -663,12 +663,15 @@ function StepCatalogWrite({
       family: wFamily || undefined,
       format: wFormat || undefined,
     });
-    if (result?.success && wId) {
-      toast({ title: "Product written", description: `${wName} sent to BDP successfully. Verifying…` });
-      setVerifyId(wId);
-      setTimeout(() => handleVerify(wId), 1500);
-    } else if (result?.success) {
-      toast({ title: "Product created", description: `${wName} sent to BDP. Enter the new ID to verify.` });
+    if (result?.success) {
+      if (result.verification?.success) {
+        toast({ title: "✅ Producto verificado", description: `${wName} escrito y verificado en BDP correctamente.` });
+      } else if (result.verification && !result.verification.success) {
+        toast({ title: "⚠️ Verificación fallida", description: `${wName} escrito en BDP pero la verificación ha fallado.`, variant: "destructive" });
+      } else if (!wId) {
+        toast({ title: "Product created", description: `${wName} sent to BDP. Enter the new ID to verify.` });
+      }
+      if (wId) setVerifyId(wId);
     }
   };
 
