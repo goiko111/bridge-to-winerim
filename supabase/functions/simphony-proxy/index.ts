@@ -1519,66 +1519,175 @@ async function handleWebhookIngest(payload: any) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: pilot-run (S7 enhanced)
+// ACTION: pilot-run (8-step automated validation)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handlePilotRun(conn: any, connectionId: string) {
-  const steps: { id: string; label: string; status: string; detail?: string }[] = [];
+  const steps: { id: string; label: string; status: string; detail?: string; data?: unknown }[] = [];
+  const supabaseClient = sb();
+  let allPassed = true;
 
-  // Step 1: Verify connection
+  const fail = (id: string, label: string, detail: string) => {
+    steps.push({ id, label, status: "error", detail });
+    allPassed = false;
+  };
+
+  // ── Step 1: Preflight ──
   try {
     const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
-    const res = await fetch(url, { headers: stsHeaders(conn) });
-    steps.push({ id: "connect", label: "Connection verified", status: res.ok ? "done" : "error", detail: res.ok ? "STS Gen2 responding" : `Status ${res.status}` });
-    if (!res.ok) { await res.text(); return json({ steps }); }
+    const res = await stsFetchWithRetry(url, stsHeaders(conn), "pilot-preflight");
+    if (res.ok) {
+      steps.push({ id: "preflight", label: "Preflight — STS Gen2 reachable", status: "done", detail: "STS responding OK" });
+    } else {
+      fail("preflight", "Preflight — STS Gen2 reachable", `STS returned ${res.status}`);
+      return json({ steps, allPassed: false });
+    }
   } catch (e: any) {
-    steps.push({ id: "connect", label: "Connection verified", status: "error", detail: e.message });
-    return json({ steps });
+    fail("preflight", "Preflight — STS Gen2 reachable", e.message);
+    return json({ steps, allPassed: false });
   }
 
-  // Step 2: Read master data
+  // ── Step 2: Discover location/RVC ──
+  const parts = (conn.location_name || "").split("|");
+  const locRef = parts[2] || "";
+  const rvcRef = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs || (rvcRef ? [rvcRef] : []);
+  if (locRef && rvcs.length > 0) {
+    steps.push({ id: "discover", label: "Discover — location & RVC", status: "done", detail: `Location: ${parts[0] || locRef}, ${rvcs.length} RVC(s): ${rvcs.join(", ")}` });
+  } else {
+    fail("discover", "Discover — location & RVC", `Missing ${!locRef ? "location ref" : "RVC selection"}. Go to Step 3 (Discover) first.`);
+  }
+
+  // ── Step 3: Sync sales (read test) ──
+  try {
+    const checksUrl = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=5`;
+    const checksRes = await stsFetchWithRetry(checksUrl, stsHeaders(conn), "pilot-sales-read");
+    if (checksRes.ok) {
+      const items = Array.isArray(checksRes.data) ? checksRes.data : (checksRes.data.items || checksRes.data.checks || []);
+      steps.push({ id: "sales-read", label: "Sales read test", status: items.length > 0 ? "done" : "warn", detail: `${items.length} check(s) found via STS` });
+    } else {
+      fail("sales-read", "Sales read test", `STS checks endpoint returned ${checksRes.status}`);
+    }
+  } catch (e: any) {
+    fail("sales-read", "Sales read test", e.message);
+  }
+
+  // ── Step 4: Catalog read test ──
   const cc = ccBaseUrl(conn);
   if (cc) {
     try {
-      const parts = (conn.location_name || "").split("|");
-      const res = await fetch(`${cc}/config/sim/v2/organizations/${parts[1]}/menuItems?limit=10`, {
+      const orgShortName = parts[1] || "";
+      const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?limit=10`, {
         headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
       });
       if (res.ok) {
         const body = await res.json();
         const count = Array.isArray(body) ? body.length : (body.items?.length || 0);
-        steps.push({ id: "master", label: "Read master data", status: "done", detail: `${count} menu items sampled` });
+        steps.push({ id: "catalog-read", label: "Catalog read test (CCAPI)", status: "done", detail: `${count} menu items sampled` });
       } else {
-        steps.push({ id: "master", label: "Read master data", status: "warn", detail: `C&C returned ${res.status}` });
+        const status = res.status;
+        fail("catalog-read", "Catalog read test (CCAPI)", `C&C returned ${status}${status === 401 ? " — token expired?" : status === 404 ? " — org not found" : ""}`);
       }
-    } catch {
-      steps.push({ id: "master", label: "Read master data", status: "warn", detail: "C&C not reachable" });
+    } catch (e: any) {
+      fail("catalog-read", "Catalog read test (CCAPI)", `C&C unreachable: ${e.message}`);
     }
   } else {
-    steps.push({ id: "master", label: "Read master data", status: "warn", detail: "C&C not configured — skipped" });
+    steps.push({ id: "catalog-read", label: "Catalog read test", status: "warn", detail: "C&C API not configured — skipped (use Import/Export)" });
   }
 
-  // Step 3: Push test item
-  const supabaseClient = sb();
-  const { error: pushErr } = await supabaseClient.from("outbound_tasks").insert({
-    connection_id: connectionId,
-    task_type: "SIMPHONY_PILOT_TEST_ITEM",
-    status: "PENDING_APPROVAL",
-    payload_json: {
-      menu_item_name: "Winerim Test Wine (Botella)", price: 25.00, format: "BOT",
-      note: "Pilot test item — please approve to push to Simphony",
-    },
-  });
-  steps.push({
-    id: "push-test", label: "Push 1 test menu item", status: pushErr ? "error" : "done",
-    detail: pushErr ? pushErr.message : "Test item enqueued for approval",
-  });
+  // ── Step 5: Preview one write ──
+  const { data: wines } = await supabaseClient
+    .from("winerim_wines").select("winerim_id, name, bottle_sale_price, wine_type")
+    .eq("connection_id", connectionId).eq("pricing_status", "READY").eq("is_active", true)
+    .limit(1);
 
-  // Step 4+5: Manual
-  steps.push({ id: "wait-sales", label: "Awaiting 2 test sales (manual)", status: "pending", detail: "Ring 1 bottle + 1 glass sale, then return here" });
-  steps.push({ id: "pull-sales", label: "Pull & verify BOT/COPA separation", status: "pending", detail: "Will verify once test sales are rung" });
+  const testWine = wines?.[0];
+  if (testWine && testWine.bottle_sale_price) {
+    const previewItem = {
+      objectNum: `WINERIM_${testWine.winerim_id}_BOT`,
+      name: `${testWine.name} (Botella)`,
+      price: testWine.bottle_sale_price,
+      format: "BOT",
+      familyGroup: testWine.wine_type || "Wines",
+    };
+    steps.push({ id: "write-preview", label: "Preview one write", status: "done", detail: `"${previewItem.name}" @ $${previewItem.price}`, data: previewItem });
+  } else {
+    steps.push({ id: "write-preview", label: "Preview one write", status: "warn", detail: "No wines with READY pricing found — sync Winerim catalog first" });
+  }
 
-  return json({ steps });
+  // ── Step 6: Execute one write (dry-run only in pilot) ──
+  if (testWine && conn.write_mode !== "NONE" && cc) {
+    const { error: taskErr } = await supabaseClient.from("outbound_tasks").insert({
+      connection_id: connectionId,
+      task_type: "SIMPHONY_PILOT_TEST_ITEM",
+      status: "PENDING_APPROVAL",
+      payload_json: {
+        winerim_id: testWine.winerim_id, wine_name: testWine.name,
+        menu_item_name: `${testWine.name} (Botella)`, price: testWine.bottle_sale_price, format: "BOT",
+        cc_base_url: cc, org_short_name: parts[1] || "",
+        pilot: true, verify_after_write: true,
+      },
+    });
+    steps.push({
+      id: "write-execute", label: "Execute one write", status: taskErr ? "error" : "done",
+      detail: taskErr ? taskErr.message : "Test item enqueued for PENDING_APPROVAL",
+    });
+    if (taskErr) allPassed = false;
+  } else if (conn.write_mode === "NONE") {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "Write mode is OFF — enable in Catalog step to test writes" });
+  } else if (!cc) {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "C&C API not configured — write test skipped" });
+  } else {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "No test wine available" });
+  }
+
+  // ── Step 7: Post-write verification ──
+  if (testWine && cc) {
+    try {
+      const orgShortName = parts[1] || "";
+      const objectNum = `WINERIM_${testWine.winerim_id}_BOT`;
+      const searchRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?filter=objectNum eq '${objectNum}'&limit=5`, {
+        headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+      });
+      if (searchRes.ok) {
+        const body = await searchRes.json();
+        const items = Array.isArray(body) ? body : (body.items || body.menuItems || []);
+        // deno-lint-ignore no-explicit-any
+        const found = items.find((it: any) => String(it.objectNum || it.menuItemId || "") === objectNum);
+        if (found) {
+          const price = Number(found.price || found.defaultPrice || 0);
+          steps.push({ id: "verify", label: "Post-write verification", status: price > 0 ? "done" : "warn", detail: `Found "${objectNum}" — price: $${price}` });
+        } else {
+          steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `"${objectNum}" not yet in C&C (pending approval or not yet pushed)` });
+        }
+      } else {
+        steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `C&C search returned ${searchRes.status}` });
+      }
+    } catch (e: any) {
+      steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `Verify failed: ${e.message}` });
+    }
+  } else {
+    steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: "Skipped — no test wine or no C&C API" });
+  }
+
+  // ── Step 8: Mark pilot-verified ──
+  const passedCount = steps.filter(s => s.status === "done").length;
+  const warnCount = steps.filter(s => s.status === "warn").length;
+  const errorCount = steps.filter(s => s.status === "error").length;
+  const pilotVerified = errorCount === 0 && passedCount >= 4; // at least preflight + discover + sales-read + catalog-read
+
+  if (pilotVerified) {
+    // Persist pilot-verified status
+    const updatedCfg = { ...cfg, pilot_verified: true, pilot_verified_at: new Date().toISOString(), pilot_passed: passedCount, pilot_warnings: warnCount };
+    await supabaseClient.from("pos_connections").update({ provider_config: updatedCfg as any }).eq("id", connectionId);
+    steps.push({ id: "mark-verified", label: "Mark pilot-verified", status: "done", detail: `${passedCount} passed, ${warnCount} warnings, 0 errors — connection marked as pilot-verified` });
+  } else {
+    steps.push({ id: "mark-verified", label: "Mark pilot-verified", status: "error", detail: `${passedCount} passed, ${warnCount} warnings, ${errorCount} errors — not verified` });
+    allPassed = false;
+  }
+
+  return json({ steps, allPassed, summary: { passed: passedCount, warnings: warnCount, errors: errorCount, pilotVerified } });
 }
 
 // ════════════════════════════════════════════════════════

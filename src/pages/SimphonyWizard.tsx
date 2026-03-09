@@ -1312,36 +1312,75 @@ export default function SimphonyWizard() {
           {currentStep === 10 && (
             <div className="space-y-5">
               <div>
-                <h2 className="text-lg font-semibold text-foreground">Minimal Pilot (1 Location)</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Verify the full loop: connect → push test item → ring test sales → verify BOT/COPA.</p>
+                <h2 className="text-lg font-semibold text-foreground">Automated Pilot Validation</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Run an 8-step automated validation to verify the full integration loop before going live. This is optional but recommended.</p>
               </div>
               {!pilotRunning && pilotSteps.length === 0 && (
-                <Button onClick={runPilot} variant="secondary" className="w-full">
-                  <FlaskConical className="mr-2 h-4 w-4" /> Start Pilot
-                </Button>
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground space-y-1.5">
+                    <p className="font-medium text-foreground text-sm mb-2">Pilot will automatically test:</p>
+                    <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                      <Badge variant="outline" className="text-[9px] w-fit">1</Badge><span>Preflight — STS Gen2 connectivity</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">2</Badge><span>Discover — verify location & RVC config</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">3</Badge><span>Sales read — fetch checks via STS</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">4</Badge><span>Catalog read — sample menu items via C&C API</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">5</Badge><span>Write preview — identify 1 test wine item</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">6</Badge><span>Write execute — enqueue test item for approval</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">7</Badge><span>Post-write verification — verify item in C&C</span>
+                      <Badge variant="outline" className="text-[9px] w-fit">8</Badge><span>Mark pilot-verified (if all critical steps pass)</span>
+                    </div>
+                  </div>
+                  <Button onClick={runPilot} variant="secondary" className="w-full">
+                    <FlaskConical className="mr-2 h-4 w-4" /> Run Pilot Validation
+                  </Button>
+                </div>
               )}
               {pilotRunning && (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                  <span className="ml-2 text-sm text-muted-foreground">Running pilot…</span>
+                  <span className="ml-2 text-sm text-muted-foreground">Running 8-step pilot validation…</span>
                 </div>
               )}
               {!pilotRunning && pilotSteps.length > 0 && (
-                <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
-                  {pilotSteps.map((step) => (
-                    <div key={step.id} className={`flex items-start gap-3 px-4 py-3 ${step.status === "done" ? "bg-success/5" : step.status === "error" ? "bg-destructive/5" : "bg-card"}`}>
-                      {pilotIcon(step.status)}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">{step.label}</p>
-                        {step.detail && <p className="text-[11px] text-muted-foreground mt-0.5">{step.detail}</p>}
+                <>
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+                    {pilotSteps.map((step, idx) => (
+                      <div key={step.id} className={`flex items-start gap-3 px-4 py-3 ${step.status === "done" ? "bg-success/5" : step.status === "error" ? "bg-destructive/5" : step.status === "warn" ? "bg-yellow-500/5" : "bg-card"}`}>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="outline" className="text-[9px] h-5 w-5 flex items-center justify-center p-0 rounded-full">{idx + 1}</Badge>
+                          {pilotIcon(step.status)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground">{step.label}</p>
+                          {step.detail && <p className="text-[11px] text-muted-foreground mt-0.5">{step.detail}</p>}
+                        </div>
+                        <Badge variant={step.status === "done" ? "default" : step.status === "error" ? "destructive" : "secondary"} className="text-[10px] shrink-0">{step.status}</Badge>
                       </div>
-                      <Badge variant={step.status === "done" ? "default" : step.status === "error" ? "destructive" : "secondary"} className="text-[10px] shrink-0">{step.status}</Badge>
+                    ))}
+                  </div>
+
+                  {/* Summary bar */}
+                  <div className="rounded-lg border border-border bg-card p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3 text-xs">
+                      <span className="text-foreground font-medium">
+                        {pilotSteps.filter(s => s.status === "done").length}/{pilotSteps.length} passed
+                      </span>
+                      {pilotSteps.some(s => s.status === "warn") && (
+                        <span className="text-yellow-600">{pilotSteps.filter(s => s.status === "warn").length} warnings</span>
+                      )}
+                      {pilotSteps.some(s => s.status === "error") && (
+                        <span className="text-destructive">{pilotSteps.filter(s => s.status === "error").length} errors</span>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
-              {!pilotRunning && pilotSteps.length > 0 && (
-                <Button variant="outline" size="sm" onClick={runPilot}>Re-run Pilot</Button>
+                    {pilotSteps.find(s => s.id === "mark-verified")?.status === "done" ? (
+                      <Badge variant="default" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" /> Pilot Verified</Badge>
+                    ) : (
+                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Verified</Badge>
+                    )}
+                  </div>
+
+                  <Button variant="outline" size="sm" onClick={runPilot}>Re-run Pilot</Button>
+                </>
               )}
             </div>
           )}

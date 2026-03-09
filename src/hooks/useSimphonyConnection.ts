@@ -67,7 +67,7 @@ export type WriteVerificationResult = PostWriteVerificationResult;
 export interface PilotStep {
   id: string;
   label: string;
-  status: "pending" | "running" | "done" | "error";
+  status: "pending" | "running" | "done" | "error" | "warn";
   detail?: string;
 }
 
