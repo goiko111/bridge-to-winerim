@@ -85,7 +85,7 @@ export default function SimphonyWizard() {
     // S2
     oidcAcquiring, oidcResult, acquireOidcToken,
     // S3
-    discoveredLocations, discovering, discoverLocations,
+    discoveredLocations, discovering, discoverLocations, saveDiscoverySelection,
     // S6
     webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
     // S9
@@ -137,6 +137,18 @@ export default function SimphonyWizard() {
   }, [currentStep, connectionId]);
 
   const handleNext = async () => {
+    if (currentStep === 3 && connectionId) {
+      // Persist discovery selection
+      const selectedLoc = discoveredLocations.find((l) => l.locRef === locRef);
+      await saveDiscoverySelection(
+        locRef,
+        selectedLoc?.name || locationLabel,
+        selectedRvcs.length > 0 ? selectedRvcs : (rvcRef ? [rvcRef] : []),
+        discoveredLocations,
+      );
+      // Also update location_name with selected values
+      await updateConnection(connectionId, { location_name: locationName });
+    }
     if (currentStep === 5 && connectionId) {
       await updateConnection(connectionId, {
         sync_mode: syncMode, sync_frequency_minutes: frequency,
