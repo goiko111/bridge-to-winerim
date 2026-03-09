@@ -62,6 +62,25 @@ export interface BdpVerifyResult {
   raw?: any;
 }
 
+export interface BdpDiscoveryEndpoint {
+  ok: boolean;
+  status: number;
+  critical: boolean;
+  role: string;
+  label: string;
+  path: string;
+  bodyPreview?: string;
+  attempts: number;
+  lastError?: string;
+}
+
+export interface BdpDiscoveryResult {
+  success: boolean;
+  endpoints: Record<string, BdpDiscoveryEndpoint>;
+  discoveredRoutes: Record<string, { path: string; status: number; verified_at: string }>;
+  capabilities: { canReadSales: boolean; canReadCatalog: boolean; canWrite: boolean; writeMode: string };
+}
+
 export function useBdpConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
@@ -90,6 +109,10 @@ export function useBdpConnection() {
   // Verify state
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<BdpVerifyResult | null>(null);
+
+  // Discovery state
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryResult, setDiscoveryResult] = useState<BdpDiscoveryResult | null>(null);
 
   const saveConnection = async (data: {
     locationName: string;
@@ -198,11 +221,23 @@ export function useBdpConnection() {
 
   const runDiscover = useCallback(async () => {
     if (!connectionId) return null;
-    const { data, error } = await supabase.functions.invoke("bdp-proxy", {
-      body: { action: "discover", connectionId },
-    });
-    if (error) return { success: false, message: error.message };
-    return data;
+    setDiscovering(true);
+    setDiscoveryResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+        body: { action: "discover", connectionId },
+      });
+      if (error) {
+        setDiscovering(false);
+        return { success: false, message: error.message };
+      }
+      setDiscoveryResult(data as BdpDiscoveryResult);
+      setDiscovering(false);
+      return data;
+    } catch (e: any) {
+      setDiscovering(false);
+      return { success: false, message: e.message };
+    }
   }, [connectionId]);
 
   const verifyProductV2 = useCallback(async (productId: string) => {
@@ -338,7 +373,7 @@ export function useBdpConnection() {
     saveConnection, updateConnection, testConnection, testCustomEndpoint,
     loadExistingConnection, setConnectionId,
     // Discovery
-    runDiscover,
+    runDiscover, discovering, discoveryResult,
     // Sales
     salesEvents, loadingSales, fetchSales,
     savingSales, saveResult, saveSalesToDb,
