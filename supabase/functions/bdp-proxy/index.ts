@@ -253,28 +253,149 @@ serve(async (req) => {
         .then(() => {});
     }
 
-    // ── ACTION: test ──
+    // ── ACTION: test (robust multi-step validation) ──
     if (action === "test") {
+      const checks: Record<string, { ok: boolean; status: number; label: string; message: string; bodyPreview?: string }> = {};
+      let overallSuccess = true;
+
+      // 1) Auth check — hit /api/v1/status
       try {
-        const testUrl = `${host}/api/v1/status`;
-        const resp = await bdpFetch(testUrl, headers);
-        const bodyText = await resp.text();
-        return ok({
-          success: resp.ok,
-          status: resp.status,
-          statusText: resp.statusText,
-          contentType: resp.headers.get("content-type") || "unknown",
-          bodyPreview: bodyText.substring(0, 2048),
-          message: resp.ok ? "Connection successful" : `HTTP ${resp.status}: ${resp.statusText}`,
-        });
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Unknown error";
-        return ok({
-          success: false, status: 0, statusText: "Network Error",
-          contentType: null, bodyPreview: null,
-          message: msg.includes("abort") ? "Connection timed out (30s)" : msg,
-        });
+        const authUrl = `${host}/api/v1/status`;
+        const authResp = await bdpFetch(authUrl, headers);
+        const authBody = await authResp.text();
+        const authOk = authResp.ok;
+        checks.auth = {
+          ok: authOk, status: authResp.status, label: "Autenticación",
+          message: authOk ? "Credenciales válidas" : (authResp.status === 401 ? "auth_failed: User Key o Password incorrectos" : `HTTP ${authResp.status}: ${authResp.statusText}`),
+          bodyPreview: authOk ? undefined : authBody.substring(0, 2048),
+        };
+        if (!authOk) overallSuccess = false;
+      } catch (e: any) {
+        const msg = e.message || "Network error";
+        checks.auth = {
+          ok: false, status: 0, label: "Autenticación",
+          message: msg.includes("abort") ? "timeout: No se pudo conectar en 30s — revisa firewall y puerto" : `network_error: ${msg}`,
+        };
+        overallSuccess = false;
       }
+
+      // 2) Endpoint discovery — probe /api/v1/articles to validate REST is available
+      if (checks.auth?.ok) {
+        try {
+          const discUrl = `${host}/api/v1/articles`;
+          const discResp = await bdpFetch(discUrl, headers);
+          const discBody = await discResp.text();
+          const discOk = discResp.ok || discResp.status === 405;
+          checks.endpoint_discovery = {
+            ok: discOk, status: discResp.status, label: "Endpoint REST disponible",
+            message: discOk ? "API REST accesible" : `endpoint_not_found: ${discResp.status} — el servicio Weblink puede no estar habilitado`,
+            bodyPreview: discOk ? undefined : discBody.substring(0, 2048),
+          };
+          if (!discOk) overallSuccess = false;
+        } catch (e: any) {
+          checks.endpoint_discovery = {
+            ok: false, status: 0, label: "Endpoint REST disponible",
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+          overallSuccess = false;
+        }
+      } else {
+        checks.endpoint_discovery = { ok: false, status: 0, label: "Endpoint REST disponible", message: "skipped: auth fallida" };
+      }
+
+      // 3) Export profile code validation — attempt a date-scoped export
+      if (checks.auth?.ok) {
+        const today = new Date().toISOString().substring(0, 10);
+        const profileToTest = exportProfileCode || "WEBLINK";
+        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(profileToTest)}?dateFrom=${today}&dateTo=${today}`;
+        try {
+          const expResp = await bdpFetch(exportUrl, headers);
+          const expBody = await expResp.text();
+          const expOk = expResp.ok;
+          checks.export_profile = {
+            ok: expOk, status: expResp.status, label: `Plantilla de exportación (${profileToTest})`,
+            message: expOk
+              ? "Plantilla aceptada por BDP"
+              : (expResp.status === 404
+                ? `export_profile_invalid: La plantilla "${profileToTest}" no existe en BDP — revisa el nombre`
+                : `HTTP ${expResp.status}: ${expResp.statusText}`),
+            bodyPreview: expOk ? undefined : expBody.substring(0, 2048),
+          };
+          if (!expOk) overallSuccess = false;
+        } catch (e: any) {
+          checks.export_profile = {
+            ok: false, status: 0, label: `Plantilla de exportación (${profileToTest})`,
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+          overallSuccess = false;
+        }
+      } else {
+        checks.export_profile = { ok: false, status: 0, label: "Plantilla de exportación", message: "skipped: auth fallida" };
+      }
+
+      // 4) Sample fetch — try to read today's export data (success = any valid JSON response)
+      if (checks.export_profile?.ok) {
+        try {
+          const today = new Date().toISOString().substring(0, 10);
+          const sampleUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${today}&dateTo=${today}`;
+          const sampleResp = await bdpFetch(sampleUrl, headers);
+          const sampleBody = await sampleResp.text();
+          let docCount = 0;
+          try {
+            const parsed = JSON.parse(sampleBody);
+            const arr = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || []);
+            docCount = Array.isArray(arr) ? arr.length : 0;
+          } catch { /* not JSON */ }
+          checks.sample_fetch = {
+            ok: sampleResp.ok, status: sampleResp.status, label: "Lectura de datos de prueba",
+            message: sampleResp.ok
+              ? `OK — ${docCount} documento(s) encontrados para hoy`
+              : `HTTP ${sampleResp.status}: No se pudieron leer datos`,
+            bodyPreview: sampleResp.ok ? undefined : sampleBody.substring(0, 2048),
+          };
+        } catch (e: any) {
+          checks.sample_fetch = {
+            ok: false, status: 0, label: "Lectura de datos de prueba",
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+        }
+        // sample_fetch failure is non-blocking — could just be no data today
+      } else {
+        checks.sample_fetch = { ok: false, status: 0, label: "Lectura de datos de prueba", message: "skipped: plantilla no válida" };
+      }
+
+      // Classify overall failure reason
+      let failureReason: string | null = null;
+      if (!overallSuccess) {
+        if (!checks.auth?.ok) {
+          failureReason = checks.auth?.message?.includes("timeout") ? "timeout_firewall" : "auth_failed";
+        } else if (!checks.endpoint_discovery?.ok) {
+          failureReason = "endpoint_not_found";
+        } else if (!checks.export_profile?.ok) {
+          failureReason = "export_profile_invalid";
+        }
+      }
+
+      // Persist test result to provider_config
+      const testMeta = {
+        last_test_at: new Date().toISOString(),
+        last_test_success: overallSuccess,
+        last_test_failure_reason: failureReason,
+        last_test_checks: checks,
+      };
+      const updatedConfig = { ...config, ...testMeta };
+      await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
+
+      return ok({
+        success: overallSuccess,
+        status: checks.auth?.status || 0,
+        statusText: overallSuccess ? "All checks passed" : (failureReason || "Check failed"),
+        contentType: "application/json",
+        bodyPreview: null,
+        message: overallSuccess ? "Conexión validada correctamente" : `Fallo: ${failureReason}`,
+        checks,
+        failureReason,
+      });
     }
 
     // ── ACTION: discover ──
