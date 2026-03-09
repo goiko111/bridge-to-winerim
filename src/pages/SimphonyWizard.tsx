@@ -919,12 +919,81 @@ export default function SimphonyWizard() {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-foreground">Menu Items (C&C API)</h3>
+                  <h3 className="text-sm font-medium text-foreground">Menu Items</h3>
                   <Button size="sm" variant="outline" onClick={fetchCatalog} disabled={catalogLoading}>
                     {catalogLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <BookOpen className="mr-2 h-3.5 w-3.5" />}
                     Fetch Catalog
                   </Button>
                 </div>
+
+                {/* Catalog Diagnostics Panel */}
+                {catalogDiagnostics && (
+                  <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                    {/* Data Source Badge */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className={`h-2 w-2 rounded-full ${catalogDiagnostics.source === "ccapi" ? "bg-emerald-500" : catalogDiagnostics.source === "sts_config" ? "bg-yellow-500" : "bg-muted-foreground"}`} />
+                        <span className="text-xs font-medium text-foreground">{catalogDiagnostics.sourceLabel}</span>
+                      </div>
+                      <Badge variant={catalogDiagnostics.source === "ccapi" ? "default" : catalogDiagnostics.source === "sts_config" ? "secondary" : "outline"} className="text-[9px]">
+                        {catalogDiagnostics.source === "ccapi" ? "CCAPI" : catalogDiagnostics.source === "sts_config" ? "STS Config V2" : "No Source"}
+                      </Badge>
+                    </div>
+
+                    {/* Scope Summary */}
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+                      <span className="text-muted-foreground">Location</span>
+                      <span className="font-medium text-foreground">{catalogDiagnostics.locationLabel} <span className="font-mono text-muted-foreground text-[10px]">({catalogDiagnostics.locRef})</span></span>
+
+                      <span className="text-muted-foreground">RVCs synced</span>
+                      <span className="font-medium text-foreground">{catalogDiagnostics.rvcsSynced} {catalogDiagnostics.rvcs.length > 0 && <span className="font-mono text-muted-foreground text-[10px]">({catalogDiagnostics.rvcs.join(", ")})</span>}</span>
+
+                      <span className="text-muted-foreground">Total items</span>
+                      <span className="font-mono font-semibold text-foreground">{catalogDiagnostics.itemCount}</span>
+
+                      <span className="text-muted-foreground">With price</span>
+                      <span className="font-mono text-foreground">{catalogDiagnostics.itemsWithPrice} <span className="text-muted-foreground">/ {catalogDiagnostics.itemsWithoutPrice} missing</span></span>
+
+                      <span className="text-muted-foreground">Active / Inactive</span>
+                      <span className="font-mono text-foreground">{catalogDiagnostics.activeItems} / {catalogDiagnostics.inactiveItems}</span>
+
+                      <span className="text-muted-foreground">Family groups</span>
+                      <span className="font-mono text-foreground">{catalogDiagnostics.familyGroups.length}</span>
+
+                      <span className="text-muted-foreground">Last sync</span>
+                      <span className="font-mono text-foreground text-[10px]">{catalogDiagnostics.lastSyncAt ? new Date(catalogDiagnostics.lastSyncAt).toLocaleString() : "Never"}</span>
+                    </div>
+
+                    {/* Family Groups */}
+                    {catalogDiagnostics.familyGroups.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {catalogDiagnostics.familyGroups.slice(0, 12).map((fg) => (
+                          <Badge key={fg} variant="outline" className="text-[9px]">{fg}</Badge>
+                        ))}
+                        {catalogDiagnostics.familyGroups.length > 12 && (
+                          <Badge variant="outline" className="text-[9px]">+{catalogDiagnostics.familyGroups.length - 12} more</Badge>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Warnings */}
+                    {catalogDiagnostics.warnings.length > 0 && (
+                      <div className="space-y-1.5">
+                        {catalogDiagnostics.warnings.map((w, i) => (
+                          <div key={i} className="flex items-start gap-2 rounded border border-yellow-500/30 bg-yellow-500/5 p-2 text-[11px]">
+                            <AlertTriangle className="h-3 w-3 text-yellow-600 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-mono text-yellow-700 text-[9px]">[{w.code}]</span>
+                              <span className="ml-1 text-muted-foreground">{w.message}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Item List */}
                 {catalogItems.length > 0 && (
                   <div className="rounded-lg border border-border overflow-hidden max-h-48 overflow-y-auto divide-y divide-border">
                     {catalogItems.map((item) => (
