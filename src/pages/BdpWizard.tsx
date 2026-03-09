@@ -8,6 +8,7 @@ import {
   Calendar, Download, RefreshCw, Database, Package, Upload, ShieldCheck,
   AlertTriangle, RotateCcw,
 } from "lucide-react";
+import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
