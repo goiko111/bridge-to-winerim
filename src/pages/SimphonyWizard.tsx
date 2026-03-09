@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { getSimphonyConfig } from "@/utils/providerConfig";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -108,13 +109,11 @@ export default function SimphonyWizard() {
           setFrequency(conn.sync_frequency_minutes);
           setBackfill(conn.backfill_days);
           setEnabled(conn.enabled);
-          const cfg = conn.provider_config as Record<string, string> | null;
-          if (cfg) {
-            setOidcBaseUrl(cfg.oidc_base_url || "");
-            setCcBaseUrl(cfg.cc_base_url || "");
-            setClientId(cfg.client_id || "");
-            setClientSecret(cfg.client_secret || "");
-          }
+          const cfg = getSimphonyConfig(conn.provider_config);
+          setOidcBaseUrl(cfg.oidc_base_url || "");
+          setCcBaseUrl(cfg.cc_base_url || "");
+          setClientId(cfg.client_id || "");
+          setClientSecret(cfg.client_secret || "");
           setCurrentStep(7);
         }
       });

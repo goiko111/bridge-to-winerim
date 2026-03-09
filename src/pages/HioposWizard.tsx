@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { getHioposConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, XCircle, Loader2, Upload, Download,
@@ -59,25 +60,23 @@ export default function HioposWizard() {
     hiopos.loadExistingConnection().then((conn) => {
       if (conn) {
         setLocationName(conn.location_name || "");
-        const cfg = conn.provider_config as any;
-        if (cfg) {
-          setIntegrationMode(cfg.integration_mode === "PORTALREST_ORDERS_API" ? "PORTALREST_ORDERS_API" : "FILES");
-          setIngestionMode(cfg.ingestion_mode || "MANUAL_UPLOAD");
-          setStoreId(cfg.store_id || "");
-          setTimezone(cfg.timezone || "Europe/Madrid");
-          setBusinessDayCloseHour(cfg.business_day_close_hour ?? 6);
-          setUseHioffice(cfg.use_hioffice || false);
-          if (cfg.sftp) {
-            setSftpHost(cfg.sftp.host || "");
-            setSftpPort(cfg.sftp.port || "22");
-            setSftpUser(cfg.sftp.user || "");
-            setSftpPath(cfg.sftp.path || "/");
-          }
-          if (cfg.portalrest) {
-            setPrBaseUrl(cfg.portalrest.base_url || "");
-            setPrAccountId(cfg.portalrest.account_id || "");
-            setPrLocationId(cfg.portalrest.location_id || "");
-          }
+        const cfg = getHioposConfig(conn.provider_config);
+        setIntegrationMode(cfg.integration_mode === "PORTALREST_ORDERS_API" ? "PORTALREST_ORDERS_API" : "FILES");
+        setIngestionMode((cfg as any).ingestion_mode || "MANUAL_UPLOAD");
+        setStoreId(cfg.store_id || "");
+        setTimezone(cfg.timezone || "Europe/Madrid");
+        setBusinessDayCloseHour(cfg.business_day_close_hour ?? 6);
+        setUseHioffice(cfg.use_hioffice || false);
+        if (cfg.sftp) {
+          setSftpHost(cfg.sftp.host || "");
+          setSftpPort(cfg.sftp.port || "22");
+          setSftpUser(cfg.sftp.user || "");
+          setSftpPath(cfg.sftp.path || "/");
+        }
+        if (cfg.portalrest) {
+          setPrBaseUrl(cfg.portalrest.base_url || "");
+          setPrAccountId(cfg.portalrest.account_id || "");
+          setPrLocationId(cfg.portalrest.location_id || "");
         }
       }
     });
