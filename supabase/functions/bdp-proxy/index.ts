@@ -861,14 +861,15 @@ serve(async (req) => {
         : exportProfileCode;
 
       try {
-        // Try fetching articles/products
-        const productsUrl = `${host}/api/v1/articles`;
+        // Try fetching articles/products (use persisted catalog endpoint)
+        const productsUrl = resolveUrl("catalog", "/api/v1/articles");
         let products: any[] = [];
         let families: any[] = [];
         let rawProductsPreview = "";
 
         try {
           const pResp = await bdpFetch(productsUrl, headers);
+          await trackEndpoint("articles", "catalog", "/api/v1/articles", pResp, pResp.ok ? undefined : `HTTP ${pResp.status}`);
           if (pResp.ok) {
             const pText = await pResp.text();
             rawProductsPreview = pText.substring(0, 2048);
