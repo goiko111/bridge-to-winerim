@@ -799,7 +799,7 @@ export default function BdpWizard() {
   const {
     connectionId, testStatus, testError, testResult,
     testConnection, testCustomEndpoint, loadExistingConnection,
-    updateConnection, runDiscover,
+    updateConnection, runDiscover, discovering, discoveryResult,
     salesEvents, loadingSales, fetchSales,
     savingSales, saveResult, saveSalesToDb,
     backfilling, backfillResult, runBackfill,
