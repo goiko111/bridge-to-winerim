@@ -216,6 +216,43 @@ serve(async (req) => {
     const host = port ? `${baseUrl}:${port}` : baseUrl;
     const headers = bdpHeaders(userKey, password);
 
+    // ── Persisted endpoint resolution ──
+    const persistedEndpoints = config.discovered_endpoints || {};
+
+    /** Resolve a URL: use persisted endpoint if available, otherwise default path */
+    function resolveUrl(role: string, defaultPath: string): string {
+      // Find the best persisted endpoint for this role
+      for (const [, ep] of Object.entries(persistedEndpoints)) {
+        if (ep.role === role && ep.path && ep.last_success_at) {
+          return `${host}${ep.path}`;
+        }
+      }
+      return `${host}${defaultPath}`;
+    }
+
+    /** Track endpoint success/error in config and persist */
+    async function trackEndpoint(
+      key: string, role: "auth" | "sales" | "catalog" | "write",
+      path: string, resp: Response | null, errorMsg?: string,
+    ) {
+      const record: BdpEndpointRecord = persistedEndpoints[key] || { path, role };
+      record.path = path;
+      record.role = role;
+      if (resp && resp.ok) {
+        record.last_success_at = new Date().toISOString();
+        record.last_success_status = resp.status;
+      } else {
+        record.last_error_at = new Date().toISOString();
+        record.last_error_status = resp?.status || 0;
+        if (errorMsg) record.last_error_body = errorMsg.substring(0, 2048);
+      }
+      persistedEndpoints[key] = record;
+      // Persist back to provider_config (non-blocking)
+      const updatedConfig = { ...config, discovered_endpoints: persistedEndpoints };
+      supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId)
+        .then(() => {});
+    }
+
     // ── ACTION: test ──
     if (action === "test") {
       try {
