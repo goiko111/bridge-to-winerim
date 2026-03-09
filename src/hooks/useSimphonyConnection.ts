@@ -410,16 +410,28 @@ export function useSimphonyConnection() {
   }, [connectionId]);
 
   // Catalog
+  const [catalogDiagnostics, setCatalogDiagnostics] = useState<{
+    source: string; sourceLabel: string;
+    locationsSynced: number; locationLabel: string; locRef: string;
+    rvcsSynced: number; rvcs: string[];
+    itemCount: number; itemsWithPrice: number; itemsWithoutPrice: number;
+    activeItems: number; inactiveItems: number;
+    familyGroups: string[]; lastSyncAt: string | null;
+    warnings: { code: string; message: string }[];
+  } | null>(null);
+
   const fetchCatalog = useCallback(async () => {
     if (!connectionId) return;
     setCatalogLoading(true);
     setCatalogItems([]);
+    setCatalogDiagnostics(null);
     try {
       const { data, error } = await supabase.functions.invoke("simphony-proxy", {
         body: { action: "cc-read-catalog", connectionId },
       });
       if (error) throw error;
       setCatalogItems(data?.items || []);
+      if (data?.catalogDiagnostics) setCatalogDiagnostics(data.catalogDiagnostics);
     } catch (e) { console.error("Catalog fetch failed:", e); }
     finally { setCatalogLoading(false); }
   }, [connectionId]);
@@ -584,7 +596,7 @@ export function useSimphonyConnection() {
     // Preflight
     preflightChecks, preflightRunning, runPreflight,
     // Catalog
-    catalogItems, catalogLoading, fetchCatalog,
+    catalogItems, catalogLoading, fetchCatalog, catalogDiagnostics,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
     // Post-write verification

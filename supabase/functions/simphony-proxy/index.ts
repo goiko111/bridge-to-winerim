@@ -997,22 +997,97 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: cc-read-catalog (S5)
+// ACTION: cc-read-catalog (S5 — enhanced with scope diagnostics)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleCcReadCatalog(conn: any) {
   const cc = ccBaseUrl(conn);
-  if (!cc) return json({ items: [], message: "Config & Content API URL not configured" });
-
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
+  const locRef = parts[2] || "";
+  const rvcRef = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const selectedRvcs = cfg.selected_rvcs || (rvcRef ? [rvcRef] : []);
+
+  // Build diagnostics about what data source we're using
+  const catalogDiagnostics = {
+    source: "none" as "ccapi" | "sts_config" | "import_export" | "none",
+    sourceLabel: "No data source available",
+    locationsSynced: locRef ? 1 : 0,
+    locationLabel: parts[0] || locRef || "Unknown",
+    locRef,
+    rvcsSynced: selectedRvcs.length,
+    rvcs: selectedRvcs,
+    itemCount: 0,
+    itemsWithPrice: 0,
+    itemsWithoutPrice: 0,
+    activeItems: 0,
+    inactiveItems: 0,
+    familyGroups: [] as string[],
+    lastSyncAt: conn.last_catalog_sync_at || null,
+    warnings: [] as { code: string; message: string }[],
+  };
+
+  if (!cc) {
+    // No C&C API — check if STS is available for basic config
+    catalogDiagnostics.warnings.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot read full catalog. Use Import/Export as fallback." });
+
+    // Try STS Configuration API V2 as fallback
+    try {
+      const stsConfigUrl = `${baseUrl(conn)}/api/v1/configuration/menuItems?limit=100`;
+      const stsRes = await stsFetchWithRetry(stsConfigUrl, stsHeaders(conn), "sts-config-catalog");
+      if (stsRes.ok) {
+        const rawItems = Array.isArray(stsRes.data) ? stsRes.data : (stsRes.data.items || stsRes.data.menuItems || []);
+        catalogDiagnostics.source = "sts_config";
+        catalogDiagnostics.sourceLabel = "STS Configuration API V2 (limited scope)";
+        // deno-lint-ignore no-explicit-any
+        const items = rawItems.map((it: any) => ({
+          menuItemId: String(it.menuItemId || it.objectNum || it.id || ""),
+          name: String(it.name || it.longDescriptor || ""),
+          familyGroup: String(it.familyGroupName || it.majorGroupName || ""),
+          price: Number(it.price || it.defaultPrice || 0),
+          active: it.active !== false,
+        }));
+        catalogDiagnostics.itemCount = items.length;
+        catalogDiagnostics.itemsWithPrice = items.filter((i: any) => i.price > 0).length;
+        catalogDiagnostics.itemsWithoutPrice = items.filter((i: any) => i.price <= 0).length;
+        catalogDiagnostics.activeItems = items.filter((i: any) => i.active).length;
+        catalogDiagnostics.inactiveItems = items.filter((i: any) => !i.active).length;
+        const families = [...new Set(items.map((i: any) => i.familyGroup).filter(Boolean))];
+        catalogDiagnostics.familyGroups = families as string[];
+        catalogDiagnostics.warnings.push({ code: "STS_LIMITED", message: "STS Configuration API provides a limited view. For full catalog access, configure the C&C API URL." });
+        return json({ items, catalogDiagnostics });
+      }
+    } catch { /* STS config not available either */ }
+
+    catalogDiagnostics.source = "none";
+    catalogDiagnostics.warnings.push({ code: "NO_CATALOG_SOURCE", message: "Neither C&C API nor STS Configuration API is reachable. Use Bulk Import/Export to generate catalog files." });
+    return json({ items: [], catalogDiagnostics });
+  }
+
+  // C&C API available
+  catalogDiagnostics.source = "ccapi";
+  catalogDiagnostics.sourceLabel = "Config & Content API (CCAPI)";
+
+  if (!orgShortName) {
+    catalogDiagnostics.warnings.push({ code: "NO_ORG", message: "Organization short name is missing. C&C API requires it in the URL path." });
+    return json({ items: [], catalogDiagnostics });
+  }
+
   try {
     const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?limit=500`, {
       headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
     });
     if (!res.ok) {
       const t = await res.text();
-      return json({ items: [], message: `C&C API responded ${res.status}: ${t.slice(0, 200)}` });
+      if (res.status === 401 || res.status === 403) {
+        catalogDiagnostics.warnings.push({ code: "AUTH_FAILED", message: `C&C API returned ${res.status}. Token may be expired or lacks menuItems scope.` });
+      } else if (res.status === 404) {
+        catalogDiagnostics.warnings.push({ code: "ORG_NOT_FOUND", message: `Organization "${orgShortName}" not found in C&C API. Verify the org short name.` });
+      } else {
+        catalogDiagnostics.warnings.push({ code: "CCAPI_ERROR", message: `C&C API returned ${res.status}: ${t.slice(0, 150)}` });
+      }
+      return json({ items: [], catalogDiagnostics, message: `C&C API responded ${res.status}` });
     }
     const body = await res.json();
     // deno-lint-ignore no-explicit-any
@@ -1025,9 +1100,28 @@ async function handleCcReadCatalog(conn: any) {
       price: Number(it.price || it.defaultPrice || 0),
       active: it.active !== false,
     }));
-    return json({ items });
+
+    catalogDiagnostics.itemCount = items.length;
+    catalogDiagnostics.itemsWithPrice = items.filter((i: any) => i.price > 0).length;
+    catalogDiagnostics.itemsWithoutPrice = items.filter((i: any) => i.price <= 0).length;
+    catalogDiagnostics.activeItems = items.filter((i: any) => i.active).length;
+    catalogDiagnostics.inactiveItems = items.filter((i: any) => !i.active).length;
+    const families = [...new Set(items.map((i: any) => i.familyGroup).filter(Boolean))];
+    catalogDiagnostics.familyGroups = families as string[];
+
+    // Update last_catalog_sync_at
+    const supabaseClient = sb();
+    await supabaseClient.from("pos_connections").update({
+      last_catalog_sync_at: new Date().toISOString(),
+      catalog_product_count: items.length,
+      catalog_wine_candidate_count: items.filter((i: any) => i.price > 0).length,
+    }).eq("id", conn.id);
+    catalogDiagnostics.lastSyncAt = new Date().toISOString();
+
+    return json({ items, catalogDiagnostics });
   } catch (e: any) {
-    return json({ items: [], message: e.message });
+    catalogDiagnostics.warnings.push({ code: "NETWORK_ERROR", message: `Failed to reach C&C API: ${e.message}` });
+    return json({ items: [], catalogDiagnostics, message: e.message });
   }
 }
 
