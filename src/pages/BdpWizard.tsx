@@ -635,6 +635,7 @@ function StepCatalogWrite({
   const [wFamily, setWFamily] = useState("");
   const [wFormat, setWFormat] = useState("");
   const [wId, setWId] = useState("");
+  const [familyOverride, setFamilyOverride] = useState("");
 
   // Verify
   const [verifyId, setVerifyId] = useState("");
@@ -661,12 +662,13 @@ function StepCatalogWrite({
       name: wName,
       price: Number(wPrice),
       vat_rate: Number(wVat) || 0,
-      family: wFamily || undefined,
+      family: familyOverride || wFamily || undefined,
       format: wFormat || undefined,
+      family_override: familyOverride || undefined,
     });
     if (result?.success) {
       if (result.verification?.success) {
-        toast({ title: "✅ Producto verificado", description: `${wName} escrito y verificado en BDP correctamente.` });
+        toast({ title: "✅ Producto verificado", description: `${wName} escrito y verificado en BDP correctamente.${familyOverride ? ` (override: ${familyOverride})` : ""}` });
       } else if (result.verification && !result.verification.success) {
         toast({ title: "⚠️ Verificación fallida", description: `${wName} escrito en BDP pero la verificación ha fallado.`, variant: "destructive" });
       } else if (!wId) {
@@ -857,6 +859,32 @@ function StepCatalogWrite({
             <label className="text-xs text-muted-foreground mb-1 block">Format</label>
             <Input placeholder="e.g. BOT" value={wFormat} onChange={(e) => setWFormat(e.target.value)} className="bg-background font-mono text-sm" />
           </div>
+        </div>
+
+        {/* Category Override */}
+        <div className="rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" />
+            <span className="text-[11px] font-medium text-foreground">Category Override (solo este push)</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Fuerza una familia/categoría concreta para este envío sin modificar el mapping guardado. Déjalo vacío para usar el mapping configurado.
+          </p>
+          <select
+            value={familyOverride}
+            onChange={(e) => setFamilyOverride(e.target.value)}
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">— Sin override (usar mapping) —</option>
+            {(catalogResult?.families || []).map((f) => (
+              <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>
+            ))}
+          </select>
+          {familyOverride && (
+            <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-600 dark:text-amber-400">
+              Override activo: {familyOverride}
+            </Badge>
+          )}
         </div>
         <Button onClick={handleWrite} disabled={writingProduct || !connectionId || !wName || !wPrice}>
           {writingProduct ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}

@@ -1307,8 +1307,8 @@ serve(async (req) => {
         : exportProfileCode;
 
       try {
-        // Resolve family from wine_type_family_mappings if wine_type provided
-        let resolvedFamily = product.family || product.department || undefined;
+        // Priority: family_override > explicit family > mapping resolution
+        let resolvedFamily = product.family_override || product.family || product.department || undefined;
         if (!resolvedFamily && (product.wine_type || product.format)) {
           const mappingKey = resolveMappingKey(product.wine_type, product.format);
           if (mappingKey) {
