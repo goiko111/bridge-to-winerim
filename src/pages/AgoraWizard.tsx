@@ -27,6 +27,11 @@ import {
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import {
+  RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
+  ReadinessBadgeRow, OverallReadinessBadge,
+  type ReadinessDimensions,
+} from "@/components/ReadinessBadges";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
