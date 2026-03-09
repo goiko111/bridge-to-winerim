@@ -2558,6 +2558,8 @@ serve(async (req) => {
           verified_preparation: true, // provider-specific
           errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
           warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+          missing_prices: [] as { product_erp_id: string; agora_product_id: string; price_list_id: string; price_list_name: string; issue: string; format: string; affected_sale_centers: string[] }[],
+          affected_sale_centers: [] as string[],
         };
 
         // Extract expected familyIds from sent XML
@@ -2572,10 +2574,21 @@ serve(async (req) => {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
 
-          // Load PriceLists for price verification
+          // Load PriceLists + SaleCenters for price verification
           const { data: cachedMaster2 } = await supabase
-            .from("agora_master_data").select("price_lists_json").eq("connection_id", task.connection_id).single();
+            .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
           const taskPriceLists = ((cachedMaster2 as any)?.price_lists_json || []) as { Id: string; Name: string }[];
+          const taskSaleCenters = ((cachedMaster2 as any)?.sale_centers_json || []) as Record<string, string>[];
+
+          // Build PriceListId -> SaleCenter names map
+          const taskPlToSc: Record<string, string[]> = {};
+          for (const sc of taskSaleCenters) {
+            const plId = sc.CurrentPriceListId;
+            if (plId) {
+              if (!taskPlToSc[plId]) taskPlToSc[plId] = [];
+              taskPlToSc[plId].push(sc.Name || sc.Id);
+            }
+          }
 
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
