@@ -373,7 +373,7 @@ export function useBdpConnection() {
     saveConnection, updateConnection, testConnection, testCustomEndpoint,
     loadExistingConnection, setConnectionId,
     // Discovery
-    runDiscover,
+    runDiscover, discovering, discoveryResult,
     // Sales
     salesEvents, loadingSales, fetchSales,
     savingSales, saveResult, saveSalesToDb,
