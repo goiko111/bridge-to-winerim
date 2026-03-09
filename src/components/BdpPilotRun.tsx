@@ -263,7 +263,7 @@ export default function BdpPilotRun({
 
       const { data, error } = await supabase.functions.invoke("bdp-proxy", {
         body: {
-          action: "verify-product-v2",
+          action: "verify-write",
           connectionId,
           productId: itemId,
         },
