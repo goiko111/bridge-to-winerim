@@ -58,6 +58,15 @@ export interface CatalogWritePreview {
   format: string;
 }
 
+export interface WriteVerificationResult {
+  success: boolean;
+  verified_exists: boolean;
+  verified_prices: boolean;
+  verified_scope: boolean;
+  errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+  warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
+}
+
 export interface PilotStep {
   id: string;
   label: string;
@@ -106,6 +115,8 @@ export function useSimphonyConnection() {
   const [catalogWritePreview, setCatalogWritePreview] = useState<CatalogWritePreview[]>([]);
   const [catalogWriteResult, setCatalogWriteResult] = useState<{ created: number; updated: number } | null>(null);
   const [catalogWriting, setCatalogWriting] = useState(false);
+  const [writeVerification, setWriteVerification] = useState<WriteVerificationResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   // Pilot
   const [pilotSteps, setPilotSteps] = useState<PilotStep[]>([]);
