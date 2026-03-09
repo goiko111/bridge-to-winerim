@@ -972,6 +972,64 @@ async function handlePilotRun(conn: any, connectionId: string) {
 }
 
 // ════════════════════════════════════════════════════════
+// ACTION: rvc-diagnostics (per-RVC health & cursor report)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleRvcDiagnostics(conn: any, connectionId: string) {
+  const rvcs = getSelectedRvcs(conn);
+  if (rvcs.length <= 1) {
+    return json({ singleRvc: true, message: "Single-RVC mode — no multi-RVC diagnostics needed", rvc: rvcs[0] || "none" });
+  }
+
+  const cfg = conn.provider_config as Record<string, any> | null;
+  const rvcCursors = cfg?.rvc_cursors || {};
+
+  const diagnostics: {
+    rvc: string; reachable: boolean; status: number | null;
+    sampleChecks: number; cursor: { last_business_day: string | null; synced_at: string | null };
+    error?: string;
+  }[] = [];
+
+  for (const rvc of rvcs) {
+    const cursor = rvcCursors[rvc] || { last_business_day: null, synced_at: null };
+    try {
+      const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=3`;
+      const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
+      if (res.ok) {
+        const body = await res.json();
+        const checks = Array.isArray(body) ? body : (body.items || body.checks || []);
+        diagnostics.push({ rvc, reachable: true, status: res.status, sampleChecks: checks.length, cursor });
+      } else {
+        const errText = await res.text();
+        diagnostics.push({ rvc, reachable: false, status: res.status, sampleChecks: 0, cursor, error: errText.slice(0, 200) });
+      }
+    } catch (e: any) {
+      diagnostics.push({ rvc, reachable: false, status: null, sampleChecks: 0, cursor, error: e.message });
+    }
+  }
+
+  // Per-RVC saved event counts from DB
+  const supabaseClient = sb();
+  const perRvcDbCounts: Record<string, number> = {};
+  for (const rvc of rvcs) {
+    const { count } = await supabaseClient
+      .from("sales_events")
+      .select("id", { count: "exact", head: true })
+      .eq("connection_id", connectionId)
+      .like("provider_doc_id", `%_${rvc}`);
+    perRvcDbCounts[rvc] = count || 0;
+  }
+
+  return json({
+    singleRvc: false,
+    rvcCount: rvcs.length,
+    diagnostics,
+    savedEventsByRvc: perRvcDbCounts,
+    globalCursor: conn.last_business_day_synced,
+  });
+}
+
+// ════════════════════════════════════════════════════════
 // ROUTER
 // ════════════════════════════════════════════════════════
 Deno.serve(async (req) => {
