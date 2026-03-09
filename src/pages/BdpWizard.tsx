@@ -9,6 +9,7 @@ import {
   AlertTriangle, RotateCcw,
 } from "lucide-react";
 import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
+import BdpFamilyMapping from "@/components/BdpFamilyMapping";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
