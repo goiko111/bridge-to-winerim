@@ -73,7 +73,32 @@ export default function ToastWizard() {
       locationName, apiHostname, restaurantGuid,
       clientId, clientSecret, timezone, closeoutHour, syncMode, webhookSecret,
     });
+    setWebhookConfigured(Boolean(webhookSecret));
     await toast.testConnection();
+  };
+
+  const runHealthChecks = async () => {
+    if (!toast.connectionId) return;
+    setHealthChecking(true);
+    try {
+      await toast.testConnection();
+      await toast.checkScopes();
+      await toast.loadSyncStatus();
+    } finally {
+      setHealthChecking(false);
+    }
+  };
+
+  const levelStyles = (level: HealthLevel) => {
+    if (level === "green") return "border-success/30 bg-success/10 text-success";
+    if (level === "red") return "border-destructive/30 bg-destructive/10 text-destructive";
+    return "border-warning/30 bg-warning/10 text-warning";
+  };
+
+  const StatusIcon = ({ level }: { level: HealthLevel }) => {
+    if (level === "green") return <CheckCircle2 className="h-4 w-4" />;
+    if (level === "red") return <XCircle className="h-4 w-4" />;
+    return <AlertTriangle className="h-4 w-4" />;
   };
 
   const renderStep = () => {
