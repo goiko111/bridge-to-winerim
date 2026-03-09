@@ -25,7 +25,7 @@ export interface AgoraConfig {
 }
 
 export interface ToastConfig {
-  toast_api_hostname?: string;
+  api_hostname?: string;
   restaurant_guid?: string;
   client_id?: string;
   client_secret?: string;
@@ -34,6 +34,13 @@ export interface ToastConfig {
   closeout_hour?: number;
   sync_mode?: "DATE_RANGE" | "BUSINESS_DATE";
   webhook_secret?: string;
+  webhook_signature_strict?: boolean;
+  circuit_breaker?: {
+    open?: boolean;
+    until?: string | null;
+    lastError?: string | null;
+  };
+  webhook_diagnostics?: Record<string, unknown>;
   last_orders_sync_cursor?: {
     mode?: string;
     startDate?: string;
@@ -55,33 +62,68 @@ export interface SimphonyConfig {
   bi_report_ids?: string[];
   webhook_url?: string;
   webhook_secret?: string;
+  oidc_base_url?: string;
+  cc_base_url?: string;
+  oidc_token_expires_at?: string;
+  selected_rvcs?: string[];
+  rvc_cursors?: Record<string, { last_business_day?: string; synced_at?: string }>;
 }
 
 export interface BdpConfig {
   base_url?: string;
-  port?: number;
+  port?: number | string;
   user_key?: string;
   password?: string;
   export_profile_code?: string;
   catalog_profile_code?: string;
   import_profile_code?: string;
+  discovered_routes?: Record<string, unknown>;
+  last_discovery_at?: string;
 }
 
 export interface HioposConfig {
-  hioffice_base_url?: string;
-  hioffice_user?: string;
-  hioffice_password?: string;
-  b2b_bridge_enabled?: boolean;
-  import_format?: "CSV" | "XML";
-  article_export_path?: string;
-  sales_export_path?: string;
+  integration_mode?: "FILES" | "PORTALREST_ORDERS_API";
+  ingestion_mode?: "MANUAL_UPLOAD" | "SFTP_PULL";
+  store_id?: string;
+  timezone?: string;
+  business_day_close_hour?: number;
+  use_hioffice?: boolean;
+  sftp?: {
+    host?: string;
+    port?: string;
+    user?: string;
+    path?: string;
+  };
+  portalrest?: {
+    base_url?: string;
+    account_id?: string;
+    location_id?: string;
+    api_key?: string;
+    api_secret?: string;
+  };
 }
 
 export interface TouchBistroConfig {
   integration_mode?: "CSV_REPORTS" | "PRIVATE_API";
+  ingestion_method?: "MANUAL_UPLOAD" | "SFTP_PULL" | "HTTPS_PULL";
   timezone?: string;
   business_day_close_time?: string;
-  ingestion_method?: "MANUAL_UPLOAD" | "SFTP_PULL" | "HTTPS_PULL";
+  business_day_close_hour?: number;
+  sftp?: {
+    host?: string;
+    port?: string;
+    user?: string;
+    password?: string;
+    path?: string;
+  };
+  https?: {
+    url?: string;
+  };
+  private_api?: {
+    base_url?: string;
+    location_id?: string;
+  };
+  // Legacy flat fields (kept for back-compat)
   sftp_host?: string;
   sftp_port?: number;
   sftp_user?: string;
@@ -93,6 +135,12 @@ export interface TouchBistroConfig {
 }
 
 export interface IcgConfig {
+  connection_mode?: "SQL_SERVER" | "REST_API";
+  host?: string;
+  port?: string;
+  database?: string;
+  db_username?: string;
+  db_password?: string;
   api_base_url?: string;
   company_code?: string;
   store_code?: string;
@@ -100,6 +148,9 @@ export interface IcgConfig {
   api_password?: string;
   catalog_endpoint?: string;
   sales_endpoint?: string;
+  sql_mapping?: Record<string, unknown>;
+  write_enabled?: boolean;
+  require_manual_approval?: boolean;
 }
 
 // ── Generic raw type ────────────────────────────────────────
@@ -125,7 +176,7 @@ export function getAgoraConfig(raw: RawConfig): AgoraConfig {
 
 export function getToastConfig(raw: RawConfig): ToastConfig {
   const c = parseJson(raw) as ToastConfig;
-  c.toast_api_hostname = c.toast_api_hostname || "https://ws-api.toasttab.com";
+  c.api_hostname = c.api_hostname || "https://ws-api.toasttab.com";
   return c;
 }
 
@@ -138,18 +189,28 @@ export function getBdpConfig(raw: RawConfig): BdpConfig {
 }
 
 export function getHioposConfig(raw: RawConfig): HioposConfig {
-  return parseJson(raw) as HioposConfig;
+  const c = parseJson(raw) as HioposConfig;
+  c.integration_mode = c.integration_mode || "FILES";
+  c.timezone = c.timezone || "Europe/Madrid";
+  c.business_day_close_hour = c.business_day_close_hour ?? 6;
+  return c;
 }
 
 export function getTouchBistroConfig(raw: RawConfig): TouchBistroConfig {
   const c = parseJson(raw) as TouchBistroConfig;
   c.integration_mode = c.integration_mode || "CSV_REPORTS";
   c.ingestion_method = c.ingestion_method || "MANUAL_UPLOAD";
+  c.timezone = c.timezone || "America/New_York";
+  c.business_day_close_hour = c.business_day_close_hour ?? 4;
   return c;
 }
 
 export function getIcgConfig(raw: RawConfig): IcgConfig {
-  return parseJson(raw) as IcgConfig;
+  const c = parseJson(raw) as IcgConfig;
+  c.connection_mode = c.connection_mode || "SQL_SERVER";
+  c.port = c.port || "1433";
+  c.database = c.database || "FrontRest";
+  return c;
 }
 
 // ── Dispatcher (optional convenience) ───────────────────────
@@ -167,6 +228,8 @@ export function getProviderConfig<T = Record<string, unknown>>(
     simphony: getSimphonyConfig,
     BDP_NET: getBdpConfig,
     bdp_net: getBdpConfig,
+    bdp: getBdpConfig,
+    BDP: getBdpConfig,
     HIOPOS: getHioposConfig,
     hiopos: getHioposConfig,
     TOUCHBISTRO: getTouchBistroConfig,
