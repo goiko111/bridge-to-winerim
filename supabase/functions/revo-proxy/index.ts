@@ -680,6 +680,7 @@ serve(async (req) => {
             blocked: true,
             error: "Write blocked: missing catalog dependencies",
             missing: deps.missing,
+            warnings: deps.warnings || [],
           });
         }
       }
