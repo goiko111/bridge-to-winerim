@@ -11,6 +11,8 @@ import {
 import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import BdpFamilyMapping from "@/components/BdpFamilyMapping";
 import BdpRepairActionsPanel from "@/components/BdpRepairActionsPanel";
+import BdpReadinessPanel from "@/components/BdpReadinessPanel";
+import BdpPilotRun from "@/components/BdpPilotRun";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
