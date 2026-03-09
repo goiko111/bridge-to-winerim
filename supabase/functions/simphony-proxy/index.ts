@@ -533,7 +533,7 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: save-sales (multi-RVC aware)
+// ACTION: save-sales (multi-RVC aware, global dedup, per-RVC cursor & diagnostics)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleSaveSales(conn: any, connectionId: string, businessDay: string) {
@@ -544,9 +544,17 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
   const supabaseClient = sb();
   let savedEvents = 0;
   let savedLines = 0;
-  const seenDocs = new Set<string>();
+  // Global dedup by checkId to prevent cross-RVC duplicates
+  const seenDocIds = new Set<string>();
+  const perRvc: Record<string, { saved: number; lines: number; wineItems: number; duplicatesSkipped: number; errors: string[] }> = {};
 
   for (const rvc of rvcs) {
+    let rvcSaved = 0;
+    let rvcLines = 0;
+    let rvcWine = 0;
+    let rvcDuplicates = 0;
+    const rvcErrors: string[] = [];
+
     // deno-lint-ignore no-explicit-any
     let allChecks: any[] = [];
     try {
@@ -555,16 +563,23 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
       if (res.ok) {
         const body = await res.json();
         allChecks = Array.isArray(body) ? body : (body.items || body.checks || []);
+      } else {
+        rvcErrors.push(`Fetch failed: ${res.status}`);
       }
-    } catch { /* skip */ }
+    } catch (e: any) {
+      rvcErrors.push(`Fetch error: ${e.message}`);
+    }
     // deno-lint-ignore no-explicit-any
     allChecks = allChecks.filter((c: any) => (c.openTime || c.closedTime || "").startsWith(businessDay));
 
     for (const check of allChecks) {
       const docId = String(check.checkId || check.id || "");
-      const globalKey = `${docId}_${rvc}`;
-      if (seenDocs.has(globalKey)) continue;
-      seenDocs.add(globalKey);
+      // Global dedup: skip if already processed from another RVC
+      if (seenDocIds.has(docId)) {
+        rvcDuplicates++;
+        continue;
+      }
+      seenDocIds.add(docId);
 
       const menuItems = check.menuItems || check.detailLines || [];
       // deno-lint-ignore no-explicit-any
@@ -573,6 +588,7 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
         const mapped = mapSimphonyMenuItem(item);
         const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
         lineData.push({ ...mapped, is_wine_candidate: wr.candidate });
+        if (wr.candidate) rvcWine++;
       }
       const totals = check.totals || {};
       const totalAmount = Number(totals.subtotal || totals.total || check.total || 0);
@@ -588,20 +604,47 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
         }, { onConflict: "connection_id,provider_doc_id" })
         .select("id").single();
 
-      if (eventErr || !eventRow) continue;
+      if (eventErr || !eventRow) {
+        if (eventErr) rvcErrors.push(`Upsert ${docId}: ${eventErr.message}`);
+        continue;
+      }
+      rvcSaved++;
       savedEvents++;
       await supabaseClient.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
       // deno-lint-ignore no-explicit-any
       const linesToInsert = lineData.map((l: any) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
       if (linesToInsert.length > 0) {
         const { error: lineErr } = await supabaseClient.from("sales_line_items").insert(linesToInsert);
-        if (!lineErr) savedLines += linesToInsert.length;
+        if (!lineErr) { savedLines += linesToInsert.length; rvcLines += linesToInsert.length; }
       }
     }
+
+    perRvc[rvc] = { saved: rvcSaved, lines: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates, errors: rvcErrors };
   }
 
-  await supabaseClient.from("pos_connections").update({ last_business_day_synced: businessDay, last_sync_at: new Date().toISOString() }).eq("id", connectionId);
-  return json({ success: true, savedEvents, savedLines, businessDay });
+  // Update global cursor
+  await supabaseClient.from("pos_connections").update({
+    last_business_day_synced: businessDay,
+    last_sync_at: new Date().toISOString(),
+    // Store per-RVC cursors in provider_config for multi-RVC tracking
+    ...(rvcs.length > 1 ? {
+      provider_config: {
+        ...(conn.provider_config || {}),
+        rvc_cursors: {
+          ...((conn.provider_config as Record<string, any>)?.rvc_cursors || {}),
+          ...Object.fromEntries(rvcs.map(rvc => [rvc, { last_business_day: businessDay, synced_at: new Date().toISOString() }])),
+        },
+      },
+    } : {}),
+  }).eq("id", connectionId);
+
+  return json({
+    success: true, savedEvents, savedLines, businessDay,
+    ...(rvcs.length > 1 ? {
+      perRvc,
+      totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0),
+    } : {}),
+  });
 }
 
 // ════════════════════════════════════════════════════════
