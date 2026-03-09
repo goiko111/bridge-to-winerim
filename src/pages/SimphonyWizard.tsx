@@ -7,7 +7,7 @@ import {
   Search, Link2, Settings2, Map, Power, Wine, Calendar,
   Download, Filter, Grape, ShieldCheck, BookOpen, FlaskConical,
   AlertTriangle, Eye, FileJson, Upload, Radio, Compass,
-  Bell, Layers, Key,
+  Bell, Layers, Key, Lock, MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,12 @@ export default function SimphonyWizard() {
   const [showWineOnly, setShowWineOnly] = useState(true);
   const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
   const [catalogDryRun, setCatalogDryRun] = useState(true);
+  const [writeMode, setWriteMode] = useState<"NONE" | "GATED">("NONE");
+  const [writeApprovalOpen, setWriteApprovalOpen] = useState(false);
+  const [writeTargetContext, setWriteTargetContext] = useState<{
+    locationLabel: string; orgShortName: string; locRef: string;
+    rvcs: string[]; writeMode: string; writeEnabled: boolean; ccBaseUrl: string | null;
+  } | null>(null);
 
   const locationName = `${locationLabel}|${orgShortName}|${locRef}|${rvcRef}`;
 
