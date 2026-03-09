@@ -73,6 +73,17 @@ export function getSimphonyConfig(raw: RawConfig): SimphonyConfig {
   return parseJson(raw) as SimphonyConfig;
 }
 
+export interface BdpEndpointRecord {
+  path: string;
+  role: "auth" | "sales" | "catalog" | "write";
+  last_success_at?: string;
+  last_success_status?: number;
+  last_error_at?: string;
+  last_error_status?: number;
+  last_error_body?: string; // first 2KB
+  verified_at?: string;
+}
+
 export interface BdpConfig {
   port?: number | string;
   user_key?: string;
@@ -80,8 +91,10 @@ export interface BdpConfig {
   export_profile_code?: string;
   catalog_profile_code?: string;
   import_profile_code?: string;
-  discovered_routes?: Record<string, unknown>;
+  discovered_endpoints?: Record<string, BdpEndpointRecord>;
   last_discovery_at?: string;
+  // Legacy compat
+  discovered_routes?: Record<string, unknown>;
 }
 
 export function getBdpConfig(raw: RawConfig): BdpConfig {
