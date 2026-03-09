@@ -672,10 +672,25 @@ serve(async (req) => {
 
       if (!tasks?.length) return json({ processed: 0 });
 
-      let processed = 0;
+      let processed = 0, blocked = 0;
       for (const task of tasks) {
         await supabase.from("outbound_tasks").update({ status: "RUNNING" }).eq("id", task.id);
         const payload = task.payload_json as any;
+
+        // Pre-write dependency check
+        const deps = await validateWriteDeps(payload);
+        if (!deps.valid) {
+          const reason = deps.missing.map((m) => `[${m.dep}] ${m.message}`).join("; ");
+          await supabase.from("outbound_tasks").update({
+            status: "BLOCKED",
+            blocked_reason: reason,
+            last_error: `Dependency check: ${deps.missing.length} missing`,
+            attempts: task.attempts + 1,
+          }).eq("id", task.id);
+          blocked++;
+          continue;
+        }
+
         try {
           let method = "POST";
           let endpoint = `${REVO_BASE}/v2/catalog/items`;
