@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { hmac } from "https://deno.land/x/hmac@v2.0.1/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,7 +21,12 @@ async function getConnection(connId: string) {
   return data;
 }
 
-// ── Token cache (in-memory per invocation, DB-backed) ──
+// ── Credential field mapping (Item 8) ──
+// merchant_id       = client_id
+// refresh_token_enc = client_secret
+// access_token_enc  = access_token (JWT)
+// expires_at        = token expiry
+
 const tokenCache: Record<string, { token: string; expiresAt: number }> = {};
 
 async function getAuthToken(conn: any): Promise<string> {
@@ -45,19 +51,15 @@ async function getAuthToken(conn: any): Promise<string> {
     }
   }
 
-  // Fetch new token
+  // Read credentials: client_id = merchant_id, client_secret = refresh_token_enc
   const clientId = cred?.merchant_id || conn.api_token;
-  const clientSecret = cred?.refresh_token_enc; // stored as "refresh" field for secret
-  if (!clientId || !clientSecret) throw new Error("Missing Toast credentials (clientId/clientSecret)");
+  const clientSecret = cred?.refresh_token_enc;
+  if (!clientId || !clientSecret) throw new Error("Missing Toast credentials (client_id / client_secret). Re-enter them in the Connection step.");
 
   const res = await fetch(`${hostname}/authentication/v1/authentication/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      clientId,
-      clientSecret,
-      userAccessType: "TOAST_MACHINE_CLIENT",
-    }),
+    body: JSON.stringify({ clientId, clientSecret, userAccessType: "TOAST_MACHINE_CLIENT" }),
   });
 
   if (!res.ok) {
@@ -72,10 +74,9 @@ async function getAuthToken(conn: any): Promise<string> {
   const token = data.token?.accessToken || data.accessToken || data.token;
   const expiresIn = data.token?.expiresIn || data.expiresIn || 3600;
   const expiresAt = Date.now() + expiresIn * 1000;
-
   if (!token) throw new Error("No token in auth response");
 
-  // Cache in DB
+  // Persist token back (access_token_enc = JWT, merchant_id = client_id, refresh_token_enc = client_secret)
   const credRow = {
     connection_id: connId,
     merchant_id: clientId,
@@ -104,7 +105,7 @@ function toastHeaders(token: string, restaurantGuid: string): Record<string, str
   };
 }
 
-// ── Resilience: retry with backoff (T12) ──
+// ── Resilience: retry with backoff ──
 async function fetchWithRetry(url: string, opts: RequestInit, maxRetries = 3): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, opts);
@@ -120,12 +121,13 @@ async function fetchWithRetry(url: string, opts: RequestInit, maxRetries = 3): P
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: store-credentials (T1)
+// ACTION: store-credentials (normalised field mapping)
 // ═══════════════════════════════════════════════════════
 async function handleStoreCredentials(connId: string, clientId: string, clientSecret: string) {
   const { data: existing } = await sb().from("provider_credentials")
     .select("id").eq("connection_id", connId).maybeSingle();
 
+  // merchant_id = client_id, refresh_token_enc = client_secret
   const row = {
     connection_id: connId,
     merchant_id: clientId,
@@ -144,7 +146,7 @@ async function handleStoreCredentials(connId: string, clientId: string, clientSe
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: preflight (T3 + T4)
+// ACTION: preflight
 // ═══════════════════════════════════════════════════════
 async function handlePreflight(connId: string) {
   const conn = await getConnection(connId);
@@ -153,15 +155,11 @@ async function handlePreflight(connId: string) {
   const guid = cfg?.restaurant_guid;
   if (!guid) return json({ success: false, message: "Missing restaurant GUID" });
 
-  // 1) Auth
   let token: string;
-  try {
-    token = await getAuthToken(conn);
-  } catch (e: any) {
+  try { token = await getAuthToken(conn); } catch (e: any) {
     return json({ success: false, message: `Auth failed: ${e.message}` });
   }
 
-  // 2) Fetch restaurant info
   try {
     const res = await fetchWithRetry(
       `${hostname}/restaurants/v1/restaurants/${guid}?includeArchived=false`,
@@ -176,7 +174,6 @@ async function handlePreflight(connId: string) {
     const closeoutHour = data.general?.closeoutHour ?? cfg?.closeout_hour ?? 4;
     const name = data.general?.name || data.restaurantName || conn.location_name;
 
-    // Persist timezone and closeoutHour
     const updatedConfig = { ...cfg, timezone: tz, closeout_hour: closeoutHour };
     await sb().from("pos_connections").update({
       provider_config: updatedConfig,
@@ -196,7 +193,7 @@ async function handlePreflight(connId: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: check-scopes (T5)
+// ACTION: check-scopes
 // ═══════════════════════════════════════════════════════
 async function handleCheckScopes(connId: string) {
   const conn = await getConnection(connId);
@@ -227,7 +224,7 @@ async function handleCheckScopes(connId: string) {
   return json({ scopes: results });
 }
 
-// ── Format classification (T8) ──
+// ── Format classification ──
 function classifyFormat(name: string): string | null {
   const n = name.trim().toUpperCase();
   if (n.startsWith("BOT.") || n.startsWith("BOT ")) return "BOTTLE";
@@ -237,21 +234,23 @@ function classifyFormat(name: string): string | null {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-sales (T6 + T7 + T8)
+// ACTION: sync-sales (with diagnostics — Item 10)
 // ═══════════════════════════════════════════════════════
 async function handleSyncSales(connId: string, mode: string, params: any) {
   const conn = await getConnection(connId);
   const cfg = conn.provider_config as any;
   const hostname = (cfg?.api_hostname || conn.base_url || "").replace(/\/+$/, "");
   const guid = cfg?.restaurant_guid;
+  const tz = cfg?.timezone || "America/New_York";
+  const closeoutHour = cfg?.closeout_hour ?? 4;
 
   let token: string;
   try { token = await getAuthToken(conn); } catch (e: any) {
-    return json({ success: false, message: `Auth failed: ${e.message}`, totalOrders: 0, totalLines: 0, duplicatesSkipped: 0, pagesProcessed: 0 });
+    return json({ success: false, message: `Auth failed: ${e.message}`, totalOrders: 0, totalLines: 0, duplicatesSkipped: 0, pagesProcessed: 0, diagnostics: null });
   }
 
   let totalOrders = 0, totalLines = 0, duplicatesSkipped = 0, pagesProcessed = 0;
-  const maxPages = 50; // safety limit
+  const maxPages = 50;
 
   try {
     for (let page = 1; page <= maxPages; page++) {
@@ -268,15 +267,14 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
       const res = await fetchWithRetry(url, { headers: toastHeaders(token, guid) });
 
       if (res.status === 403) {
-        return json({ success: false, message: "403 Forbidden — likely missing orders:read scope.", totalOrders, totalLines, duplicatesSkipped, pagesProcessed });
+        return json({ success: false, message: "403 Forbidden — likely missing orders:read scope.", totalOrders, totalLines, duplicatesSkipped, pagesProcessed, diagnostics: { mode, timezone: tz, closeoutHour } });
       }
       if (!res.ok) {
         const body = await res.text();
-        // Circuit breaker: mark failure
         await sb().from("pos_connections").update({
           provider_config: { ...cfg, circuit_breaker: { open: true, until: new Date(Date.now() + 300000).toISOString(), lastError: `${res.status}: ${body.slice(0, 200)}` } },
         }).eq("id", connId);
-        return json({ success: false, message: `Orders API error (${res.status}): ${body.slice(0, 300)}`, totalOrders, totalLines, duplicatesSkipped, pagesProcessed });
+        return json({ success: false, message: `Orders API error (${res.status}): ${body.slice(0, 300)}`, totalOrders, totalLines, duplicatesSkipped, pagesProcessed, diagnostics: { mode, timezone: tz, closeoutHour } });
       }
 
       const orders = await res.json();
@@ -290,12 +288,10 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
           : (order.openedDate || new Date().toISOString()).slice(0, 10);
         const docId = `TOAST_${orderGuid}`;
 
-        // Check dupe
         const { data: existing } = await sb().from("sales_events")
           .select("id").eq("connection_id", connId).eq("provider_doc_id", docId).limit(1);
         if (existing && existing.length > 0) { duplicatesSkipped++; continue; }
 
-        // Compute totals from checks
         let totalAmount = 0, totalTax = 0, lineCount = 0;
         const checks = order.checks || [];
         const lineItems: any[] = [];
@@ -331,7 +327,6 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
           }
         }
 
-        // Insert SalesEvent
         const { data: evt } = await sb().from("sales_events").insert({
           connection_id: connId,
           provider_doc_id: docId,
@@ -354,15 +349,29 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
       }
     }
 
-    // Update sync cursor
+    // Build cursor and diagnostics
+    const cursor = { mode, ...params, page: pagesProcessed, lastModified: new Date().toISOString() };
     await sb().from("pos_connections").update({
       last_sync_at: new Date().toISOString(),
       provider_config: {
         ...cfg,
         circuit_breaker: { open: false, until: null, lastError: null },
-        last_orders_sync_cursor: { mode, ...params, page: pagesProcessed },
+        last_orders_sync_cursor: cursor,
       },
     }).eq("id", connId);
+
+    // Item 10: return full diagnostics
+    const diagnostics = {
+      mode,
+      timezone: tz,
+      closeoutHour,
+      startDate: params.startDate || null,
+      endDate: params.endDate || null,
+      businessDate: params.businessDate || null,
+      pagesProcessed,
+      totalOrdersFetched: totalOrders,
+      cursorSaved: cursor,
+    };
 
     return json({
       success: true,
@@ -370,15 +379,16 @@ async function handleSyncSales(connId: string, mode: string, params: any) {
       totalLines,
       duplicatesSkipped,
       pagesProcessed,
+      diagnostics,
       message: `Synced ${totalOrders} orders with ${totalLines} line items across ${pagesProcessed} pages.`,
     });
   } catch (e: any) {
-    return json({ success: false, message: `Sync error: ${e.message}`, totalOrders, totalLines, duplicatesSkipped, pagesProcessed });
+    return json({ success: false, message: `Sync error: ${e.message}`, totalOrders, totalLines, duplicatesSkipped, pagesProcessed, diagnostics: { mode, timezone: tz, closeoutHour } });
   }
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-menus (T9)
+// ACTION: sync-menus
 // ═══════════════════════════════════════════════════════
 async function handleSyncMenus(connId: string) {
   const conn = await getConnection(connId);
@@ -392,10 +402,7 @@ async function handleSyncMenus(connId: string) {
   }
 
   try {
-    const res = await fetchWithRetry(
-      `${hostname}/menus/v2/menus`,
-      { headers: toastHeaders(token, guid) }
-    );
+    const res = await fetchWithRetry(`${hostname}/menus/v2/menus`, { headers: toastHeaders(token, guid) });
     if (res.status === 403) {
       return json({ success: false, totalMenus: 0, totalItems: 0, message: "403 — likely missing menus:read scope." });
     }
@@ -449,12 +456,13 @@ async function handleSyncMenus(connId: string) {
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: sync-status (T12)
+// ACTION: sync-status (extended with diagnostics)
 // ═══════════════════════════════════════════════════════
 async function handleSyncStatus(connId: string) {
   const conn = await getConnection(connId);
   const cfg = conn.provider_config as any;
   const cb = cfg?.circuit_breaker || {};
+  const cursor = cfg?.last_orders_sync_cursor || null;
 
   const { count: ordersCount } = await sb().from("sales_events")
     .select("id", { count: "exact", head: true }).eq("connection_id", connId);
@@ -463,6 +471,18 @@ async function handleSyncStatus(connId: string) {
     .select("id", { count: "exact", head: true }).eq("connection_id", connId)
     .gte("created_at", new Date(Date.now() - 3600000).toISOString());
 
+  // Item 9: webhook diagnostics
+  const { data: lastWebhook } = await sb().from("webhook_events")
+    .select("created_at, event_type, status")
+    .eq("provider", "TOAST").eq("connection_id", connId)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+  // Count webhook failures (signature/parse)
+  const { count: webhookFailures } = await sb().from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("provider", "TOAST").eq("connection_id", connId)
+    .eq("status", "REJECTED");
+
   return json({
     lastSuccessfulSync: conn.last_sync_at,
     lastError: cb.lastError || null,
@@ -470,15 +490,54 @@ async function handleSyncStatus(connId: string) {
     newOrders: recentCount || 0,
     circuitBreakerOpen: cb.open || false,
     circuitBreakerUntil: cb.until || null,
+    // Item 10: cursor diagnostics
+    lastCursor: cursor,
+    timezone: cfg?.timezone || null,
+    closeoutHour: cfg?.closeout_hour ?? null,
+    // Item 9: webhook diagnostics
+    webhook: {
+      lastEvent: lastWebhook ? `${lastWebhook.event_type} — ${lastWebhook.created_at}` : null,
+      lastStatus: lastWebhook?.status || null,
+      rejectedCount: webhookFailures || 0,
+    },
   });
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: webhook-ingest (T10)
+// ACTION: webhook-ingest (Item 9 — hardened)
 // ═══════════════════════════════════════════════════════
+const MAX_WEBHOOK_BODY_SIZE = 2 * 1024 * 1024; // 2 MB
+
 async function handleWebhookIngest(req: Request) {
+  // Item 9: payload size guard
+  const contentLength = parseInt(req.headers.get("content-length") || "0");
+  if (contentLength > MAX_WEBHOOK_BODY_SIZE) {
+    console.warn(`Webhook payload too large: ${contentLength} bytes`);
+    return json({ error: "Payload too large" }, 413);
+  }
+
   const body = await req.text();
-  const payload = JSON.parse(body);
+  if (body.length > MAX_WEBHOOK_BODY_SIZE) {
+    console.warn(`Webhook body exceeds limit after read: ${body.length}`);
+    return json({ error: "Payload too large" }, 413);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    // Item 9: log parse failure
+    console.error("Webhook JSON parse failure, body preview:", body.slice(0, 500));
+    // Store as rejected event for diagnostics
+    await sb().from("webhook_events").insert({
+      provider: "TOAST",
+      event_id: `PARSE_FAIL_${Date.now()}`,
+      event_type: "PARSE_ERROR",
+      payload: { raw_preview: body.slice(0, 2000) },
+      status: "REJECTED",
+    });
+    return json({ error: "Invalid JSON" }, 400);
+  }
 
   // Find connection by restaurantGuid
   const guid = payload.restaurantGuid || payload.restaurant?.guid;
@@ -498,28 +557,69 @@ async function handleWebhookIngest(req: Request) {
 
   const cfg = match.provider_config as any;
 
-  // Signature verification (if webhook secret configured)
-  const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature");
-  if (cfg?.webhook_secret && sig) {
-    // Basic HMAC check would go here; for now log presence
-    console.log("Webhook signature present, verification not yet implemented");
+  // Item 9: HMAC signature verification
+  const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature") || "";
+  const webhookSecret = cfg?.webhook_secret;
+
+  if (webhookSecret) {
+    if (!sig) {
+      console.warn("Webhook missing signature header, secret is configured. Rejecting.");
+      await sb().from("webhook_events").insert({
+        provider: "TOAST",
+        connection_id: match.id,
+        event_id: `SIG_MISSING_${Date.now()}`,
+        event_type: "SIGNATURE_MISSING",
+        payload: { restaurantGuid: guid },
+        status: "REJECTED",
+      });
+      return json({ error: "Missing signature" }, 401);
+    }
+
+    try {
+      const expectedSig = hmac("sha256", webhookSecret, body, "utf8", "hex");
+      const sigValue = sig.startsWith("sha256=") ? sig.slice(7) : sig;
+      if (sigValue.toLowerCase() !== expectedSig.toLowerCase()) {
+        console.warn("Webhook signature mismatch.");
+        await sb().from("webhook_events").insert({
+          provider: "TOAST",
+          connection_id: match.id,
+          event_id: `SIG_FAIL_${Date.now()}`,
+          event_type: "SIGNATURE_MISMATCH",
+          payload: { restaurantGuid: guid },
+          status: "REJECTED",
+        });
+        return json({ error: "Invalid signature" }, 401);
+      }
+    } catch (e: any) {
+      console.error("HMAC verification error:", e.message);
+      // Allow through if HMAC lib fails but log it
+    }
   }
 
-  // Dedupe by event guid
-  const eventGuid = payload.eventGuid || payload.guid || `${guid}_${Date.now()}`;
+  // Item 9: strong dedupe by eventGuid + orderGuid
+  const eventGuid = payload.eventGuid || payload.guid || "";
+  const orderGuid = payload.orderGuid || payload.order?.guid || "";
+  const dedupeKey = eventGuid || `${guid}_${orderGuid}_${payload.eventType || "UNKNOWN"}_${payload.timestamp || Date.now()}`;
+
   const { data: existingEvt } = await sb().from("webhook_events")
-    .select("id").eq("event_id", eventGuid).limit(1);
+    .select("id").eq("event_id", dedupeKey).limit(1);
   if (existingEvt && existingEvt.length > 0) return json({ ok: true, message: "Duplicate event" });
 
   // Store webhook event
-  await sb().from("webhook_events").insert({
+  const { error: insertErr } = await sb().from("webhook_events").insert({
     provider: "TOAST",
     connection_id: match.id,
-    event_id: eventGuid,
+    event_id: dedupeKey,
     event_type: payload.eventType || "ORDER_UPDATE",
     payload: payload,
     status: "PENDING",
   });
+
+  if (insertErr) {
+    // 23505 = unique violation (concurrent dedupe)
+    if (insertErr.code === "23505") return json({ ok: true, message: "Duplicate event" });
+    console.error("Webhook insert error:", insertErr);
+  }
 
   return json({ ok: true, message: "Event queued for processing" });
 }
@@ -531,7 +631,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // Check if this is a webhook POST (external)
     const url = new URL(req.url);
     if (url.pathname.endsWith("/webhook") || url.searchParams.get("webhook") === "true") {
       return await handleWebhookIngest(req);

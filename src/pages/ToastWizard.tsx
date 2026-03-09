@@ -226,6 +226,19 @@ export default function ToastWizard() {
                   </div>
                 </div>
               )}
+              {/* Item 10: Polling diagnostics */}
+              {toast.salesDiagnostics && (
+                <div className="rounded border border-border/50 p-3 text-xs space-y-1">
+                  <p className="font-semibold text-foreground flex items-center gap-1.5"><BarChart3 className="h-3 w-3 text-primary" /> Sync Diagnostics</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
+                    <span>Mode:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.mode}</span>
+                    <span>Timezone:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.timezone}</span>
+                    <span>Closeout Hour:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.closeoutHour}:00</span>
+                    <span>Pages Processed:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.pagesProcessed}</span>
+                    <span>Orders Fetched:</span><span className="text-foreground font-medium">{toast.salesDiagnostics.totalOrdersFetched}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -344,7 +357,7 @@ export default function ToastWizard() {
           </div>
         );
 
-      // ── Step 8: Resilience & Status (T12) ──
+      // ── Step 8: Resilience & Status (enhanced with cursor + webhook diagnostics) ──
       case 8:
         return (
           <div className="space-y-6">
@@ -382,6 +395,35 @@ export default function ToastWizard() {
                       Last Error: {toast.syncStatus.lastError}
                     </div>
                   )}
+
+                  {/* Item 10: Last cursor diagnostics */}
+                  {(toast.syncStatus.lastCursor || toast.syncStatus.timezone) && (
+                    <div className="rounded border border-border/50 p-3 text-xs space-y-1">
+                      <p className="font-semibold text-foreground flex items-center gap-1.5"><BarChart3 className="h-3 w-3 text-primary" /> Last Sync Cursor</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
+                        {toast.syncStatus.timezone && <><span>Timezone:</span><span className="text-foreground font-medium">{toast.syncStatus.timezone}</span></>}
+                        {toast.syncStatus.closeoutHour != null && <><span>Closeout Hour:</span><span className="text-foreground font-medium">{toast.syncStatus.closeoutHour}:00</span></>}
+                        {toast.syncStatus.lastCursor && Object.entries(toast.syncStatus.lastCursor).map(([k, v]) => (
+                          v != null ? <><span key={k}>{k}:</span><span className="text-foreground font-medium">{String(v)}</span></> : null
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Item 9: Webhook diagnostics */}
+                  {toast.syncStatus.webhook && (
+                    <div className="rounded border border-border/50 p-3 text-xs space-y-1">
+                      <p className="font-semibold text-foreground flex items-center gap-1.5"><Zap className="h-3 w-3 text-primary" /> Webhook Diagnostics</p>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-muted-foreground">
+                        <span>Last Event:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.lastEvent || "None"}</span>
+                        <span>Last Status:</span><span className="text-foreground font-medium">{toast.syncStatus.webhook.lastStatus || "—"}</span>
+                        <span>Rejected (sig/parse):</span>
+                        <span className={`font-medium ${toast.syncStatus.webhook.rejectedCount > 0 ? "text-destructive" : "text-foreground"}`}>
+                          {toast.syncStatus.webhook.rejectedCount}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="rounded bg-secondary/50 p-3 text-xs text-muted-foreground space-y-1">
@@ -389,7 +431,9 @@ export default function ToastWizard() {
                 <p>• Automatic retry with exponential backoff for 429/503</p>
                 <p>• Respects Retry-After headers</p>
                 <p>• Circuit breaker pauses sync after repeated failures (5 min cooldown)</p>
-                <p>• Raw order JSON stored for debugging</p>
+                <p>• HMAC signature verification for webhooks (when secret configured)</p>
+                <p>• Payload size limit (2 MB) and parse error tracking</p>
+                <p>• Strong dedupe by eventGuid + orderGuid</p>
               </div>
             </div>
           </div>

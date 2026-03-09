@@ -42,6 +42,24 @@ export interface ToastScopeCheck {
   status: "ok" | "missing" | "unknown";
 }
 
+export interface ToastSyncDiagnostics {
+  mode: string;
+  timezone: string;
+  closeoutHour: number;
+  startDate?: string | null;
+  endDate?: string | null;
+  businessDate?: string | null;
+  pagesProcessed: number;
+  totalOrdersFetched: number;
+  cursorSaved?: Record<string, unknown>;
+}
+
+export interface ToastWebhookDiagnostics {
+  lastEvent: string | null;
+  lastStatus: string | null;
+  rejectedCount: number;
+}
+
 export interface ToastSyncStatus {
   lastSuccessfulSync: string | null;
   lastError: string | null;
@@ -49,6 +67,10 @@ export interface ToastSyncStatus {
   newOrders: number;
   circuitBreakerOpen: boolean;
   circuitBreakerUntil: string | null;
+  lastCursor?: Record<string, unknown> | null;
+  timezone?: string | null;
+  closeoutHour?: number | null;
+  webhook?: ToastWebhookDiagnostics | null;
 }
 
 export function useToastConnection() {
@@ -64,6 +86,7 @@ export function useToastConnection() {
   const [menusResult, setMenusResult] = useState<ToastMenusResult | null>(null);
   const [syncStatus, setSyncStatus] = useState<ToastSyncStatus | null>(null);
   const [webhookLastEvent, setWebhookLastEvent] = useState<string | null>(null);
+  const [salesDiagnostics, setSalesDiagnostics] = useState<ToastSyncDiagnostics | null>(null);
 
   const callProxy = useCallback(async (action: string, payload: Record<string, unknown> = {}) => {
     const { data, error } = await supabase.functions.invoke("toast-proxy", {
@@ -161,9 +184,11 @@ export function useToastConnection() {
     if (!connectionId) return;
     setSalesSyncing(true);
     setSalesResult(null);
+    setSalesDiagnostics(null);
     try {
       const res = await callProxy("sync-sales", { connection_id: connectionId, mode, ...params });
       setSalesResult(res);
+      if (res.diagnostics) setSalesDiagnostics(res.diagnostics);
       return res;
     } finally {
       setSalesSyncing(false);
@@ -209,7 +234,7 @@ export function useToastConnection() {
   return {
     connectionId, testStatus, testError,
     preflight, scopeChecks,
-    salesSyncing, salesResult,
+    salesSyncing, salesResult, salesDiagnostics,
     menusSyncing, menusResult,
     syncStatus, webhookLastEvent,
     loadExistingConnection, saveConnection, testConnection,
