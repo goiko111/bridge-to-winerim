@@ -205,7 +205,7 @@ export default function SimphonyWizard() {
     return <div className="h-4 w-4 rounded-full border-2 border-border" />;
   };
 
-  const requiredCheckIds = ["sts", "oidc", "locations", "rvc", "rvc74", "workstation"];
+  const requiredCheckIds = ["base_urls", "sts", "oidc", "locations", "rvc", "rvc74", "workstation"];
   const preflightAllPass = preflightChecks.length > 0 && preflightChecks.filter((c) => c.required !== false && requiredCheckIds.includes(c.id)).every((c) => c.status === "pass");
 
   return (
@@ -450,7 +450,7 @@ export default function SimphonyWizard() {
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Preflight Checks</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Verifying STS Gen2 connectivity, OIDC auth, locations, RVC, Option 74, and workstation.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Verifying base URLs, STS Gen2, OIDC auth, locations, RVC, Option 74, and workstation.</p>
               </div>
               {preflightRunning && (
                 <div className="flex items-center justify-center py-12">
@@ -459,35 +459,58 @@ export default function SimphonyWizard() {
                 </div>
               )}
               {!preflightRunning && preflightChecks.length > 0 && (
-                <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
-                  {preflightChecks.map((check) => (
-                    <div key={check.id} className={`flex items-start gap-3 px-4 py-3 ${check.status === "pass" ? "bg-success/5" : check.status === "fail" ? "bg-destructive/5" : "bg-card"}`}>
-                      {preflightIcon(check.status)}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">{check.label}</p>
-                        {check.detail && <p className="text-[11px] text-muted-foreground mt-0.5">{check.detail}</p>}
+                <div className="space-y-2">
+                  {preflightChecks.map((check) => {
+                    const level = check.status === "pass" ? "green" : check.status === "fail" ? "red" : "amber";
+                    const bg = level === "green" ? "bg-success/5 border-success/30" : level === "red" ? "bg-destructive/5 border-destructive/30" : "bg-warning/5 border-warning/30";
+                    const textColor = level === "green" ? "text-success" : level === "red" ? "text-destructive" : "text-warning";
+                    return (
+                      <div key={check.id} className={`flex items-start gap-3 rounded-lg border p-3 ${bg}`}>
+                        <div className="mt-0.5 shrink-0">
+                          {level === "green" && <CheckCircle2 className="h-4 w-4 text-success" />}
+                          {level === "red" && <XCircle className="h-4 w-4 text-destructive" />}
+                          {level === "amber" && <AlertTriangle className="h-4 w-4 text-warning" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-foreground">{check.label}</p>
+                            {check.required !== false && <Badge variant="outline" className="text-[9px]">Required</Badge>}
+                            <Badge className={`text-[9px] ml-auto shrink-0 ${level === "green" ? "bg-success/20 text-success border-success/30" : level === "red" ? "bg-destructive/20 text-destructive border-destructive/30" : "bg-warning/20 text-warning border-warning/30"}`} variant="outline">{check.status}</Badge>
+                          </div>
+                          {check.detail && <p className={`text-[11px] mt-0.5 ${textColor}`}>{check.detail}</p>}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {check.required !== false && <Badge variant="outline" className="text-[9px]">Required</Badge>}
-                        <Badge variant={check.status === "pass" ? "default" : check.status === "fail" ? "destructive" : "secondary"} className="text-[10px]">{check.status}</Badge>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
-              {!preflightRunning && !preflightAllPass && (
-                <div className="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs text-warning space-y-2">
-                  <div><AlertTriangle className="inline h-3.5 w-3.5 mr-1" />Some checks failed. Fix and re-run before Go Live.</div>
-                  <div className="text-[11px] space-y-1">
-                    <p className="font-medium">Common fixes:</p>
+              {!preflightRunning && preflightChecks.length > 0 && !preflightAllPass && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive space-y-2">
+                  <div className="flex items-center gap-2 font-semibold"><XCircle className="h-3.5 w-3.5" /> Required checks must be green before Go Live</div>
+                  <div className="text-[11px] space-y-1 text-destructive/80">
+                    <p className="font-medium">Failing checks:</p>
+                    {preflightChecks.filter((c) => c.required !== false && c.status !== "pass").map((c) => (
+                      <p key={c.id}>• <strong>{c.label}</strong>: {c.detail || c.status}</p>
+                    ))}
+                  </div>
+                  <div className="text-[11px] space-y-1 mt-2 text-muted-foreground">
+                    <p className="font-medium text-foreground">Common fixes:</p>
+                    <p>• <strong>Base URLs</strong>: Verify STS Host URL, OIDC URL, Org Short Name, locRef, rvcRef in step 1</p>
                     <p>• <strong>Option 74</strong>: EMC → Setup → RVC Parameters → Options → #74 Enable STS Gen2</p>
                     <p>• <strong>Workstation</strong>: EMC → Setup → Workstations → New → Type: POS API Client</p>
                     <p>• <strong>CAPS Host</strong>: Set CAPS Service Host on the POS API Client workstation</p>
                   </div>
                 </div>
               )}
+              {!preflightRunning && preflightChecks.length > 0 && preflightAllPass && (
+                <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs text-success flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4" /> All required checks passed — ready to proceed.
+                </div>
+              )}
               {!preflightRunning && (
-                <Button variant="outline" size="sm" onClick={runPreflight}>Re-run Preflight</Button>
+                <Button variant="outline" size="sm" onClick={runPreflight}>
+                  <ShieldCheck className="mr-2 h-3.5 w-3.5" /> {preflightChecks.length > 0 ? "Re-run Preflight" : "Run Preflight"}
+                </Button>
               )}
             </div>
           )}

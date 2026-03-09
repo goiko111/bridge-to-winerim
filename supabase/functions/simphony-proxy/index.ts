@@ -312,6 +312,22 @@ async function handlePreflight(conn: any) {
   const orgShortName = parts[1] || "";
   const locRefParam = parts[2] || "";
   const rvcRefParam = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+
+  // ── 0) Required base URLs present ──
+  const hostUrlVal = (conn.base_url || "").trim();
+  const oidcUrlVal = (cfg.oidc_base_url || "").trim();
+  const missingUrls: string[] = [];
+  if (!hostUrlVal) missingUrls.push("STS Gen2 Host URL");
+  if (!oidcUrlVal && !conn.api_token) missingUrls.push("OIDC Base URL (no manual token set either)");
+  if (!orgShortName) missingUrls.push("Org Short Name");
+  if (!locRefParam) missingUrls.push("Location Ref (locRef)");
+  if (!rvcRefParam) missingUrls.push("Revenue Center Ref (rvcRef)");
+  if (missingUrls.length > 0) {
+    checks.push({ id: "base_urls", label: "Required base URLs & refs", status: "fail", detail: `Missing: ${missingUrls.join(", ")}. Set these in step 1 (Connection).`, required: true });
+  } else {
+    checks.push({ id: "base_urls", label: "Required base URLs & refs", status: "pass", detail: `STS: ${hostUrlVal.slice(0, 40)}… | OIDC: ${oidcUrlVal ? oidcUrlVal.slice(0, 30) + "…" : "manual token"} | Org: ${orgShortName} | Loc: ${locRefParam} | RVC: ${rvcRefParam}`, required: true });
+  }
 
   // ── 1) STS Gen2 connectivity ──
   let stsOk = false;
