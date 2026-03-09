@@ -965,21 +965,31 @@ function StepGoLive({ connectionId, onEnable }: { connectionId: string | null; o
   };
 
   return (
-    <div className="space-y-5 text-center py-8">
-      <CheckCircle2 className="h-12 w-12 text-success mx-auto" />
-      <h2 className="text-lg font-semibold text-foreground">BDP NET Fully Connected</h2>
-      <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        Your BDP NET connection is configured with sales sync, catalog sync, and product write capabilities.
-        Enable automatic sync to start processing data.
-      </p>
-      <ProviderReadinessPanel connectionId={connectionId} provider="bdp" />
-      {connectionId && (
-        <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
-      )}
-      <Button onClick={handleEnable} disabled={enabling || enabled || !connectionId} className="mx-auto">
-        {enabling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Power className="mr-2 h-4 w-4" />}
-        {enabled ? "Sync Enabled ✓" : enabling ? "Enabling…" : "Enable Sync"}
-      </Button>
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
+        <CheckCircle2 className="h-12 w-12 text-success mx-auto" />
+        <h2 className="text-lg font-semibold text-foreground">BDP NET — Go Live</h2>
+        <p className="text-sm text-muted-foreground max-w-md mx-auto">
+          Review readiness, run the pilot validation, and enable automatic sync.
+        </p>
+      </div>
+
+      {/* Readiness checks */}
+      <BdpReadinessPanel connectionId={connectionId} />
+
+      {/* Pilot run */}
+      <BdpPilotRun connectionId={connectionId} />
+
+      {/* Enable sync */}
+      <div className="text-center space-y-3">
+        {connectionId && (
+          <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
+        )}
+        <Button onClick={handleEnable} disabled={enabling || enabled || !connectionId} className="mx-auto">
+          {enabling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Power className="mr-2 h-4 w-4" />}
+          {enabled ? "Sync Enabled ✓" : enabling ? "Enabling…" : "Enable Sync"}
+        </Button>
+      </div>
     </div>
   );
 }
