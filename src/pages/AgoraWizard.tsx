@@ -27,6 +27,7 @@ import {
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
@@ -2231,6 +2232,7 @@ function StepOutboundSync({
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
+  reassigningFamilies, onReassignFamilies,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2249,6 +2251,8 @@ function StepOutboundSync({
   onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
   fixingPrices: boolean;
   onFixMissingPrices: (winerimWineIds: string[], formatTypes?: string[]) => Promise<any>;
+  reassigningFamilies: boolean;
+  onReassignFamilies: (winerimWineIds?: string[]) => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
