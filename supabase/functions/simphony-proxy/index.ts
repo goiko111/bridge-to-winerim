@@ -380,6 +380,8 @@ async function handleOidcAcquire(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleDiscoverLocations(conn: any) {
+  // Auto-refresh token before discovery
+  try { await ensureValidToken(conn); } catch { /* proceed with current token */ }
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
 
@@ -453,6 +455,8 @@ async function handleDiscoverLocations(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handlePreflight(conn: any) {
+  // Auto-refresh token before preflight
+  try { await ensureValidToken(conn); } catch { /* preflight will detect auth failures */ }
   const checks: { id: string; label: string; status: string; detail?: string; required: boolean }[] = [];
   const parts = (conn.location_name || "").split("|");
   const orgShortName = parts[1] || "";
@@ -629,6 +633,8 @@ async function handlePreflight(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleFindDays(conn: any, daysBack: number) {
+  // Auto-refresh token before scanning
+  await ensureValidToken(conn);
   const scanDays = daysBack || 60;
   const rvcs = getSelectedRvcs(conn);
   const globalDays = new Set<string>();
