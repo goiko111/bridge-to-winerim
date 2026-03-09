@@ -596,7 +596,7 @@ export function useSimphonyConnection() {
     // Preflight
     preflightChecks, preflightRunning, runPreflight,
     // Catalog
-    catalogItems, catalogLoading, fetchCatalog,
+    catalogItems, catalogLoading, fetchCatalog, catalogDiagnostics,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
     // Post-write verification
