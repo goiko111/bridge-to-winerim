@@ -1427,6 +1427,14 @@ function StepWinerimCatalog({
     if (filterMissingReason !== "all") {
       result = result.filter(w => normalizePricingReason(w.pricing_missing_reason) === filterMissingReason);
     }
+    if (filterFormat !== "all") {
+      result = result.filter(w => {
+        if (filterFormat === "bottle") return w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0;
+        if (filterFormat === "glass") return w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0;
+        if (filterFormat === "magnum") return w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0;
+        return true;
+      });
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(w =>
@@ -1437,7 +1445,7 @@ function StepWinerimCatalog({
       );
     }
     return result;
-  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason]);
+  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason, filterFormat]);
 
   const toggleWine = (id: string) => {
     setSelectedIds(prev => {
