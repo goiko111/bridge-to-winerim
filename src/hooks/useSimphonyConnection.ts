@@ -58,14 +58,10 @@ export interface CatalogWritePreview {
   format: string;
 }
 
-export interface WriteVerificationResult {
-  success: boolean;
-  verified_exists: boolean;
-  verified_prices: boolean;
-  verified_scope: boolean;
-  errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
-  warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
-}
+import type { PostWriteVerificationResult } from "@/types/postWriteVerification";
+
+/** @deprecated Use PostWriteVerificationResult directly */
+export type WriteVerificationResult = PostWriteVerificationResult;
 
 export interface PilotStep {
   id: string;
