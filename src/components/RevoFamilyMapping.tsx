@@ -88,7 +88,7 @@ export default function RevoFamilyMapping({ connectionId }: { connectionId: stri
         name: String(c.name),
         group_id: c.group_id ? String(c.group_id) : undefined,
       }));
-      const grps = (grpResult.data?.items || []).map((g: any) => ({
+      const grps: { id: string; name: string }[] = (grpResult.data?.items || []).map((g: any) => ({
         id: String(g.id),
         name: String(g.name),
       }));
