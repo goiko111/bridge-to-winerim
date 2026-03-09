@@ -68,6 +68,22 @@ function classify(
   return { isWine: score >= 40, score, reasons };
 }
 
+// ── Format normalizer: map Revo selling format names to canonical types ──
+function normalizeFormat(rawFormat: string, name: string): string {
+  const f = (rawFormat || "").toLowerCase().trim();
+  const n = (name || "").toLowerCase();
+  // Exact / prefix matches on selling format
+  if (/^bot(\.|\b|ella)/i.test(f) || f === "bot" || f === "botella" || f === "bottle") return "BOTTLE";
+  if (/^copa/i.test(f) || f === "glass" || f === "cup") return "GLASS";
+  if (/^magn/i.test(f) || f === "magnum" || f === "mag") return "MAGNUM";
+  // Fallback: infer from product name
+  if (/\b(bot\.?|botella|bottle)\b/i.test(n) || /\b75\s?cl\b/i.test(n)) return "BOTTLE";
+  if (/\b(copa|glass|cup)\b/i.test(n)) return "GLASS";
+  if (/\b(magnum|mag\.?|150\s?cl)\b/i.test(n)) return "MAGNUM";
+  // Return raw if no match
+  return rawFormat || "";
+}
+
 // ── Fetch with rate-limit + retry on 429 ──
 async function revoFetch(
   url: string,
@@ -236,9 +252,11 @@ serve(async (req) => {
           const total = Number(item.total || item.totalAmount || price * qty);
           const vatRate = Number(item.taxPercentage || item.vatRate || 0);
           const cls = classify(name, family, price);
+          const rawFmt = String(item.sellingFormatName || item.format || "");
+          const format = normalizeFormat(rawFmt, name);
           return {
             provider_product_id: String(item.product_id || item.productId || item.id || ""),
-            name, format: String(item.sellingFormatName || item.format || ""), family,
+            name, format, family,
             quantity: qty, unit_price: price, total_amount: total,
             vat_rate: vatRate, is_wine_candidate: cls.isWine,
             wine_score: cls.score, wine_reasons: cls.reasons,
@@ -308,9 +326,11 @@ serve(async (req) => {
           const total = Number(item.total || price * qty);
           docTotal += total;
           const cls = classify(name, family, price);
+          const rawFmt = String(item.sellingFormatName || "");
+          const format = normalizeFormat(rawFmt, name);
           lineData.push({
             provider_product_id: String(item.product_id || item.productId || ""),
-            name, format: String(item.sellingFormatName || ""), family,
+            name, format, family,
             quantity: qty, unit_price: price, total_amount: total,
             vat_rate: Number(item.taxPercentage || 0),
             is_wine_candidate: cls.isWine,
@@ -383,9 +403,11 @@ serve(async (req) => {
               const price = Number(item.price || 0);
               const qty = Number(item.quantity || 1);
               const cls = classify(name, family, price);
+              const rawFmt = String(item.sellingFormatName || "");
+              const format = normalizeFormat(rawFmt, name);
               lineData.push({
                 provider_product_id: String(item.product_id || item.productId || ""),
-                name, format: String(item.sellingFormatName || ""), family,
+                name, format, family,
                 quantity: qty, unit_price: price, total_amount: Number(item.total || price * qty),
                 vat_rate: Number(item.taxPercentage || 0), is_wine_candidate: cls.isWine,
               });
