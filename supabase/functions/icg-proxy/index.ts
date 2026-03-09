@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getIcgConfig } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -216,7 +217,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  const cfg = (conn.provider_config || {}) as Record<string, any>;
+  const cfg = getIcgConfig(conn.provider_config);
   const host = (cfg.host || "").trim();
   const port = (cfg.port || "1433").trim();
   const database = (cfg.database || "FrontRest").trim();

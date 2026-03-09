@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getTouchBistroConfig } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -93,7 +94,7 @@ function classifyFormat(name: string): string | null {
 // ═══════════════════════════════════════════════════════
 async function handleTest(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
+  const cfg = getTouchBistroConfig(conn.provider_config);
   if (!cfg?.integration_mode) {
     return json({ success: false, message: "Missing integration_mode in config" });
   }
@@ -131,8 +132,8 @@ async function handleDetectReport(connId: string, filePath: string) {
 // ═══════════════════════════════════════════════════════
 async function handleImportSales(connId: string, filePaths: string[]) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const timezone = cfg?.timezone || "America/New_York";
+  const cfg = getTouchBistroConfig(conn.provider_config);
+  const timezone = cfg.timezone || "America/New_York";
   let totalEvents = 0, totalLines = 0, duplicatesSkipped = 0, rowsFailed = 0;
   const failReasons: string[] = [];
 
@@ -350,8 +351,8 @@ async function handleImportCatalog(connId: string, filePaths: string[]) {
 // ═══════════════════════════════════════════════════════
 async function handleApiDiscover(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
-  const apiCfg = cfg?.private_api;
+  const cfg = getTouchBistroConfig(conn.provider_config);
+  const apiCfg = cfg.private_api;
   if (!apiCfg?.base_url) return json({ success: false, endpoints: [], message: "No API base URL configured" });
 
   const baseUrl = apiCfg.base_url.replace(/\/+$/, "");
@@ -404,7 +405,7 @@ async function handleApiDiscover(connId: string) {
 // ═══════════════════════════════════════════════════════
 async function handleDebugBundle(connId: string) {
   const conn = await getConnection(connId);
-  const cfg = conn.provider_config as any;
+  const cfg = getTouchBistroConfig(conn.provider_config);
 
   // Sanitize: remove tokens
   const sanitizedSettings = { ...cfg };

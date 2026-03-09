@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getBdpConfig } from "@/utils/providerConfig";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import {
@@ -885,8 +886,8 @@ export default function BdpWizard() {
       if (conn) {
         setLocationName(conn.location_name || "");
         setBaseUrl(conn.base_url || "");
-        const cfg = (conn as any).provider_config || {};
-        setPort(cfg.port || "");
+        const cfg = getBdpConfig(conn.provider_config);
+        setPort(String(cfg.port || ""));
         setUserKey(cfg.user_key || "");
         setPassword(cfg.password || "");
         setExportProfileCode(cfg.export_profile_code || "");

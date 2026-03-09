@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getIcgConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, XCircle, Loader2, Database, Globe, Info,
@@ -46,15 +47,13 @@ export default function IcgWizard() {
     icg.loadExistingConnection().then((conn) => {
       if (conn) {
         setLocationName(conn.location_name || "");
-        const cfg = conn.provider_config as any;
-        if (cfg) {
-          setMode(cfg.connection_mode || "SQL_SERVER");
-          setHost(cfg.host || "");
-          setPort(cfg.port || "1433");
-          setDatabase(cfg.database || "FrontRest");
-          setUsername(cfg.db_username || "");
-          setPassword(cfg.db_password || "");
-        }
+        const cfg = getIcgConfig(conn.provider_config);
+        setMode((cfg.connection_mode as any) || "SQL_SERVER");
+        setHost(cfg.host || "");
+        setPort(cfg.port || "1433");
+        setDatabase(cfg.database || "FrontRest");
+        setUsername(cfg.db_username || "");
+        setPassword(cfg.db_password || "");
       }
     });
   }, []);

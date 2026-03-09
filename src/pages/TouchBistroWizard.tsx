@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { getTouchBistroConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, XCircle, Loader2, Upload, Download,
@@ -58,23 +59,21 @@ export default function TouchBistroWizard() {
     tb.loadExistingConnection().then((conn) => {
       if (conn) {
         setLocationName(conn.location_name || "");
-        const cfg = conn.provider_config as any;
-        if (cfg) {
-          setIntegrationMode(cfg.integration_mode === "PRIVATE_API" ? "PRIVATE_API" : "CSV_REPORTS");
-          setIngestionMethod(cfg.ingestion_method || "MANUAL_UPLOAD");
-          setTimezone(cfg.timezone || "America/New_York");
-          setBusinessDayCloseHour(cfg.business_day_close_hour ?? 4);
-          if (cfg.sftp) {
-            setSftpHost(cfg.sftp.host || "");
-            setSftpPort(cfg.sftp.port || "22");
-            setSftpUser(cfg.sftp.user || "");
-            setSftpPath(cfg.sftp.path || "/");
-          }
-          if (cfg.https) setHttpsUrl(cfg.https.url || "");
-          if (cfg.private_api) {
-            setApiBaseUrl(cfg.private_api.base_url || "");
-            setApiLocationId(cfg.private_api.location_id || "");
-          }
+        const cfg = getTouchBistroConfig(conn.provider_config);
+        setIntegrationMode(cfg.integration_mode === "PRIVATE_API" ? "PRIVATE_API" : "CSV_REPORTS");
+        setIngestionMethod(cfg.ingestion_method || "MANUAL_UPLOAD");
+        setTimezone(cfg.timezone || "America/New_York");
+        setBusinessDayCloseHour(cfg.business_day_close_hour ?? 4);
+        if (cfg.sftp) {
+          setSftpHost(cfg.sftp.host || "");
+          setSftpPort(cfg.sftp.port || "22");
+          setSftpUser(cfg.sftp.user || "");
+          setSftpPath(cfg.sftp.path || "/");
+        }
+        if (cfg.https) setHttpsUrl(cfg.https.url || "");
+        if (cfg.private_api) {
+          setApiBaseUrl(cfg.private_api.base_url || "");
+          setApiLocationId(cfg.private_api.location_id || "");
         }
       }
     });
