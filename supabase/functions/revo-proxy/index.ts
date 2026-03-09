@@ -497,10 +497,117 @@ serve(async (req) => {
       return json({ success: true, totalProducts, wineCandidates, groups: groups.length, categories: categories.length });
     }
 
+    // ── VALIDATE WRITE DEPENDENCIES ──
+    // Checks that required catalog dependencies exist before allowing a write.
+    // Returns { valid, missing[], guidance[] }
+    async function validateWriteDeps(itemData: any) {
+      const missing: { dep: string; message: string; guidance: string }[] = [];
+
+      // 1) Category must exist
+      const categoryId = itemData.category_id;
+      if (!categoryId) {
+        missing.push({
+          dep: "category_id",
+          message: "No category_id provided. Items require a category in Revo.",
+          guidance: "In Revo XEF back-office: Catálogo → Categorías. Create a category, then map it in the wizard Catalog step.",
+        });
+      } else {
+        // Verify category exists in Revo
+        try {
+          const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${categoryId}`, revoHeaders, connectionId);
+          if (!catRes.ok) {
+            missing.push({
+              dep: "category_id",
+              message: `Category ${categoryId} not found in Revo (HTTP ${catRes.status}).`,
+              guidance: "Create the category in Revo XEF back-office first, or update the category_id mapping.",
+            });
+          } else {
+            // Category exists — check it belongs to a group
+            const cat = await catRes.json();
+            const catData = cat.data || cat;
+            if (!catData.group_id) {
+              missing.push({
+                dep: "group",
+                message: `Category ${categoryId} has no parent group assigned.`,
+                guidance: "In Revo XEF: Catálogo → Grupos. Assign the category to a group so items appear in the POS menu.",
+              });
+            }
+          }
+        } catch (e: any) {
+          missing.push({
+            dep: "category_id",
+            message: `Could not verify category ${categoryId}: ${e.message}`,
+            guidance: "Check network connectivity to Revo API.",
+          });
+        }
+      }
+
+      // 2) Tax / VAT rate must be positive
+      const tax = Number(itemData.tax ?? itemData.vat_rate ?? 0);
+      if (tax <= 0) {
+        missing.push({
+          dep: "tax",
+          message: `Tax/VAT rate is ${tax}. Items need a valid VAT rate.`,
+          guidance: "Set a default_vat_rate in the wizard Settings step, or pass tax > 0 in the item payload.",
+        });
+      }
+
+      // 3) Price must be > 0
+      const price = Number(itemData.price ?? 0);
+      if (price <= 0) {
+        missing.push({
+          dep: "price",
+          message: `Price is ${price}. Items must have a price > 0 to be sellable.`,
+          guidance: "Ensure the Winerim wine has a bottle_sale_price or glass_sale_price set before pushing.",
+        });
+      }
+
+      // 4) Selling format (optional but recommended)
+      const sellingFormat = itemData.selling_format || itemData.sellingFormatName || "";
+      if (!sellingFormat) {
+        missing.push({
+          dep: "selling_format",
+          message: "No selling format specified. The item may default to the POS default format.",
+          guidance: "In Revo XEF: Catálogo → Formatos de venta. Create formats like 'Botella' or 'Copa', then pass selling_format.",
+        });
+      }
+
+      return { valid: missing.length === 0, missing };
+    }
+
+    // ── VALIDATE-WRITE-DEPS (standalone action) ──
+    if (action === "validate-write-deps") {
+      const { itemData } = reqBody;
+      if (!itemData) return json({ error: "itemData required" }, 400);
+      const result = await validateWriteDeps(itemData);
+      return json(result);
+    }
+
     // ── UPSERT ITEM (Outbound: Winerim → Revo) ──
     if (action === "upsert-item") {
-      const { itemData, taskId } = reqBody;
+      const { itemData, taskId, skipValidation } = reqBody;
       if (!itemData) return json({ error: "itemData required" }, 400);
+
+      // Pre-write dependency validation (unless explicitly skipped)
+      if (!skipValidation) {
+        const deps = await validateWriteDeps(itemData);
+        if (!deps.valid) {
+          const errorMsg = deps.missing.map((m) => `[${m.dep}] ${m.message}`).join("; ");
+          if (taskId) {
+            await supabase.from("outbound_tasks").update({
+              status: "BLOCKED",
+              blocked_reason: errorMsg,
+              last_error: `Dependency check failed: ${deps.missing.length} missing`,
+            }).eq("id", taskId);
+          }
+          return json({
+            success: false,
+            blocked: true,
+            error: "Write blocked: missing catalog dependencies",
+            missing: deps.missing,
+          });
+        }
+      }
 
       try {
         // Check if item exists (has external_id)
