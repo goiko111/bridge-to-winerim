@@ -196,6 +196,24 @@ export function useBdpConnection() {
     return data;
   };
 
+  const runDiscover = useCallback(async () => {
+    if (!connectionId) return null;
+    const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+      body: { action: "discover", connectionId },
+    });
+    if (error) return { success: false, message: error.message };
+    return data;
+  }, [connectionId]);
+
+  const verifyProductV2 = useCallback(async (productId: string) => {
+    if (!connectionId) return null;
+    const { data, error } = await supabase.functions.invoke("bdp-proxy", {
+      body: { action: "verify-product-v2", connectionId, productId },
+    });
+    if (error) return null;
+    return data;
+  }, [connectionId]);
+
   const fetchSales = useCallback(async (day: string) => {
     if (!connectionId) return;
     setLoadingSales(true); setSalesEvents([]);
@@ -319,6 +337,8 @@ export function useBdpConnection() {
     connectionId, testStatus, testError, testResult, saving,
     saveConnection, updateConnection, testConnection, testCustomEndpoint,
     loadExistingConnection, setConnectionId,
+    // Discovery
+    runDiscover,
     // Sales
     salesEvents, loadingSales, fetchSales,
     savingSales, saveResult, saveSalesToDb,
@@ -330,5 +350,6 @@ export function useBdpConnection() {
     writingProduct, writeResult, writeProduct,
     // Verify
     verifying, verifyResult, verifyProduct,
+    verifyProductV2,
   };
 }
