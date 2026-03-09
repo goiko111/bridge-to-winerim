@@ -909,16 +909,7 @@ serve(async (req) => {
               field: "category_id",
             });
           } else {
-            // Category exists — try to resolve its group
-            let groupOk = false;
-            try {
-              const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
-              if (catRes.ok) {
-                const catData = (await catRes.json()).data || (await catRes.json());
-                const parsedCat = catRes.ok ? (item._catCache || await (async () => { const c = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId); return c.ok ? ((await c.json()).data || await c.json()) : null; })()) : null;
-                // Re-fetch avoided: we already have catRes — parse once
-              } catch (_e) { /* handled below */ }
-            // Simplified: just validate category is assigned and optionally matches
+            // Category is assigned — check it optionally matches expected
             if (expectedCatId && actualCategoryId !== expectedCatId) {
               result.warnings.push({
                 code: "CATEGORY_MISMATCH",
@@ -927,6 +918,21 @@ serve(async (req) => {
                 context: { expected: expectedCatId, actual: actualCategoryId },
               });
             }
+            // Verify the category has a parent group (item is reachable in POS menu)
+            try {
+              const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
+              if (catRes.ok) {
+                const catJson = await catRes.json();
+                const catData = catJson.data || catJson;
+                if (!catData.group_id) {
+                  result.warnings.push({
+                    code: "NO_GROUP",
+                    message: `Category ${actualCategoryId} has no parent group. Item may not be visible in POS menu.`,
+                    field: "category_id",
+                  });
+                }
+              }
+            } catch (_e) { /* non-blocking */ }
             result.verified_family = true;
           }
 
