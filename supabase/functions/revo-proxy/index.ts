@@ -650,7 +650,48 @@ serve(async (req) => {
       return { valid: missing.length === 0, missing, warnings };
     }
 
-    // ── VALIDATE-WRITE-DEPS (standalone action) ──
+    // ── FETCH DIAGNOSTICS DEPS (UI diagnostics panel) ──
+    if (action === "fetch-diagnostics-deps") {
+      const { resource } = reqBody;
+      const resourceMap: Record<string, string> = {
+        groups: "catalog/groups",
+        categories: "catalog/categories",
+        taxes: "taxes",
+        sellingFormats: "catalog/sellingFormats",
+        rooms: "rooms",
+      };
+      const endpoint = resourceMap[resource];
+      if (!endpoint) return json({ error: `Unknown resource: ${resource}` }, 400);
+
+      try {
+        let all: any[] = [];
+        let page = 1;
+        let hasMore = true;
+        while (hasMore) {
+          const res = await revoFetch(`${REVO_BASE}/v2/${endpoint}?page=${page}&per_page=200`, revoHeaders, connectionId);
+          if (!res.ok) break;
+          const data = await res.json();
+          const items = Array.isArray(data) ? data : data.data || [];
+          all = all.concat(items);
+          const lastPage = (data.meta || {}).last_page || 1;
+          hasMore = page < lastPage;
+          page++;
+        }
+
+        // Normalize to a consistent shape
+        const items = all.map((item: any) => ({
+          id: String(item.id || ""),
+          name: String(item.name || ""),
+          ...(resource === "categories" ? { group_id: item.group_id || null } : {}),
+          ...(resource === "taxes" ? { percentage: Number(item.percentage || item.rate || item.value || 0) } : {}),
+        }));
+
+        return json({ success: true, resource, items, count: items.length });
+      } catch (e: any) {
+        return json({ success: false, resource, items: [], error: e.message });
+      }
+    }
+
     if (action === "validate-write-deps") {
       const { itemData } = reqBody;
       if (!itemData) return json({ error: "itemData required" }, 400);
