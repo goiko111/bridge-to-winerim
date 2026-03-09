@@ -90,6 +90,8 @@ export default function SimphonyWizard() {
     webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
     // S9
     selectedRvcs, setSelectedRvcs,
+    // RVC diagnostics
+    rvcDiagnostics, rvcDiagLoading, fetchRvcDiagnostics,
   } = useSimphonyConnection();
 
   useEffect(() => {
@@ -677,9 +679,61 @@ export default function SimphonyWizard() {
                   </div>
                 </div>
                 {selectedRvcs.length > 1 && (
-                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
-                    <Layers className="inline h-3.5 w-3.5 mr-1" />
-                    Multi-RVC: syncing across {selectedRvcs.length} revenue centers ({selectedRvcs.join(", ")})
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
+                      <Layers className="inline h-3.5 w-3.5 mr-1" />
+                      Multi-RVC: syncing across {selectedRvcs.length} revenue centers ({selectedRvcs.join(", ")})
+                    </div>
+                    <Button variant="outline" size="sm" onClick={fetchRvcDiagnostics} disabled={rvcDiagLoading}>
+                      {rvcDiagLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Layers className="mr-2 h-3.5 w-3.5" />}
+                      {rvcDiagLoading ? "Checking RVCs…" : "Check RVC Health"}
+                    </Button>
+                    {rvcDiagnostics && !rvcDiagnostics.singleRvc && rvcDiagnostics.diagnostics && (
+                      <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
+                        {rvcDiagnostics.diagnostics.map((d) => (
+                          <div key={d.rvc} className={`px-4 py-3 ${d.reachable ? "bg-card" : "bg-destructive/5"}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className={`h-2 w-2 rounded-full ${d.reachable ? "bg-success" : "bg-destructive"}`} />
+                                <span className="text-sm font-mono font-medium text-foreground">{d.rvc}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {d.reachable ? (
+                                  <Badge variant="default" className="text-[9px]">Reachable</Badge>
+                                ) : (
+                                  <Badge variant="destructive" className="text-[9px]">Unreachable</Badge>
+                                )}
+                                {typeof d.savedEvents === "number" && (
+                                  <Badge variant="secondary" className="text-[9px]">{d.savedEvents} events</Badge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px]">
+                              <span className="text-muted-foreground">Last sync</span>
+                              <span className="font-mono text-foreground">{d.cursor.synced_at ? new Date(d.cursor.synced_at).toLocaleString() : "Never"}</span>
+                              <span className="text-muted-foreground">Last business day</span>
+                              <span className="font-mono text-foreground">{d.cursor.last_business_day || "—"}</span>
+                              <span className="text-muted-foreground">Last cursor</span>
+                              <span className="font-mono text-foreground">{d.cursor.last_cursor ? d.cursor.last_cursor.slice(0, 19) : "—"}</span>
+                              <span className="text-muted-foreground">Sample checks</span>
+                              <span className="font-mono text-foreground">{d.sampleChecks}</span>
+                              {d.error && (
+                                <>
+                                  <span className="text-destructive">Error</span>
+                                  <span className="font-mono text-destructive truncate">{d.error.slice(0, 80)}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        {rvcDiagnostics.globalCursor && (
+                          <div className="px-4 py-2 bg-secondary/30 flex justify-between text-[10px]">
+                            <span className="text-muted-foreground">Global cursor</span>
+                            <span className="font-mono text-foreground">{rvcDiagnostics.globalCursor}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

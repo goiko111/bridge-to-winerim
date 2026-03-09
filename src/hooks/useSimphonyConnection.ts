@@ -147,6 +147,22 @@ export function useSimphonyConnection() {
   // S9: Multi-RVC
   const [selectedRvcs, setSelectedRvcs] = useState<string[]>([]);
 
+  // RVC diagnostics
+  const [rvcDiagnostics, setRvcDiagnostics] = useState<{
+    singleRvc: boolean;
+    rvcCount?: number;
+    diagnostics?: {
+      rvc: string; reachable: boolean; status: number | null;
+      sampleChecks: number;
+      cursor: { last_business_day: string | null; synced_at: string | null; last_cursor: string | null };
+      error?: string;
+      savedEvents?: number;
+    }[];
+    globalCursor?: string | null;
+    lastSync?: Record<string, unknown> | null;
+  } | null>(null);
+  const [rvcDiagLoading, setRvcDiagLoading] = useState(false);
+
   const saveConnection = async (data: {
     locationName: string;
     baseUrl: string;
@@ -493,6 +509,21 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Webhook status failed:", e); }
   }, [connectionId]);
 
+  // RVC diagnostics
+  const fetchRvcDiagnostics = useCallback(async () => {
+    if (!connectionId) return;
+    setRvcDiagLoading(true);
+    setRvcDiagnostics(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "rvc-diagnostics", connectionId },
+      });
+      if (error) throw error;
+      setRvcDiagnostics(data);
+    } catch (e) { console.error("RVC diagnostics failed:", e); }
+    finally { setRvcDiagLoading(false); }
+  }, [connectionId]);
+
   // Pilot
   const runPilot = useCallback(async () => {
     if (!connectionId) return;
@@ -570,5 +601,7 @@ export function useSimphonyConnection() {
     webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
     // S9: Multi-RVC
     selectedRvcs, setSelectedRvcs,
+    // RVC diagnostics
+    rvcDiagnostics, rvcDiagLoading, fetchRvcDiagnostics,
   };
 }

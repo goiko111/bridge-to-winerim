@@ -1325,56 +1325,72 @@ async function handlePilotRun(conn: any, connectionId: string) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleRvcDiagnostics(conn: any, connectionId: string) {
+  await ensureValidToken(conn);
   const rvcs = getSelectedRvcs(conn);
   if (rvcs.length <= 1) {
-    return json({ singleRvc: true, message: "Single-RVC mode — no multi-RVC diagnostics needed", rvc: rvcs[0] || "none" });
+    // Single-RVC: still return basic diagnostics
+    const rvc = rvcs[0] || "none";
+    const cfg = getSimphonyConfig(conn.provider_config);
+    const cursor = cfg.rvc_cursors?.[rvc] || {};
+    const lastSync = cfg.last_sync_diagnostics || {};
+    return json({
+      singleRvc: true, rvc,
+      cursor: { last_business_day: cursor.last_business_day || conn.last_business_day_synced || null, synced_at: cursor.synced_at || conn.last_sync_at || null, last_cursor: cursor.last_cursor || null },
+      lastSync,
+    });
   }
 
-  const cfgStatus = getSimphonyConfig(conn.provider_config);
-  const rvcCursors = cfgStatus.rvc_cursors || {};
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcCursors = cfg.rvc_cursors || {};
 
   const diagnostics: {
     rvc: string; reachable: boolean; status: number | null;
-    sampleChecks: number; cursor: { last_business_day: string | null; synced_at: string | null };
+    sampleChecks: number;
+    cursor: { last_business_day: string | null; synced_at: string | null; last_cursor: string | null };
     error?: string;
+    savedEvents?: number;
   }[] = [];
 
-  for (const rvc of rvcs) {
-    const cursor = rvcCursors[rvc] || { last_business_day: null, synced_at: null };
-    try {
-      const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=3`;
-      const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
-      if (res.ok) {
-        const body = await res.json();
-        const checks = Array.isArray(body) ? body : (body.items || body.checks || []);
-        diagnostics.push({ rvc, reachable: true, status: res.status, sampleChecks: checks.length, cursor });
-      } else {
-        const errText = await res.text();
-        diagnostics.push({ rvc, reachable: false, status: res.status, sampleChecks: 0, cursor, error: errText.slice(0, 200) });
-      }
-    } catch (e: any) {
-      diagnostics.push({ rvc, reachable: false, status: null, sampleChecks: 0, cursor, error: e.message });
-    }
-  }
-
-  // Per-RVC saved event counts from DB
   const supabaseClient = sb();
-  const perRvcDbCounts: Record<string, number> = {};
+
   for (const rvc of rvcs) {
+    const cursor = rvcCursors[rvc] || {};
+    const result = await stsFetchWithRetry(
+      `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=3`,
+      stsHeaders(conn, rvc),
+      `rvcDiag-${rvc}`,
+    );
+
+    // Count saved events for this RVC
     const { count } = await supabaseClient
       .from("sales_events")
       .select("id", { count: "exact", head: true })
       .eq("connection_id", connectionId)
       .like("provider_doc_id", `%_${rvc}`);
-    perRvcDbCounts[rvc] = count || 0;
+
+    if (result.ok) {
+      const checks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+      diagnostics.push({
+        rvc, reachable: true, status: result.status, sampleChecks: checks.length,
+        cursor: { last_business_day: cursor.last_business_day || null, synced_at: cursor.synced_at || null, last_cursor: cursor.last_cursor || null },
+        savedEvents: count || 0,
+      });
+    } else {
+      diagnostics.push({
+        rvc, reachable: false, status: result.status, sampleChecks: 0,
+        cursor: { last_business_day: cursor.last_business_day || null, synced_at: cursor.synced_at || null, last_cursor: cursor.last_cursor || null },
+        error: result.error?.slice(0, 200),
+        savedEvents: count || 0,
+      });
+    }
   }
 
   return json({
     singleRvc: false,
     rvcCount: rvcs.length,
     diagnostics,
-    savedEventsByRvc: perRvcDbCounts,
     globalCursor: conn.last_business_day_synced,
+    lastSync: cfg.last_sync_diagnostics || null,
   });
 }
 
