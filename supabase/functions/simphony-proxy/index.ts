@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getSimphonyConfig } from "../_shared/providerConfig.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -130,14 +131,14 @@ function baseUrl(conn: any) {
 
 // deno-lint-ignore no-explicit-any
 function ccBaseUrl(conn: any): string | null {
-  const cfg = conn.provider_config as Record<string, string> | null;
-  return cfg?.cc_base_url || null;
+  const cfg = getSimphonyConfig(conn.provider_config);
+  return cfg.cc_base_url || null;
 }
 
 // deno-lint-ignore no-explicit-any
 function getSelectedRvcs(conn: any): string[] {
-  const cfg = conn.provider_config as Record<string, any> | null;
-  const rvcs = cfg?.selected_rvcs;
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs;
   if (Array.isArray(rvcs) && rvcs.length > 0) return rvcs;
   const parts = (conn.location_name || "").split("|");
   return parts[3] ? [parts[3]] : [];
@@ -173,9 +174,9 @@ async function handleTest(conn: any) {
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleOidcAcquire(conn: any) {
-  const cfg = conn.provider_config as Record<string, string> | null;
-  const oidcBase = cfg?.oidc_base_url;
-  const clientId = cfg?.client_id;
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const oidcBase = cfg.oidc_base_url;
+  const clientId = cfg.client_id;
   const clientSecret = cfg?.client_secret;
 
   if (!oidcBase || !clientId || !clientSecret) {
@@ -332,8 +333,8 @@ async function handlePreflight(conn: any) {
   }
 
   // ── 2) OIDC auth success ──
-  const cfg = conn.provider_config as Record<string, string> | null;
-  const tokenExpiry = cfg?.oidc_token_expires_at;
+  const cfgAuth = getSimphonyConfig(conn.provider_config);
+  const tokenExpiry = cfgAuth.oidc_token_expires_at;
   if (stsOk) {
     checks.push({ id: "oidc", label: "OIDC authentication", status: "pass", detail: tokenExpiry ? `Token valid, expires: ${tokenExpiry}` : "Token accepted by STS Gen2", required: true });
   } else {
@@ -1041,8 +1042,8 @@ async function handleRvcDiagnostics(conn: any, connectionId: string) {
     return json({ singleRvc: true, message: "Single-RVC mode — no multi-RVC diagnostics needed", rvc: rvcs[0] || "none" });
   }
 
-  const cfg = conn.provider_config as Record<string, any> | null;
-  const rvcCursors = cfg?.rvc_cursors || {};
+  const cfgStatus = getSimphonyConfig(conn.provider_config);
+  const rvcCursors = cfgStatus.rvc_cursors || {};
 
   const diagnostics: {
     rvc: string; reachable: boolean; status: number | null;
