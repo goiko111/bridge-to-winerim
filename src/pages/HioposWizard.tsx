@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useHioposConnection, HioposIngestionMode, HioposIntegrationMode } from "@/hooks/useHioposConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = ["Connection", "Sales Import", "SFTP Pull", "Catalog Import", "Generate Export", "HiOffice", "PortalRest API", "Pricing Quality"];
 const STEP_ICONS = [Settings2, Upload, Server, Package, Download, Globe, Zap, BarChart3];
@@ -686,6 +687,8 @@ export default function HioposWizard() {
           ) : (
             <p className="text-sm text-muted-foreground">No data yet. Click "Refresh Diagnostics" to load.</p>
           )}
+
+          <ProviderReadinessPanel connectionId={hiopos.connectionId} provider="hiopos" />
 
           <div className="flex justify-between pt-4 border-t">
             <Button variant="outline" onClick={() => setStep(6)}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>

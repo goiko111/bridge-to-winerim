@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useCloverConnection, SalesEvent, SalesLineItem, DetectedFamily } from "@/hooks/useCloverConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const REGIONS = [
   { label: "Europe (EU)", base: "https://api.eu.clover.com" },
@@ -556,12 +557,14 @@ function StepGoLive({
   onEnable, enabled,
   familyOverrides, detectedFamilies,
   merchantName,
+  connectionId,
 }: {
   syncMode: string; frequency: number; backfill: number;
   salesEvents: SalesEvent[]; selectedDay: string | null;
   onEnable: () => void; enabled: boolean;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   merchantName: string | null;
+  connectionId: string | null;
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
@@ -579,6 +582,7 @@ function StepGoLive({
           Clover integration is configured{merchantName ? ` for ${merchantName}` : ""}. Enable sync to start importing orders every {frequency} minutes.
         </p>
       </div>
+      <ProviderReadinessPanel connectionId={connectionId} provider="clover" />
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Auth</span><span className="font-medium text-success">OAuth ✓</span></div>
         {merchantName && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Merchant</span><span className="font-medium text-foreground">{merchantName}</span></div>}
@@ -771,6 +775,7 @@ export default function CloverWizard() {
               enabled={enabled}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
               merchantName={merchantName}
+              connectionId={connectionId}
             />
           )}
         </motion.div>

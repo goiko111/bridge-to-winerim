@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useTouchBistroConnection, TBIntegrationMode, TBIngestionMethod, TBDetectedFile } from "@/hooks/useTouchBistroConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = [
   "Connection", "Export Guide", "Upload & Detect", "Sales Import",
@@ -549,7 +550,8 @@ export default function TouchBistroWizard() {
       // ── Step 10: Go Live ──
       case 10:
         return (
-          <div className="space-y-6">
+           <div className="space-y-6">
+            <ProviderReadinessPanel connectionId={tb.connectionId} provider="touchbistro" />
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-primary" /> Go Live Checklist

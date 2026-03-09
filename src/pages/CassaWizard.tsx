@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { useCassaConnection, CassaSalesPoint } from "@/hooks/useCassaConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -330,6 +331,7 @@ export default function CassaWizard() {
                   Enable the connection to start syncing sales and products from Cassa in Cloud automatically.
                 </p>
               </div>
+              <ProviderReadinessPanel connectionId={hook.connectionId} provider="cassa" />
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left space-y-2">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                   <span className="text-muted-foreground">Location</span>

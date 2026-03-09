@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useIcgConnection, IcgConnectionMode } from "@/hooks/useIcgConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = ["Connection Mode", "Credentials", "Test & Save", "Sales Sync", "Catalog & Write", "Go Live"];
 
@@ -491,6 +492,8 @@ export default function IcgWizard() {
         <h2 className="text-lg font-semibold text-foreground">Go Live</h2>
         <p className="text-sm text-muted-foreground mt-1">Review and enable sync.</p>
       </div>
+
+      <ProviderReadinessPanel connectionId={icg.connectionId} provider="icg" />
 
       {/* Checklist */}
       <div className="space-y-3">

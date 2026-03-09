@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToastConnection, ToastSyncMode } from "@/hooks/useToastConnection";
+import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 
 const STEPS = [
   "Connection", "Preflight", "Scopes", "Sales Sync",
@@ -398,6 +399,7 @@ export default function ToastWizard() {
       case 8:
         return (
           <div className="space-y-6">
+            <ProviderReadinessPanel connectionId={toast.connectionId} provider="toast" />
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Activity className="h-4 w-4 text-primary" /> Sync Status & Resilience
