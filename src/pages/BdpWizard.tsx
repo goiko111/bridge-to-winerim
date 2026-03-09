@@ -703,18 +703,32 @@ function StepCatalogWrite({
 }
 
 // ── Step 5: Go Live ──
-function StepGoLive({ connectionId }: { connectionId: string | null }) {
+function StepGoLive({ connectionId, onEnable }: { connectionId: string | null; onEnable: () => void }) {
+  const [enabling, setEnabling] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+
+  const handleEnable = async () => {
+    setEnabling(true);
+    await onEnable();
+    setEnabled(true);
+    setEnabling(false);
+  };
+
   return (
     <div className="space-y-5 text-center py-8">
       <CheckCircle2 className="h-12 w-12 text-success mx-auto" />
       <h2 className="text-lg font-semibold text-foreground">BDP NET Fully Connected</h2>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
         Your BDP NET connection is configured with sales sync, catalog sync, and product write capabilities.
-        Enable automatic sync or continue using manual operations.
+        Enable automatic sync to start processing data.
       </p>
       {connectionId && (
         <p className="text-xs font-mono text-muted-foreground">Connection ID: {connectionId}</p>
       )}
+      <Button onClick={handleEnable} disabled={enabling || enabled || !connectionId} className="mx-auto">
+        {enabling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Power className="mr-2 h-4 w-4" />}
+        {enabled ? "Sync Enabled ✓" : enabling ? "Enabling…" : "Enable Sync"}
+      </Button>
     </div>
   );
 }
