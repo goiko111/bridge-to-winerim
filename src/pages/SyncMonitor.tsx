@@ -101,6 +101,8 @@ export default function SyncMonitor() {
     }
   };
 
+  const getProxyName = (provider: string) => `${provider}-proxy`;
+
   const syncStockForConnection = useCallback(async (conn: Connection) => {
     if (!conn.last_business_day_synced) {
       toast({ title: "Sin ventas", description: "No hay día de ventas sincronizado aún.", variant: "destructive" });
@@ -112,7 +114,7 @@ export default function SyncMonitor() {
     }
     setSyncingStock(conn.id);
     try {
-      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+      const { data, error } = await supabase.functions.invoke(getProxyName(conn.provider), {
         body: { action: "sync-stock", connectionId: conn.id, businessDay: conn.last_business_day_synced },
       });
       if (error) throw error;
