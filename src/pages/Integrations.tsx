@@ -302,20 +302,7 @@ export default function Integrations() {
                         ? "border-border hover:border-primary/40 hover:shadow-glow cursor-pointer"
                         : "border-border/50 opacity-60"
                     }`}
-                    onClick={() => {
-                      if (c.id === "agora") navigate("/integrations/agora");
-                      if (c.id === "revo") navigate("/integrations/revo");
-                      if (c.id === "tcpos") navigate("/integrations/tcpos");
-                      if (c.id === "clover") navigate("/integrations/clover");
-                      if (c.id === "square") navigate("/integrations/square");
-                      if (c.id === "simphony") navigate("/integrations/simphony");
-                      if (c.id === "cassa") navigate("/integrations/cassa");
-                      if (c.id === "bdp") navigate("/integrations/bdp");
-                      if (c.id === "icg") navigate("/integrations/icg");
-                      if (c.id === "hiopos") navigate("/integrations/hiopos");
-                      if (c.id === "touchbistro") navigate("/integrations/touchbistro");
-                      if (c.id === "toast") navigate("/integrations/toast");
-                    }}
+                    onClick={() => isAvailable && navigate(`/integrations/${c.id}`)}
                   >
                     <div className="p-5">
                       <div className="flex items-start justify-between">
