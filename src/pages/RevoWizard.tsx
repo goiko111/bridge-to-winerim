@@ -18,6 +18,7 @@ import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisp
 import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 import RevoFamilyMapping from "@/components/RevoFamilyMapping";
 import RevoPushPanel from "@/components/RevoPushPanel";
+import RevoRepairActionsPanel from "@/components/RevoRepairActionsPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -366,6 +367,9 @@ export default function RevoWizard() {
                   To write products (Winerim → Revo), ensure the target Group/Category exist first.
                 </p>
               </div>
+
+              {/* Repair Actions for existing pushed products */}
+              <RevoRepairActionsPanel connectionId={connectionId} />
 
               {/* Pre-write dependency validation */}
               <div className="space-y-3 border-t border-border pt-4">
