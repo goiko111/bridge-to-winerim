@@ -635,6 +635,7 @@ function StepCatalogWrite({
   const [wFamily, setWFamily] = useState("");
   const [wFormat, setWFormat] = useState("");
   const [wId, setWId] = useState("");
+  const [familyOverride, setFamilyOverride] = useState("");
 
   // Verify
   const [verifyId, setVerifyId] = useState("");
