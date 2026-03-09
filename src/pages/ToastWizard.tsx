@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, ArrowRight, CheckCircle2, XCircle, Loader2,
   Settings2, ShieldCheck, Globe, Download, Utensils, Bell,
-  HelpCircle, Activity, BarChart3, Zap,
+  HelpCircle, Activity, BarChart3, Zap, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,8 @@ const STEPS = [
 ];
 const STEP_ICONS = [Settings2, ShieldCheck, ShieldCheck, Download, Globe, Utensils, Bell, HelpCircle, Activity];
 
+type HealthLevel = "green" | "amber" | "red";
+
 export default function ToastWizard() {
   const navigate = useNavigate();
   const toast = useToastConnection();
@@ -38,6 +40,8 @@ export default function ToastWizard() {
   const [closeoutHour, setCloseoutHour] = useState(4);
   const [syncMode, setSyncMode] = useState<ToastSyncMode>("DATE_RANGE");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookConfigured, setWebhookConfigured] = useState(false);
+  const [healthChecking, setHealthChecking] = useState(false);
 
   // Sync params
   const [startDate, setStartDate] = useState(() => new Date(Date.now() - 86400000).toISOString().slice(0, 10));
@@ -54,6 +58,7 @@ export default function ToastWizard() {
         setTimezone(cfg.timezone || "America/New_York");
         setCloseoutHour(cfg.closeout_hour ?? 4);
         setSyncMode(cfg.sync_mode || "DATE_RANGE");
+        setWebhookConfigured(Boolean(cfg.webhook_secret));
       }
     });
   }, []);
