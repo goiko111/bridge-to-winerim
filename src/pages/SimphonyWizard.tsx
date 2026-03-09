@@ -82,7 +82,7 @@ export default function SimphonyWizard() {
     saving, saveResult, saveSalesToDb,
     enableSync, saveFamilyRules,
     preflightChecks, preflightRunning, runPreflight,
-    catalogItems, catalogLoading, fetchCatalog,
+    catalogItems, catalogLoading, fetchCatalog, catalogDiagnostics,
     catalogWritePreview, previewCatalogWrite,
     catalogWriteResult, catalogWriting, executeCatalogWrite,
     writeVerification, verifying, verifyWrite,
