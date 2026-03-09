@@ -164,15 +164,22 @@ async function fetchWithRetry(url: string, opts: RequestInit, maxRetries = 3): P
 }
 
 // ═══════════════════════════════════════════════════════
-// ACTION: store-credentials (normalised field mapping)
+// ACTION: store-credentials (explicit typed columns)
 // ═══════════════════════════════════════════════════════
 async function handleStoreCredentials(connId: string, clientId: string, clientSecret: string) {
   const { data: existing } = await sb().from("provider_credentials")
     .select("id").eq("connection_id", connId).maybeSingle();
 
-  // merchant_id = client_id, refresh_token_enc = client_secret
+  // Use new explicit columns + legacy for backward compat
   const row = {
     connection_id: connId,
+    // Explicit Toast columns (primary)
+    toast_client_id: clientId,
+    toast_client_secret: clientSecret,
+    toast_access_token: null, // Will be set after first auth
+    toast_refresh_token: null,
+    toast_expires_at: null,
+    // Legacy columns (backward compat)
     merchant_id: clientId,
     access_token_enc: "pending",
     refresh_token_enc: clientSecret,
