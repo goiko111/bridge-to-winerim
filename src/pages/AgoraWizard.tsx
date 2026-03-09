@@ -1959,14 +1959,6 @@ function StepCapabilities({
 }) {
   useEffect(() => { onLoadCapabilities(); }, [connectionId]);
 
-  // XML Import status: 3 states based on write_mode + successful import
-  const xmlStatus: "NOT_SUPPORTED" | "SUPPORTED_NOT_VERIFIED" | "VALIDATED" =
-    writeMode !== "XML_IMPORT"
-      ? "NOT_SUPPORTED"
-      : xmlWriteCapability === "YES"
-        ? "VALIDATED"
-        : "SUPPORTED_NOT_VERIFIED";
-
   return (
     <div className="space-y-5">
       <div>
@@ -1981,24 +1973,18 @@ function StepCapabilities({
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-border bg-background p-3 space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">REST Write</p>
-            <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
+            <RestWriteBadge />
             <p className="text-[10px] text-muted-foreground mt-1">Standard REST endpoints not available on this installation.</p>
           </div>
           <div className="rounded-lg border border-border bg-background p-3 space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">XML Import Write</p>
-            {xmlStatus === "VALIDATED" ? (
-              <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Validated</Badge>
-            ) : xmlStatus === "SUPPORTED_NOT_VERIFIED" ? (
-              <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600"><HelpCircle className="mr-1 h-3 w-3" /> Supported / Not Verified</Badge>
-            ) : (
-              <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
-            )}
+            <XmlImportBadge writeMode={writeMode} canWrite={xmlWriteCapability} />
             <p className="text-[10px] text-muted-foreground mt-1">
-              {xmlStatus === "VALIDATED"
+              {writeMode === "XML_IMPORT" && xmlWriteCapability === "YES"
                 ? "XML import has been validated successfully for this connection."
-                : xmlStatus === "SUPPORTED_NOT_VERIFIED"
+                : writeMode === "XML_IMPORT"
                   ? "XML import is available. Run a manual XML import to validate before enabling auto-push."
-                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 9)."}
+                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 10)."}
             </p>
           </div>
         </div>
