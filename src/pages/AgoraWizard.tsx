@@ -2362,6 +2362,7 @@ function StepOutboundSync({
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
   reassigningFamilies, onReassignFamilies,
+  clearingQueue, onClearQueue,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2382,6 +2383,8 @@ function StepOutboundSync({
   onFixMissingPrices: (winerimWineIds: string[], formatTypes?: string[]) => Promise<any>;
   reassigningFamilies: boolean;
   onReassignFamilies: (winerimWineIds?: string[]) => Promise<any>;
+  clearingQueue: boolean;
+  onClearQueue: (statusFilter?: "FAILED" | "BLOCKED") => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
