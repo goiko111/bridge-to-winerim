@@ -2393,7 +2393,7 @@ serve(async (req) => {
           xmlSent: xml.substring(0, 3000),
           winesProcessed: wines.length,
           formatsUsed: formatTypes,
-          verification: verificationResult,
+          verification,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
