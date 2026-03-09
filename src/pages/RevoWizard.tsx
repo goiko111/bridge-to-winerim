@@ -18,6 +18,7 @@ import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisp
 import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 import RevoFamilyMapping from "@/components/RevoFamilyMapping";
 import RevoPushPanel from "@/components/RevoPushPanel";
+import RevoRepairActionsPanel from "@/components/RevoRepairActionsPanel";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
