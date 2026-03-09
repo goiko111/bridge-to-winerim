@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getHioposConfig } from "@/utils/providerConfig";
 
 export type HioposIntegrationMode = "FILES" | "PORTALREST_ORDERS_API";
 export type HioposIngestionMode = "MANUAL_UPLOAD" | "SFTP_PULL";
@@ -180,8 +181,8 @@ export function useHioposConnection() {
       .maybeSingle();
     if (error || !data) return null;
     setConnectionId(data.id);
-    const cfg = data.provider_config as any;
-    if (cfg?.use_hioffice) setHiofficeMode(true);
+    const cfg = getHioposConfig(data.provider_config);
+    if (cfg.use_hioffice) setHiofficeMode(true);
     return data;
   }, []);
 

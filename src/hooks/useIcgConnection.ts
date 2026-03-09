@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getIcgConfig } from "@/utils/providerConfig";
 
 export type IcgConnectionMode = "SQL_SERVER" | "WEB_SERVICE";
 
@@ -179,10 +180,10 @@ export function useIcgConnection() {
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (data) {
       setConnectionId(data.id);
-      const cfg = data.provider_config as any;
-      if (cfg?.connection_mode) setConnectionMode(cfg.connection_mode);
-      setWriteEnabled(cfg?.write_enabled === true);
-      setRequireApproval(cfg?.require_manual_approval !== false);
+      const cfg = getIcgConfig(data.provider_config);
+      if (cfg.connection_mode) setConnectionMode(cfg.connection_mode as IcgConnectionMode);
+      setWriteEnabled(cfg.write_enabled === true);
+      setRequireApproval(cfg.require_manual_approval !== false);
       return data;
     }
     return null;
