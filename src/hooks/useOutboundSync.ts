@@ -38,6 +38,7 @@ export function useOutboundSync(connectionId: string | null) {
   const [exporting, setExporting] = useState(false);
   const [backfillingPreparation, setBackfillingPreparation] = useState(false);
   const [fixingPrices, setFixingPrices] = useState(false);
+  const [reassigningFamilies, setReassigningFamilies] = useState(false);
   const loadCapabilities = useCallback(async () => {
     if (!connectionId) return;
     const { data } = await supabase
@@ -212,6 +213,23 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadOutboundTasks]);
 
+  const reassignFamilies = useCallback(async (winerimWineIds?: string[]) => {
+    if (!connectionId) return;
+    setReassigningFamilies(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "reassign-families", connectionId, winerimWineIds: winerimWineIds || [] },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to reassign families:", e);
+    } finally {
+      setReassigningFamilies(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   return {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
@@ -222,5 +240,6 @@ export function useOutboundSync(connectionId: string | null) {
     retryTask,
     backfillingPreparation, backfillPreparation,
     fixingPrices, fixMissingPrices,
+    reassigningFamilies, reassignFamilies,
   };
 }
