@@ -2077,52 +2077,161 @@ function StepWinerimCatalog({
           )}
 
           {/* Wine list */}
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-[500px] overflow-y-auto">
             {filteredWines.length === 0 ? (
               <div className="text-center py-8 text-sm text-muted-foreground">No wines match your filters.</div>
-            ) : filteredWines.map((w) => (
-              <label key={w.winerim_id} className="flex items-center gap-3 px-4 py-2.5 bg-card hover:bg-secondary/30 cursor-pointer transition-colors">
-                <input type="checkbox" checked={selectedIds.has(w.winerim_id)} onChange={() => toggleWine(w.winerim_id)}
-                  className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
-                    {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
-                    {w.pricing_status === "READY" ? (
-                      <Badge variant="default" className="text-[10px]">✓ READY</Badge>
-                    ) : (
-                      <>
-                        <Badge variant="outline" className="text-[10px]">{w.pricing_status || "MISSING"}</Badge>
-                        <Badge variant="outline" className="text-[10px]" title={`Reason: ${normalizePricingReason(w.pricing_missing_reason)}`}>
-                          {normalizePricingReason(w.pricing_missing_reason)}
-                        </Badge>
-                        <Badge variant="secondary" className="text-[10px]">
-                          {isRetryableReason(normalizePricingReason(w.pricing_missing_reason)) ? "Retryable" : "Non-retryable"}
-                        </Badge>
-                      </>
-                    )}
+            ) : filteredWines.map((w) => {
+              const bottleOk = w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0;
+              const glassOk = w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0;
+              const magnumOk = w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0;
+              const isReady = w.pricing_status === "READY";
+              const reason = normalizePricingReason(w.pricing_missing_reason);
+              const blockReasons: string[] = [];
+              if (!isReady) {
+                if (!bottleOk && !glassOk && !magnumOk) blockReasons.push("No valid sale price for any format");
+                else blockReasons.push(`pricing_status is "${w.pricing_status || "MISSING"}" (reason: ${reason})`);
+              }
+              if (!bottleOk) blockReasons.push("BOTTLE: bottle_sale_price missing or ≤ 0");
+              if (w.serve_by_glass && !glassOk) blockReasons.push("GLASS: serve_by_glass=true but glass_sale_price missing or ≤ 0");
+              if (!w.serve_by_glass) blockReasons.push("GLASS: serve_by_glass=false");
+
+              const isExpanded = expandedWineId === w.winerim_id;
+
+              return (
+                <div key={w.winerim_id} className="bg-card hover:bg-secondary/30 transition-colors">
+                  <div className="flex items-center gap-3 px-4 py-2.5 cursor-pointer" onClick={() => setExpandedWineId(isExpanded ? null : w.winerim_id)}>
+                    <input type="checkbox" checked={selectedIds.has(w.winerim_id)}
+                      onChange={(e) => { e.stopPropagation(); toggleWine(w.winerim_id); }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
+                        {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
+                        {isReady ? (
+                          <Badge variant="default" className="text-[10px]">✓ READY</Badge>
+                        ) : (
+                          <>
+                            <Badge variant="outline" className="text-[10px]">{w.pricing_status || "MISSING"}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{reason}</Badge>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {isRetryableReason(reason) ? "Retryable" : "Non-retryable"}
+                            </Badge>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
+                        {w.wine_type && <span className="capitalize">{w.wine_type}</span>}
+                        {w.winery && <span>{w.winery}</span>}
+                        {w.vintage && <span>{w.vintage}</span>}
+                        {w.region && <span>{w.region}</span>}
+                        {/* Format availability badges inline */}
+                        <span className={`${bottleOk ? "text-success" : "text-muted-foreground/50"}`}>🍾 {bottleOk ? "✓" : "✗"}</span>
+                        <span className={`${glassOk ? "text-success" : "text-muted-foreground/50"}`}>🍷 {glassOk ? "✓" : "✗"}</span>
+                        <span className={`${magnumOk ? "text-success" : "text-muted-foreground/50"}`}>MAG {magnumOk ? "✓" : "✗"}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-[11px]">
+                      {w.bottle_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.bottle_sale_price).toFixed(2)}</span>
+                      )}
+                      {w.glass_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.glass_sale_price).toFixed(2)}</span>
+                      )}
+                      {w.magnum_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.magnum_sale_price).toFixed(2)}</span>
+                      )}
+                      <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
-                    {w.wine_type && <span className="capitalize">{w.wine_type}</span>}
-                    {w.winery && <span>{w.winery}</span>}
-                    {w.vintage && <span>{w.vintage}</span>}
-                    {w.region && <span>{w.region}</span>}
-                  </div>
+
+                  {/* Per-wine debug panel */}
+                  {isExpanded && (
+                    <div className="px-4 pb-3 pt-0">
+                      <div className="rounded-md border border-border bg-secondary/30 p-3 space-y-2 text-xs">
+                        <p className="font-semibold text-foreground text-[11px]">Wine Debug: {w.winerim_id}</p>
+
+                        {/* Pricing status */}
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                          <span className="text-muted-foreground">pricing_status</span>
+                          <span className={`font-mono font-medium ${isReady ? "text-success" : "text-destructive"}`}>{w.pricing_status || "MISSING"}</span>
+                          <span className="text-muted-foreground">pricing_missing_reason</span>
+                          <span className="font-mono text-foreground">{w.pricing_missing_reason || "—"}</span>
+                          <span className="text-muted-foreground">is_active</span>
+                          <span className="font-mono text-foreground">{String(w.is_active)}</span>
+                          <span className="text-muted-foreground">serve_by_glass</span>
+                          <span className="font-mono text-foreground">{String(w.serve_by_glass)}</span>
+                          <span className="text-muted-foreground">wine_type</span>
+                          <span className="font-mono text-foreground">{w.wine_type || "—"}</span>
+                          <span className="text-muted-foreground">updated_at</span>
+                          <span className="font-mono text-foreground">{new Date(w.updated_at).toLocaleString()}</span>
+                        </div>
+
+                        {/* Format eligibility */}
+                        <div className="mt-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Format Eligibility</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className={`rounded border p-2 text-center ${bottleOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍾 BOTTLE</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.bottle_sale_price != null ? `€${Number(w.bottle_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${bottleOk ? "text-success" : "text-destructive"}`}>{bottleOk ? "✓ Eligible" : "✗ Blocked"}</p>
+                            </div>
+                            <div className={`rounded border p-2 text-center ${glassOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍷 GLASS</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.glass_sale_price != null ? `€${Number(w.glass_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${glassOk ? "text-success" : "text-destructive"}`}>
+                                {!w.serve_by_glass ? "✗ serve_by_glass=false" : glassOk ? "✓ Eligible" : "✗ No glass price"}
+                              </p>
+                            </div>
+                            <div className={`rounded border p-2 text-center ${magnumOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍾 MAGNUM</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.magnum_sale_price != null ? `€${Number(w.magnum_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${magnumOk ? "text-success" : "text-destructive"}`}>{magnumOk ? "✓ Eligible" : "✗ No magnum price"}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Normalized prices */}
+                        <div className="mt-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Normalized Prices</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono">
+                            <span className="text-muted-foreground">bottle_sale_price</span>
+                            <span className="text-foreground">{w.bottle_sale_price != null ? `€${Number(w.bottle_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">bottle_purchase_price</span>
+                            <span className="text-foreground">{w.bottle_purchase_price != null ? `€${Number(w.bottle_purchase_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">glass_sale_price</span>
+                            <span className="text-foreground">{w.glass_sale_price != null ? `€${Number(w.glass_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">glass_cost_price</span>
+                            <span className="text-foreground">{w.glass_cost_price != null ? `€${Number(w.glass_cost_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">magnum_sale_price</span>
+                            <span className="text-foreground">{w.magnum_sale_price != null ? `€${Number(w.magnum_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">magnum_purchase_price</span>
+                            <span className="text-foreground">{w.magnum_purchase_price != null ? `€${Number(w.magnum_purchase_price).toFixed(2)}` : "null"}</span>
+                          </div>
+                        </div>
+
+                        {/* Block reasons */}
+                        {blockReasons.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+                              {isReady ? "Format Limitations" : "Block Reasons"}
+                            </p>
+                            <ul className="space-y-0.5">
+                              {blockReasons.map((r, i) => (
+                                <li key={i} className="flex items-start gap-1.5 text-[11px] text-destructive">
+                                  <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                                  <span>{r}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-3 shrink-0 text-[11px]">
-                  {w.bottle_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg> €{Number(w.bottle_sale_price).toFixed(2)}</span>
-                  )}
-                  {w.glass_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><Wine className="h-3.5 w-3.5" /> €{Number(w.glass_sale_price).toFixed(2)}</span>
-                  )}
-                  {w.magnum_sale_price != null && (
-                    <span className="font-mono text-foreground inline-flex items-center gap-1"><svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg> €{Number(w.magnum_sale_price).toFixed(2)}<span className="text-muted-foreground ml-0.5">mag</span></span>
-                  )}
-                  {w.serve_by_glass && <Badge variant="outline" className="text-[10px]">Glass</Badge>}
-                </div>
-              </label>
-            ))}
+              );
+            })}
           </div>
 
           {/* XML Preview */}
