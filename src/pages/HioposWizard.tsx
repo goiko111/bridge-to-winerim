@@ -613,10 +613,27 @@ export default function HioposWizard() {
         </div>
       )}
 
-      {/* ═══════════ Step 7: Pricing Quality ═══════════ */}
+      {/* ═══════════ Step 7: Go Live ═══════════ */}
       {step === 7 && (
         <div className="space-y-6 rounded-xl border bg-card p-6">
-          <h2 className="text-lg font-semibold flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Pricing Quality & Diagnostics</h2>
+          <h2 className="text-lg font-semibold flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Go Live & Diagnostics</h2>
+
+          {/* Checklist */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Pre-flight Checklist</h3>
+            <div className="space-y-2">
+              {[
+                { label: "Connection saved", pass: !!hiopos.connectionId },
+                { label: "Connection tested", pass: hiopos.testStatus === "success" },
+                { label: integrationMode === "PORTALREST_ORDERS_API" ? "PortalRest API configured" : "Files integration configured", pass: !!hiopos.connectionId },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center gap-2 text-sm">
+                  {item.pass ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-muted-foreground" />}
+                  <span className={item.pass ? "text-foreground" : "text-muted-foreground"}>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <Button onClick={hiopos.loadPricingDiagnostics} disabled={hiopos.pricingLoading} variant="outline" size="sm">
             {hiopos.pricingLoading ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Loading...</> : "Refresh Diagnostics"}
@@ -672,7 +689,12 @@ export default function HioposWizard() {
 
           <div className="flex justify-between pt-4 border-t">
             <Button variant="outline" onClick={() => setStep(6)}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
-            <Button onClick={hiopos.enableSync}><CheckCircle2 className="h-4 w-4 mr-1" /> Enable Connection</Button>
+            <Button 
+              onClick={hiopos.enableSync}
+              disabled={!hiopos.connectionId || hiopos.testStatus !== "success"}
+            >
+              <CheckCircle2 className="h-4 w-4 mr-1" /> Enable Sync
+            </Button>
           </div>
         </div>
       )}
