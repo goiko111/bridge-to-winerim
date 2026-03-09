@@ -402,17 +402,20 @@ async function handlePreflight(conn: any) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: find-last-business-day (S4 — multi-RVC aware)
+// ACTION: find-last-business-day (S4 — multi-RVC aware, per-RVC diagnostics)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleFindDays(conn: any, daysBack: number) {
   const scanDays = daysBack || 60;
   const rvcs = getSelectedRvcs(conn);
-  const daysWithSales: string[] = [];
+  const globalDays = new Set<string>();
   let totalScanned = 0;
   let totalInvoicesFound = 0;
+  const perRvc: Record<string, { invoices: number; days: string[] }> = {};
 
   for (const rvc of rvcs) {
+    const rvcDays = new Set<string>();
+    let rvcInvoices = 0;
     for (let i = 0; i < scanDays; i += 7) {
       const sinceDate = new Date(Date.now() - Math.min(i + 7, scanDays) * 86400000);
       try {
@@ -421,25 +424,35 @@ async function handleFindDays(conn: any, daysBack: number) {
         if (res.ok) {
           const body = await res.json();
           const checks = Array.isArray(body) ? body : (body.items || body.checks || []);
+          rvcInvoices += checks.length;
           totalInvoicesFound += checks.length;
           for (const check of checks) {
             const openTime = check.openTime || check.closedTime || check.createdAt;
             if (openTime) {
               const day = new Date(openTime).toISOString().split("T")[0];
-              if (!daysWithSales.includes(day)) daysWithSales.push(day);
+              rvcDays.add(day);
+              globalDays.add(day);
             }
           }
         } else { await res.text(); }
       } catch { /* skip */ }
       totalScanned += Math.min(7, scanDays - i);
     }
+    perRvc[rvc] = { invoices: rvcInvoices, days: Array.from(rvcDays).sort((a, b) => b.localeCompare(a)) };
   }
-  daysWithSales.sort((a, b) => b.localeCompare(a));
-  return json({ daysWithSales: daysWithSales.slice(0, 30), totalScanned, totalInvoicesFound });
+
+  const daysWithSales = Array.from(globalDays).sort((a, b) => b.localeCompare(a));
+  return json({
+    daysWithSales: daysWithSales.slice(0, 30),
+    totalScanned,
+    totalInvoicesFound,
+    // Per-RVC diagnostics (omitted for single-RVC to keep backward compat)
+    ...(rvcs.length > 1 ? { perRvc } : {}),
+  });
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: fetch-day (S4 — multi-RVC, dedup by checkRef)
+// ACTION: fetch-day (S4 — multi-RVC, global dedup by checkId, per-RVC diagnostics)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleFetchDay(conn: any, connectionId: string, businessDay: string) {
@@ -448,11 +461,18 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
   const sinceTime = `${businessDay}T00:00:00Z`;
   const wineFamilies = await getWineFamilies(connectionId);
   const allFamilies = new Set<string>();
-  const seenDocs = new Set<string>();
+  // Global dedup: prevent same check from appearing across RVC queries
+  const seenDocIds = new Set<string>();
   // deno-lint-ignore no-explicit-any
   const salesEvents: any[] = [];
+  const perRvc: Record<string, { invoices: number; lineItems: number; wineItems: number; duplicatesSkipped: number }> = {};
 
   for (const rvc of rvcs) {
+    let rvcInvoices = 0;
+    let rvcLines = 0;
+    let rvcWine = 0;
+    let rvcDuplicates = 0;
+
     const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
     try {
       const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
@@ -465,9 +485,13 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
 
       for (const check of allChecks) {
         const docId = String(check.checkId || check.id || "");
-        const globalKey = `${docId}_${rvc}`;
-        if (seenDocs.has(globalKey)) continue;
-        seenDocs.add(globalKey);
+        // Global dedup: if this checkId was already processed from another RVC, skip
+        if (seenDocIds.has(docId)) {
+          rvcDuplicates++;
+          continue;
+        }
+        seenDocIds.add(docId);
+        rvcInvoices++;
 
         const menuItems = check.menuItems || check.detailLines || [];
         // deno-lint-ignore no-explicit-any
@@ -477,6 +501,8 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
           if (mapped.family) allFamilies.add(mapped.family);
           const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
           lines.push({ ...mapped, is_wine_candidate: wr.candidate, wine_score: wr.score, wine_reasons: wr.reasons });
+          rvcLines++;
+          if (wr.candidate) rvcWine++;
         }
         const totals = check.totals || {};
         const totalAmount = Number(totals.subtotal || totals.total || check.total || 0);
@@ -489,6 +515,8 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
         });
       }
     } catch { /* skip */ }
+
+    perRvc[rvc] = { invoices: rvcInvoices, lineItems: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates };
   }
 
   const detectedFamilies = Array.from(allFamilies).map((f) => {
@@ -498,7 +526,10 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
     return { name: f, ...suggestion, itemCount };
   });
 
-  return json({ businessDay, invoiceCount: salesEvents.length, salesEvents, detectedFamilies });
+  return json({
+    businessDay, invoiceCount: salesEvents.length, salesEvents, detectedFamilies,
+    ...(rvcs.length > 1 ? { perRvc, totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0) } : {}),
+  });
 }
 
 // ════════════════════════════════════════════════════════
