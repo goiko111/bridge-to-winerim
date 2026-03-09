@@ -133,7 +133,7 @@ export default function SyncMonitor() {
   const processOutboundForConnection = useCallback(async (conn: Connection) => {
     setProcessingOutbound(conn.id);
     try {
-      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+      const { data, error } = await supabase.functions.invoke(getProxyName(conn.provider), {
         body: { action: "process-outbound-queue", connectionId: conn.id },
       });
       if (error) throw error;
