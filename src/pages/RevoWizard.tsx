@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useRevoConnection } from "@/hooks/useRevoConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import RevoHealthPanel from "@/components/RevoHealthPanel";
 import { useOutboundSync } from "@/hooks/useOutboundSync";
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
 import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
