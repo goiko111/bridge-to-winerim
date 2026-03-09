@@ -1223,47 +1223,115 @@ async function handleRegisterWebhook(conn: any, connectionId: string) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: webhook-status (S6)
+// ACTION: webhook-status (S6 — enhanced with health diagnostics)
 // ════════════════════════════════════════════════════════
 async function handleWebhookStatus(connectionId: string) {
   const supabaseClient = sb();
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 
-  const { data: events, error } = await supabaseClient
+  // Last event received
+  const { data: lastEvents } = await supabaseClient
     .from("webhook_events")
-    .select("created_at")
+    .select("created_at, event_type, status")
     .eq("connection_id", connectionId)
     .eq("provider", "SIMPHONY")
     .order("created_at", { ascending: false })
     .limit(1);
 
-  const { count } = await supabaseClient
+  // Total count
+  const { count: totalCount } = await supabaseClient
     .from("webhook_events")
     .select("id", { count: "exact", head: true })
     .eq("connection_id", connectionId)
     .eq("provider", "SIMPHONY");
 
+  // Last successfully processed
+  const { data: lastSuccess } = await supabaseClient
+    .from("webhook_events")
+    .select("created_at, event_type, processed_at")
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "PROCESSED")
+    .order("processed_at", { ascending: false })
+    .limit(1);
+
+  // Last failure
+  const { data: lastFailure } = await supabaseClient
+    .from("webhook_events")
+    .select("created_at, event_type, status, payload")
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .in("status", ["FAILED", "ERROR"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  // Pending count
+  const { count: pendingCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "PENDING");
+
+  // Failed count
+  const { count: failedCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .in("status", ["FAILED", "ERROR"]);
+
+  // Duplicate count
+  const { count: dupeCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "DUPLICATE");
+
   return json({
     webhookStatus: {
       registered: true,
       callbackUrl: `${supabaseUrl}/functions/v1/simphony-proxy`,
-      lastEventAt: events?.[0]?.created_at || null,
-      eventCount: count || 0,
+      lastEventAt: lastEvents?.[0]?.created_at || null,
+      lastEventType: lastEvents?.[0]?.event_type || null,
+      eventCount: totalCount || 0,
+      pendingCount: pendingCount || 0,
+      failedCount: failedCount || 0,
+      duplicateCount: dupeCount || 0,
+      lastSuccessAt: lastSuccess?.[0]?.processed_at || null,
+      lastSuccessType: lastSuccess?.[0]?.event_type || null,
+      lastFailureAt: lastFailure?.[0]?.created_at || null,
+      lastFailureType: lastFailure?.[0]?.event_type || null,
+      lastFailureReason: lastFailure?.[0]?.payload ? (lastFailure[0].payload as any).error_reason || null : null,
     },
   });
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: webhook-ingest (S6 — callback handler)
+// ACTION: webhook-ingest (S6 — hardened: fast 200, dedupe, async processing)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleWebhookIngest(payload: any) {
   const supabaseClient = sb();
   const eventType = payload.eventType || payload.type || "UNKNOWN";
-  const eventId = payload.eventId || payload.id || `simphony_${Date.now()}`;
+  const eventId = payload.eventId || payload.id || `simphony_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // Store the raw event
-  await supabaseClient.from("webhook_events").insert({
+  // ── Deduplicate: check if this eventId already exists ──
+  const { data: existing } = await supabaseClient
+    .from("webhook_events")
+    .select("id")
+    .eq("event_id", eventId)
+    .eq("provider", "SIMPHONY")
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    // Already received — return fast 200 without re-processing
+    return json({ received: true, eventId, duplicate: true });
+  }
+
+  // ── Store raw event immediately for fast 200 ──
+  const { error: insertErr } = await supabaseClient.from("webhook_events").insert({
     provider: "SIMPHONY",
     event_id: eventId,
     event_type: eventType,
@@ -1271,6 +1339,87 @@ async function handleWebhookIngest(payload: any) {
     connection_id: payload.connectionId || null,
     status: "PENDING",
   });
+
+  if (insertErr) {
+    // If insert fails due to unique constraint, it's a race-condition duplicate
+    if (insertErr.code === "23505") {
+      return json({ received: true, eventId, duplicate: true });
+    }
+    console.error("Webhook insert failed:", insertErr.message);
+    return json({ received: false, error: insertErr.message }, 500);
+  }
+
+  // ── Async processing: fire-and-forget to avoid blocking the 200 ──
+  // We process inline but after sending the response would be ideal;
+  // in edge functions we process quickly and update status.
+  try {
+    const connectionId = payload.connectionId || null;
+    if (connectionId && (eventType === "CHECK_CLOSED" || eventType === "CHECK_UPDATED")) {
+      // Mark as processing
+      await supabaseClient.from("webhook_events")
+        .update({ status: "PROCESSING" })
+        .eq("event_id", eventId)
+        .eq("provider", "SIMPHONY");
+
+      // Fetch the connection to get headers
+      const { data: conn } = await supabaseClient
+        .from("pos_connections")
+        .select("*")
+        .eq("id", connectionId)
+        .single();
+
+      if (conn) {
+        // Fetch the specific check if checkId is provided
+        const checkId = payload.checkId || payload.entityId || null;
+        if (checkId) {
+          const checkUrl = `${baseUrl(conn)}/api/v1/checks/${checkId}`;
+          const checkRes = await stsFetchWithRetry(checkUrl, stsHeaders(conn), `webhook-check-${checkId}`);
+          if (checkRes.ok) {
+            // Upsert the check as a sales event (reuse idempotency key)
+            const check = checkRes.data;
+            const businessDay = check.businessDate || check.businessDay || new Date().toISOString().slice(0, 10);
+            const providerDocId = `${connectionId}_${String(check.checkNum || check.checkId || checkId)}`;
+
+            await supabaseClient.from("sales_events").upsert({
+              connection_id: connectionId,
+              provider_doc_id: providerDocId,
+              business_day: businessDay,
+              doc_type: eventType,
+              total_amount: Number(check.totalAmount || check.total || 0),
+              total_tax: Number(check.totalTax || check.tax || 0),
+              total_net: Number(check.totalNet || (check.totalAmount || 0) - (check.totalTax || 0)),
+              line_count: Array.isArray(check.detailLines || check.lineItems) ? (check.detailLines || check.lineItems).length : 0,
+              raw_json: check,
+            }, { onConflict: "connection_id,provider_doc_id" });
+          }
+        }
+
+        // Mark as processed
+        await supabaseClient.from("webhook_events")
+          .update({ status: "PROCESSED", processed_at: new Date().toISOString() })
+          .eq("event_id", eventId)
+          .eq("provider", "SIMPHONY");
+      } else {
+        await supabaseClient.from("webhook_events")
+          .update({ status: "FAILED", payload: { ...payload, error_reason: "Connection not found" } })
+          .eq("event_id", eventId)
+          .eq("provider", "SIMPHONY");
+      }
+    } else {
+      // Non-actionable event type — mark as processed (informational)
+      await supabaseClient.from("webhook_events")
+        .update({ status: "PROCESSED", processed_at: new Date().toISOString() })
+        .eq("event_id", eventId)
+        .eq("provider", "SIMPHONY");
+    }
+  } catch (e: any) {
+    // Processing failed — mark but don't fail the 200 response
+    console.error("Webhook processing error:", e.message);
+    await supabaseClient.from("webhook_events")
+      .update({ status: "FAILED", payload: { ...payload, error_reason: e.message } })
+      .eq("event_id", eventId)
+      .eq("provider", "SIMPHONY");
+  }
 
   return json({ received: true, eventId });
 }
