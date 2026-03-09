@@ -427,43 +427,97 @@ export default function SimphonyWizard() {
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Discover Locations & Revenue Centers</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Auto-discover from Organizations API to avoid manual entry errors.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Auto-discover from Organizations API to avoid manual config mistakes.</p>
               </div>
+
+              {/* Selection summary — always visible when something is selected */}
+              {(locRef || selectedRvcs.length > 0) && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-2">
+                  <p className="text-xs font-semibold text-primary flex items-center gap-1.5"><Map className="h-3.5 w-3.5" /> Current Selection</p>
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-muted-foreground">Location</span>
+                      <p className="font-mono text-foreground font-medium">
+                        {(() => {
+                          const loc = discoveredLocations.find((l) => l.locRef === locRef);
+                          return loc ? `${loc.name} (${locRef})` : locRef || "Not selected";
+                        })()}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Revenue Centers</span>
+                      {selectedRvcs.length > 0 ? (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {selectedRvcs.map((r) => {
+                            const loc = discoveredLocations.find((l) => l.locRef === locRef);
+                            const rvcInfo = loc?.revenueCenters.find((rv) => rv.rvcRef === r);
+                            return (
+                              <Badge key={r} variant="secondary" className="text-[9px] font-mono">
+                                {rvcInfo ? `${rvcInfo.name} (${r})` : r}
+                                {r === rvcRef && <span className="ml-1 text-primary">★</span>}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="font-mono text-foreground">{rvcRef || "None"}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <Button onClick={discoverLocations} disabled={discovering || !connectionId} variant="secondary" className="w-full">
                 {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Compass className="mr-2 h-4 w-4" />}
-                {discovering ? "Discovering…" : "Discover Locations"}
+                {discovering ? "Discovering…" : discoveredLocations.length > 0 ? "Re-discover Locations" : "Discover Locations"}
               </Button>
 
               {discoveredLocations.length > 0 && (
                 <div className="space-y-3">
-                  {discoveredLocations.map((loc) => (
-                    <div key={loc.locRef} className="rounded-lg border border-border overflow-hidden">
-                      <div className="px-4 py-3 bg-secondary/30 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Found <strong className="text-foreground">{discoveredLocations.length}</strong> location(s) with <strong className="text-foreground">{discoveredLocations.reduce((s, l) => s + l.revenueCenters.length, 0)}</strong> revenue center(s). Select one location and one or more RVCs.
+                  </p>
+                  {discoveredLocations.map((loc) => {
+                    const isSelectedLoc = locRef === loc.locRef;
+                    return (
+                    <div key={loc.locRef} className={`rounded-lg border overflow-hidden ${isSelectedLoc ? "border-primary/50 ring-1 ring-primary/20" : "border-border"}`}>
+                      <div className={`px-4 py-3 flex items-center justify-between ${isSelectedLoc ? "bg-primary/5" : "bg-secondary/30"}`}>
                         <div>
                           <p className="text-sm font-medium text-foreground">{loc.name}</p>
                           <p className="text-[11px] font-mono text-muted-foreground">locRef: {loc.locRef}</p>
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => setLocRef(loc.locRef)}>
-                          {locRef === loc.locRef ? <CheckCircle2 className="mr-1 h-3 w-3 text-success" /> : null}
-                          {locRef === loc.locRef ? "Selected" : "Use"}
+                        <Button size="sm" variant={isSelectedLoc ? "default" : "outline"} onClick={() => {
+                          setLocRef(loc.locRef);
+                          // Auto-select all RVCs for this location if none selected
+                          if (!isSelectedLoc && loc.revenueCenters.length > 0) {
+                            const allRvcRefs = loc.revenueCenters.map((r) => r.rvcRef);
+                            setSelectedRvcs(allRvcRefs);
+                            setRvcRef(allRvcRefs[0]);
+                          }
+                        }}>
+                          {isSelectedLoc ? <><CheckCircle2 className="mr-1 h-3 w-3" /> Selected</> : "Select Location"}
                         </Button>
                       </div>
                       {loc.revenueCenters.length > 0 && (
                         <div className="divide-y divide-border">
                           {loc.revenueCenters.map((rvc) => {
                             const isSelected = selectedRvcs.includes(rvc.rvcRef);
+                            const isPrimary = rvc.rvcRef === rvcRef;
                             return (
-                              <div key={rvc.rvcRef} className="flex items-center justify-between px-4 py-2.5 bg-card">
+                              <div key={rvc.rvcRef} className={`flex items-center justify-between px-4 py-2.5 ${isSelectedLoc ? "bg-card" : "bg-card/50 opacity-60"}`}>
                                 <div className="flex items-center gap-3">
                                   <Checkbox
                                     checked={isSelected}
+                                    disabled={!isSelectedLoc}
                                     onCheckedChange={(checked) => {
                                       if (checked) {
-                                        setSelectedRvcs([...selectedRvcs, rvc.rvcRef]);
+                                        const newRvcs = [...selectedRvcs, rvc.rvcRef];
+                                        setSelectedRvcs(newRvcs);
                                         if (!rvcRef) setRvcRef(rvc.rvcRef);
                                       } else {
-                                        setSelectedRvcs(selectedRvcs.filter((r) => r !== rvc.rvcRef));
+                                        const newRvcs = selectedRvcs.filter((r) => r !== rvc.rvcRef);
+                                        setSelectedRvcs(newRvcs);
+                                        if (rvcRef === rvc.rvcRef && newRvcs.length > 0) setRvcRef(newRvcs[0]);
                                       }
                                     }}
                                   />
@@ -472,14 +526,22 @@ export default function SimphonyWizard() {
                                     <p className="text-[11px] font-mono text-muted-foreground">rvcRef: {rvc.rvcRef}</p>
                                   </div>
                                 </div>
-                                {rvc.rvcRef === rvcRef && <Badge variant="default" className="text-[9px]">Primary</Badge>}
+                                <div className="flex items-center gap-1.5">
+                                  {isPrimary && <Badge variant="default" className="text-[9px]">Primary</Badge>}
+                                  {isSelected && !isPrimary && isSelectedLoc && (
+                                    <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[9px]" onClick={() => setRvcRef(rvc.rvcRef)}>
+                                      Set Primary
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                             );
                           })}
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
 
                   {selectedRvcs.length > 1 && (
                     <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-primary">
