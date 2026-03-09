@@ -1112,6 +1112,64 @@ serve(async (req) => {
           };
         });
 
+        // ── Field-level diagnostics ──
+        let missingPrice = 0;
+        let missingFamily = 0;
+        let missingName = 0;
+        let missingVat = 0;
+        let missingFormat = 0;
+        let missingId = 0;
+        const pricesFound: number[] = [];
+
+        for (const p of normalized) {
+          if (!p.provider_product_id) missingId++;
+          if (!p.name || p.name === "Unknown") missingName++;
+          if (!p.price || p.price <= 0) missingPrice++;
+          else pricesFound.push(p.price);
+          if (!p.family) missingFamily++;
+          if (p.vat_rate === 0 || p.vat_rate === undefined) missingVat++;
+          if (!p.sale_format) missingFormat++;
+        }
+
+        const totalProducts = normalized.length;
+        const uniqueFamilies = [...new Set(normalized.filter(p => p.family).map(p => p.family))];
+        const avgPrice = pricesFound.length > 0 ? pricesFound.reduce((a, b) => a + b, 0) / pricesFound.length : 0;
+
+        const fieldCoverage = {
+          products: totalProducts,
+          with_price: totalProducts - missingPrice,
+          with_family: totalProducts - missingFamily,
+          with_name: totalProducts - missingName,
+          with_vat: totalProducts - missingVat,
+          with_format: totalProducts - missingFormat,
+          with_id: totalProducts - missingId,
+          unique_families: uniqueFamilies.length,
+          avg_price: Math.round(avgPrice * 100) / 100,
+          min_price: pricesFound.length > 0 ? Math.min(...pricesFound) : 0,
+          max_price: pricesFound.length > 0 ? Math.max(...pricesFound) : 0,
+        };
+
+        // Build warnings for important missing fields
+        const warnings: { code: string; message: string; count: number }[] = [];
+        if (missingPrice > 0) warnings.push({ code: "MISSING_PRICE", message: `${missingPrice} producto(s) sin precio válido`, count: missingPrice });
+        if (missingFamily > 0) warnings.push({ code: "MISSING_FAMILY", message: `${missingFamily} producto(s) sin familia/categoría`, count: missingFamily });
+        if (missingVat > 0) warnings.push({ code: "MISSING_VAT", message: `${missingVat} producto(s) sin IVA definido`, count: missingVat });
+        if (missingName > 0) warnings.push({ code: "MISSING_NAME", message: `${missingName} producto(s) sin nombre`, count: missingName });
+        if (missingId > 0) warnings.push({ code: "MISSING_ID", message: `${missingId} producto(s) sin ID`, count: missingId });
+        if (families.length === 0 && uniqueFamilies.length === 0) warnings.push({ code: "NO_FAMILIES", message: "No se encontraron familias/departamentos", count: 0 });
+
+        const catalogHealth = warnings.length === 0 ? "complete" : warnings.some(w => w.code === "MISSING_PRICE" || w.code === "NO_FAMILIES") ? "incomplete" : "partial";
+
+        // Sample: first 3 products for diagnostics
+        const sampleProducts = normalized.slice(0, 3).map(p => ({
+          id: p.provider_product_id,
+          name: p.name,
+          family: p.family,
+          price: p.price,
+          vat_rate: p.vat_rate,
+          format: p.sale_format,
+        }));
+
         // Upsert into provider_products
         let upserted = 0;
         const errors: string[] = [];
@@ -1142,13 +1200,25 @@ serve(async (req) => {
           }
         }
 
+        // Persist catalog diagnostics summary
+        const catalogDiagnostics = {
+          synced_at: new Date().toISOString(),
+          field_coverage: fieldCoverage,
+          warnings,
+          catalog_health: catalogHealth,
+          sample_products: sampleProducts,
+          families_count: families.length,
+          unique_product_families: uniqueFamilies.length,
+        };
+
         // Update connection catalog metadata
         await supabase
           .from("pos_connections")
           .update({
             last_catalog_sync_at: new Date().toISOString(),
             catalog_product_count: normalized.length,
-          })
+            provider_config: { ...config, last_catalog_diagnostics: catalogDiagnostics },
+          } as any)
           .eq("id", connectionId);
 
         return ok({
@@ -1162,6 +1232,10 @@ serve(async (req) => {
           })),
           rawProductsPreview,
           errors,
+          fieldCoverage,
+          warnings,
+          catalogHealth,
+          sampleProducts,
         });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Unknown error";
