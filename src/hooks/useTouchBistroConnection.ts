@@ -287,6 +287,12 @@ export function useTouchBistroConnection() {
     }
   }, [connectionId, callProxy]);
 
+  const enableSync = useCallback(async () => {
+    if (!connectionId) return;
+    const { error } = await supabase.from("pos_connections").update({ enabled: true }).eq("id", connectionId);
+    if (error) throw error;
+  }, [connectionId]);
+
   return {
     connectionId, testStatus, testError,
     detectedFiles, uploading,
@@ -298,6 +304,6 @@ export function useTouchBistroConnection() {
     debugBundle,
     loadExistingConnection, saveConnection, testConnection,
     uploadFiles, importSales, importBillsPayments, importCatalog,
-    loadPricingDiagnostics, discoverApi, exportDebugBundle,
+    loadPricingDiagnostics, discoverApi, exportDebugBundle, enableSync,
   };
 }

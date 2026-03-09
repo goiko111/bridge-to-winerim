@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useIcgConnection, IcgConnectionMode } from "@/hooks/useIcgConnection";
 
-const STEPS = ["Connection Mode", "Credentials", "Test & Save", "Sales Sync", "Catalog & Write"];
+const STEPS = ["Connection Mode", "Credentials", "Test & Save", "Sales Sync", "Catalog & Write", "Go Live"];
 
 export default function IcgWizard() {
   const navigate = useNavigate();
@@ -484,7 +484,53 @@ export default function IcgWizard() {
     </div>
   );
 
-  const stepsContent = [stepMode, stepCredentials, stepTest, stepSales, stepCatalog];
+  /* ── Step 5: Go Live ── */
+  const stepGoLive = (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Go Live</h2>
+        <p className="text-sm text-muted-foreground mt-1">Review and enable sync.</p>
+      </div>
+
+      {/* Checklist */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold">Pre-flight Checklist</h3>
+        <div className="space-y-2">
+          {[
+            { label: "Connection saved", pass: !!icg.connectionId },
+            { label: "Connection tested", pass: icg.testStatus === "success" },
+            { label: "SQL mapping configured", pass: !!icg.sqlMapping },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-2 text-sm">
+              {item.pass ? <CheckCircle2 className="h-4 w-4 text-green-500" /> : <XCircle className="h-4 w-4 text-muted-foreground" />}
+              <span className={item.pass ? "text-foreground" : "text-muted-foreground"}>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Write mode summary */}
+      <div className="rounded-lg border p-4 space-y-2">
+        <p className="text-xs text-muted-foreground">Write mode:</p>
+        <p className="text-sm font-medium">{icg.writeEnabled ? "Enabled" : "Disabled (read-only)"}</p>
+        {icg.writeEnabled && (
+          <p className="text-xs text-muted-foreground">
+            {icg.requireApproval ? "Writes require manual approval" : "Writes execute immediately"}
+          </p>
+        )}
+      </div>
+
+      <Button
+        onClick={() => icg.enableSync()}
+        disabled={!icg.connectionId || icg.testStatus !== "success"}
+        className="w-full"
+      >
+        <CheckCircle2 className="h-4 w-4 mr-2" /> Enable Sync
+      </Button>
+    </div>
+  );
+
+  const stepsContent = [stepMode, stepCredentials, stepTest, stepSales, stepCatalog, stepGoLive];
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

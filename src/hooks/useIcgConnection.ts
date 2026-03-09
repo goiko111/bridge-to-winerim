@@ -291,6 +291,12 @@ export function useIcgConnection() {
     catch (e) { console.error("Failed to reject write:", e); }
   }, [connectionId, loadPendingWrites]);
 
+  const enableSync = useCallback(async () => {
+    if (!connectionId) return;
+    const { error } = await supabase.from("pos_connections").update({ enabled: true } as any).eq("id", connectionId);
+    if (error) throw error;
+  }, [connectionId]);
+
   return {
     connectionId, connectionMode, setConnectionMode,
     testStatus, testError, testResult,
@@ -310,6 +316,6 @@ export function useIcgConnection() {
     writeEnabled, requireApproval, updateWriteSettings,
     writeResult, writingPrice, writePrice,
     pendingWrites, loadingPending, loadPendingWrites,
-    approveWrite, rejectWrite,
+    approveWrite, rejectWrite, enableSync,
   };
 }

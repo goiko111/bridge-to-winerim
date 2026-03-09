@@ -87,6 +87,7 @@ const connectors: Connector[] = [
     logo: "B",
     status: "disconnected",
     country: "España",
+    maturity: "beta",
   },
   // Italia
   {
@@ -104,6 +105,7 @@ const connectors: Connector[] = [
     logo: "C",
     status: "disconnected",
     country: "Italia",
+    maturity: "beta",
   },
   {
     id: "scloby",
@@ -128,6 +130,7 @@ const connectors: Connector[] = [
     logo: "K",
     status: "disconnected",
     country: "Italia",
+    maturity: "beta",
   },
   // México
   {
@@ -171,6 +174,7 @@ const connectors: Connector[] = [
     logo: "C",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "square",
@@ -179,6 +183,7 @@ const connectors: Connector[] = [
     logo: "S",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
   {
     id: "lightspeed",
@@ -221,6 +226,7 @@ const connectors: Connector[] = [
     logo: "O",
     status: "disconnected",
     country: "USA",
+    maturity: "pilot",
   },
 ];
 
