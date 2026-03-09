@@ -71,6 +71,17 @@ export interface BdpCatalogResult {
   sampleProducts?: { id: string; name: string; family: string | null; price: number; vat_rate: number; format: string | null }[];
 }
 
+export interface BdpWriteVerification {
+  success: boolean;
+  verified_exists: boolean;
+  verified_prices: boolean;
+  verified_family: boolean;
+  verified_tax: boolean;
+  verified_scope: boolean;
+  errors: { code: string; message: string; field?: string; context?: any }[];
+  warnings: { code: string; message: string; field?: string; context?: any }[];
+}
+
 export interface BdpWriteResult {
   success: boolean;
   method?: string;
@@ -78,6 +89,7 @@ export interface BdpWriteResult {
   bodyPreview?: string;
   product?: any;
   message?: string;
+  verification?: BdpWriteVerification | null;
 }
 
 export interface BdpVerifyResult {
