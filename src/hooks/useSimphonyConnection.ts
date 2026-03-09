@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getSimphonyConfig } from "@/utils/providerConfig";
 
 export interface SalesLineItem {
   provider_product_id: string;
@@ -484,8 +485,8 @@ export function useSimphonyConnection() {
     const { data, error } = await supabase.from("pos_connections").select("*").eq("id", id).single();
     if (error || !data) return null;
     setConnectionId(data.id);
-    const cfg = data.provider_config as Record<string, any> | null;
-    if (cfg?.selected_rvcs) setSelectedRvcs(cfg.selected_rvcs);
+    const cfg = getSimphonyConfig(data.provider_config);
+    if (cfg.selected_rvcs) setSelectedRvcs(cfg.selected_rvcs);
     return data;
   }, []);
 
