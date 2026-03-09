@@ -1446,12 +1446,18 @@ function StepWinerimCatalog({
   const selectAll = () => setSelectedIds(new Set(filteredWines.map(w => w.winerim_id)));
   const clearSelection = () => setSelectedIds(new Set());
 
+  // Status tab filter
+  const [statusTab, setStatusTab] = useState<"ALL" | "READY" | "MISSING" | "RETRYING" | "FAILED" | "BY_REASON">("ALL");
+
   const pricingStats = useMemo(() => {
     const byStatus: Record<string, number> = {};
     const byReason = Object.fromEntries(PRICING_REASON_ORDER.map((reason) => [reason, 0])) as Record<PricingMissingReason, number>;
     let nonReadyTotal = 0;
     let retryable = 0;
     let nonRetryable = 0;
+    let withBottle = 0;
+    let withGlass = 0;
+    let withMagnum = 0;
 
     for (const w of wines) {
       const st = w.pricing_status || "MISSING";
@@ -1462,10 +1468,40 @@ function StepWinerimCatalog({
         byReason[reason] = (byReason[reason] || 0) + 1;
         if (isRetryableReason(reason)) retryable += 1;
         else nonRetryable += 1;
+      } else {
+        // Count variants for READY wines
+        if (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) withBottle += 1;
+        if (w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0) withGlass += 1;
+        if (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0) withMagnum += 1;
       }
     }
 
-    return { byStatus, byReason, nonReadyTotal, retryable, nonRetryable };
+    return { byStatus, byReason, nonReadyTotal, retryable, nonRetryable, withBottle, withGlass, withMagnum };
+  }, [wines]);
+
+  // Group wines by pricing_status
+  const winesByStatus = useMemo(() => {
+    const groups: Record<string, WinerimCatalogWine[]> = { READY: [], MISSING: [], RETRYING: [], FAILED: [] };
+    for (const w of wines) {
+      const st = w.pricing_status || "MISSING";
+      if (!groups[st]) groups[st] = [];
+      groups[st].push(w);
+    }
+    return groups;
+  }, [wines]);
+
+  // Group wines by missing_reason (only non-READY)
+  const winesByReason = useMemo(() => {
+    const groups: Record<PricingMissingReason, WinerimCatalogWine[]> = Object.fromEntries(
+      PRICING_REASON_ORDER.map((r) => [r, []])
+    ) as Record<PricingMissingReason, WinerimCatalogWine[]>;
+    for (const w of wines) {
+      if ((w.pricing_status || "MISSING") !== "READY") {
+        const reason = normalizePricingReason(w.pricing_missing_reason);
+        groups[reason].push(w);
+      }
+    }
+    return groups;
   }, [wines]);
 
   const enrichMissingPrices = async () => {
