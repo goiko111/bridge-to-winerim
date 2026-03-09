@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import {
   useBdpConnection, BdpTestResult, BdpSalesEvent,
-  BdpCatalogResult, BdpWriteResult, BdpVerifyResult,
+  BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
 
 const steps = [
