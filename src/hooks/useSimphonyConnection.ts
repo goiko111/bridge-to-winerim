@@ -509,6 +509,21 @@ export function useSimphonyConnection() {
     } catch (e) { console.error("Webhook status failed:", e); }
   }, [connectionId]);
 
+  // RVC diagnostics
+  const fetchRvcDiagnostics = useCallback(async () => {
+    if (!connectionId) return;
+    setRvcDiagLoading(true);
+    setRvcDiagnostics(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("simphony-proxy", {
+        body: { action: "rvc-diagnostics", connectionId },
+      });
+      if (error) throw error;
+      setRvcDiagnostics(data);
+    } catch (e) { console.error("RVC diagnostics failed:", e); }
+    finally { setRvcDiagLoading(false); }
+  }, [connectionId]);
+
   // Pilot
   const runPilot = useCallback(async () => {
     if (!connectionId) return;
