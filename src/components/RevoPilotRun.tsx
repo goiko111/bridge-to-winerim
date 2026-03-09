@@ -410,10 +410,10 @@ export default function RevoPilotRun({
       )}
 
       {anyFailed && !running && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+          <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
           <div>
-            <p className="text-xs font-semibold text-amber-600">Pilot Incomplete</p>
+            <p className="text-xs font-semibold text-warning">Pilot Incomplete</p>
             <p className="text-[10px] text-muted-foreground">
               Fix the failed step and retry. The pilot is non-destructive.
             </p>

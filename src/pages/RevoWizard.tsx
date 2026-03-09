@@ -20,6 +20,7 @@ import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 import RevoFamilyMapping from "@/components/RevoFamilyMapping";
 import RevoPushPanel from "@/components/RevoPushPanel";
 import RevoRepairActionsPanel from "@/components/RevoRepairActionsPanel";
+import RevoPilotRun from "@/components/RevoPilotRun";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
