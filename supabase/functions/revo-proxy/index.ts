@@ -760,21 +760,22 @@ serve(async (req) => {
         const result = await res.json();
         const newId = String(result.id || result.data?.id || revoItemId || "");
 
-        // ── Auto post-write verification ──
+        // ── Auto post-write verification with price-context checks ──
         let verification = null;
         try {
           const vItemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${newId}`, revoHeaders, connectionId);
           if (vItemRes.ok) {
             const vItem = await vItemRes.json();
             const vData = vItem.data || vItem;
-            const vPrice = Number(vData.price || vData.sellingPrice || 0);
             const vTax = Number(vData.tax || vData.taxPercentage || 0);
             const vCat = String(vData.category_id || vData.categoryId || "");
             const vFmt = String(vData.sellingFormatName || vData.format || "");
             const vErrors: any[] = [];
             const vWarnings: any[] = [];
 
-            if (vPrice <= 0) vErrors.push({ code: "PRICE_ZERO", message: `Price is ${vPrice}`, field: "price" });
+            // Price context verification (base + formats + price lists)
+            const priceCheck = await verifyPriceContexts(newId, vData, vErrors, vWarnings);
+
             if (vTax <= 0) vErrors.push({ code: "TAX_MISSING", message: `Tax is ${vTax}%`, field: "tax" });
             if (!vCat) vErrors.push({ code: "NO_CATEGORY", message: "No category assigned", field: "category_id" });
             if (itemData.selling_format && !vFmt) vWarnings.push({ code: "FORMAT_MISSING", message: "No selling format", field: "selling_format" });
@@ -782,10 +783,11 @@ serve(async (req) => {
             verification = {
               success: vErrors.length === 0,
               verified_exists: true,
-              verified_prices: vPrice > 0,
+              verified_prices: priceCheck.verified,
               verified_family: !!vCat,
               verified_tax: vTax > 0,
               verified_scope: true,
+              price_contexts: priceCheck.contexts,
               errors: vErrors,
               warnings: vWarnings,
             };
