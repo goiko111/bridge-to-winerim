@@ -1991,6 +1991,16 @@ function StepWinerimCatalog({
                 <option key={reason} value={reason}>{reason}</option>
               ))}
             </select>
+            <select
+              value={filterFormat}
+              onChange={(e) => setFilterFormat(e.target.value as "all" | "bottle" | "glass" | "magnum")}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All formats</option>
+              <option value="bottle">🍾 Bottle available</option>
+              <option value="glass">🍷 Glass available</option>
+              <option value="magnum">🍾 Magnum available</option>
+            </select>
           </div>
 
           {/* PriceList coverage info */}
