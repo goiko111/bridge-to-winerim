@@ -62,6 +62,25 @@ export interface BdpVerifyResult {
   raw?: any;
 }
 
+export interface BdpDiscoveryEndpoint {
+  ok: boolean;
+  status: number;
+  critical: boolean;
+  role: string;
+  label: string;
+  path: string;
+  bodyPreview?: string;
+  attempts: number;
+  lastError?: string;
+}
+
+export interface BdpDiscoveryResult {
+  success: boolean;
+  endpoints: Record<string, BdpDiscoveryEndpoint>;
+  discoveredRoutes: Record<string, { path: string; status: number; verified_at: string }>;
+  capabilities: { canReadSales: boolean; canReadCatalog: boolean; canWrite: boolean; writeMode: string };
+}
+
 export function useBdpConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
