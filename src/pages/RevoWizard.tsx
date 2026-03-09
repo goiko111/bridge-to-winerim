@@ -15,6 +15,7 @@ import { useRevoConnection } from "@/hooks/useRevoConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import { useOutboundSync } from "@/hooks/useOutboundSync";
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
+import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
