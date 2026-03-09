@@ -2507,13 +2507,14 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // ── UNIFIED POST-IMPORT VERIFICATION (queue task) ──
+        // ── UNIFIED POST-IMPORT VERIFICATION (shared contract + provider extras) ──
         const taskVerification = {
           success: true,
           verified_exists: true,
           verified_prices: true,
-          verified_family: true,
-          verified_preparation: true,
+          verified_scope: true, // shared contract field
+          verified_family: true, // provider-specific
+          verified_preparation: true, // provider-specific
           errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
           warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
         };
