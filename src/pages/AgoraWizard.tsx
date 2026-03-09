@@ -2542,6 +2542,57 @@ function StepOutboundSync({
         <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
         </Button>
+
+        {/* Clear Queue buttons */}
+        {outboundTasks.some(t => t.status === "FAILED" || t.status === "BLOCKED") && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={clearingQueue} className="text-amber-600 border-amber-300 hover:bg-amber-50">
+                {clearingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+                Clear Failed/Blocked ({outboundTasks.filter(t => t.status === "FAILED" || t.status === "BLOCKED").length})
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear failed & blocked tasks?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete {outboundTasks.filter(t => t.status === "FAILED" || t.status === "BLOCKED").length} tasks with status FAILED or BLOCKED. Success and queued tasks will not be affected.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={async () => {
+                  const res = await onClearQueue("FAILED");
+                  if (res?.success) toast({ title: "Failed/blocked tasks cleared" });
+                }}>Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" disabled={clearingQueue || outboundTasks.length === 0} className="text-destructive border-destructive/30 hover:bg-destructive/5">
+              {clearingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+              Clear All ({outboundTasks.length})
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear entire queue?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete ALL {outboundTasks.length} outbound tasks for this connection, including successful ones. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={async () => {
+                const res = await onClearQueue();
+                if (res?.success) toast({ title: "All tasks cleared" });
+              }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete All</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <Button variant="ghost" size="sm"
           onClick={async () => {
             if (!connectionId) return;
@@ -3983,7 +4034,9 @@ export default function AgoraWizard() {
               fixingPrices={outbound.fixingPrices}
               onFixMissingPrices={outbound.fixMissingPrices}
               reassigningFamilies={outbound.reassigningFamilies}
-              onReassignFamilies={outbound.reassignFamilies} />
+              onReassignFamilies={outbound.reassignFamilies}
+              clearingQueue={outbound.clearingQueue}
+              onClearQueue={outbound.clearQueue} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
