@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { PostWriteVerificationResult } from "@/types/postWriteVerification";
 import { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface BdpTestResult {
   success: boolean;
