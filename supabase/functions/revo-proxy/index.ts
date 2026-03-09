@@ -498,12 +498,13 @@ serve(async (req) => {
     }
 
     // ── VALIDATE WRITE DEPENDENCIES ──
-    // Checks that required catalog dependencies exist before allowing a write.
-    // Returns { valid, missing[], guidance[] }
+    // Checks that required catalog dependencies exist in Revo before allowing a write.
+    // Returns { valid, missing[], warnings[] }
     async function validateWriteDeps(itemData: any) {
       const missing: { dep: string; message: string; guidance: string }[] = [];
+      const warnings: { dep: string; message: string; guidance: string }[] = [];
 
-      // 1) Category must exist
+      // 1) Category must exist and belong to a group
       const categoryId = itemData.category_id;
       if (!categoryId) {
         missing.push({
@@ -512,7 +513,6 @@ serve(async (req) => {
           guidance: "In Revo XEF back-office: Catálogo → Categorías. Create a category, then map it in the wizard Catalog step.",
         });
       } else {
-        // Verify category exists in Revo
         try {
           const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${categoryId}`, revoHeaders, connectionId);
           if (!catRes.ok) {
@@ -522,15 +522,32 @@ serve(async (req) => {
               guidance: "Create the category in Revo XEF back-office first, or update the category_id mapping.",
             });
           } else {
-            // Category exists — check it belongs to a group
-            const cat = await catRes.json();
-            const catData = cat.data || cat;
+            const catJson = await catRes.json();
+            const catData = catJson.data || catJson;
             if (!catData.group_id) {
               missing.push({
                 dep: "group",
-                message: `Category ${categoryId} has no parent group assigned.`,
-                guidance: "In Revo XEF: Catálogo → Grupos. Assign the category to a group so items appear in the POS menu.",
+                message: `Category ${categoryId} has no parent group assigned. The item will not appear in any POS menu.`,
+                guidance: "In Revo XEF: Catálogo → Grupos. Assign the category to a group so items are reachable.",
               });
+            } else {
+              // Verify the group itself exists
+              try {
+                const grpRes = await revoFetch(`${REVO_BASE}/v2/catalog/groups/${catData.group_id}`, revoHeaders, connectionId);
+                if (!grpRes.ok) {
+                  missing.push({
+                    dep: "group",
+                    message: `Group ${catData.group_id} (parent of category ${categoryId}) not found (HTTP ${grpRes.status}).`,
+                    guidance: "The category references a deleted group. Reassign it in Revo XEF: Catálogo → Grupos.",
+                  });
+                }
+              } catch (_e) {
+                warnings.push({
+                  dep: "group",
+                  message: `Could not verify group ${catData.group_id}: network error.`,
+                  guidance: "Non-blocking. The group may still exist.",
+                });
+              }
             }
           }
         } catch (e: any) {
@@ -542,14 +559,32 @@ serve(async (req) => {
         }
       }
 
-      // 2) Tax / VAT rate must be positive
+      // 2) Tax / VAT – must be > 0 and validated against Revo tax list
       const tax = Number(itemData.tax ?? itemData.vat_rate ?? 0);
       if (tax <= 0) {
         missing.push({
           dep: "tax",
-          message: `Tax/VAT rate is ${tax}. Items need a valid VAT rate.`,
+          message: `Tax/VAT rate is ${tax}. Items need a valid VAT rate for invoicing.`,
           guidance: "Set a default_vat_rate in the wizard Settings step, or pass tax > 0 in the item payload.",
         });
+      } else {
+        // Verify the tax value exists in Revo's tax configuration
+        try {
+          const taxRes = await revoFetch(`${REVO_BASE}/v2/taxes`, revoHeaders, connectionId);
+          if (taxRes.ok) {
+            const taxJson = await taxRes.json();
+            const taxes = Array.isArray(taxJson) ? taxJson : taxJson.data || [];
+            const taxValues = taxes.map((t: any) => Number(t.percentage || t.rate || t.value || 0));
+            if (taxValues.length > 0 && !taxValues.some((v: number) => Math.abs(v - tax) < 0.5)) {
+              missing.push({
+                dep: "tax",
+                message: `Tax rate ${tax}% does not match any configured Revo tax (available: ${taxValues.join(", ")}%).`,
+                guidance: "In Revo XEF: Configuración → Impuestos. Add the tax rate or use one of the existing ones.",
+              });
+            }
+          }
+          // If endpoint not available, skip (non-blocking)
+        } catch (_e) { /* non-blocking */ }
       }
 
       // 3) Price must be > 0
@@ -562,17 +597,57 @@ serve(async (req) => {
         });
       }
 
-      // 4) Selling format (optional but recommended)
+      // 4) Selling format – validate against Revo's selling formats if provided
       const sellingFormat = itemData.selling_format || itemData.sellingFormatName || "";
       if (!sellingFormat) {
-        missing.push({
+        warnings.push({
           dep: "selling_format",
-          message: "No selling format specified. The item may default to the POS default format.",
+          message: "No selling format specified. The item will use the POS default format.",
           guidance: "In Revo XEF: Catálogo → Formatos de venta. Create formats like 'Botella' or 'Copa', then pass selling_format.",
         });
+      } else {
+        // Verify the format exists
+        try {
+          const fmtRes = await revoFetch(`${REVO_BASE}/v2/catalog/sellingFormats`, revoHeaders, connectionId);
+          if (fmtRes.ok) {
+            const fmtJson = await fmtRes.json();
+            const formats = Array.isArray(fmtJson) ? fmtJson : fmtJson.data || [];
+            const fmtNames = formats.map((f: any) => String(f.name || "").toLowerCase());
+            if (fmtNames.length > 0 && !fmtNames.includes(sellingFormat.toLowerCase())) {
+              missing.push({
+                dep: "selling_format",
+                message: `Selling format "${sellingFormat}" not found in Revo (available: ${formats.map((f: any) => f.name).join(", ")}).`,
+                guidance: "Create this format in Revo XEF: Catálogo → Formatos de venta, or use an existing one.",
+              });
+            }
+          }
+        } catch (_e) { /* non-blocking */ }
       }
 
-      return { valid: missing.length === 0, missing };
+      // 5) Room/location reference (if provided)
+      const roomId = itemData.room_id || itemData.roomId || "";
+      if (roomId) {
+        try {
+          const roomRes = await revoFetch(`${REVO_BASE}/v2/rooms/${roomId}`, revoHeaders, connectionId);
+          if (!roomRes.ok) {
+            missing.push({
+              dep: "room_id",
+              message: `Room ${roomId} not found in Revo (HTTP ${roomRes.status}).`,
+              guidance: "In Revo XEF: Configuración → Salas. Verify the room exists or remove room_id from payload.",
+            });
+          }
+        } catch (_e) {
+          warnings.push({
+            dep: "room_id",
+            message: `Could not verify room ${roomId}: network error.`,
+            guidance: "Non-blocking. The room reference will be sent as-is.",
+          });
+        }
+      }
+
+      // Combine: missing = hard blocks, warnings = soft issues
+      // A write is only valid if there are zero missing deps
+      return { valid: missing.length === 0, missing, warnings };
     }
 
     // ── VALIDATE-WRITE-DEPS (standalone action) ──
