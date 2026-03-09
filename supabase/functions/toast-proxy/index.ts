@@ -582,7 +582,7 @@ interface WebhookDiagnostics {
 async function updateWebhookDiagnostics(connId: string, updates: Partial<WebhookDiagnostics>) {
   const { data: conn } = await sb().from("pos_connections").select("provider_config").eq("id", connId).single();
   if (!conn) return;
-  const cfg = conn.provider_config as any || {};
+  const cfg = getToastConfig(conn.provider_config);
   const diag = { ...(cfg.webhook_diagnostics || {}), ...updates };
   await sb().from("pos_connections").update({
     provider_config: { ...cfg, webhook_diagnostics: diag },
@@ -659,8 +659,8 @@ async function handleWebhookIngest(req: Request) {
     .limit(100);
 
   const match = (connections || []).find((c: any) => {
-    const cfg = c.provider_config as any;
-    return cfg?.restaurant_guid === guid;
+    const ccfg = getToastConfig(c.provider_config);
+    return ccfg.restaurant_guid === guid;
   });
 
   if (!match) {
@@ -669,9 +669,9 @@ async function handleWebhookIngest(req: Request) {
   }
 
   const connId = match.id;
-  const cfg = match.provider_config as any;
-  const webhookSecret = cfg?.webhook_secret;
-  const strictMode = cfg?.webhook_signature_strict === true;
+  const matchCfg = getToastConfig(match.provider_config);
+  const webhookSecret = matchCfg.webhook_secret;
+  const strictMode = matchCfg.webhook_signature_strict === true;
 
   // ── Signature verification (enforcement based on config) ──
   const sig = req.headers.get("Toast-Signature") || req.headers.get("x-toast-signature") || "";
