@@ -23,7 +23,7 @@ import {
   useBdpConnection, BdpTestResult, BdpTestCheck, BdpSalesEvent,
   BdpCatalogResult, BdpWriteResult,
 } from "@/hooks/useBdpConnection";
-import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
 
 const steps = [
