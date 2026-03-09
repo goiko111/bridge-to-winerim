@@ -2472,6 +2472,21 @@ function StepOutboundSync({
         </div>
       )}
 
+      {/* Repair Actions Panel */}
+      {canWrite && (
+        <AgoraRepairActionsPanel
+          connectionId={connectionId}
+          backfillingPreparation={backfillingPreparation}
+          onBackfillPreparation={onBackfillPreparation}
+          fixingPrices={fixingPrices}
+          onFixMissingPrices={onFixMissingPrices}
+          reassigningFamilies={reassigningFamilies}
+          onReassignFamilies={onReassignFamilies}
+          onProcessQueue={onProcessQueue}
+          processingQueue={processingQueue}
+        />
+      )}
+
       {/* Task list */}
       <Tabs defaultValue="all" className="space-y-3">
         <TabsList className="w-full">
@@ -3834,7 +3849,9 @@ export default function AgoraWizard() {
               backfillingPreparation={outbound.backfillingPreparation}
               onBackfillPreparation={outbound.backfillPreparation}
               fixingPrices={outbound.fixingPrices}
-              onFixMissingPrices={outbound.fixMissingPrices} />
+              onFixMissingPrices={outbound.fixMissingPrices}
+              reassigningFamilies={outbound.reassigningFamilies}
+              onReassignFamilies={outbound.reassignFamilies} />
           )}
           {currentStep === 12 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
