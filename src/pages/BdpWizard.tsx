@@ -854,14 +854,23 @@ function StepCatalogWrite({
           {writingProduct ? "Writing…" : wId ? "Update Product" : "Create Product"}
         </Button>
         {writeResult && (
-          <div className={`rounded border p-2 text-xs ${writeResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
-            {writeResult.success ? (
-              <>✅ Product {writeResult.method === "create" ? "created" : writeResult.method === "import" ? "imported" : "updated"} — HTTP {writeResult.status}</>
-            ) : (
-              <>❌ {writeResult.message || `Write failed (HTTP ${writeResult.status})`}</>
+          <div className="space-y-2">
+            <div className={`rounded border p-2 text-xs ${writeResult.success ? "border-success/30 bg-success/5 text-foreground" : "border-destructive/30 bg-destructive/5 text-destructive"}`}>
+              {writeResult.method && (
+                <span>
+                  {writeResult.success ? "✅" : "❌"} Product {writeResult.method === "create" ? "created" : writeResult.method === "import" ? "imported" : "updated"} — HTTP {writeResult.status}
+                </span>
+              )}
+              {!writeResult.method && writeResult.message && (
+                <span>❌ {writeResult.message}</span>
+              )}
+            </div>
+            {/* Auto-verification result */}
+            {writeResult.verification && (
+              <PostWriteVerificationDisplay result={writeResult.verification as any} provider="bdp" />
             )}
-            {writeResult.bodyPreview && (
-              <pre className="mt-1 max-h-24 overflow-auto rounded border border-border bg-card p-1.5 text-[10px] font-mono whitespace-pre-wrap break-all">{writeResult.bodyPreview}</pre>
+            {writeResult.bodyPreview && !writeResult.verification && (
+              <pre className="max-h-24 overflow-auto rounded border border-border bg-card p-1.5 text-[10px] font-mono whitespace-pre-wrap break-all">{writeResult.bodyPreview}</pre>
             )}
           </div>
         )}
