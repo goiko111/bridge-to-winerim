@@ -3329,12 +3329,14 @@ function StepWriteSettings({
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
+  readinessDimensions,
 }: {
   syncMode: string; frequency: number; backfill: number;
   salesEvents: SalesEvent[]; selectedDay: string | null;
   onEnable: () => void; enabled: boolean;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   catalogStatus: { catalogEndpoint: string | null; catalogProductCount: number; catalogWineCandidateCount: number; catalogSyncEnabled: boolean };
+  readinessDimensions?: ReadinessDimensions;
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
@@ -3348,6 +3350,19 @@ function StepGoLive({
         <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
         <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Enable sync to start pulling sales data every {frequency} minutes.</p>
       </div>
+
+      {/* Readiness summary */}
+      {readinessDimensions && (
+        <div className="flex justify-center gap-2 flex-wrap">
+          <OverallReadinessBadge dimensions={readinessDimensions} />
+        </div>
+      )}
+      {readinessDimensions && (
+        <div className="flex justify-center">
+          <ReadinessBadgeRow dimensions={readinessDimensions} />
+        </div>
+      )}
+
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
