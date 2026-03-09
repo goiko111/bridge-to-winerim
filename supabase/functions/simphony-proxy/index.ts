@@ -1059,6 +1059,7 @@ Deno.serve(async (req) => {
       case "register-webhook": return await handleRegisterWebhook(conn, connectionId);
       case "webhook-status": return await handleWebhookStatus(connectionId);
       case "pilot-run": return await handlePilotRun(conn, connectionId);
+      case "rvc-diagnostics": return await handleRvcDiagnostics(conn, connectionId);
       default: return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (e: any) {
