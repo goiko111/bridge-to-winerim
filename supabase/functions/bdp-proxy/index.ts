@@ -210,6 +210,117 @@ serve(async (req) => {
       }
     }
 
+    // ── ACTION: discover ──
+    // Probe multiple endpoints to detect capabilities
+    if (action === "discover") {
+      const endpoints = [
+        { key: "status",      path: "/api/v1/status",      critical: true },
+        { key: "articles",    path: "/api/v1/articles",     critical: false },
+        { key: "departments", path: "/api/v1/departments",  critical: false },
+        { key: "export",      path: `/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${new Date().toISOString().substring(0,10)}&dateTo=${new Date().toISOString().substring(0,10)}`, critical: true },
+      ];
+
+      // Add import endpoint if configured
+      const importCode = config.import_profile_code ? String(config.import_profile_code) : "";
+      if (importCode) {
+        endpoints.push({ key: "import", path: `/api/v1/import/${encodeURIComponent(importCode)}`, critical: false });
+      }
+
+      const results: Record<string, { ok: boolean; status: number; critical: boolean; bodyPreview?: string }> = {};
+
+      for (const ep of endpoints) {
+        try {
+          const resp = await bdpFetch(`${host}${ep.path}`, headers);
+          const body = await resp.text();
+          results[ep.key] = { ok: resp.ok || resp.status === 405, status: resp.status, critical: ep.critical, bodyPreview: body.substring(0, 512) };
+        } catch {
+          results[ep.key] = { ok: false, status: 0, critical: ep.critical };
+        }
+      }
+
+      const canReadSales = results.export?.ok ?? false;
+      const canReadCatalog = results.articles?.ok ?? false;
+      const canWrite = importCode ? (results.import?.ok ?? false) : (results.articles?.ok ?? false);
+      const allCriticalPass = Object.values(results).filter(r => r.critical).every(r => r.ok);
+
+      // Upsert provider_capabilities
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "BDP_NET",
+        can_read_sales: canReadSales,
+        can_read_catalog: canReadCatalog,
+        can_write_products: canWrite ? "YES" : "NO",
+        write_mode: importCode ? "IMPORT_PROFILE" : (canWrite ? "REST" : "NONE"),
+        webhook_supported: false,
+        readiness_status: allCriticalPass ? "CONNECTED" : "PARTIAL",
+        last_checked_at: new Date().toISOString(),
+      } as any, { onConflict: "connection_id" });
+
+      return ok({
+        success: allCriticalPass,
+        endpoints: results,
+        capabilities: { canReadSales, canReadCatalog, canWrite, writeMode: importCode ? "IMPORT_PROFILE" : (canWrite ? "REST" : "NONE") },
+      });
+    }
+
+    // ── ACTION: verify-product-v2 ──
+    // Returns shared PostWriteVerificationResult contract
+    if (action === "verify-product-v2") {
+      const { productId } = payload;
+      if (!productId) return err({ success: false, message: "Missing productId" });
+
+      const errors: { code: string; message: string; field?: string }[] = [];
+      const warnings: { code: string; message: string; field?: string }[] = [];
+      let exists = false;
+      let priceValid = false;
+
+      try {
+        // Try direct article fetch
+        let product: any = null;
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        if (resp.ok) {
+          product = JSON.parse(await resp.text());
+        } else {
+          // Fallback: list all
+          const allResp = await bdpFetch(`${host}/api/v1/articles`, headers);
+          if (allResp.ok) {
+            const all = JSON.parse(await allResp.text());
+            const arr = Array.isArray(all) ? all : (all.articles || all.Articles || all.data || []);
+            product = arr.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(productId));
+          }
+        }
+
+        if (!product) {
+          errors.push({ code: "NOT_FOUND", message: `Product ${productId} not found in BDP` });
+        } else {
+          exists = true;
+          const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+          if (price > 0) {
+            priceValid = true;
+          } else {
+            errors.push({ code: "PRICE_ZERO", message: "Price is 0 or missing", field: "price" });
+          }
+        }
+
+        return ok({
+          success: exists && priceValid,
+          verified_exists: exists,
+          verified_prices: priceValid,
+          verified_scope: true,
+          errors,
+          warnings,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({
+          success: false, verified_exists: false, verified_prices: false, verified_scope: true,
+          errors: [{ code: "NETWORK_ERROR", message: msg }], warnings: [],
+        });
+      }
+    }
+
     // ── ACTION: test-custom ──
     if (action === "test-custom") {
       const { path, method: httpMethod } = payload;

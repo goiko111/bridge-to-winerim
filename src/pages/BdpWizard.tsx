@@ -217,17 +217,20 @@ function StepConnection({
   );
 }
 
-// ── Step 2: Diagnostics ──
+// ── Step 2: Diagnostics (Discovery + Custom endpoint) ──
 function StepDiagnostics({
-  connectionId, testCustomEndpoint,
+  connectionId, testCustomEndpoint, runDiscover,
 }: {
   connectionId: string | null;
   testCustomEndpoint: (path: string, method?: string) => Promise<any>;
+  runDiscover: () => Promise<any>;
 }) {
   const [path, setPath] = useState("/api/v1/status");
   const [method, setMethod] = useState("GET");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovery, setDiscovery] = useState<any>(null);
 
   const run = async () => {
     setLoading(true); setResult(null);
@@ -235,35 +238,100 @@ function StepDiagnostics({
     setResult(r); setLoading(false);
   };
 
+  const handleDiscover = async () => {
+    setDiscovering(true); setDiscovery(null);
+    const r = await runDiscover();
+    setDiscovery(r); setDiscovering(false);
+  };
+
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">API Diagnostics</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Test any BDP endpoint to explore the API and verify access.</p>
+        <h2 className="text-lg font-semibold text-foreground">API Discovery & Diagnostics</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Auto-detect BDP capabilities or test any endpoint manually.</p>
       </div>
-      <div className="flex gap-2">
-        <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-md border border-input bg-background px-3 py-2 text-sm font-mono">
-          <option>GET</option>
-          <option>POST</option>
-          <option>PUT</option>
-        </select>
-        <Input placeholder="/api/v1/..." value={path} onChange={(e) => setPath(e.target.value)} className="bg-background font-mono text-sm flex-1" />
-        <Button onClick={run} disabled={loading || !connectionId} size="sm">
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+
+      {/* Auto-discovery */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
+          <Server className="h-3.5 w-3.5" /> Endpoint Discovery
+        </p>
+        <p className="text-xs text-muted-foreground">Probes status, articles, departments, export, and import endpoints to determine capabilities.</p>
+        <Button onClick={handleDiscover} disabled={discovering || !connectionId} variant="secondary" size="sm">
+          {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+          {discovering ? "Discovering…" : "Run Discovery"}
         </Button>
-      </div>
-      {result && (
-        <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
-          <div className="flex items-center gap-3 text-xs">
-            <Badge variant={result.success ? "default" : "destructive"}>{result.status || "ERR"}</Badge>
-            <span className="font-mono text-muted-foreground truncate">{result.url || ""}</span>
+        {discovery && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              {discovery.endpoints && Object.entries(discovery.endpoints).map(([key, val]: [string, any]) => (
+                <div key={key} className={`rounded border p-2 text-xs ${val.ok ? "border-success/30 bg-success/5" : val.critical ? "border-destructive/30 bg-destructive/5" : "border-border bg-card"}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono font-medium text-foreground">{key}</span>
+                    <Badge variant={val.ok ? "default" : "destructive"} className="text-[10px]">
+                      {val.ok ? `${val.status} OK` : val.status || "FAIL"}
+                    </Badge>
+                  </div>
+                  {val.critical && <span className="text-[10px] text-muted-foreground">critical</span>}
+                </div>
+              ))}
+            </div>
+            {discovery.capabilities && (
+              <div className="rounded border border-border bg-card p-2 text-xs space-y-1">
+                <p className="font-medium text-foreground">Detected Capabilities:</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="text-muted-foreground">Sales</span>
+                    <p className={discovery.capabilities.canReadSales ? "text-success font-bold" : "text-destructive font-bold"}>
+                      {discovery.capabilities.canReadSales ? "YES" : "NO"}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Catalog</span>
+                    <p className={discovery.capabilities.canReadCatalog ? "text-success font-bold" : "text-muted-foreground font-bold"}>
+                      {discovery.capabilities.canReadCatalog ? "YES" : "NO"}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Write</span>
+                    <p className={discovery.capabilities.canWrite ? "text-success font-bold" : "text-muted-foreground font-bold"}>
+                      {discovery.capabilities.canWrite ? discovery.capabilities.writeMode : "NO"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          {result.bodyPreview && (
-            <pre className="max-h-64 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{result.bodyPreview}</pre>
-          )}
-          {result.message && !result.bodyPreview && <p className="text-sm text-destructive">{result.message}</p>}
+        )}
+      </div>
+
+      {/* Manual endpoint test */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Custom Endpoint Test</p>
+        <div className="flex gap-2">
+          <select value={method} onChange={(e) => setMethod(e.target.value)} className="rounded-md border border-input bg-background px-3 py-2 text-sm font-mono">
+            <option>GET</option>
+            <option>POST</option>
+            <option>PUT</option>
+          </select>
+          <Input placeholder="/api/v1/..." value={path} onChange={(e) => setPath(e.target.value)} className="bg-background font-mono text-sm flex-1" />
+          <Button onClick={run} disabled={loading || !connectionId} size="sm">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
         </div>
-      )}
+        {result && (
+          <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
+            <div className="flex items-center gap-3 text-xs">
+              <Badge variant={result.success ? "default" : "destructive"}>{result.status || "ERR"}</Badge>
+              <span className="font-mono text-muted-foreground truncate">{result.url || ""}</span>
+            </div>
+            {result.bodyPreview && (
+              <pre className="max-h-64 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{result.bodyPreview}</pre>
+            )}
+            {result.message && !result.bodyPreview && <p className="text-sm text-destructive">{result.message}</p>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
