@@ -24,14 +24,10 @@ export interface RevoSalesEvent {
   }[];
 }
 
-export interface RevoWriteVerificationResult {
-  success: boolean;
-  verified_exists: boolean;
-  verified_prices: boolean;
-  verified_scope: boolean;
-  errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
-  warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
-}
+import type { PostWriteVerificationResult } from "@/types/postWriteVerification";
+
+/** @deprecated Use PostWriteVerificationResult directly */
+export type RevoWriteVerificationResult = PostWriteVerificationResult;
 
 export function useRevoConnection() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
