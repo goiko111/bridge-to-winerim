@@ -943,7 +943,7 @@ export default function BdpWizard() {
                 connectionId={connectionId}
                 syncingCatalog={syncingCatalog} catalogResult={catalogResult} syncCatalog={syncCatalog}
                 writingProduct={writingProduct} writeResult={writeResult} writeProduct={writeProduct}
-                verifying={verifying} verifyResult={verifyResult} verifyProduct={verifyProduct}
+                verifyProductV2={verifyProductV2}
               />
             )}
             {step === 5 && <StepGoLive connectionId={connectionId} onEnable={async () => { if (connectionId) await updateConnection(connectionId, { enabled: true }); }} />}
