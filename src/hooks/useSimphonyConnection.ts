@@ -147,6 +147,22 @@ export function useSimphonyConnection() {
   // S9: Multi-RVC
   const [selectedRvcs, setSelectedRvcs] = useState<string[]>([]);
 
+  // RVC diagnostics
+  const [rvcDiagnostics, setRvcDiagnostics] = useState<{
+    singleRvc: boolean;
+    rvcCount?: number;
+    diagnostics?: {
+      rvc: string; reachable: boolean; status: number | null;
+      sampleChecks: number;
+      cursor: { last_business_day: string | null; synced_at: string | null; last_cursor: string | null };
+      error?: string;
+      savedEvents?: number;
+    }[];
+    globalCursor?: string | null;
+    lastSync?: Record<string, unknown> | null;
+  } | null>(null);
+  const [rvcDiagLoading, setRvcDiagLoading] = useState(false);
+
   const saveConnection = async (data: {
     locationName: string;
     baseUrl: string;
@@ -570,5 +586,7 @@ export function useSimphonyConnection() {
     webhookStatus, webhookRegistering, registerWebhook, fetchWebhookStatus,
     // S9: Multi-RVC
     selectedRvcs, setSelectedRvcs,
+    // RVC diagnostics
+    rvcDiagnostics, rvcDiagLoading, fetchRvcDiagnostics,
   };
 }
