@@ -9,6 +9,7 @@ import {
   AlertTriangle, RotateCcw,
 } from "lucide-react";
 import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
+import BdpFamilyMapping from "@/components/BdpFamilyMapping";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -813,6 +814,14 @@ function StepCatalogWrite({
             )}
           </div>
         )}
+      </div>
+
+      {/* ── Family Mapping ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4">
+        <BdpFamilyMapping
+          connectionId={connectionId}
+          availableFamilies={catalogResult?.families || []}
+        />
       </div>
 
       {/* ── Write Product ── */}

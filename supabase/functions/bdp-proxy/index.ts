@@ -71,6 +71,24 @@ async function bdpFetchWithRetry(
   return { resp: null, attempts: retries + 1, lastError };
 }
 
+/** Resolve mapping key from wine type + format for family lookup */
+function resolveMappingKey(wineType?: string, format?: string): string | null {
+  const fmt = (format || "").toLowerCase();
+  const type = (wineType || "").toLowerCase();
+
+  if (fmt === "glass" || fmt === "copa") return "glass";
+  if (fmt === "magnum") return "magnum";
+
+  if (type.includes("tinto") || type.includes("red")) return "bottle_red";
+  if (type.includes("blanco") || type.includes("white")) return "bottle_white";
+  if (type.includes("rosado") || type.includes("rosé") || type.includes("rose")) return "bottle_rose";
+  if (type.includes("espumoso") || type.includes("sparkling") || type.includes("cava") || type.includes("champagne")) return "bottle_sparkling";
+  if (type.includes("fortificado") || type.includes("fortified") || type.includes("jerez") || type.includes("sherry") || type.includes("porto") || type.includes("port")) return "bottle_fortified";
+  if (type.includes("postre") || type.includes("dessert") || type.includes("dulce") || type.includes("sweet")) return "bottle_dessert";
+
+  return type ? "bottle_red" : null; // fallback for unknown wine types
+}
+
 /**
  * Parse BDP export documents into canonical SalesEvent + LineItems.
  * BDP Weblink REST returns an array of "documents", each with header, lines, payments.
@@ -1289,6 +1307,23 @@ serve(async (req) => {
         : exportProfileCode;
 
       try {
+        // Resolve family from wine_type_family_mappings if wine_type provided
+        let resolvedFamily = product.family || product.department || undefined;
+        if (!resolvedFamily && (product.wine_type || product.format)) {
+          const mappingKey = resolveMappingKey(product.wine_type, product.format);
+          if (mappingKey) {
+            const { data: mappingRow } = await supabase
+              .from("wine_type_family_mappings")
+              .select("agora_family_name")
+              .eq("connection_id", connectionId)
+              .eq("mapping_key", mappingKey)
+              .single();
+            if (mappingRow?.agora_family_name) {
+              resolvedFamily = mappingRow.agora_family_name;
+            }
+          }
+        }
+
         // Try direct article endpoint first (PUT for update, POST for create)
         const articleId = product.provider_product_id || product.id;
         const articlePayload = {
@@ -1296,7 +1331,7 @@ serve(async (req) => {
           Code: product.code || articleId || undefined,
           Name: product.name,
           Description: product.description || product.name,
-          Department: product.family || product.department || undefined,
+          Department: resolvedFamily,
           Price: product.price || 0,
           SalePrice: product.price || 0,
           PVP: product.price || 0,
