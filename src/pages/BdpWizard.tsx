@@ -939,6 +939,15 @@ function StepCatalogWrite({
           <PostWriteVerificationDisplay result={verification} provider="bdp" />
         )}
       </div>
+
+      {/* ── Repair Actions ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4">
+        <BdpRepairActionsPanel
+          connectionId={connectionId}
+          onRepairAction={onRepairAction}
+          repairing={repairing}
+        />
+      </div>
     </div>
   );
 }
@@ -1114,6 +1123,7 @@ export default function BdpWizard() {
                 syncingCatalog={syncingCatalog} catalogResult={catalogResult} syncCatalog={syncCatalog}
                 writingProduct={writingProduct} writeResult={writeResult} writeProduct={writeProduct}
                 verifyProductV2={verifyProductV2}
+                repairing={repairing} onRepairAction={runRepairAction}
               />
             )}
             {step === 5 && <StepGoLive connectionId={connectionId} onEnable={async () => { if (connectionId) await updateConnection(connectionId, { enabled: true }); }} />}
