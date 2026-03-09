@@ -55,6 +55,7 @@ export default function PostWriteVerificationDisplay({
         <DimensionChip ok={result.verified_scope} icon={<Lock className="h-3 w-3" />} label="Scope valid" />
         {"verified_config" in result && <DimensionChip ok={(result as any).verified_config} icon={<Shield className="h-3 w-3" />} label="Config fields" />}
         {"verified_family" in result && <DimensionChip ok={(result as any).verified_family} icon={<Package className="h-3 w-3" />} label="Family" />}
+        {"verified_tax" in result && <DimensionChip ok={(result as any).verified_tax} icon={<DollarSign className="h-3 w-3" />} label="Tax/VAT" />}
         {"verified_preparation" in result && <DimensionChip ok={(result as any).verified_preparation} icon={<Shield className="h-3 w-3" />} label="Preparation" />}
       </div>
 
