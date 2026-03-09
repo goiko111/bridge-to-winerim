@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -10,21 +10,34 @@ import {
   Settings,
   ChevronLeft,
   Wine,
-  Menu,
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/integrations", icon: Plug, label: "Integrations" },
   { to: "/sync-monitor", icon: Activity, label: "Sync Monitor" },
-  { to: "/alerts", icon: Bell, label: "Alerts" },
+  { to: "/alerts", icon: Bell, label: "Alerts", badgeKey: "alerts" },
   { to: "/docs", icon: FileText, label: "Documentation" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [alertCount, setAlertCount] = useState(0);
   const location = useLocation();
+
+  useEffect(() => {
+    // Count active alerts: failed stock syncs + failed/blocked outbound tasks
+    const fetchAlertCount = async () => {
+      const [stockRes, outboundRes] = await Promise.all([
+        supabase.from("stock_sync_log").select("id", { count: "exact", head: true }).eq("status", "FAILED"),
+        supabase.from("outbound_tasks").select("id", { count: "exact", head: true }).in("status", ["FAILED", "BLOCKED"]),
+      ]);
+      setAlertCount((stockRes.count || 0) + (outboundRes.count || 0));
+    };
+    fetchAlertCount();
+  }, [location.pathname]);
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -54,6 +67,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <nav className="flex-1 space-y-1 px-2 py-4">
           {navItems.map((item) => {
             const isActive = location.pathname === item.to;
+            const showBadge = item.badgeKey === "alerts" && alertCount > 0;
             return (
               <NavLink
                 key={item.to}
@@ -64,7 +78,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                 }`}
               >
-                <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
+                <div className="relative shrink-0">
+                  <item.icon className={`h-4 w-4 ${isActive ? "text-primary" : ""}`} />
+                  {showBadge && (
+                    <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
+                      {alertCount > 99 ? "99+" : alertCount}
+                    </span>
+                  )}
+                </div>
                 {!collapsed && <span>{item.label}</span>}
               </NavLink>
             );
