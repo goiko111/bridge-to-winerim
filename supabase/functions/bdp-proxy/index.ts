@@ -71,6 +71,24 @@ async function bdpFetchWithRetry(
   return { resp: null, attempts: retries + 1, lastError };
 }
 
+/** Resolve mapping key from wine type + format for family lookup */
+function resolveMappingKey(wineType?: string, format?: string): string | null {
+  const fmt = (format || "").toLowerCase();
+  const type = (wineType || "").toLowerCase();
+
+  if (fmt === "glass" || fmt === "copa") return "glass";
+  if (fmt === "magnum") return "magnum";
+
+  if (type.includes("tinto") || type.includes("red")) return "bottle_red";
+  if (type.includes("blanco") || type.includes("white")) return "bottle_white";
+  if (type.includes("rosado") || type.includes("rosé") || type.includes("rose")) return "bottle_rose";
+  if (type.includes("espumoso") || type.includes("sparkling") || type.includes("cava") || type.includes("champagne")) return "bottle_sparkling";
+  if (type.includes("fortificado") || type.includes("fortified") || type.includes("jerez") || type.includes("sherry") || type.includes("porto") || type.includes("port")) return "bottle_fortified";
+  if (type.includes("postre") || type.includes("dessert") || type.includes("dulce") || type.includes("sweet")) return "bottle_dessert";
+
+  return type ? "bottle_red" : null; // fallback for unknown wine types
+}
+
 /**
  * Parse BDP export documents into canonical SalesEvent + LineItems.
  * BDP Weblink REST returns an array of "documents", each with header, lines, payments.
