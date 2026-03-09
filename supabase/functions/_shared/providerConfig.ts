@@ -47,7 +47,7 @@ export interface SimphonyConfig {
   oidc_token_expires_at?: string;
   oidc_refresh_token?: string;
   selected_rvcs?: string[];
-  rvc_cursors?: Record<string, { last_business_day?: string; synced_at?: string }>;
+  rvc_cursors?: Record<string, { last_business_day?: string; synced_at?: string; last_cursor?: string }>;
   // Auth diagnostics (never contains raw tokens/secrets)
   auth_diagnostics?: {
     last_auth_success_at?: string;
@@ -56,6 +56,16 @@ export interface SimphonyConfig {
     token_expires_at?: string;
     endpoint_used?: string;
     attempts_last_acquire?: number;
+  };
+  // Sync diagnostics (persisted after each save-sales)
+  last_sync_diagnostics?: {
+    business_day?: string;
+    checks_fetched?: number;
+    batches_processed?: number;
+    line_items_saved?: number;
+    retries?: number;
+    duration_ms?: number;
+    synced_at?: string;
   };
 }
 
