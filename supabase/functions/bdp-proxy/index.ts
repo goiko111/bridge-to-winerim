@@ -1289,6 +1289,23 @@ serve(async (req) => {
         : exportProfileCode;
 
       try {
+        // Resolve family from wine_type_family_mappings if wine_type provided
+        let resolvedFamily = product.family || product.department || undefined;
+        if (!resolvedFamily && (product.wine_type || product.format)) {
+          const mappingKey = resolveMappingKey(product.wine_type, product.format);
+          if (mappingKey) {
+            const { data: mappingRow } = await supabase
+              .from("wine_type_family_mappings")
+              .select("agora_family_name")
+              .eq("connection_id", connectionId)
+              .eq("mapping_key", mappingKey)
+              .single();
+            if (mappingRow?.agora_family_name) {
+              resolvedFamily = mappingRow.agora_family_name;
+            }
+          }
+        }
+
         // Try direct article endpoint first (PUT for update, POST for create)
         const articleId = product.provider_product_id || product.id;
         const articlePayload = {
@@ -1296,7 +1313,7 @@ serve(async (req) => {
           Code: product.code || articleId || undefined,
           Name: product.name,
           Description: product.description || product.name,
-          Department: product.family || product.department || undefined,
+          Department: resolvedFamily,
           Price: product.price || 0,
           SalePrice: product.price || 0,
           PVP: product.price || 0,
