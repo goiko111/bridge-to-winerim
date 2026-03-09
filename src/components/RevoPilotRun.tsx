@@ -292,7 +292,7 @@ export default function RevoPilotRun({
             pilot_wine: pilotWine?.name || "unknown",
             pilot_revo_item_id: pushedItemId,
           },
-        },
+        } as any,
         { onConflict: "connection_id" },
       );
       updateStep("mark_verified", "passed", "Connection marked as pilot-verified");
