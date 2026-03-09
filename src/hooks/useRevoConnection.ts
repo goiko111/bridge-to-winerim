@@ -53,7 +53,7 @@ export function useRevoConnection() {
   const [writeVerification, setWriteVerification] = useState<RevoWriteVerificationResult | null>(null);
   const [verifying, setVerifying] = useState(false);
 
-  const [depValidation, setDepValidation] = useState<{ valid: boolean; missing: { dep: string; message: string; guidance: string }[] } | null>(null);
+  const [depValidation, setDepValidation] = useState<{ valid: boolean; missing: { dep: string; message: string; guidance: string }[]; warnings?: { dep: string; message: string; guidance: string }[] } | null>(null);
   const [validatingDeps, setValidatingDeps] = useState(false);
 
   // Compound token: "tenant|access_token|client_token|webhook_secret"
