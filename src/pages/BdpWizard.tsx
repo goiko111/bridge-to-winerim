@@ -174,29 +174,28 @@ function StepConnection({
         </Button>
 
         {testResult && (
-          <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-medium text-foreground">
-              <Eye className="h-3.5 w-3.5" /> Raw Response Diagnostics
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                <ShieldCheck className="h-3.5 w-3.5" /> Resultado del test
+              </div>
+              <Badge variant={testResult.success ? "default" : "destructive"} className="text-[10px]">
+                {testResult.success ? "PASS" : testResult.failureReason || "FAIL"}
+              </Badge>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Status</span>
-                <p className={`font-mono font-bold ${testResult.success ? "text-success" : "text-destructive"}`}>{testResult.status} {testResult.statusText}</p>
+
+            {testResult.checks && (
+              <div className="space-y-1.5">
+                {Object.entries(testResult.checks).map(([key, check]) => (
+                  <TestCheckRow key={key} check={check} />
+                ))}
               </div>
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Content-Type</span>
-                <p className="font-mono truncate">{testResult.contentType || "—"}</p>
-              </div>
-              <div className="rounded border border-border bg-card p-2">
-                <span className="text-muted-foreground">Result</span>
-                <Badge variant={testResult.success ? "default" : "destructive"} className="text-[10px]">{testResult.success ? "OK" : "FAIL"}</Badge>
-              </div>
-            </div>
-            {testResult.bodyPreview && (
-              <div>
-                <span className="text-[11px] text-muted-foreground">Body Preview (first 2 KB)</span>
-                <pre className="mt-1 max-h-48 overflow-auto rounded border border-border bg-card p-2 text-[11px] font-mono text-foreground whitespace-pre-wrap break-all">{testResult.bodyPreview}</pre>
-              </div>
+            )}
+
+            {testResult.message && (
+              <p className={`text-[11px] font-medium ${testResult.success ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+                {testResult.message}
+              </p>
             )}
           </div>
         )}
