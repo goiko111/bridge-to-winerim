@@ -220,18 +220,19 @@ function StepConnection({
 
 // ── Step 2: Diagnostics (Discovery + Custom endpoint) ──
 function StepDiagnostics({
-  connectionId, testCustomEndpoint, runDiscover,
+  connectionId, testCustomEndpoint, runDiscover, discovering, discoveryResult,
 }: {
   connectionId: string | null;
   testCustomEndpoint: (path: string, method?: string) => Promise<any>;
   runDiscover: () => Promise<any>;
+  discovering: boolean;
+  discoveryResult: any;
 }) {
   const [path, setPath] = useState("/api/v1/status");
   const [method, setMethod] = useState("GET");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [discovering, setDiscovering] = useState(false);
-  const [discovery, setDiscovery] = useState<any>(null);
+  const [expandedFailure, setExpandedFailure] = useState<string | null>(null);
 
   const run = async () => {
     setLoading(true); setResult(null);
@@ -239,17 +240,18 @@ function StepDiagnostics({
     setResult(r); setLoading(false);
   };
 
-  const handleDiscover = async () => {
-    setDiscovering(true); setDiscovery(null);
-    const r = await runDiscover();
-    setDiscovery(r); setDiscovering(false);
+  const roleColors: Record<string, string> = {
+    auth: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    sales: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    catalog: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    write: "bg-violet-500/10 text-violet-400 border-violet-500/20",
   };
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-lg font-semibold text-foreground">API Discovery & Diagnostics</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Auto-detect BDP capabilities or test any endpoint manually.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Auto-detect BDP capabilities with retry/backoff. Discovered routes are persisted per connection.</p>
       </div>
 
       {/* Auto-discovery */}
@@ -257,48 +259,105 @@ function StepDiagnostics({
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
           <Server className="h-3.5 w-3.5" /> Endpoint Discovery
         </p>
-        <p className="text-xs text-muted-foreground">Probes status, articles, departments, export, and import endpoints to determine capabilities.</p>
-        <Button onClick={handleDiscover} disabled={discovering || !connectionId} variant="secondary" size="sm">
+        <p className="text-xs text-muted-foreground">Probes auth, sales, catalog, and write endpoints with automatic retry (2 retries, exponential backoff).</p>
+        <Button onClick={runDiscover} disabled={discovering || !connectionId} variant="secondary" size="sm">
           {discovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
           {discovering ? "Discovering…" : "Run Discovery"}
         </Button>
-        {discovery && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              {discovery.endpoints && Object.entries(discovery.endpoints).map(([key, val]: [string, any]) => (
-                <div key={key} className={`rounded border p-2 text-xs ${val.ok ? "border-success/30 bg-success/5" : val.critical ? "border-destructive/30 bg-destructive/5" : "border-border bg-card"}`}>
+        {discoveryResult && (
+          <div className="space-y-3">
+            {/* Endpoint grid */}
+            <div className="space-y-2">
+              {discoveryResult.endpoints && Object.entries(discoveryResult.endpoints).map(([key, val]: [string, any]) => (
+                <div key={key} className={`rounded-lg border p-3 text-xs ${val.ok ? "border-success/30 bg-success/5" : val.critical ? "border-destructive/30 bg-destructive/5" : "border-border bg-card"}`}>
                   <div className="flex items-center justify-between">
-                    <span className="font-mono font-medium text-foreground">{key}</span>
-                    <Badge variant={val.ok ? "default" : "destructive"} className="text-[10px]">
-                      {val.ok ? `${val.status} OK` : val.status || "FAIL"}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      {val.ok ? <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" /> : <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                      <span className="font-medium text-foreground">{val.label || key}</span>
+                      <Badge variant="outline" className={`text-[9px] ${roleColors[val.role] || "border-border"}`}>{val.role}</Badge>
+                      {val.critical && <Badge variant="outline" className="text-[9px] border-destructive/30 text-destructive">required</Badge>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {val.attempts > 1 && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                          <RotateCcw className="h-2.5 w-2.5" /> {val.attempts} tries
+                        </span>
+                      )}
+                      <Badge variant={val.ok ? "default" : "destructive"} className="text-[10px]">
+                        {val.ok ? `${val.status} OK` : val.status || "FAIL"}
+                      </Badge>
+                    </div>
                   </div>
-                  {val.critical && <span className="text-[10px] text-muted-foreground">critical</span>}
+                  <p className="font-mono text-[10px] text-muted-foreground mt-1 truncate">{val.path}</p>
+                  {/* Show body preview on failure */}
+                  {!val.ok && (val.bodyPreview || val.lastError) && (
+                    <div className="mt-2">
+                      <button
+                        onClick={() => setExpandedFailure(expandedFailure === key ? null : key)}
+                        className="flex items-center gap-1 text-[10px] text-destructive hover:underline"
+                      >
+                        <AlertTriangle className="h-2.5 w-2.5" />
+                        {expandedFailure === key ? "Hide error details" : "Show error details"}
+                      </button>
+                      {expandedFailure === key && (
+                        <div className="mt-1.5 space-y-1">
+                          {val.lastError && <p className="text-[10px] text-destructive">{val.lastError}</p>}
+                          {val.bodyPreview && (
+                            <pre className="max-h-32 overflow-auto rounded border border-destructive/20 bg-destructive/5 p-2 text-[10px] font-mono text-foreground whitespace-pre-wrap break-all">{val.bodyPreview}</pre>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
-            {discovery.capabilities && (
-              <div className="rounded border border-border bg-card p-2 text-xs space-y-1">
-                <p className="font-medium text-foreground">Detected Capabilities:</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <span className="text-muted-foreground">Sales</span>
-                    <p className={discovery.capabilities.canReadSales ? "text-success font-bold" : "text-destructive font-bold"}>
-                      {discovery.capabilities.canReadSales ? "YES" : "NO"}
+
+            {/* Capabilities summary */}
+            {discoveryResult.capabilities && (
+              <div className="rounded-lg border border-border bg-card p-3 text-xs space-y-2">
+                <p className="font-medium text-foreground">Detected Capabilities</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded border border-border bg-muted/30 p-2 text-center">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Sales</span>
+                    <p className={`font-bold mt-0.5 ${discoveryResult.capabilities.canReadSales ? "text-success" : "text-destructive"}`}>
+                      {discoveryResult.capabilities.canReadSales ? "YES" : "NO"}
                     </p>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Catalog</span>
-                    <p className={discovery.capabilities.canReadCatalog ? "text-success font-bold" : "text-muted-foreground font-bold"}>
-                      {discovery.capabilities.canReadCatalog ? "YES" : "NO"}
+                  <div className="rounded border border-border bg-muted/30 p-2 text-center">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Catalog</span>
+                    <p className={`font-bold mt-0.5 ${discoveryResult.capabilities.canReadCatalog ? "text-success" : "text-muted-foreground"}`}>
+                      {discoveryResult.capabilities.canReadCatalog ? "YES" : "NO"}
                     </p>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Write</span>
-                    <p className={discovery.capabilities.canWrite ? "text-success font-bold" : "text-muted-foreground font-bold"}>
-                      {discovery.capabilities.canWrite ? discovery.capabilities.writeMode : "NO"}
+                  <div className="rounded border border-border bg-muted/30 p-2 text-center">
+                    <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Write</span>
+                    <p className={`font-bold mt-0.5 ${discoveryResult.capabilities.canWrite ? "text-success" : "text-muted-foreground"}`}>
+                      {discoveryResult.capabilities.canWrite ? discoveryResult.capabilities.writeMode : "NO"}
                     </p>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Persisted routes */}
+            {discoveryResult.discoveredRoutes && Object.keys(discoveryResult.discoveredRoutes).length > 0 && (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs space-y-2">
+                <p className="font-medium text-foreground flex items-center gap-1.5">
+                  <Database className="h-3.5 w-3.5 text-primary" /> Persisted Routes
+                </p>
+                <p className="text-[10px] text-muted-foreground">These verified routes are saved to this connection and used for all subsequent operations.</p>
+                <div className="space-y-1">
+                  {Object.entries(discoveryResult.discoveredRoutes).map(([key, route]: [string, any]) => (
+                    <div key={key} className="flex items-center justify-between rounded border border-primary/10 bg-background px-2 py-1.5">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-3 w-3 text-success" />
+                        <span className="font-medium text-foreground">{key}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[200px]">{route.path}</span>
+                      </div>
+                      <span className="text-[9px] text-muted-foreground">{new Date(route.verified_at).toLocaleTimeString()}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
