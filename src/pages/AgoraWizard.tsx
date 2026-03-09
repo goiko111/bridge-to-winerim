@@ -27,6 +27,11 @@ import {
 import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import {
+  RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
+  ReadinessBadgeRow, OverallReadinessBadge,
+  type ReadinessDimensions,
+} from "@/components/ReadinessBadges";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -1954,14 +1959,6 @@ function StepCapabilities({
 }) {
   useEffect(() => { onLoadCapabilities(); }, [connectionId]);
 
-  // XML Import status: 3 states based on write_mode + successful import
-  const xmlStatus: "NOT_SUPPORTED" | "SUPPORTED_NOT_VERIFIED" | "VALIDATED" =
-    writeMode !== "XML_IMPORT"
-      ? "NOT_SUPPORTED"
-      : xmlWriteCapability === "YES"
-        ? "VALIDATED"
-        : "SUPPORTED_NOT_VERIFIED";
-
   return (
     <div className="space-y-5">
       <div>
@@ -1976,24 +1973,18 @@ function StepCapabilities({
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-lg border border-border bg-background p-3 space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">REST Write</p>
-            <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
+            <RestWriteBadge />
             <p className="text-[10px] text-muted-foreground mt-1">Standard REST endpoints not available on this installation.</p>
           </div>
           <div className="rounded-lg border border-border bg-background p-3 space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">XML Import Write</p>
-            {xmlStatus === "VALIDATED" ? (
-              <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> Validated</Badge>
-            ) : xmlStatus === "SUPPORTED_NOT_VERIFIED" ? (
-              <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600"><HelpCircle className="mr-1 h-3 w-3" /> Supported / Not Verified</Badge>
-            ) : (
-              <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> Not Supported</Badge>
-            )}
+            <XmlImportBadge writeMode={writeMode} canWrite={xmlWriteCapability} />
             <p className="text-[10px] text-muted-foreground mt-1">
-              {xmlStatus === "VALIDATED"
+              {writeMode === "XML_IMPORT" && xmlWriteCapability === "YES"
                 ? "XML import has been validated successfully for this connection."
-                : xmlStatus === "SUPPORTED_NOT_VERIFIED"
+                : writeMode === "XML_IMPORT"
                   ? "XML import is available. Run a manual XML import to validate before enabling auto-push."
-                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 9)."}
+                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 10)."}
             </p>
           </div>
         </div>
@@ -2746,26 +2737,13 @@ function StepMasterData({
         <Input placeholder="Search master data…" value={searchMaster} onChange={(e) => setSearchMaster(e.target.value)} className="pl-10 bg-background" />
       </div>
 
-      {/* Status badges */}
-      <div className="flex gap-2 flex-wrap">
-        {masterData.fetchedAt ? (
-          <Badge variant="default" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" /> Master data synced</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px]"><AlertTriangle className="mr-1 h-3 w-3" /> Not synced</Badge>
-        )}
-        {writeCapability === "YES" ? (
-          <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> XML import validated</Badge>
-        ) : writeCapability === "UNKNOWN" ? (
-          <Badge variant="outline" className="text-[10px]"><HelpCircle className="mr-1 h-3 w-3" /> XML import not verified</Badge>
-        ) : (
-          <Badge variant="secondary" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> XML import not supported</Badge>
-        )}
-        {writeSettings.auto_push_verified_ready ? (
-          <Badge variant="default" className="text-[10px]"><Zap className="mr-1 h-3 w-3" /> Auto-push ready</Badge>
-        ) : (
-          <Badge variant="outline" className="text-[10px]">Auto-push not verified</Badge>
-        )}
-      </div>
+      {/* Status badges — unified readiness model */}
+      <ReadinessBadgeRow dimensions={{
+        writeMode: writeSettings.write_mode,
+        canWrite: writeCapability,
+        masterDataFetchedAt: masterData.fetchedAt,
+        autoPushVerifiedReady: writeSettings.auto_push_verified_ready,
+      }} />
 
       {/* ── Auto-push verification gate ── */}
       <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
@@ -3351,12 +3329,14 @@ function StepWriteSettings({
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
+  readinessDimensions,
 }: {
   syncMode: string; frequency: number; backfill: number;
   salesEvents: SalesEvent[]; selectedDay: string | null;
   onEnable: () => void; enabled: boolean;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   catalogStatus: { catalogEndpoint: string | null; catalogProductCount: number; catalogWineCandidateCount: number; catalogSyncEnabled: boolean };
+  readinessDimensions?: ReadinessDimensions;
 }) {
   const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
   const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
@@ -3370,6 +3350,19 @@ function StepGoLive({
         <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
         <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Enable sync to start pulling sales data every {frequency} minutes.</p>
       </div>
+
+      {/* Readiness summary */}
+      {readinessDimensions && (
+        <div className="flex justify-center gap-2 flex-wrap">
+          <OverallReadinessBadge dimensions={readinessDimensions} />
+        </div>
+      )}
+      {readinessDimensions && (
+        <div className="flex justify-center">
+          <ReadinessBadgeRow dimensions={readinessDimensions} />
+        </div>
+      )}
+
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
@@ -3657,7 +3650,13 @@ export default function AgoraWizard() {
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
-              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus} />
+              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus}
+              readinessDimensions={{
+                writeMode: agoraMaster.writeSettings.write_mode,
+                canWrite: agoraMaster.writeCapability,
+                masterDataFetchedAt: agoraMaster.masterData.fetchedAt,
+                autoPushVerifiedReady: agoraMaster.writeSettings.auto_push_verified_ready,
+              }} />
           )}
         </motion.div>
       </AnimatePresence>
