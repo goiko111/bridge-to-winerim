@@ -448,6 +448,9 @@ function StepDiagnostics({
         )}
       </div>
 
+      {/* Persisted Endpoint Status */}
+      <BdpEndpointDiagnostics connectionId={connectionId} />
+
       {/* Manual endpoint test */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Custom Endpoint Test</p>
