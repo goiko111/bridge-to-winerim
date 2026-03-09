@@ -690,9 +690,9 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
     // Store per-RVC cursors in provider_config for multi-RVC tracking
     ...(rvcs.length > 1 ? {
       provider_config: {
-        ...(conn.provider_config || {}),
+        ...getSimphonyConfig(conn.provider_config),
         rvc_cursors: {
-          ...((conn.provider_config as Record<string, any>)?.rvc_cursors || {}),
+          ...(getSimphonyConfig(conn.provider_config).rvc_cursors || {}),
           ...Object.fromEntries(rvcs.map(rvc => [rvc, { last_business_day: businessDay, synced_at: new Date().toISOString() }])),
         },
       },
