@@ -206,7 +206,152 @@ serve(async (req) => {
       }
     }
 
-    // ── FETCH ROOMS (lightweight test) ──
+    // ── HEALTH CHECK (comprehensive connection readiness) ──
+    if (action === "health-check") {
+      const checks: Record<string, { status: "OK" | "FAIL" | "WARN"; message: string; timestamp?: string }> = {};
+      let overallStatus: "VERIFIED" | "PARTIAL" | "ERROR" = "VERIFIED";
+
+      // 1) Auth check
+      try {
+        const authRes = await revoFetch(`${REVO_BASE}/v2/paymentMethods`, revoHeaders, connectionId);
+        if (authRes.ok) {
+          checks.auth = { status: "OK", message: "Authentication valid" };
+        } else if (authRes.status === 401 || authRes.status === 403) {
+          checks.auth = { status: "FAIL", message: `Auth failed: HTTP ${authRes.status}. Token expired or permissions revoked.` };
+          overallStatus = "ERROR";
+        } else {
+          checks.auth = { status: "WARN", message: `Auth returned HTTP ${authRes.status}. May be transient.` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.auth = { status: "FAIL", message: `Auth check error: ${e.message}` };
+        overallStatus = "ERROR";
+      }
+
+      // 2) Sales read check
+      const today = new Date().toISOString().split("T")[0];
+      try {
+        const salesRes = await revoFetch(
+          `${REVO_BASE}/v3/reports/orders?start_date=${today}&end_date=${today}&per_page=1`,
+          revoHeaders, connectionId,
+        );
+        if (salesRes.ok) {
+          checks.sales_read = { status: "OK", message: "Sales API accessible" };
+        } else if (salesRes.status === 401 || salesRes.status === 403) {
+          checks.sales_read = { status: "FAIL", message: `Sales API returned ${salesRes.status}. Insufficient permissions.` };
+          overallStatus = "ERROR";
+        } else {
+          checks.sales_read = { status: "WARN", message: `Sales API returned ${salesRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.sales_read = { status: "FAIL", message: `Sales check error: ${e.message}` };
+        overallStatus = "ERROR";
+      }
+
+      // 3) Catalog sync check
+      try {
+        const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/items?per_page=1`, revoHeaders, connectionId);
+        if (catRes.ok) {
+          checks.catalog_sync = { status: "OK", message: "Catalog API accessible" };
+        } else {
+          checks.catalog_sync = { status: "FAIL", message: `Catalog API returned ${catRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.catalog_sync = { status: "FAIL", message: `Catalog check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 4) Dependencies check (category, tax, format availability)
+      try {
+        const [catRes, taxRes] = await Promise.all([
+          revoFetch(`${REVO_BASE}/v2/catalog/categories?per_page=1`, revoHeaders, connectionId),
+          revoFetch(`${REVO_BASE}/v2/taxes`, revoHeaders, connectionId),
+        ]);
+        const catOk = catRes.ok;
+        const taxOk = taxRes.ok;
+        let taxCount = 0;
+        if (taxOk) {
+          const taxJson = await taxRes.json();
+          taxCount = (Array.isArray(taxJson) ? taxJson : taxJson.data || []).length;
+        }
+        if (catOk && taxOk && taxCount > 0) {
+          checks.dependencies = { status: "OK", message: `Categories and taxes (${taxCount}) available` };
+        } else {
+          const issues: string[] = [];
+          if (!catOk) issues.push("categories unavailable");
+          if (!taxOk) issues.push("taxes unavailable");
+          if (taxOk && taxCount === 0) issues.push("no tax rates configured");
+          checks.dependencies = { status: issues.length > 0 ? "FAIL" : "OK", message: issues.join(", ") || "OK" };
+          if (issues.length > 0 && overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.dependencies = { status: "WARN", message: `Dep check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 5) Write verification check (test write capability without creating)
+      try {
+        const writeRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items`, revoHeaders, connectionId,
+          "POST", { name: "__health_check_probe__" },
+        );
+        // 422 = validation error (write endpoint exists), 201/200 = created (clean up)
+        const canWrite = writeRes.status === 422 || writeRes.status === 201 || writeRes.status === 200;
+        if (writeRes.status === 201 || writeRes.status === 200) {
+          try {
+            const created = await writeRes.json();
+            const cid = created.id || created.data?.id;
+            if (cid) await revoFetch(`${REVO_BASE}/v2/catalog/items/${cid}`, revoHeaders, connectionId, "DELETE");
+          } catch { /* ignore */ }
+        }
+        if (canWrite) {
+          checks.write_verification = { status: "OK", message: "Write endpoint accessible" };
+        } else if (writeRes.status === 401 || writeRes.status === 403) {
+          checks.write_verification = { status: "FAIL", message: `Write not permitted: HTTP ${writeRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        } else {
+          checks.write_verification = { status: "WARN", message: `Write probe returned ${writeRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.write_verification = { status: "FAIL", message: `Write check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 6) Last successful sync timestamp
+      checks.last_sync = {
+        status: connection.last_sync_at ? "OK" : "WARN",
+        message: connection.last_sync_at ? "Last sync recorded" : "No sync recorded yet",
+        timestamp: connection.last_sync_at || undefined,
+      };
+
+      // 7) Last catalog sync timestamp
+      checks.last_catalog_sync = {
+        status: connection.last_catalog_sync_at ? "OK" : "WARN",
+        message: connection.last_catalog_sync_at ? "Last catalog sync recorded" : "No catalog sync yet",
+        timestamp: connection.last_catalog_sync_at || undefined,
+      };
+
+      // Persist to provider_capabilities
+      const canWrite = checks.write_verification?.status === "OK";
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "REVO_XEF",
+        can_read_sales: checks.sales_read?.status === "OK",
+        can_read_catalog: checks.catalog_sync?.status === "OK",
+        can_write_products: canWrite ? "YES" : checks.write_verification?.status === "WARN" ? "UNKNOWN" : "NO",
+        write_mode: canWrite ? "REST" : "NONE",
+        readiness_status: overallStatus,
+        last_checked_at: new Date().toISOString(),
+        last_verified_at: overallStatus === "VERIFIED" ? new Date().toISOString() : undefined,
+        write_endpoints_json: { health_checks: checks },
+      }, { onConflict: "connection_id" });
+
+      return json({ success: true, overallStatus, checks });
+    }
+
     if (action === "fetch-rooms") {
       const res = await revoFetch(`${REVO_BASE}/v2/rooms`, revoHeaders, connectionId);
       if (!res.ok) return json({ error: `Revo ${res.status}` }, 502);
