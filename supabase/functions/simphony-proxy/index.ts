@@ -302,100 +302,160 @@ async function handleDiscoverLocations(conn: any) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTION: preflight (S2+S3+S8 enhanced)
+// ACTION: preflight (strengthened — explicit per-area checks)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handlePreflight(conn: any) {
-  const checks: { id: string; label: string; status: string; detail?: string }[] = [];
+  const checks: { id: string; label: string; status: string; detail?: string; required: boolean }[] = [];
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  const locRefParam = parts[2] || "";
+  const rvcRefParam = parts[3] || "";
 
-  // 1) STS reachable
+  // ── 1) STS Gen2 connectivity ──
   let stsOk = false;
   try {
     const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
     const res = await fetch(url, { headers: stsHeaders(conn) });
     if (res.ok) {
       stsOk = true;
-      checks.push({ id: "sts", label: "STS Gen2 reachable", status: "pass" });
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "pass", detail: "STS Gen2 API responding", required: true });
     } else if (res.status === 403) {
-      checks.push({ id: "sts", label: "STS Gen2 reachable", status: "fail", detail: "403 Forbidden — ensure RVC Option 74 is enabled: EMC → RVC Parameters → Options → 74 Enable STS Gen2" });
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: "403 Forbidden — STS Gen2 reachable but access denied. Check Option 74 and POS API Client workstation.", required: true });
     } else if (res.status === 401) {
-      checks.push({ id: "sts", label: "STS Gen2 reachable", status: "fail", detail: "401 Unauthorized — token expired or invalid. Use 'Acquire Token' to refresh." });
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: "401 Unauthorized — token expired or invalid. Acquire a fresh OIDC token in step 2.", required: true });
     } else {
-      checks.push({ id: "sts", label: "STS Gen2 reachable", status: "warn", detail: `Status ${res.status}` });
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "warn", detail: `Unexpected status ${res.status}. Verify STS Gen2 host URL.`, required: true });
     }
   } catch (e: any) {
-    checks.push({ id: "sts", label: "STS Gen2 reachable", status: "fail", detail: e.message });
+    checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: `Network error: ${e.message}. Verify STS Gen2 host URL is correct.`, required: true });
   }
 
-  // 2) RVC Option 74 inference
-  const stsCheck = checks[0];
-  if (stsOk) {
-    checks.push({ id: "rvc74", label: "RVC Option 74 (STS Gen2 enabled)", status: "pass", detail: "STS responding — option is enabled" });
-  } else if (stsCheck?.detail?.includes("403")) {
-    checks.push({
-      id: "rvc74", label: "RVC Option 74 (STS Gen2 enabled)", status: "fail",
-      detail: "Likely disabled. Steps: EMC → Setup → RVC Parameters → Options tab → Enable #74 (Enable STS Gen2). Also verify a POS API Client workstation exists for this RVC.",
-    });
-  } else {
-    checks.push({ id: "rvc74", label: "RVC Option 74 (STS Gen2 enabled)", status: "warn", detail: "Unable to determine — verify manually in EMC" });
-  }
-
-  // 3) OIDC token validity
+  // ── 2) OIDC auth success ──
   const cfg = conn.provider_config as Record<string, string> | null;
   const tokenExpiry = cfg?.oidc_token_expires_at;
   if (stsOk) {
-    checks.push({ id: "oidc", label: "OIDC token valid", status: "pass", detail: tokenExpiry ? `Expires: ${tokenExpiry}` : "Token accepted by STS" });
-  } else if (stsCheck?.detail?.includes("401")) {
-    checks.push({ id: "oidc", label: "OIDC token valid", status: "fail", detail: "Token rejected. Acquire a new token via OIDC client_credentials flow." });
+    checks.push({ id: "oidc", label: "OIDC authentication", status: "pass", detail: tokenExpiry ? `Token valid, expires: ${tokenExpiry}` : "Token accepted by STS Gen2", required: true });
   } else {
-    checks.push({ id: "oidc", label: "OIDC token valid", status: "warn", detail: tokenExpiry ? `Expires: ${tokenExpiry}` : "Token may be expired or invalid" });
+    const stsCheck = checks[0];
+    if (stsCheck?.detail?.includes("401")) {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "fail", detail: "Token rejected. Go to step 2 → Acquire Token via client_credentials flow.", required: true });
+    } else if (tokenExpiry && new Date(tokenExpiry) > new Date()) {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "warn", detail: `Token exists (expires: ${tokenExpiry}) but STS did not respond. May be a network or config issue.`, required: true });
+    } else {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "fail", detail: tokenExpiry ? `Token expired at ${tokenExpiry}. Acquire a fresh token.` : "No OIDC token. Go to step 2 → Acquire Token.", required: true });
+    }
   }
 
-  // 4) POS API Client workstation (S8)
+  // ── 3) Locations discovered ──
+  let locationsFound = 0;
+  let rvcsFound = 0;
+  try {
+    const locUrl = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations`;
+    const locRes = await fetch(locUrl, { headers: stsHeaders(conn) });
+    if (locRes.ok) {
+      const locBody = await locRes.json();
+      const locs = Array.isArray(locBody) ? locBody : (locBody.items || locBody.locations || []);
+      locationsFound = locs.length;
+      const matchedLoc = locs.find((l: any) => String(l.locRef || l.locationRef || l.id || "") === locRefParam);
+      if (matchedLoc) {
+        try {
+          const rvcUrl = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations/${locRefParam}/revenueCenters`;
+          const rvcRes = await fetch(rvcUrl, { headers: stsHeaders(conn) });
+          if (rvcRes.ok) {
+            const rvcBody = await rvcRes.json();
+            const rvcList = Array.isArray(rvcBody) ? rvcBody : (rvcBody.items || rvcBody.revenueCenters || []);
+            rvcsFound = rvcList.length;
+          }
+        } catch { /* skip */ }
+      }
+      checks.push({
+        id: "locations", label: "Locations discovered", status: locationsFound > 0 ? "pass" : "warn",
+        detail: locationsFound > 0
+          ? `Found ${locationsFound} location(s). Configured: ${locRefParam || "not set"} ${matchedLoc ? "✓ matched" : "⚠ not found in list"}`
+          : "No locations returned. Verify Org Short Name and API permissions.",
+        required: true,
+      });
+    } else if (locRes.status === 403 || locRes.status === 401) {
+      checks.push({ id: "locations", label: "Locations discovered", status: stsOk ? "warn" : "fail", detail: `Locations API returned ${locRes.status}. Organization listing may require additional permissions.`, required: true });
+    } else {
+      checks.push({ id: "locations", label: "Locations discovered", status: "warn", detail: `Locations API returned ${locRes.status}. Location ${locRefParam || "not set"} may still work if manually configured.`, required: true });
+    }
+  } catch {
+    checks.push({ id: "locations", label: "Locations discovered", status: stsOk ? "warn" : "fail", detail: "Could not query locations. Verify STS host URL and credentials.", required: true });
+  }
+
+  // ── 4) RVC discovered ──
+  if (rvcsFound > 0) {
+    const rvcMatchDetail = rvcRefParam ? `Configured RVC: ${rvcRefParam}` : "No RVC configured — set in step 1 or Discover step";
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: "pass", detail: `Found ${rvcsFound} RVC(s) for location ${locRefParam}. ${rvcMatchDetail}`, required: true });
+  } else if (locationsFound > 0 && stsOk) {
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: "warn", detail: `No RVCs returned for location ${locRefParam}. RVC ${rvcRefParam || "not set"} may still work. Use Discover step to verify.`, required: true });
+  } else {
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: stsOk ? "warn" : "fail", detail: rvcRefParam ? `RVC ${rvcRefParam} configured but could not verify. Ensure it exists in EMC → Setup → Revenue Centers.` : "No RVC configured. Set in step 1 or use Discover step.", required: true });
+  }
+
+  // ── 5) Option 74 likely enabled ──
   if (stsOk) {
-    checks.push({ id: "workstation", label: "POS API Client workstation", status: "pass", detail: "STS Gen2 responding implies workstation exists" });
+    checks.push({ id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "pass", detail: "STS Gen2 API responding — Option 74 is enabled for this RVC.", required: true });
+  } else {
+    const stsCheck = checks[0];
+    if (stsCheck?.detail?.includes("403")) {
+      checks.push({
+        id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "fail",
+        detail: "403 strongly suggests Option 74 is disabled. Steps: EMC → Setup → RVC Parameters → Options tab → Enable #74 (Enable STS Gen2).",
+        required: true,
+      });
+    } else {
+      checks.push({ id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "warn", detail: "Cannot determine — verify manually: EMC → Setup → RVC Parameters → Options tab → #74.", required: true });
+    }
+  }
+
+  // ── 6) POS API Client workstation ──
+  if (stsOk) {
+    checks.push({ id: "workstation", label: "POS API Client workstation", status: "pass", detail: "STS Gen2 responding — a POS API Client workstation exists and CAPS Service Host is configured.", required: true });
   } else {
     checks.push({
       id: "workstation", label: "POS API Client workstation", status: "warn",
-      detail: "Ensure a workstation of type 'POS API Client' exists: EMC → Setup → Workstations → New → Type: POS API Client, CAPS Service Host configured",
+      detail: "Cannot confirm. Ensure: EMC → Setup → Workstations → New → Type: POS API Client. Assign CAPS Service Host.",
+      required: true,
     });
   }
 
-  // 5) C&C API (optional)
+  // ── 7) C&C API (optional) ──
   const cc = ccBaseUrl(conn);
   if (cc) {
     try {
-      const parts = (conn.location_name || "").split("|");
-      const res = await fetch(`${cc}/config/sim/v2/organizations/${parts[1]}/locations`, {
+      const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
         headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
       });
       if (res.ok) {
-        checks.push({ id: "cc", label: "Config & Content API (optional)", status: "pass", detail: "C&C API responding" });
+        checks.push({ id: "cc", label: "Config & Content API", status: "pass", detail: "C&C API responding — catalog write available", required: false });
       } else {
-        checks.push({ id: "cc", label: "Config & Content API (optional)", status: "warn", detail: `Status ${res.status}. Verify CCAPI URL from EMC → Enterprise Parameters → Applications` });
+        checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: `Status ${res.status}. Verify CCAPI URL: EMC → Enterprise Parameters → Applications`, required: false });
       }
     } catch {
-      checks.push({ id: "cc", label: "Config & Content API (optional)", status: "warn", detail: "Not reachable" });
+      checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: "Not reachable", required: false });
     }
   } else {
-    checks.push({ id: "cc", label: "Config & Content API (optional)", status: "warn", detail: "Not configured — catalog write disabled" });
+    checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: "Not configured — catalog write disabled", required: false });
   }
 
-  // 6) Notifications API (optional)
+  // ── 8) Notifications API (optional) ──
   if (stsOk) {
     try {
       const url = `${baseUrl(conn)}/api/v1/notifications/subscriptions`;
       const res = await fetch(url, { headers: stsHeaders(conn) });
       if (res.ok || res.status === 404) {
-        checks.push({ id: "notifications", label: "Notifications API (optional)", status: res.ok ? "pass" : "warn", detail: res.ok ? "Notifications endpoint available" : "Endpoint returned 404 — may not be enabled" });
+        checks.push({ id: "notifications", label: "Notifications API", status: res.ok ? "pass" : "warn", detail: res.ok ? "Notifications endpoint available" : "Endpoint returned 404 — may not be enabled for this org", required: false });
       } else {
-        checks.push({ id: "notifications", label: "Notifications API (optional)", status: "warn", detail: `Status ${res.status}` });
+        checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: `Status ${res.status}`, required: false });
       }
     } catch {
-      checks.push({ id: "notifications", label: "Notifications API (optional)", status: "warn", detail: "Not reachable" });
+      checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: "Not reachable", required: false });
     }
   } else {
-    checks.push({ id: "notifications", label: "Notifications API (optional)", status: "warn", detail: "Skipped (STS not reachable)" });
+    checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: "Skipped (STS not reachable)", required: false });
   }
 
   return json({ checks });
