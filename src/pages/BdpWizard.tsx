@@ -554,9 +554,12 @@ function StepSalesSync({
           </div>
         )}
         {saveResult && (
-          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground">
-            ✅ Saved {saveResult.savedEvents} events, {saveResult.savedLines} lines
-            {saveResult.errors.length > 0 && <p className="text-destructive mt-1">{saveResult.errors.length} error(s): {saveResult.errors[0]}</p>}
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-2">
+            <p>✅ Saved {saveResult.savedEvents} events, {saveResult.savedLines} lines
+              {(saveResult as any).skippedRows > 0 && <span className="text-destructive ml-1">({(saveResult as any).skippedRows} omitidas)</span>}
+            </p>
+            {saveResult.errors.length > 0 && <p className="text-destructive">{saveResult.errors.length} error(s): {saveResult.errors[0]}</p>}
+            <SyncMetaPanel meta={(saveResult as any).syncMeta} />
           </div>
         )}
       </div>
@@ -575,9 +578,12 @@ function StepSalesSync({
           </Button>
         </div>
         {backfillResult && (
-          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
-            <p>✅ {backfillResult.totalSaved} events, {backfillResult.totalLines} lines across {backfillResult.daysProcessed} days</p>
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-2">
+            <p>✅ {backfillResult.totalSaved} events, {backfillResult.totalLines} lines across {backfillResult.daysProcessed} days
+              {(backfillResult as any).totalSkipped > 0 && <span className="text-destructive ml-1">({(backfillResult as any).totalSkipped} omitidas)</span>}
+            </p>
             {backfillResult.errors.length > 0 && <p className="text-destructive">{backfillResult.errors.length} error(s)</p>}
+            <SyncMetaPanel meta={(backfillResult as any).syncMeta} />
           </div>
         )}
       </div>
@@ -591,10 +597,13 @@ function StepSalesSync({
           {incrementalSyncing ? "Syncing…" : "Sync Now"}
         </Button>
         {incrementalResult && (
-          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-0.5">
-            <p>✅ {incrementalResult.savedEvents} events, {incrementalResult.savedLines} lines</p>
+          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs text-foreground space-y-2">
+            <p>✅ {incrementalResult.savedEvents} events, {incrementalResult.savedLines} lines
+              {(incrementalResult as any).skippedRows > 0 && <span className="text-destructive ml-1">({(incrementalResult as any).skippedRows} omitidas)</span>}
+            </p>
             <p className="text-muted-foreground">Range: {incrementalResult.dateRange.from} → {incrementalResult.dateRange.to}</p>
             {incrementalResult.errors.length > 0 && <p className="text-destructive">{incrementalResult.errors.length} error(s)</p>}
+            <SyncMetaPanel meta={(incrementalResult as any).syncMeta} />
           </div>
         )}
       </div>
