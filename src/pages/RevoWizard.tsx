@@ -15,6 +15,7 @@ import { useRevoConnection } from "@/hooks/useRevoConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import { useOutboundSync } from "@/hooks/useOutboundSync";
 import PostWriteVerificationDisplay from "@/components/PostWriteVerificationDisplay";
+import RevoDependencyDiagnostics from "@/components/RevoDependencyDiagnostics";
 
 const steps = [
   { id: 1, label: "Connection", icon: Link2 },
@@ -348,6 +349,9 @@ export default function RevoWizard() {
                   </div>
                 </div>
               )}
+              {/* Dependency Diagnostics Panel */}
+              <RevoDependencyDiagnostics connectionId={connectionId} />
+
               <div className="rounded-lg border border-border p-3">
                 <p className="text-xs text-muted-foreground">
                   <strong>Important:</strong> In Revo, Items depend on Categories and Groups. 
