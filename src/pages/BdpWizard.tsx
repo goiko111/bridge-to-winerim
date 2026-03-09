@@ -816,6 +816,14 @@ function StepCatalogWrite({
         )}
       </div>
 
+      {/* ── Family Mapping ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4">
+        <BdpFamilyMapping
+          connectionId={connectionId}
+          availableFamilies={catalogResult?.families || []}
+        />
+      </div>
+
       {/* ── Write Product ── */}
       <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
         <p className="text-xs font-semibold text-foreground uppercase tracking-wide flex items-center gap-1.5">
