@@ -1138,9 +1138,15 @@ serve(async (req) => {
           } else {
             const item = await itemRes.json();
             const d = item.data || item;
-            const vPrice = Number(d.price || 0) > 0;
             const vCat = !!(d.category_id || d.categoryId);
             const vTax = Number(d.tax || d.taxPercentage || 0) > 0;
+
+            // Price context verification
+            const priceErrors: any[] = [];
+            const priceWarnings: any[] = [];
+            const priceCheck = await verifyPriceContexts(extId, d, priceErrors, priceWarnings);
+            const vPrice = priceCheck.verified;
+
             const ok = vPrice && vCat && vTax;
             results.push({
               external_id: extId,
@@ -1149,6 +1155,9 @@ serve(async (req) => {
               verified_prices: vPrice,
               verified_family: vCat,
               verified_tax: vTax,
+              price_contexts: priceCheck.contexts,
+              price_errors: priceErrors,
+              price_warnings: priceWarnings,
             });
             if (ok) passed++; else failed++;
           }
