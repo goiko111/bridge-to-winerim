@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import BdpFamilyMapping from "@/components/BdpFamilyMapping";
+import BdpRepairActionsPanel from "@/components/BdpRepairActionsPanel";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -618,6 +619,7 @@ function StepCatalogWrite({
   syncingCatalog, catalogResult, syncCatalog,
   writingProduct, writeResult, writeProduct,
   verifyProductV2,
+  repairing, onRepairAction,
 }: {
   connectionId: string | null;
   syncingCatalog: boolean;
@@ -627,6 +629,8 @@ function StepCatalogWrite({
   writeResult: BdpWriteResult | null;
   writeProduct: (p: any) => Promise<BdpWriteResult | null>;
   verifyProductV2: (id: string) => Promise<any>;
+  repairing: boolean;
+  onRepairAction: (action: string) => Promise<any>;
 }) {
   // Write form
   const [wName, setWName] = useState("");
@@ -935,6 +939,15 @@ function StepCatalogWrite({
           <PostWriteVerificationDisplay result={verification} provider="bdp" />
         )}
       </div>
+
+      {/* ── Repair Actions ── */}
+      <div className="rounded-lg border border-border bg-muted/20 p-4">
+        <BdpRepairActionsPanel
+          connectionId={connectionId}
+          onRepairAction={onRepairAction}
+          repairing={repairing}
+        />
+      </div>
     </div>
   );
 }
@@ -986,6 +999,7 @@ export default function BdpWizard() {
     writingProduct, writeResult, writeProduct,
     verifying, verifyResult, verifyProduct,
     verifyProductV2,
+    repairing, runRepairAction,
   } = useBdpConnection();
 
   const [step, setStep] = useState(1);
@@ -1109,6 +1123,7 @@ export default function BdpWizard() {
                 syncingCatalog={syncingCatalog} catalogResult={catalogResult} syncCatalog={syncCatalog}
                 writingProduct={writingProduct} writeResult={writeResult} writeProduct={writeProduct}
                 verifyProductV2={verifyProductV2}
+                repairing={repairing} onRepairAction={runRepairAction}
               />
             )}
             {step === 5 && <StepGoLive connectionId={connectionId} onEnable={async () => { if (connectionId) await updateConnection(connectionId, { enabled: true }); }} />}

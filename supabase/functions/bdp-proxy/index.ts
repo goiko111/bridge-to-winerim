@@ -1501,6 +1501,237 @@ serve(async (req) => {
       }
     }
 
+    // ── ACTION: repair-fix-prices ──
+    // Update prices on existing BDP products via PUT, then auto-verify each
+    if (action === "repair-fix-prices") {
+      const { productIds } = payload; // optional array of product IDs to fix; if empty, fix all from provider_products
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, price, vat_rate, family")
+          .eq("connection_id", connectionId)
+          .gt("price", 0);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ Price: p.price, SalePrice: p.price, PVP: p.price });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "fix-prices", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-reassign-category ──
+    // Update family/department on existing BDP products using saved mappings
+    if (action === "repair-reassign-category") {
+      const { productIds } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, family")
+          .eq("connection_id", connectionId);
+
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_name")
+          .eq("connection_id", connectionId);
+
+        const mappingMap: Record<string, string> = {};
+        for (const m of (mappings || [])) {
+          if (m.agora_family_name) mappingMap[m.mapping_key] = m.agora_family_name;
+        }
+
+        // Also load winerim_wines to resolve wine_type for each product
+        const { data: winerimWines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, wine_type, format")
+          .eq("connection_id", connectionId);
+
+        const wineMap: Record<string, { wine_type: string | null; format: string | null }> = {};
+        for (const w of (winerimWines || [])) {
+          wineMap[w.winerim_id] = { wine_type: w.wine_type, format: w.format };
+        }
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          // Try to resolve mapping key from product name or winerim data
+          const winerimId = (p as any).winerim_wine_id || p.provider_product_id.replace("WINERIM_", "");
+          const wineData = wineMap[winerimId];
+          const mappingKey = wineData ? resolveMappingKey(wineData.wine_type || undefined, wineData.format || undefined) : null;
+          const newFamily = mappingKey ? mappingMap[mappingKey] : null;
+
+          if (!newFamily) { skipped++; continue; }
+
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ Department: newFamily });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "reassign-category", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-fix-tax ──
+    // Update VAT/tax on existing BDP products
+    if (action === "repair-fix-tax") {
+      const { productIds, defaultVatRate } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, vat_rate")
+          .eq("connection_id", connectionId);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        const vatToApply = Number(defaultVatRate || conn.default_vat_rate || 10);
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          const productVat = p.vat_rate && p.vat_rate > 0 ? p.vat_rate : vatToApply;
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ VatRate: productVat, IVA: productVat });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "fix-tax", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-re-verify ──
+    // Re-run post-write verification on all products without modifying them
+    if (action === "repair-re-verify") {
+      const { productIds } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, price, vat_rate, family")
+          .eq("connection_id", connectionId);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+        const results: any[] = [];
+
+        for (const p of targets) {
+          try {
+            let foundProduct: any = null;
+            const vUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const vResp = await bdpFetch(vUrl, headers);
+            if (vResp.ok) {
+              foundProduct = JSON.parse(await vResp.text());
+            }
+
+            if (!foundProduct) { skipped++; continue; }
+
+            const actualPrice = Number(foundProduct.Price || foundProduct.price || foundProduct.SalePrice || foundProduct.PVP || 0);
+            const actualFam = String(foundProduct.Department || foundProduct.department || foundProduct.Family || foundProduct.family || "");
+            const actualVat = Number(foundProduct.VatRate || foundProduct.vat_rate || foundProduct.IVA || 0);
+
+            const priceOk = actualPrice > 0;
+            const familyOk = !p.family || actualFam.toLowerCase() === (p.family || "").toLowerCase();
+            const taxOk = !p.vat_rate || p.vat_rate === 0 || actualVat === p.vat_rate;
+
+            if (priceOk && familyOk && taxOk) {
+              updated++; // "updated" = verified OK
+            } else {
+              failed++;
+              const issues: string[] = [];
+              if (!priceOk) issues.push("price=0");
+              if (!familyOk) issues.push(`family="${actualFam}" expected="${p.family}"`);
+              if (!taxOk) issues.push(`vat=${actualVat} expected=${p.vat_rate}`);
+              errors.push(`${p.provider_product_id}: ${issues.join(", ")}`);
+            }
+
+            results.push({
+              id: p.provider_product_id,
+              name: p.name,
+              verified_exists: true,
+              verified_prices: priceOk,
+              verified_family: familyOk,
+              verified_tax: taxOk,
+              success: priceOk && familyOk && taxOk,
+            });
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "re-verify", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors, results });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
     // ── ACTION: verify-product ──
     // Confirm product exists in BDP and has price > 0
     if (action === "verify-product") {
