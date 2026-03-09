@@ -628,6 +628,54 @@ async function handlePreflight(conn: any) {
   return json({ checks });
 }
 
+// ── Retry wrapper for STS Gen2 API calls ──
+const STS_MAX_RETRIES = 3;
+const STS_BASE_BACKOFF_MS = 1000;
+
+interface StsFetchResult {
+  ok: boolean;
+  status: number;
+  // deno-lint-ignore no-explicit-any
+  data: any;
+  attempts: number;
+  error?: string;
+}
+
+async function stsFetchWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  label: string,
+): Promise<StsFetchResult> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= STS_MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        const body = await res.json();
+        return { ok: true, status: res.status, data: body, attempts: attempt };
+      }
+      const errText = await res.text();
+      lastError = `${res.status}: ${errText.slice(0, 200)}`;
+      // Only retry on 5xx or 429
+      if ((res.status >= 500 || res.status === 429) && attempt < STS_MAX_RETRIES) {
+        console.log(`[simphony-sts] ${label} attempt ${attempt}/${STS_MAX_RETRIES} got ${res.status}, retrying…`);
+        await sleep(STS_BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      return { ok: false, status: res.status, data: null, attempts: attempt, error: lastError };
+    } catch (e: any) {
+      lastError = e.message || String(e);
+      if (attempt < STS_MAX_RETRIES && (lastError.includes("fetch") || lastError.includes("network") || lastError.includes("timeout"))) {
+        console.log(`[simphony-sts] ${label} attempt ${attempt}/${STS_MAX_RETRIES} error, retrying…`);
+        await sleep(STS_BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      return { ok: false, status: 0, data: null, attempts: attempt, error: lastError };
+    }
+  }
+  return { ok: false, status: 0, data: null, attempts: STS_MAX_RETRIES, error: lastError };
+}
+
 // ════════════════════════════════════════════════════════
 // ACTION: find-last-business-day (S4 — multi-RVC aware, per-RVC diagnostics)
 // ════════════════════════════════════════════════════════
@@ -640,34 +688,38 @@ async function handleFindDays(conn: any, daysBack: number) {
   const globalDays = new Set<string>();
   let totalScanned = 0;
   let totalInvoicesFound = 0;
-  const perRvc: Record<string, { invoices: number; days: string[] }> = {};
+  let totalBatches = 0;
+  let totalRetries = 0;
+  const perRvc: Record<string, { invoices: number; days: string[]; batches: number }> = {};
 
   for (const rvc of rvcs) {
     const rvcDays = new Set<string>();
     let rvcInvoices = 0;
+    let rvcBatches = 0;
     for (let i = 0; i < scanDays; i += 7) {
       const sinceDate = new Date(Date.now() - Math.min(i + 7, scanDays) * 86400000);
-      try {
-        const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceDate.toISOString()}&limit=500`;
-        const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
-        if (res.ok) {
-          const body = await res.json();
-          const checks = Array.isArray(body) ? body : (body.items || body.checks || []);
-          rvcInvoices += checks.length;
-          totalInvoicesFound += checks.length;
-          for (const check of checks) {
-            const openTime = check.openTime || check.closedTime || check.createdAt;
-            if (openTime) {
-              const day = new Date(openTime).toISOString().split("T")[0];
-              rvcDays.add(day);
-              globalDays.add(day);
-            }
+      const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceDate.toISOString()}&limit=500`;
+      const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `findDays-rvc${rvc}-batch${i}`);
+      rvcBatches++;
+      totalBatches++;
+      if (result.attempts > 1) totalRetries += result.attempts - 1;
+      if (result.ok) {
+        const checks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+        rvcInvoices += checks.length;
+        totalInvoicesFound += checks.length;
+        // deno-lint-ignore no-explicit-any
+        for (const check of checks) {
+          const openTime = check.openTime || check.closedTime || check.createdAt;
+          if (openTime) {
+            const day = new Date(openTime).toISOString().split("T")[0];
+            rvcDays.add(day);
+            globalDays.add(day);
           }
-        } else { await res.text(); }
-      } catch { /* skip */ }
+        }
+      }
       totalScanned += Math.min(7, scanDays - i);
     }
-    perRvc[rvc] = { invoices: rvcInvoices, days: Array.from(rvcDays).sort((a, b) => b.localeCompare(a)) };
+    perRvc[rvc] = { invoices: rvcInvoices, days: Array.from(rvcDays).sort((a, b) => b.localeCompare(a)), batches: rvcBatches };
   }
 
   const daysWithSales = Array.from(globalDays).sort((a, b) => b.localeCompare(a));
@@ -675,6 +727,8 @@ async function handleFindDays(conn: any, daysBack: number) {
     daysWithSales: daysWithSales.slice(0, 30),
     totalScanned,
     totalInvoicesFound,
+    totalBatches,
+    totalRetries,
     // Per-RVC diagnostics (omitted for single-RVC to keep backward compat)
     ...(rvcs.length > 1 ? { perRvc } : {}),
   });
@@ -686,6 +740,7 @@ async function handleFindDays(conn: any, daysBack: number) {
 // deno-lint-ignore no-explicit-any
 async function handleFetchDay(conn: any, connectionId: string, businessDay: string) {
   if (!businessDay) return json({ error: "businessDay is required" }, 400);
+  await ensureValidToken(conn);
   const rvcs = getSelectedRvcs(conn);
   const sinceTime = `${businessDay}T00:00:00Z`;
   const wineFamilies = await getWineFamilies(connectionId);
@@ -694,21 +749,26 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
   const seenDocIds = new Set<string>();
   // deno-lint-ignore no-explicit-any
   const salesEvents: any[] = [];
-  const perRvc: Record<string, { invoices: number; lineItems: number; wineItems: number; duplicatesSkipped: number }> = {};
+  let totalBatches = 0;
+  let totalRetries = 0;
+  const perRvc: Record<string, { invoices: number; lineItems: number; wineItems: number; duplicatesSkipped: number; batches: number }> = {};
 
   for (const rvc of rvcs) {
     let rvcInvoices = 0;
     let rvcLines = 0;
     let rvcWine = 0;
     let rvcDuplicates = 0;
+    let rvcBatches = 0;
 
     const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
-    try {
-      const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
-      if (!res.ok) { await res.text(); continue; }
-      const body = await res.json();
+    const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `fetchDay-${businessDay}-rvc${rvc}`);
+    rvcBatches++;
+    totalBatches++;
+    if (result.attempts > 1) totalRetries += result.attempts - 1;
+
+    if (result.ok) {
       // deno-lint-ignore no-explicit-any
-      let allChecks: any[] = Array.isArray(body) ? body : (body.items || body.checks || []);
+      let allChecks: any[] = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
       // deno-lint-ignore no-explicit-any
       allChecks = allChecks.filter((c: any) => (c.openTime || c.closedTime || "").startsWith(businessDay));
 
@@ -743,9 +803,9 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
           line_count: lines.length, lines, rvc_ref: rvc,
         });
       }
-    } catch { /* skip */ }
+    }
 
-    perRvc[rvc] = { invoices: rvcInvoices, lineItems: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates };
+    perRvc[rvc] = { invoices: rvcInvoices, lineItems: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates, batches: rvcBatches };
   }
 
   const detectedFamilies = Array.from(allFamilies).map((f) => {
@@ -757,47 +817,62 @@ async function handleFetchDay(conn: any, connectionId: string, businessDay: stri
 
   return json({
     businessDay, invoiceCount: salesEvents.length, salesEvents, detectedFamilies,
+    totalBatches, totalRetries,
     ...(rvcs.length > 1 ? { perRvc, totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0) } : {}),
   });
 }
 
+// ── Stable idempotency key for line items ──
+function lineIdempotencyKey(connectionId: string, providerDocId: string, idx: number, providerProductId: string): string {
+  return `${connectionId}::${providerDocId}::${idx}::${providerProductId}`;
+}
+
 // ════════════════════════════════════════════════════════
-// ACTION: save-sales (multi-RVC aware, global dedup, per-RVC cursor & diagnostics)
+// ACTION: save-sales (idempotent, raw payload, diagnostics, retry)
 // ════════════════════════════════════════════════════════
 // deno-lint-ignore no-explicit-any
 async function handleSaveSales(conn: any, connectionId: string, businessDay: string) {
   if (!businessDay) return json({ error: "businessDay required" }, 400);
+  await ensureValidToken(conn);
   const rvcs = getSelectedRvcs(conn);
   const sinceTime = `${businessDay}T00:00:00Z`;
   const wineFamilies = await getWineFamilies(connectionId);
   const supabaseClient = sb();
   let savedEvents = 0;
   let savedLines = 0;
+  let totalPaymentsSaved = 0;
+  let totalBatches = 0;
+  let totalRetries = 0;
   // Global dedup by checkId to prevent cross-RVC duplicates
   const seenDocIds = new Set<string>();
-  const perRvc: Record<string, { saved: number; lines: number; wineItems: number; duplicatesSkipped: number; errors: string[] }> = {};
+  const perRvc: Record<string, { saved: number; lines: number; wineItems: number; duplicatesSkipped: number; errors: string[]; batches: number; retries: number; lastCursor?: string }> = {};
+  const startedAt = Date.now();
 
   for (const rvc of rvcs) {
     let rvcSaved = 0;
     let rvcLines = 0;
     let rvcWine = 0;
     let rvcDuplicates = 0;
+    let rvcBatches = 0;
+    let rvcRetries = 0;
     const rvcErrors: string[] = [];
+    let lastCheckTime = "";
 
     // deno-lint-ignore no-explicit-any
     let allChecks: any[] = [];
-    try {
-      const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
-      const res = await fetch(url, { headers: stsHeaders(conn, rvc) });
-      if (res.ok) {
-        const body = await res.json();
-        allChecks = Array.isArray(body) ? body : (body.items || body.checks || []);
-      } else {
-        rvcErrors.push(`Fetch failed: ${res.status}`);
-      }
-    } catch (e: any) {
-      rvcErrors.push(`Fetch error: ${e.message}`);
+    const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
+    const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `saveSales-${businessDay}-rvc${rvc}`);
+    rvcBatches++;
+    totalBatches++;
+    rvcRetries += Math.max(0, result.attempts - 1);
+    totalRetries += Math.max(0, result.attempts - 1);
+
+    if (result.ok) {
+      allChecks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+    } else {
+      rvcErrors.push(`Fetch failed: ${result.error || result.status}`);
     }
+
     // deno-lint-ignore no-explicit-any
     allChecks = allChecks.filter((c: any) => (c.openTime || c.closedTime || "").startsWith(businessDay));
 
@@ -809,6 +884,10 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
         continue;
       }
       seenDocIds.add(docId);
+
+      // Track cursor (latest check time in this RVC)
+      const checkTime = check.closedTime || check.openTime || "";
+      if (checkTime > lastCheckTime) lastCheckTime = checkTime;
 
       const menuItems = check.menuItems || check.detailLines || [];
       // deno-lint-ignore no-explicit-any
@@ -824,6 +903,7 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
       const totalTax = Number(totals.tax || check.taxTotal || 0);
       const providerDocId = `${docId}${rvcs.length > 1 ? `_${rvc}` : ""}`;
 
+      // Upsert sales event with full raw payload for debugging
       const { data: eventRow, error: eventErr } = await supabaseClient
         .from("sales_events")
         .upsert({
@@ -839,36 +919,76 @@ async function handleSaveSales(conn: any, connectionId: string, businessDay: str
       }
       rvcSaved++;
       savedEvents++;
+
+      // Delete existing lines then re-insert (idempotent via event-level upsert)
       await supabaseClient.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-      // deno-lint-ignore no-explicit-any
-      const linesToInsert = lineData.map((l: any) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
+      const linesToInsert = lineData.map((l: any, idx: number) => ({
+        ...l,
+        sales_event_id: eventRow.id,
+        connection_id: connectionId,
+        // Stable provider_product_id: use original if present, else generate from position
+        provider_product_id: l.provider_product_id || lineIdempotencyKey(connectionId, providerDocId, idx, ""),
+      }));
       if (linesToInsert.length > 0) {
         const { error: lineErr } = await supabaseClient.from("sales_line_items").insert(linesToInsert);
         if (!lineErr) { savedLines += linesToInsert.length; rvcLines += linesToInsert.length; }
+        else { rvcErrors.push(`Lines ${providerDocId}: ${lineErr.message}`); }
       }
     }
 
-    perRvc[rvc] = { saved: rvcSaved, lines: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates, errors: rvcErrors };
+    perRvc[rvc] = {
+      saved: rvcSaved, lines: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates,
+      errors: rvcErrors, batches: rvcBatches, retries: rvcRetries,
+      lastCursor: lastCheckTime || undefined,
+    };
   }
 
-  // Update global cursor
+  // Build sync diagnostics
+  const durationMs = Date.now() - startedAt;
+  const syncDiagnostics = {
+    business_day: businessDay,
+    checks_fetched: savedEvents,
+    batches_processed: totalBatches,
+    line_items_saved: savedLines,
+    payments_saved: totalPaymentsSaved,
+    retries: totalRetries,
+    duration_ms: durationMs,
+    synced_at: new Date().toISOString(),
+    per_rvc: Object.fromEntries(
+      Object.entries(perRvc).map(([rvc, d]) => [rvc, {
+        saved: d.saved, lines: d.lines, wine: d.wineItems,
+        duplicates_skipped: d.duplicatesSkipped, errors: d.errors.length,
+        last_cursor: d.lastCursor,
+      }])
+    ),
+  };
+
+  // Update global cursor + persist sync diagnostics & per-RVC cursors
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const updatedCfg = {
+    ...cfg,
+    last_sync_diagnostics: syncDiagnostics,
+    rvc_cursors: {
+      ...(cfg.rvc_cursors || {}),
+      ...Object.fromEntries(
+        Object.entries(perRvc).map(([rvc, d]) => [rvc, {
+          last_business_day: businessDay,
+          synced_at: new Date().toISOString(),
+          last_cursor: d.lastCursor,
+        }])
+      ),
+    },
+  };
+
   await supabaseClient.from("pos_connections").update({
     last_business_day_synced: businessDay,
     last_sync_at: new Date().toISOString(),
-    // Store per-RVC cursors in provider_config for multi-RVC tracking
-    ...(rvcs.length > 1 ? {
-      provider_config: {
-        ...getSimphonyConfig(conn.provider_config),
-        rvc_cursors: {
-          ...(getSimphonyConfig(conn.provider_config).rvc_cursors || {}),
-          ...Object.fromEntries(rvcs.map(rvc => [rvc, { last_business_day: businessDay, synced_at: new Date().toISOString() }])),
-        },
-      },
-    } : {}),
+    provider_config: updatedCfg,
   }).eq("id", connectionId);
 
   return json({
     success: true, savedEvents, savedLines, businessDay,
+    diagnostics: syncDiagnostics,
     ...(rvcs.length > 1 ? {
       perRvc,
       totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0),
