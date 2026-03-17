@@ -3545,18 +3545,21 @@ function StepMasterData({
               {masterData.priceLists.length > 0 && masterData.saleCenters.length > 0 && (
                 <details className="rounded-lg border border-border bg-background">
                   <summary className="px-3 py-2 text-[11px] font-medium text-muted-foreground cursor-pointer hover:text-foreground">
-                    PriceList → SaleCenter mapping ({masterData.priceLists.length} lists)
+                    PriceList → SaleCenter mapping ({masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active, {masterData.priceLists.filter((pl: any) => !!pl.DeletionDate).length} deleted)
                   </summary>
                   <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
                     {masterData.priceLists.map((pl: any) => {
+                      const isDeleted = !!pl.DeletionDate;
                       const linkedCenters = masterData.saleCenters.filter(
-                        (sc: any) => sc.CurrentPriceListId === pl.Id
+                        (sc: any) => sc.CurrentPriceListId === pl.Id && !sc.DeletionDate
                       );
                       return (
-                        <div key={pl.Id} className="flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0">
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0 font-mono">{pl.Id}</Badge>
-                          <span className="font-medium text-foreground min-w-[80px]">{pl.Name}</span>
-                          {linkedCenters.length > 0 ? (
+                        <div key={pl.Id} className={`flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0 ${isDeleted ? "opacity-50" : ""}`}>
+                          <Badge variant={isDeleted ? "secondary" : "outline"} className={`text-[9px] px-1.5 py-0 shrink-0 font-mono ${isDeleted ? "line-through" : ""}`}>{pl.Id}</Badge>
+                          <span className={`font-medium min-w-[80px] ${isDeleted ? "text-muted-foreground line-through" : "text-foreground"}`}>{pl.Name}</span>
+                          {isDeleted ? (
+                            <Badge variant="secondary" className="text-[8px] px-1 py-0">🗑 Deleted {String(pl.DeletionDate).slice(0, 10)}</Badge>
+                          ) : linkedCenters.length > 0 ? (
                             <span className="text-muted-foreground">
                               → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
                             </span>
