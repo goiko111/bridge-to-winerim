@@ -2721,17 +2721,17 @@ serve(async (req) => {
 
               // CHECK 2: PRICES
               for (const pl of taskPriceLists) {
-                const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
+                const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
                 const priceMatch = innerXml.match(priceRegex);
                 const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
                 if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
                   taskVerification.verified_prices = false;
                   taskVerification.success = false;
-                  const scNames = taskPlToSc[pl.Id] || [];
+                  const scNames = taskPlToSc[pl.id] || [];
                   const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
                   taskVerification.missing_prices.push({
                     product_erp_id: winerimWineId || "", agora_product_id: productId,
-                    price_list_id: pl.Id, price_list_name: pl.Name,
+                    price_list_id: pl.id, price_list_name: pl.name,
                     issue, format: fmt, affected_sale_centers: scNames,
                   });
                   for (const s of scNames) {
@@ -2739,9 +2739,9 @@ serve(async (req) => {
                   }
                   taskVerification.errors.push({
                     code: "PRICE_MISSING",
-                    message: `Product ${productId} (${fmt}): ${issue} price in PriceList "${pl.Name}"`,
+                    message: `Product ${productId} (${fmt}): ${issue} price in PriceList "${pl.name}"`,
                     field: "prices",
-                    context: { productId, format: fmt, priceListId: pl.Id, priceListName: pl.Name, affectedSaleCenters: scNames },
+                    context: { productId, format: fmt, priceListId: pl.id, priceListName: pl.name, affectedSaleCenters: scNames },
                   });
                 }
               }
