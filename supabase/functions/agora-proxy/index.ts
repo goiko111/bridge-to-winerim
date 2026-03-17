@@ -3242,6 +3242,13 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      // Load master data for scope
+      const { data: reassignMasterData } = await supabase
+        .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+      const reassignScopePayload = buildAgoraVerificationScopePayload(reassignMasterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       // Get connection write settings for format types
       const { data: connSettings } = await supabase
         .from("pos_connections").select("write_bottle, write_glass")
@@ -3272,6 +3279,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "REASSIGN_FAMILIES",
+            ...reassignScopePayload,
           },
           status: "QUEUED",
         });
