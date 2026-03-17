@@ -3686,14 +3686,17 @@ function StepMasterData({
       {sections.map(({ label, data, icon: Icon }) => {
         const filtered = filterItems(data);
         if (searchMaster.trim() && filtered.length === 0) return null;
+        const isDeletedSection = label === "Price Lists" || label === "Sale Centers";
+        const activeItems = isDeletedSection ? filtered.filter((item: any) => !item.DeletionDate) : filtered;
+        const deletedItems = isDeletedSection ? filtered.filter((item: any) => !!item.DeletionDate) : [];
         return (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
           <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5" /> {label} ({filtered.length}{searchMaster.trim() ? `/${data.length}` : ""})
+            <Icon className="h-3.5 w-3.5" /> {label} ({activeItems.length}{deletedItems.length > 0 ? ` active, ${deletedItems.length} deleted` : ""}{searchMaster.trim() ? ` / ${data.length} total` : ""})
           </p>
-          {filtered.length > 0 ? (
+          {activeItems.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {filtered.map((item: any, i: number) => (
+              {activeItems.map((item: any, i: number) => (
                 <Badge key={i} variant="outline" className="text-[10px] font-mono">
                   {item.Id}: {item.Name}{item.VatRate ? ` (${(Number(item.VatRate) * 100).toFixed(0)}%)` : ""}
                 </Badge>
@@ -3701,6 +3704,21 @@ function StepMasterData({
             </div>
           ) : (
             <p className="text-[11px] text-muted-foreground italic">No data yet. Click sync above.</p>
+          )}
+          {deletedItems.length > 0 && (
+            <details className="group">
+              <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
+                {deletedItems.length} deleted / archived
+              </summary>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {deletedItems.map((item: any, i: number) => (
+                  <Badge key={`del-${i}`} variant="secondary" className="text-[10px] font-mono opacity-60 line-through">
+                    {item.Id}: {item.Name}
+                    {item.DeletionDate && <span className="ml-1 no-underline text-[8px]">🗑 {String(item.DeletionDate).slice(0, 10)}</span>}
+                  </Badge>
+                ))}
+              </div>
+            </details>
           )}
         </div>
         );
