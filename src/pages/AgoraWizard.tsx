@@ -3171,7 +3171,8 @@ function StepMasterData({
 
   // ── Sale Center / PriceList diagnostic ──
   // Find all candidate central sale centers
-  const centralCandidates = masterData.saleCenters.filter(
+  const activeSaleCenters = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+  const centralCandidates = activeSaleCenters.filter(
     (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
   );
   const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
