@@ -3891,13 +3891,15 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+      const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
+      const priceLists = allPriceListsRaw.filter((e: any) => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+      const deletedPriceLists = allPriceListsRaw.filter((e: any) => isDeletedEntity(e)) as { Id: string; Name: string; DeletionDate?: string }[];
       const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
       const families = (masterData.families_json || []) as { Id: string; Name: string }[];
       const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
 
       if (priceLists.length === 0) {
-        return new Response(JSON.stringify({ success: false, error: "No PriceLists in master data." }),
+        return new Response(JSON.stringify({ success: false, error: `No active PriceLists in master data. ${deletedPriceLists.length} deleted PriceLists were excluded.` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
