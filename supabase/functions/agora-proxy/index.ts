@@ -3353,6 +3353,7 @@ serve(async (req) => {
       const verificationScope = buildAgoraVerificationScope(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
       const scopedPriceLists = verificationScope.selectedPriceLists;
       const priceListToSaleCenters = verificationScope.priceListToSaleCenters;
