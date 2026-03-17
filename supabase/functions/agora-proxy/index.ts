@@ -3017,6 +3017,7 @@ serve(async (req) => {
       const scopePayload = buildAgoraVerificationScopePayload(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
