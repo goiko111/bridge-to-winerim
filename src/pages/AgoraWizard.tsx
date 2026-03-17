@@ -3496,13 +3496,13 @@ function StepMasterData({
                 <div className="rounded-lg border border-border bg-background p-3 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     {(verifyResult.missingCentralPrice || 0) === 0 ? (
-                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists</Badge>
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists</Badge>
                     ) : (
                       <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} products with price issues</Badge>
                     )}
                     {verifyResult.summary && (
                       <span className="text-[10px] text-muted-foreground">
-                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.length} SaleCenters
+                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.filter((sc: any) => !sc.DeletionDate).length} active SaleCenters
                       </span>
                     )}
                   </div>
