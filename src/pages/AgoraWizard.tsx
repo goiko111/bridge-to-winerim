@@ -2852,7 +2852,7 @@ function StepOutboundSync({
                               <RotateCcw className="h-3.5 w-3.5" />
                             </Button>
                             <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={() => onRequeueWithCurrentScope(t.id)}>
-                              Requeue with current verification scope
+                              Requeue with production scope
                             </Button>
                           </div>
                         )}
