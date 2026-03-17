@@ -3211,6 +3211,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: "BACKFILL_PREPARATION",
             _force_empty_preparation: true,
+            ...prepScopePayload,
           },
           status: "QUEUED",
         });
