@@ -340,6 +340,8 @@ function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCen
     verificationMode,
     allPriceLists,
     allSaleCenters,
+    deletedPriceLists: deletedPriceLists.map((pl: any) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id), deletionDate: String(pl.DeletionDate || pl.deletionDate || "") })),
+    deletedSaleCenters: deletedSaleCenters.map((sc: any) => ({ id: String(sc.Id || ""), name: String(sc.Name || sc.Id || ""), deletionDate: String(sc.DeletionDate || sc.deletionDate || "") })),
     selectedSaleCenters: selectedSaleCenters.map((sc) => ({
       id: String(sc.Id || ""),
       name: String(sc.Name || sc.Id || ""),
