@@ -3193,12 +3193,12 @@ function StepMasterData({
   // Determine active central: persisted selection > single candidate > first sale center
   const activeCentralCenter = (() => {
     if (selectedSaleCenterId) {
-      return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
+      return activeSaleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
     }
     if (centralCandidates.length === 1) return centralCandidates[0];
     if (centralCandidates.length > 1) return null; // force selection
-    // Default: pick first sale center if none selected
-    if (masterData.saleCenters.length > 0) return masterData.saleCenters[0];
+    // Default: pick first active sale center if none selected
+    if (activeSaleCenters.length > 0) return activeSaleCenters[0];
     return null;
   })();
 
