@@ -275,8 +275,14 @@ function isDeletedEntity(entity: any): boolean {
 
 // deno-lint-ignore no-explicit-any
 function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[]; verificationMode?: string } = {}) {
-  const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
-  const allSaleCenters = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+  const allPriceListsRaw = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as Record<string, unknown>[];
+  const allSaleCentersRaw = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+
+  // Filter out deleted entities — they must never contaminate production scope
+  const allPriceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+  const allSaleCenters = allSaleCentersRaw.filter(e => !isDeletedEntity(e)) as Record<string, unknown>[];
+  const deletedPriceLists = allPriceListsRaw.filter(e => isDeletedEntity(e));
+  const deletedSaleCenters = allSaleCentersRaw.filter(e => isDeletedEntity(e));
   const explicitIds = normalizeStringArray(options.explicitSaleCenterIds);
   const connectionSelectedIds = normalizeStringArray(options.connectionSelectedSaleCenterIds);
 
