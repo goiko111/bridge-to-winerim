@@ -2831,20 +2831,7 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
-        // ── UNIFIED POST-IMPORT VERIFICATION (shared contract + provider extras) ──
-        const taskVerification = {
-          success: true,
-          verified_exists: true,
-          verified_prices: true,
-          verified_scope: true, // shared contract field
-          verified_family: true, // provider-specific
-          verified_preparation: true, // provider-specific
-          errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-          warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-          missing_prices: [] as { product_erp_id: string; agora_product_id: string; price_list_id: string; price_list_name: string; issue: string; format: string; affected_sale_centers: string[] }[],
-          affected_sale_centers: [] as string[],
-        };
-
+        // ── UNIFIED POST-IMPORT VERIFICATION (using shared function) ──
         // Extract expected familyIds from sent XML
         const expectedFamilies: Record<string, string> = {};
         const famRegex = /<Product[^>]*Id="(\d+)"[^>]*FamilyId="([^"]*)"/g;
@@ -2853,11 +2840,17 @@ serve(async (req) => {
           expectedFamilies[fm[1]] = fm[2];
         }
 
+        let taskVerification: AgoraVerificationResult & Record<string, unknown> = {
+          success: true, verified_exists: true, verified_prices: true,
+          verified_family: true, verified_preparation: true, verified_scope: true,
+          errors: [], warnings: [], missing_prices: [], affected_sale_centers: [],
+          summary: { checked: 0, ok: 0, failed: 0 },
+        };
+
         try {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
 
-          // Load PriceLists + SaleCenters for scoped price verification
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
 
@@ -2866,112 +2859,41 @@ serve(async (req) => {
             connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
           });
 
-          Object.assign(taskVerification, {
-            verified_scope: verificationScope.selectedPriceLists.length > 0,
-            selected_sale_centers: verificationScope.selectedSaleCenters,
-            selected_price_lists: verificationScope.selectedPriceLists,
-            ignored_price_lists: verificationScope.ignoredPriceLists,
-            verification_scope_source: verificationScope.source,
-            legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+          // Build product list for this task
+          const productsToVerify: AgoraProductToVerify[] = fmtTypes.map((fmt: string) => {
+            const productId = fmt === "MAGNUM"
+              ? String(900000 + Number(winerimWineId || 0))
+              : fmt === "GLASS"
+              ? String(700000 + Number(winerimWineId || 0))
+              : String(500000 + Number(winerimWineId || 0));
+            return {
+              productId,
+              productName: wineArr[0].name,
+              format: fmt,
+              erpId: winerimWineId || "",
+              expectedFamilyId: expectedFamilies[productId] || undefined,
+            };
           });
-
-          const taskPriceLists = verificationScope.selectedPriceLists;
-          const taskPlToSc = verificationScope.priceListToSaleCenters;
-
-          if (taskPriceLists.length === 0) {
-            taskVerification.success = false;
-            taskVerification.errors.push({
-              code: "VERIFY_SCOPE_EMPTY",
-              message: "No relevant PriceLists resolved from current SaleCenter scope",
-              field: "verification_scope",
-            });
-          }
 
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
-
-            for (const fmt of fmtTypes) {
-              const productId = fmt === "MAGNUM"
-                ? String(900000 + Number(winerimWineId || 0))
-                : fmt === "GLASS"
-                ? String(700000 + Number(winerimWineId || 0))
-                : String(500000 + Number(winerimWineId || 0));
-
-              // CHECK 1: EXISTS
-              const productFullRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
-              const productMatch = verifyXml.match(productFullRegex);
-              if (!productMatch) {
-                taskVerification.success = false;
-                taskVerification.verified_exists = false;
-                taskVerification.errors.push({
-                  code: "NOT_FOUND",
-                  message: `Product ${productId} (${fmt}) not found in Agora after import`,
-                  context: { productId, format: fmt },
-                });
-                continue;
-              }
-
-              const attrs = productMatch[1];
-              const innerXml = productMatch[2];
-
-              // CHECK 2: PRICES
-              for (const pl of taskPriceLists) {
-                const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
-                const priceMatch = innerXml.match(priceRegex);
-                const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
-                if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
-                  taskVerification.verified_prices = false;
-                  taskVerification.success = false;
-                  const scNames = taskPlToSc[pl.id] || [];
-                  const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
-                  taskVerification.missing_prices.push({
-                    product_erp_id: winerimWineId || "", agora_product_id: productId,
-                    price_list_id: pl.id, price_list_name: pl.name,
-                    issue, format: fmt, affected_sale_centers: scNames,
-                  });
-                  for (const s of scNames) {
-                    if (!taskVerification.affected_sale_centers.includes(s)) taskVerification.affected_sale_centers.push(s);
-                  }
-                  taskVerification.errors.push({
-                    code: "PRICE_MISSING",
-                    message: `Product ${productId} (${fmt}): ${issue} price in PriceList "${pl.name}"`,
-                    field: "prices",
-                    context: { productId, format: fmt, priceListId: pl.id, priceListName: pl.name, affectedSaleCenters: scNames },
-                  });
-                }
-              }
-
-              // CHECK 3: FAMILY
-              const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
-              const actualFamilyId = familyMatch ? familyMatch[1] : "";
-              const expectedFamilyId = expectedFamilies[productId] || "";
-              if (expectedFamilyId && actualFamilyId !== expectedFamilyId) {
-                taskVerification.verified_family = false;
-                taskVerification.success = false;
-                taskVerification.errors.push({
-                  code: "FAMILY_MISMATCH",
-                  message: `Product ${productId} (${fmt}): expected FamilyId="${expectedFamilyId}", got "${actualFamilyId}"`,
-                  field: "FamilyId",
-                  context: { productId, format: fmt, expected: expectedFamilyId, actual: actualFamilyId },
-                });
-              }
-
-              // CHECK 4: PREPARATION FIELDS
-              const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
-              const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
-              const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
-              const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
-              if ((!prepTypeVal) !== (!prepOrderVal)) {
-                taskVerification.verified_preparation = false;
-                taskVerification.success = false;
-                taskVerification.errors.push({
-                  code: "INVALID_PREPARATION_PAIR",
-                  message: `Preparation Type and Order must both be empty or both set (Product ${productId}, ${fmt}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
-                  field: "PreparationTypeId,PreparationOrderId",
-                  context: { productId, format: fmt, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
-                });
-              }
-            }
+            taskVerification = {
+              ...verifyAgoraProductsAgainstScope(
+                verifyXml, productsToVerify,
+                verificationScope.selectedPriceLists,
+                verificationScope.priceListToSaleCenters,
+              ),
+              selected_sale_centers: verificationScope.selectedSaleCenters,
+              selected_price_lists: verificationScope.selectedPriceLists,
+              ignored_price_lists: verificationScope.ignoredPriceLists,
+              verification_scope_source: verificationScope.source,
+              legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+            };
+          } else {
+            taskVerification.warnings.push({
+              code: "VERIFY_FETCH_FAILED",
+              message: `Export-master returned ${verifyRes.status} — verification incomplete`,
+            });
           }
         } catch (_verifyErr) {
           taskVerification.warnings.push({
@@ -2981,7 +2903,7 @@ serve(async (req) => {
         }
 
         if (!taskVerification.success) {
-          const failMsg = `Post-import verification failed: ${taskVerification.errors.map(e => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 500);
+          const failMsg = `Post-import verification failed: ${taskVerification.errors.map((e: AgoraVerificationIssue) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 500);
           await supabase.from("outbound_tasks").update({
             status: "FAILED",
             last_error: failMsg,
