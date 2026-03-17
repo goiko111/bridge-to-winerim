@@ -3144,6 +3144,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "BACKFILL_PRICES",
+            ...backfillScopePayload,
           },
           status: "QUEUED",
         });
