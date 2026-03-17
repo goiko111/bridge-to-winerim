@@ -3855,6 +3855,155 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── PROBE PRICELIST PERSISTENCE ──
+    // Creates a disposable test product with all active PriceLists, imports it,
+    // reads it back, and compares sent vs persisted. Evidence for Agora support.
+    if (action === "probe-pricelist-persistence") {
+      const probeStarted = new Date().toISOString();
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "No master data cached." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+      const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
+      const families = (masterData.families_json || []) as { Id: string; Name: string }[];
+      const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
+
+      if (priceLists.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No PriceLists in master data." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Use a distinctive test product ID that won't collide with real wines
+      const probeProductId = "999999";
+      const probeName = "_WINERIM_PROBE_PRICELIST_TEST";
+      const probePrice = "0.01";
+      const defaultVatId = connection.default_vat_id || (vats.length > 0 ? vats[0].Id : "3");
+      const defaultFamilyId = connection.default_family_id || (families.length > 0 ? families[0].Id : "1");
+      const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
+
+      // Build test XML with ALL PriceLists
+      const pricesXml = priceLists.map(pl =>
+        `        <Price PriceListId="${pl.Id}" MainPrice="${probePrice}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+      ).join("\n");
+      const costPricesXml = warehouses.map(wh =>
+        `        <CostPrice WarehouseId="${wh.Id}" CostPrice="0.01" />`
+      ).join("\n");
+
+      const probeXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<Import>
+  <Products>
+    <Product Id="${probeProductId}" Name="${probeName}" ButtonText="PROBE" Color="#999999" PLU="" FamilyId="${defaultFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="false" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="" PreparationOrderId="" CostPrice="0.01">
+      <Prices>
+${pricesXml}
+      </Prices>
+      <CostPrices>
+${costPricesXml}
+      </CostPrices>
+    </Product>
+  </Products>
+</Import>`;
+
+      const sentPriceListIds = priceLists.map(pl => String(pl.Id));
+      const sentPriceListNames = Object.fromEntries(priceLists.map(pl => [String(pl.Id), String(pl.Name)]));
+
+      // Step 1: Import the probe product
+      let importSuccess = false;
+      let importError: string | null = null;
+      let importRawResponse = "";
+      try {
+        const importUrl = `${baseUrlClean}/api/import/`;
+        const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: probeXml }, 30000);
+        importRawResponse = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, importRawResponse);
+        importSuccess = parsed.success;
+        if (!parsed.success) importError = parsed.errors.join("; ") || `HTTP ${importRes.status}`;
+      } catch (e) {
+        importError = String(e).substring(0, 500);
+      }
+
+      // Step 2: Read back the product from Agora
+      const actualPriceListIds: string[] = [];
+      const actualPrices: { priceListId: string; priceListName: string; mainPrice: string }[] = [];
+      let productFoundInExport = false;
+      let readBackRaw = "";
+      try {
+        const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+        const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+        if (verifyRes.ok) {
+          readBackRaw = await verifyRes.text();
+          const prodRegex = new RegExp(`<Product[^>]*Id="${probeProductId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
+          const prodMatch = readBackRaw.match(prodRegex);
+          if (prodMatch) {
+            productFoundInExport = true;
+            const inner = prodMatch[1];
+            const prReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+            let pr;
+            while ((pr = prReg.exec(inner)) !== null) {
+              actualPriceListIds.push(pr[1]);
+              actualPrices.push({
+                priceListId: pr[1],
+                priceListName: sentPriceListNames[pr[1]] || pr[1],
+                mainPrice: pr[2],
+              });
+            }
+          }
+        }
+      } catch (_) { /* best-effort */ }
+
+      // Step 3: Compare
+      const missingInAgora = sentPriceListIds.filter(id => !actualPriceListIds.includes(id));
+      const extraInAgora = actualPriceListIds.filter(id => !sentPriceListIds.includes(id));
+      const persistedAll = missingInAgora.length === 0;
+      const probeFinished = new Date().toISOString();
+
+      const diagnosis = !importSuccess
+        ? "IMPORT_FAILED"
+        : !productFoundInExport
+        ? "PRODUCT_NOT_FOUND_AFTER_IMPORT"
+        : persistedAll
+        ? "ALL_PRICELISTS_PERSISTED"
+        : "IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS";
+
+      const probeResult = {
+        success: true,
+        diagnosis,
+        probe_product_id: probeProductId,
+        probe_started: probeStarted,
+        probe_finished: probeFinished,
+        import_success: importSuccess,
+        import_error: importError,
+        product_found_in_export: productFoundInExport,
+        sent_price_list_count: sentPriceListIds.length,
+        sent_price_list_ids: sentPriceListIds,
+        sent_price_list_names: sentPriceListNames,
+        actual_price_list_count: actualPriceListIds.length,
+        actual_price_list_ids: actualPriceListIds,
+        actual_prices: actualPrices,
+        missing_in_agora: missingInAgora,
+        missing_in_agora_names: missingInAgora.map(id => sentPriceListNames[id] || id),
+        extra_in_agora: extraInAgora,
+        persisted_all: persistedAll,
+        conclusion: persistedAll
+          ? "✅ Agora correctly persisted ALL PriceLists. The middleware XML is correct."
+          : diagnosis === "IMPORT_FAILED"
+          ? "❌ Import failed. Cannot determine PriceList persistence behavior."
+          : diagnosis === "PRODUCT_NOT_FOUND_AFTER_IMPORT"
+          ? "❌ Product not found after import. Agora may have rejected it silently."
+          : `⚠️ Agora only persisted ${actualPriceListIds.length}/${sentPriceListIds.length} PriceLists. Missing: ${missingInAgora.map(id => sentPriceListNames[id] || id).join(", ")}. This is an Agora-side limitation — the middleware XML is correct.`,
+        xml_sent: probeXml,
+        import_raw_response: importRawResponse.substring(0, 2000),
+      };
+
+      return new Response(JSON.stringify(probeResult, null, 2),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(
       JSON.stringify({ error: "Unknown action" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

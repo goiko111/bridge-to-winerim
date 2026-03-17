@@ -28,6 +28,7 @@ import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
+import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
@@ -2713,6 +2714,26 @@ function StepOutboundSync({
           onProcessQueue={onProcessQueue}
           processingQueue={processingQueue}
         />
+      )}
+
+      {/* PriceList Persistence Probe */}
+      {canWrite && (
+        <AgoraPriceListProbePanel connectionId={connectionId} />
+      )}
+
+      {/* Persistence warning banner */}
+      {outboundTasks.some(t => t.last_error?.includes("IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS")) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div className="text-xs text-amber-700">
+            <p className="font-medium">Agora is not persisting all PriceLists</p>
+            <p className="mt-0.5 text-muted-foreground">
+              One or more tasks have confirmed that Agora does not save prices for all sent PriceLists.
+              Run the PriceList Persistence Probe above to generate evidence for Agora support.
+              Do NOT mark this connection as production-verified until this is resolved.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Task list */}
