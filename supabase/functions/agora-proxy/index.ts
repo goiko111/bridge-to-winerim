@@ -2361,10 +2361,26 @@ serve(async (req) => {
       }));
 
       const hasProducts = xml.includes("<Product");
+      const previewXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
+        (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""),
+      );
+
+      // Extract per-product price list counts for transparency
+      const previewPricesByProduct: Record<string, number> = {};
+      const prevProdRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+      let prevM;
+      while ((prevM = prevProdRegex.exec(xml)) !== null) {
+        const inner = prevM[2];
+        const priceCount = (inner.match(/<Price\s/gi) || []).length;
+        previewPricesByProduct[prevM[1]] = priceCount;
+      }
+
       return new Response(
         JSON.stringify({
           success: hasProducts,
           xml,
+          xmlHash: previewXmlHash,
+          priceListCountByProduct: previewPricesByProduct,
           wineCount: wines.length,
           validationResults,
           sourceDataSummary,
