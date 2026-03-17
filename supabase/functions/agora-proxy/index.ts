@@ -262,6 +262,17 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+// ── DELETION DATE FILTER ──
+// Agora entities with a DeletionDate are soft-deleted and must be excluded from all operational logic.
+// deno-lint-ignore no-explicit-any
+function isDeletedEntity(entity: any): boolean {
+  if (!entity) return false;
+  const dd = entity.DeletionDate || entity.deletionDate || entity.deletion_date;
+  if (!dd) return false;
+  // Any non-empty DeletionDate means deleted
+  return String(dd).trim().length > 0;
+}
+
 // deno-lint-ignore no-explicit-any
 function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[]; verificationMode?: string } = {}) {
   const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
