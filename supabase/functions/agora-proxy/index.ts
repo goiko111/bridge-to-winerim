@@ -262,10 +262,27 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+// ── DELETION DATE FILTER ──
+// Agora entities with a DeletionDate are soft-deleted and must be excluded from all operational logic.
+// deno-lint-ignore no-explicit-any
+function isDeletedEntity(entity: any): boolean {
+  if (!entity) return false;
+  const dd = entity.DeletionDate || entity.deletionDate || entity.deletion_date;
+  if (!dd) return false;
+  // Any non-empty DeletionDate means deleted
+  return String(dd).trim().length > 0;
+}
+
 // deno-lint-ignore no-explicit-any
 function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[]; verificationMode?: string } = {}) {
-  const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
-  const allSaleCenters = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+  const allPriceListsRaw = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as Record<string, unknown>[];
+  const allSaleCentersRaw = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+
+  // Filter out deleted entities — they must never contaminate production scope
+  const allPriceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+  const allSaleCenters = allSaleCentersRaw.filter(e => !isDeletedEntity(e)) as Record<string, unknown>[];
+  const deletedPriceLists = allPriceListsRaw.filter(e => isDeletedEntity(e));
+  const deletedSaleCenters = allSaleCentersRaw.filter(e => isDeletedEntity(e));
   const explicitIds = normalizeStringArray(options.explicitSaleCenterIds);
   const connectionSelectedIds = normalizeStringArray(options.connectionSelectedSaleCenterIds);
 
@@ -323,6 +340,8 @@ function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCen
     verificationMode,
     allPriceLists,
     allSaleCenters,
+    deletedPriceLists: deletedPriceLists.map((pl: any) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id), deletionDate: String(pl.DeletionDate || pl.deletionDate || "") })),
+    deletedSaleCenters: deletedSaleCenters.map((sc: any) => ({ id: String(sc.Id || ""), name: String(sc.Name || sc.Id || ""), deletionDate: String(sc.DeletionDate || sc.deletionDate || "") })),
     selectedSaleCenters: selectedSaleCenters.map((sc) => ({
       id: String(sc.Id || ""),
       name: String(sc.Name || sc.Id || ""),
@@ -349,6 +368,8 @@ function buildAgoraVerificationScopePayload(masterData: any, options: { explicit
     _selected_sale_centers: scope.selectedSaleCenters,
     _selected_price_lists: scope.selectedPriceLists,
     _ignored_price_lists: scope.ignoredPriceLists,
+    _deleted_price_lists: scope.deletedPriceLists,
+    _deleted_sale_centers: scope.deletedSaleCenters,
     _legacy_verification_scope: false,
     _scope_frozen_at: new Date().toISOString(),
   };
@@ -700,7 +721,9 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
 function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
-  const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+  // Filter out deleted PriceLists — they must never appear in generated XML
+  const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
+  const priceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
   const prepTypes = (masterData.preparation_types_json || []) as { Id: string; Name: string }[];
   const prepOrders = (masterData.preparation_orders_json || []) as { Id: string; Name: string }[];
   const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
@@ -3868,13 +3891,15 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+      const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
+      const priceLists = allPriceListsRaw.filter((e: any) => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+      const deletedPriceLists = allPriceListsRaw.filter((e: any) => isDeletedEntity(e)) as { Id: string; Name: string; DeletionDate?: string }[];
       const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
       const families = (masterData.families_json || []) as { Id: string; Name: string }[];
       const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
 
       if (priceLists.length === 0) {
-        return new Response(JSON.stringify({ success: false, error: "No PriceLists in master data." }),
+        return new Response(JSON.stringify({ success: false, error: `No active PriceLists in master data. ${deletedPriceLists.length} deleted PriceLists were excluded.` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
@@ -3989,13 +4014,15 @@ ${costPricesXml}
         missing_in_agora_names: missingInAgora.map(id => sentPriceListNames[id] || id),
         extra_in_agora: extraInAgora,
         persisted_all: persistedAll,
+        deleted_price_lists_excluded: deletedPriceLists.map((pl: any) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id), deletionDate: String(pl.DeletionDate || "") })),
+        deleted_price_lists_count: deletedPriceLists.length,
         conclusion: persistedAll
-          ? "✅ Agora correctly persisted ALL PriceLists. The middleware XML is correct."
+          ? `✅ Agora correctly persisted ALL ${sentPriceListIds.length} active PriceLists. The middleware XML is correct.${deletedPriceLists.length > 0 ? ` (${deletedPriceLists.length} deleted PriceLists were excluded from probe.)` : ""}`
           : diagnosis === "IMPORT_FAILED"
           ? "❌ Import failed. Cannot determine PriceList persistence behavior."
           : diagnosis === "PRODUCT_NOT_FOUND_AFTER_IMPORT"
           ? "❌ Product not found after import. Agora may have rejected it silently."
-          : `⚠️ Agora only persisted ${actualPriceListIds.length}/${sentPriceListIds.length} PriceLists. Missing: ${missingInAgora.map(id => sentPriceListNames[id] || id).join(", ")}. This is an Agora-side limitation — the middleware XML is correct.`,
+          : `⚠️ Agora only persisted ${actualPriceListIds.length}/${sentPriceListIds.length} active PriceLists. Missing: ${missingInAgora.map(id => sentPriceListNames[id] || id).join(", ")}. This is an Agora-side limitation — the middleware XML is correct.${deletedPriceLists.length > 0 ? ` (${deletedPriceLists.length} deleted PriceLists were excluded.)` : ""}`,
         xml_sent: probeXml,
         import_raw_response: importRawResponse.substring(0, 2000),
       };

@@ -3171,7 +3171,8 @@ function StepMasterData({
 
   // ── Sale Center / PriceList diagnostic ──
   // Find all candidate central sale centers
-  const centralCandidates = masterData.saleCenters.filter(
+  const activeSaleCenters = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+  const centralCandidates = activeSaleCenters.filter(
     (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
   );
   const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
@@ -3192,12 +3193,12 @@ function StepMasterData({
   // Determine active central: persisted selection > single candidate > first sale center
   const activeCentralCenter = (() => {
     if (selectedSaleCenterId) {
-      return masterData.saleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
+      return activeSaleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
     }
     if (centralCandidates.length === 1) return centralCandidates[0];
     if (centralCandidates.length > 1) return null; // force selection
-    // Default: pick first sale center if none selected
-    if (masterData.saleCenters.length > 0) return masterData.saleCenters[0];
+    // Default: pick first active sale center if none selected
+    if (activeSaleCenters.length > 0) return activeSaleCenters[0];
     return null;
   })();
 
@@ -3416,13 +3417,13 @@ function StepMasterData({
           )}
 
           {/* No candidates — manual selection */}
-          {centralCandidates.length === 0 && masterData.saleCenters.length > 0 && !selectedSaleCenterId && (
+          {centralCandidates.length === 0 && activeSaleCenters.length > 0 && !selectedSaleCenterId && (
             <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
               <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
                 <AlertTriangle className="h-3 w-3 shrink-0" /> No "Central" or default sale center detected. Select one manually:
               </p>
               <div className="flex gap-2 flex-wrap">
-                {masterData.saleCenters.map((sc: any) => (
+                {activeSaleCenters.map((sc: any) => (
                   <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
@@ -3432,20 +3433,30 @@ function StepMasterData({
           )}
 
           {/* Fetched counts summary */}
-          <div className="grid grid-cols-3 gap-2 text-[10px]">
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">SaleCenters</p>
-              <p className={`text-sm font-bold ${masterData.saleCenters.length > 0 ? "text-foreground" : "text-destructive"}`}>{masterData.saleCenters.length}</p>
-            </div>
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">SalePoints</p>
-              <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
-            </div>
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">PriceLists</p>
-              <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
-            </div>
-          </div>
+          {(() => {
+            const activeSC = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+            const deletedSC = masterData.saleCenters.filter((sc: any) => !!sc.DeletionDate);
+            const activePL = masterData.priceLists.filter((pl: any) => !pl.DeletionDate);
+            const deletedPL = masterData.priceLists.filter((pl: any) => !!pl.DeletionDate);
+            return (
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SaleCenters</p>
+                  <p className={`text-sm font-bold ${activeSC.length > 0 ? "text-foreground" : "text-destructive"}`}>{activeSC.length}</p>
+                  {deletedSC.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedSC.length} deleted</p>}
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SalePoints</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">PriceLists</p>
+                  <p className="text-sm font-bold text-foreground">{activePL.length}</p>
+                  {deletedPL.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedPL.length} deleted</p>}
+                </div>
+              </div>
+            );
+          })()}
 
           {activeCentralCenter ? (
             <div className="space-y-2">
@@ -3486,13 +3497,13 @@ function StepMasterData({
                 <div className="rounded-lg border border-border bg-background p-3 space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
                     {(verifyResult.missingCentralPrice || 0) === 0 ? (
-                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists</Badge>
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists</Badge>
                     ) : (
                       <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} products with price issues</Badge>
                     )}
                     {verifyResult.summary && (
                       <span className="text-[10px] text-muted-foreground">
-                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.length} PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.length} SaleCenters
+                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.filter((sc: any) => !sc.DeletionDate).length} active SaleCenters
                       </span>
                     )}
                   </div>
@@ -3535,18 +3546,21 @@ function StepMasterData({
               {masterData.priceLists.length > 0 && masterData.saleCenters.length > 0 && (
                 <details className="rounded-lg border border-border bg-background">
                   <summary className="px-3 py-2 text-[11px] font-medium text-muted-foreground cursor-pointer hover:text-foreground">
-                    PriceList → SaleCenter mapping ({masterData.priceLists.length} lists)
+                    PriceList → SaleCenter mapping ({masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active, {masterData.priceLists.filter((pl: any) => !!pl.DeletionDate).length} deleted)
                   </summary>
                   <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
                     {masterData.priceLists.map((pl: any) => {
+                      const isDeleted = !!pl.DeletionDate;
                       const linkedCenters = masterData.saleCenters.filter(
-                        (sc: any) => sc.CurrentPriceListId === pl.Id
+                        (sc: any) => sc.CurrentPriceListId === pl.Id && !sc.DeletionDate
                       );
                       return (
-                        <div key={pl.Id} className="flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0">
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0 font-mono">{pl.Id}</Badge>
-                          <span className="font-medium text-foreground min-w-[80px]">{pl.Name}</span>
-                          {linkedCenters.length > 0 ? (
+                        <div key={pl.Id} className={`flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0 ${isDeleted ? "opacity-50" : ""}`}>
+                          <Badge variant={isDeleted ? "secondary" : "outline"} className={`text-[9px] px-1.5 py-0 shrink-0 font-mono ${isDeleted ? "line-through" : ""}`}>{pl.Id}</Badge>
+                          <span className={`font-medium min-w-[80px] ${isDeleted ? "text-muted-foreground line-through" : "text-foreground"}`}>{pl.Name}</span>
+                          {isDeleted ? (
+                            <Badge variant="secondary" className="text-[8px] px-1 py-0">🗑 Deleted {String(pl.DeletionDate).slice(0, 10)}</Badge>
+                          ) : linkedCenters.length > 0 ? (
                             <span className="text-muted-foreground">
                               → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
                             </span>
@@ -3676,14 +3690,17 @@ function StepMasterData({
       {sections.map(({ label, data, icon: Icon }) => {
         const filtered = filterItems(data);
         if (searchMaster.trim() && filtered.length === 0) return null;
+        const isDeletedSection = label === "Price Lists" || label === "Sale Centers";
+        const activeItems = isDeletedSection ? filtered.filter((item: any) => !item.DeletionDate) : filtered;
+        const deletedItems = isDeletedSection ? filtered.filter((item: any) => !!item.DeletionDate) : [];
         return (
         <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
           <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Icon className="h-3.5 w-3.5" /> {label} ({filtered.length}{searchMaster.trim() ? `/${data.length}` : ""})
+            <Icon className="h-3.5 w-3.5" /> {label} ({activeItems.length}{deletedItems.length > 0 ? ` active, ${deletedItems.length} deleted` : ""}{searchMaster.trim() ? ` / ${data.length} total` : ""})
           </p>
-          {filtered.length > 0 ? (
+          {activeItems.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {filtered.map((item: any, i: number) => (
+              {activeItems.map((item: any, i: number) => (
                 <Badge key={i} variant="outline" className="text-[10px] font-mono">
                   {item.Id}: {item.Name}{item.VatRate ? ` (${(Number(item.VatRate) * 100).toFixed(0)}%)` : ""}
                 </Badge>
@@ -3691,6 +3708,21 @@ function StepMasterData({
             </div>
           ) : (
             <p className="text-[11px] text-muted-foreground italic">No data yet. Click sync above.</p>
+          )}
+          {deletedItems.length > 0 && (
+            <details className="group">
+              <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
+                {deletedItems.length} deleted / archived
+              </summary>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {deletedItems.map((item: any, i: number) => (
+                  <Badge key={`del-${i}`} variant="secondary" className="text-[10px] font-mono opacity-60 line-through">
+                    {item.Id}: {item.Name}
+                    {item.DeletionDate && <span className="ml-1 no-underline text-[8px]">🗑 {String(item.DeletionDate).slice(0, 10)}</span>}
+                  </Badge>
+                ))}
+              </div>
+            </details>
           )}
         </div>
         );

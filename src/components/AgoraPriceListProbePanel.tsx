@@ -27,6 +27,8 @@ interface ProbeResult {
   conclusion: string;
   xml_sent: string;
   import_raw_response: string;
+  deleted_price_lists_excluded?: { id: string; name: string; deletionDate: string }[];
+  deleted_price_lists_count?: number;
 }
 
 interface Props {
@@ -166,6 +168,14 @@ export default function AgoraPriceListProbePanel({ connectionId }: Props) {
               <p className="text-[10px] text-muted-foreground">Missing</p>
             </div>
           </div>
+
+          {/* Deleted PLs excluded info */}
+          {result.deleted_price_lists_count != null && result.deleted_price_lists_count > 0 && (
+            <div className="rounded-lg border border-border bg-secondary/20 p-2 text-[10px] text-muted-foreground flex items-center gap-1.5">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              <span>{result.deleted_price_lists_count} deleted PriceLists excluded from probe: {result.deleted_price_lists_excluded?.map(pl => `${pl.name} (🗑 ${pl.deletionDate.slice(0, 10)})`).join(", ")}</span>
+            </div>
+          )}
 
           {/* Details */}
           <details className="group">
