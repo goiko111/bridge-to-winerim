@@ -263,16 +263,24 @@ function normalizeStringArray(value: unknown): string[] {
 }
 
 // deno-lint-ignore no-explicit-any
-function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}) {
+function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[]; verificationMode?: string } = {}) {
   const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
   const allSaleCenters = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
   const explicitIds = normalizeStringArray(options.explicitSaleCenterIds);
   const connectionSelectedIds = normalizeStringArray(options.connectionSelectedSaleCenterIds);
 
-  let selectedSaleCenters = [] as Record<string, unknown>[];
-  let source: "selected_sale_centers" | "referenced_sale_centers" = "referenced_sale_centers";
+  // Determine verification mode
+  const verificationMode = options.verificationMode || "PRODUCTION_ALL_ACTIVE_SALE_CENTERS";
 
-  if (explicitIds.length > 0) {
+  let selectedSaleCenters = [] as Record<string, unknown>[];
+  let source: "selected_sale_centers" | "referenced_sale_centers" | "production_all_active" = "production_all_active";
+
+  if (verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS") {
+    // Production mode: use ALL SaleCenters that have a CurrentPriceListId
+    // This ensures we verify against every active SaleCenter, not just user-selected ones
+    selectedSaleCenters = allSaleCenters.filter((sc) => !!sc.CurrentPriceListId);
+    source = "production_all_active";
+  } else if (explicitIds.length > 0) {
     selectedSaleCenters = allSaleCenters.filter((sc) => explicitIds.includes(String(sc.Id || "")));
     source = "selected_sale_centers";
   } else if (connectionSelectedIds.length > 0) {
@@ -312,6 +320,7 @@ function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCen
 
   return {
     source,
+    verificationMode,
     allPriceLists,
     allSaleCenters,
     selectedSaleCenters: selectedSaleCenters.map((sc) => ({
@@ -327,10 +336,11 @@ function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCen
 }
 
 // deno-lint-ignore no-explicit-any
-function buildAgoraVerificationScopePayload(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}, includeVersion = true) {
+function buildAgoraVerificationScopePayload(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[]; verificationMode?: string } = {}, includeVersion = true) {
   const scope = buildAgoraVerificationScope(masterData, options);
   return {
-    ...(includeVersion ? { _verification_scope_version: 2 } : {}),
+    ...(includeVersion ? { _verification_scope_version: 3 } : {}),
+    _verification_mode: scope.verificationMode,
     _verification_scope_source: scope.source,
     _selected_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
     _effective_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
@@ -3007,6 +3017,7 @@ serve(async (req) => {
       const scopePayload = buildAgoraVerificationScopePayload(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
@@ -3121,6 +3132,7 @@ serve(async (req) => {
 
       const backfillScopePayload = buildAgoraVerificationScopePayload(masterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Queue them as outbound tasks for re-push (idempotent: skip already queued)
@@ -3186,6 +3198,7 @@ serve(async (req) => {
 
       const prepScopePayload = buildAgoraVerificationScopePayload(masterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Queue UPDATE tasks with a special flag to force empty preparation fields
@@ -3247,6 +3260,7 @@ serve(async (req) => {
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const reassignScopePayload = buildAgoraVerificationScopePayload(reassignMasterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Get connection write settings for format types
@@ -3304,6 +3318,7 @@ serve(async (req) => {
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const scopePayload = buildAgoraVerificationScopePayload(masterDataForScope, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       const taskPayload = (taskToClone.payload_json || {}) as Record<string, unknown>;
@@ -3338,6 +3353,7 @@ serve(async (req) => {
       const verificationScope = buildAgoraVerificationScope(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
       const scopedPriceLists = verificationScope.selectedPriceLists;
       const priceListToSaleCenters = verificationScope.priceListToSaleCenters;

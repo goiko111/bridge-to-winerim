@@ -2422,6 +2422,8 @@ function StepOutboundSync({
     const scopeFrozen = !!payload._scope_frozen_at;
     const scopeFrozenAt = payload._scope_frozen_at ? String(payload._scope_frozen_at) : null;
 
+    const verificationMode = payload._verification_mode || null;
+
     return {
       payload,
       selectedSaleCenters,
@@ -2430,13 +2432,16 @@ function StepOutboundSync({
       legacyVerificationScope,
       scopeFrozen,
       scopeFrozenAt,
-      sourceLabel: scopeFrozen
-        ? "Frozen at enqueue time"
-        : payload._verification_scope_source === "selected_sale_centers"
-          ? "Selected SaleCenters"
-          : payload._verification_scope_source === "referenced_sale_centers"
-            ? "Referenced SaleCenters"
-            : "Unknown scope",
+      verificationMode,
+      sourceLabel: verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS"
+        ? "Production (all active SaleCenters)"
+        : scopeFrozen
+          ? "Frozen at enqueue time"
+          : payload._verification_scope_source === "selected_sale_centers"
+            ? "Selected SaleCenters"
+            : payload._verification_scope_source === "referenced_sale_centers"
+              ? "Referenced SaleCenters"
+              : "Unknown scope",
     };
   };
 
@@ -2804,6 +2809,14 @@ function StepOutboundSync({
                           </div>
                           <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                             <p>
+                              <span className="font-medium text-foreground">Verification mode:</span>{" "}
+                              {scopeMeta.verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS" ? (
+                                <Badge variant="default" className="text-[9px] px-1 py-0 ml-1">🏭 Production</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1">{scopeMeta.verificationMode || "legacy"}</Badge>
+                              )}
+                            </p>
+                            <p>
                               <span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}
                               {scopeMeta.scopeFrozen && (
                                 <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 border-emerald-500 text-emerald-600">🔒 Frozen</Badge>
@@ -2812,11 +2825,11 @@ function StepOutboundSync({
                             {scopeMeta.scopeFrozenAt && (
                               <p className="text-[10px]"><span className="font-medium text-foreground">Scope frozen at:</span> {new Date(scopeMeta.scopeFrozenAt).toLocaleString()}</p>
                             )}
-                            <p><span className="font-medium text-foreground">Selected SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
-                            <p><span className="font-medium text-foreground">Selected PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
+                            <p><span className="font-medium text-foreground">Included SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
+                            <p><span className="font-medium text-foreground">Included PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
                             <p><span className="font-medium text-foreground">Ignored PriceLists:</span> {formatScopeNames(scopeMeta.ignoredPriceLists)}</p>
                             {scopeMeta.legacyVerificationScope && (
-                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with current verification scope" para recrearlo.</p>
+                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with production scope" para recrearlo.</p>
                             )}
                           </div>
                           {t.last_error && (
@@ -2839,7 +2852,7 @@ function StepOutboundSync({
                               <RotateCcw className="h-3.5 w-3.5" />
                             </Button>
                             <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={() => onRequeueWithCurrentScope(t.id)}>
-                              Requeue with current verification scope
+                              Requeue with production scope
                             </Button>
                           </div>
                         )}
