@@ -2722,6 +2722,15 @@ function StepOutboundSync({
         <AgoraPriceListProbePanel connectionId={connectionId} />
       )}
 
+      {/* Connection Comparison Diagnostics */}
+      <div className="rounded-lg border p-4 space-y-2">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <ArrowLeftRight className="h-4 w-4" /> Connection Comparison
+        </h4>
+        <p className="text-xs text-muted-foreground">Compare two Agora connections side-by-side to diagnose installation-specific issues.</p>
+        <AgoraConnectionCompare />
+      </div>
+
       {/* Persistence warning banner */}
       {outboundTasks.some(t => t.last_error?.includes("IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS")) && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
