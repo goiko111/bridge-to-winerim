@@ -3132,6 +3132,7 @@ serve(async (req) => {
 
       const backfillScopePayload = buildAgoraVerificationScopePayload(masterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Queue them as outbound tasks for re-push (idempotent: skip already queued)
