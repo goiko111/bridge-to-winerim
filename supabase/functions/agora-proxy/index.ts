@@ -2844,6 +2844,22 @@ serve(async (req) => {
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
+        const sentPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
+        const productBlockRegex = /<Product[^>]*Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        let pm;
+        while ((pm = productBlockRegex.exec(xml)) !== null) {
+          const prodId = pm[1];
+          const innerBlock = pm[2];
+          const priceEntries: { priceListId: string; mainPrice: string }[] = [];
+          const prReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+          let pr;
+          while ((pr = prReg.exec(innerBlock)) !== null) {
+            priceEntries.push({ priceListId: pr[1], mainPrice: pr[2] });
+          }
+          sentPricesByProduct[prodId] = priceEntries;
+        }
+
         // ── UNIFIED POST-IMPORT VERIFICATION (using shared function) ──
         // Extract expected familyIds from sent XML
         const expectedFamilies: Record<string, string> = {};
@@ -2859,6 +2875,9 @@ serve(async (req) => {
           errors: [], warnings: [], missing_prices: [], affected_sale_centers: [],
           summary: { checked: 0, ok: 0, failed: 0 },
         };
+
+        // Diagnostics: actual prices read back from Agora
+        const actualPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
 
         try {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
@@ -2915,6 +2934,27 @@ serve(async (req) => {
 
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
+
+            // ── DIAGNOSTICS: Extract actual stored prices from Agora's response ──
+            for (const p of productsToVerify) {
+              const pRegex = new RegExp(
+                `<Product[^>]*Id="${p.productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i",
+              );
+              const pMatch = verifyXml.match(pRegex);
+              if (pMatch) {
+                const inner = pMatch[1];
+                const actualPrices: { priceListId: string; mainPrice: string }[] = [];
+                const apReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+                let ap;
+                while ((ap = apReg.exec(inner)) !== null) {
+                  actualPrices.push({ priceListId: ap[1], mainPrice: ap[2] });
+                }
+                actualPricesByProduct[p.productId] = actualPrices;
+              } else {
+                actualPricesByProduct[p.productId] = [];
+              }
+            }
+
             taskVerification = {
               ...verifyAgoraProductsAgainstScope(
                 verifyXml, productsToVerify,
@@ -2942,15 +2982,83 @@ serve(async (req) => {
           });
         }
 
+        // ── DIAGNOSTICS: Compare sent XML vs actual stored prices ──
+        // Determine if the bug is in generation, import, or verification
+        const diagnostics: Record<string, unknown> = {
+          timestamp: new Date().toISOString(),
+          sent_price_lists_by_product: sentPricesByProduct,
+          actual_price_lists_by_product: actualPricesByProduct,
+          products_diagnosed: [] as unknown[],
+        };
+
+        const productsToVerifyIds = fmtTypes.map((fmt: string) =>
+          fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
+          : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
+          : String(500000 + Number(winerimWineId || 0))
+        );
+
+        let hasImportPersistenceBug = false;
+        for (const prodId of productsToVerifyIds) {
+          const sent = sentPricesByProduct[prodId] || [];
+          const actual = actualPricesByProduct[prodId] || [];
+          const sentPlIds = sent.map(s => s.priceListId);
+          const actualPlIds = actual.map(a => a.priceListId);
+          const missingInAgora = sentPlIds.filter(id => !actualPlIds.includes(id));
+          const extraInAgora = actualPlIds.filter(id => !sentPlIds.includes(id));
+          const xmlIncludedAll = (taskPayload._effective_price_list_ids as string[] || []).every(id => sentPlIds.includes(id));
+
+          if (missingInAgora.length > 0 && xmlIncludedAll) {
+            hasImportPersistenceBug = true;
+          }
+
+          (diagnostics.products_diagnosed as unknown[]).push({
+            product_id: prodId,
+            sent_price_list_ids: sentPlIds,
+            actual_price_list_ids: actualPlIds,
+            missing_in_agora: missingInAgora,
+            extra_in_agora: extraInAgora,
+            xml_included_all_expected: xmlIncludedAll,
+            diagnosis: missingInAgora.length > 0 && xmlIncludedAll
+              ? "IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS"
+              : missingInAgora.length > 0
+              ? "XML_GENERATION_MISSING_PRICELISTS"
+              : "OK",
+          });
+        }
+
+        // If verification failed and it's an import persistence bug, upgrade error codes
+        if (!taskVerification.success && hasImportPersistenceBug) {
+          for (const err of (taskVerification.errors as AgoraVerificationIssue[])) {
+            if (err.code === "PRICE_MISSING") {
+              const prodId = (err.context as Record<string, unknown>)?.productId as string;
+              const plId = (err.context as Record<string, unknown>)?.priceListId as string;
+              const prodDiag = (diagnostics.products_diagnosed as any[]).find(d => d.product_id === prodId);
+              if (prodDiag && (prodDiag.missing_in_agora as string[]).includes(plId)) {
+                err.code = "IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS";
+                err.message = err.message.replace("missing price", "XML sent price but Agora did not persist");
+              }
+            }
+          }
+        }
+
+        // Store diagnostics in the task payload for UI visibility
+        const updatedPayload = { ...taskPayload, _diagnostics: diagnostics };
+
         if (!taskVerification.success) {
-          const failMsg = `Post-import verification failed: ${taskVerification.errors.map((e: AgoraVerificationIssue) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 500);
+          const failMsg = `Post-import verification failed: ${(taskVerification.errors as AgoraVerificationIssue[]).map((e) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 1000);
           await supabase.from("outbound_tasks").update({
             status: "FAILED",
             last_error: failMsg,
+            payload_json: updatedPayload,
           }).eq("id", task.id);
-          return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification }),
+          return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
+
+        // Store diagnostics even on success
+        await supabase.from("outbound_tasks").update({
+          payload_json: updatedPayload,
+        }).eq("id", task.id);
 
         // Success - update mappings
         for (const fmt of fmtTypes) {

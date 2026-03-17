@@ -2843,6 +2843,58 @@ function StepOutboundSync({
                               </pre>
                             </details>
                           )}
+                          {/* ── POST-IMPORT DIAGNOSTICS ── */}
+                          {(() => {
+                            const diag = (t.payload_json as any)?._diagnostics;
+                            if (!diag || !Array.isArray(diag.products_diagnosed)) return null;
+                            return (
+                              <details className="mt-2 group">
+                                <summary className="text-[11px] font-medium text-foreground cursor-pointer hover:text-primary">
+                                  🔍 Import Diagnostics ({(diag.products_diagnosed as any[]).length} products)
+                                </summary>
+                                <div className="mt-1 rounded border border-border bg-secondary/20 p-2 space-y-2 text-[10px]">
+                                  <p className="text-muted-foreground">Diagnostics captured: {diag.timestamp ? new Date(diag.timestamp).toLocaleString() : "—"}</p>
+                                  {(diag.products_diagnosed as any[]).map((pd: any, idx: number) => {
+                                    const sent = diag.sent_price_lists_by_product?.[pd.product_id] || [];
+                                    const actual = diag.actual_price_lists_by_product?.[pd.product_id] || [];
+                                    return (
+                                      <div key={idx} className="rounded border border-border p-2 space-y-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="font-mono font-semibold">Product {pd.product_id}</span>
+                                          <Badge variant={pd.diagnosis === "OK" ? "default" : "destructive"} className="text-[9px]">
+                                            {pd.diagnosis}
+                                          </Badge>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <p className="font-medium text-foreground">Sent in XML ({sent.length} PLs):</p>
+                                            {sent.map((s: any, si: number) => (
+                                              <p key={si} className="font-mono">PL {s.priceListId} → €{s.mainPrice}</p>
+                                            ))}
+                                          </div>
+                                          <div>
+                                            <p className="font-medium text-foreground">Actual in Agora ({actual.length} PLs):</p>
+                                            {actual.length > 0 ? actual.map((a: any, ai: number) => (
+                                              <p key={ai} className="font-mono">PL {a.priceListId} → €{a.mainPrice}</p>
+                                            )) : <p className="text-destructive">Product not found in export</p>}
+                                          </div>
+                                        </div>
+                                        {pd.missing_in_agora?.length > 0 && (
+                                          <p className="text-destructive font-medium">
+                                            ❌ Missing in Agora: PL {pd.missing_in_agora.join(", PL ")}
+                                            {pd.xml_included_all_expected && " — XML was correct, Agora did NOT persist these PriceLists"}
+                                          </p>
+                                        )}
+                                        {pd.extra_in_agora?.length > 0 && (
+                                          <p className="text-amber-600">Extra in Agora (not in sent XML): PL {pd.extra_in_agora.join(", PL ")}</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </details>
+                            );
+                          })()}
                           {t.blocked_reason && (
                             <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
                           )}
