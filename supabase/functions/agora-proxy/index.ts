@@ -2871,14 +2871,15 @@ serve(async (req) => {
         }
 
         // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
+        // FIX: Use `<Product\s+Id=` to match the FIRST Id attribute, NOT FamilyId/VatId
         const sentPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
-        const productBlockRegex = /<Product[^>]*Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        const productBlockRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
         let pm;
         while ((pm = productBlockRegex.exec(xml)) !== null) {
           const prodId = pm[1];
           const innerBlock = pm[2];
           const priceEntries: { priceListId: string; mainPrice: string }[] = [];
-          const prReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+          const prReg = /<Price\s[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
           let pr;
           while ((pr = prReg.exec(innerBlock)) !== null) {
             priceEntries.push({ priceListId: pr[1], mainPrice: pr[2] });
@@ -2887,9 +2888,9 @@ serve(async (req) => {
         }
 
         // ── UNIFIED POST-IMPORT VERIFICATION (using shared function) ──
-        // Extract expected familyIds from sent XML
+        // Extract expected familyIds from sent XML (use \s+Id= to avoid FamilyId capture)
         const expectedFamilies: Record<string, string> = {};
-        const famRegex = /<Product[^>]*Id="(\d+)"[^>]*FamilyId="([^"]*)"/g;
+        const famRegex = /<Product\s+Id="(\d+)"[^>]*\sFamilyId="([^"]*)"/g;
         let fm;
         while ((fm = famRegex.exec(xml)) !== null) {
           expectedFamilies[fm[1]] = fm[2];
