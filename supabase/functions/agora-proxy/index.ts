@@ -3280,7 +3280,6 @@ serve(async (req) => {
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
 
       const allPriceLists = ((masterData as any)?.price_lists_json || []) as { Id: string; Name: string }[];
-      const allSaleCenters = ((masterData as any)?.sale_centers_json || []) as Record<string, string>[];
 
       if (allPriceLists.length === 0) {
         return new Response(JSON.stringify({ 
@@ -3310,164 +3309,29 @@ serve(async (req) => {
         .from("product_mappings").select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
         .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
 
-      interface VerifyMissingPrice {
-        product_erp_id: string;
-        agora_product_id: string;
-        price_list_id: string;
-        price_list_name: string;
-        issue: "missing" | "zero" | "invalid";
-        name: string;
-        format: string;
-        affected_sale_centers: string[];
-      }
+      // Build product list from mappings (no expectedFamilyId → triggers FAMILY_EMPTY warning path)
+      const productsToVerify: AgoraProductToVerify[] = (mappings || []).map((m: any) => ({
+        productId: m.provider_product_id,
+        productName: m.provider_product_name,
+        format: m.format_type,
+        erpId: m.winerim_wine_id || "",
+      }));
 
-      const missing_prices: VerifyMissingPrice[] = [];
-      const verifyResult = {
-        success: true,
-        verified_exists: true,
-        verified_prices: true,
-        verified_family: true,
-        verified_preparation: true,
-        verified_scope: scopedPriceLists.length > 0,
-        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
-        missing_prices: [] as VerifyMissingPrice[],
-        affected_sale_centers: [] as string[],
-        summary: { checked: 0, ok: 0, failed: 0 },
+      const verifyResult = verifyAgoraProductsAgainstScope(
+        verifyXml, productsToVerify, scopedPriceLists, priceListToSaleCenters,
+      );
+
+      return new Response(JSON.stringify({
+        ...verifyResult,
         totalPriceLists: scopedPriceLists.length,
         totalSaleCenters: verificationScope.selectedSaleCenters.length,
+        totalProducts: verifyResult.summary.checked,
+        missingCentralPrice: verifyResult.summary.failed,
         priceListToSaleCenters,
         selectedSaleCenters: verificationScope.selectedSaleCenters,
         selectedPriceLists: verificationScope.selectedPriceLists,
         ignoredPriceLists: verificationScope.ignoredPriceLists,
         verificationScopeSource: verificationScope.source,
-      };
-
-      if (scopedPriceLists.length === 0) {
-        verifyResult.success = false;
-        verifyResult.errors.push({
-          code: "VERIFY_SCOPE_EMPTY",
-          message: "No relevant PriceLists resolved from current SaleCenter scope",
-          field: "verification_scope",
-        });
-      }
-
-      // Load expected families from last outbound XML (from mappings + winerim_wines wine_type)
-      // For verify-products we compare against whatever FamilyId is currently in the connection defaults
-      // (no "expected" family available here — skip family check unless mapping has agora_product_id)
-
-      for (const mapping of (mappings || [])) {
-        verifyResult.summary.checked++;
-        const productFullRegex = new RegExp(`<Product[^>]*Id="${mapping.provider_product_id}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
-        const productMatch = verifyXml.match(productFullRegex);
-
-        if (!productMatch) {
-          verifyResult.summary.failed++;
-          verifyResult.verified_exists = false;
-          verifyResult.success = false;
-          verifyResult.errors.push({
-            code: "NOT_FOUND",
-            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) not found in Agora`,
-            context: { productId: mapping.provider_product_id, format: mapping.format_type },
-          });
-          for (const pl of scopedPriceLists) {
-            const scNames = priceListToSaleCenters[pl.id] || [];
-            verifyResult.missing_prices.push({
-              product_erp_id: mapping.winerim_wine_id || "",
-              agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.id, price_list_name: pl.name,
-              issue: "missing", name: mapping.provider_product_name, format: mapping.format_type,
-              affected_sale_centers: scNames,
-            });
-            for (const s of scNames) {
-              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
-            }
-          }
-          continue;
-        }
-
-        const attrs = productMatch[1];
-        const innerXml = productMatch[2];
-        let productOk = true;
-
-        // CHECK: PRICES
-        for (const pl of scopedPriceLists) {
-          const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
-          const priceMatch = innerXml.match(priceRegex);
-          const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
-
-          if (!priceMatch || isNaN(priceVal) || priceVal <= 0) {
-            productOk = false;
-            verifyResult.verified_prices = false;
-            const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
-            const scNames = priceListToSaleCenters[pl.id] || [];
-            verifyResult.missing_prices.push({
-              product_erp_id: mapping.winerim_wine_id || "",
-              agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.id, price_list_name: pl.name,
-              issue, name: mapping.provider_product_name, format: mapping.format_type,
-              affected_sale_centers: scNames,
-            });
-            for (const s of scNames) {
-              if (!verifyResult.affected_sale_centers.includes(s)) verifyResult.affected_sale_centers.push(s);
-            }
-          }
-        }
-
-        // CHECK: PREPARATION FIELDS
-        const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
-        const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
-        const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
-        const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
-        if ((!prepTypeVal) !== (!prepOrderVal)) {
-          productOk = false;
-          verifyResult.verified_preparation = false;
-          verifyResult.errors.push({
-            code: "INVALID_PREPARATION_PAIR",
-            message: `Preparation Type and Order must both be empty or both set (Product ${mapping.provider_product_id}, ${mapping.format_type}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
-            field: "PreparationTypeId,PreparationOrderId",
-            context: { productId: mapping.provider_product_id, format: mapping.format_type, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
-          });
-        }
-
-        // CHECK: FAMILY (compare against FamilyId in attrs — warn if empty)
-        const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
-        const actualFamilyId = familyMatch ? familyMatch[1] : "";
-        if (!actualFamilyId) {
-          productOk = false;
-          verifyResult.verified_family = false;
-          verifyResult.warnings.push({
-            code: "FAMILY_EMPTY",
-            message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) has no FamilyId assigned`,
-            field: "FamilyId",
-            context: { productId: mapping.provider_product_id, format: mapping.format_type },
-          });
-        }
-
-        if (productOk) {
-          verifyResult.summary.ok++;
-        } else {
-          verifyResult.success = false;
-          verifyResult.summary.failed++;
-        }
-      }
-
-      return new Response(JSON.stringify({
-        success: verifyResult.success,
-        verified_exists: verifyResult.verified_exists,
-        verified_prices: verifyResult.verified_prices,
-        verified_family: verifyResult.verified_family,
-        verified_preparation: verifyResult.verified_preparation,
-        errors: verifyResult.errors,
-        warnings: verifyResult.warnings,
-        missing_prices: verifyResult.missing_prices,
-        affected_sale_centers: verifyResult.affected_sale_centers,
-        totalPriceLists: verifyResult.totalPriceLists,
-        totalSaleCenters: verifyResult.totalSaleCenters,
-        totalProducts: verifyResult.summary.checked,
-        missingCentralPrice: verifyResult.summary.failed,
-        summary: verifyResult.summary,
-        priceListToSaleCenters,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
