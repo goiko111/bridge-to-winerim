@@ -2357,7 +2357,7 @@ function StepCapabilities({
 function StepOutboundSync({
   connectionId, capabilities, outboundTasks, loadingTasks,
   processingQueue, queuingProducts, exporting,
-  onLoadTasks, onProcessQueue, onRetry, onExport,
+  onLoadTasks, onProcessQueue, onRetry, onRequeueWithCurrentScope, onExport,
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
@@ -2374,6 +2374,7 @@ function StepOutboundSync({
   onLoadTasks: () => Promise<OutboundTask[]>;
   onProcessQueue: () => Promise<{ success: boolean; processed: number; succeeded: number; failed: number } | undefined>;
   onRetry: (taskId: string) => void;
+  onRequeueWithCurrentScope: (taskId: string) => Promise<any>;
   onExport: (format: "json" | "csv") => void;
   winerimWines: { winerim_id: string; name: string }[];
   onQueueProducts: (ids: string[], formatTypes?: string[]) => Promise<any>;
@@ -2400,10 +2401,42 @@ function StepOutboundSync({
   const hasSuccessTasks = outboundTasks.some(t => t.status === "SUCCESS");
   const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN" || hasSuccessTasks;
 
+  const getTaskPayload = (t: OutboundTask) => ((t.payload_json as any) || {}) as any;
+
   const getTaskName = (t: OutboundTask) => {
-    const wid = (t.payload_json as any)?._winerim_wine_id;
-    return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type);
+    const payload = getTaskPayload(t);
+    const wid = payload?._winerim_wine_id;
+    return wineNameMap[wid] || payload?.Name || (wid ? `Wine ${wid}` : t.task_type);
   };
+
+  const getScopeItems = (value: unknown): Array<{ id?: string; name?: string; priceListId?: string | null }> => (
+    Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<{ id?: string; name?: string; priceListId?: string | null }> : []
+  );
+
+  const getTaskScopeMeta = (t: OutboundTask) => {
+    const payload = getTaskPayload(t);
+    const selectedSaleCenters = getScopeItems(payload._selected_sale_centers);
+    const selectedPriceLists = getScopeItems(payload._selected_price_lists);
+    const ignoredPriceLists = getScopeItems(payload._ignored_price_lists);
+    const legacyVerificationScope = !!payload._legacy_verification_scope || !payload._verification_scope_version;
+
+    return {
+      payload,
+      selectedSaleCenters,
+      selectedPriceLists,
+      ignoredPriceLists,
+      legacyVerificationScope,
+      sourceLabel: payload._verification_scope_source === "selected_sale_centers"
+        ? "Selected SaleCenters"
+        : payload._verification_scope_source === "referenced_sale_centers"
+          ? "Referenced SaleCenters"
+          : "Unknown scope",
+    };
+  };
+
+  const formatScopeNames = (items: Array<{ id?: string; name?: string }>) => (
+    items.length > 0 ? items.map((item) => item.name || item.id || "Unknown").join(", ") : "—"
+  );
 
   const filteredTasks = useMemo(() => {
     if (!searchOutbound.trim()) return outboundTasks;
@@ -2727,67 +2760,71 @@ function StepOutboundSync({
                 <div className="text-center py-8 text-sm text-muted-foreground">No tasks.</div>
               ) : items.map(t => (
                 <div key={t.id} className="px-4 py-3 bg-card hover:bg-secondary/30 transition-colors">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground truncate">
-                        {getTaskName(t)}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
-                        <Badge variant={
-                          t.status === "SUCCESS" ? "default" :
-                          t.status === "FAILED" ? "destructive" :
-                          t.status === "BLOCKED" ? "outline" :
-                          "secondary"
-                        } className="text-[10px]">{t.status}</Badge>
-                        {(t.payload_json as any)?._operation && (
-                          <Badge variant="outline" className={`text-[10px] ${(t.payload_json as any)._operation === "CREATE" ? "border-emerald-500 text-emerald-600" : "border-blue-500 text-blue-600"}`}>
-                            {(t.payload_json as any)._operation === "CREATE" ? "➕ CREATE" : "✏️ UPDATE"}
-                          </Badge>
-                        )}
-                        {(t.payload_json as any)?._trigger_source && (
-                          <Badge variant="outline" className="text-[10px]">
-                            {(t.payload_json as any)._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :
-                             (t.payload_json as any)._trigger_source === "AUTO_UPDATE" ? "⚡ Auto Update" : 
-                             (t.payload_json as any)._trigger_source}
-                          </Badge>
-                        )}
-                        {(t.payload_json as any)?._winerim_wine_id && (
-                          <span className="font-mono">Winerim: {(t.payload_json as any)._winerim_wine_id}</span>
-                        )}
-                        {t.external_id && <span className="font-mono">Agora: {t.external_id}</span>}
-                        <span>Attempts: {t.attempts}/{t.max_attempts}</span>
-                      </div>
-                      {t.last_error && (
-                        <p className="mt-1 text-[11px] text-destructive truncate">{t.last_error}</p>
-                      )}
-                      {t.blocked_reason && (
-                        <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
-                      )}
-                      {(t.status === "SUCCESS" || t.status === "FAILED") && t.last_error?.includes("verification") && (
-                        <div className="mt-1.5">
-                          <PostWriteVerificationDisplay
-                            compact
-                            provider="agora"
-                            result={adaptVerificationResult({
-                              success: t.status === "SUCCESS",
-                              verified_exists: !t.last_error?.includes("NOT_FOUND"),
-                              verified_prices: !t.last_error?.includes("PRICE"),
-                              verified_scope: true,
-                              errors: t.status === "FAILED" && t.last_error
-                                ? [{ code: "POST_IMPORT", message: t.last_error.substring(0, 200) }]
-                                : [],
-                              warnings: [],
-                            })}
-                          />
+                  {(() => {
+                    const scopeMeta = getTaskScopeMeta(t);
+                    return (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {getTaskName(t)}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            <Badge variant={
+                              t.status === "SUCCESS" ? "default" :
+                              t.status === "FAILED" ? "destructive" :
+                              t.status === "BLOCKED" ? "outline" :
+                              "secondary"
+                            } className="text-[10px]">{t.status}</Badge>
+                            {scopeMeta.legacyVerificationScope && (
+                              <Badge variant="outline" className="text-[10px]">legacy_verification_scope</Badge>
+                            )}
+                            {scopeMeta.payload?._operation && (
+                              <Badge variant="outline" className={`text-[10px] ${scopeMeta.payload._operation === "CREATE" ? "border-emerald-500 text-emerald-600" : "border-blue-500 text-blue-600"}`}>
+                                {scopeMeta.payload._operation === "CREATE" ? "➕ CREATE" : "✏️ UPDATE"}
+                              </Badge>
+                            )}
+                            {scopeMeta.payload?._trigger_source && (
+                              <Badge variant="outline" className="text-[10px]">
+                                {scopeMeta.payload._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :
+                                 scopeMeta.payload._trigger_source === "AUTO_UPDATE" ? "⚡ Auto Update" :
+                                 String(scopeMeta.payload._trigger_source)}
+                              </Badge>
+                            )}
+                            {scopeMeta.payload?._winerim_wine_id && (
+                              <span className="font-mono">Winerim: {String(scopeMeta.payload._winerim_wine_id)}</span>
+                            )}
+                            {t.external_id && <span className="font-mono">Agora: {t.external_id}</span>}
+                            <span>Attempts: {t.attempts}/{t.max_attempts}</span>
+                          </div>
+                          <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                            <p><span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}</p>
+                            <p><span className="font-medium text-foreground">Selected SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
+                            <p><span className="font-medium text-foreground">Selected PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
+                            <p><span className="font-medium text-foreground">Ignored PriceLists:</span> {formatScopeNames(scopeMeta.ignoredPriceLists)}</p>
+                            {scopeMeta.legacyVerificationScope && (
+                              <p className="text-amber-600">Legacy task: recrea este task manualmente con el scope actual.</p>
+                            )}
+                          </div>
+                          {t.last_error && (
+                            <p className="mt-1 text-[11px] text-destructive truncate">{t.last_error}</p>
+                          )}
+                          {t.blocked_reason && (
+                            <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    {(t.status === "FAILED" || t.status === "BLOCKED") && (
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRetry(t.id)}>
-                        <RotateCcw className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
+                        {(t.status === "FAILED" || t.status === "BLOCKED") && (
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRetry(t.id)}>
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={() => onRequeueWithCurrentScope(t.id)}>
+                              Requeue with current verification scope
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -4026,7 +4063,9 @@ export default function AgoraWizard() {
               processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
               exporting={outbound.exporting}
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
-              onRetry={outbound.retryTask} onExport={outbound.exportProducts}
+              onRetry={outbound.retryTask}
+              onRequeueWithCurrentScope={outbound.requeueTaskWithCurrentScope}
+              onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
               onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               backfillingPreparation={outbound.backfillingPreparation}

@@ -252,6 +252,95 @@ function stableFamilyId(name: string): string {
   return String(900000 + (Math.abs(hash) % 9999));
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+// deno-lint-ignore no-explicit-any
+function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}) {
+  const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
+  const allSaleCenters = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+  const explicitIds = normalizeStringArray(options.explicitSaleCenterIds);
+  const connectionSelectedIds = normalizeStringArray(options.connectionSelectedSaleCenterIds);
+
+  let selectedSaleCenters = [] as Record<string, unknown>[];
+  let source: "selected_sale_centers" | "referenced_sale_centers" = "referenced_sale_centers";
+
+  if (explicitIds.length > 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => explicitIds.includes(String(sc.Id || "")));
+    source = "selected_sale_centers";
+  } else if (connectionSelectedIds.length > 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => connectionSelectedIds.includes(String(sc.Id || "")));
+    source = "selected_sale_centers";
+  }
+
+  if (selectedSaleCenters.length === 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => !!sc.CurrentPriceListId);
+    source = "referenced_sale_centers";
+  }
+
+  const selectedPriceListMap = new Map<string, { id: string; name: string }>();
+  const priceListToSaleCenters: Record<string, string[]> = {};
+
+  for (const sc of selectedSaleCenters) {
+    const priceListId = sc.CurrentPriceListId ? String(sc.CurrentPriceListId) : "";
+    if (!priceListId) continue;
+
+    const priceList = allPriceLists.find((pl) => String(pl.Id) === priceListId);
+    if (!selectedPriceListMap.has(priceListId)) {
+      selectedPriceListMap.set(priceListId, {
+        id: priceListId,
+        name: priceList?.Name ? String(priceList.Name) : priceListId,
+      });
+    }
+
+    if (!priceListToSaleCenters[priceListId]) priceListToSaleCenters[priceListId] = [];
+    priceListToSaleCenters[priceListId].push(sc.Name ? String(sc.Name) : String(sc.Id || priceListId));
+  }
+
+  const selectedPriceLists = Array.from(selectedPriceListMap.values());
+  const selectedPriceListIds = selectedPriceLists.map((pl) => pl.id);
+  const ignoredPriceLists = allPriceLists
+    .filter((pl) => !selectedPriceListIds.includes(String(pl.Id)))
+    .map((pl) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id) }));
+
+  return {
+    source,
+    allPriceLists,
+    allSaleCenters,
+    selectedSaleCenters: selectedSaleCenters.map((sc) => ({
+      id: String(sc.Id || ""),
+      name: String(sc.Name || sc.Id || ""),
+      priceListId: sc.CurrentPriceListId ? String(sc.CurrentPriceListId) : null,
+    })),
+    selectedPriceLists,
+    selectedPriceListIds,
+    ignoredPriceLists,
+    priceListToSaleCenters,
+  };
+}
+
+// deno-lint-ignore no-explicit-any
+function buildAgoraVerificationScopePayload(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}, includeVersion = true) {
+  const scope = buildAgoraVerificationScope(masterData, options);
+  return {
+    ...(includeVersion ? { _verification_scope_version: 2 } : {}),
+    _verification_scope_source: scope.source,
+    _selected_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    ...(scope.selectedSaleCenters.length === 1 ? { _sale_center_id: scope.selectedSaleCenters[0].id } : {}),
+    _selected_sale_centers: scope.selectedSaleCenters,
+    _selected_price_lists: scope.selectedPriceLists,
+    _ignored_price_lists: scope.ignoredPriceLists,
+    _legacy_verification_scope: false,
+  };
+}
+
 // ── WINE VALIDATION ──
 interface WineValidationResult {
   valid: boolean;
@@ -2573,20 +2662,34 @@ serve(async (req) => {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
 
-          // Load PriceLists + SaleCenters for price verification
+          // Load PriceLists + SaleCenters for scoped price verification
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
-          const taskPriceLists = ((cachedMaster2 as any)?.price_lists_json || []) as { Id: string; Name: string }[];
-          const taskSaleCenters = ((cachedMaster2 as any)?.sale_centers_json || []) as Record<string, string>[];
 
-          // Build PriceListId -> SaleCenter names map
-          const taskPlToSc: Record<string, string[]> = {};
-          for (const sc of taskSaleCenters) {
-            const plId = sc.CurrentPriceListId;
-            if (plId) {
-              if (!taskPlToSc[plId]) taskPlToSc[plId] = [];
-              taskPlToSc[plId].push(sc.Name || sc.Id);
-            }
+          const verificationScope = buildAgoraVerificationScope(cachedMaster2, {
+            explicitSaleCenterIds: normalizeStringArray(taskPayload._selected_sale_center_ids || taskPayload._sale_center_id),
+            connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+          });
+
+          Object.assign(taskVerification, {
+            verified_scope: verificationScope.selectedPriceLists.length > 0,
+            selected_sale_centers: verificationScope.selectedSaleCenters,
+            selected_price_lists: verificationScope.selectedPriceLists,
+            ignored_price_lists: verificationScope.ignoredPriceLists,
+            verification_scope_source: verificationScope.source,
+            legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+          });
+
+          const taskPriceLists = verificationScope.selectedPriceLists;
+          const taskPlToSc = verificationScope.priceListToSaleCenters;
+
+          if (taskPriceLists.length === 0) {
+            taskVerification.success = false;
+            taskVerification.errors.push({
+              code: "VERIFY_SCOPE_EMPTY",
+              message: "No relevant PriceLists resolved from current SaleCenter scope",
+              field: "verification_scope",
+            });
           }
 
           if (verifyRes.ok) {
@@ -2749,11 +2852,15 @@ serve(async (req) => {
       const formatTypes = payload.formatTypes || ["BOTTLE"];
       const familyOverrideId = payload.familyOverrideId || null;
 
-      // Load master data to check which products already exist in Agora
+      // Load master data to check which products already exist in Agora + capture verification scope
       const { data: masterData } = await supabase
-        .from("agora_master_data").select("products_summary_json").eq("connection_id", connectionId).single();
+        .from("agora_master_data").select("products_summary_json, sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const existingProducts = (masterData?.products_summary_json || []) as { Id: string; Name: string }[];
       const existingProductIds = new Set(existingProducts.map((p: any) => String(p.Id)));
+      const scopePayload = buildAgoraVerificationScopePayload(masterData, {
+        explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
 
       let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
       for (const wineId of winerimWineIds) {
@@ -2790,6 +2897,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
             _operation: operationType,
+            ...scopePayload,
             ...(familyOverrideId ? { _family_override_id: familyOverrideId } : {}),
           },
           status: "QUEUED",
@@ -3017,6 +3125,39 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "requeue-task-current-scope") {
+      const taskId = payload.taskId;
+      const { data: taskToClone, error: taskCloneErr } = await supabase
+        .from("outbound_tasks").select("*").eq("id", taskId).single();
+
+      if (taskCloneErr || !taskToClone) {
+        return new Response(JSON.stringify({ success: false, error: "Task not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { data: masterDataForScope } = await supabase
+        .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+      const scopePayload = buildAgoraVerificationScopePayload(masterDataForScope, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
+      const taskPayload = (taskToClone.payload_json || {}) as Record<string, unknown>;
+      await supabase.from("outbound_tasks").insert({
+        connection_id: connectionId,
+        task_type: taskToClone.task_type,
+        payload_json: {
+          ...taskPayload,
+          ...scopePayload,
+          _trigger_source: "REQUEUE_CURRENT_SCOPE",
+          _requeued_from_task_id: taskToClone.id,
+        },
+        status: "QUEUED",
+      });
+
+      return new Response(JSON.stringify({ success: true, requeuedFromTaskId: taskToClone.id }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "verify-products") {
       const { data: masterData } = await supabase
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
@@ -3030,15 +3171,12 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Build PriceListId -> SaleCenter names map
-      const priceListToSaleCenters: Record<string, string[]> = {};
-      for (const sc of allSaleCenters) {
-        const plId = sc.CurrentPriceListId;
-        if (plId) {
-          if (!priceListToSaleCenters[plId]) priceListToSaleCenters[plId] = [];
-          priceListToSaleCenters[plId].push(sc.Name || sc.Id);
-        }
-      }
+      const verificationScope = buildAgoraVerificationScope(masterData, {
+        explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+      const scopedPriceLists = verificationScope.selectedPriceLists;
+      const priceListToSaleCenters = verificationScope.priceListToSaleCenters;
 
       // Re-fetch current products from Agora
       const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
@@ -3073,15 +3211,29 @@ serve(async (req) => {
         verified_prices: true,
         verified_family: true,
         verified_preparation: true,
+        verified_scope: scopedPriceLists.length > 0,
         errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
         warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
         missing_prices: [] as VerifyMissingPrice[],
         affected_sale_centers: [] as string[],
         summary: { checked: 0, ok: 0, failed: 0 },
-        totalPriceLists: allPriceLists.length,
-        totalSaleCenters: allSaleCenters.length,
+        totalPriceLists: scopedPriceLists.length,
+        totalSaleCenters: verificationScope.selectedSaleCenters.length,
         priceListToSaleCenters,
+        selectedSaleCenters: verificationScope.selectedSaleCenters,
+        selectedPriceLists: verificationScope.selectedPriceLists,
+        ignoredPriceLists: verificationScope.ignoredPriceLists,
+        verificationScopeSource: verificationScope.source,
       };
+
+      if (scopedPriceLists.length === 0) {
+        verifyResult.success = false;
+        verifyResult.errors.push({
+          code: "VERIFY_SCOPE_EMPTY",
+          message: "No relevant PriceLists resolved from current SaleCenter scope",
+          field: "verification_scope",
+        });
+      }
 
       // Load expected families from last outbound XML (from mappings + winerim_wines wine_type)
       // For verify-products we compare against whatever FamilyId is currently in the connection defaults
@@ -3101,12 +3253,12 @@ serve(async (req) => {
             message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) not found in Agora`,
             context: { productId: mapping.provider_product_id, format: mapping.format_type },
           });
-          for (const pl of allPriceLists) {
-            const scNames = priceListToSaleCenters[pl.Id] || [];
+          for (const pl of scopedPriceLists) {
+            const scNames = priceListToSaleCenters[pl.id] || [];
             verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id, price_list_name: pl.Name,
+              price_list_id: pl.id, price_list_name: pl.name,
               issue: "missing", name: mapping.provider_product_name, format: mapping.format_type,
               affected_sale_centers: scNames,
             });
@@ -3122,8 +3274,8 @@ serve(async (req) => {
         let productOk = true;
 
         // CHECK: PRICES
-        for (const pl of allPriceLists) {
-          const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
+        for (const pl of scopedPriceLists) {
+          const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
           const priceMatch = innerXml.match(priceRegex);
           const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
 
@@ -3131,11 +3283,11 @@ serve(async (req) => {
             productOk = false;
             verifyResult.verified_prices = false;
             const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
-            const scNames = priceListToSaleCenters[pl.Id] || [];
+            const scNames = priceListToSaleCenters[pl.id] || [];
             verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id, price_list_name: pl.Name,
+              price_list_id: pl.id, price_list_name: pl.name,
               issue, name: mapping.provider_product_name, format: mapping.format_type,
               affected_sale_centers: scNames,
             });

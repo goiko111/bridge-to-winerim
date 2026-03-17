@@ -146,6 +146,20 @@ export function useOutboundSync(connectionId: string | null) {
     await loadOutboundTasks();
   }, [loadOutboundTasks]);
 
+  const requeueTaskWithCurrentScope = useCallback(async (taskId: string) => {
+    if (!connectionId) return;
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "requeue-task-current-scope", connectionId, taskId },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to requeue task with current verification scope:", e);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   const exportProducts = useCallback(async (format: "json" | "csv", winerimWineIds?: string[]) => {
     if (!connectionId) return;
     setExporting(true);
@@ -258,6 +272,7 @@ export function useOutboundSync(connectionId: string | null) {
     queuingProducts, queueProducts,
     exporting, exportProducts,
     retryTask,
+    requeueTaskWithCurrentScope,
     backfillingPreparation, backfillPreparation,
     fixingPrices, fixMissingPrices,
     reassigningFamilies, reassignFamilies,
