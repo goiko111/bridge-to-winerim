@@ -368,6 +368,8 @@ function buildAgoraVerificationScopePayload(masterData: any, options: { explicit
     _selected_sale_centers: scope.selectedSaleCenters,
     _selected_price_lists: scope.selectedPriceLists,
     _ignored_price_lists: scope.ignoredPriceLists,
+    _deleted_price_lists: scope.deletedPriceLists,
+    _deleted_sale_centers: scope.deletedSaleCenters,
     _legacy_verification_scope: false,
     _scope_frozen_at: new Date().toISOString(),
   };
