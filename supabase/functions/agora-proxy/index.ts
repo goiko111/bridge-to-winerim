@@ -4014,13 +4014,15 @@ ${costPricesXml}
         missing_in_agora_names: missingInAgora.map(id => sentPriceListNames[id] || id),
         extra_in_agora: extraInAgora,
         persisted_all: persistedAll,
+        deleted_price_lists_excluded: deletedPriceLists.map((pl: any) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id), deletionDate: String(pl.DeletionDate || "") })),
+        deleted_price_lists_count: deletedPriceLists.length,
         conclusion: persistedAll
-          ? "✅ Agora correctly persisted ALL PriceLists. The middleware XML is correct."
+          ? `✅ Agora correctly persisted ALL ${sentPriceListIds.length} active PriceLists. The middleware XML is correct.${deletedPriceLists.length > 0 ? ` (${deletedPriceLists.length} deleted PriceLists were excluded from probe.)` : ""}`
           : diagnosis === "IMPORT_FAILED"
           ? "❌ Import failed. Cannot determine PriceList persistence behavior."
           : diagnosis === "PRODUCT_NOT_FOUND_AFTER_IMPORT"
           ? "❌ Product not found after import. Agora may have rejected it silently."
-          : `⚠️ Agora only persisted ${actualPriceListIds.length}/${sentPriceListIds.length} PriceLists. Missing: ${missingInAgora.map(id => sentPriceListNames[id] || id).join(", ")}. This is an Agora-side limitation — the middleware XML is correct.`,
+          : `⚠️ Agora only persisted ${actualPriceListIds.length}/${sentPriceListIds.length} active PriceLists. Missing: ${missingInAgora.map(id => sentPriceListNames[id] || id).join(", ")}. This is an Agora-side limitation — the middleware XML is correct.${deletedPriceLists.length > 0 ? ` (${deletedPriceLists.length} deleted PriceLists were excluded.)` : ""}`,
         xml_sent: probeXml,
         import_raw_response: importRawResponse.substring(0, 2000),
       };
