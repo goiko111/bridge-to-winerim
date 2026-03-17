@@ -333,11 +333,14 @@ function buildAgoraVerificationScopePayload(masterData: any, options: { explicit
     ...(includeVersion ? { _verification_scope_version: 2 } : {}),
     _verification_scope_source: scope.source,
     _selected_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    _effective_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    _effective_price_list_ids: scope.selectedPriceListIds,
     ...(scope.selectedSaleCenters.length === 1 ? { _sale_center_id: scope.selectedSaleCenters[0].id } : {}),
     _selected_sale_centers: scope.selectedSaleCenters,
     _selected_price_lists: scope.selectedPriceLists,
     _ignored_price_lists: scope.ignoredPriceLists,
     _legacy_verification_scope: false,
+    _scope_frozen_at: new Date().toISOString(),
   };
 }
 
