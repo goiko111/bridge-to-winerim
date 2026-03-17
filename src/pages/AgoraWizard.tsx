@@ -3417,13 +3417,13 @@ function StepMasterData({
           )}
 
           {/* No candidates — manual selection */}
-          {centralCandidates.length === 0 && masterData.saleCenters.length > 0 && !selectedSaleCenterId && (
+          {centralCandidates.length === 0 && activeSaleCenters.length > 0 && !selectedSaleCenterId && (
             <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
               <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
                 <AlertTriangle className="h-3 w-3 shrink-0" /> No "Central" or default sale center detected. Select one manually:
               </p>
               <div className="flex gap-2 flex-wrap">
-                {masterData.saleCenters.map((sc: any) => (
+                {activeSaleCenters.map((sc: any) => (
                   <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
                     {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
                   </Button>
