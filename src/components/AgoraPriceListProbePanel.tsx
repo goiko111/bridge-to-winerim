@@ -27,6 +27,8 @@ interface ProbeResult {
   conclusion: string;
   xml_sent: string;
   import_raw_response: string;
+  deleted_price_lists_excluded?: { id: string; name: string; deletionDate: string }[];
+  deleted_price_lists_count?: number;
 }
 
 interface Props {
