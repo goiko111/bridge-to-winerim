@@ -2809,6 +2809,14 @@ function StepOutboundSync({
                           </div>
                           <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                             <p>
+                              <span className="font-medium text-foreground">Verification mode:</span>{" "}
+                              {scopeMeta.verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS" ? (
+                                <Badge variant="default" className="text-[9px] px-1 py-0 ml-1">🏭 Production</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1">{scopeMeta.verificationMode || "legacy"}</Badge>
+                              )}
+                            </p>
+                            <p>
                               <span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}
                               {scopeMeta.scopeFrozen && (
                                 <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 border-emerald-500 text-emerald-600">🔒 Frozen</Badge>
@@ -2817,11 +2825,11 @@ function StepOutboundSync({
                             {scopeMeta.scopeFrozenAt && (
                               <p className="text-[10px]"><span className="font-medium text-foreground">Scope frozen at:</span> {new Date(scopeMeta.scopeFrozenAt).toLocaleString()}</p>
                             )}
-                            <p><span className="font-medium text-foreground">Selected SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
-                            <p><span className="font-medium text-foreground">Selected PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
+                            <p><span className="font-medium text-foreground">Included SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
+                            <p><span className="font-medium text-foreground">Included PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
                             <p><span className="font-medium text-foreground">Ignored PriceLists:</span> {formatScopeNames(scopeMeta.ignoredPriceLists)}</p>
                             {scopeMeta.legacyVerificationScope && (
-                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with current verification scope" para recrearlo.</p>
+                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with production scope" para recrearlo.</p>
                             )}
                           </div>
                           {t.last_error && (
