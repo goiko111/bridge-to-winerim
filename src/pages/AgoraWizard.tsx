@@ -2820,7 +2820,14 @@ function StepOutboundSync({
                             )}
                           </div>
                           {t.last_error && (
-                            <p className="mt-1 text-[11px] text-destructive truncate">{t.last_error}</p>
+                            <details className="mt-1 group">
+                              <summary className="text-[11px] text-destructive cursor-pointer truncate hover:text-destructive/80">
+                                {t.last_error}
+                              </summary>
+                              <pre className="mt-1 text-[10px] text-destructive whitespace-pre-wrap break-all bg-destructive/5 rounded p-2 border border-destructive/20 max-h-48 overflow-y-auto font-mono">
+                                {t.last_error}
+                              </pre>
+                            </details>
                           )}
                           {t.blocked_reason && (
                             <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
