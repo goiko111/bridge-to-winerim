@@ -721,7 +721,9 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
 function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
-  const priceLists = (masterData.price_lists_json || []) as { Id: string; Name: string }[];
+  // Filter out deleted PriceLists — they must never appear in generated XML
+  const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
+  const priceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
   const prepTypes = (masterData.preparation_types_json || []) as { Id: string; Name: string }[];
   const prepOrders = (masterData.preparation_orders_json || []) as { Id: string; Name: string }[];
   const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
