@@ -3198,6 +3198,7 @@ serve(async (req) => {
 
       const prepScopePayload = buildAgoraVerificationScopePayload(masterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Queue UPDATE tasks with a special flag to force empty preparation fields
