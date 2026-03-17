@@ -3119,6 +3119,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      const backfillScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       // Queue them as outbound tasks for re-push (idempotent: skip already queued)
       let queued = 0;
       let skipped = 0;
