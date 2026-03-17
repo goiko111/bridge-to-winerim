@@ -2401,10 +2401,42 @@ function StepOutboundSync({
   const hasSuccessTasks = outboundTasks.some(t => t.status === "SUCCESS");
   const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN" || hasSuccessTasks;
 
+  const getTaskPayload = (t: OutboundTask) => ((t.payload_json as any) || {}) as any;
+
   const getTaskName = (t: OutboundTask) => {
-    const wid = (t.payload_json as any)?._winerim_wine_id;
-    return wineNameMap[wid] || (t.payload_json as any)?.Name || (wid ? `Wine ${wid}` : t.task_type);
+    const payload = getTaskPayload(t);
+    const wid = payload?._winerim_wine_id;
+    return wineNameMap[wid] || payload?.Name || (wid ? `Wine ${wid}` : t.task_type);
   };
+
+  const getScopeItems = (value: unknown): Array<{ id?: string; name?: string; priceListId?: string | null }> => (
+    Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<{ id?: string; name?: string; priceListId?: string | null }> : []
+  );
+
+  const getTaskScopeMeta = (t: OutboundTask) => {
+    const payload = getTaskPayload(t);
+    const selectedSaleCenters = getScopeItems(payload._selected_sale_centers);
+    const selectedPriceLists = getScopeItems(payload._selected_price_lists);
+    const ignoredPriceLists = getScopeItems(payload._ignored_price_lists);
+    const legacyVerificationScope = !!payload._legacy_verification_scope || !payload._verification_scope_version;
+
+    return {
+      payload,
+      selectedSaleCenters,
+      selectedPriceLists,
+      ignoredPriceLists,
+      legacyVerificationScope,
+      sourceLabel: payload._verification_scope_source === "selected_sale_centers"
+        ? "Selected SaleCenters"
+        : payload._verification_scope_source === "referenced_sale_centers"
+          ? "Referenced SaleCenters"
+          : "Unknown scope",
+    };
+  };
+
+  const formatScopeNames = (items: Array<{ id?: string; name?: string }>) => (
+    items.length > 0 ? items.map((item) => item.name || item.id || "Unknown").join(", ") : "—"
+  );
 
   const filteredTasks = useMemo(() => {
     if (!searchOutbound.trim()) return outboundTasks;
