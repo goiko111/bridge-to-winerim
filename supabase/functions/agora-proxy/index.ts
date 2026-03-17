@@ -2361,10 +2361,26 @@ serve(async (req) => {
       }));
 
       const hasProducts = xml.includes("<Product");
+      const previewXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
+        (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""),
+      );
+
+      // Extract per-product price list counts for transparency
+      const previewPricesByProduct: Record<string, number> = {};
+      const prevProdRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+      let prevM;
+      while ((prevM = prevProdRegex.exec(xml)) !== null) {
+        const inner = prevM[2];
+        const priceCount = (inner.match(/<Price\s/gi) || []).length;
+        previewPricesByProduct[prevM[1]] = priceCount;
+      }
+
       return new Response(
         JSON.stringify({
           success: hasProducts,
           xml,
+          xmlHash: previewXmlHash,
+          priceListCountByProduct: previewPricesByProduct,
           wineCount: wines.length,
           validationResults,
           sourceDataSummary,
@@ -2801,6 +2817,11 @@ serve(async (req) => {
         }
         const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
 
+        // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
+        const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
+          (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""),
+        );
+
         // Check if any products were actually generated (validation may have skipped all)
         if (!xml.includes("<Product ")) {
           const reasons = validationResults.map(v => v.validation.missingFields.join(", ")).filter(Boolean).join("; ");
@@ -2808,6 +2829,27 @@ serve(async (req) => {
             status: "BLOCKED", blocked_reason: `Validation failed: ${reasons || "no products generated"}`,
           }).eq("id", task.id);
           return new Response(JSON.stringify({ success: false, status: "BLOCKED", validationResults }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        // ── HARD VALIDATION: Block if any sellable product has 0 <Price> entries ──
+        const zeroPriceProducts: string[] = [];
+        const preSendProductRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        let preSendMatch;
+        while ((preSendMatch = preSendProductRegex.exec(xml)) !== null) {
+          const pid = preSendMatch[1];
+          const inner = preSendMatch[2];
+          const hasPrices = /<Price\s/i.test(inner);
+          if (!hasPrices) zeroPriceProducts.push(pid);
+        }
+        if (zeroPriceProducts.length > 0) {
+          const blockMsg = `[NO_PRICELISTS_GENERATED_IN_TASK_XML] Products with 0 Price entries: ${zeroPriceProducts.join(", ")}. PriceLists in masterData: ${(masterData.price_lists_json || []).length}`;
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED",
+            last_error: blockMsg,
+            payload_json: { ...taskPayload, _task_xml_hash: taskXmlHash, _zero_price_products: zeroPriceProducts },
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED", error: blockMsg }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
@@ -2845,14 +2887,15 @@ serve(async (req) => {
         }
 
         // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
+        // FIX: Use `<Product\s+Id=` to match the FIRST Id attribute, NOT FamilyId/VatId
         const sentPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
-        const productBlockRegex = /<Product[^>]*Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        const productBlockRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
         let pm;
         while ((pm = productBlockRegex.exec(xml)) !== null) {
           const prodId = pm[1];
           const innerBlock = pm[2];
           const priceEntries: { priceListId: string; mainPrice: string }[] = [];
-          const prReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+          const prReg = /<Price\s[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
           let pr;
           while ((pr = prReg.exec(innerBlock)) !== null) {
             priceEntries.push({ priceListId: pr[1], mainPrice: pr[2] });
@@ -2861,9 +2904,9 @@ serve(async (req) => {
         }
 
         // ── UNIFIED POST-IMPORT VERIFICATION (using shared function) ──
-        // Extract expected familyIds from sent XML
+        // Extract expected familyIds from sent XML (use \s+Id= to avoid FamilyId capture)
         const expectedFamilies: Record<string, string> = {};
-        const famRegex = /<Product[^>]*Id="(\d+)"[^>]*FamilyId="([^"]*)"/g;
+        const famRegex = /<Product\s+Id="(\d+)"[^>]*\sFamilyId="([^"]*)"/g;
         let fm;
         while ((fm = famRegex.exec(xml)) !== null) {
           expectedFamilies[fm[1]] = fm[2];
@@ -2986,6 +3029,7 @@ serve(async (req) => {
         // Determine if the bug is in generation, import, or verification
         const diagnostics: Record<string, unknown> = {
           timestamp: new Date().toISOString(),
+          task_xml_hash: taskXmlHash,
           sent_price_lists_by_product: sentPricesByProduct,
           actual_price_lists_by_product: actualPricesByProduct,
           products_diagnosed: [] as unknown[],
