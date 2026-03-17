@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, ArrowRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
+  ArrowLeft, ArrowRight, ArrowLeftRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
   Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
@@ -29,6 +29,7 @@ import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData"
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
+import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
@@ -2720,6 +2721,15 @@ function StepOutboundSync({
       {canWrite && (
         <AgoraPriceListProbePanel connectionId={connectionId} />
       )}
+
+      {/* Connection Comparison Diagnostics */}
+      <div className="rounded-lg border p-4 space-y-2">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <ArrowLeftRight className="h-4 w-4" /> Connection Comparison
+        </h4>
+        <p className="text-xs text-muted-foreground">Compare two Agora connections side-by-side to diagnose installation-specific issues.</p>
+        <AgoraConnectionCompare />
+      </div>
 
       {/* Persistence warning banner */}
       {outboundTasks.some(t => t.last_error?.includes("IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS")) && (
