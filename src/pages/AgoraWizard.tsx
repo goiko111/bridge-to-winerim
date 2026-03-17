@@ -2803,12 +2803,20 @@ function StepOutboundSync({
                             <span>Attempts: {t.attempts}/{t.max_attempts}</span>
                           </div>
                           <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-                            <p><span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}</p>
+                            <p>
+                              <span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}
+                              {scopeMeta.scopeFrozen && (
+                                <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 border-emerald-500 text-emerald-600">🔒 Frozen</Badge>
+                              )}
+                            </p>
+                            {scopeMeta.scopeFrozenAt && (
+                              <p className="text-[10px]"><span className="font-medium text-foreground">Scope frozen at:</span> {new Date(scopeMeta.scopeFrozenAt).toLocaleString()}</p>
+                            )}
                             <p><span className="font-medium text-foreground">Selected SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
                             <p><span className="font-medium text-foreground">Selected PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
                             <p><span className="font-medium text-foreground">Ignored PriceLists:</span> {formatScopeNames(scopeMeta.ignoredPriceLists)}</p>
                             {scopeMeta.legacyVerificationScope && (
-                              <p className="text-amber-600">Legacy task: recrea este task manualmente con el scope actual.</p>
+                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with current verification scope" para recrearlo.</p>
                             )}
                           </div>
                           {t.last_error && (
