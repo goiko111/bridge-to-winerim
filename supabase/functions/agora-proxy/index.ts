@@ -3672,6 +3672,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: evtType === "CREATE" ? "AUTO_CREATE" : "AUTO_UPDATE",
             _requested_at: new Date().toISOString(),
+            ...autoPushScopePayload,
           },
           status: "QUEUED",
         });
