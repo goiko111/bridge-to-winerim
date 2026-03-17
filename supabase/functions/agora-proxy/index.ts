@@ -3138,15 +3138,12 @@ serve(async (req) => {
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Build PriceListId -> SaleCenter names map
-      const priceListToSaleCenters: Record<string, string[]> = {};
-      for (const sc of allSaleCenters) {
-        const plId = sc.CurrentPriceListId;
-        if (plId) {
-          if (!priceListToSaleCenters[plId]) priceListToSaleCenters[plId] = [];
-          priceListToSaleCenters[plId].push(sc.Name || sc.Id);
-        }
-      }
+      const verificationScope = buildAgoraVerificationScope(masterData, {
+        explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+      const scopedPriceLists = verificationScope.selectedPriceLists;
+      const priceListToSaleCenters = verificationScope.priceListToSaleCenters;
 
       // Re-fetch current products from Agora
       const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
@@ -3181,15 +3178,29 @@ serve(async (req) => {
         verified_prices: true,
         verified_family: true,
         verified_preparation: true,
+        verified_scope: scopedPriceLists.length > 0,
         errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
         warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
         missing_prices: [] as VerifyMissingPrice[],
         affected_sale_centers: [] as string[],
         summary: { checked: 0, ok: 0, failed: 0 },
-        totalPriceLists: allPriceLists.length,
-        totalSaleCenters: allSaleCenters.length,
+        totalPriceLists: scopedPriceLists.length,
+        totalSaleCenters: verificationScope.selectedSaleCenters.length,
         priceListToSaleCenters,
+        selectedSaleCenters: verificationScope.selectedSaleCenters,
+        selectedPriceLists: verificationScope.selectedPriceLists,
+        ignoredPriceLists: verificationScope.ignoredPriceLists,
+        verificationScopeSource: verificationScope.source,
       };
+
+      if (scopedPriceLists.length === 0) {
+        verifyResult.success = false;
+        verifyResult.errors.push({
+          code: "VERIFY_SCOPE_EMPTY",
+          message: "No relevant PriceLists resolved from current SaleCenter scope",
+          field: "verification_scope",
+        });
+      }
 
       // Load expected families from last outbound XML (from mappings + winerim_wines wine_type)
       // For verify-products we compare against whatever FamilyId is currently in the connection defaults
