@@ -2247,18 +2247,6 @@ function StepWinerimCatalog({
             })}
           </div>
 
-          {/* XML Preview */}
-          {previewXml && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-muted-foreground">XML Preview</p>
-                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPreviewXml(null)}>Close</Button>
-              </div>
-              <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto text-foreground whitespace-pre-wrap">
-                {previewXml}
-              </pre>
-            </div>
-          )}
         </>
       )}
     </div>
