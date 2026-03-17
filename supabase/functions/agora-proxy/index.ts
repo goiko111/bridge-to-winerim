@@ -2801,6 +2801,11 @@ serve(async (req) => {
         }
         const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
 
+        // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
+        const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
+          (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""),
+        );
+
         // Check if any products were actually generated (validation may have skipped all)
         if (!xml.includes("<Product ")) {
           const reasons = validationResults.map(v => v.validation.missingFields.join(", ")).filter(Boolean).join("; ");
@@ -2808,6 +2813,27 @@ serve(async (req) => {
             status: "BLOCKED", blocked_reason: `Validation failed: ${reasons || "no products generated"}`,
           }).eq("id", task.id);
           return new Response(JSON.stringify({ success: false, status: "BLOCKED", validationResults }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        // ── HARD VALIDATION: Block if any sellable product has 0 <Price> entries ──
+        const zeroPriceProducts: string[] = [];
+        const preSendProductRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        let preSendMatch;
+        while ((preSendMatch = preSendProductRegex.exec(xml)) !== null) {
+          const pid = preSendMatch[1];
+          const inner = preSendMatch[2];
+          const hasPrices = /<Price\s/i.test(inner);
+          if (!hasPrices) zeroPriceProducts.push(pid);
+        }
+        if (zeroPriceProducts.length > 0) {
+          const blockMsg = `[NO_PRICELISTS_GENERATED_IN_TASK_XML] Products with 0 Price entries: ${zeroPriceProducts.join(", ")}. PriceLists in masterData: ${(masterData.price_lists_json || []).length}`;
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED",
+            last_error: blockMsg,
+            payload_json: { ...taskPayload, _task_xml_hash: taskXmlHash, _zero_price_products: zeroPriceProducts },
+          }).eq("id", task.id);
+          return new Response(JSON.stringify({ success: false, status: "FAILED", error: blockMsg }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
