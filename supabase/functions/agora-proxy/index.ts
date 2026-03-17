@@ -3260,6 +3260,7 @@ serve(async (req) => {
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const reassignScopePayload = buildAgoraVerificationScopePayload(reassignMasterData, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // Get connection write settings for format types
