@@ -333,11 +333,14 @@ function buildAgoraVerificationScopePayload(masterData: any, options: { explicit
     ...(includeVersion ? { _verification_scope_version: 2 } : {}),
     _verification_scope_source: scope.source,
     _selected_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    _effective_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    _effective_price_list_ids: scope.selectedPriceListIds,
     ...(scope.selectedSaleCenters.length === 1 ? { _sale_center_id: scope.selectedSaleCenters[0].id } : {}),
     _selected_sale_centers: scope.selectedSaleCenters,
     _selected_price_lists: scope.selectedPriceLists,
     _ignored_price_lists: scope.ignoredPriceLists,
     _legacy_verification_scope: false,
+    _scope_frozen_at: new Date().toISOString(),
   };
 }
 
@@ -2854,10 +2857,35 @@ serve(async (req) => {
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
 
-          const verificationScope = buildAgoraVerificationScope(cachedMaster2, {
+          // Use frozen scope from task payload if available; fall back to live resolution for legacy tasks
+          const frozenPriceLists = Array.isArray(taskPayload._selected_price_lists) ? taskPayload._selected_price_lists as { id: string; name: string }[] : null;
+          const frozenPlToSc = frozenPriceLists ? (() => {
+            const map: Record<string, string[]> = {};
+            const saleCenters = Array.isArray(taskPayload._selected_sale_centers) ? taskPayload._selected_sale_centers as { id: string; name: string; priceListId?: string | null }[] : [];
+            for (const sc of saleCenters) {
+              if (sc.priceListId) {
+                if (!map[sc.priceListId]) map[sc.priceListId] = [];
+                map[sc.priceListId].push(sc.name || sc.id || "");
+              }
+            }
+            return map;
+          })() : null;
+          const hasFrozenScope = frozenPriceLists && frozenPriceLists.length > 0 && taskPayload._scope_frozen_at;
+
+          const verificationScope = hasFrozenScope ? null : buildAgoraVerificationScope(cachedMaster2, {
             explicitSaleCenterIds: normalizeStringArray(taskPayload._selected_sale_center_ids || taskPayload._sale_center_id),
             connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
           });
+
+          const effectivePriceLists = hasFrozenScope ? frozenPriceLists! : verificationScope!.selectedPriceLists;
+          const effectivePlToSc = hasFrozenScope ? frozenPlToSc! : verificationScope!.priceListToSaleCenters;
+          const effectiveScopeSource = hasFrozenScope ? (taskPayload._verification_scope_source || "frozen") : verificationScope!.source;
+          const effectiveSaleCenters = hasFrozenScope
+            ? (Array.isArray(taskPayload._selected_sale_centers) ? taskPayload._selected_sale_centers : [])
+            : verificationScope!.selectedSaleCenters;
+          const effectiveIgnoredPriceLists = hasFrozenScope
+            ? (Array.isArray(taskPayload._ignored_price_lists) ? taskPayload._ignored_price_lists : [])
+            : verificationScope!.ignoredPriceLists;
 
           // Build product list for this task
           const productsToVerify: AgoraProductToVerify[] = fmtTypes.map((fmt: string) => {
@@ -2880,14 +2908,16 @@ serve(async (req) => {
             taskVerification = {
               ...verifyAgoraProductsAgainstScope(
                 verifyXml, productsToVerify,
-                verificationScope.selectedPriceLists,
-                verificationScope.priceListToSaleCenters,
+                effectivePriceLists,
+                effectivePlToSc,
               ),
-              selected_sale_centers: verificationScope.selectedSaleCenters,
-              selected_price_lists: verificationScope.selectedPriceLists,
-              ignored_price_lists: verificationScope.ignoredPriceLists,
-              verification_scope_source: verificationScope.source,
-              legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+              selected_sale_centers: effectiveSaleCenters,
+              selected_price_lists: effectivePriceLists,
+              ignored_price_lists: effectiveIgnoredPriceLists,
+              verification_scope_source: effectiveScopeSource,
+              scope_frozen: !!hasFrozenScope,
+              scope_frozen_at: taskPayload._scope_frozen_at || null,
+              legacy_verification_scope: !hasFrozenScope && (!!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0)),
             };
           } else {
             taskVerification.warnings.push({
@@ -3089,6 +3119,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      const backfillScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       // Queue them as outbound tasks for re-push (idempotent: skip already queued)
       let queued = 0;
       let skipped = 0;
@@ -3110,6 +3144,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "BACKFILL_PRICES",
+            ...backfillScopePayload,
           },
           status: "QUEUED",
         });
@@ -3149,6 +3184,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      const prepScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       // Queue UPDATE tasks with a special flag to force empty preparation fields
       let queued = 0;
       let skipped = 0;
@@ -3172,6 +3211,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: "BACKFILL_PREPARATION",
             _force_empty_preparation: true,
+            ...prepScopePayload,
           },
           status: "QUEUED",
         });
@@ -3201,6 +3241,13 @@ serve(async (req) => {
         return new Response(JSON.stringify({ success: true, message: "No pushed products to reassign", queued: 0 }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+
+      // Load master data for scope
+      const { data: reassignMasterData } = await supabase
+        .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+      const reassignScopePayload = buildAgoraVerificationScopePayload(reassignMasterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
 
       // Get connection write settings for format types
       const { data: connSettings } = await supabase
@@ -3232,6 +3279,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "REASSIGN_FAMILIES",
+            ...reassignScopePayload,
           },
           status: "QUEUED",
         });
@@ -3507,7 +3555,7 @@ serve(async (req) => {
 
       // Check master data exists
       const { data: masterData } = await supabase
-        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json")
+        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json, sale_centers_json")
         .eq("connection_id", connectionId).single();
       if (!masterData) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no master data cached" }),
@@ -3523,6 +3571,10 @@ serve(async (req) => {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "master_data_incomplete", warnings }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+
+      const autoPushScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
 
       const { data: wines } = await supabase
         .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active")
@@ -3620,6 +3672,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: evtType === "CREATE" ? "AUTO_CREATE" : "AUTO_UPDATE",
             _requested_at: new Date().toISOString(),
+            ...autoPushScopePayload,
           },
           status: "QUEUED",
         });
