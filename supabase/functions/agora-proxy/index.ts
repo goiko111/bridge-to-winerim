@@ -3184,6 +3184,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      const prepScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       // Queue UPDATE tasks with a special flag to force empty preparation fields
       let queued = 0;
       let skipped = 0;
