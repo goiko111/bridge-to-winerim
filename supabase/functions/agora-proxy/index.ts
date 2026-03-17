@@ -3572,6 +3572,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      const autoPushScopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
       const { data: wines } = await supabase
         .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
