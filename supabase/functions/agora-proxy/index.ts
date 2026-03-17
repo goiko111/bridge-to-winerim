@@ -3220,12 +3220,12 @@ serve(async (req) => {
             message: `Product ${mapping.provider_product_id} (${mapping.format_type} ${mapping.provider_product_name}) not found in Agora`,
             context: { productId: mapping.provider_product_id, format: mapping.format_type },
           });
-          for (const pl of allPriceLists) {
-            const scNames = priceListToSaleCenters[pl.Id] || [];
+          for (const pl of scopedPriceLists) {
+            const scNames = priceListToSaleCenters[pl.id] || [];
             verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id, price_list_name: pl.Name,
+              price_list_id: pl.id, price_list_name: pl.name,
               issue: "missing", name: mapping.provider_product_name, format: mapping.format_type,
               affected_sale_centers: scNames,
             });
@@ -3241,8 +3241,8 @@ serve(async (req) => {
         let productOk = true;
 
         // CHECK: PRICES
-        for (const pl of allPriceLists) {
-          const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
+        for (const pl of scopedPriceLists) {
+          const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
           const priceMatch = innerXml.match(priceRegex);
           const priceVal = priceMatch ? parseFloat(priceMatch[1]) : NaN;
 
@@ -3250,11 +3250,11 @@ serve(async (req) => {
             productOk = false;
             verifyResult.verified_prices = false;
             const issue = !priceMatch ? "missing" : isNaN(priceVal) ? "invalid" : "zero";
-            const scNames = priceListToSaleCenters[pl.Id] || [];
+            const scNames = priceListToSaleCenters[pl.id] || [];
             verifyResult.missing_prices.push({
               product_erp_id: mapping.winerim_wine_id || "",
               agora_product_id: mapping.provider_product_id,
-              price_list_id: pl.Id, price_list_name: pl.Name,
+              price_list_id: pl.id, price_list_name: pl.name,
               issue, name: mapping.provider_product_name, format: mapping.format_type,
               affected_sale_centers: scNames,
             });
