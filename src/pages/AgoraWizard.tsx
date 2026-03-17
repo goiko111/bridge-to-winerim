@@ -2422,6 +2422,8 @@ function StepOutboundSync({
     const scopeFrozen = !!payload._scope_frozen_at;
     const scopeFrozenAt = payload._scope_frozen_at ? String(payload._scope_frozen_at) : null;
 
+    const verificationMode = payload._verification_mode || null;
+
     return {
       payload,
       selectedSaleCenters,
@@ -2430,13 +2432,16 @@ function StepOutboundSync({
       legacyVerificationScope,
       scopeFrozen,
       scopeFrozenAt,
-      sourceLabel: scopeFrozen
-        ? "Frozen at enqueue time"
-        : payload._verification_scope_source === "selected_sale_centers"
-          ? "Selected SaleCenters"
-          : payload._verification_scope_source === "referenced_sale_centers"
-            ? "Referenced SaleCenters"
-            : "Unknown scope",
+      verificationMode,
+      sourceLabel: verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS"
+        ? "Production (all active SaleCenters)"
+        : scopeFrozen
+          ? "Frozen at enqueue time"
+          : payload._verification_scope_source === "selected_sale_centers"
+            ? "Selected SaleCenters"
+            : payload._verification_scope_source === "referenced_sale_centers"
+              ? "Referenced SaleCenters"
+              : "Unknown scope",
     };
   };
 
