@@ -2838,11 +2838,15 @@ serve(async (req) => {
       const formatTypes = payload.formatTypes || ["BOTTLE"];
       const familyOverrideId = payload.familyOverrideId || null;
 
-      // Load master data to check which products already exist in Agora
+      // Load master data to check which products already exist in Agora + capture verification scope
       const { data: masterData } = await supabase
-        .from("agora_master_data").select("products_summary_json").eq("connection_id", connectionId).single();
+        .from("agora_master_data").select("products_summary_json, sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const existingProducts = (masterData?.products_summary_json || []) as { Id: string; Name: string }[];
       const existingProductIds = new Set(existingProducts.map((p: any) => String(p.Id)));
+      const scopePayload = buildAgoraVerificationScopePayload(masterData, {
+        explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
 
       let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
       for (const wineId of winerimWineIds) {
@@ -2879,6 +2883,7 @@ serve(async (req) => {
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
             _operation: operationType,
+            ...scopePayload,
             ...(familyOverrideId ? { _family_override_id: familyOverrideId } : {}),
           },
           status: "QUEUED",

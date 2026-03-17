@@ -4066,7 +4066,7 @@ export default function AgoraWizard() {
               onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               backfillingPreparation={outbound.backfillingPreparation}
               onBackfillPreparation={outbound.backfillPreparation}
-              fixingPrices={outbound.fixMissingPrices}
+              fixingPrices={outbound.fixingPrices}
               onFixMissingPrices={outbound.fixMissingPrices}
               reassigningFamilies={outbound.reassigningFamilies}
               onReassignFamilies={outbound.reassignFamilies}
