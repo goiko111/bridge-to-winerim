@@ -272,6 +272,7 @@ export function useOutboundSync(connectionId: string | null) {
     queuingProducts, queueProducts,
     exporting, exportProducts,
     retryTask,
+    requeueTaskWithCurrentScope,
     backfillingPreparation, backfillPreparation,
     fixingPrices, fixMissingPrices,
     reassigningFamilies, reassignFamilies,

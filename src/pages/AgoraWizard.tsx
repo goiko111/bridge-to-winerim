@@ -4059,12 +4059,14 @@ export default function AgoraWizard() {
               processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
               exporting={outbound.exporting}
               onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
-              onRetry={outbound.retryTask} onExport={outbound.exportProducts}
+              onRetry={outbound.retryTask}
+              onRequeueWithCurrentScope={outbound.requeueTaskWithCurrentScope}
+              onExport={outbound.exportProducts}
               winerimWines={winerimWinesForPush}
               onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
               backfillingPreparation={outbound.backfillingPreparation}
               onBackfillPreparation={outbound.backfillPreparation}
-              fixingPrices={outbound.fixingPrices}
+              fixingPrices={outbound.fixMissingPrices}
               onFixMissingPrices={outbound.fixMissingPrices}
               reassigningFamilies={outbound.reassigningFamilies}
               onReassignFamilies={outbound.reassignFamilies}
