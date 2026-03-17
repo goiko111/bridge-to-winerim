@@ -3125,6 +3125,39 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    if (action === "requeue-task-current-scope") {
+      const taskId = payload.taskId;
+      const { data: taskToClone, error: taskCloneErr } = await supabase
+        .from("outbound_tasks").select("*").eq("id", taskId).single();
+
+      if (taskCloneErr || !taskToClone) {
+        return new Response(JSON.stringify({ success: false, error: "Task not found" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { data: masterDataForScope } = await supabase
+        .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+      const scopePayload = buildAgoraVerificationScopePayload(masterDataForScope, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+      });
+
+      const taskPayload = (taskToClone.payload_json || {}) as Record<string, unknown>;
+      await supabase.from("outbound_tasks").insert({
+        connection_id: connectionId,
+        task_type: taskToClone.task_type,
+        payload_json: {
+          ...taskPayload,
+          ...scopePayload,
+          _trigger_source: "REQUEUE_CURRENT_SCOPE",
+          _requeued_from_task_id: taskToClone.id,
+        },
+        status: "QUEUED",
+      });
+
+      return new Response(JSON.stringify({ success: true, requeuedFromTaskId: taskToClone.id }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     if (action === "verify-products") {
       const { data: masterData } = await supabase
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
