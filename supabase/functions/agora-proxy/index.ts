@@ -3555,7 +3555,7 @@ serve(async (req) => {
 
       // Check master data exists
       const { data: masterData } = await supabase
-        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json")
+        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json, sale_centers_json")
         .eq("connection_id", connectionId).single();
       if (!masterData) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no master data cached" }),
