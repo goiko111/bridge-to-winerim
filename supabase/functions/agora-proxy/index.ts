@@ -3013,6 +3013,7 @@ serve(async (req) => {
         // Determine if the bug is in generation, import, or verification
         const diagnostics: Record<string, unknown> = {
           timestamp: new Date().toISOString(),
+          task_xml_hash: taskXmlHash,
           sent_price_lists_by_product: sentPricesByProduct,
           actual_price_lists_by_product: actualPricesByProduct,
           products_diagnosed: [] as unknown[],
