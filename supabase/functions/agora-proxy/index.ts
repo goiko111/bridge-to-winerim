@@ -2857,10 +2857,35 @@ serve(async (req) => {
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
 
-          const verificationScope = buildAgoraVerificationScope(cachedMaster2, {
+          // Use frozen scope from task payload if available; fall back to live resolution for legacy tasks
+          const frozenPriceLists = Array.isArray(taskPayload._selected_price_lists) ? taskPayload._selected_price_lists as { id: string; name: string }[] : null;
+          const frozenPlToSc = frozenPriceLists ? (() => {
+            const map: Record<string, string[]> = {};
+            const saleCenters = Array.isArray(taskPayload._selected_sale_centers) ? taskPayload._selected_sale_centers as { id: string; name: string; priceListId?: string | null }[] : [];
+            for (const sc of saleCenters) {
+              if (sc.priceListId) {
+                if (!map[sc.priceListId]) map[sc.priceListId] = [];
+                map[sc.priceListId].push(sc.name || sc.id || "");
+              }
+            }
+            return map;
+          })() : null;
+          const hasFrozenScope = frozenPriceLists && frozenPriceLists.length > 0 && taskPayload._scope_frozen_at;
+
+          const verificationScope = hasFrozenScope ? null : buildAgoraVerificationScope(cachedMaster2, {
             explicitSaleCenterIds: normalizeStringArray(taskPayload._selected_sale_center_ids || taskPayload._sale_center_id),
             connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
           });
+
+          const effectivePriceLists = hasFrozenScope ? frozenPriceLists! : verificationScope!.selectedPriceLists;
+          const effectivePlToSc = hasFrozenScope ? frozenPlToSc! : verificationScope!.priceListToSaleCenters;
+          const effectiveScopeSource = hasFrozenScope ? (taskPayload._verification_scope_source || "frozen") : verificationScope!.source;
+          const effectiveSaleCenters = hasFrozenScope
+            ? (Array.isArray(taskPayload._selected_sale_centers) ? taskPayload._selected_sale_centers : [])
+            : verificationScope!.selectedSaleCenters;
+          const effectiveIgnoredPriceLists = hasFrozenScope
+            ? (Array.isArray(taskPayload._ignored_price_lists) ? taskPayload._ignored_price_lists : [])
+            : verificationScope!.ignoredPriceLists;
 
           // Build product list for this task
           const productsToVerify: AgoraProductToVerify[] = fmtTypes.map((fmt: string) => {
