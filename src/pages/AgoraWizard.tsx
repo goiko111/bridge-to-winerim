@@ -3432,20 +3432,30 @@ function StepMasterData({
           )}
 
           {/* Fetched counts summary */}
-          <div className="grid grid-cols-3 gap-2 text-[10px]">
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">SaleCenters</p>
-              <p className={`text-sm font-bold ${masterData.saleCenters.length > 0 ? "text-foreground" : "text-destructive"}`}>{masterData.saleCenters.length}</p>
-            </div>
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">SalePoints</p>
-              <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
-            </div>
-            <div className="rounded border border-border bg-background p-2 text-center">
-              <p className="text-muted-foreground">PriceLists</p>
-              <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
-            </div>
-          </div>
+          {(() => {
+            const activeSC = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+            const deletedSC = masterData.saleCenters.filter((sc: any) => !!sc.DeletionDate);
+            const activePL = masterData.priceLists.filter((pl: any) => !pl.DeletionDate);
+            const deletedPL = masterData.priceLists.filter((pl: any) => !!pl.DeletionDate);
+            return (
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SaleCenters</p>
+                  <p className={`text-sm font-bold ${activeSC.length > 0 ? "text-foreground" : "text-destructive"}`}>{activeSC.length}</p>
+                  {deletedSC.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedSC.length} deleted</p>}
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SalePoints</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">PriceLists</p>
+                  <p className="text-sm font-bold text-foreground">{activePL.length}</p>
+                  {deletedPL.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedPL.length} deleted</p>}
+                </div>
+              </div>
+            );
+          })()}
 
           {activeCentralCenter ? (
             <div className="space-y-2">
