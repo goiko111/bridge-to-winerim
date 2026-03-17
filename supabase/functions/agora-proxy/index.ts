@@ -252,6 +252,95 @@ function stableFamilyId(name: string): string {
   return String(900000 + (Math.abs(hash) % 9999));
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+// deno-lint-ignore no-explicit-any
+function buildAgoraVerificationScope(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}) {
+  const allPriceLists = (Array.isArray(masterData?.price_lists_json) ? masterData.price_lists_json : []) as { Id: string; Name: string }[];
+  const allSaleCenters = (Array.isArray(masterData?.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+  const explicitIds = normalizeStringArray(options.explicitSaleCenterIds);
+  const connectionSelectedIds = normalizeStringArray(options.connectionSelectedSaleCenterIds);
+
+  let selectedSaleCenters = [] as Record<string, unknown>[];
+  let source: "selected_sale_centers" | "referenced_sale_centers" = "referenced_sale_centers";
+
+  if (explicitIds.length > 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => explicitIds.includes(String(sc.Id || "")));
+    source = "selected_sale_centers";
+  } else if (connectionSelectedIds.length > 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => connectionSelectedIds.includes(String(sc.Id || "")));
+    source = "selected_sale_centers";
+  }
+
+  if (selectedSaleCenters.length === 0) {
+    selectedSaleCenters = allSaleCenters.filter((sc) => !!sc.CurrentPriceListId);
+    source = "referenced_sale_centers";
+  }
+
+  const selectedPriceListMap = new Map<string, { id: string; name: string }>();
+  const priceListToSaleCenters: Record<string, string[]> = {};
+
+  for (const sc of selectedSaleCenters) {
+    const priceListId = sc.CurrentPriceListId ? String(sc.CurrentPriceListId) : "";
+    if (!priceListId) continue;
+
+    const priceList = allPriceLists.find((pl) => String(pl.Id) === priceListId);
+    if (!selectedPriceListMap.has(priceListId)) {
+      selectedPriceListMap.set(priceListId, {
+        id: priceListId,
+        name: priceList?.Name ? String(priceList.Name) : priceListId,
+      });
+    }
+
+    if (!priceListToSaleCenters[priceListId]) priceListToSaleCenters[priceListId] = [];
+    priceListToSaleCenters[priceListId].push(sc.Name ? String(sc.Name) : String(sc.Id || priceListId));
+  }
+
+  const selectedPriceLists = Array.from(selectedPriceListMap.values());
+  const selectedPriceListIds = selectedPriceLists.map((pl) => pl.id);
+  const ignoredPriceLists = allPriceLists
+    .filter((pl) => !selectedPriceListIds.includes(String(pl.Id)))
+    .map((pl) => ({ id: String(pl.Id), name: String(pl.Name || pl.Id) }));
+
+  return {
+    source,
+    allPriceLists,
+    allSaleCenters,
+    selectedSaleCenters: selectedSaleCenters.map((sc) => ({
+      id: String(sc.Id || ""),
+      name: String(sc.Name || sc.Id || ""),
+      priceListId: sc.CurrentPriceListId ? String(sc.CurrentPriceListId) : null,
+    })),
+    selectedPriceLists,
+    selectedPriceListIds,
+    ignoredPriceLists,
+    priceListToSaleCenters,
+  };
+}
+
+// deno-lint-ignore no-explicit-any
+function buildAgoraVerificationScopePayload(masterData: any, options: { explicitSaleCenterIds?: string[]; connectionSelectedSaleCenterIds?: string[] } = {}, includeVersion = true) {
+  const scope = buildAgoraVerificationScope(masterData, options);
+  return {
+    ...(includeVersion ? { _verification_scope_version: 2 } : {}),
+    _verification_scope_source: scope.source,
+    _selected_sale_center_ids: scope.selectedSaleCenters.map((sc) => sc.id),
+    ...(scope.selectedSaleCenters.length === 1 ? { _sale_center_id: scope.selectedSaleCenters[0].id } : {}),
+    _selected_sale_centers: scope.selectedSaleCenters,
+    _selected_price_lists: scope.selectedPriceLists,
+    _ignored_price_lists: scope.ignoredPriceLists,
+    _legacy_verification_scope: false,
+  };
+}
+
 // ── WINE VALIDATION ──
 interface WineValidationResult {
   valid: boolean;
