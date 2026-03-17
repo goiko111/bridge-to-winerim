@@ -2662,20 +2662,34 @@ serve(async (req) => {
           const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
           const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
 
-          // Load PriceLists + SaleCenters for price verification
+          // Load PriceLists + SaleCenters for scoped price verification
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
-          const taskPriceLists = ((cachedMaster2 as any)?.price_lists_json || []) as { Id: string; Name: string }[];
-          const taskSaleCenters = ((cachedMaster2 as any)?.sale_centers_json || []) as Record<string, string>[];
 
-          // Build PriceListId -> SaleCenter names map
-          const taskPlToSc: Record<string, string[]> = {};
-          for (const sc of taskSaleCenters) {
-            const plId = sc.CurrentPriceListId;
-            if (plId) {
-              if (!taskPlToSc[plId]) taskPlToSc[plId] = [];
-              taskPlToSc[plId].push(sc.Name || sc.Id);
-            }
+          const verificationScope = buildAgoraVerificationScope(cachedMaster2, {
+            explicitSaleCenterIds: normalizeStringArray(taskPayload._selected_sale_center_ids || taskPayload._sale_center_id),
+            connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+          });
+
+          Object.assign(taskVerification, {
+            verified_scope: verificationScope.selectedPriceLists.length > 0,
+            selected_sale_centers: verificationScope.selectedSaleCenters,
+            selected_price_lists: verificationScope.selectedPriceLists,
+            ignored_price_lists: verificationScope.ignoredPriceLists,
+            verification_scope_source: verificationScope.source,
+            legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+          });
+
+          const taskPriceLists = verificationScope.selectedPriceLists;
+          const taskPlToSc = verificationScope.priceListToSaleCenters;
+
+          if (taskPriceLists.length === 0) {
+            taskVerification.success = false;
+            taskVerification.errors.push({
+              code: "VERIFY_SCOPE_EMPTY",
+              message: "No relevant PriceLists resolved from current SaleCenter scope",
+              field: "verification_scope",
+            });
           }
 
           if (verifyRes.ok) {
