@@ -2908,14 +2908,16 @@ serve(async (req) => {
             taskVerification = {
               ...verifyAgoraProductsAgainstScope(
                 verifyXml, productsToVerify,
-                verificationScope.selectedPriceLists,
-                verificationScope.priceListToSaleCenters,
+                effectivePriceLists,
+                effectivePlToSc,
               ),
-              selected_sale_centers: verificationScope.selectedSaleCenters,
-              selected_price_lists: verificationScope.selectedPriceLists,
-              ignored_price_lists: verificationScope.ignoredPriceLists,
-              verification_scope_source: verificationScope.source,
-              legacy_verification_scope: !!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0),
+              selected_sale_centers: effectiveSaleCenters,
+              selected_price_lists: effectivePriceLists,
+              ignored_price_lists: effectiveIgnoredPriceLists,
+              verification_scope_source: effectiveScopeSource,
+              scope_frozen: !!hasFrozenScope,
+              scope_frozen_at: taskPayload._scope_frozen_at || null,
+              legacy_verification_scope: !hasFrozenScope && (!!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0)),
             };
           } else {
             taskVerification.warnings.push({
