@@ -2566,19 +2566,15 @@ serve(async (req) => {
 
           const { data: cachedMaster } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", connectionId).single();
-          const allPriceLists = ((cachedMaster as any)?.price_lists_json || []) as { Id: string; Name: string }[];
-          const allSaleCenters = ((cachedMaster as any)?.sale_centers_json || []) as Record<string, string>[];
+          
+          // Use production scope to only verify against active PLs linked to active SaleCenters
+          const manualImportScope = buildAgoraVerificationScope(cachedMaster, {
+            connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+            verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+          });
+          const allPriceLists = manualImportScope.selectedPriceLists.map(pl => ({ Id: pl.id, Name: pl.name }));
+          const plToSc = manualImportScope.priceListToSaleCenters;
           verification.summary.totalPriceListsChecked = allPriceLists.length;
-
-          // Build PriceListId -> SaleCenter names map
-          const plToSc: Record<string, string[]> = {};
-          for (const sc of allSaleCenters) {
-            const plId = sc.CurrentPriceListId;
-            if (plId) {
-              if (!plToSc[plId]) plToSc[plId] = [];
-              plToSc[plId].push(sc.Name || sc.Id);
-            }
-          }
 
           // Extract expected familyIds from the sent XML
           const expectedFamilies: Record<string, string> = {};
