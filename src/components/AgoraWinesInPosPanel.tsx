@@ -21,6 +21,7 @@ interface PushTrackingRow {
 
 interface WineWithTracking extends PushTrackingRow {
   wine_name: string;
+  family_name: string | null;
 }
 
 export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: string | null }) {
