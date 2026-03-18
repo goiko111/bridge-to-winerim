@@ -66,7 +66,7 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
       for (const f of familiesArr) { familyMap[String(f.Id)] = f.Name || f.ButtonText || String(f.Id); }
 
       const productFamilyMap: Record<string, string | null> = {};
-      const productsArr = ((masterData?.products_summary_json as AgoraProductSummary[]) || []);
+      const productsArr = ((masterData?.products_summary_json as unknown as AgoraProductSummary[]) || []);
       for (const p of productsArr) {
         productFamilyMap[String(p.Id)] = p.FamilyId ? (familyMap[String(p.FamilyId)] || String(p.FamilyId)) : null;
       }

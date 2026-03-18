@@ -2539,6 +2539,7 @@ function StepWinerimCatalog({
                                     <Badge variant={t.sync_status === "VERIFIED" ? "default" : t.sync_status === "FAILED" ? "destructive" : "outline"} className="text-[9px] mt-0.5">
                                       {t.sync_status}
                                     </Badge>
+                                    {t.agora_family_name && <p className="text-[9px] text-muted-foreground mt-0.5">📁 {t.agora_family_name}</p>}
                                     {t.pushed_at && <p className="text-[9px] text-muted-foreground mt-0.5">Pushed: {new Date(t.pushed_at).toLocaleDateString()}</p>}
                                     {t.verified_at && <p className="text-[9px] text-success mt-0.5">Verified: {new Date(t.verified_at).toLocaleDateString()}</p>}
                                     {t.last_error && <p className="text-[9px] text-destructive mt-0.5 truncate" title={t.last_error}>{t.last_error.substring(0, 40)}</p>}
