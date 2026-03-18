@@ -4153,6 +4153,137 @@ ${costPricesXml}
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── MIGRATE VERIFIED WINERIM FAMILIES TO PRODUCTION FAMILIES ──
+    if (action === "migrate-families-to-production") {
+      // 1. Load custom family mappings
+      const { data: mappingRows } = await supabase
+        .from("wine_type_family_mappings")
+        .select("mapping_key, agora_family_id, agora_family_name")
+        .eq("connection_id", connectionId);
+      const customMappings: Record<string, { id: string; name: string }> = {};
+      for (const m of (mappingRows || [])) {
+        if (m.agora_family_id && m.agora_family_name) {
+          customMappings[m.mapping_key] = { id: m.agora_family_id, name: m.agora_family_name };
+        }
+      }
+      if (Object.keys(customMappings).length === 0) {
+        return new Response(JSON.stringify({ error: "No family mappings configured. Set up wine-type → Agora family mappings first." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 2. Load master data for family resolution
+      const { data: masterRow } = await supabase
+        .from("agora_master_data")
+        .select("families_json, vats_json, price_lists_json, preparation_types_json, preparation_orders_json, warehouses_json, products_summary_json")
+        .eq("connection_id", connectionId)
+        .single();
+
+      // 3. Load VERIFIED tracking rows only
+      const { data: verifiedRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("id, winerim_wine_id, format, agora_product_id, sync_status")
+        .eq("connection_id", connectionId)
+        .eq("sync_status", "VERIFIED");
+
+      if (!verifiedRows || verifiedRows.length === 0) {
+        return new Response(JSON.stringify({ success: true, queued: 0, skipped: 0, totalTargets: 0, message: "No VERIFIED products to migrate." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 4. Load winerim wines for type resolution
+      const wineIds = [...new Set(verifiedRows.map(r => r.winerim_wine_id))];
+      const { data: wines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, wine_type, bottle_sale_price, glass_sale_price, magnum_sale_price")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", wineIds);
+      const wineMap = new Map((wines || []).map(w => [w.winerim_id, w]));
+
+      // 5. Check for pending tasks to avoid duplicates
+      const { data: pendingTasks } = await supabase
+        .from("outbound_tasks")
+        .select("external_id")
+        .eq("connection_id", connectionId)
+        .in("status", ["QUEUED", "RUNNING"]);
+      const pendingIds = new Set((pendingTasks || []).map(t => t.external_id));
+
+      // 6. Build and queue migration tasks
+      const families = (masterRow?.families_json || []) as { Id: string; Name: string }[];
+      let queued = 0;
+      let skipped = 0;
+      const totalTargets = verifiedRows.length;
+
+      for (const row of verifiedRows) {
+        const extId = row.agora_product_id || `WINERIM_${row.winerim_wine_id}`;
+        if (pendingIds.has(extId)) { skipped++; continue; }
+
+        const wine = wineMap.get(row.winerim_wine_id);
+        if (!wine) { skipped++; continue; }
+
+        // Resolve target family using mappings
+        const wineType = (wine.wine_type || "").toLowerCase();
+        const fmt = row.format;
+        let targetFamilyId: string | null = null;
+        let targetFamilyName: string | null = null;
+
+        // Try format-specific keys first
+        if (fmt === "GLASS" && (customMappings["copa"] || customMappings["glass"])) {
+          const m = customMappings["copa"] || customMappings["glass"];
+          targetFamilyId = m.id; targetFamilyName = m.name;
+        } else if (fmt === "MAGNUM" && customMappings["magnum"]) {
+          targetFamilyId = customMappings["magnum"].id; targetFamilyName = customMappings["magnum"].name;
+        } else if (wineType) {
+          const bottleKey = `botella_${wineType}`;
+          if (fmt === "BOTTLE" && customMappings[bottleKey]) {
+            targetFamilyId = customMappings[bottleKey].id; targetFamilyName = customMappings[bottleKey].name;
+          } else if (customMappings[wineType]) {
+            targetFamilyId = customMappings[wineType].id; targetFamilyName = customMappings[wineType].name;
+          }
+        }
+
+        if (!targetFamilyId) {
+          // No mapping found for this type/format — skip
+          skipped++;
+          continue;
+        }
+
+        // Verify the target family actually exists in Agora
+        const familyExists = families.some(f => f.Id === targetFamilyId);
+        if (!familyExists) { skipped++; continue; }
+
+        // Queue UPDATE task — only changes FamilyId
+        const productId = Number(extId.replace("WINERIM_", "")) || 0;
+        const agoraProductId = row.agora_product_id || String(productId > 0 ? (fmt === "MAGNUM" ? 900000 + productId : fmt === "GLASS" ? 700000 + productId : 500000 + productId) : extId);
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_MIGRATE_FAMILY",
+          external_id: agoraProductId,
+          status: "QUEUED",
+          payload_json: {
+            productId: agoraProductId,
+            winerimWineId: row.winerim_wine_id,
+            format: fmt,
+            targetFamilyId,
+            targetFamilyName,
+            wineName: wine.name,
+            wineType: wine.wine_type,
+            migrationType: "WINERIM_TO_PRODUCTION",
+          },
+        });
+
+        // Update tracking
+        await supabase.from("winerim_push_tracking")
+          .update({ sync_status: "QUEUED", agora_family_id: targetFamilyId })
+          .eq("id", row.id);
+
+        queued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(
       JSON.stringify({ error: "Unknown action" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
