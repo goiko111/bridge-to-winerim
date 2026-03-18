@@ -2587,6 +2587,8 @@ serve(async (req) => {
           if (verifyRes.ok) {
             const verifyXml = await verifyRes.text();
 
+            // Build products list for unified verification
+            const productsToVerify: AgoraProductToVerify[] = [];
             for (const wine of wines) {
               for (const fmt of formatTypes) {
                 const productId = fmt === "MAGNUM"
@@ -2594,140 +2596,37 @@ serve(async (req) => {
                   : fmt === "GLASS"
                   ? String(700000 + Number(wine.winerim_id || 0))
                   : String(500000 + Number(wine.winerim_id || 0));
-                const productName = fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`;
-                const winerimRef = `${wine.winerim_id}:${fmt}`;
-
-                verification.summary.checked++;
-
-                // ── CHECK 1: EXISTS ──
-                const productFullRegex = new RegExp(`<Product[^>]*Id="${productId}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i");
-                const productMatch = verifyXml.match(productFullRegex);
-
-                if (!productMatch) {
-                  verification.success = false;
-                  verification.verified_exists = false;
-                  verification.summary.failed++;
-                  verification.errors.push({
-                    code: "NOT_FOUND",
-                    message: `Product ${productId} (${fmt} ${wine.name}) not found in Agora after import`,
-                    context: { productId, format: fmt, wineName: wine.name },
-                  });
-                  for (const pl of allPriceLists) {
-                    const scNames = plToSc[pl.Id] || [];
-                    verification.missing_prices.push({
-                      product_erp_id: winerimRef, agora_product_id: productId,
-                      price_list_id: pl.Id, price_list_name: pl.Name,
-                      issue: "missing", product_name: productName, format: fmt,
-                      affected_sale_centers: scNames,
-                    });
-                    for (const s of scNames) {
-                      if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
-                    }
-                  }
-                  continue;
-                }
-
-                const attrs = productMatch[1];
-                const innerXml = productMatch[2];
-                let productOk = true;
-
-                // ── CHECK 2: PRICES ──
-                if (allPriceLists.length > 0) {
-                  for (const pl of allPriceLists) {
-                    const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.Id}"[^>]*MainPrice="([^"]*)"`, "i");
-                    const priceMatch = innerXml.match(priceRegex);
-                    if (!priceMatch) {
-                      verification.verified_prices = false;
-                      productOk = false;
-                      const scNames = plToSc[pl.Id] || [];
-                      verification.missing_prices.push({
-                        product_erp_id: winerimRef, agora_product_id: productId,
-                        price_list_id: pl.Id, price_list_name: pl.Name,
-                        issue: "missing", product_name: productName, format: fmt,
-                        affected_sale_centers: scNames,
-                      });
-                      for (const s of scNames) {
-                        if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
-                      }
-                    } else {
-                      const priceVal = parseFloat(priceMatch[1]);
-                      if (isNaN(priceVal) || priceVal <= 0) {
-                        verification.verified_prices = false;
-                        productOk = false;
-                        const scNames = plToSc[pl.Id] || [];
-                        verification.missing_prices.push({
-                          product_erp_id: winerimRef, agora_product_id: productId,
-                          price_list_id: pl.Id, price_list_name: pl.Name,
-                          issue: isNaN(priceVal) ? "invalid" : "zero",
-                          product_name: productName, format: fmt,
-                          affected_sale_centers: scNames,
-                        });
-                        for (const s of scNames) {
-                          if (!verification.affected_sale_centers.includes(s)) verification.affected_sale_centers.push(s);
-                        }
-                      }
-                    }
-                  }
-                  if (!productOk) {
-                    const missingPls = verification.missing_prices
-                      .filter(mp => mp.agora_product_id === productId)
-                      .map(mp => mp.price_list_name);
-                    verification.errors.push({
-                      code: "PRICE_MISSING",
-                      message: `Product ${productId} (${fmt} ${wine.name}) missing/invalid prices in: ${missingPls.join(", ")}`,
-                      field: "prices",
-                      context: { productId, format: fmt, priceLists: missingPls },
-                    });
-                  }
-                } else {
-                  verification.warnings.push({
-                    code: "NO_PRICELISTS",
-                    message: "No PriceLists in master data — cannot verify cross-center pricing",
-                  });
-                }
-
-                // ── CHECK 3: FAMILY ──
-                const familyMatch = attrs.match(/FamilyId="([^"]*)"/);
-                const actualFamilyId = familyMatch ? familyMatch[1] : "";
-                const expectedFamilyId = expectedFamilies[productId] || "";
-                if (expectedFamilyId && actualFamilyId !== expectedFamilyId) {
-                  verification.verified_family = false;
-                  productOk = false;
-                  verification.errors.push({
-                    code: "FAMILY_MISMATCH",
-                    message: `Product ${productId} (${fmt} ${wine.name}): expected FamilyId="${expectedFamilyId}", got "${actualFamilyId}"`,
-                    field: "FamilyId",
-                    context: { productId, format: fmt, expected: expectedFamilyId, actual: actualFamilyId },
-                  });
-                }
-
-                // ── CHECK 4: PREPARATION FIELDS CONSISTENCY ──
-                const prepTypeMatch = attrs.match(/PreparationTypeId="([^"]*)"/);
-                const prepOrderMatch = attrs.match(/PreparationOrderId="([^"]*)"/);
-                const prepTypeVal = prepTypeMatch ? prepTypeMatch[1] : "";
-                const prepOrderVal = prepOrderMatch ? prepOrderMatch[1] : "";
-                const typeEmpty = !prepTypeVal;
-                const orderEmpty = !prepOrderVal;
-                if (typeEmpty !== orderEmpty) {
-                  verification.verified_preparation = false;
-                  verification.success = false;
-                  productOk = false;
-                  verification.errors.push({
-                    code: "INVALID_PREPARATION_PAIR",
-                    message: `Preparation Type and Order must both be empty or both set (Product ${productId}, ${fmt} ${wine.name}: Type="${prepTypeVal}" Order="${prepOrderVal}")`,
-                    field: "PreparationTypeId,PreparationOrderId",
-                    context: { productId, format: fmt, prepTypeId: prepTypeVal, prepOrderId: prepOrderVal },
-                  });
-                }
-
-                if (productOk) {
-                  verification.summary.ok++;
-                } else {
-                  verification.success = false;
-                  verification.summary.failed++;
-                }
+                productsToVerify.push({
+                  productId,
+                  productName: fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`,
+                  format: fmt,
+                  erpId: `${wine.winerim_id}:${fmt}`,
+                  expectedFamilyId: expectedFamilies[productId] || undefined,
+                });
               }
             }
+
+            // Use the unified verification function — same logic as verify-products and process-xml-outbound-task
+            const scopedPriceLists = manualImportScope.selectedPriceLists;
+            const unifiedResult = verifyAgoraProductsAgainstScope(
+              verifyXml, productsToVerify, scopedPriceLists, plToSc,
+            );
+
+            // Merge unified result into the verification object
+            verification.success = unifiedResult.success;
+            verification.verified_exists = unifiedResult.verified_exists;
+            verification.verified_prices = unifiedResult.verified_prices;
+            verification.verified_family = unifiedResult.verified_family;
+            verification.verified_preparation = unifiedResult.verified_preparation;
+            verification.verified_scope = unifiedResult.verified_scope;
+            verification.errors = unifiedResult.errors;
+            verification.warnings = unifiedResult.warnings;
+            verification.missing_prices = unifiedResult.missing_prices;
+            verification.affected_sale_centers = unifiedResult.affected_sale_centers;
+            verification.summary.checked = unifiedResult.summary.checked;
+            verification.summary.ok = unifiedResult.summary.ok;
+            verification.summary.failed = unifiedResult.summary.failed;
+            verification.summary.totalPriceListsChecked = scopedPriceLists.length;
           } else {
             verification.warnings.push({
               code: "VERIFY_FETCH_FAILED",
