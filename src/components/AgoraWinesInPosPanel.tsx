@@ -21,9 +21,10 @@ interface PushTrackingRow {
 
 interface WineWithTracking extends PushTrackingRow {
   wine_name: string;
+  family_name: string | null;
 }
 
-export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: string | null }) {
+export default function AgoraWinesInPosPanel({ connectionId, families }: { connectionId: string | null; families?: { Id: string; Name: string }[] }) {
   const [rows, setRows] = useState<WineWithTracking[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -55,10 +56,16 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
       const nameMap: Record<string, string> = {};
       (wines || []).forEach((w: any) => { nameMap[w.winerim_id] = w.name; });
 
+      const familyMap: Record<string, string> = {};
+      if (families) {
+        for (const f of families) { familyMap[f.Id] = f.Name; }
+      }
+
       setRows(
         (tracking as PushTrackingRow[]).map(t => ({
           ...t,
           wine_name: nameMap[t.winerim_wine_id] || t.winerim_wine_id,
+          family_name: t.agora_family_id ? (familyMap[t.agora_family_id] || t.agora_family_id) : null,
         }))
       );
     } catch (e) {
@@ -66,7 +73,7 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
     } finally {
       setLoading(false);
     }
-  }, [connectionId]);
+  }, [connectionId, families]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -142,6 +149,9 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
                         <Badge variant="outline" className="text-[10px]">{r.format}</Badge>
                         {r.agora_product_id && (
                           <span className="text-[10px] font-mono text-muted-foreground">ID: {r.agora_product_id}</span>
+                        )}
+                        {r.family_name && (
+                          <Badge variant="outline" className="text-[10px]">📁 {r.family_name}</Badge>
                         )}
                         {r.pushed_at && (
                           <span className="text-[10px] text-muted-foreground">

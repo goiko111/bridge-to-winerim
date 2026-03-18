@@ -1800,7 +1800,7 @@ function StepWinerimCatalog({
       </div>
 
       {/* Wines already in Ágora */}
-      <AgoraWinesInPosPanel connectionId={connectionId} />
+      <AgoraWinesInPosPanel connectionId={connectionId} families={families} />
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
@@ -2362,7 +2362,7 @@ function StepWinerimCatalog({
               const isExpanded = expandedWineId === w.winerim_id;
 
               return (
-                <div key={w.winerim_id} className="bg-card hover:bg-secondary/30 transition-colors">
+                <div key={w.winerim_id} className={`bg-card hover:bg-secondary/30 transition-colors ${getWineSyncStatus(w.winerim_id) !== "NOT_PUSHED" ? "opacity-50" : ""}`}>
                   <div className="flex items-center gap-3 px-4 py-2.5 cursor-pointer" onClick={() => setExpandedWineId(isExpanded ? null : w.winerim_id)}>
                     <input type="checkbox" checked={selectedIds.has(w.winerim_id)}
                       onChange={(e) => { e.stopPropagation(); toggleWine(w.winerim_id); }}
@@ -4607,7 +4607,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(12, s + 1));
+    setCurrentStep((s) => Math.min(13, s + 1));
   };
 
   return (
