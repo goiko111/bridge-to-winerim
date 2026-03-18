@@ -6,7 +6,7 @@ import {
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
   Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
-  Server, Wrench, GlassWater,
+  Server, Wrench, GlassWater, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,7 +49,8 @@ const steps = [
   { id: 9, label: "Winerim Catalog", icon: Grape },
   { id: 10, label: "Write Settings", icon: Wrench },
   { id: 11, label: "Outbound Sync", icon: Upload },
-  { id: 12, label: "Go Live", icon: Power },
+  { id: 12, label: "Sales Analytics", icon: BarChart3 },
+  { id: 13, label: "Go Live", icon: Power },
 ];
 
 // Helper to fetch all rows from a table without limit
@@ -877,7 +878,7 @@ function StepSalesMapping({
       {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
         <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines` : "Save to DB"}
+          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
         </Button>
       )}
     </div>
@@ -4142,7 +4143,191 @@ function StepWriteSettings({
   );
 }
 
-// ── Step 11: Go Live ──
+// ── Step 12: Sales Analytics ──
+function StepSalesAnalytics({ connectionId }: { connectionId: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [analytics, setAnalytics] = useState<{
+    totalEvents: number; totalLines: number; totalWineLines: number;
+    resolvedCount: number; unresolvedCount: number;
+    byFormat: Record<string, { count: number; qty: number; total: number }>;
+    unresolvedByProduct: { provider_product_id: string; name: string; family: string; count: number; qty: number; total: number }[];
+    lastSyncDay: string | null;
+    events: { id: string; business_day: string; total_amount: number; line_count: number }[];
+  } | null>(null);
+  const [resolveResult, setResolveResult] = useState<{ totalUnresolved: number; resolved: number; remaining: number } | null>(null);
+
+  const loadAnalytics = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "sales-analytics", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) setAnalytics(data);
+    } catch (e: any) { console.error("Failed to load analytics:", e); }
+    finally { setLoading(false); }
+  }, [connectionId]);
+
+  useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
+
+  const resolveSales = useCallback(async () => {
+    if (!connectionId) return;
+    setResolving(true); setResolveResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "resolve-sales", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        setResolveResult(data);
+        await loadAnalytics();
+      }
+    } catch (e: any) { console.error("Failed to resolve sales:", e); }
+    finally { setResolving(false); }
+  }, [connectionId, loadAnalytics]);
+
+  if (loading && !analytics) {
+    return <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Sales Analytics — Agora → Winerim</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Track how sales from Agora resolve to Winerim wines by product and format.
+        </p>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={loadAnalytics} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh Analytics
+        </Button>
+        <Button variant="outline" size="sm" onClick={resolveSales} disabled={resolving}>
+          {resolving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+          Re-resolve Unmatched Lines
+        </Button>
+      </div>
+
+      {resolveResult && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
+          <p className="font-semibold text-foreground">Resolution Result</p>
+          <p className="text-foreground">Processed: <strong>{resolveResult.totalUnresolved}</strong> unresolved · Resolved: <strong className="text-success">{resolveResult.resolved}</strong> · Remaining: <strong className={resolveResult.remaining > 0 ? "text-destructive" : "text-success"}>{resolveResult.remaining}</strong></p>
+        </div>
+      )}
+
+      {analytics && (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{analytics.totalEvents}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Sales Events</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{analytics.totalWineLines}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Wine Lines</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-success">{analytics.resolvedCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Resolved</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className={`text-lg font-bold ${analytics.unresolvedCount > 0 ? "text-destructive" : "text-success"}`}>{analytics.unresolvedCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Unresolved</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-sm font-bold text-foreground">{analytics.lastSyncDay || "—"}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Last Sync Day</p>
+            </div>
+          </div>
+
+          {/* Format Breakdown */}
+          {Object.keys(analytics.byFormat).length > 0 && (
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+                <p className="text-xs font-semibold text-foreground">Resolved Sales by Format</p>
+              </div>
+              <div className="grid grid-cols-3 gap-0 divide-x divide-border">
+                {["BOTTLE", "GLASS", "MAGNUM"].map(fmt => {
+                  const data = analytics.byFormat[fmt] || analytics.byFormat[fmt.toLowerCase()] || { count: 0, qty: 0, total: 0 };
+                  return (
+                    <div key={fmt} className="p-4 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase">{fmt}</p>
+                      <p className="text-xl font-bold text-foreground">{data.count}</p>
+                      <p className="text-[10px] text-muted-foreground">{data.qty} units · €{data.total.toFixed(2)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Unresolved Lines for Review */}
+          {analytics.unresolvedByProduct.length > 0 && (
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-2.5 bg-destructive/5 border-b border-border flex items-center gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                <p className="text-xs font-semibold text-destructive">Unresolved Wine Lines ({analytics.unresolvedCount})</p>
+              </div>
+              <div className="max-h-[300px] overflow-y-auto divide-y divide-border">
+                {analytics.unresolvedByProduct.map((p) => (
+                  <div key={p.provider_product_id} className="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-secondary/30">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{p.name}</p>
+                      <p className="text-[10px] text-muted-foreground">ID: {p.provider_product_id} · Family: {p.family || "—"}</p>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0 text-right">
+                      <div>
+                        <p className="font-mono text-foreground">{p.count} lines</p>
+                        <p className="text-[10px] text-muted-foreground">{p.qty} qty</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-foreground">€{p.total.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="px-4 py-2 bg-secondary/20 border-t border-border text-[10px] text-muted-foreground">
+                Push these products to Agora first, or match them in Wine Matching to resolve.
+              </div>
+            </div>
+          )}
+
+          {/* Recent Events */}
+          {analytics.events.length > 0 && (
+            <details className="rounded-lg border border-border bg-card overflow-hidden">
+              <summary className="px-4 py-2.5 bg-secondary/30 text-xs font-semibold text-foreground cursor-pointer hover:bg-secondary/50">
+                Recent Sales Events ({analytics.events.length})
+              </summary>
+              <div className="max-h-[200px] overflow-y-auto divide-y divide-border">
+                {analytics.events.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between px-4 py-2 text-xs">
+                    <span className="font-mono text-foreground">{e.business_day}</span>
+                    <span className="text-muted-foreground">{e.line_count} lines</span>
+                    <span className="font-mono text-foreground">€{Number(e.total_amount).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+
+      {!analytics && !loading && (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+          <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">No sales data yet. Save sales from the Sales & Mapping step first.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 13: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
@@ -4470,6 +4655,9 @@ export default function AgoraWizard() {
               onClearQueue={outbound.clearQueue} />
           )}
           {currentStep === 12 && (
+            <StepSalesAnalytics connectionId={connectionId} />
+          )}
+          {currentStep === 13 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -4487,7 +4675,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 12 && (
+        {currentStep < 13 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
