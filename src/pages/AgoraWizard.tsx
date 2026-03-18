@@ -2235,7 +2235,39 @@ function StepWinerimCatalog({
                           </div>
                         </div>
 
-                        {/* Normalized prices */}
+                        {/* Push Tracking Status */}
+                        {Object.keys(wineTracking).length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Agora Push Status</p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {["BOTTLE", "GLASS", "MAGNUM"].map(fmt => {
+                                const t = wineTracking[fmt];
+                                if (!t) return (
+                                  <div key={fmt} className="rounded border border-border p-2 text-center">
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <p className="text-[9px] mt-0.5 text-muted-foreground">NOT_PUSHED</p>
+                                  </div>
+                                );
+                                const statusColor = t.sync_status === "VERIFIED" ? "border-success/30 bg-success/5"
+                                  : t.sync_status === "PUSHED" ? "border-primary/30 bg-primary/5"
+                                  : t.sync_status === "QUEUED" ? "border-accent bg-accent/30"
+                                  : t.sync_status === "FAILED" ? "border-destructive/30 bg-destructive/5"
+                                  : "border-border";
+                                return (
+                                  <div key={fmt} className={`rounded border p-2 text-center ${statusColor}`}>
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <Badge variant={t.sync_status === "VERIFIED" ? "default" : t.sync_status === "FAILED" ? "destructive" : "outline"} className="text-[9px] mt-0.5">
+                                      {t.sync_status}
+                                    </Badge>
+                                    {t.pushed_at && <p className="text-[9px] text-muted-foreground mt-0.5">Pushed: {new Date(t.pushed_at).toLocaleDateString()}</p>}
+                                    {t.verified_at && <p className="text-[9px] text-success mt-0.5">Verified: {new Date(t.verified_at).toLocaleDateString()}</p>}
+                                    {t.last_error && <p className="text-[9px] text-destructive mt-0.5 truncate" title={t.last_error}>{t.last_error.substring(0, 40)}</p>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                         <div className="mt-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Normalized Prices</p>
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono">
