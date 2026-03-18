@@ -1352,7 +1352,15 @@ function StepWinerimCatalog({
   priceListCount: number;
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
-  const [pushTracking, setPushTracking] = useState<Record<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>>>({});
+  const [pushTracking, setPushTracking] = useState<Record<string, Record<string, {
+    sync_status: string;
+    last_error: string | null;
+    pushed_at: string | null;
+    verified_at: string | null;
+    agora_product_id?: string | null;
+    agora_family_id?: string | null;
+    agora_family_name?: string | null;
+  }>>>({});
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
   const [refreshDiagnostics, setRefreshDiagnostics] = useState<{

@@ -19,6 +19,12 @@ interface PushTrackingRow {
   verified_at: string | null;
 }
 
+interface AgoraProductSummary {
+  Id: string;
+  Name?: string;
+  FamilyId?: string;
+}
+
 interface WineWithTracking extends PushTrackingRow {
   wine_name: string;
   family_name: string | null;
