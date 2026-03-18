@@ -1799,6 +1799,9 @@ function StepWinerimCatalog({
         </p>
       </div>
 
+      {/* Wines already in Ágora */}
+      <AgoraWinesInPosPanel connectionId={connectionId} />
+
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 text-xs">
