@@ -628,12 +628,14 @@ function StepFamilies({
 
 // ── Step 5: Sales & Mapping ──
 function StepSalesMapping({
+  connectionId: smConnectionId,
   daysWithSales, selectedDay, setSelectedDay, loadingDays,
   salesEvents, loadingSales, onFetchDay, onSaveSales,
   saving, saveResult, familyOverrides, detectedFamilies,
   catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
   lastClosedDay,
 }: {
+  connectionId: string | null;
   daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
   loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
   onFetchDay: (day: string) => void; onSaveSales: (day: string) => void;
@@ -648,6 +650,9 @@ function StepSalesMapping({
 }) {
   const [searchMapping, setSearchMapping] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [classOpen, setClassOpen] = useState(false);
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const [autoSyncResult, setAutoSyncResult] = useState<{ daysSynced: number; totalEvents: number; totalLines: number; resolvedLines: number; unresolvedLines: number; message?: string } | null>(null);
   const useCatalog = catalogProducts.length > 0;
 
   const isFamilyWine = (familyName: string) => {
@@ -736,10 +741,42 @@ function StepSalesMapping({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {useCatalog ? "Products from catalog with classification. NEEDS_REVIEW tab shown by default." : "Review sales data."}
+          Sales are auto-synced every 15 min. You can also sync manually or browse by day.
         </p>
-        {useCatalog && <Badge variant="outline" className="mt-1 text-[10px]"><Package className="mr-1 h-3 w-3" /> Catalog ({catalogProducts.length})</Badge>}
       </div>
+
+      {/* Auto-sync button */}
+      <div className="flex items-center gap-3">
+        <Button variant="default" size="sm" disabled={autoSyncing || !smConnectionId} onClick={async () => {
+          if (!smConnectionId) return;
+          setAutoSyncing(true); setAutoSyncResult(null);
+          try {
+            const { data, error } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "auto-sync-sales", connectionId: smConnectionId },
+            });
+            if (error) throw error;
+            setAutoSyncResult(data);
+          } catch (err) { console.error("Auto-sync error:", err); }
+          finally { setAutoSyncing(false); }
+        }}>
+          {autoSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+          Sync All Pending Days
+        </Button>
+        <span className="text-[11px] text-muted-foreground">Auto-runs every 15 min</span>
+      </div>
+
+      {autoSyncResult && (
+        <div className={`rounded-lg border p-3 text-xs ${autoSyncResult.daysSynced > 0 ? "border-success/30 bg-success/5" : "border-border bg-secondary/20"}`}>
+          {autoSyncResult.message ? (
+            <p className="text-muted-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> {autoSyncResult.message}</p>
+          ) : (
+            <>
+              <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Synced {autoSyncResult.daysSynced} days</p>
+              <p className="text-muted-foreground">{autoSyncResult.totalEvents} events · {autoSyncResult.totalLines} lines · ✓{autoSyncResult.resolvedLines} resolved · ⚠{autoSyncResult.unresolvedLines} unresolved</p>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Last closed day banner */}
       {lastClosedDay && (
@@ -807,70 +844,78 @@ function StepSalesMapping({
       </div>
 
       {/* Recompute + bulk actions */}
+      {/* Classification (collapsible) */}
       {useCatalog && (
-        <div className="flex gap-2 flex-wrap items-center">
-          <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
-            {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-            Recompute Classification
-          </Button>
-          {selectedIds.size > 0 && (
-            <>
-              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
-                <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
-                Mark {selectedIds.size} as Not Wine
-              </Button>
-            </>
+        <div className="rounded-lg border border-border">
+          <button onClick={() => setClassOpen(!classOpen)} className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+            <span className="flex items-center gap-2">
+              <Filter className="h-3.5 w-3.5" /> Product Classification ({wineProducts.length} wine · {notWineProducts.length} not wine · {reviewProducts.length} review)
+            </span>
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${classOpen ? "rotate-180" : ""}`} />
+          </button>
+          {classOpen && (
+            <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
+              <div className="flex gap-2 flex-wrap items-center">
+                <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
+                  {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                  Recompute Classification
+                </Button>
+                {selectedIds.size > 0 && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
+                      <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
+                      Mark {selectedIds.size} as Not Wine
+                    </Button>
+                  </>
+                )}
+              </div>
+              {recomputeResult && (
+                <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
+                  <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
+                  <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
+                </div>
+              )}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
+              </div>
+              <Tabs defaultValue="review">
+                <TabsList className="w-full">
+                  <TabsTrigger value="review" className="flex-1">
+                    <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="wine" className="flex-1">
+                    <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="notwine" className="flex-1">
+                    Not Wine ({notWineProducts.length})
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="review">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
+                      : reviewProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+                <TabsContent value="wine">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
+                      : wineProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+                <TabsContent value="notwine">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
+                      : notWineProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
           )}
         </div>
       )}
-
-      {recomputeResult && (
-        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
-          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
-          <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
-        </div>
-      )}
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="review">
-        <TabsList className="w-full">
-          <TabsTrigger value="review" className="flex-1">
-            <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
-          </TabsTrigger>
-          <TabsTrigger value="wine" className="flex-1">
-            <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
-          </TabsTrigger>
-          <TabsTrigger value="notwine" className="flex-1">
-            Not Wine ({notWineProducts.length})
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="review">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
-              : reviewProducts.map(renderProductRow)}
-          </div>
-        </TabsContent>
-        <TabsContent value="wine">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
-              : wineProducts.map(renderProductRow)}
-          </div>
-        </TabsContent>
-        <TabsContent value="notwine">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
-              : notWineProducts.map(renderProductRow)}
-          </div>
-        </TabsContent>
-      </Tabs>
 
       {/* Day sales preview */}
       {selectedDay && loadingSales && (
@@ -4646,7 +4691,7 @@ export default function AgoraWizard() {
               catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
           )}
           {currentStep === 7 && (
-            <StepSalesMapping daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
+            <StepSalesMapping connectionId={connectionId} daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
               loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
               onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
