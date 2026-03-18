@@ -2115,11 +2115,28 @@ function StepWinerimCatalog({
             >
               Select READY ({filteredWines.filter((w) => w.pricing_status === "READY").length})
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px]"
+            >
+              Select Not Pushed ({filteredWines.filter((w) => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED").length})
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => getWineSyncStatus(w.winerim_id) === "FAILED").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px] text-destructive"
+            >
+              Select Failed ({filteredWines.filter((w) => getWineSyncStatus(w.winerim_id) === "FAILED").length})
+            </Button>
             {selectedIds.size > 0 && (() => {
               const pushableIds = Array.from(selectedIds).filter(id => {
                 const w = wines.find(x => x.winerim_id === id);
                 return w && w.pricing_status === "READY";
               });
+              const failedIds = Array.from(selectedIds).filter(id => getWineSyncStatus(id) === "FAILED");
               const blockedCount = selectedIds.size - pushableIds.length;
               return (
                 <>
@@ -2131,6 +2148,14 @@ function StepWinerimCatalog({
                     Push {pushableIds.length} to Agora
                     {blockedCount > 0 && <span className="text-destructive ml-1">({blockedCount} blocked)</span>}
                   </Button>
+                  {failedIds.length > 0 && (
+                    <Button variant="outline" size="sm"
+                      onClick={() => { onQueueProducts(failedIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
+                      disabled={queuingProducts} className="h-7 text-[11px] border-destructive/30 text-destructive">
+                      <RefreshCw className="mr-1 h-3 w-3" />
+                      Requeue {failedIds.length} Failed
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={handlePreviewXml} disabled={generatingXml} className="h-7 text-[11px]">
                     {generatingXml ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
                     Preview XML
@@ -2139,9 +2164,52 @@ function StepWinerimCatalog({
               );
             })()}
             <span className="text-[11px] text-muted-foreground ml-auto">
-              Only READY wines are pushable · Showing {filteredWines.length} of {wines.length}
+              Showing {filteredWines.length} of {wines.length}
+              {filterSyncStatus !== "all" && ` · Push: ${filterSyncStatus}`}
+              {filterWineType !== "all" && ` · Type: ${filterWineType}`}
             </span>
           </div>
+
+          {/* Quick rollout actions */}
+          {wines.length > 0 && (
+            <div className="flex gap-2 items-center flex-wrap rounded-lg border border-border bg-secondary/20 p-2.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mr-1">Rollout:</span>
+              {(() => {
+                const notPushedReady = wines.filter(w => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED");
+                const failedAll = wines.filter(w => getWineSyncStatus(w.winerim_id) === "FAILED");
+                return (
+                  <>
+                    <Button variant="outline" size="sm" className="h-7 text-[11px]"
+                      disabled={queuingProducts || notPushedReady.length === 0}
+                      onClick={() => { onQueueProducts(notPushedReady.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                      <Send className="mr-1 h-3 w-3" />
+                      Push all not pushed ({notPushedReady.length})
+                    </Button>
+                    {failedAll.length > 0 && (
+                      <Button variant="outline" size="sm" className="h-7 text-[11px] border-destructive/30 text-destructive"
+                        disabled={queuingProducts}
+                        onClick={() => { onQueueProducts(failedAll.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                        <RefreshCw className="mr-1 h-3 w-3" />
+                        Requeue all failed ({failedAll.length})
+                      </Button>
+                    )}
+                    {/* Push by wine type */}
+                    {filterWineType !== "all" && (() => {
+                      const typeNotPushed = notPushedReady.filter(w => w.wine_type === filterWineType);
+                      return typeNotPushed.length > 0 ? (
+                        <Button variant="outline" size="sm" className="h-7 text-[11px]"
+                          disabled={queuingProducts}
+                          onClick={() => { onQueueProducts(typeNotPushed.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                          <Send className="mr-1 h-3 w-3" />
+                          Push {filterWineType} not pushed ({typeNotPushed.length})
+                        </Button>
+                      ) : null;
+                    })()}
+                  </>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Family override at push time */}
           {families.length > 0 && selectedIds.size > 0 && (
