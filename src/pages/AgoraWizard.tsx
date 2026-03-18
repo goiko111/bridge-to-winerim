@@ -4657,7 +4657,7 @@ export default function AgoraWizard() {
               catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
           )}
           {currentStep === 7 && (
-            <StepSalesMapping daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
+            <StepSalesMapping connectionId={connectionId} daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
               loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
               onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
               familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
