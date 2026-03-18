@@ -1441,6 +1441,25 @@ function StepWinerimCatalog({
     }
   };
 
+  // Unique wine types for filter dropdown
+  const uniqueWineTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const w of wines) { if (w.wine_type) types.add(w.wine_type); }
+    return Array.from(types).sort();
+  }, [wines]);
+
+  // Helper to get push status for a wine (worst across formats)
+  const getWineSyncStatus = useCallback((winerimId: string): string => {
+    const wt = pushTracking[winerimId];
+    if (!wt || Object.keys(wt).length === 0) return "NOT_PUSHED";
+    const statuses = Object.values(wt).map(t => t.sync_status);
+    if (statuses.includes("FAILED")) return "FAILED";
+    if (statuses.includes("QUEUED")) return "QUEUED";
+    if (statuses.includes("PUSHED")) return "PUSHED";
+    if (statuses.every(s => s === "VERIFIED")) return "VERIFIED";
+    return statuses[0] || "NOT_PUSHED";
+  }, [pushTracking]);
+
   const filteredWines = useMemo(() => {
     let result = wines;
     if (filterActive) result = result.filter(w => w.is_active);
@@ -1459,6 +1478,12 @@ function StepWinerimCatalog({
         return true;
       });
     }
+    if (filterWineType !== "all") {
+      result = result.filter(w => w.wine_type === filterWineType);
+    }
+    if (filterSyncStatus !== "all") {
+      result = result.filter(w => getWineSyncStatus(w.winerim_id) === filterSyncStatus);
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(w =>
@@ -1469,7 +1494,7 @@ function StepWinerimCatalog({
       );
     }
     return result;
-  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason, filterFormat]);
+  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason, filterFormat, filterWineType, filterSyncStatus, getWineSyncStatus]);
 
   const toggleWine = (id: string) => {
     setSelectedIds(prev => {
