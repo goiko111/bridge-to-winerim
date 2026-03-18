@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, CheckCircle2, XCircle, Grape, Plus, HelpCircle, Palette, Hash, Eye, EyeOff,
-  RefreshCw,
+  RefreshCw, ShieldCheck, ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,8 @@ interface FamilyMapping {
   agora_family_name: string | null;
 }
 
+export type FamilyStructureMode = "WINERIM_SEPARATE_FAMILIES" | "EXISTING_CUSTOMER_FAMILIES";
+
 /* ── Constants ── */
 const MAPPING_LABELS: Record<string, string> = {
   copa: "Copa (Glass)",
@@ -31,12 +33,95 @@ const MAPPING_LABELS: Record<string, string> = {
 };
 const MAPPING_KEYS = Object.keys(MAPPING_LABELS);
 
+const WINERIM_FAMILIES = [
+  "COPAS WINERIM", "TINTOS WINERIM", "BLANCOS WINERIM", "ESPUMOSOS WINERIM",
+  "FORTIFICADOS WINERIM", "POSTRE WINERIM", "ROSADOS WINERIM", "MAGNUM WINERIM",
+];
+
 /* ── Props ── */
 interface Props {
   connectionId: string | null;
   families: AgoraMasterItem[];
   onSyncMasterData: () => void | Promise<any>;
   syncing: boolean;
+}
+
+/* ══════════════════════════════════════════════
+   Mode Selector
+   ══════════════════════════════════════════════ */
+function ModeSelector({ connectionId, mode, onModeChange }: { connectionId: string | null; mode: FamilyStructureMode; onModeChange: (m: FamilyStructureMode) => void }) {
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async (newMode: FamilyStructureMode) => {
+    if (!connectionId || newMode === mode) return;
+    setSaving(true);
+    try {
+      // Load current provider_config, merge mode
+      const { data: conn } = await supabase
+        .from("pos_connections")
+        .select("provider_config")
+        .eq("id", connectionId)
+        .single();
+      const currentConfig = (conn?.provider_config as Record<string, unknown>) || {};
+      await supabase
+        .from("pos_connections")
+        .update({ provider_config: { ...currentConfig, family_structure_mode: newMode } })
+        .eq("id", connectionId);
+      onModeChange(newMode);
+      toast({ title: "Family mode updated", description: newMode === "WINERIM_SEPARATE_FAMILIES" ? "Using dedicated WINERIM families" : "Using existing customer families" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium text-foreground">Family Structure Mode</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <button
+          onClick={() => handleChange("WINERIM_SEPARATE_FAMILIES")}
+          disabled={saving}
+          className={`rounded-lg border p-3 text-left transition-all ${
+            mode === "WINERIM_SEPARATE_FAMILIES"
+              ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+              : "border-border bg-background hover:border-primary/40"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-medium text-foreground">Separate WINERIM Families</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Safe rollout. Products go into dedicated "… WINERIM" families, keeping customer's existing families untouched.
+          </p>
+        </button>
+        <button
+          onClick={() => handleChange("EXISTING_CUSTOMER_FAMILIES")}
+          disabled={saving}
+          className={`rounded-lg border p-3 text-left transition-all ${
+            mode === "EXISTING_CUSTOMER_FAMILIES"
+              ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+              : "border-border bg-background hover:border-primary/40"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <ArrowRight className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-medium text-foreground">Existing Customer Families</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Map wine types directly to the customer's own Agora families (TINTOS, BLANCOS, etc.).
+          </p>
+        </button>
+      </div>
+      {saving && (
+        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ══════════════════════════════════════════════
@@ -51,6 +136,9 @@ function AutoPilotSection({ connectionId, families, syncing, onSyncMasterData, o
   } | null>(null);
 
   const hasPilotFamilies = families.some(f => f.Name.includes("WINERIM"));
+  const allPilotExist = WINERIM_FAMILIES.every(wf =>
+    families.some(f => f.Name.toUpperCase() === wf.toUpperCase())
+  );
 
   const createPilotFamilies = async () => {
     if (!connectionId) return;
@@ -84,19 +172,34 @@ function AutoPilotSection({ connectionId, families, syncing, onSyncMasterData, o
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Grape className="h-3.5 w-3.5 text-primary" />
-        <p className="text-xs font-medium text-foreground">Quick Setup: WINERIM Test Families</p>
+        <p className="text-xs font-medium text-foreground">WINERIM Families Setup</p>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        One-click to create dedicated pilot families in Agora (COPAS WINERIM, TINTOS WINERIM, etc.) and auto-map all wine types.
+        Create dedicated WINERIM families in Agora (COPAS WINERIM, TINTOS WINERIM, etc.) and auto-map all wine types to them.
+        Customer's existing families remain untouched.
       </p>
+
+      {/* Status badges */}
+      <div className="flex flex-wrap gap-1.5">
+        {WINERIM_FAMILIES.map(wf => {
+          const exists = families.some(f => f.Name.toUpperCase() === wf.toUpperCase());
+          return (
+            <Badge key={wf} variant={exists ? "default" : "outline"} className={`text-[10px] ${exists ? "bg-emerald-600" : ""}`}>
+              {exists ? <CheckCircle2 className="mr-1 h-2.5 w-2.5" /> : null}
+              {wf}
+            </Badge>
+          );
+        })}
+      </div>
+
       <div className="flex gap-2 flex-wrap items-center">
         <Button variant="secondary" size="sm" onClick={createPilotFamilies} disabled={creating || syncing}>
           {creating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-          {creating ? "Creating…" : "Create Winerim Test Families"}
+          {allPilotExist ? "Re-sync Mappings" : creating ? "Creating…" : "Create WINERIM Families"}
         </Button>
-        {hasPilotFamilies && (
+        {allPilotExist && (
           <Badge variant="default" className="text-[10px] bg-emerald-600">
-            <CheckCircle2 className="mr-1 h-3 w-3" /> Pilot families exist
+            <CheckCircle2 className="mr-1 h-3 w-3" /> All WINERIM families ready
           </Badge>
         )}
       </div>
@@ -105,7 +208,7 @@ function AutoPilotSection({ connectionId, families, syncing, onSyncMasterData, o
           {createResult.error ? (
             <p className="font-medium text-destructive flex items-center gap-1.5"><XCircle className="h-3.5 w-3.5" /> Error: {createResult.error}</p>
           ) : (
-            <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Pilot families ready</p>
+            <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> WINERIM families ready</p>
           )}
           {createResult.created.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -237,7 +340,7 @@ function ManualFamilyCreator({ connectionId, syncing, onSyncMasterData }: Pick<P
 /* ══════════════════════════════════════════════
    Section 3: Family Mapping UI (editable)
    ══════════════════════════════════════════════ */
-function FamilyMappingSection({ connectionId, families, mappingsVersion }: { connectionId: string | null; families: AgoraMasterItem[]; mappingsVersion: number }) {
+function FamilyMappingSection({ connectionId, families, mappingsVersion, mode }: { connectionId: string | null; families: AgoraMasterItem[]; mappingsVersion: number; mode: FamilyStructureMode }) {
   const [mappings, setMappings] = useState<FamilyMapping[]>([]);
   const [loadingMappings, setLoadingMappings] = useState(false);
   const [reassigning, setReassigning] = useState(false);
@@ -294,12 +397,17 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
   const getMappingValue = (key: string) => mappings.find(m => m.mapping_key === key)?.agora_family_id || "";
   const hasAnyMapping = mappings.some(m => m.agora_family_id);
 
+  // In WINERIM_SEPARATE mode, highlight WINERIM families
+  const isWinerimFamily = (f: AgoraMasterItem) => f.Name.toUpperCase().includes("WINERIM");
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-foreground">Wine Type → Agora Family Mapping</p>
         <p className="text-[10px] text-muted-foreground">
-          Select any existing Agora family — not limited to WINERIM families
+          {mode === "WINERIM_SEPARATE_FAMILIES"
+            ? "Mapped to dedicated WINERIM families"
+            : "Select any existing Agora family"}
         </p>
       </div>
       {loadingMappings ? (
@@ -309,26 +417,45 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
         </div>
       ) : (
         <div className="grid gap-2">
-          {MAPPING_KEYS.map(key => (
-            <div key={key} className="flex items-center gap-3">
-              <span className="text-xs font-medium text-foreground w-36 shrink-0">{MAPPING_LABELS[key]}</span>
-              <span className="text-muted-foreground text-xs">→</span>
-              <select
-                value={getMappingValue(key)}
-                onChange={(e) => {
-                  const fam = families.find(f => f.Id === e.target.value);
-                  updateMapping(key, e.target.value, fam?.Name || "");
-                }}
-                className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
-              >
-                <option value="">Auto / Default</option>
-                {families.map(f => (
-                  <option key={f.Id} value={f.Id}>{f.Id}: {f.Name}</option>
-                ))}
-              </select>
-              {getMappingValue(key) && <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />}
-            </div>
-          ))
+          {MAPPING_KEYS.map(key => {
+            const currentValue = getMappingValue(key);
+            const currentFamily = families.find(f => f.Id === currentValue);
+            const isWinerimMapped = currentFamily ? isWinerimFamily(currentFamily) : false;
+            return (
+              <div key={key} className="flex items-center gap-3">
+                <span className="text-xs font-medium text-foreground w-36 shrink-0">{MAPPING_LABELS[key]}</span>
+                <span className="text-muted-foreground text-xs">→</span>
+                <select
+                  value={currentValue}
+                  onChange={(e) => {
+                    const fam = families.find(f => f.Id === e.target.value);
+                    updateMapping(key, e.target.value, fam?.Name || "");
+                  }}
+                  className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+                >
+                  <option value="">Auto / Default</option>
+                  {/* In WINERIM_SEPARATE mode, show WINERIM families first */}
+                  {mode === "WINERIM_SEPARATE_FAMILIES" && (
+                    <optgroup label="── WINERIM Families ──">
+                      {families.filter(isWinerimFamily).map(f => (
+                        <option key={f.Id} value={f.Id}>🍷 {f.Id}: {f.Name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label={mode === "WINERIM_SEPARATE_FAMILIES" ? "── Other Families ──" : "── All Families ──"}>
+                    {families.filter(f => mode !== "WINERIM_SEPARATE_FAMILIES" || !isWinerimFamily(f)).map(f => (
+                      <option key={f.Id} value={f.Id}>{f.Id}: {f.Name}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                {currentValue && (
+                  isWinerimMapped
+                    ? <Badge variant="default" className="text-[9px] bg-primary shrink-0">WINERIM</Badge>
+                    : <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                )}
+              </div>
+            );
+          })
           }
         </div>
       )}
@@ -337,7 +464,8 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
           <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0 mt-0.5" />
           <p className="text-[11px] text-success">
             {mappings.filter(m => m.agora_family_id).length} of {MAPPING_KEYS.length} wine types mapped.
-            Wines pushed from Winerim will use these family assignments.
+            {mode === "WINERIM_SEPARATE_FAMILIES" && " Products will be isolated in WINERIM families."}
+            {mode === "EXISTING_CUSTOMER_FAMILIES" && " Wines pushed from Winerim will use these family assignments."}
           </p>
         </div>
       )}
@@ -355,7 +483,7 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion }: { con
 /* ══════════════════════════════════════════════
    Section 4: Existing Families List
    ══════════════════════════════════════════════ */
-function ExistingFamiliesList({ families }: { families: AgoraMasterItem[] }) {
+function ExistingFamiliesList({ families, mode }: { families: AgoraMasterItem[]; mode: FamilyStructureMode }) {
   const [showAll, setShowAll] = useState(false);
   if (families.length === 0) return null;
   const shown = showAll ? families : families.slice(0, 12);
@@ -364,13 +492,24 @@ function ExistingFamiliesList({ families }: { families: AgoraMasterItem[] }) {
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">
         Existing Agora Families ({families.length})
+        {mode === "WINERIM_SEPARATE_FAMILIES" && (
+          <span className="ml-2 text-[10px] text-amber-600">← Customer's families (will not be modified)</span>
+        )}
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {shown.map(f => (
-          <Badge key={f.Id} variant="outline" className="text-[10px] font-mono">
-            {f.Id}: {f.Name}
-          </Badge>
-        ))}
+        {shown.map(f => {
+          const isWinerim = f.Name.toUpperCase().includes("WINERIM");
+          return (
+            <Badge
+              key={f.Id}
+              variant={isWinerim ? "default" : "outline"}
+              className={`text-[10px] font-mono ${isWinerim ? "bg-primary" : ""}`}
+            >
+              {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
+              {f.Id}: {f.Name}
+            </Badge>
+          );
+        })}
       </div>
       {families.length > 12 && (
         <button onClick={() => setShowAll(!showAll)} className="text-[10px] text-primary hover:underline">
@@ -382,49 +521,118 @@ function ExistingFamiliesList({ families }: { families: AgoraMasterItem[] }) {
 }
 
 /* ══════════════════════════════════════════════
+   Migration Notice
+   ══════════════════════════════════════════════ */
+function MigrationNotice({ mode }: { mode: FamilyStructureMode }) {
+  if (mode !== "WINERIM_SEPARATE_FAMILIES") return null;
+  return (
+    <div className="flex items-start gap-2 p-2.5 rounded-md bg-accent/50 border border-accent">
+      <HelpCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+      <div className="text-[11px] text-muted-foreground space-y-1">
+        <p className="font-medium text-foreground">Progressive rollout mode active</p>
+        <p>Products are pushed to dedicated "… WINERIM" families to avoid mixing with the customer's existing categories.
+        When ready, switch to "Existing Customer Families" mode and use the reassign action to migrate products.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
    Main Component
    ══════════════════════════════════════════════ */
 export default function AgoraFamilyManager({ connectionId, families, onSyncMasterData, syncing }: Props) {
   const [mappingsVersion, setMappingsVersion] = useState(0);
+  const [mode, setMode] = useState<FamilyStructureMode>("WINERIM_SEPARATE_FAMILIES");
+  const [loadingMode, setLoadingMode] = useState(true);
+
+  // Load mode from provider_config
+  useEffect(() => {
+    if (!connectionId) { setLoadingMode(false); return; }
+    (async () => {
+      const { data } = await supabase
+        .from("pos_connections")
+        .select("provider_config")
+        .eq("id", connectionId)
+        .single();
+      const config = (data?.provider_config as Record<string, unknown>) || {};
+      const savedMode = config.family_structure_mode as FamilyStructureMode | undefined;
+      if (savedMode === "EXISTING_CUSTOMER_FAMILIES" || savedMode === "WINERIM_SEPARATE_FAMILIES") {
+        setMode(savedMode);
+      }
+      setLoadingMode(false);
+    })();
+  }, [connectionId]);
+
+  if (loadingMode) {
+    return (
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+        <span className="text-xs text-muted-foreground">Loading family configuration…</span>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-5">
       <div className="flex items-center gap-2">
         <Grape className="h-4 w-4 text-primary" />
         <p className="text-xs font-medium text-foreground">Agora Family Manager</p>
+        <Badge variant="outline" className="text-[9px] ml-auto">
+          {mode === "WINERIM_SEPARATE_FAMILIES" ? "🔒 Separate mode" : "🔗 Customer families"}
+        </Badge>
       </div>
 
-      <div className="flex items-start gap-2 p-2 rounded-md bg-muted/50 border border-border">
-        <HelpCircle className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-        <p className="text-[11px] text-muted-foreground">
-          Manage Agora families and control which family each wine type maps to when pushing products.
-          Use the quick setup for pilot testing, or create custom families for any restaurant.
-        </p>
-      </div>
+      {/* Mode selector */}
+      <ModeSelector connectionId={connectionId} mode={mode} onModeChange={setMode} />
+
+      {/* Migration notice */}
+      <MigrationNotice mode={mode} />
 
       {/* Existing families */}
-      <ExistingFamiliesList families={families} />
+      <ExistingFamiliesList families={families} mode={mode} />
 
-      {/* Auto pilot */}
-      <div className="border-t border-border pt-4">
-        <AutoPilotSection
-          connectionId={connectionId}
-          families={families}
-          onSyncMasterData={onSyncMasterData}
-          syncing={syncing}
-          onMappingsChanged={() => setMappingsVersion(v => v + 1)}
-        />
-      </div>
+      {/* WINERIM family setup — prominent in SEPARATE mode */}
+      {mode === "WINERIM_SEPARATE_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <AutoPilotSection
+            connectionId={connectionId}
+            families={families}
+            onSyncMasterData={onSyncMasterData}
+            syncing={syncing}
+            onMappingsChanged={() => setMappingsVersion(v => v + 1)}
+          />
+        </div>
+      )}
 
-      {/* Manual family creator */}
+      {/* Manual family creator — always available */}
       <div className="border-t border-border pt-4">
         <ManualFamilyCreator connectionId={connectionId} syncing={syncing} onSyncMasterData={onSyncMasterData} />
       </div>
 
       {/* Mapping editor */}
       <div className="border-t border-border pt-4">
-        <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} />
+        <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} mode={mode} />
       </div>
+
+      {/* In EXISTING mode, show the quick setup as collapsed secondary option */}
+      {mode === "EXISTING_CUSTOMER_FAMILIES" && (
+        <div className="border-t border-border pt-4 opacity-70 hover:opacity-100 transition-opacity">
+          <details className="text-[11px]">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Grape className="h-3 w-3" /> Quick Setup: WINERIM Test Families (optional)
+            </summary>
+            <div className="mt-3">
+              <AutoPilotSection
+                connectionId={connectionId}
+                families={families}
+                onSyncMasterData={onSyncMasterData}
+                syncing={syncing}
+                onMappingsChanged={() => setMappingsVersion(v => v + 1)}
+              />
+            </div>
+          </details>
+        </div>
+      )}
     </div>
   );
 }
