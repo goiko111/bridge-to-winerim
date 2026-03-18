@@ -628,12 +628,14 @@ function StepFamilies({
 
 // ── Step 5: Sales & Mapping ──
 function StepSalesMapping({
+  connectionId: smConnectionId,
   daysWithSales, selectedDay, setSelectedDay, loadingDays,
   salesEvents, loadingSales, onFetchDay, onSaveSales,
   saving, saveResult, familyOverrides, detectedFamilies,
   catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
   lastClosedDay,
 }: {
+  connectionId: string | null;
   daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
   loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
   onFetchDay: (day: string) => void; onSaveSales: (day: string) => void;
