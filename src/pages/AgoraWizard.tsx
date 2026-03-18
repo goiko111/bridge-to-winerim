@@ -1288,6 +1288,8 @@ function StepWinerimCatalog({
   const [filterMissingReason, setFilterMissingReason] = useState<"all" | PricingMissingReason>("all");
   const [filterFormat, setFilterFormat] = useState<"all" | "bottle" | "glass" | "magnum">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [filterSyncStatus, setFilterSyncStatus] = useState<"all" | "NOT_PUSHED" | "QUEUED" | "PUSHED" | "VERIFIED" | "FAILED">("all");
+  const [filterWineType, setFilterWineType] = useState<string>("all");
   const [expandedWineId, setExpandedWineId] = useState<string | null>(null);
   const [familyOverrideId, setFamilyOverrideId] = useState("");
   const [previewXml, setPreviewXml] = useState<string | null>(null);
