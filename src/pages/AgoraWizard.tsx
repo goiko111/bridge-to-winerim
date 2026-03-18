@@ -4471,6 +4471,9 @@ export default function AgoraWizard() {
               onClearQueue={outbound.clearQueue} />
           )}
           {currentStep === 12 && (
+            <StepSalesAnalytics connectionId={connectionId} />
+          )}
+          {currentStep === 13 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
