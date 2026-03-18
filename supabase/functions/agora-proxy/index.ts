@@ -3090,6 +3090,18 @@ serve(async (req) => {
 
         // auto_push_verified_ready is NOT set here — manual verification required
 
+        // ── PUSH TRACKING: Mark PUSHED (or VERIFIED if verification passed) per format ──
+        const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
+        for (const fmt of fmtTypes) {
+          await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+            sync_status: pushStatus,
+            task_id: task.id,
+            pushed_at: new Date().toISOString(),
+            verified_at: taskVerification.success ? new Date().toISOString() : null,
+            last_error: null,
+          });
+        }
+
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
