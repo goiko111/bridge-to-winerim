@@ -1314,12 +1314,31 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const data = await fetchAllWinerimWines(
-      connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
-    );
+    const [data, trackingData] = await Promise.all([
+      fetchAllWinerimWines(
+        connectionId,
+        "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
+      ),
+      supabase.from("winerim_push_tracking" as any)
+        .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at")
+        .eq("connection_id", connectionId)
+        .then(r => r.data || []),
+    ]);
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
+
+    // Build tracking lookup: winerim_wine_id -> { BOTTLE: {...}, GLASS: {...}, MAGNUM: {...} }
+    const trackingMap: Record<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>> = {};
+    for (const t of trackingData as any[]) {
+      if (!trackingMap[t.winerim_wine_id]) trackingMap[t.winerim_wine_id] = {};
+      trackingMap[t.winerim_wine_id][t.format] = {
+        sync_status: t.sync_status,
+        last_error: t.last_error,
+        pushed_at: t.pushed_at,
+        verified_at: t.verified_at,
+      };
+    }
+    setPushTracking(trackingMap);
 
     const latestEnriched = rows
       .filter((w) =>
