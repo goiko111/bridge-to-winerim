@@ -872,12 +872,51 @@ function StepSalesMapping({
         </TabsContent>
       </Tabs>
 
-      {/* Save sales */}
+      {/* Day sales preview */}
+      {selectedDay && loadingSales && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="h-4 w-4 animate-spin" /> Fetching sales for {selectedDay}…</div>
+      )}
       {selectedDay && !loadingSales && salesEvents.length > 0 && (
-        <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
-          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
-        </Button>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">
+              Sales for {selectedDay} — {salesEvents.length} tickets, {salesEvents.reduce((s, e) => s + e.lines.length, 0)} lines
+            </h3>
+          </div>
+          <div className="rounded-lg border border-border bg-card max-h-[300px] overflow-y-auto divide-y divide-border">
+            {salesEvents.flatMap((ev, ei) =>
+              ev.lines.map((l, li) => (
+                <div key={`${ei}-${li}`} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-secondary/30">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground truncate">{l.name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {l.family && <span className="mr-2">{l.family}</span>}
+                      {l.format && <span className="mr-2">· {l.format}</span>}
+                      {l.provider_product_id && <span className="font-mono mr-2">ID:{l.provider_product_id}</span>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0 text-xs text-muted-foreground">
+                    <span>×{l.quantity}</span>
+                    <span className="font-mono">€{l.unit_price.toFixed(2)}</span>
+                    <span className="font-mono font-semibold text-foreground">€{l.total_amount.toFixed(2)}</span>
+                    {l.is_wine_candidate ? (
+                      <Badge variant="outline" className="text-[10px] border-success/30 text-success">🍷</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] border-border text-muted-foreground">—</Badge>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
+          </Button>
+        </div>
+      )}
+      {selectedDay && !loadingSales && salesEvents.length === 0 && (
+        <p className="text-sm text-muted-foreground py-2">No sales found for {selectedDay}.</p>
       )}
     </div>
   );
