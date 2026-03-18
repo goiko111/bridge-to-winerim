@@ -73,7 +73,7 @@ export default function AgoraWinesInPosPanel({ connectionId, families }: { conne
     } finally {
       setLoading(false);
     }
-  }, [connectionId]);
+  }, [connectionId, families]);
 
   useEffect(() => { load(); }, [load]);
 
