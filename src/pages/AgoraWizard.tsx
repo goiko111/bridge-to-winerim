@@ -741,10 +741,42 @@ function StepSalesMapping({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          {useCatalog ? "Products from catalog with classification. NEEDS_REVIEW tab shown by default." : "Review sales data."}
+          Sales are auto-synced every 15 min. You can also sync manually or browse by day.
         </p>
-        {useCatalog && <Badge variant="outline" className="mt-1 text-[10px]"><Package className="mr-1 h-3 w-3" /> Catalog ({catalogProducts.length})</Badge>}
       </div>
+
+      {/* Auto-sync button */}
+      <div className="flex items-center gap-3">
+        <Button variant="default" size="sm" disabled={autoSyncing || !smConnectionId} onClick={async () => {
+          if (!smConnectionId) return;
+          setAutoSyncing(true); setAutoSyncResult(null);
+          try {
+            const { data, error } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "auto-sync-sales", connectionId: smConnectionId },
+            });
+            if (error) throw error;
+            setAutoSyncResult(data);
+          } catch (err) { console.error("Auto-sync error:", err); }
+          finally { setAutoSyncing(false); }
+        }}>
+          {autoSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+          Sync All Pending Days
+        </Button>
+        <span className="text-[11px] text-muted-foreground">Auto-runs every 15 min</span>
+      </div>
+
+      {autoSyncResult && (
+        <div className={`rounded-lg border p-3 text-xs ${autoSyncResult.daysSynced > 0 ? "border-success/30 bg-success/5" : "border-border bg-secondary/20"}`}>
+          {autoSyncResult.message ? (
+            <p className="text-muted-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> {autoSyncResult.message}</p>
+          ) : (
+            <>
+              <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Synced {autoSyncResult.daysSynced} days</p>
+              <p className="text-muted-foreground">{autoSyncResult.totalEvents} events · {autoSyncResult.totalLines} lines · ✓{autoSyncResult.resolvedLines} resolved · ⚠{autoSyncResult.unresolvedLines} unresolved</p>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Last closed day banner */}
       {lastClosedDay && (
