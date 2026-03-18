@@ -2549,6 +2549,14 @@ serve(async (req) => {
             last_synced_at: parsedResponse.success ? new Date().toISOString() : null,
             last_sync_error: parsedResponse.success ? null : parsedResponse.errors.join("; ").substring(0, 500),
           }, { onConflict: "connection_id,provider_product_id" });
+
+          // ── PUSH TRACKING: Mark per format ──
+          await upsertPushTracking(supabase, connectionId, wine.winerim_id, fmt, {
+            sync_status: parsedResponse.success ? "PUSHED" : "FAILED",
+            agora_product_id: agoraProductId,
+            pushed_at: parsedResponse.success ? new Date().toISOString() : null,
+            last_error: parsedResponse.success ? null : parsedResponse.errors.join("; ").substring(0, 500),
+          });
         }
       }
 
