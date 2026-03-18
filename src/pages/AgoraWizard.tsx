@@ -30,6 +30,7 @@ import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
+import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
@@ -1797,6 +1798,9 @@ function StepWinerimCatalog({
           Browse your Winerim wine catalog, select wines, and push them to Agora POS.
         </p>
       </div>
+
+      {/* Wines already in Ágora */}
+      <AgoraWinesInPosPanel connectionId={connectionId} />
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
