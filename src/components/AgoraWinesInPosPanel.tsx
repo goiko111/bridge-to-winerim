@@ -24,7 +24,7 @@ interface WineWithTracking extends PushTrackingRow {
   family_name: string | null;
 }
 
-export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: string | null }) {
+export default function AgoraWinesInPosPanel({ connectionId, families }: { connectionId: string | null; families?: { Id: string; Name: string }[] }) {
   const [rows, setRows] = useState<WineWithTracking[]>([]);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
