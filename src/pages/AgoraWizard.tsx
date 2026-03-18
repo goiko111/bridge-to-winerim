@@ -1268,6 +1268,7 @@ function StepWinerimCatalog({
   priceListCount: number;
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
+  const [pushTracking, setPushTracking] = useState<Map<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>>>(new Map());
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
   const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
