@@ -3522,6 +3522,21 @@ serve(async (req) => {
         verifyXml, productsToVerify, scopedPriceLists, priceListToSaleCenters,
       );
 
+      // ── PUSH TRACKING: Update verified status per product ──
+      for (const m of (mappings || [])) {
+        const productOk = !verifyResult.errors.some((e: any) =>
+          (e.context as Record<string, unknown>)?.productId === m.provider_product_id
+        );
+        await upsertPushTracking(supabase, connectionId, m.winerim_wine_id, m.format_type, {
+          sync_status: productOk ? "VERIFIED" : "FAILED",
+          agora_product_id: m.provider_product_id,
+          verified_at: productOk ? new Date().toISOString() : null,
+          last_error: productOk ? null : verifyResult.errors
+            .filter((e: any) => (e.context as Record<string, unknown>)?.productId === m.provider_product_id)
+            .map((e: any) => e.message).join("; ").substring(0, 500),
+        });
+      }
+
       return new Response(JSON.stringify({
         ...verifyResult,
         totalPriceLists: scopedPriceLists.length,
