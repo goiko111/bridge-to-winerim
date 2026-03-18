@@ -2066,6 +2066,28 @@ function StepWinerimCatalog({
               <option value="glass">🍷 Glass available</option>
               <option value="magnum">🍾 Magnum available</option>
             </select>
+            <select
+              value={filterWineType}
+              onChange={(e) => setFilterWineType(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All types</option>
+              {uniqueWineTypes.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <select
+              value={filterSyncStatus}
+              onChange={(e) => setFilterSyncStatus(e.target.value as typeof filterSyncStatus)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All push states</option>
+              <option value="NOT_PUSHED">⬜ Not pushed</option>
+              <option value="QUEUED">⏳ Queued</option>
+              <option value="PUSHED">↑ Pushed</option>
+              <option value="VERIFIED">✓ Verified</option>
+              <option value="FAILED">✗ Failed</option>
+            </select>
           </div>
 
           {/* PriceList coverage info */}
