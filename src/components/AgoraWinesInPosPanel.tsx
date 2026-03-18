@@ -56,10 +56,16 @@ export default function AgoraWinesInPosPanel({ connectionId, families }: { conne
       const nameMap: Record<string, string> = {};
       (wines || []).forEach((w: any) => { nameMap[w.winerim_id] = w.name; });
 
+      const familyMap: Record<string, string> = {};
+      if (families) {
+        for (const f of families) { familyMap[f.Id] = f.Name; }
+      }
+
       setRows(
         (tracking as PushTrackingRow[]).map(t => ({
           ...t,
           wine_name: nameMap[t.winerim_wine_id] || t.winerim_wine_id,
+          family_name: t.agora_family_id ? (familyMap[t.agora_family_id] || t.agora_family_id) : null,
         }))
       );
     } catch (e) {
