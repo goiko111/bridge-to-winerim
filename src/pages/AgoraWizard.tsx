@@ -648,6 +648,7 @@ function StepSalesMapping({
 }) {
   const [searchMapping, setSearchMapping] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [classOpen, setClassOpen] = useState(false);
   const useCatalog = catalogProducts.length > 0;
 
   const isFamilyWine = (familyName: string) => {
