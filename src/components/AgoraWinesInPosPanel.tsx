@@ -47,25 +47,23 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
       }
 
       const wineIds = [...new Set((tracking as PushTrackingRow[]).map(t => t.winerim_wine_id))];
-      const { data: wines } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, name")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", wineIds);
+      const [{ data: wines }, { data: masterData }] = await Promise.all([
+        supabase.from("winerim_wines").select("winerim_id, name").eq("connection_id", connectionId).in("winerim_id", wineIds),
+        supabase.from("agora_master_data").select("families_json").eq("connection_id", connectionId).maybeSingle(),
+      ]);
 
       const nameMap: Record<string, string> = {};
       (wines || []).forEach((w: any) => { nameMap[w.winerim_id] = w.name; });
 
       const familyMap: Record<string, string> = {};
-      if (families) {
-        for (const f of families) { familyMap[f.Id] = f.Name; }
-      }
+      const familiesArr = (masterData?.families_json as any[]) || [];
+      for (const f of familiesArr) { familyMap[String(f.Id)] = f.Name || f.ButtonText || String(f.Id); }
 
       setRows(
         (tracking as PushTrackingRow[]).map(t => ({
           ...t,
           wine_name: nameMap[t.winerim_wine_id] || t.winerim_wine_id,
-          family_name: t.agora_family_id ? (familyMap[t.agora_family_id] || t.agora_family_id) : null,
+          family_name: t.agora_family_id ? (familyMap[String(t.agora_family_id)] || t.agora_family_id) : null,
         }))
       );
     } catch (e) {
