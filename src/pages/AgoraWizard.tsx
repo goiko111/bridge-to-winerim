@@ -807,70 +807,81 @@ function StepSalesMapping({
       </div>
 
       {/* Recompute + bulk actions */}
-      {useCatalog && (
-        <div className="flex gap-2 flex-wrap items-center">
-          <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
-            {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-            Recompute Classification
-          </Button>
-          {selectedIds.size > 0 && (
-            <>
-              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
-                <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
-                Mark {selectedIds.size} as Not Wine
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-
-      {recomputeResult && (
-        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
-          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
-          <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
-        </div>
-      )}
-
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="review">
-        <TabsList className="w-full">
-          <TabsTrigger value="review" className="flex-1">
-            <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
-          </TabsTrigger>
-          <TabsTrigger value="wine" className="flex-1">
-            <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
-          </TabsTrigger>
-          <TabsTrigger value="notwine" className="flex-1">
-            Not Wine ({notWineProducts.length})
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="review">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
-              : reviewProducts.map(renderProductRow)}
+      {/* Classification (collapsible) */}
+      {useCatalog && (() => {
+        const [classOpen, setClassOpen] = useState(false);
+        return (
+          <div className="rounded-lg border border-border">
+            <button onClick={() => setClassOpen(!classOpen)} className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+              <span className="flex items-center gap-2">
+                <Filter className="h-3.5 w-3.5" /> Product Classification ({wineProducts.length} wine · {notWineProducts.length} not wine · {reviewProducts.length} review)
+              </span>
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${classOpen ? "rotate-180" : ""}`} />
+            </button>
+            {classOpen && (
+              <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
+                <div className="flex gap-2 flex-wrap items-center">
+                  <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
+                    {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                    Recompute Classification
+                  </Button>
+                  {selectedIds.size > 0 && (
+                    <>
+                      <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
+                        <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
+                        Mark {selectedIds.size} as Not Wine
+                      </Button>
+                    </>
+                  )}
+                </div>
+                {recomputeResult && (
+                  <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
+                    <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
+                    <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
+                  </div>
+                )}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
+                </div>
+                <Tabs defaultValue="review">
+                  <TabsList className="w-full">
+                    <TabsTrigger value="review" className="flex-1">
+                      <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="wine" className="flex-1">
+                      <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="notwine" className="flex-1">
+                      Not Wine ({notWineProducts.length})
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="review">
+                    <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                      {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
+                        : reviewProducts.map(renderProductRow)}
+                    </div>
+                  </TabsContent>
+                  <TabsContent value="wine">
+                    <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                      {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
+                        : wineProducts.map(renderProductRow)}
+                    </div>
+                  </TabsContent>
+                  <TabsContent value="notwine">
+                    <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                      {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
+                        : notWineProducts.map(renderProductRow)}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              </div>
+            )}
           </div>
-        </TabsContent>
-        <TabsContent value="wine">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
-              : wineProducts.map(renderProductRow)}
-          </div>
-        </TabsContent>
-        <TabsContent value="notwine">
-          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
-            {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
-              : notWineProducts.map(renderProductRow)}
-          </div>
-        </TabsContent>
-      </Tabs>
+        );
+      })()}
 
       {/* Day sales preview */}
       {selectedDay && loadingSales && (
