@@ -150,7 +150,14 @@ export default function AgoraWinesInPosPanel({ connectionId, families }: { conne
                         {r.agora_product_id && (
                           <span className="text-[10px] font-mono text-muted-foreground">ID: {r.agora_product_id}</span>
                         )}
+                        {r.family_name && (
+                          <Badge variant="outline" className="text-[10px]">📁 {r.family_name}</Badge>
+                        )}
                         {r.pushed_at && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(r.pushed_at).toLocaleDateString()}
+                          </span>
+                        )}
                           <span className="text-[10px] text-muted-foreground">
                             {new Date(r.pushed_at).toLocaleDateString()}
                           </span>
