@@ -4607,7 +4607,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(12, s + 1));
+    setCurrentStep((s) => Math.min(13, s + 1));
   };
 
   return (
