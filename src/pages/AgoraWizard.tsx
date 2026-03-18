@@ -2306,6 +2306,14 @@ function StepWinerimCatalog({
                         <span className={`${bottleOk ? "text-success" : "text-muted-foreground/50"}`}>🍾 {bottleOk ? "✓" : "✗"}</span>
                         <span className={`${glassOk ? "text-success" : "text-muted-foreground/50"}`}>🍷 {glassOk ? "✓" : "✗"}</span>
                         <span className={`${magnumOk ? "text-success" : "text-muted-foreground/50"}`}>MAG {magnumOk ? "✓" : "✗"}</span>
+                        {/* Inline push status */}
+                        {(() => {
+                          const syncSt = getWineSyncStatus(w.winerim_id);
+                          if (syncSt === "NOT_PUSHED") return null;
+                          const variant = syncSt === "VERIFIED" ? "default" as const : syncSt === "FAILED" ? "destructive" as const : "outline" as const;
+                          const icon = syncSt === "VERIFIED" ? "✓" : syncSt === "PUSHED" ? "↑" : syncSt === "QUEUED" ? "⏳" : syncSt === "FAILED" ? "✗" : "—";
+                          return <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>;
+                        })()}
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0 text-[11px]">
