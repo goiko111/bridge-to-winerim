@@ -3432,28 +3432,49 @@ function StepMasterData({
             </div>
           )}
 
-          {/* Fetched counts summary */}
+          {/* Fetched counts summary with production scope breakdown */}
           {(() => {
             const activeSC = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
             const deletedSC = masterData.saleCenters.filter((sc: any) => !!sc.DeletionDate);
             const activePL = masterData.priceLists.filter((pl: any) => !pl.DeletionDate);
             const deletedPL = masterData.priceLists.filter((pl: any) => !!pl.DeletionDate);
+            // Production scope: only PLs linked to an active SC via CurrentPriceListId
+            const activeSCWithPL = activeSC.filter((sc: any) => !!sc.CurrentPriceListId);
+            const scopedPLIds = new Set(activeSCWithPL.map((sc: any) => String(sc.CurrentPriceListId)));
+            const inScopePL = activePL.filter((pl: any) => scopedPLIds.has(String(pl.Id)));
+            const outOfScopePL = activePL.filter((pl: any) => !scopedPLIds.has(String(pl.Id)));
             return (
-              <div className="grid grid-cols-3 gap-2 text-[10px]">
-                <div className="rounded border border-border bg-background p-2 text-center">
-                  <p className="text-muted-foreground">SaleCenters</p>
-                  <p className={`text-sm font-bold ${activeSC.length > 0 ? "text-foreground" : "text-destructive"}`}>{activeSC.length}</p>
-                  {deletedSC.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedSC.length} deleted</p>}
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">SaleCenters</p>
+                    <p className={`text-sm font-bold ${activeSC.length > 0 ? "text-foreground" : "text-destructive"}`}>{activeSC.length}</p>
+                    {deletedSC.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedSC.length} 🗑</p>}
+                  </div>
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">SalePoints</p>
+                    <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                  </div>
+                  <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-center">
+                    <p className="text-muted-foreground">PLs in Scope</p>
+                    <p className="text-sm font-bold text-emerald-600">{inScopePL.length}</p>
+                    <p className="text-[9px] text-muted-foreground">linked to active SC</p>
+                  </div>
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">PLs Excluded</p>
+                    <p className="text-sm font-bold text-muted-foreground">{outOfScopePL.length + deletedPL.length}</p>
+                    {outOfScopePL.length > 0 && <p className="text-[9px] text-muted-foreground">{outOfScopePL.length} no SC</p>}
+                    {deletedPL.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedPL.length} 🗑</p>}
+                  </div>
                 </div>
-                <div className="rounded border border-border bg-background p-2 text-center">
-                  <p className="text-muted-foreground">SalePoints</p>
-                  <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
-                </div>
-                <div className="rounded border border-border bg-background p-2 text-center">
-                  <p className="text-muted-foreground">PriceLists</p>
-                  <p className="text-sm font-bold text-foreground">{activePL.length}</p>
-                  {deletedPL.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedPL.length} deleted</p>}
-                </div>
+                {outOfScopePL.length > 0 && (
+                  <div className="rounded border border-border bg-secondary/30 p-2 text-[10px] text-muted-foreground flex items-start gap-1.5">
+                    <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>{outOfScopePL.length} active PriceList{outOfScopePL.length > 1 ? "s" : ""} excluded from production scope</strong> (no SaleCenter linked): {outOfScopePL.map((pl: any) => pl.Name).join(", ")}. These won't block verification or readiness.
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })()}
