@@ -2441,7 +2441,17 @@ function StepWinerimCatalog({
                           if (syncSt === "NOT_PUSHED") return null;
                           const variant = syncSt === "VERIFIED" ? "default" as const : syncSt === "FAILED" ? "destructive" as const : "outline" as const;
                           const icon = syncSt === "VERIFIED" ? "✓" : syncSt === "PUSHED" ? "↑" : syncSt === "QUEUED" ? "⏳" : syncSt === "FAILED" ? "✗" : "—";
-                          return <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>;
+                          const trackedFamilies = Object.entries(wineTracking)
+                            .filter(([, t]) => !!t?.agora_family_name)
+                            .map(([fmt, t]) => `${fmt} → ${t.agora_family_name}`);
+                          return (
+                            <>
+                              <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>
+                              {trackedFamilies.map((label) => (
+                                <Badge key={label} variant="outline" className="text-[9px]">📁 {label}</Badge>
+                              ))}
+                            </>
+                          );
                         })()}
                       </div>
                     </div>
