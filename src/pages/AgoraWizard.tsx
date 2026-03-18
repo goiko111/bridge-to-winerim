@@ -878,7 +878,7 @@ function StepSalesMapping({
       {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
         <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines` : "Save to DB"}
+          {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
         </Button>
       )}
     </div>
