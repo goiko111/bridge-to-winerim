@@ -1698,6 +1698,22 @@ function StepWinerimCatalog({
           <div><span className="text-muted-foreground block">With Magnum Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
+        {/* Push tracking stats */}
+        {Object.keys(pushTracking).length > 0 && (() => {
+          const allFormats = Object.values(pushTracking).flatMap(wt => Object.values(wt));
+          const byStatus: Record<string, number> = {};
+          for (const f of allFormats) { byStatus[f.sync_status] = (byStatus[f.sync_status] || 0) + 1; }
+          return (
+            <div className="grid grid-cols-5 gap-2 mt-2">
+              {["NOT_PUSHED", "QUEUED", "PUSHED", "VERIFIED", "FAILED"].map(s => (
+                <div key={s} className="text-center rounded border border-border p-1.5">
+                  <p className="text-[10px] text-muted-foreground">{s}</p>
+                  <p className={`text-sm font-bold ${s === "VERIFIED" ? "text-success" : s === "FAILED" ? "text-destructive" : "text-foreground"}`}>{byStatus[s] || 0}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {lastEnrichedAt && (
           <p className="text-[11px] text-muted-foreground">
             Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
