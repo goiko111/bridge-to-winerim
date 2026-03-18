@@ -886,6 +886,65 @@ export type Database = {
           },
         ]
       }
+      winerim_push_tracking: {
+        Row: {
+          agora_family_id: string | null
+          agora_product_id: string | null
+          connection_id: string
+          created_at: string
+          format: string
+          id: string
+          last_error: string | null
+          pushed_at: string | null
+          source: string
+          sync_status: string
+          task_id: string | null
+          updated_at: string
+          verified_at: string | null
+          winerim_wine_id: string
+        }
+        Insert: {
+          agora_family_id?: string | null
+          agora_product_id?: string | null
+          connection_id: string
+          created_at?: string
+          format?: string
+          id?: string
+          last_error?: string | null
+          pushed_at?: string | null
+          source?: string
+          sync_status?: string
+          task_id?: string | null
+          updated_at?: string
+          verified_at?: string | null
+          winerim_wine_id: string
+        }
+        Update: {
+          agora_family_id?: string | null
+          agora_product_id?: string | null
+          connection_id?: string
+          created_at?: string
+          format?: string
+          id?: string
+          last_error?: string | null
+          pushed_at?: string | null
+          source?: string
+          sync_status?: string
+          task_id?: string | null
+          updated_at?: string
+          verified_at?: string | null
+          winerim_wine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_push_tracking_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       winerim_wines: {
         Row: {
           bottle_purchase_price: number | null
