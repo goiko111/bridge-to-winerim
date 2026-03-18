@@ -787,26 +787,24 @@ function StepSalesMapping({
         );
       })()}
 
-      {/* Day selector for invoice-based */}
-      {!useCatalog && (
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-2 block"><Calendar className="inline h-3.5 w-3.5 mr-1" /> Business Day</label>
-          {loadingDays ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /> Scanning…</div>
-          ) : daysWithSales.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-2">No cash closures found.</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {daysWithSales.map((day) => (
-                <button key={day} onClick={() => { setSelectedDay(day); onFetchDay(day); }}
-                  className={`rounded-lg border px-3 py-2 text-xs font-mono transition-all ${selectedDay === day ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
-                  {day}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Day selector — always visible */}
+      <div>
+        <label className="text-xs font-medium text-muted-foreground mb-2 block"><Calendar className="inline h-3.5 w-3.5 mr-1" /> Business Day — Fetch & Save Sales</label>
+        {loadingDays ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /> Scanning…</div>
+        ) : daysWithSales.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">No cash closures found.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {daysWithSales.map((day) => (
+              <button key={day} onClick={() => { setSelectedDay(day); onFetchDay(day); }}
+                className={`rounded-lg border px-3 py-2 text-xs font-mono transition-all ${selectedDay === day ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                {day}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Recompute + bulk actions */}
       {useCatalog && (
@@ -874,8 +872,8 @@ function StepSalesMapping({
         </TabsContent>
       </Tabs>
 
-      {/* Save for invoice mode */}
-      {!useCatalog && selectedDay && !loadingSales && salesEvents.length > 0 && (
+      {/* Save sales */}
+      {selectedDay && !loadingSales && salesEvents.length > 0 && (
         <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
           {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
