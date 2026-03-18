@@ -3162,6 +3162,13 @@ serve(async (req) => {
           status: "QUEUED",
         });
         if (operationType === "CREATE") queuedCreate++; else queuedUpdate++;
+
+        // ── PUSH TRACKING: Mark QUEUED per format ──
+        for (const fmt of formatTypes) {
+          await upsertPushTracking(supabase, connectionId, wineId, fmt, {
+            sync_status: "QUEUED",
+          });
+        }
       }
 
       return new Response(JSON.stringify({
