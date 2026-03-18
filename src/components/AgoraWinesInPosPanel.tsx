@@ -157,11 +157,7 @@ export default function AgoraWinesInPosPanel({ connectionId, families }: { conne
                           <span className="text-[10px] text-muted-foreground">
                             {new Date(r.pushed_at).toLocaleDateString()}
                           </span>
-                        )}
-                          <span className="text-[10px] text-muted-foreground">
-                            {new Date(r.pushed_at).toLocaleDateString()}
-                          </span>
-                        )}
+                        )
                       </div>
                     </div>
                     {statusBadge(r.sync_status)}
