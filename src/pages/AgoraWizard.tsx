@@ -6,7 +6,7 @@ import {
   Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
   ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
   Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
-  Server, Wrench, GlassWater,
+  Server, Wrench, GlassWater, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
