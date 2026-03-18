@@ -262,6 +262,37 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+// ── PUSH TRACKING HELPER ──
+// deno-lint-ignore no-explicit-any
+async function upsertPushTracking(supabaseClient: any, connId: string, winerimWineId: string, format: string, updates: {
+  sync_status: string;
+  agora_product_id?: string;
+  agora_family_id?: string;
+  task_id?: string;
+  last_error?: string | null;
+  pushed_at?: string | null;
+  verified_at?: string | null;
+}) {
+  const agoraProductId = updates.agora_product_id || (
+    format === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
+    : format === "GLASS" ? String(700000 + Number(winerimWineId || 0))
+    : String(500000 + Number(winerimWineId || 0))
+  );
+  await supabaseClient.from("winerim_push_tracking").upsert({
+    connection_id: connId,
+    winerim_wine_id: winerimWineId,
+    format,
+    agora_product_id: agoraProductId,
+    agora_family_id: updates.agora_family_id || null,
+    source: "WINERIM",
+    sync_status: updates.sync_status,
+    task_id: updates.task_id || null,
+    last_error: updates.last_error || null,
+    pushed_at: updates.pushed_at || null,
+    verified_at: updates.verified_at || null,
+  }, { onConflict: "connection_id,winerim_wine_id,format" });
+}
+
 // ── DELETION DATE FILTER ──
 // Agora entities with a DeletionDate are soft-deleted and must be excluded from all operational logic.
 // deno-lint-ignore no-explicit-any
@@ -2518,6 +2549,14 @@ serve(async (req) => {
             last_synced_at: parsedResponse.success ? new Date().toISOString() : null,
             last_sync_error: parsedResponse.success ? null : parsedResponse.errors.join("; ").substring(0, 500),
           }, { onConflict: "connection_id,provider_product_id" });
+
+          // ── PUSH TRACKING: Mark per format ──
+          await upsertPushTracking(supabase, connectionId, wine.winerim_id, fmt, {
+            sync_status: parsedResponse.success ? "PUSHED" : "FAILED",
+            agora_product_id: agoraProductId,
+            pushed_at: parsedResponse.success ? new Date().toISOString() : null,
+            last_error: parsedResponse.success ? null : parsedResponse.errors.join("; ").substring(0, 500),
+          });
         }
       }
 
@@ -3013,6 +3052,15 @@ serve(async (req) => {
             last_error: failMsg,
             payload_json: updatedPayload,
           }).eq("id", task.id);
+          // ── PUSH TRACKING: Mark FAILED per format ──
+          for (const fmt of fmtTypes) {
+            await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+              sync_status: "FAILED",
+              task_id: task.id,
+              last_error: failMsg.substring(0, 500),
+              pushed_at: new Date().toISOString(),
+            });
+          }
           return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
@@ -3058,6 +3106,18 @@ serve(async (req) => {
         }).eq("id", task.id);
 
         // auto_push_verified_ready is NOT set here — manual verification required
+
+        // ── PUSH TRACKING: Mark PUSHED (or VERIFIED if verification passed) per format ──
+        const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
+        for (const fmt of fmtTypes) {
+          await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+            sync_status: pushStatus,
+            task_id: task.id,
+            pushed_at: new Date().toISOString(),
+            verified_at: taskVerification.success ? new Date().toISOString() : null,
+            last_error: null,
+          });
+        }
 
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -3131,6 +3191,13 @@ serve(async (req) => {
           status: "QUEUED",
         });
         if (operationType === "CREATE") queuedCreate++; else queuedUpdate++;
+
+        // ── PUSH TRACKING: Mark QUEUED per format ──
+        for (const fmt of formatTypes) {
+          await upsertPushTracking(supabase, connectionId, wineId, fmt, {
+            sync_status: "QUEUED",
+          });
+        }
       }
 
       return new Response(JSON.stringify({
@@ -3454,6 +3521,21 @@ serve(async (req) => {
       const verifyResult = verifyAgoraProductsAgainstScope(
         verifyXml, productsToVerify, scopedPriceLists, priceListToSaleCenters,
       );
+
+      // ── PUSH TRACKING: Update verified status per product ──
+      for (const m of (mappings || [])) {
+        const productOk = !verifyResult.errors.some((e: any) =>
+          (e.context as Record<string, unknown>)?.productId === m.provider_product_id
+        );
+        await upsertPushTracking(supabase, connectionId, m.winerim_wine_id, m.format_type, {
+          sync_status: productOk ? "VERIFIED" : "FAILED",
+          agora_product_id: m.provider_product_id,
+          verified_at: productOk ? new Date().toISOString() : null,
+          last_error: productOk ? null : verifyResult.errors
+            .filter((e: any) => (e.context as Record<string, unknown>)?.productId === m.provider_product_id)
+            .map((e: any) => e.message).join("; ").substring(0, 500),
+        });
+      }
 
       return new Response(JSON.stringify({
         ...verifyResult,

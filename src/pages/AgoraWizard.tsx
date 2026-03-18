@@ -1268,6 +1268,7 @@ function StepWinerimCatalog({
   priceListCount: number;
 }) {
   const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
+  const [pushTracking, setPushTracking] = useState<Record<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>>>({});
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
   const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
@@ -1313,12 +1314,31 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const data = await fetchAllWinerimWines(
-      connectionId,
-      "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
-    );
+    const [data, trackingData] = await Promise.all([
+      fetchAllWinerimWines(
+        connectionId,
+        "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
+      ),
+      supabase.from("winerim_push_tracking" as any)
+        .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at")
+        .eq("connection_id", connectionId)
+        .then(r => r.data || []),
+    ]);
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
+
+    // Build tracking lookup: winerim_wine_id -> { BOTTLE: {...}, GLASS: {...}, MAGNUM: {...} }
+    const trackingMap: Record<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>> = {};
+    for (const t of trackingData as any[]) {
+      if (!trackingMap[t.winerim_wine_id]) trackingMap[t.winerim_wine_id] = {};
+      trackingMap[t.winerim_wine_id][t.format] = {
+        sync_status: t.sync_status,
+        last_error: t.last_error,
+        pushed_at: t.pushed_at,
+        verified_at: t.verified_at,
+      };
+    }
+    setPushTracking(trackingMap);
 
     const latestEnriched = rows
       .filter((w) =>
@@ -1678,6 +1698,22 @@ function StepWinerimCatalog({
           <div><span className="text-muted-foreground block">With Magnum Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0).length}</span></div>
           <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
         </div>
+        {/* Push tracking stats */}
+        {Object.keys(pushTracking).length > 0 && (() => {
+          const allFormats = Object.values(pushTracking).flatMap(wt => Object.values(wt));
+          const byStatus: Record<string, number> = {};
+          for (const f of allFormats) { byStatus[f.sync_status] = (byStatus[f.sync_status] || 0) + 1; }
+          return (
+            <div className="grid grid-cols-5 gap-2 mt-2">
+              {["NOT_PUSHED", "QUEUED", "PUSHED", "VERIFIED", "FAILED"].map(s => (
+                <div key={s} className="text-center rounded border border-border p-1.5">
+                  <p className="text-[10px] text-muted-foreground">{s}</p>
+                  <p className={`text-sm font-bold ${s === "VERIFIED" ? "text-success" : s === "FAILED" ? "text-destructive" : "text-foreground"}`}>{byStatus[s] || 0}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {lastEnrichedAt && (
           <p className="text-[11px] text-muted-foreground">
             Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
@@ -2110,6 +2146,15 @@ function StepWinerimCatalog({
               if (w.serve_by_glass && !glassOk) blockReasons.push("GLASS: serve_by_glass=true but glass_sale_price missing or ≤ 0");
               if (!w.serve_by_glass) blockReasons.push("GLASS: serve_by_glass=false");
 
+              const wineTracking = pushTracking[w.winerim_id] || {};
+              const getPushBadge = (fmt: string) => {
+                const t = wineTracking[fmt];
+                if (!t) return null;
+                const s = t.sync_status;
+                const variant = s === "VERIFIED" ? "default" : s === "PUSHED" ? "secondary" : s === "QUEUED" ? "outline" : s === "FAILED" ? "destructive" : "outline";
+                const icon = s === "VERIFIED" ? "✓" : s === "PUSHED" ? "↑" : s === "QUEUED" ? "⏳" : s === "FAILED" ? "✗" : "—";
+                return { variant, label: `${icon} ${s}`, error: t.last_error };
+              };
               const isExpanded = expandedWineId === w.winerim_id;
 
               return (
@@ -2206,7 +2251,39 @@ function StepWinerimCatalog({
                           </div>
                         </div>
 
-                        {/* Normalized prices */}
+                        {/* Push Tracking Status */}
+                        {Object.keys(wineTracking).length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Agora Push Status</p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {["BOTTLE", "GLASS", "MAGNUM"].map(fmt => {
+                                const t = wineTracking[fmt];
+                                if (!t) return (
+                                  <div key={fmt} className="rounded border border-border p-2 text-center">
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <p className="text-[9px] mt-0.5 text-muted-foreground">NOT_PUSHED</p>
+                                  </div>
+                                );
+                                const statusColor = t.sync_status === "VERIFIED" ? "border-success/30 bg-success/5"
+                                  : t.sync_status === "PUSHED" ? "border-primary/30 bg-primary/5"
+                                  : t.sync_status === "QUEUED" ? "border-accent bg-accent/30"
+                                  : t.sync_status === "FAILED" ? "border-destructive/30 bg-destructive/5"
+                                  : "border-border";
+                                return (
+                                  <div key={fmt} className={`rounded border p-2 text-center ${statusColor}`}>
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <Badge variant={t.sync_status === "VERIFIED" ? "default" : t.sync_status === "FAILED" ? "destructive" : "outline"} className="text-[9px] mt-0.5">
+                                      {t.sync_status}
+                                    </Badge>
+                                    {t.pushed_at && <p className="text-[9px] text-muted-foreground mt-0.5">Pushed: {new Date(t.pushed_at).toLocaleDateString()}</p>}
+                                    {t.verified_at && <p className="text-[9px] text-success mt-0.5">Verified: {new Date(t.verified_at).toLocaleDateString()}</p>}
+                                    {t.last_error && <p className="text-[9px] text-destructive mt-0.5 truncate" title={t.last_error}>{t.last_error.substring(0, 40)}</p>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                         <div className="mt-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Normalized Prices</p>
                           <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono">
