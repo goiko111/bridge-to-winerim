@@ -3044,6 +3044,15 @@ serve(async (req) => {
             last_error: failMsg,
             payload_json: updatedPayload,
           }).eq("id", task.id);
+          // ── PUSH TRACKING: Mark FAILED per format ──
+          for (const fmt of fmtTypes) {
+            await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+              sync_status: "FAILED",
+              task_id: task.id,
+              last_error: failMsg.substring(0, 500),
+              pushed_at: new Date().toISOString(),
+            });
+          }
           return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
