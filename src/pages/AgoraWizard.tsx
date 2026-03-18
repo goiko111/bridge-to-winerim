@@ -2130,7 +2130,15 @@ function StepWinerimCatalog({
               if (w.serve_by_glass && !glassOk) blockReasons.push("GLASS: serve_by_glass=true but glass_sale_price missing or ≤ 0");
               if (!w.serve_by_glass) blockReasons.push("GLASS: serve_by_glass=false");
 
-              const isExpanded = expandedWineId === w.winerim_id;
+              const wineTracking = pushTracking[w.winerim_id] || {};
+              const getPushBadge = (fmt: string) => {
+                const t = wineTracking[fmt];
+                if (!t) return null;
+                const s = t.sync_status;
+                const variant = s === "VERIFIED" ? "default" : s === "PUSHED" ? "secondary" : s === "QUEUED" ? "outline" : s === "FAILED" ? "destructive" : "outline";
+                const icon = s === "VERIFIED" ? "✓" : s === "PUSHED" ? "↑" : s === "QUEUED" ? "⏳" : s === "FAILED" ? "✗" : "—";
+                return { variant, label: `${icon} ${s}`, error: t.last_error };
+              };
 
               return (
                 <div key={w.winerim_id} className="bg-card hover:bg-secondary/30 transition-colors">
