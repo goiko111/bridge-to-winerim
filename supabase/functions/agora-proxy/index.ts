@@ -1235,7 +1235,7 @@ serve(async (req) => {
       );
     }
 
-    // ── SAVE SALES TO DB ──
+    // ── SAVE SALES TO DB (with Winerim resolution) ──
     if (action === "save-sales") {
       const day = businessDay;
       if (!day) {
@@ -1262,8 +1262,35 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
+      // ── Build resolution lookup: agora_product_id -> { winerim_wine_id, format } ──
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+
+      // Build lookup map: agora_product_id -> { winerim_wine_id, format }
+      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
+      // Priority 1: push tracking (verified/pushed products)
+      for (const t of (trackingRows || [])) {
+        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
+          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
+        }
+      }
+      // Priority 2: product mappings (confirmed matches)
+      for (const m of (mappingRows || [])) {
+        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
+          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
+        }
+      }
+
       let savedEvents = 0;
       let savedLines = 0;
+      let resolvedLines = 0;
+      let unresolvedLines = 0;
 
       for (const inv of invoices) {
         const docId = String(inv.InvoiceId || inv.Id || "");
@@ -1282,12 +1309,22 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
+            const productId = String(line.ProductId || "");
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
+
+            // Resolve to winerim wine
+            const resolution = resolutionMap.get(productId);
+            const winerimProductId = resolution?.winerim_wine_id || null;
+            const isResolved = !!winerimProductId;
+            if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
+
             lineData.push({
-              provider_product_id: String(line.ProductId || ""),
+              provider_product_id: productId,
               name: pName, format: normalizedFmt, family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
+              winerim_product_id: winerimProductId,
+              mapped: isResolved,
             });
           }
         }
@@ -1320,9 +1357,117 @@ serve(async (req) => {
         .eq("id", connectionId);
 
       return new Response(
-        JSON.stringify({ success: true, savedEvents, savedLines, businessDay: day }),
+        JSON.stringify({ success: true, savedEvents, savedLines, resolvedLines, unresolvedLines, businessDay: day }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // ── RESOLVE EXISTING SALES LINES (re-resolution pass) ──
+    if (action === "resolve-sales") {
+      // Build resolution lookup
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+
+      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
+      for (const t of (trackingRows || [])) {
+        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
+          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
+        }
+      }
+      for (const m of (mappingRows || [])) {
+        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
+          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
+        }
+      }
+
+      // Fetch unresolved wine candidate lines
+      const { data: unresolvedLines } = await supabase
+        .from("sales_line_items")
+        .select("id, provider_product_id")
+        .eq("connection_id", connectionId)
+        .eq("is_wine_candidate", true)
+        .eq("mapped", false)
+        .limit(1000);
+
+      let resolved = 0;
+      for (const line of (unresolvedLines || [])) {
+        const resolution = resolutionMap.get(line.provider_product_id || "");
+        if (resolution) {
+          await supabase.from("sales_line_items").update({
+            winerim_product_id: resolution.winerim_wine_id,
+            mapped: true,
+          }).eq("id", line.id);
+          resolved++;
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, totalUnresolved: (unresolvedLines || []).length, resolved, remaining: (unresolvedLines || []).length - resolved }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── SALES ANALYTICS ──
+    if (action === "sales-analytics") {
+      const { data: events } = await supabase
+        .from("sales_events")
+        .select("id, business_day, total_amount, line_count")
+        .eq("connection_id", connectionId)
+        .order("business_day", { ascending: false })
+        .limit(100);
+
+      const { data: lines } = await supabase
+        .from("sales_line_items")
+        .select("id, format, is_wine_candidate, mapped, winerim_product_id, quantity, total_amount, name, provider_product_id, family")
+        .eq("connection_id", connectionId)
+        .limit(5000);
+
+      const allLines = lines || [];
+      const wineLines = allLines.filter((l: any) => l.is_wine_candidate);
+      const resolvedLines = wineLines.filter((l: any) => l.mapped && l.winerim_product_id);
+      const unresolvedLines = wineLines.filter((l: any) => !l.mapped || !l.winerim_product_id);
+
+      // By format breakdown
+      const byFormat: Record<string, { count: number; qty: number; total: number }> = {};
+      for (const l of resolvedLines) {
+        const fmt = (l.format || "UNKNOWN").toUpperCase();
+        if (!byFormat[fmt]) byFormat[fmt] = { count: 0, qty: 0, total: 0 };
+        byFormat[fmt].count++;
+        byFormat[fmt].qty += Number(l.quantity || 0);
+        byFormat[fmt].total += Number(l.total_amount || 0);
+      }
+
+      // Unresolved grouped by product
+      const unresolvedByProduct: Record<string, { name: string; family: string; count: number; qty: number; total: number }> = {};
+      for (const l of unresolvedLines) {
+        const pid = l.provider_product_id || "unknown";
+        if (!unresolvedByProduct[pid]) unresolvedByProduct[pid] = { name: l.name, family: l.family || "", count: 0, qty: 0, total: 0 };
+        unresolvedByProduct[pid].count++;
+        unresolvedByProduct[pid].qty += Number(l.quantity || 0);
+        unresolvedByProduct[pid].total += Number(l.total_amount || 0);
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        totalEvents: (events || []).length,
+        totalLines: allLines.length,
+        totalWineLines: wineLines.length,
+        resolvedCount: resolvedLines.length,
+        unresolvedCount: unresolvedLines.length,
+        byFormat,
+        unresolvedByProduct: Object.entries(unresolvedByProduct)
+          .sort(([, a], [, b]) => b.total - a.total)
+          .slice(0, 50)
+          .map(([pid, v]) => ({ provider_product_id: pid, ...v })),
+        lastSyncDay: (events || [])[0]?.business_day || null,
+        events: (events || []).slice(0, 30),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── DISCOVER CATALOG ENDPOINT ──
