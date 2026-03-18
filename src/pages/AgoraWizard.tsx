@@ -2139,6 +2139,7 @@ function StepWinerimCatalog({
                 const icon = s === "VERIFIED" ? "✓" : s === "PUSHED" ? "↑" : s === "QUEUED" ? "⏳" : s === "FAILED" ? "✗" : "—";
                 return { variant, label: `${icon} ${s}`, error: t.last_error };
               };
+              const isExpanded = expandedWineId === w.winerim_id;
 
               return (
                 <div key={w.winerim_id} className="bg-card hover:bg-secondary/30 transition-colors">
