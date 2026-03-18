@@ -3570,27 +3570,46 @@ function StepMasterData({
                     PriceList → SaleCenter mapping ({masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active, {masterData.priceLists.filter((pl: any) => !!pl.DeletionDate).length} deleted)
                   </summary>
                   <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
-                    {masterData.priceLists.map((pl: any) => {
-                      const isDeleted = !!pl.DeletionDate;
-                      const linkedCenters = masterData.saleCenters.filter(
-                        (sc: any) => sc.CurrentPriceListId === pl.Id && !sc.DeletionDate
-                      );
-                      return (
-                        <div key={pl.Id} className={`flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0 ${isDeleted ? "opacity-50" : ""}`}>
-                          <Badge variant={isDeleted ? "secondary" : "outline"} className={`text-[9px] px-1.5 py-0 shrink-0 font-mono ${isDeleted ? "line-through" : ""}`}>{pl.Id}</Badge>
-                          <span className={`font-medium min-w-[80px] ${isDeleted ? "text-muted-foreground line-through" : "text-foreground"}`}>{pl.Name}</span>
-                          {isDeleted ? (
-                            <Badge variant="secondary" className="text-[8px] px-1 py-0">🗑 Deleted {String(pl.DeletionDate).slice(0, 10)}</Badge>
-                          ) : linkedCenters.length > 0 ? (
-                            <span className="text-muted-foreground">
-                              → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground italic">No linked SaleCenter</span>
-                          )}
-                        </div>
-                      );
-                    })}
+                    {/* In-scope PLs first, then out-of-scope, then deleted */}
+                    {(() => {
+                      const activeSCIds = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate && !!sc.CurrentPriceListId);
+                      const scopedIds = new Set(activeSCIds.map((sc: any) => String(sc.CurrentPriceListId)));
+                      const sorted = [...masterData.priceLists].sort((a: any, b: any) => {
+                        const aDeleted = !!a.DeletionDate;
+                        const bDeleted = !!b.DeletionDate;
+                        const aInScope = !aDeleted && scopedIds.has(String(a.Id));
+                        const bInScope = !bDeleted && scopedIds.has(String(b.Id));
+                        if (aInScope !== bInScope) return aInScope ? -1 : 1;
+                        if (aDeleted !== bDeleted) return aDeleted ? 1 : -1;
+                        return 0;
+                      });
+                      return sorted.map((pl: any) => {
+                        const isDeleted = !!pl.DeletionDate;
+                        const isInScope = !isDeleted && scopedIds.has(String(pl.Id));
+                        const linkedCenters = masterData.saleCenters.filter(
+                          (sc: any) => sc.CurrentPriceListId === pl.Id && !sc.DeletionDate
+                        );
+                        return (
+                          <div key={pl.Id} className={`flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0 ${isDeleted ? "opacity-40" : !isInScope ? "opacity-60" : ""}`}>
+                            <Badge variant={isDeleted ? "secondary" : isInScope ? "default" : "outline"} className={`text-[9px] px-1.5 py-0 shrink-0 font-mono ${isDeleted ? "line-through" : ""} ${isInScope ? "bg-emerald-600" : ""}`}>{pl.Id}</Badge>
+                            <span className={`font-medium min-w-[80px] ${isDeleted ? "text-muted-foreground line-through" : "text-foreground"}`}>{pl.Name}</span>
+                            {isDeleted ? (
+                              <Badge variant="secondary" className="text-[8px] px-1 py-0">🗑 Deleted {String(pl.DeletionDate).slice(0, 10)}</Badge>
+                            ) : isInScope ? (
+                              <span className="text-muted-foreground">
+                                <Badge variant="outline" className="text-[8px] px-1 py-0 mr-1 border-emerald-500/40 text-emerald-600">IN SCOPE</Badge>
+                                → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">
+                                <Badge variant="outline" className="text-[8px] px-1 py-0 mr-1">OUT OF SCOPE</Badge>
+                                No linked SaleCenter — excluded from verification
+                              </span>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </details>
               )}
