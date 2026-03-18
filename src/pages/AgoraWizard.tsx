@@ -1800,7 +1800,7 @@ function StepWinerimCatalog({
       </div>
 
       {/* Wines already in Ágora */}
-      <AgoraWinesInPosPanel connectionId={connectionId} families={families} />
+      <AgoraWinesInPosPanel connectionId={connectionId} />
 
       {/* Stats */}
       <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
