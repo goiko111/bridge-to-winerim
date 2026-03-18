@@ -262,6 +262,37 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+// ── PUSH TRACKING HELPER ──
+// deno-lint-ignore no-explicit-any
+async function upsertPushTracking(supabaseClient: any, connId: string, winerimWineId: string, format: string, updates: {
+  sync_status: string;
+  agora_product_id?: string;
+  agora_family_id?: string;
+  task_id?: string;
+  last_error?: string | null;
+  pushed_at?: string | null;
+  verified_at?: string | null;
+}) {
+  const agoraProductId = updates.agora_product_id || (
+    format === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
+    : format === "GLASS" ? String(700000 + Number(winerimWineId || 0))
+    : String(500000 + Number(winerimWineId || 0))
+  );
+  await supabaseClient.from("winerim_push_tracking").upsert({
+    connection_id: connId,
+    winerim_wine_id: winerimWineId,
+    format,
+    agora_product_id: agoraProductId,
+    agora_family_id: updates.agora_family_id || null,
+    source: "WINERIM",
+    sync_status: updates.sync_status,
+    task_id: updates.task_id || null,
+    last_error: updates.last_error || null,
+    pushed_at: updates.pushed_at || null,
+    verified_at: updates.verified_at || null,
+  }, { onConflict: "connection_id,winerim_wine_id,format" });
+}
+
 // ── DELETION DATE FILTER ──
 // Agora entities with a DeletionDate are soft-deleted and must be excluded from all operational logic.
 // deno-lint-ignore no-explicit-any
