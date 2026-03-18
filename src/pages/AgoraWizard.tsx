@@ -1408,28 +1408,62 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const [data, trackingData] = await Promise.all([
+    const [data, trackingData, masterData] = await Promise.all([
       fetchAllWinerimWines(
         connectionId,
         "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
       ),
       supabase.from("winerim_push_tracking" as any)
-        .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at")
+        .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at, agora_product_id, agora_family_id")
         .eq("connection_id", connectionId)
         .then(r => r.data || []),
+      supabase.from("agora_master_data")
+        .select("families_json, products_summary_json")
+        .eq("connection_id", connectionId)
+        .maybeSingle()
+        .then(r => r.data || null),
     ]);
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
 
+    const familyMap: Record<string, string> = {};
+    const familiesArr = ((masterData as any)?.families_json as any[]) || [];
+    for (const f of familiesArr) {
+      familyMap[String(f.Id)] = f.Name || f.ButtonText || String(f.Id);
+    }
+
+    const productFamilyMap: Record<string, { familyId: string | null; familyName: string | null }> = {};
+    const productsArr = (((masterData as any)?.products_summary_json as any[]) || []);
+    for (const p of productsArr) {
+      const familyId = p?.FamilyId ? String(p.FamilyId) : null;
+      productFamilyMap[String(p.Id)] = {
+        familyId,
+        familyName: familyId ? (familyMap[familyId] || familyId) : null,
+      };
+    }
+
     // Build tracking lookup: winerim_wine_id -> { BOTTLE: {...}, GLASS: {...}, MAGNUM: {...} }
-    const trackingMap: Record<string, Record<string, { sync_status: string; last_error: string | null; pushed_at: string | null; verified_at: string | null }>> = {};
+    const trackingMap: Record<string, Record<string, {
+      sync_status: string;
+      last_error: string | null;
+      pushed_at: string | null;
+      verified_at: string | null;
+      agora_product_id?: string | null;
+      agora_family_id?: string | null;
+      agora_family_name?: string | null;
+    }>> = {};
     for (const t of trackingData as any[]) {
       if (!trackingMap[t.winerim_wine_id]) trackingMap[t.winerim_wine_id] = {};
+      const fallbackFamily = t.agora_product_id ? productFamilyMap[String(t.agora_product_id)] : null;
+      const resolvedFamilyId = t.agora_family_id ? String(t.agora_family_id) : (fallbackFamily?.familyId || null);
       trackingMap[t.winerim_wine_id][t.format] = {
         sync_status: t.sync_status,
         last_error: t.last_error,
         pushed_at: t.pushed_at,
         verified_at: t.verified_at,
+        agora_product_id: t.agora_product_id,
+        agora_family_id: resolvedFamilyId,
+        agora_family_name: resolvedFamilyId ? (familyMap[resolvedFamilyId] || fallbackFamily?.familyName || resolvedFamilyId) : (fallbackFamily?.familyName || null),
       };
     }
     setPushTracking(trackingMap);
