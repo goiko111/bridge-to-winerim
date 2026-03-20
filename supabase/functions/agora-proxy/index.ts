@@ -1362,6 +1362,154 @@ serve(async (req) => {
       );
     }
 
+    // ── AUTO-SYNC SALES (find pending days and save them) ──
+    if (action === "auto-sync-sales") {
+      // Find last synced day
+      const lastSynced = connection.last_business_day_synced;
+      const startDate = lastSynced
+        ? new Date(new Date(lastSynced).getTime() + 86400000)
+        : new Date(Date.now() - 30 * 86400000);
+      const today = new Date();
+      const yesterday = new Date(today.getTime() - 86400000);
+
+      // Scan from startDate to yesterday (closed days only)
+      const pendingDays: string[] = [];
+      const current = new Date(startDate);
+      while (current <= yesterday && pendingDays.length < 30) {
+        const dayStr = current.toISOString().split("T")[0];
+        const url = `${baseUrlClean}/api/export/?business-day=${dayStr}&filter=Invoices`;
+        try {
+          const res = await fetch(url, { headers });
+          if (res.ok) {
+            const rawData = await res.json();
+            const invoices = parseInvoices(rawData);
+            if (invoices.length > 0) pendingDays.push(dayStr);
+          } else {
+            await res.text();
+          }
+        } catch (err) { /* skip */ }
+        current.setDate(current.getDate() + 1);
+      }
+
+      if (pendingDays.length === 0) {
+        return new Response(
+          JSON.stringify({ success: true, daysSynced: 0, message: "No pending days to sync" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Build resolution lookup once
+      const { data: familyRules } = await supabase
+        .from("wine_family_rules").select("family_name, is_wine").eq("connection_id", connectionId);
+      const customWineFamilies = familyRules
+        ?.filter((r: { is_wine: boolean }) => r.is_wine)
+        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
+
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+
+      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
+      for (const t of (trackingRows || [])) {
+        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
+          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
+        }
+      }
+      for (const m of (mappingRows || [])) {
+        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
+          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
+        }
+      }
+
+      let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
+      let lastDay = "";
+
+      for (const day of pendingDays) {
+        const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
+        const res = await fetch(url, { headers });
+        if (!res.ok) { await res.text(); continue; }
+        const rawData = await res.json();
+        const invoices = parseInvoices(rawData);
+
+        for (const inv of invoices) {
+          const docId = String(inv.InvoiceId || inv.Id || "");
+          const items = inv.InvoiceItems || [];
+          let docTotal = 0;
+          const lineData: Record<string, unknown>[] = [];
+
+          for (const item of items) {
+            for (const line of (item.Lines || [])) {
+              const rawTotal = Number(line.TotalAmount || 0);
+              const uP = Number(line.UnitPrice || 0);
+              const qty = Number(line.Quantity || 0);
+              const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+              docTotal += lineTotal;
+              const pName = String(line.ProductName || "");
+              const fName = String(line.SaleFormatName || "");
+              const normalizedFmt = normalizeLineFormat(pName, fName);
+              const fam = String(line.FamilyName || "");
+              const productId = String(line.ProductId || "");
+              const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
+
+              const resolution = resolutionMap.get(productId);
+              const winerimProductId = resolution?.winerim_wine_id || null;
+              const isResolved = !!winerimProductId;
+              if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
+
+              lineData.push({
+                provider_product_id: productId,
+                name: pName, format: normalizedFmt, family: fam,
+                quantity: qty, unit_price: uP, total_amount: lineTotal,
+                vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
+                winerim_product_id: winerimProductId,
+                mapped: isResolved,
+              });
+            }
+          }
+
+          const { data: eventRow, error: eventErr } = await supabase
+            .from("sales_events")
+            .upsert({
+              connection_id: connectionId, provider_doc_id: docId, business_day: day,
+              doc_type: String(inv.Type || "BasicInvoice"),
+              total_amount: Number(inv.TotalAmount || docTotal),
+              total_tax: Number(inv.TotalTaxAmount || 0),
+              total_net: Number(inv.TotalNetAmount || 0),
+              line_count: lineData.length, raw_json: inv,
+            }, { onConflict: "connection_id,provider_doc_id" })
+            .select("id").single();
+
+          if (eventErr || !eventRow) continue;
+          totalEvents++;
+
+          await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+          const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
+          if (linesToInsert.length > 0) {
+            const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
+            if (!lineErr) totalLines += linesToInsert.length;
+          }
+        }
+        lastDay = day;
+      }
+
+      if (lastDay) {
+        await supabase.from("pos_connections")
+          .update({ last_business_day_synced: lastDay, last_sync_at: new Date().toISOString() })
+          .eq("id", connectionId);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true, daysSynced: pendingDays.length, totalEvents, totalLines, resolvedLines, unresolvedLines }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── RESOLVE EXISTING SALES LINES (re-resolution pass) ──
     if (action === "resolve-sales") {
       // Build resolution lookup
