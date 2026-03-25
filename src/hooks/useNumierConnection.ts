@@ -72,12 +72,17 @@ export function useNumierConnection() {
   // ── Derived: active TPV id and source ─────────────────────
 
   const activeTpvId = useMemo(() => {
-    return selectedTpvId || config.selected_tpv_id || config.discovered_locations?.[0]?.id || null;
+    if (selectedTpvId || config.selected_tpv_id) return selectedTpvId || config.selected_tpv_id || null;
+    const locs = config.discovered_locations || [];
+    // Fallback only if exactly one location
+    if (locs.length === 1 && locs[0]?.id) return locs[0].id;
+    return null;
   }, [selectedTpvId, config]);
 
-  const tpvSource = useMemo((): "selected" | "fallback" | "none" => {
+  const tpvSource = useMemo((): "selected" | "fallback_single" | "none" => {
     if (selectedTpvId || config.selected_tpv_id) return "selected";
-    if (config.discovered_locations?.[0]?.id) return "fallback";
+    const locs = config.discovered_locations || [];
+    if (locs.length === 1 && locs[0]?.id) return "fallback_single";
     return "none";
   }, [selectedTpvId, config]);
 
