@@ -140,7 +140,7 @@ export default function NumierWizard() {
             </div>
 
             <Button
-              onClick={() => testConnection(apiBaseUrl, apiToken)}
+              onClick={() => testConnection(apiBaseUrl, apiToken, locationName || undefined)}
               disabled={!apiBaseUrl || !apiToken || testStatus === "testing"}
               className="w-full"
             >
