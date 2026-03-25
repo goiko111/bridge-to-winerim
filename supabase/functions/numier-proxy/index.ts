@@ -53,7 +53,6 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
 function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback_single" | "none"; locationCount: number } {
   const locs = cfg.discovered_locations || [];
   if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
-  // Fallback ONLY if exactly one location discovered
   if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
   return { tpvId: null, source: "none", locationCount: locs.length };
 }
@@ -161,6 +160,8 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
 
   try {
     const allTickets: Record<string, unknown>[] = [];
+    const allTicketIds = new Set<string>();
+    let duplicateCount = 0;
     let page = 1;
     let totalPages = 1;
 
@@ -181,7 +182,16 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
         return json({ success: false, message: data.message || "API returned response=false" });
       }
 
-      allTickets.push(...(data.result || []));
+      const pageTickets = data.result || [];
+      for (const t of pageTickets) {
+        const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
+        if (allTicketIds.has(tid)) {
+          duplicateCount++;
+        } else {
+          allTicketIds.add(tid);
+        }
+      }
+      allTickets.push(...pageTickets);
       totalPages = data.totalpages || 1;
       page++;
     } while (page <= totalPages);
@@ -221,6 +231,13 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       };
     });
 
+    // ── Pagination & normalization metrics ──
+    const ticketsWithNoLines = salesEvents.filter((e) => e.line_count === 0).length;
+    const allLines = salesEvents.flatMap((e) => e.lines);
+    const linesWithZeroPrice = allLines.filter((l) => l.unit_price === 0).length;
+    const linesWithoutProductId = allLines.filter((l) => !l.provider_product_id).length;
+    const businessDays = [...new Set(salesEvents.map((e) => e.business_day))].sort();
+
     if (salesEvents.length > 0) {
       const updatedCfg = {
         ...cfg,
@@ -237,8 +254,24 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       tpvSource: source,
       salesEvents,
       count: salesEvents.length,
-      totalPages,
-      ticketsFetched: allTickets.length,
+      // Pagination metrics
+      pagination: {
+        pages_read: totalPages,
+        tickets_seen: allTickets.length,
+        unique_ticket_ids: allTicketIds.size,
+        duplicate_ticket_ids_count: duplicateCount,
+      },
+      // Normalization metrics
+      normalization: {
+        events_count: salesEvents.length,
+        total_lines: allLines.length,
+        tickets_without_lines: ticketsWithNoLines,
+        lines_with_zero_price: linesWithZeroPrice,
+        lines_without_product_id: linesWithoutProductId,
+        business_day_range: businessDays.length > 0
+          ? { min: businessDays[0], max: businessDays[businessDays.length - 1] }
+          : null,
+      },
     });
   } catch (err) {
     return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
@@ -247,8 +280,7 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
 
 /**
  * SAVE_SALES — persist normalized sales to DB.
- * Uses deterministic line_key to avoid collisions between lines of the same product
- * within the same ticket, while keeping idempotency across re-runs.
+ * Delete + insert per event for idempotency without collisions.
  */
 async function handleSaveSales(connId: string, businessDay: string, endDate?: string) {
   const fetchRes = await handleReadSales(connId, businessDay, endDate);
@@ -282,8 +314,6 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
     if (evErr || !eventRow) continue;
     savedEvents++;
 
-    // Delete existing lines for this event, then insert fresh.
-    // This avoids collision issues from onConflict on non-unique combos.
     await sb()
       .from("sales_line_items")
       .delete()
@@ -314,7 +344,18 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
     last_business_day_synced: businessDay,
   }).eq("id", connId);
 
-  return json({ success: true, savedEvents, savedLines, businessDay });
+  return json({
+    success: true,
+    savedEvents,
+    savedLines,
+    businessDay,
+    pagination: fetchBody.pagination,
+    normalization: {
+      ...fetchBody.normalization,
+      events_saved: savedEvents,
+      lines_saved: savedLines,
+    },
+  });
 }
 
 async function handleReadCategories(connId: string) {
@@ -429,6 +470,223 @@ async function handleReadProducts(connId: string) {
   }
 }
 
+// ── Diagnose TPV ────────────────────────────────────────────
+// Validates that a given TPV id actually works for sales, categories and products endpoints.
+
+interface DiagnoseProbe {
+  endpoint: string;
+  http_status: number | null;
+  success: boolean;
+  error: string | null;
+  detail: Record<string, unknown>;
+}
+
+async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
+  const conn = await getConnection(connId);
+  const cfg = getNumierConfig(conn.provider_config);
+  const baseUrl = resolveBaseUrl(conn, cfg);
+  const headers = buildHeaders(conn.api_token);
+
+  const tpvId = overrideTpvId || cfg.selected_tpv_id;
+  if (!tpvId) {
+    return json({ success: false, message: "No TPV id provided for diagnosis." }, 400);
+  }
+
+  // Yesterday as a safe short range
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const diagDay = yesterday.toISOString().slice(0, 10);
+
+  const probes: DiagnoseProbe[] = [];
+
+  // ── Probe 1: getLocales ──
+  try {
+    const res = await fetch(`${baseUrl}/getLocales`, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
+    const body = await res.json();
+    const locIds = (body.result || []).map((l: any) => String(l.id));
+    probes.push({
+      endpoint: "getLocales",
+      http_status: res.status,
+      success: res.ok && body.response === true,
+      error: null,
+      detail: {
+        location_count: locIds.length,
+        location_ids: locIds,
+        tpv_id_found_in_locales: locIds.includes(tpvId),
+      },
+    });
+  } catch (err) {
+    probes.push({ endpoint: "getLocales", http_status: null, success: false, error: (err as Error).message, detail: {} });
+  }
+
+  // ── Probe 2: v2/sales/{idTpv} (1 day, page 1) ──
+  try {
+    const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${diagDay}&end_date=${diagDay}&pag=1`;
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
+    const body = await res.json();
+    const tickets = body.result || [];
+    const totalPages = body.totalpages || 1;
+
+    // Pagination integrity: read ALL pages and check for duplicates
+    const allTicketIds: string[] = [];
+    const ticketIdSet = new Set<string>();
+    let duplicatesFound = 0;
+    let pagesRead = 1;
+
+    for (const t of tickets) {
+      const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
+      if (ticketIdSet.has(tid)) duplicatesFound++;
+      else ticketIdSet.add(tid);
+      allTicketIds.push(tid);
+    }
+
+    // Read remaining pages if any
+    if (totalPages > 1) {
+      for (let p = 2; p <= Math.min(totalPages, 5); p++) {
+        try {
+          const pageUrl = `${baseUrl}/v2/sales/${tpvId}?start_date=${diagDay}&end_date=${diagDay}&pag=${p}`;
+          const pageRes = await fetch(pageUrl, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
+          const pageBody = await pageRes.json();
+          pagesRead++;
+          for (const t of (pageBody.result || [])) {
+            const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
+            if (ticketIdSet.has(tid)) duplicatesFound++;
+            else ticketIdSet.add(tid);
+            allTicketIds.push(tid);
+          }
+        } catch (_e) {
+          // swallow page errors — report what we got
+        }
+      }
+    }
+
+    // Line-level analysis on first page tickets
+    let totalLines = 0;
+    let linesZeroPrice = 0;
+    let linesNoProductId = 0;
+    let ticketsNoLines = 0;
+    for (const t of tickets) {
+      const items = t.InvoiceItems || [];
+      if (items.length === 0) ticketsNoLines++;
+      totalLines += items.length;
+      for (const item of items) {
+        if (!item.idProduct) linesNoProductId++;
+        if (Number(item.price || 0) === 0) linesZeroPrice++;
+      }
+    }
+
+    probes.push({
+      endpoint: `v2/sales/${tpvId}`,
+      http_status: res.status,
+      success: res.ok && body.response === true,
+      error: (!res.ok || !body.response) ? (body.message || `HTTP ${res.status}`) : null,
+      detail: {
+        date_queried: diagDay,
+        total_pages_reported: totalPages,
+        pages_read: pagesRead,
+        tickets_page1: tickets.length,
+        tickets_all_pages: allTicketIds.length,
+        unique_ticket_ids: ticketIdSet.size,
+        duplicate_ticket_ids: duplicatesFound,
+        // Line-level (page 1 only for speed)
+        total_lines_page1: totalLines,
+        tickets_without_lines: ticketsNoLines,
+        lines_with_zero_price: linesZeroPrice,
+        lines_without_product_id: linesNoProductId,
+        sample_ticket_id: allTicketIds[0] || null,
+      },
+    });
+  } catch (err) {
+    probes.push({ endpoint: `v2/sales/${tpvId}`, http_status: null, success: false, error: (err as Error).message, detail: {} });
+  }
+
+  // ── Probe 3: getCategoriesByTpv ──
+  try {
+    const res = await fetch(`${baseUrl}/getCategoriesByTpv/${tpvId}`, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
+    const body = await res.json();
+    const cats = body.result || [];
+    probes.push({
+      endpoint: `getCategoriesByTpv/${tpvId}`,
+      http_status: res.status,
+      success: res.ok && body.response === true,
+      error: (!res.ok || !body.response) ? (body.message || `HTTP ${res.status}`) : null,
+      detail: { categories_count: cats.length, sample: cats.slice(0, 3).map((c: any) => ({ id: c.id, name: c.name })) },
+    });
+  } catch (err) {
+    probes.push({ endpoint: `getCategoriesByTpv/${tpvId}`, http_status: null, success: false, error: (err as Error).message, detail: {} });
+  }
+
+  // ── Probe 4: getProducts (page 1 only) ──
+  try {
+    const res = await fetch(`${baseUrl}/getProducts/${tpvId}?pag=1`, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
+    const body = await res.json();
+    const prods = body.result || [];
+    probes.push({
+      endpoint: `getProducts/${tpvId}`,
+      http_status: res.status,
+      success: res.ok && body.response === true,
+      error: (!res.ok || !body.response) ? (body.message || `HTTP ${res.status}`) : null,
+      detail: { products_page1: prods.length, sample: prods.slice(0, 3).map((p: any) => ({ id: p.id, name: p.name })) },
+    });
+  } catch (err) {
+    probes.push({ endpoint: `getProducts/${tpvId}`, http_status: null, success: false, error: (err as Error).message, detail: {} });
+  }
+
+  // ── Conclusion ──
+  const salesProbe = probes.find((p) => p.endpoint.startsWith("v2/sales"));
+  const catProbe = probes.find((p) => p.endpoint.startsWith("getCategoriesByTpv"));
+  const prodProbe = probes.find((p) => p.endpoint.startsWith("getProducts"));
+  const locProbe = probes.find((p) => p.endpoint === "getLocales");
+
+  let conclusion: "valid" | "suspicious" | "invalid" = "valid";
+  const warnings: string[] = [];
+
+  if (!salesProbe?.success) {
+    conclusion = "invalid";
+    warnings.push("Sales endpoint failed — this TPV id may not be valid for /v2/sales.");
+  }
+  if (salesProbe?.success && (salesProbe.detail.tickets_page1 as number) === 0) {
+    warnings.push("Sales returned 0 tickets for yesterday. Possibly no sales or wrong TPV.");
+    if (conclusion === "valid") conclusion = "suspicious";
+  }
+  if (salesProbe?.detail.duplicate_ticket_ids && (salesProbe.detail.duplicate_ticket_ids as number) > 0) {
+    warnings.push(`${salesProbe.detail.duplicate_ticket_ids} duplicate ticket IDs found across pages.`);
+    if (conclusion === "valid") conclusion = "suspicious";
+  }
+  if (!catProbe?.success) {
+    warnings.push("Categories endpoint failed for this TPV id.");
+    if (conclusion === "valid") conclusion = "suspicious";
+  }
+  if (!prodProbe?.success) {
+    warnings.push("Products endpoint failed for this TPV id.");
+    if (conclusion === "valid") conclusion = "suspicious";
+  }
+  if (locProbe?.success && !(locProbe.detail.tpv_id_found_in_locales as boolean)) {
+    warnings.push("Selected TPV id was NOT found in getLocales results.");
+    if (conclusion === "valid") conclusion = "suspicious";
+  }
+
+  // Persist diagnosis result
+  const diagResult = { conclusion, warnings, probes, diagnosed_at: new Date().toISOString() };
+  const updatedCfg = {
+    ...cfg,
+    last_diagnosis: diagResult,
+    verified_capabilities: {
+      ...(cfg.verified_capabilities || {}),
+      tpv_diagnosis: conclusion,
+    },
+  };
+  await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
+
+  return json({
+    success: true,
+    tpv_id: tpvId,
+    conclusion,
+    warnings,
+    probes,
+  });
+}
+
 // ── Main router ─────────────────────────────────────────────
 
 serve(async (req) => {
@@ -469,6 +727,9 @@ serve(async (req) => {
         return await handleSaveSales(connectionId, day, payload.endDate);
       }
 
+      case "diagnose-tpv":
+        return await handleDiagnoseTpv(connectionId, payload.tpvId || payload.selected_tpv_id);
+
       case "write-catalog":
         return json({ error: "write-catalog not demonstrated for Numier", status: "NOT_DEMONSTRATED" }, 501);
 
@@ -478,7 +739,7 @@ serve(async (req) => {
       default:
         return json({ error: "Unknown action", available: [
           "test", "healthcheck", "read-locations", "read-categories",
-          "read-products", "read-sales", "fetch-day", "save-sales",
+          "read-products", "read-sales", "fetch-day", "save-sales", "diagnose-tpv",
         ] }, 400);
     }
   } catch (err) {
