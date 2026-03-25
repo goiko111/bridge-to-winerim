@@ -282,6 +282,8 @@ export function getProviderConfig<T = Record<string, unknown>>(
     touchbistro: getTouchBistroConfig,
     ICG: getIcgConfig,
     icg: getIcgConfig,
+    NUMIER: getNumierConfig,
+    numier: getNumierConfig,
   };
   const getter = map[provider];
   return (getter ? getter(raw) : parseJson(raw)) as T;
