@@ -262,6 +262,14 @@ export default function NumierWizard() {
               </div>
             </div>
 
+            {/* TPV Diagnosis Panel */}
+            <NumierTpvDiagnostics
+              activeTpvId={activeTpvId}
+              diagnosing={diagnosing}
+              diagnosisResult={diagnosisResult}
+              onDiagnose={diagnoseTpv}
+            />
+
             <div className="flex gap-2 items-end">
               <div className="flex-1">
                 <label className="text-sm font-medium text-foreground">Business Day</label>
