@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
 import { useNavigate } from "react-router-dom";
 
 const steps = [
