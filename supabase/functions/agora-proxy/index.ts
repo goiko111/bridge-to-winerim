@@ -3557,29 +3557,30 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── PROCESS XML OUTBOUND QUEUE (batch) ──
+    // ── PROCESS XML OUTBOUND QUEUE (all batches, 10 at a time) ──
     if (action === "process-xml-outbound-queue") {
-      const { data: tasks } = await supabase
-        .from("outbound_tasks").select("id")
-        .eq("connection_id", connectionId)
-        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
-        .eq("status", "QUEUED")
-        .order("created_at").limit(10);
-
-      if (!tasks || tasks.length === 0) {
-        return new Response(JSON.stringify({ success: true, processed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
+      const BATCH_SIZE = 10;
       let processed = 0, succeeded = 0, failed = 0;
-      for (const t of tasks) {
-        try {
-          const { data: result } = await supabase.functions.invoke("agora-proxy", {
-            body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
-          });
-          processed++;
-          if (result?.status === "SUCCESS") succeeded++; else failed++;
-        } catch (_) { failed++; processed++; }
+
+      while (true) {
+        const { data: tasks } = await supabase
+          .from("outbound_tasks").select("id")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .eq("status", "QUEUED")
+          .order("created_at").limit(BATCH_SIZE);
+
+        if (!tasks || tasks.length === 0) break;
+
+        for (const t of tasks) {
+          try {
+            const { data: result } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
+            });
+            processed++;
+            if (result?.status === "SUCCESS") succeeded++; else failed++;
+          } catch (_) { failed++; processed++; }
+        }
       }
 
       return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
