@@ -162,6 +162,35 @@ export interface IcgConfig {
   require_manual_approval?: boolean;
 }
 
+export interface NumierConfig {
+  /** Base URL of Numier API (e.g. https://api.numier.com or on-prem host) */
+  api_base_url?: string;
+  /** Auth mode: API_KEY, BASIC, OAUTH */
+  auth_mode?: "API_KEY" | "BASIC" | "OAUTH";
+  /** API key if auth_mode = API_KEY */
+  api_key?: string;
+  /** Username for BASIC auth */
+  username?: string;
+  /** Password for BASIC auth */
+  password?: string;
+  /** Location / store identifier inside Numier */
+  location_id?: string;
+  /** Timezone for business-day calculation */
+  timezone?: string;
+  /** Hour at which the business day closes (0-23) */
+  business_day_close_hour?: number;
+  /** Discovered locations from read_locations */
+  discovered_locations?: { id: string; name: string; address?: string }[];
+  /** Capabilities explicitly verified */
+  verified_capabilities?: {
+    healthcheck?: boolean;
+    read_locations?: boolean;
+    read_sales?: boolean;
+    read_catalog?: boolean;
+    write_catalog?: boolean;
+  };
+}
+
 // ── Generic raw type ────────────────────────────────────────
 
 type RawConfig = Json | null | undefined;
