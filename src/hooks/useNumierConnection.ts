@@ -40,15 +40,17 @@ export interface NumierCapabilities {
   healthcheck: boolean;
   read_locations: boolean;
   read_sales: boolean;
-  read_catalog: boolean;   // stub
-  write_catalog: boolean;  // stub
+  read_categories: boolean;
+  read_products: boolean;
+  write_catalog: boolean;  // not demonstrated
 }
 
 const DEFAULT_CAPABILITIES: NumierCapabilities = {
   healthcheck: false,
   read_locations: false,
   read_sales: false,
-  read_catalog: false,
+  read_categories: false,
+  read_products: false,
   write_catalog: false,
 };
 
