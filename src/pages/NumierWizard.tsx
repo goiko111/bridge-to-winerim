@@ -219,6 +219,13 @@ export default function NumierWizard() {
             {!loadingLocations && locations.length === 0 && (
               <p className="text-xs text-muted-foreground italic">No establishments found. Click Discover to fetch.</p>
             )}
+
+            {locations.length > 1 && !selectedTpvId && (
+              <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 p-3 rounded-md">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Multiple locations found. You must select one before continuing.</span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -170,7 +170,7 @@ export function useNumierConnection() {
     if (!connId) {
       try {
         connId = await saveConnection({
-          locationName: "Numier Location",
+          locationName: locationNameOverride || "Numier Location",
           apiBaseUrl,
           apiToken,
         });
