@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getNumierConfig, type NumierConfig } from "../_shared/providerConfig.ts";
 
+const NUMIER_BASE = "https://www.numier.com/api/public/index.php/api";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -33,23 +35,17 @@ function json(body: unknown, status = 200) {
 
 // ── Auth helpers ────────────────────────────────────────────
 
-function buildAuthHeaders(cfg: NumierConfig, apiToken: string): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-  if (cfg.auth_mode === "BASIC") {
-    // apiToken stored as "user:password"
-    const encoded = btoa(apiToken);
-    headers["Authorization"] = `Basic ${encoded}`;
-  } else {
-    // Default: API_KEY — use the api_token from connection
-    headers["Authorization"] = `Bearer ${apiToken}`;
-  }
-
-  return headers;
+function buildHeaders(apiKey: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "API-KEY": apiKey,
+  };
 }
 
 function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
+  // Allow overriding the base URL for on-prem installations
   const raw = cfg.api_base_url || conn.base_url || "";
+  if (!raw || raw === NUMIER_BASE) return NUMIER_BASE;
   let url = raw.trim().replace(/\/+$/, "");
   if (url && !url.startsWith("http")) url = `https://${url}`;
   return url;
@@ -58,49 +54,43 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
 // ── Action handlers ─────────────────────────────────────────
 
 /**
- * HEALTHCHECK — verify connectivity & auth
- * Status: IMPLEMENTED (stub — validates URL + auth header)
- *
- * When Numier API docs are available, this should hit a lightweight
- * endpoint (e.g. GET /health or GET /api/v1/status).
+ * HEALTHCHECK — GET /getLocales to verify API-KEY works
+ * Status: IMPLEMENTED (real endpoint)
  */
 async function handleHealthcheck(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
-
-  if (!baseUrl) {
-    return json({ success: false, message: "No base URL configured" }, 400);
-  }
-
-  const headers = buildAuthHeaders(cfg, conn.api_token);
+  const headers = buildHeaders(conn.api_token);
 
   try {
-    // Attempt a lightweight GET; adjust path when real API is known
-    const res = await fetch(`${baseUrl}/api/v1/health`, {
+    const res = await fetch(`${baseUrl}/getLocales`, {
       method: "GET",
       headers,
       signal: AbortSignal.timeout(10_000),
     });
 
-    const body = await res.text();
+    const body = await res.json();
 
-    if (res.ok) {
-      // Persist verified capability
+    if (res.ok && body.response === true) {
       const updatedCfg = {
         ...cfg,
         verified_capabilities: { ...(cfg.verified_capabilities || {}), healthcheck: true },
       };
       await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
 
-      return json({ success: true, status: res.status, message: "Numier reachable" });
+      return json({
+        success: true,
+        status: res.status,
+        message: "Numier reachable",
+        localesCount: body.result?.length || 0,
+      });
     }
 
     return json({
       success: false,
       status: res.status,
-      message: `Numier responded with ${res.status}`,
-      body: body.slice(0, 500),
+      message: body.message || `Numier responded with ${res.status}`,
     });
   } catch (err) {
     return json({ success: false, message: `Connection failed: ${(err as Error).message}` }, 502);
@@ -108,17 +98,20 @@ async function handleHealthcheck(connId: string) {
 }
 
 /**
- * READ_LOCATIONS — discover stores/locations
- * Status: STUB — returns structure, needs real endpoint
+ * READ_LOCATIONS — GET /getLocales
+ * Status: IMPLEMENTED (real endpoint)
+ *
+ * Returns businesses linked to the API key.
+ * Each "locale" is a business/establishment (not a physical location).
  */
 async function handleReadLocations(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
-  const headers = buildAuthHeaders(cfg, conn.api_token);
+  const headers = buildHeaders(conn.api_token);
 
   try {
-    const res = await fetch(`${baseUrl}/api/v1/locations`, {
+    const res = await fetch(`${baseUrl}/getLocales`, {
       method: "GET",
       headers,
       signal: AbortSignal.timeout(15_000),
@@ -126,19 +119,20 @@ async function handleReadLocations(connId: string) {
 
     if (!res.ok) {
       const body = await res.text();
-      return json({ success: false, message: `Locations API error (${res.status})`, body: body.slice(0, 500) });
+      return json({ success: false, message: `Locales API error (${res.status})`, body: body.slice(0, 500) });
     }
 
     const data = await res.json();
 
-    // Normalize to common shape — adapt when real response is known
-    const locations: { id: string; name: string; address?: string }[] = Array.isArray(data)
-      ? data.map((loc: Record<string, unknown>) => ({
-          id: String(loc.id || loc.locationId || ""),
-          name: String(loc.name || loc.locationName || "Unknown"),
-          address: loc.address ? String(loc.address) : undefined,
-        }))
-      : [];
+    if (!data.response) {
+      return json({ success: false, message: data.message || "API returned response=false" });
+    }
+
+    // Normalize: Numier returns { id, establishmentName }
+    const locations = (data.result || []).map((loc: Record<string, unknown>) => ({
+      id: String(loc.id || ""),
+      name: String(loc.establishmentName || "Unknown"),
+    }));
 
     // Persist discovered locations
     const updatedCfg = {
@@ -155,61 +149,95 @@ async function handleReadLocations(connId: string) {
 }
 
 /**
- * READ_SALES — fetch sales for a business day
- * Status: STUB — returns normalized SalesEvent structure, needs real endpoint
+ * READ_SALES — GET /v2/sales/{idTpv}?start_date=yyyy-MM-dd&end_date=yyyy-MM-dd&pag=N
+ * Status: IMPLEMENTED (real endpoint)
  *
- * Expected to return data compatible with sales_events + sales_line_items tables.
+ * Numier constraints:
+ * - Dates: yyyy-MM-dd, max range 34 days
+ * - Pagination: max 250 tickets per page
+ * - Returns { result: [...tickets], response, totalpages, message }
+ *
+ * Each ticket has: Serie, Number, TaxDocumentNumber, BusinessDay, Date,
+ *   Pos{Id,Name}, Workplace{Id,Name}, Section, User, DocumentType,
+ *   InvoiceItems[{idProduct, name, idCategory, units, price, amount, vatType, subproducts}],
+ *   Totals{GrossAmount, NetAmount, VatAmount, SurchargeAmount, Taxes}
  */
-async function handleReadSales(connId: string, businessDay: string) {
+async function handleReadSales(connId: string, businessDay: string, endDate?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
-  const headers = buildAuthHeaders(cfg, conn.api_token);
+  const headers = buildHeaders(conn.api_token);
 
-  const locationId = cfg.location_id || "";
+  // Determine which TPV (POS) to query
+  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
+  if (!tpvId) {
+    return json({ success: false, message: "No TPV selected. Discover locations first." }, 400);
+  }
+
+  const startDate = businessDay;
+  const end = endDate || businessDay;
 
   try {
-    // Adjust endpoint path when Numier API docs are available
-    const url = `${baseUrl}/api/v1/sales?date=${businessDay}${locationId ? `&locationId=${locationId}` : ""}`;
-    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+    // Fetch all pages
+    const allTickets: Record<string, unknown>[] = [];
+    let page = 1;
+    let totalPages = 1;
 
-    if (!res.ok) {
-      const body = await res.text();
-      return json({ success: false, message: `Sales API error (${res.status})`, body: body.slice(0, 500) });
-    }
+    do {
+      const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${startDate}&end_date=${end}&pag=${page}`;
+      console.log(`[numier] Fetching sales page ${page}: ${url}`);
 
-    const rawSales = await res.json();
+      const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+
+      if (!res.ok) {
+        const body = await res.text();
+        return json({ success: false, message: `Sales API error (${res.status})`, body: body.slice(0, 500) });
+      }
+
+      const data = await res.json();
+
+      if (!data.response) {
+        return json({ success: false, message: data.message || "API returned response=false" });
+      }
+
+      allTickets.push(...(data.result || []));
+      totalPages = data.totalpages || 1;
+      page++;
+    } while (page <= totalPages);
 
     // ── Normalize to canonical SalesEvent shape ──
-    // This mapping is a stub — adjust field names to real Numier response
-    const salesEvents = (Array.isArray(rawSales) ? rawSales : rawSales?.sales || rawSales?.data || []).map(
-      (sale: Record<string, unknown>) => {
-        const lines = (Array.isArray(sale.lines) ? sale.lines : sale.items || sale.details || []).map(
-          (line: Record<string, unknown>) => ({
-            provider_product_id: String(line.productId || line.product_id || line.id || ""),
-            name: String(line.productName || line.name || line.description || ""),
-            format: String(line.format || line.saleFormat || "UNIT"),
-            family: String(line.family || line.familyName || line.category || ""),
-            quantity: Number(line.quantity || line.qty || 0),
-            unit_price: Number(line.unitPrice || line.price || 0),
-            total_amount: Number(line.totalAmount || line.total || 0) || Number(line.quantity || 0) * Number(line.unitPrice || line.price || 0),
-            vat_rate: Number(line.vatRate || line.taxRate || line.vat || 0),
-            is_wine_candidate: false, // Will be classified by wine_family_rules
-          }),
-        );
+    const salesEvents = allTickets.map((ticket) => {
+      const invoiceItems = (ticket.InvoiceItems || []) as Record<string, unknown>[];
+      const totals = (ticket.Totals || {}) as Record<string, unknown>;
 
-        return {
-          provider_doc_id: String(sale.id || sale.saleId || sale.documentId || ""),
-          business_day: businessDay,
-          doc_type: String(sale.type || sale.docType || "Sale"),
-          total_amount: Number(sale.totalAmount || sale.total || 0),
-          total_tax: Number(sale.totalTax || sale.tax || 0),
-          total_net: Number(sale.totalNet || sale.net || 0),
-          line_count: lines.length,
-          lines,
-        };
-      },
-    );
+      const lines = invoiceItems.map((item) => ({
+        provider_product_id: String(item.idProduct || ""),
+        name: String(item.name || ""),
+        format: "UNIT",
+        family: String(item.idCategory || ""),
+        quantity: Number(item.units || 0),
+        unit_price: Number(item.price || 0),
+        total_amount: Number(item.amount || 0) || Number(item.units || 0) * Number(item.price || 0),
+        vat_rate: Number(item.vatType || 0),
+        is_wine_candidate: false, // Will be classified by wine_family_rules
+      }));
+
+      const serie = String(ticket.Serie || "");
+      const number = String(ticket.Number || "");
+
+      return {
+        provider_doc_id: ticket.TaxDocumentNumber
+          ? String(ticket.TaxDocumentNumber)
+          : `${serie}-${number}`,
+        business_day: String(ticket.BusinessDay || businessDay),
+        doc_type: String(ticket.DocumentType || "FS"),
+        total_amount: Number(totals.GrossAmount || 0),
+        total_tax: Number(totals.VatAmount || 0),
+        total_net: Number(totals.NetAmount || 0),
+        line_count: lines.length,
+        lines,
+      };
+    });
 
     // Update verified capabilities
     if (salesEvents.length > 0) {
@@ -220,7 +248,15 @@ async function handleReadSales(connId: string, businessDay: string) {
       await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
     }
 
-    return json({ success: true, businessDay, salesEvents, count: salesEvents.length });
+    return json({
+      success: true,
+      businessDay: startDate,
+      endDate: end,
+      salesEvents,
+      count: salesEvents.length,
+      totalPages,
+      ticketsFetched: allTickets.length,
+    });
   } catch (err) {
     return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
   }
@@ -228,11 +264,10 @@ async function handleReadSales(connId: string, businessDay: string) {
 
 /**
  * SAVE_SALES — persist normalized sales to DB
- * Status: IMPLEMENTED — uses same pattern as other providers
+ * Status: IMPLEMENTED
  */
-async function handleSaveSales(connId: string, businessDay: string) {
-  // First fetch
-  const fetchRes = await handleReadSales(connId, businessDay);
+async function handleSaveSales(connId: string, businessDay: string, endDate?: string) {
+  const fetchRes = await handleReadSales(connId, businessDay, endDate);
   const fetchBody = await fetchRes.clone().json();
 
   if (!fetchBody.success) return fetchRes;
@@ -242,14 +277,13 @@ async function handleSaveSales(connId: string, businessDay: string) {
   let savedLines = 0;
 
   for (const ev of salesEvents) {
-    // Upsert sales_event
     const { data: eventRow, error: evErr } = await sb()
       .from("sales_events")
       .upsert(
         {
           connection_id: connId,
           provider_doc_id: ev.provider_doc_id,
-          business_day: businessDay,
+          business_day: ev.business_day,
           doc_type: ev.doc_type,
           total_amount: ev.total_amount,
           total_tax: ev.total_tax,
@@ -264,7 +298,6 @@ async function handleSaveSales(connId: string, businessDay: string) {
     if (evErr || !eventRow) continue;
     savedEvents++;
 
-    // Insert lines
     for (const line of ev.lines) {
       const { error: lineErr } = await sb().from("sales_line_items").upsert(
         {
@@ -286,7 +319,6 @@ async function handleSaveSales(connId: string, businessDay: string) {
     }
   }
 
-  // Update last sync
   await sb().from("pos_connections").update({
     last_sync_at: new Date().toISOString(),
     last_business_day_synced: businessDay,
@@ -296,7 +328,112 @@ async function handleSaveSales(connId: string, businessDay: string) {
 }
 
 /**
- * TEST — alias for healthcheck, used by wizard step 1
+ * READ_CATEGORIES — GET /getCategoriesByTpv/{idTpv}
+ * Status: IMPLEMENTED (real endpoint)
+ */
+async function handleReadCategories(connId: string) {
+  const conn = await getConnection(connId);
+  const cfg = getNumierConfig(conn.provider_config);
+  const baseUrl = resolveBaseUrl(conn, cfg);
+  const headers = buildHeaders(conn.api_token);
+
+  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
+  if (!tpvId) {
+    return json({ success: false, message: "No TPV selected." }, 400);
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/getCategoriesByTpv/${tpvId}`, {
+      method: "GET",
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      return json({ success: false, message: `Categories API error (${res.status})`, body: body.slice(0, 500) });
+    }
+
+    const data = await res.json();
+    if (!data.response) {
+      return json({ success: false, message: data.message || "API returned response=false" });
+    }
+
+    const categories = (data.result || []).map((cat: Record<string, unknown>) => ({
+      id: String(cat.id || ""),
+      name: String(cat.name || ""),
+    }));
+
+    return json({ success: true, categories, count: categories.length });
+  } catch (err) {
+    return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
+  }
+}
+
+/**
+ * READ_PRODUCTS — GET /getProducts/{idTpv}?pag=N
+ * Status: IMPLEMENTED (real endpoint)
+ */
+async function handleReadProducts(connId: string) {
+  const conn = await getConnection(connId);
+  const cfg = getNumierConfig(conn.provider_config);
+  const baseUrl = resolveBaseUrl(conn, cfg);
+  const headers = buildHeaders(conn.api_token);
+
+  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
+  if (!tpvId) {
+    return json({ success: false, message: "No TPV selected." }, 400);
+  }
+
+  try {
+    const allProducts: Record<string, unknown>[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `${baseUrl}/getProducts/${tpvId}?pag=${page}`;
+      const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+
+      if (!res.ok) {
+        const body = await res.text();
+        return json({ success: false, message: `Products API error (${res.status})`, body: body.slice(0, 500) });
+      }
+
+      const data = await res.json();
+      if (!data.response) {
+        return json({ success: false, message: data.message || "API returned response=false" });
+      }
+
+      const batch = data.result || [];
+      allProducts.push(...batch);
+
+      // Numier returns max 50 per page; if less, we're done
+      hasMore = batch.length >= 50;
+      page++;
+    }
+
+    // Normalize
+    const products = allProducts.map((p: Record<string, unknown>) => ({
+      id: String(p.id || ""),
+      name: String(p.name || ""),
+      category_id: String(p.idCategory || ""),
+      category_name: String(p.nameCategory || ""),
+      price: Number(p.price1 || 0),
+      price2: Number(p.price2 || 0),
+      price3: Number(p.price3 || 0),
+      price4: Number(p.price4 || 0),
+      vat_type: Number(p.vatType || 0),
+      is_active: p.isActive === true || p.isActive === "true",
+    }));
+
+    return json({ success: true, products, count: products.length });
+  } catch (err) {
+    return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
+  }
+}
+
+/**
+ * TEST — alias for healthcheck
  */
 async function handleTest(connId: string) {
   return handleHealthcheck(connId);
@@ -323,33 +460,37 @@ serve(async (req) => {
       case "read-locations":
         return await handleReadLocations(connectionId);
 
+      case "read-categories":
+        return await handleReadCategories(connectionId);
+
+      case "read-products":
+        return await handleReadProducts(connectionId);
+
       case "read-sales":
       case "fetch-day": {
-        const day = payload.businessDay || payload.date;
+        const day = payload.businessDay || payload.date || payload.start_date;
         if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleReadSales(connectionId, day);
+        return await handleReadSales(connectionId, day, payload.endDate || payload.end_date);
       }
 
       case "save-sales": {
         const day = payload.businessDay || payload.date;
         if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleSaveSales(connectionId, day);
+        return await handleSaveSales(connectionId, day, payload.endDate);
       }
 
-      // ── Future stubs (not implemented yet) ──
-      case "read-catalog":
-        return json({ error: "read-catalog not implemented yet", status: "STUB" }, 501);
-
+      // ── Not yet demonstrated ──
       case "write-catalog":
-        return json({ error: "write-catalog not implemented yet", status: "STUB" }, 501);
+        return json({ error: "write-catalog not demonstrated for Numier", status: "NOT_DEMONSTRATED" }, 501);
 
       case "verify-catalog":
-        return json({ error: "verify-catalog not implemented yet", status: "STUB" }, 501);
+        return json({ error: "verify-catalog not demonstrated for Numier", status: "NOT_DEMONSTRATED" }, 501);
 
       default:
         return json({ error: "Unknown action", available: [
-          "test", "healthcheck", "read-locations", "read-sales", "fetch-day",
-          "save-sales", "read-catalog (stub)", "write-catalog (stub)", "verify-catalog (stub)",
+          "test", "healthcheck", "read-locations", "read-categories",
+          "read-products", "read-sales", "fetch-day", "save-sales",
+          "write-catalog (not demonstrated)", "verify-catalog (not demonstrated)",
         ] }, 400);
     }
   } catch (err) {

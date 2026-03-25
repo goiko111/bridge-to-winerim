@@ -164,10 +164,13 @@ export interface NumierConfig {
   api_key?: string;
   username?: string;
   password?: string;
+  /** Selected TPV (POS terminal) id from discovered locations */
+  selected_tpv_id?: string;
+  /** Legacy field kept for compat */
   location_id?: string;
   timezone?: string;
   business_day_close_hour?: number;
-  discovered_locations?: { id: string; name: string; address?: string }[];
+  discovered_locations?: { id: string; name: string }[];
   verified_capabilities?: Record<string, boolean>;
 }
 

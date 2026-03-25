@@ -163,30 +163,27 @@ export interface IcgConfig {
 }
 
 export interface NumierConfig {
-  /** Base URL of Numier API (e.g. https://api.numier.com or on-prem host) */
+  /** Base URL — defaults to https://www.numier.com/api/public/index.php/api */
   api_base_url?: string;
-  /** Auth mode: API_KEY, BASIC, OAUTH */
-  auth_mode?: "API_KEY" | "BASIC" | "OAUTH";
-  /** API key if auth_mode = API_KEY */
-  api_key?: string;
-  /** Username for BASIC auth */
-  username?: string;
-  /** Password for BASIC auth */
-  password?: string;
-  /** Location / store identifier inside Numier */
+  /** Auth: API-KEY header. Only API_KEY supported by Numier. */
+  auth_mode?: "API_KEY";
+  /** Selected TPV (POS terminal) id from discovered locations */
+  selected_tpv_id?: string;
+  /** Legacy field */
   location_id?: string;
   /** Timezone for business-day calculation */
   timezone?: string;
   /** Hour at which the business day closes (0-23) */
   business_day_close_hour?: number;
-  /** Discovered locations from read_locations */
-  discovered_locations?: { id: string; name: string; address?: string }[];
-  /** Capabilities explicitly verified */
+  /** Discovered businesses/TPVs from /getLocales */
+  discovered_locations?: { id: string; name: string }[];
+  /** Capabilities explicitly verified against real API */
   verified_capabilities?: {
     healthcheck?: boolean;
     read_locations?: boolean;
     read_sales?: boolean;
-    read_catalog?: boolean;
+    read_categories?: boolean;
+    read_products?: boolean;
     write_catalog?: boolean;
   };
 }
