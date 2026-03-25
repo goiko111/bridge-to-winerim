@@ -54,7 +54,12 @@ export default function NumierWizard() {
   const canNext = useMemo(() => {
     switch (step) {
       case 0: return testStatus === "success";
-      case 1: return !!selectedTpvId || locations.length > 0;
+      case 1: {
+        // Must have explicit selection, OR exactly 1 location (auto-selected)
+        if (selectedTpvId) return true;
+        if (locations.length === 1) return true;
+        return false;
+      }
       case 2: return true;
       case 3: return true;
       default: return false;
