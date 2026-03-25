@@ -69,6 +69,10 @@ export function useNumierConnection() {
   const [capabilities, setCapabilities] = useState<NumierCapabilities>(DEFAULT_CAPABILITIES);
   const [config, setConfig] = useState<NumierConfig>({});
 
+  // Diagnosis state
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnosisResult, setDiagnosisResult] = useState<Record<string, unknown> | null>(null);
+
   // ── Derived: active TPV id and source ─────────────────────
 
   const activeTpvId = useMemo(() => {
