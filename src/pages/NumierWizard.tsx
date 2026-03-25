@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
 import { useNavigate } from "react-router-dom";
 
 const steps = [
@@ -49,6 +50,9 @@ export default function NumierWizard() {
     enableSync,
     activeTpvId,
     tpvSource,
+    diagnosing,
+    diagnosisResult,
+    diagnoseTpv,
   } = useNumierConnection();
 
   const canNext = useMemo(() => {
@@ -257,6 +261,14 @@ export default function NumierWizard() {
                 )}
               </div>
             </div>
+
+            {/* TPV Diagnosis Panel */}
+            <NumierTpvDiagnostics
+              activeTpvId={activeTpvId}
+              diagnosing={diagnosing}
+              diagnosisResult={diagnosisResult}
+              onDiagnose={diagnoseTpv}
+            />
 
             <div className="flex gap-2 items-end">
               <div className="flex-1">

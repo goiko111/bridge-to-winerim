@@ -69,6 +69,10 @@ export function useNumierConnection() {
   const [capabilities, setCapabilities] = useState<NumierCapabilities>(DEFAULT_CAPABILITIES);
   const [config, setConfig] = useState<NumierConfig>({});
 
+  // Diagnosis state
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnosisResult, setDiagnosisResult] = useState<Record<string, unknown> | null>(null);
+
   // ── Derived: active TPV id and source ─────────────────────
 
   const activeTpvId = useMemo(() => {
@@ -282,6 +286,23 @@ export function useNumierConnection() {
     }
   }, [connectionId]);
 
+  // ── Diagnose TPV ───────────────────────────────────────────
+
+  const diagnoseTpv = useCallback(async () => {
+    if (!connectionId) return;
+    setDiagnosing(true);
+    setDiagnosisResult(null);
+    try {
+      const data = await invoke("diagnose-tpv", { tpvId: activeTpvId });
+      setDiagnosisResult(data);
+    } catch (e) {
+      console.error("Diagnosis failed:", e);
+      setDiagnosisResult({ success: false, error: (e as Error).message });
+    } finally {
+      setDiagnosing(false);
+    }
+  }, [connectionId, activeTpvId]);
+
   // ── Enable Sync ───────────────────────────────────────────
 
   const enableSync = async () => {
@@ -320,5 +341,9 @@ export function useNumierConnection() {
     updateConnection,
     loadConnection,
     enableSync,
+
+    diagnosing,
+    diagnosisResult,
+    diagnoseTpv,
   };
 }
