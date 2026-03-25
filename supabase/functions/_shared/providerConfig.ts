@@ -157,3 +157,24 @@ export function getIcgConfig(raw: RawConfig): IcgConfig {
   c.database = c.database || "FrontRest";
   return c;
 }
+
+export interface NumierConfig {
+  api_base_url?: string;
+  auth_mode?: string;
+  api_key?: string;
+  username?: string;
+  password?: string;
+  location_id?: string;
+  timezone?: string;
+  business_day_close_hour?: number;
+  discovered_locations?: { id: string; name: string; address?: string }[];
+  verified_capabilities?: Record<string, boolean>;
+}
+
+export function getNumierConfig(raw: RawConfig): NumierConfig {
+  const c = parseJson(raw) as NumierConfig;
+  c.auth_mode = c.auth_mode || "API_KEY";
+  c.timezone = c.timezone || "Europe/Madrid";
+  c.business_day_close_hour = c.business_day_close_hour ?? 6;
+  return c;
+}
