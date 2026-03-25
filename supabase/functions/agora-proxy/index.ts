@@ -2264,16 +2264,18 @@ serve(async (req) => {
       }
     }
 
-    // ── PROCESS OUTBOUND QUEUE (legacy JSON, all batches) ──
+    // ── PROCESS OUTBOUND QUEUE (legacy JSON, time-budgeted) ──
     if (action === "process-outbound-queue") {
       // Check write capability once
       const { data: caps } = await supabase
         .from("provider_capabilities").select("can_write_products, write_endpoint").eq("connection_id", connectionId).single();
 
       const BATCH_SIZE = 10;
+      const TIME_BUDGET_MS = 45_000;
+      const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
-      while (true) {
+      while (Date.now() - startTime < TIME_BUDGET_MS) {
         const { data: tasks } = await supabase
           .from("outbound_tasks").select("id, task_type, payload_json, external_id, attempts")
           .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
@@ -2282,6 +2284,7 @@ serve(async (req) => {
         if (!tasks || tasks.length === 0) break;
 
         for (const t of tasks) {
+          if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           try {
             if (t.task_type === "AGORA_MIGRATE_FAMILY") {
               const p = t.payload_json as Record<string, unknown>;
@@ -2335,11 +2338,16 @@ serve(async (req) => {
               processed++;
               if (result?.status === "SUCCESS") succeeded++; else failed++;
             }
-          } catch (_) { failed++; processed++; }
+          } catch (err) { failed++; processed++; }
         }
       }
 
-      return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
+      const { count: remaining } = await supabase
+        .from("outbound_tasks").select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
+        .eq("status", "QUEUED");
+
+      return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remaining || 0, done: (remaining || 0) === 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -3554,12 +3562,14 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── PROCESS XML OUTBOUND QUEUE (all batches, 10 at a time) ──
+    // ── PROCESS XML OUTBOUND QUEUE (time-budgeted, auto-retry from UI) ──
     if (action === "process-xml-outbound-queue") {
       const BATCH_SIZE = 10;
+      const TIME_BUDGET_MS = 45_000; // 45s budget, edge functions timeout at ~60s
+      const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
-      while (true) {
+      while (Date.now() - startTime < TIME_BUDGET_MS) {
         const { data: tasks } = await supabase
           .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
@@ -3570,17 +3580,25 @@ serve(async (req) => {
         if (!tasks || tasks.length === 0) break;
 
         for (const t of tasks) {
+          if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           try {
             const { data: result } = await supabase.functions.invoke("agora-proxy", {
               body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
             });
             processed++;
             if (result?.status === "SUCCESS") succeeded++; else failed++;
-          } catch (_) { failed++; processed++; }
+          } catch (err) { failed++; processed++; }
         }
       }
 
-      return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
+      // Check if there are remaining tasks
+      const { count: remaining } = await supabase
+        .from("outbound_tasks").select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .eq("status", "QUEUED");
+
+      return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remaining || 0, done: (remaining || 0) === 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

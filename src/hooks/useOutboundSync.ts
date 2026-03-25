@@ -113,26 +113,40 @@ export function useOutboundSync(connectionId: string | null) {
   const processQueue = useCallback(async () => {
     if (!connectionId) return;
     setProcessingQueue(true);
+    let totalProcessed = 0, totalSucceeded = 0, totalFailed = 0;
     try {
-      const { data: xmlData, error: xmlError } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "process-xml-outbound-queue", connectionId },
-      });
-      if (xmlError) throw xmlError;
+      // Auto-loop: keep calling until both queues are empty
+      let xmlDone = false, legacyDone = false;
+      while (!xmlDone || !legacyDone) {
+        if (!xmlDone) {
+          const { data: xmlData, error: xmlError } = await supabase.functions.invoke("agora-proxy", {
+            body: { action: "process-xml-outbound-queue", connectionId },
+          });
+          if (xmlError) throw xmlError;
+          totalProcessed += xmlData?.processed || 0;
+          totalSucceeded += xmlData?.succeeded || 0;
+          totalFailed += xmlData?.failed || 0;
+          xmlDone = xmlData?.done !== false;
+        }
 
-      // Backward compatibility: also process legacy JSON queue if any old tasks exist
-      const { data: legacyData, error: legacyError } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "process-outbound-queue", connectionId },
-      });
-      if (legacyError) throw legacyError;
+        if (!legacyDone) {
+          const { data: legacyData, error: legacyError } = await supabase.functions.invoke("agora-proxy", {
+            body: { action: "process-outbound-queue", connectionId },
+          });
+          if (legacyError) throw legacyError;
+          totalProcessed += legacyData?.processed || 0;
+          totalSucceeded += legacyData?.succeeded || 0;
+          totalFailed += legacyData?.failed || 0;
+          legacyDone = legacyData?.done !== false;
+        }
+      }
 
       await loadOutboundTasks();
       return {
         success: true,
-        processed: (xmlData?.processed || 0) + (legacyData?.processed || 0),
-        succeeded: (xmlData?.succeeded || 0) + (legacyData?.succeeded || 0),
-        failed: (xmlData?.failed || 0) + (legacyData?.failed || 0),
-        xml: xmlData,
-        legacy: legacyData,
+        processed: totalProcessed,
+        succeeded: totalSucceeded,
+        failed: totalFailed,
       };
     } catch (e) {
       console.error("Failed to process queue:", e);
