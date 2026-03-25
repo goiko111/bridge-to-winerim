@@ -50,23 +50,12 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
-function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback" | "none" } {
-  if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected" };
-  const fallback = cfg.discovered_locations?.[0]?.id;
-  if (fallback) return { tpvId: fallback, source: "fallback" };
-  return { tpvId: null, source: "none" };
-}
-
-// ── Deterministic line key (avoids collisions within same ticket) ──
-
-function makeLineKey(
-  providerProductId: string,
-  quantity: number,
-  unitPrice: number,
-  totalAmount: number,
-  ordinal: number,
-): string {
-  return `${providerProductId}|${quantity}|${unitPrice}|${totalAmount}|${ordinal}`;
+function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback_single" | "none"; locationCount: number } {
+  const locs = cfg.discovered_locations || [];
+  if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
+  // Fallback ONLY if exactly one location discovered
+  if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
+  return { tpvId: null, source: "none", locationCount: locs.length };
 }
 
 // ── Action handlers ─────────────────────────────────────────
@@ -159,9 +148,12 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId, source } = resolveTpvId(cfg);
+  const { tpvId, source, locationCount } = resolveTpvId(cfg);
   if (!tpvId) {
-    return json({ success: false, message: "No TPV selected. Discover locations and select one first." }, 400);
+    const msg = locationCount > 1
+      ? `Multiple locations discovered (${locationCount}) but no TPV explicitly selected. Please select one in the wizard.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
   }
 
   const startDate = businessDay;
@@ -331,8 +323,13 @@ async function handleReadCategories(connId: string) {
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId } = resolveTpvId(cfg);
-  if (!tpvId) return json({ success: false, message: "No TPV selected." }, 400);
+  const { tpvId, locationCount } = resolveTpvId(cfg);
+  if (!tpvId) {
+    const msg = locationCount > 1
+      ? `Multiple locations (${locationCount}) but no TPV selected.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
+  }
 
   try {
     const res = await fetch(`${baseUrl}/getCategoriesByTpv/${tpvId}`, {
@@ -374,8 +371,13 @@ async function handleReadProducts(connId: string) {
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId } = resolveTpvId(cfg);
-  if (!tpvId) return json({ success: false, message: "No TPV selected." }, 400);
+  const { tpvId, locationCount } = resolveTpvId(cfg);
+  if (!tpvId) {
+    const msg = locationCount > 1
+      ? `Multiple locations (${locationCount}) but no TPV selected.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
+  }
 
   try {
     const allProducts: Record<string, unknown>[] = [];

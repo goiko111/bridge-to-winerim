@@ -54,7 +54,12 @@ export default function NumierWizard() {
   const canNext = useMemo(() => {
     switch (step) {
       case 0: return testStatus === "success";
-      case 1: return !!selectedTpvId || locations.length > 0;
+      case 1: {
+        // Must have explicit selection, OR exactly 1 location (auto-selected)
+        if (selectedTpvId) return true;
+        if (locations.length === 1) return true;
+        return false;
+      }
       case 2: return true;
       case 3: return true;
       default: return false;
@@ -135,7 +140,7 @@ export default function NumierWizard() {
             </div>
 
             <Button
-              onClick={() => testConnection(apiBaseUrl, apiToken)}
+              onClick={() => testConnection(apiBaseUrl, apiToken, locationName || undefined)}
               disabled={!apiBaseUrl || !apiToken || testStatus === "testing"}
               className="w-full"
             >
@@ -214,6 +219,13 @@ export default function NumierWizard() {
             {!loadingLocations && locations.length === 0 && (
               <p className="text-xs text-muted-foreground italic">No establishments found. Click Discover to fetch.</p>
             )}
+
+            {locations.length > 1 && !selectedTpvId && (
+              <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 p-3 rounded-md">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Multiple locations found. You must select one before continuing.</span>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -234,8 +246,15 @@ export default function NumierWizard() {
                 <span>Querying TPV: </span>
                 <strong className="text-foreground">{activeTpvId || "none"}</strong>
                 <span className="ml-1">
-                  ({tpvSource === "selected" ? "explicitly selected" : tpvSource === "fallback" ? "⚠ fallback — first discovered" : "⚠ not set"})
+                  ({tpvSource === "selected"
+                    ? "✅ explicitly selected"
+                    : tpvSource === "fallback_single"
+                    ? "⚠ auto-selected (only 1 location)"
+                    : "❌ not set"})
                 </span>
+                {locations.length > 0 && (
+                  <span className="ml-1">· {locations.length} location(s) discovered</span>
+                )}
               </div>
             </div>
 
