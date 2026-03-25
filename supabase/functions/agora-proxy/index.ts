@@ -2264,82 +2264,79 @@ serve(async (req) => {
       }
     }
 
-    // ── PROCESS OUTBOUND QUEUE (legacy JSON) ──
+    // ── PROCESS OUTBOUND QUEUE (legacy JSON, all batches) ──
     if (action === "process-outbound-queue") {
-      const { data: tasks } = await supabase
-        .from("outbound_tasks").select("id, task_type, payload_json, external_id")
-        .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
-        .eq("status", "QUEUED").order("created_at").limit(10);
-
-      if (!tasks || tasks.length === 0) {
-        return new Response(JSON.stringify({ success: true, processed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      // Check write capability
+      // Check write capability once
       const { data: caps } = await supabase
         .from("provider_capabilities").select("can_write_products, write_endpoint").eq("connection_id", connectionId).single();
 
+      const BATCH_SIZE = 10;
       let processed = 0, succeeded = 0, failed = 0;
-      for (const t of tasks) {
-        try {
-          if (t.task_type === "AGORA_MIGRATE_FAMILY") {
-            // Handle migration via XML import (only updates FamilyId)
-            const p = t.payload_json as Record<string, unknown>;
-            const productId = p.productId || t.external_id;
-            const targetFamilyId = p.targetFamilyId;
-            const wineName = String(p.wineName || "");
-            const fmt = String(p.format || "BOTTLE");
-            const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
 
-            const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-            const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+      while (true) {
+        const { data: tasks } = await supabase
+          .from("outbound_tasks").select("id, task_type, payload_json, external_id, attempts")
+          .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
+          .eq("status", "QUEUED").order("created_at").limit(BATCH_SIZE);
 
-            await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: ((t as any).attempts || 0) + 1 }).eq("id", t.id);
+        if (!tasks || tasks.length === 0) break;
 
-            const importUrl = `${baseUrlClean}/api/import/`;
-            const res = await fetchWithRetry(importUrl, {
-              method: "POST",
-              headers: { ...headers, "Content-Type": "application/xml" },
-              body: migrateXml,
-            });
-            const resBody = await res.text();
+        for (const t of tasks) {
+          try {
+            if (t.task_type === "AGORA_MIGRATE_FAMILY") {
+              const p = t.payload_json as Record<string, unknown>;
+              const productId = p.productId || t.external_id;
+              const targetFamilyId = p.targetFamilyId;
+              const wineName = String(p.wineName || "");
+              const fmt = String(p.format || "BOTTLE");
+              const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
 
-            if (res.ok) {
-              await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
-              // Update tracking
-              const winerimId = String(p.winerimWineId || "");
-              if (winerimId) {
-                await supabase.from("winerim_push_tracking")
-                  .update({ sync_status: "VERIFIED", agora_family_id: String(targetFamilyId), verified_at: new Date().toISOString() })
-                  .eq("connection_id", connectionId)
-                  .eq("winerim_wine_id", winerimId)
-                  .eq("format", fmt);
+              const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: ((t as any).attempts || 0) + 1 }).eq("id", t.id);
+
+              const importUrl = `${baseUrlClean}/api/import/`;
+              const res = await fetchWithRetry(importUrl, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/xml" },
+                body: migrateXml,
+              });
+              const resBody = await res.text();
+
+              if (res.ok) {
+                await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                const winerimId = String(p.winerimWineId || "");
+                if (winerimId) {
+                  await supabase.from("winerim_push_tracking")
+                    .update({ sync_status: "VERIFIED", agora_family_id: String(targetFamilyId), verified_at: new Date().toISOString() })
+                    .eq("connection_id", connectionId)
+                    .eq("winerim_wine_id", winerimId)
+                    .eq("format", fmt);
+                }
+                succeeded++;
+              } else {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                const winerimId = String(p.winerimWineId || "");
+                if (winerimId) {
+                  await supabase.from("winerim_push_tracking")
+                    .update({ sync_status: "FAILED", last_error: `Migration failed: HTTP ${res.status}` })
+                    .eq("connection_id", connectionId)
+                    .eq("winerim_wine_id", winerimId)
+                    .eq("format", fmt);
+                }
+                failed++;
               }
-              succeeded++;
+              processed++;
             } else {
-              await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
-              // Mark tracking as FAILED
-              const winerimId = String(p.winerimWineId || "");
-              if (winerimId) {
-                await supabase.from("winerim_push_tracking")
-                  .update({ sync_status: "FAILED", last_error: `Migration failed: HTTP ${res.status}` })
-                  .eq("connection_id", connectionId)
-                  .eq("winerim_wine_id", winerimId)
-                  .eq("format", fmt);
-              }
-              failed++;
+              const { data: result } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-outbound-task", connectionId, taskId: t.id },
+              });
+              processed++;
+              if (result?.status === "SUCCESS") succeeded++; else failed++;
             }
-            processed++;
-          } else {
-            // Legacy JSON processing
-            const { data: result } = await supabase.functions.invoke("agora-proxy", {
-              body: { action: "process-outbound-task", connectionId, taskId: t.id },
-            });
-            processed++;
-            if (result?.status === "SUCCESS") succeeded++; else failed++;
-          }
-        } catch (_) { failed++; processed++; }
+          } catch (_) { failed++; processed++; }
+        }
       }
 
       return new Response(JSON.stringify({ success: true, processed, succeeded, failed }),
