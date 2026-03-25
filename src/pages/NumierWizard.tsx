@@ -3,36 +3,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import { useNavigate } from "react-router-dom";
 
 const steps = [
-  { label: "Connection", description: "Configure Numier API credentials" },
-  { label: "Locations", description: "Discover available locations" },
+  { label: "Connection", description: "Configure Numier API-KEY" },
+  { label: "TPV Selection", description: "Choose your POS terminal" },
   { label: "Sales Preview", description: "Fetch and preview sales data" },
   { label: "Activate", description: "Enable automated sync" },
 ];
 
-/**
- * NumierWizard — MVP wizard for the Numier POS connector.
- *
- * Capabilities status:
- * ✅ IMPLEMENTED: healthcheck, test connection
- * 🔲 STUB: read_locations, read_sales (needs real API endpoints)
- * ❌ NOT YET: read_catalog, write_catalog, verify_catalog
- */
 export default function NumierWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
 
   // Form state
   const [locationName, setLocationName] = useState("");
-  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [apiBaseUrl, setApiBaseUrl] = useState("https://www.numier.com/api/public/index.php/api");
   const [apiToken, setApiToken] = useState("");
-  const [authMode, setAuthMode] = useState("API_KEY");
   const [selectedDay, setSelectedDay] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -48,6 +38,8 @@ export default function NumierWizard() {
     locations,
     loadingLocations,
     fetchLocations,
+    selectedTpvId,
+    selectTpv,
     salesEvents,
     loadingSales,
     fetchSalesForDay,
@@ -55,17 +47,19 @@ export default function NumierWizard() {
     saveResult,
     saveSalesToDb,
     enableSync,
+    activeTpvId,
+    tpvSource,
   } = useNumierConnection();
 
   const canNext = useMemo(() => {
     switch (step) {
       case 0: return testStatus === "success";
-      case 1: return true; // locations is optional
+      case 1: return !!selectedTpvId || locations.length > 0;
       case 2: return true;
       case 3: return true;
       default: return false;
     }
-  }, [step, testStatus]);
+  }, [step, testStatus, selectedTpvId, locations.length]);
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
@@ -119,37 +113,29 @@ export default function NumierWizard() {
             <div>
               <label className="text-sm font-medium text-foreground">API Base URL</label>
               <Input
-                placeholder="https://api.numier.com"
+                placeholder="https://www.numier.com/api/public/index.php/api"
                 value={apiBaseUrl}
                 onChange={(e) => setApiBaseUrl(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Default: https://www.numier.com/api/public/index.php/api
+              </p>
             </div>
             <div>
-              <label className="text-sm font-medium text-foreground">Auth Mode</label>
-              <Select value={authMode} onValueChange={setAuthMode}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="API_KEY">API Key (Bearer)</SelectItem>
-                  <SelectItem value="BASIC">Basic Auth (user:password)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-foreground">
-                {authMode === "BASIC" ? "Credentials (user:password)" : "API Token"}
-              </label>
+              <label className="text-sm font-medium text-foreground">API-KEY</label>
               <Input
                 type="password"
-                placeholder={authMode === "BASIC" ? "user:password" : "Bearer token"}
+                placeholder="Tu API-KEY de Numier"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Se envía como header <code className="text-xs bg-muted px-1 rounded">API-KEY</code>. Solicítala desde tu panel de Numier.
+              </p>
             </div>
 
             <Button
-              onClick={() => testConnection(apiBaseUrl, apiToken, authMode)}
+              onClick={() => testConnection(apiBaseUrl, apiToken)}
               disabled={!apiBaseUrl || !apiToken || testStatus === "testing"}
               className="w-full"
             >
@@ -171,39 +157,62 @@ export default function NumierWizard() {
         </Card>
       )}
 
-      {/* Step 1: Locations */}
+      {/* Step 1: TPV Selection */}
       {step === 1 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <MapPin className="h-5 w-5" /> Discover Locations
+              <MapPin className="h-5 w-5" /> Select TPV / Establishment
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Fetch available locations/stores from Numier. This step is optional — you can skip if your API doesn't support multi-location.
+              Discover the establishments linked to your API-KEY, then select the one to sync sales from.
             </p>
             <Button onClick={fetchLocations} disabled={loadingLocations}>
               {loadingLocations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Discover Locations
+              Discover Establishments
             </Button>
 
             {locations.length > 0 && (
               <div className="space-y-2">
-                {locations.map((loc) => (
-                  <div key={loc.id} className="flex items-center justify-between p-3 rounded-md border border-border bg-secondary/30">
-                    <div>
-                      <span className="font-medium text-foreground">{loc.name}</span>
-                      {loc.address && <span className="text-xs text-muted-foreground ml-2">{loc.address}</span>}
-                    </div>
-                    <Badge variant="outline">{loc.id}</Badge>
-                  </div>
-                ))}
+                {locations.map((loc) => {
+                  const isSelected = selectedTpvId === loc.id;
+                  return (
+                    <button
+                      key={loc.id}
+                      onClick={() => selectTpv(loc.id)}
+                      className={`w-full flex items-center justify-between p-3 rounded-md border transition-colors text-left ${
+                        isSelected
+                          ? "border-primary bg-primary/10"
+                          : "border-border bg-secondary/30 hover:bg-secondary/50"
+                      }`}
+                    >
+                      <div>
+                        <span className="font-medium text-foreground">{loc.name}</span>
+                        {loc.address && <span className="text-xs text-muted-foreground ml-2">{loc.address}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">{loc.id}</Badge>
+                        {isSelected && <CheckCircle2 className="h-4 w-4 text-primary" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedTpvId && (
+              <div className="flex items-start gap-2 text-sm bg-muted p-3 rounded-md">
+                <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground">
+                  Selected TPV: <strong className="text-foreground">{selectedTpvId}</strong> — this ID will be used for all sales and catalog queries.
+                </span>
               </div>
             )}
 
             {!loadingLocations && locations.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">No locations found or endpoint not available yet.</p>
+              <p className="text-xs text-muted-foreground italic">No establishments found. Click Discover to fetch.</p>
             )}
           </CardContent>
         </Card>
@@ -218,12 +227,24 @@ export default function NumierWizard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* TPV Diagnostics */}
+            <div className="flex items-start gap-2 text-xs bg-muted p-3 rounded-md">
+              <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="text-muted-foreground">
+                <span>Querying TPV: </span>
+                <strong className="text-foreground">{activeTpvId || "none"}</strong>
+                <span className="ml-1">
+                  ({tpvSource === "selected" ? "explicitly selected" : tpvSource === "fallback" ? "⚠ fallback — first discovered" : "⚠ not set"})
+                </span>
+              </div>
+            </div>
+
             <div className="flex gap-2 items-end">
               <div className="flex-1">
                 <label className="text-sm font-medium text-foreground">Business Day</label>
                 <Input type="date" value={selectedDay} onChange={(e) => setSelectedDay(e.target.value)} />
               </div>
-              <Button onClick={() => fetchSalesForDay(selectedDay)} disabled={loadingSales || !selectedDay}>
+              <Button onClick={() => fetchSalesForDay(selectedDay)} disabled={loadingSales || !selectedDay || !activeTpvId}>
                 {loadingSales && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Fetch Sales
               </Button>

@@ -1,8 +1,8 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getNumierConfig, type NumierConfig } from "@/utils/providerConfig";
 
-// ── Canonical types (shared with other providers) ───────────
+// ── Canonical types ─────────────────────────────────────────
 
 export interface SalesLineItem {
   provider_product_id: string;
@@ -33,16 +33,13 @@ export interface NumierLocation {
   address?: string;
 }
 
-/**
- * Capabilities map — tracks what's been verified for this connection.
- */
 export interface NumierCapabilities {
   healthcheck: boolean;
   read_locations: boolean;
   read_sales: boolean;
   read_categories: boolean;
   read_products: boolean;
-  write_catalog: boolean;  // not demonstrated
+  write_catalog: boolean;
 }
 
 const DEFAULT_CAPABILITIES: NumierCapabilities = {
@@ -61,6 +58,7 @@ export function useNumierConnection() {
 
   const [locations, setLocations] = useState<NumierLocation[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
+  const [selectedTpvId, setSelectedTpvId] = useState<string | null>(null);
 
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
@@ -71,18 +69,29 @@ export function useNumierConnection() {
   const [capabilities, setCapabilities] = useState<NumierCapabilities>(DEFAULT_CAPABILITIES);
   const [config, setConfig] = useState<NumierConfig>({});
 
+  // ── Derived: active TPV id and source ─────────────────────
+
+  const activeTpvId = useMemo(() => {
+    return selectedTpvId || config.selected_tpv_id || config.discovered_locations?.[0]?.id || null;
+  }, [selectedTpvId, config]);
+
+  const tpvSource = useMemo((): "selected" | "fallback" | "none" => {
+    if (selectedTpvId || config.selected_tpv_id) return "selected";
+    if (config.discovered_locations?.[0]?.id) return "fallback";
+    return "none";
+  }, [selectedTpvId, config]);
+
   // ── Connection CRUD ───────────────────────────────────────
 
   const saveConnection = async (data: {
     locationName: string;
     apiBaseUrl: string;
     apiToken: string;
-    authMode: string;
     syncFrequency?: number;
   }) => {
     const providerConfig: NumierConfig = {
       api_base_url: data.apiBaseUrl,
-      auth_mode: data.authMode as NumierConfig["auth_mode"],
+      auth_mode: "API_KEY",
     };
 
     const { data: row, error } = await supabase
@@ -130,6 +139,9 @@ export function useNumierConnection() {
     if (cfg.discovered_locations) {
       setLocations(cfg.discovered_locations);
     }
+    if (cfg.selected_tpv_id) {
+      setSelectedTpvId(cfg.selected_tpv_id);
+    }
     return data;
   }, []);
 
@@ -145,7 +157,7 @@ export function useNumierConnection() {
 
   // ── Test / Healthcheck ────────────────────────────────────
 
-  const testConnection = async (apiBaseUrl: string, apiToken: string, authMode = "API_KEY") => {
+  const testConnection = async (apiBaseUrl: string, apiToken: string) => {
     setTestStatus("testing");
     setTestError(null);
 
@@ -156,7 +168,6 @@ export function useNumierConnection() {
           locationName: "Numier Location",
           apiBaseUrl,
           apiToken,
-          authMode,
         });
       } catch (e: unknown) {
         setTestStatus("error");
@@ -167,7 +178,7 @@ export function useNumierConnection() {
       await updateConnection(connId, {
         base_url: apiBaseUrl,
         api_token: apiToken,
-        provider_config: { ...config, api_base_url: apiBaseUrl, auth_mode: authMode },
+        provider_config: { ...config, api_base_url: apiBaseUrl, auth_mode: "API_KEY" },
       });
     }
 
@@ -192,6 +203,20 @@ export function useNumierConnection() {
     }
   };
 
+  // ── Select TPV and persist ────────────────────────────────
+
+  const selectTpv = useCallback(async (tpvId: string) => {
+    setSelectedTpvId(tpvId);
+    if (connectionId) {
+      const updatedConfig = { ...config, selected_tpv_id: tpvId };
+      setConfig(updatedConfig);
+      await supabase
+        .from("pos_connections")
+        .update({ provider_config: updatedConfig })
+        .eq("id", connectionId);
+    }
+  }, [connectionId, config]);
+
   // ── Read Locations ────────────────────────────────────────
 
   const fetchLocations = useCallback(async () => {
@@ -200,15 +225,20 @@ export function useNumierConnection() {
     try {
       const data = await invoke("read-locations");
       if (data?.success) {
-        setLocations(data.locations || []);
+        const locs = data.locations || [];
+        setLocations(locs);
         setCapabilities((prev) => ({ ...prev, read_locations: true }));
+        // Auto-select if only one
+        if (locs.length === 1 && !selectedTpvId) {
+          await selectTpv(locs[0].id);
+        }
       }
     } catch (e) {
       console.error("Failed to fetch locations:", e);
     } finally {
       setLoadingLocations(false);
     }
-  }, [connectionId]);
+  }, [connectionId, selectedTpvId, selectTpv]);
 
   // ── Read Sales ────────────────────────────────────────────
 
@@ -255,33 +285,32 @@ export function useNumierConnection() {
   };
 
   return {
-    // Connection state
     connectionId,
     setConnectionId,
     config,
     capabilities,
 
-    // Test
     testStatus,
     testError,
     testConnection,
 
-    // Locations
     locations,
     loadingLocations,
     fetchLocations,
 
-    // Sales
+    selectedTpvId,
+    selectTpv,
+    activeTpvId,
+    tpvSource,
+
     salesEvents,
     loadingSales,
     fetchSalesForDay,
 
-    // Save
     saving,
     saveResult,
     saveSalesToDb,
 
-    // Lifecycle
     saveConnection,
     updateConnection,
     loadConnection,
