@@ -323,8 +323,13 @@ async function handleReadCategories(connId: string) {
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId } = resolveTpvId(cfg);
-  if (!tpvId) return json({ success: false, message: "No TPV selected." }, 400);
+  const { tpvId, locationCount } = resolveTpvId(cfg);
+  if (!tpvId) {
+    const msg = locationCount > 1
+      ? `Multiple locations (${locationCount}) but no TPV selected.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
+  }
 
   try {
     const res = await fetch(`${baseUrl}/getCategoriesByTpv/${tpvId}`, {
