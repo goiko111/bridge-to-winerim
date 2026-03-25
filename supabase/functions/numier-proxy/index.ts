@@ -50,23 +50,12 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
-function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback" | "none" } {
-  if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected" };
-  const fallback = cfg.discovered_locations?.[0]?.id;
-  if (fallback) return { tpvId: fallback, source: "fallback" };
-  return { tpvId: null, source: "none" };
-}
-
-// ── Deterministic line key (avoids collisions within same ticket) ──
-
-function makeLineKey(
-  providerProductId: string,
-  quantity: number,
-  unitPrice: number,
-  totalAmount: number,
-  ordinal: number,
-): string {
-  return `${providerProductId}|${quantity}|${unitPrice}|${totalAmount}|${ordinal}`;
+function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback_single" | "none"; locationCount: number } {
+  const locs = cfg.discovered_locations || [];
+  if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
+  // Fallback ONLY if exactly one location discovered
+  if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
+  return { tpvId: null, source: "none", locationCount: locs.length };
 }
 
 // ── Action handlers ─────────────────────────────────────────
