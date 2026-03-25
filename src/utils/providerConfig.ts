@@ -251,6 +251,14 @@ export function getIcgConfig(raw: RawConfig): IcgConfig {
   return c;
 }
 
+export function getNumierConfig(raw: RawConfig): NumierConfig {
+  const c = parseJson(raw) as NumierConfig;
+  c.auth_mode = c.auth_mode || "API_KEY";
+  c.timezone = c.timezone || "Europe/Madrid";
+  c.business_day_close_hour = c.business_day_close_hour ?? 6;
+  return c;
+}
+
 // ── Dispatcher (optional convenience) ───────────────────────
 
 export function getProviderConfig<T = Record<string, unknown>>(
