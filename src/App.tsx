@@ -18,6 +18,7 @@ import IcgWizard from "./pages/IcgWizard";
 import HioposWizard from "./pages/HioposWizard";
 import TouchBistroWizard from "./pages/TouchBistroWizard";
 import ToastWizard from "./pages/ToastWizard";
+import NumierWizard from "./pages/NumierWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
