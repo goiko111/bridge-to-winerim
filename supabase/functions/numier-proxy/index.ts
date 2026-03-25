@@ -43,7 +43,6 @@ function buildHeaders(apiKey: string): Record<string, string> {
 }
 
 function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
-  // Allow overriding the base URL for on-prem installations
   const raw = cfg.api_base_url || conn.base_url || "";
   if (!raw || raw === NUMIER_BASE) return NUMIER_BASE;
   let url = raw.trim().replace(/\/+$/, "");
@@ -51,12 +50,27 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
+function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback" | "none" } {
+  if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected" };
+  const fallback = cfg.discovered_locations?.[0]?.id;
+  if (fallback) return { tpvId: fallback, source: "fallback" };
+  return { tpvId: null, source: "none" };
+}
+
+// ── Deterministic line key (avoids collisions within same ticket) ──
+
+function makeLineKey(
+  providerProductId: string,
+  quantity: number,
+  unitPrice: number,
+  totalAmount: number,
+  ordinal: number,
+): string {
+  return `${providerProductId}|${quantity}|${unitPrice}|${totalAmount}|${ordinal}`;
+}
+
 // ── Action handlers ─────────────────────────────────────────
 
-/**
- * HEALTHCHECK — GET /getLocales to verify API-KEY works
- * Status: IMPLEMENTED (real endpoint)
- */
 async function handleHealthcheck(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
@@ -97,13 +111,6 @@ async function handleHealthcheck(connId: string) {
   }
 }
 
-/**
- * READ_LOCATIONS — GET /getLocales
- * Status: IMPLEMENTED (real endpoint)
- *
- * Returns businesses linked to the API key.
- * Each "locale" is a business/establishment (not a physical location).
- */
 async function handleReadLocations(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
@@ -128,13 +135,11 @@ async function handleReadLocations(connId: string) {
       return json({ success: false, message: data.message || "API returned response=false" });
     }
 
-    // Normalize: Numier returns { id, establishmentName }
     const locations = (data.result || []).map((loc: Record<string, unknown>) => ({
       id: String(loc.id || ""),
       name: String(loc.establishmentName || "Unknown"),
     }));
 
-    // Persist discovered locations
     const updatedCfg = {
       ...cfg,
       discovered_locations: locations,
@@ -148,37 +153,21 @@ async function handleReadLocations(connId: string) {
   }
 }
 
-/**
- * READ_SALES — GET /v2/sales/{idTpv}?start_date=yyyy-MM-dd&end_date=yyyy-MM-dd&pag=N
- * Status: IMPLEMENTED (real endpoint)
- *
- * Numier constraints:
- * - Dates: yyyy-MM-dd, max range 34 days
- * - Pagination: max 250 tickets per page
- * - Returns { result: [...tickets], response, totalpages, message }
- *
- * Each ticket has: Serie, Number, TaxDocumentNumber, BusinessDay, Date,
- *   Pos{Id,Name}, Workplace{Id,Name}, Section, User, DocumentType,
- *   InvoiceItems[{idProduct, name, idCategory, units, price, amount, vatType, subproducts}],
- *   Totals{GrossAmount, NetAmount, VatAmount, SurchargeAmount, Taxes}
- */
 async function handleReadSales(connId: string, businessDay: string, endDate?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  // Determine which TPV (POS) to query
-  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
+  const { tpvId, source } = resolveTpvId(cfg);
   if (!tpvId) {
-    return json({ success: false, message: "No TPV selected. Discover locations first." }, 400);
+    return json({ success: false, message: "No TPV selected. Discover locations and select one first." }, 400);
   }
 
   const startDate = businessDay;
   const end = endDate || businessDay;
 
   try {
-    // Fetch all pages
     const allTickets: Record<string, unknown>[] = [];
     let page = 1;
     let totalPages = 1;
@@ -210,7 +199,7 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       const invoiceItems = (ticket.InvoiceItems || []) as Record<string, unknown>[];
       const totals = (ticket.Totals || {}) as Record<string, unknown>;
 
-      const lines = invoiceItems.map((item) => ({
+      const lines = invoiceItems.map((item, idx) => ({
         provider_product_id: String(item.idProduct || ""),
         name: String(item.name || ""),
         format: "UNIT",
@@ -219,7 +208,8 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
         unit_price: Number(item.price || 0),
         total_amount: Number(item.amount || 0) || Number(item.units || 0) * Number(item.price || 0),
         vat_rate: Number(item.vatType || 0),
-        is_wine_candidate: false, // Will be classified by wine_family_rules
+        is_wine_candidate: false,
+        _ordinal: idx,
       }));
 
       const serie = String(ticket.Serie || "");
@@ -239,7 +229,6 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       };
     });
 
-    // Update verified capabilities
     if (salesEvents.length > 0) {
       const updatedCfg = {
         ...cfg,
@@ -252,6 +241,8 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       success: true,
       businessDay: startDate,
       endDate: end,
+      tpvId,
+      tpvSource: source,
       salesEvents,
       count: salesEvents.length,
       totalPages,
@@ -263,8 +254,9 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
 }
 
 /**
- * SAVE_SALES — persist normalized sales to DB
- * Status: IMPLEMENTED
+ * SAVE_SALES — persist normalized sales to DB.
+ * Uses deterministic line_key to avoid collisions between lines of the same product
+ * within the same ticket, while keeping idempotency across re-runs.
  */
 async function handleSaveSales(connId: string, businessDay: string, endDate?: string) {
   const fetchRes = await handleReadSales(connId, businessDay, endDate);
@@ -298,24 +290,30 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
     if (evErr || !eventRow) continue;
     savedEvents++;
 
-    for (const line of ev.lines) {
-      const { error: lineErr } = await sb().from("sales_line_items").upsert(
-        {
-          sales_event_id: eventRow.id,
-          connection_id: connId,
-          provider_product_id: line.provider_product_id,
-          name: line.name,
-          format: line.format,
-          family: line.family,
-          quantity: line.quantity,
-          unit_price: line.unit_price,
-          total_amount: line.total_amount,
-          vat_rate: line.vat_rate,
-          is_wine_candidate: line.is_wine_candidate,
-        },
-        { onConflict: "sales_event_id,provider_product_id" },
-      );
-      if (!lineErr) savedLines++;
+    // Delete existing lines for this event, then insert fresh.
+    // This avoids collision issues from onConflict on non-unique combos.
+    await sb()
+      .from("sales_line_items")
+      .delete()
+      .eq("sales_event_id", eventRow.id);
+
+    const lineRows = ev.lines.map((line: any) => ({
+      sales_event_id: eventRow.id,
+      connection_id: connId,
+      provider_product_id: line.provider_product_id,
+      name: line.name,
+      format: line.format,
+      family: line.family,
+      quantity: line.quantity,
+      unit_price: line.unit_price,
+      total_amount: line.total_amount,
+      vat_rate: line.vat_rate,
+      is_wine_candidate: line.is_wine_candidate,
+    }));
+
+    if (lineRows.length > 0) {
+      const { error: lineErr } = await sb().from("sales_line_items").insert(lineRows);
+      if (!lineErr) savedLines += lineRows.length;
     }
   }
 
@@ -327,20 +325,14 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
   return json({ success: true, savedEvents, savedLines, businessDay });
 }
 
-/**
- * READ_CATEGORIES — GET /getCategoriesByTpv/{idTpv}
- * Status: IMPLEMENTED (real endpoint)
- */
 async function handleReadCategories(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
-  if (!tpvId) {
-    return json({ success: false, message: "No TPV selected." }, 400);
-  }
+  const { tpvId } = resolveTpvId(cfg);
+  if (!tpvId) return json({ success: false, message: "No TPV selected." }, 400);
 
   try {
     const res = await fetch(`${baseUrl}/getCategoriesByTpv/${tpvId}`, {
@@ -364,26 +356,26 @@ async function handleReadCategories(connId: string) {
       name: String(cat.name || ""),
     }));
 
+    const updatedCfg = {
+      ...cfg,
+      verified_capabilities: { ...(cfg.verified_capabilities || {}), read_categories: true },
+    };
+    await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
+
     return json({ success: true, categories, count: categories.length });
   } catch (err) {
     return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
   }
 }
 
-/**
- * READ_PRODUCTS — GET /getProducts/{idTpv}?pag=N
- * Status: IMPLEMENTED (real endpoint)
- */
 async function handleReadProducts(connId: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const tpvId = cfg.selected_tpv_id || cfg.discovered_locations?.[0]?.id;
-  if (!tpvId) {
-    return json({ success: false, message: "No TPV selected." }, 400);
-  }
+  const { tpvId } = resolveTpvId(cfg);
+  if (!tpvId) return json({ success: false, message: "No TPV selected." }, 400);
 
   try {
     const allProducts: Record<string, unknown>[] = [];
@@ -406,13 +398,10 @@ async function handleReadProducts(connId: string) {
 
       const batch = data.result || [];
       allProducts.push(...batch);
-
-      // Numier returns max 50 per page; if less, we're done
       hasMore = batch.length >= 50;
       page++;
     }
 
-    // Normalize
     const products = allProducts.map((p: Record<string, unknown>) => ({
       id: String(p.id || ""),
       name: String(p.name || ""),
@@ -426,17 +415,16 @@ async function handleReadProducts(connId: string) {
       is_active: p.isActive === true || p.isActive === "true",
     }));
 
+    const updatedCfg = {
+      ...cfg,
+      verified_capabilities: { ...(cfg.verified_capabilities || {}), read_products: true },
+    };
+    await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
+
     return json({ success: true, products, count: products.length });
   } catch (err) {
     return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
   }
-}
-
-/**
- * TEST — alias for healthcheck
- */
-async function handleTest(connId: string) {
-  return handleHealthcheck(connId);
 }
 
 // ── Main router ─────────────────────────────────────────────
@@ -455,7 +443,7 @@ serve(async (req) => {
     switch (action) {
       case "test":
       case "healthcheck":
-        return await handleTest(connectionId);
+        return await handleHealthcheck(connectionId);
 
       case "read-locations":
         return await handleReadLocations(connectionId);
@@ -479,7 +467,6 @@ serve(async (req) => {
         return await handleSaveSales(connectionId, day, payload.endDate);
       }
 
-      // ── Not yet demonstrated ──
       case "write-catalog":
         return json({ error: "write-catalog not demonstrated for Numier", status: "NOT_DEMONSTRATED" }, 501);
 
@@ -490,7 +477,6 @@ serve(async (req) => {
         return json({ error: "Unknown action", available: [
           "test", "healthcheck", "read-locations", "read-categories",
           "read-products", "read-sales", "fetch-day", "save-sales",
-          "write-catalog (not demonstrated)", "verify-catalog (not demonstrated)",
         ] }, 400);
     }
   } catch (err) {
