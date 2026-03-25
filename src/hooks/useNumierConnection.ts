@@ -341,5 +341,9 @@ export function useNumierConnection() {
     updateConnection,
     loadConnection,
     enableSync,
+
+    diagnosing,
+    diagnosisResult,
+    diagnoseTpv,
   };
 }
