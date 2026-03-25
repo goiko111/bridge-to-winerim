@@ -18,6 +18,7 @@ import IcgWizard from "./pages/IcgWizard";
 import HioposWizard from "./pages/HioposWizard";
 import TouchBistroWizard from "./pages/TouchBistroWizard";
 import ToastWizard from "./pages/ToastWizard";
+import NumierWizard from "./pages/NumierWizard";
 import SyncMonitor from "./pages/SyncMonitor";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/integrations/hiopos" element={<HioposWizard />} />
             <Route path="/integrations/touchbistro" element={<TouchBistroWizard />} />
             <Route path="/integrations/toast" element={<ToastWizard />} />
+            <Route path="/integrations/numier" element={<NumierWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />

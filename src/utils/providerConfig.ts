@@ -162,6 +162,35 @@ export interface IcgConfig {
   require_manual_approval?: boolean;
 }
 
+export interface NumierConfig {
+  /** Base URL of Numier API (e.g. https://api.numier.com or on-prem host) */
+  api_base_url?: string;
+  /** Auth mode: API_KEY, BASIC, OAUTH */
+  auth_mode?: "API_KEY" | "BASIC" | "OAUTH";
+  /** API key if auth_mode = API_KEY */
+  api_key?: string;
+  /** Username for BASIC auth */
+  username?: string;
+  /** Password for BASIC auth */
+  password?: string;
+  /** Location / store identifier inside Numier */
+  location_id?: string;
+  /** Timezone for business-day calculation */
+  timezone?: string;
+  /** Hour at which the business day closes (0-23) */
+  business_day_close_hour?: number;
+  /** Discovered locations from read_locations */
+  discovered_locations?: { id: string; name: string; address?: string }[];
+  /** Capabilities explicitly verified */
+  verified_capabilities?: {
+    healthcheck?: boolean;
+    read_locations?: boolean;
+    read_sales?: boolean;
+    read_catalog?: boolean;
+    write_catalog?: boolean;
+  };
+}
+
 // ── Generic raw type ────────────────────────────────────────
 
 type RawConfig = Json | null | undefined;
@@ -222,6 +251,14 @@ export function getIcgConfig(raw: RawConfig): IcgConfig {
   return c;
 }
 
+export function getNumierConfig(raw: RawConfig): NumierConfig {
+  const c = parseJson(raw) as NumierConfig;
+  c.auth_mode = c.auth_mode || "API_KEY";
+  c.timezone = c.timezone || "Europe/Madrid";
+  c.business_day_close_hour = c.business_day_close_hour ?? 6;
+  return c;
+}
+
 // ── Dispatcher (optional convenience) ───────────────────────
 
 export function getProviderConfig<T = Record<string, unknown>>(
@@ -245,6 +282,8 @@ export function getProviderConfig<T = Record<string, unknown>>(
     touchbistro: getTouchBistroConfig,
     ICG: getIcgConfig,
     icg: getIcgConfig,
+    NUMIER: getNumierConfig,
+    numier: getNumierConfig,
   };
   const getter = map[provider];
   return (getter ? getter(raw) : parseJson(raw)) as T;
