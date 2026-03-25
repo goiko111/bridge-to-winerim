@@ -50,6 +50,9 @@ export default function NumierWizard() {
     enableSync,
     activeTpvId,
     tpvSource,
+    diagnosing,
+    diagnosisResult,
+    diagnoseTpv,
   } = useNumierConnection();
 
   const canNext = useMemo(() => {
