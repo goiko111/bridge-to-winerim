@@ -162,7 +162,7 @@ export function useNumierConnection() {
 
   // ── Test / Healthcheck ────────────────────────────────────
 
-  const testConnection = async (apiBaseUrl: string, apiToken: string) => {
+  const testConnection = async (apiBaseUrl: string, apiToken: string, locationNameOverride?: string) => {
     setTestStatus("testing");
     setTestError(null);
 
