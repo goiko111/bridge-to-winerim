@@ -286,6 +286,23 @@ export function useNumierConnection() {
     }
   }, [connectionId]);
 
+  // ── Diagnose TPV ───────────────────────────────────────────
+
+  const diagnoseTpv = useCallback(async () => {
+    if (!connectionId) return;
+    setDiagnosing(true);
+    setDiagnosisResult(null);
+    try {
+      const data = await invoke("diagnose-tpv", { tpvId: activeTpvId });
+      setDiagnosisResult(data);
+    } catch (e) {
+      console.error("Diagnosis failed:", e);
+      setDiagnosisResult({ success: false, error: (e as Error).message });
+    } finally {
+      setDiagnosing(false);
+    }
+  }, [connectionId, activeTpvId]);
+
   // ── Enable Sync ───────────────────────────────────────────
 
   const enableSync = async () => {
