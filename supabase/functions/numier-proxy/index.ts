@@ -148,9 +148,12 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId, source } = resolveTpvId(cfg);
+  const { tpvId, source, locationCount } = resolveTpvId(cfg);
   if (!tpvId) {
-    return json({ success: false, message: "No TPV selected. Discover locations and select one first." }, 400);
+    const msg = locationCount > 1
+      ? `Multiple locations discovered (${locationCount}) but no TPV explicitly selected. Please select one in the wizard.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
   }
 
   const startDate = businessDay;
