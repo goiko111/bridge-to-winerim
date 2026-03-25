@@ -239,8 +239,15 @@ export default function NumierWizard() {
                 <span>Querying TPV: </span>
                 <strong className="text-foreground">{activeTpvId || "none"}</strong>
                 <span className="ml-1">
-                  ({tpvSource === "selected" ? "explicitly selected" : tpvSource === "fallback" ? "⚠ fallback — first discovered" : "⚠ not set"})
+                  ({tpvSource === "selected"
+                    ? "✅ explicitly selected"
+                    : tpvSource === "fallback_single"
+                    ? "⚠ auto-selected (only 1 location)"
+                    : "❌ not set"})
                 </span>
+                {locations.length > 0 && (
+                  <span className="ml-1">· {locations.length} location(s) discovered</span>
+                )}
               </div>
             </div>
 
