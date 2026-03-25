@@ -56,6 +56,15 @@ const connectors: Connector[] = [
     maturity: "beta",
   },
   {
+    id: "numier",
+    name: "Numier",
+    description: "POS integration with healthcheck, locations and sales read. Catalog write planned.",
+    logo: "N",
+    status: "disconnected",
+    country: "España",
+    maturity: "experimental",
+  },
+  {
     id: "glop",
     name: "Glop",
     description: "TPV with API docs at apidoc.glop.es. Requires developer account.",
