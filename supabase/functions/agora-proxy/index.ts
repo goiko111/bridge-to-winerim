@@ -3399,23 +3399,47 @@ serve(async (req) => {
         const updatedPayload = { ...taskPayload, _diagnostics: diagnostics };
 
         if (!taskVerification.success) {
-          const failMsg = `Post-import verification failed: ${(taskVerification.errors as AgoraVerificationIssue[]).map((e) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 1000);
-          await supabase.from("outbound_tasks").update({
-            status: "FAILED",
-            last_error: failMsg,
-            payload_json: updatedPayload,
-          }).eq("id", task.id);
-          // ── PUSH TRACKING: Mark FAILED per format ──
-          for (const fmt of fmtTypes) {
-            await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
-              sync_status: "FAILED",
-              task_id: task.id,
-              last_error: failMsg.substring(0, 500),
-              pushed_at: new Date().toISOString(),
-            });
+          // Distinguish between hard failures and soft verification issues (e.g. NOT_FOUND after successful import)
+          const hardErrors = (taskVerification.errors as AgoraVerificationIssue[]).filter(
+            (e) => e.code !== "NOT_FOUND"
+          );
+          const notFoundErrors = (taskVerification.errors as AgoraVerificationIssue[]).filter(
+            (e) => e.code === "NOT_FOUND"
+          );
+
+          // If the ONLY verification failures are NOT_FOUND (product not yet indexed by Agora after import),
+          // treat as SUCCESS with warnings — the import itself was accepted (HTTP 200).
+          if (hardErrors.length === 0 && notFoundErrors.length > 0) {
+            // Downgrade NOT_FOUND to warnings
+            for (const nf of notFoundErrors) {
+              taskVerification.warnings.push({
+                ...nf,
+                code: "NOT_FOUND_POST_IMPORT",
+                message: `${nf.message} (import accepted, verification pending — Agora may need time to index)`,
+              });
+            }
+            taskVerification.errors = [];
+            taskVerification.success = true;
+            // Fall through to the success path below
+          } else {
+            const failMsg = `Post-import verification failed: ${(taskVerification.errors as AgoraVerificationIssue[]).map((e) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 1000);
+            await supabase.from("outbound_tasks").update({
+              status: "FAILED",
+              last_error: failMsg,
+              payload_json: updatedPayload,
+            }).eq("id", task.id);
+            // ── PUSH TRACKING: Mark FAILED per format ──
+            for (const fmt of fmtTypes) {
+              await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+                sync_status: "FAILED",
+                task_id: task.id,
+                last_error: failMsg.substring(0, 500),
+                pushed_at: new Date().toISOString(),
+              });
+            }
+            return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
-          return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // Store diagnostics even on success
