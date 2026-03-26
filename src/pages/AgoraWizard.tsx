@@ -2701,7 +2701,7 @@ function StepCapabilities({
 // ── Step 8: Outbound Sync Panel ──
 function StepOutboundSync({
   connectionId, capabilities, outboundTasks, loadingTasks,
-  processingQueue, queuingProducts, exporting,
+  processingQueue, queuingProducts, exporting, queueProgress,
   onLoadTasks, onProcessQueue, onRetry, onRequeueWithCurrentScope, onExport,
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
