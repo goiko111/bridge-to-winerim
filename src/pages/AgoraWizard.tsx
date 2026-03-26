@@ -1413,10 +1413,23 @@ function StepWinerimCatalog({
         connectionId,
         "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
       ),
-      supabase.from("winerim_push_tracking" as any)
-        .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at, agora_product_id, agora_family_id")
-        .eq("connection_id", connectionId)
-        .then(r => r.data || []),
+      (async () => {
+        const PAGE = 1000;
+        let all: any[] = [];
+        let page = 0;
+        while (true) {
+          const { data: batch } = await supabase
+            .from("winerim_push_tracking" as any)
+            .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at, agora_product_id, agora_family_id")
+            .eq("connection_id", connectionId)
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (!batch || batch.length === 0) break;
+          all = all.concat(batch);
+          if (batch.length < PAGE) break;
+          page++;
+        }
+        return all;
+      })(),
       supabase.from("agora_master_data")
         .select("families_json, products_summary_json")
         .eq("connection_id", connectionId)
