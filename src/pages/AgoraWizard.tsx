@@ -2923,6 +2923,24 @@ function StepOutboundSync({
             </Button>
           </>
         )}
+
+        {/* Live progress bar during queue processing */}
+        {processingQueue && queueProgress && queueProgress.total > 0 && (
+          <div className="w-full mt-2 space-y-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Procesando cola…</span>
+              <span>{queueProgress.processed} / {queueProgress.total} ({queueProgress.succeeded} ✓ {queueProgress.failed > 0 ? ` ${queueProgress.failed} ✗` : ""})</span>
+            </div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full flex">
+                <div className="bg-emerald-500 transition-all duration-300" style={{ width: `${(queueProgress.succeeded / queueProgress.total) * 100}%` }} />
+                {queueProgress.failed > 0 && (
+                  <div className="bg-destructive transition-all duration-300" style={{ width: `${(queueProgress.failed / queueProgress.total) * 100}%` }} />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
           <FileJson className="mr-2 h-4 w-4" /> Export JSON
         </Button>
