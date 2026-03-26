@@ -197,6 +197,7 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
             )}
           </div>
 
+          {loading ? (
             <div className="flex items-center justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
           ) : (
             <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
