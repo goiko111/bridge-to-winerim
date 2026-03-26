@@ -27,6 +27,7 @@ export interface OutboundTask {
 }
 
 export function useOutboundSync(connectionId: string | null) {
+  const OUTBOUND_TASKS_PAGE_SIZE = 1000;
   const [capabilities, setCapabilities] = useState<ProviderCapability | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [detectionResults, setDetectionResults] = useState<unknown[]>([]);
@@ -73,16 +74,29 @@ export function useOutboundSync(connectionId: string | null) {
     if (!connectionId) return [];
     setLoadingTasks(true);
     try {
-      const { data, error } = await supabase
-        .from("outbound_tasks")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .order("created_at", { ascending: false })
-        .limit(200);
+      const allTasks: OutboundTask[] = [];
+      let from = 0;
 
-      if (error) throw error;
+      while (true) {
+        const { data, error } = await supabase
+          .from("outbound_tasks")
+          .select("*")
+          .eq("connection_id", connectionId)
+          .order("created_at", { ascending: false })
+          .range(from, from + OUTBOUND_TASKS_PAGE_SIZE - 1);
 
-      const tasks = (data ?? []) as unknown as OutboundTask[];
+        if (error) throw error;
+
+        const page = (data ?? []) as unknown as OutboundTask[];
+        if (page.length === 0) break;
+
+        allTasks.push(...page);
+
+        if (page.length < OUTBOUND_TASKS_PAGE_SIZE) break;
+        from += OUTBOUND_TASKS_PAGE_SIZE;
+      }
+
+      const tasks = allTasks;
       setOutboundTasks(tasks);
       return tasks;
     } catch (e) {
