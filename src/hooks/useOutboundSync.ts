@@ -129,6 +129,9 @@ export function useOutboundSync(connectionId: string | null) {
     if (!connectionId) return;
     setProcessingQueue(true);
     let totalProcessed = 0, totalSucceeded = 0, totalFailed = 0;
+    // Snapshot initial queue size for progress tracking
+    const initialQueued = outboundTasks.filter(t => t.status === "QUEUED" || t.status === "RUNNING").length;
+    setQueueProgress({ processed: 0, succeeded: 0, failed: 0, total: initialQueued });
     try {
       const invokeWithRetry = async (action: "process-xml-outbound-queue" | "process-outbound-queue") => {
         let lastError: unknown = null;
@@ -167,9 +170,12 @@ export function useOutboundSync(connectionId: string | null) {
           totalFailed += legacyData?.failed || 0;
           legacyDone = legacyData?.done !== false;
         }
+
+        // Update progress and refresh task list after each batch
+        setQueueProgress({ processed: totalProcessed, succeeded: totalSucceeded, failed: totalFailed, total: initialQueued });
+        await loadOutboundTasks();
       }
 
-      await loadOutboundTasks();
       return {
         success: true,
         processed: totalProcessed,
@@ -180,6 +186,7 @@ export function useOutboundSync(connectionId: string | null) {
       console.error("Failed to process queue:", e);
     } finally {
       setProcessingQueue(false);
+      setQueueProgress(null);
     }
   }, [connectionId, loadOutboundTasks]);
 
