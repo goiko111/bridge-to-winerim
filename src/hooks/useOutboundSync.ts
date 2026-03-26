@@ -115,14 +115,30 @@ export function useOutboundSync(connectionId: string | null) {
     setProcessingQueue(true);
     let totalProcessed = 0, totalSucceeded = 0, totalFailed = 0;
     try {
+      const invokeWithRetry = async (action: "process-xml-outbound-queue" | "process-outbound-queue") => {
+        let lastError: unknown = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const { data, error } = await supabase.functions.invoke("agora-proxy", {
+              body: { action, connectionId },
+            });
+            if (error) throw error;
+            return data;
+          } catch (err) {
+            lastError = err;
+            if (attempt < 2) {
+              await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+            }
+          }
+        }
+        throw lastError;
+      };
+
       // Auto-loop: keep calling until both queues are empty
       let xmlDone = false, legacyDone = false;
       while (!xmlDone || !legacyDone) {
         if (!xmlDone) {
-          const { data: xmlData, error: xmlError } = await supabase.functions.invoke("agora-proxy", {
-            body: { action: "process-xml-outbound-queue", connectionId },
-          });
-          if (xmlError) throw xmlError;
+          const xmlData = await invokeWithRetry("process-xml-outbound-queue");
           totalProcessed += xmlData?.processed || 0;
           totalSucceeded += xmlData?.succeeded || 0;
           totalFailed += xmlData?.failed || 0;
@@ -130,10 +146,7 @@ export function useOutboundSync(connectionId: string | null) {
         }
 
         if (!legacyDone) {
-          const { data: legacyData, error: legacyError } = await supabase.functions.invoke("agora-proxy", {
-            body: { action: "process-outbound-queue", connectionId },
-          });
-          if (legacyError) throw legacyError;
+          const legacyData = await invokeWithRetry("process-outbound-queue");
           totalProcessed += legacyData?.processed || 0;
           totalSucceeded += legacyData?.succeeded || 0;
           totalFailed += legacyData?.failed || 0;
