@@ -240,8 +240,14 @@ const WINE_TYPE_FAMILY_MAP: Record<string, string[]> = {
   "champagne": ["ESPUMOSOS", "Champagne", "Espumosos"],
   "generoso": ["GENEROSOS", "Generosos", "Jerez"],
   "fortificado": ["GENEROSOS", "Generosos"],
+  "dulce": ["DULCE", "Dulce", "Postre", "Dessert"],
+  "postre": ["DULCE", "Dulce", "Postre", "Dessert"],
 };
 
+// Wine type aliases: normalize legacy keys to canonical ones
+const WINE_TYPE_ALIASES: Record<string, string> = {
+  "postre": "dulce",
+};
 // ── DETERMINISTIC FAMILY ID GENERATOR ──
 function stableFamilyId(name: string): string {
   const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
