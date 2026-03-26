@@ -2271,7 +2271,7 @@ serve(async (req) => {
         .from("provider_capabilities").select("can_write_products, write_endpoint").eq("connection_id", connectionId).single();
 
       const BATCH_SIZE = 10;
-      const TIME_BUDGET_MS = 45_000;
+      const TIME_BUDGET_MS = 20_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
@@ -3565,7 +3565,7 @@ serve(async (req) => {
     // ── PROCESS XML OUTBOUND QUEUE (time-budgeted, auto-retry from UI) ──
     if (action === "process-xml-outbound-queue") {
       const BATCH_SIZE = 10;
-      const TIME_BUDGET_MS = 45_000; // 45s budget, edge functions timeout at ~60s
+      const TIME_BUDGET_MS = 20_000; // keep responses comfortably below browser/network timeouts
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
