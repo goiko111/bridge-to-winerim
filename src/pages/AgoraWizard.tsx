@@ -4810,7 +4810,8 @@ export default function AgoraWizard() {
               reassigningFamilies={outbound.reassigningFamilies}
               onReassignFamilies={outbound.reassignFamilies}
               clearingQueue={outbound.clearingQueue}
-              onClearQueue={outbound.clearQueue} />
+              onClearQueue={outbound.clearQueue}
+              queueProgress={outbound.queueProgress} />
           )}
           {currentStep === 12 && (
             <StepSalesAnalytics connectionId={connectionId} />
