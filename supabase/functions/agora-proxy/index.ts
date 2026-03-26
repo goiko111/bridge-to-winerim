@@ -853,7 +853,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
     // Try matching wine type (only from real type field, not grape/region)
     if (wineType) {
-      const typeKey = wineType.toLowerCase();
+      const typeKey = WINE_TYPE_ALIASES[wineType.toLowerCase()] || wineType.toLowerCase();
       const candidates = WINE_TYPE_FAMILY_MAP[typeKey] || [];
       for (const candidate of candidates) {
         const found = families.find(f => f.Name.toLowerCase().includes(candidate.toLowerCase()));
