@@ -41,6 +41,7 @@ export function useOutboundSync(connectionId: string | null) {
   const [fixingPrices, setFixingPrices] = useState(false);
   const [reassigningFamilies, setReassigningFamilies] = useState(false);
   const [clearingQueue, setClearingQueue] = useState(false);
+  const [queueProgress, setQueueProgress] = useState<{ processed: number; succeeded: number; failed: number; total: number } | null>(null);
   const loadCapabilities = useCallback(async () => {
     if (!connectionId) return;
     const { data } = await supabase
