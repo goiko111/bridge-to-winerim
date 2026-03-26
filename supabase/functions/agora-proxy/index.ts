@@ -3120,7 +3120,7 @@ serve(async (req) => {
         // If family override is set, create an override mapping that takes priority
         if (familyOverrideId) {
           const overrideMapping: Record<string, { id: string; name: string }> = {};
-          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_postre", "magnum"]) {
+          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_dulce", "magnum"]) {
             overrideMapping[key] = { id: familyOverrideId, name: `Override Family ${familyOverrideId}` };
           }
           customFamilyMappings = overrideMapping;
