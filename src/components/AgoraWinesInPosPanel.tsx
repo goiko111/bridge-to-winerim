@@ -40,26 +40,47 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
     if (!connectionId) return;
     setLoading(true);
     try {
-      const { data: tracking } = await supabase
-        .from("winerim_push_tracking")
-        .select("winerim_wine_id, format, sync_status, agora_product_id, agora_family_id, last_error, pushed_at, verified_at")
-        .eq("connection_id", connectionId)
-        .in("sync_status", ["PUSHED", "VERIFIED", "QUEUED", "FAILED"]);
+      // Paginate to fetch ALL tracking rows (Supabase default limit is 1000)
+      const PAGE_SIZE = 1000;
+      let allTracking: PushTrackingRow[] = [];
+      let page = 0;
+      while (true) {
+        const { data: batch } = await supabase
+          .from("winerim_push_tracking")
+          .select("winerim_wine_id, format, sync_status, agora_product_id, agora_family_id, last_error, pushed_at, verified_at")
+          .eq("connection_id", connectionId)
+          .in("sync_status", ["PUSHED", "VERIFIED", "QUEUED", "FAILED"])
+          .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+        if (!batch || batch.length === 0) break;
+        allTracking = allTracking.concat(batch as PushTrackingRow[]);
+        if (batch.length < PAGE_SIZE) break;
+        page++;
+      }
 
-      if (!tracking || tracking.length === 0) {
+      if (allTracking.length === 0) {
         setRows([]);
         setLoading(false);
         return;
       }
 
-      const wineIds = [...new Set((tracking as PushTrackingRow[]).map(t => t.winerim_wine_id))];
-      const [{ data: wines }, { data: masterData }] = await Promise.all([
-        supabase.from("winerim_wines").select("winerim_id, name").eq("connection_id", connectionId).in("winerim_id", wineIds),
-        supabase.from("agora_master_data").select("families_json, products_summary_json").eq("connection_id", connectionId).maybeSingle(),
-      ]);
-
+      // Fetch wine names in batches too (winerim_wines can also exceed 1000)
+      const wineIds = [...new Set(allTracking.map(t => t.winerim_wine_id))];
       const nameMap: Record<string, string> = {};
-      (wines || []).forEach((w: any) => { nameMap[w.winerim_id] = w.name; });
+      for (let i = 0; i < wineIds.length; i += 500) {
+        const chunk = wineIds.slice(i, i + 500);
+        const { data: wines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, name")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", chunk);
+        (wines || []).forEach((w: any) => { nameMap[w.winerim_id] = w.name; });
+      }
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("families_json, products_summary_json")
+        .eq("connection_id", connectionId)
+        .maybeSingle();
 
       const familyMap: Record<string, string> = {};
       const familiesArr = (masterData?.families_json as any[]) || [];
@@ -72,7 +93,7 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
       }
 
       setRows(
-        (tracking as PushTrackingRow[]).map(t => ({
+        allTracking.map(t => ({
           ...t,
           wine_name: nameMap[t.winerim_wine_id] || t.winerim_wine_id,
           family_name: t.agora_family_id
