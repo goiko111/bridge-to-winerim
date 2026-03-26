@@ -3,9 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   Search, RefreshCw, Loader2, CheckCircle2, Wine, ChevronDown, ChevronUp,
-  AlertTriangle, Eye,
+  AlertTriangle, Eye, ShieldCheck,
 } from "lucide-react";
 
 interface PushTrackingRow {
@@ -33,6 +34,7 @@ interface WineWithTracking extends PushTrackingRow {
 export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: string | null; families?: { Id: string; Name: string }[] }) {
   const [rows, setRows] = useState<WineWithTracking[]>([]);
   const [loading, setLoading] = useState(false);
+  const [reverifying, setReverifying] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -108,6 +110,26 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
     }
   }, [connectionId]);
 
+  const reverifyFailed = useCallback(async () => {
+    if (!connectionId) return;
+    setReverifying(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "verify-products", connectionId },
+      });
+      if (error) throw error;
+      const verified = data?.summary?.passed || 0;
+      const failed = data?.summary?.failed || 0;
+      toast.success(`Re-verificación completada: ${verified} OK, ${failed} con problemas`);
+      await load();
+    } catch (e) {
+      console.error("Re-verify failed:", e);
+      toast.error("Error al re-verificar");
+    } finally {
+      setReverifying(false);
+    }
+  }, [connectionId, load]);
+
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
@@ -167,6 +189,12 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
             <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-8">
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             </Button>
+            {stats.failed > 0 && (
+              <Button variant="outline" size="sm" onClick={reverifyFailed} disabled={reverifying} className="h-8 text-xs gap-1">
+                {reverifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                Re-verificar {stats.failed} failed
+              </Button>
+            )}
           </div>
 
           {loading ? (
