@@ -3622,6 +3622,7 @@ serve(async (req) => {
         queuedCreate,
         queuedUpdate,
         skippedDuplicate,
+        skippedNoFormats,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
