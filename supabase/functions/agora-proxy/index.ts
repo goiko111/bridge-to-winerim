@@ -826,7 +826,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       }
       // Try wine type key (e.g. "botella_tinto", "tinto")
       if (wineType) {
-        const typeKey = wineType.toLowerCase();
+        const typeKey = WINE_TYPE_ALIASES[wineType.toLowerCase()] || wineType.toLowerCase();
         // Try "botella_<type>" for bottles
         if (formatType === "BOTTLE" || !formatType) {
           const bottleKey = `botella_${typeKey}`;
