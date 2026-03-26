@@ -2596,7 +2596,7 @@ serve(async (req) => {
         { key: "botella_blanco", name: "BLANCOS WINERIM" },
         { key: "botella_espumoso", name: "ESPUMOSOS WINERIM" },
         { key: "botella_fortificado", name: "FORTIFICADOS WINERIM" },
-        { key: "botella_postre", name: "POSTRE WINERIM" },
+        { key: "botella_dulce", name: "DULCE WINERIM" },
         { key: "botella_rosado", name: "ROSADOS WINERIM" },
         { key: "magnum", name: "MAGNUM WINERIM" },
       ];
