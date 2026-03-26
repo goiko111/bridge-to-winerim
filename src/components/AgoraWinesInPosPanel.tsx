@@ -189,7 +189,12 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
             <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-8">
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             </Button>
-          </div>
+            {stats.failed > 0 && (
+              <Button variant="outline" size="sm" onClick={reverifyFailed} disabled={reverifying} className="h-8 text-xs gap-1">
+                {reverifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                Re-verificar {stats.failed} failed
+              </Button>
+            )}
 
           {loading ? (
             <div className="flex items-center justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
