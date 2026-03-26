@@ -110,6 +110,26 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
     }
   }, [connectionId]);
 
+  const reverifyFailed = useCallback(async () => {
+    if (!connectionId) return;
+    setReverifying(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "verify-products", connectionId },
+      });
+      if (error) throw error;
+      const verified = data?.summary?.passed || 0;
+      const failed = data?.summary?.failed || 0;
+      toast.success(`Re-verificación completada: ${verified} OK, ${failed} con problemas`);
+      await load();
+    } catch (e) {
+      console.error("Re-verify failed:", e);
+      toast.error("Error al re-verificar");
+    } finally {
+      setReverifying(false);
+    }
+  }, [connectionId, load]);
+
   useEffect(() => { load(); }, [load]);
 
   const filtered = useMemo(() => {
