@@ -240,8 +240,14 @@ const WINE_TYPE_FAMILY_MAP: Record<string, string[]> = {
   "champagne": ["ESPUMOSOS", "Champagne", "Espumosos"],
   "generoso": ["GENEROSOS", "Generosos", "Jerez"],
   "fortificado": ["GENEROSOS", "Generosos"],
+  "dulce": ["DULCE", "Dulce", "Postre", "Dessert"],
+  "postre": ["DULCE", "Dulce", "Postre", "Dessert"],
 };
 
+// Wine type aliases: normalize legacy keys to canonical ones
+const WINE_TYPE_ALIASES: Record<string, string> = {
+  "postre": "dulce",
+};
 // ── DETERMINISTIC FAMILY ID GENERATOR ──
 function stableFamilyId(name: string): string {
   const normalized = name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -820,7 +826,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       }
       // Try wine type key (e.g. "botella_tinto", "tinto")
       if (wineType) {
-        const typeKey = wineType.toLowerCase();
+        const typeKey = WINE_TYPE_ALIASES[wineType.toLowerCase()] || wineType.toLowerCase();
         // Try "botella_<type>" for bottles
         if (formatType === "BOTTLE" || !formatType) {
           const bottleKey = `botella_${typeKey}`;
@@ -847,7 +853,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
     // Try matching wine type (only from real type field, not grape/region)
     if (wineType) {
-      const typeKey = wineType.toLowerCase();
+      const typeKey = WINE_TYPE_ALIASES[wineType.toLowerCase()] || wineType.toLowerCase();
       const candidates = WINE_TYPE_FAMILY_MAP[typeKey] || [];
       for (const candidate of candidates) {
         const found = families.find(f => f.Name.toLowerCase().includes(candidate.toLowerCase()));
@@ -2596,7 +2602,7 @@ serve(async (req) => {
         { key: "botella_blanco", name: "BLANCOS WINERIM" },
         { key: "botella_espumoso", name: "ESPUMOSOS WINERIM" },
         { key: "botella_fortificado", name: "FORTIFICADOS WINERIM" },
-        { key: "botella_postre", name: "POSTRE WINERIM" },
+        { key: "botella_dulce", name: "DULCE WINERIM" },
         { key: "botella_rosado", name: "ROSADOS WINERIM" },
         { key: "magnum", name: "MAGNUM WINERIM" },
       ];
@@ -3120,7 +3126,7 @@ serve(async (req) => {
         // If family override is set, create an override mapping that takes priority
         if (familyOverrideId) {
           const overrideMapping: Record<string, { id: string; name: string }> = {};
-          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_postre", "magnum"]) {
+          for (const key of ["copa", "botella_tinto", "botella_blanco", "botella_rosado", "botella_espumoso", "botella_fortificado", "botella_dulce", "magnum"]) {
             overrideMapping[key] = { id: familyOverrideId, name: `Override Family ${familyOverrideId}` };
           }
           customFamilyMappings = overrideMapping;

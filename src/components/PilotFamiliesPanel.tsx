@@ -21,7 +21,7 @@ const MAPPING_LABELS: Record<string, string> = {
   botella_rosado: "Botella Rosado",
   botella_espumoso: "Botella Espumoso",
   botella_fortificado: "Botella Fortificado",
-  botella_postre: "Botella Postre",
+  botella_dulce: "Botella Dulce",
   magnum: "Magnum",
 };
 

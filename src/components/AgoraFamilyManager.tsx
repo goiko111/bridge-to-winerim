@@ -28,14 +28,14 @@ const MAPPING_LABELS: Record<string, string> = {
   botella_rosado: "Botella Rosado",
   botella_espumoso: "Botella Espumoso",
   botella_fortificado: "Botella Fortificado",
-  botella_postre: "Botella Postre",
+  botella_dulce: "Botella Dulce",
   magnum: "Magnum",
 };
 const MAPPING_KEYS = Object.keys(MAPPING_LABELS);
 
 const WINERIM_FAMILIES = [
   "COPAS WINERIM", "TINTOS WINERIM", "BLANCOS WINERIM", "ESPUMOSOS WINERIM",
-  "FORTIFICADOS WINERIM", "POSTRE WINERIM", "ROSADOS WINERIM", "MAGNUM WINERIM",
+  "FORTIFICADOS WINERIM", "DULCE WINERIM", "ROSADOS WINERIM", "MAGNUM WINERIM",
 ];
 
 /* ── Props ── */
