@@ -1,0 +1,1 @@
+UPDATE public.outbound_tasks SET status = 'QUEUED', last_error = NULL, attempts = 0 WHERE connection_id = 'e5b988f1-8471-4336-a1f7-a5c1626deab1' AND status = 'FAILED' AND last_error LIKE '%NOT_FOUND%';
