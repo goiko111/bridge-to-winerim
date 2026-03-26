@@ -3533,8 +3533,41 @@ serve(async (req) => {
         verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
-      let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0;
+      // ── Pre-load wine eligibility data to filter formats per wine ──
+      const wineEligibility: Record<string, { serve_by_glass: boolean; bottle_sale_price: number | null; glass_sale_price: number | null; magnum_sale_price: number | null }> = {};
+      for (let i = 0; i < winerimWineIds.length; i += 500) {
+        const chunk = winerimWineIds.slice(i, i + 500);
+        const { data: wines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", chunk);
+        for (const w of (wines || [])) {
+          wineEligibility[w.winerim_id] = {
+            serve_by_glass: w.serve_by_glass,
+            bottle_sale_price: w.bottle_sale_price,
+            glass_sale_price: w.glass_sale_price,
+            magnum_sale_price: w.magnum_sale_price,
+          };
+        }
+      }
+
+      let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0, skippedNoFormats = 0;
       for (const wineId of winerimWineIds) {
+        // ── Filter formats based on wine eligibility ──
+        const elig = wineEligibility[wineId];
+        const eligibleFormats = formatTypes.filter((fmt: string) => {
+          if (fmt === "GLASS") return elig?.serve_by_glass && (elig?.glass_sale_price ?? 0) > 0;
+          if (fmt === "BOTTLE") return (elig?.bottle_sale_price ?? 0) > 0;
+          if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
+          return false;
+        });
+        if (eligibleFormats.length === 0) {
+          // Fallback: if no format qualifies but BOTTLE was requested, still push BOTTLE
+          if (formatTypes.includes("BOTTLE")) eligibleFormats.push("BOTTLE");
+          else { skippedNoFormats++; continue; }
+        }
+
         // Skip if already queued/running
         const { data: alreadyQueued } = await supabase
           .from("outbound_tasks").select("id")
@@ -3556,7 +3589,7 @@ serve(async (req) => {
           GLASS: String(700000 + winerimIdNum),
           MAGNUM: String(900000 + winerimIdNum),
         };
-        const existsInAgora = formatTypes.some((fmt: string) => existingProductIds.has(formatProductIds[fmt] || ""));
+        const existsInAgora = eligibleFormats.some((fmt: string) => existingProductIds.has(formatProductIds[fmt] || ""));
         const operationType = existsInAgora ? "UPDATE" : "CREATE";
 
         await supabase.from("outbound_tasks").insert({
@@ -3564,7 +3597,7 @@ serve(async (req) => {
           task_type: "AGORA_XML_UPSERT_PRODUCT",
           payload_json: {
             _winerim_wine_id: wineId,
-            _format_types: formatTypes,
+            _format_types: eligibleFormats,
             _write_mode: "XML_IMPORT",
             _trigger_source: "MANUAL",
             _operation: operationType,
@@ -3575,8 +3608,8 @@ serve(async (req) => {
         });
         if (operationType === "CREATE") queuedCreate++; else queuedUpdate++;
 
-        // ── PUSH TRACKING: Mark QUEUED per format ──
-        for (const fmt of formatTypes) {
+        // ── PUSH TRACKING: Mark QUEUED only for eligible formats ──
+        for (const fmt of eligibleFormats) {
           await upsertPushTracking(supabase, connectionId, wineId, fmt, {
             sync_status: "QUEUED",
           });
