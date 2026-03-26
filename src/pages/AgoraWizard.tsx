@@ -2714,6 +2714,7 @@ function StepOutboundSync({
   outboundTasks: OutboundTask[];
   loadingTasks: boolean;
   processingQueue: boolean;
+  queueProgress: { processed: number; succeeded: number; failed: number; total: number } | null;
   queuingProducts: boolean;
   exporting: boolean;
   onLoadTasks: () => Promise<OutboundTask[]>;
