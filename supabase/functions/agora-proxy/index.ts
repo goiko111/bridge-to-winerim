@@ -753,9 +753,55 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
   return null;
 }
 
+// ── GEOGRAPHIC FAMILY HELPERS ──
+const GEO_COUNTRY_NAMES: Record<string, string> = {
+  ES: "España", FR: "Francia", IT: "Italia", PT: "Portugal", DE: "Alemania",
+  AT: "Austria", CH: "Suiza", GR: "Grecia", US: "EEUU", AR: "Argentina",
+  CL: "Chile", AU: "Australia", NZ: "Nueva Zelanda", ZA: "Sudáfrica",
+  GB: "Reino Unido", HU: "Hungría", GE: "Georgia", LB: "Líbano",
+  IL: "Israel", AM: "Armenia", RO: "Rumanía", SI: "Eslovenia",
+  HR: "Croacia", MX: "México", UY: "Uruguay", BR: "Brasil",
+};
+
+const GEO_TYPE_LABELS: Record<string, string> = {
+  tinto: "TINTO", blanco: "BLANCO", rosado: "ROSADO",
+  espumoso: "ESPUMOSO", fortificado: "FORTIFICADO",
+  postre: "DULCE", dulce: "DULCE",
+};
+
+interface GeographicFamilyConfig {
+  family_naming_mode: string;
+  region_threshold: number;
+  selected_regions: string[];
+  excluded_regions: string[];
+}
+
+function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
+  const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
+  const cName = GEO_COUNTRY_NAMES[country] || country;
+  if (isTopRegion && region) {
+    return `${tLabel} - ${region}`;
+  }
+  return `${tLabel} - ${cName} (Otras)`;
+}
+
+// deno-lint-ignore no-explicit-any
+function isTopRegion(country: string, region: string, geoConfig: GeographicFamilyConfig, allWines: any[]): boolean {
+  const key = `${country}|${region}`;
+  if (geoConfig.excluded_regions?.includes(key)) return false;
+  if (geoConfig.selected_regions?.includes(key)) return true;
+  // Count wines in this region across all types
+  let count = 0;
+  for (const w of allWines) {
+    const raw = w.raw_payload || {};
+    if ((raw.country || "XX") === country && (raw.region || "Sin región") === region) count++;
+  }
+  return count >= (geoConfig.region_threshold || 10);
+}
+
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
