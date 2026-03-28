@@ -2906,7 +2906,9 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
+      const geoConfigBulk = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const isGeoModeBulk = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigBulk;
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModeBulk ? geoConfigBulk : undefined, isGeoModeBulk ? wines : undefined);
 
       if (dryRun) {
         return new Response(
