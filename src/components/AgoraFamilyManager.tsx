@@ -115,6 +115,23 @@ function ModeSelector({ connectionId, mode, onModeChange }: { connectionId: stri
             Map wine types directly to the customer's own Agora families (TINTOS, BLANCOS, etc.).
           </p>
         </button>
+        <button
+          onClick={() => handleChange("GEOGRAPHIC_FAMILIES")}
+          disabled={saving}
+          className={`rounded-lg border p-3 text-left transition-all ${
+            mode === "GEOGRAPHIC_FAMILIES"
+              ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+              : "border-border bg-background hover:border-primary/40"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Globe className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-medium text-foreground">Geographic Families</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Auto-generate families by Type + Country/Region (e.g. "TINTO - Rioja", "BLANCO - Francia (Otras)").
+          </p>
+        </button>
       </div>
       {saving && (
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
