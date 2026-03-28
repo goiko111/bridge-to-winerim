@@ -4122,7 +4122,9 @@ serve(async (req) => {
             .eq("connection_id", connectionId).eq("winerim_id", sampleMapping.winerim_wine_id).limit(1);
           if (sampleWines && sampleWines.length > 0) {
             const customMappings = await loadCustomFamilyMappings(connectionId);
-            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings);
+            const geoConfigSample = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+            const isGeoModeSample = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigSample;
+            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings, false, isGeoModeSample ? geoConfigSample : undefined, isGeoModeSample ? sampleWines : undefined);
             sampleXml = xml;
           }
         }
