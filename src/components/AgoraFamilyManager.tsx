@@ -19,7 +19,7 @@ interface FamilyMapping {
   agora_family_name: string | null;
 }
 
-export type FamilyStructureMode = "WINERIM_SEPARATE_FAMILIES" | "EXISTING_CUSTOMER_FAMILIES";
+export type FamilyStructureMode = "WINERIM_SEPARATE_FAMILIES" | "EXISTING_CUSTOMER_FAMILIES" | "GEOGRAPHIC_FAMILIES";
 
 /* ── Constants ── */
 const MAPPING_LABELS: Record<string, string> = {
