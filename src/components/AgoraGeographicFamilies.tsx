@@ -196,7 +196,12 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         .eq("id", connectionId)
         .single();
       const currentConfig = (conn?.provider_config as Record<string, unknown>) || {};
-      const geoConfig: GeographicFamilyConfig = {
+      const geoConfig = {
+        family_naming_mode: "GEOGRAPHIC_FAMILIES" as const,
+        region_threshold: threshold,
+        selected_regions: Array.from(selectedRegions),
+        excluded_regions: Array.from(excludedRegions),
+      };
         family_naming_mode: "GEOGRAPHIC_FAMILIES",
         region_threshold: threshold,
         selected_regions: Array.from(selectedRegions),
