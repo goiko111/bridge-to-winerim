@@ -94,15 +94,15 @@ export default function AgoraWinesInPosPanel({ connectionId }: { connectionId: s
         productFamilyMap[String(p.Id)] = p.FamilyId ? (familyMap[String(p.FamilyId)] || String(p.FamilyId)) : null;
       }
 
-      setRows(
-        allTracking.map(t => ({
+      const mapped = allTracking.map(t => ({
           ...t,
           wine_name: nameMap[t.winerim_wine_id] || t.winerim_wine_id,
           family_name: t.agora_family_id
             ? (familyMap[String(t.agora_family_id)] || t.agora_family_id)
             : (t.agora_product_id ? (productFamilyMap[String(t.agora_product_id)] || null) : null),
-        }))
-      );
+        }));
+      mapped.sort((a, b) => a.wine_name.localeCompare(b.wine_name, "es"));
+      setRows(mapped);
     } catch (e) {
       console.error("Failed to load push tracking:", e);
     } finally {
