@@ -860,7 +860,24 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
-  function findFamilyId(wineType: string | null, formatType?: string): { id: string; needsCreate: boolean; familyName: string } {
+  // deno-lint-ignore no-explicit-any
+  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string } {
+    // PRIORITY 0: Geographic families mode
+    if (geographicConfig && geographicConfig.family_naming_mode === "GEOGRAPHIC_FAMILIES" && wine) {
+      const raw = wine.raw_payload || {};
+      const country = (raw.country || "XX") as string;
+      const region = (raw.region || "Sin región") as string;
+      const winesPool = allWinesForGeo || wines;
+      const top = isTopRegion(country, region, geographicConfig, winesPool);
+      const familyName = buildGeoFamilyName(wineType || "otros", country, region, top);
+      // Check if this family already exists in master data
+      const existing = families.find(f => f.Name === familyName);
+      if (existing) return { id: existing.Id, needsCreate: false, familyName: existing.Name };
+      // Auto-create with deterministic ID
+      const newId = stableFamilyId(familyName);
+      return { id: newId, needsCreate: true, familyName };
+    }
+
     // PRIORITY 1: Use custom family mappings if available
     if (customFamilyMappings) {
       // Try format-specific key first (e.g. "copa", "magnum")
