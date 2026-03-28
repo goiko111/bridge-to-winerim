@@ -969,6 +969,14 @@ ${costPricesXml}
     xml += `  </Families>\n`;
   }
 
+  // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
+  productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
+
+  // Inject SortOrder attribute into each <Product> based on sorted position
+  const productXmls = productEntries.map((entry, idx) => {
+    return entry.xml.replace('<Product Id=', `<Product SortOrder="${idx + 1}" Id=`);
+  });
+
   if (productXmls.length > 0) {
     xml += `  <Products>\n`;
     xml += productXmls.join("\n");
