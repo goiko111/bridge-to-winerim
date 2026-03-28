@@ -2829,7 +2829,9 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
+      const geoConfigPreview = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const isGeoModePreview = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigPreview;
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModePreview ? geoConfigPreview : undefined, isGeoModePreview ? wines : undefined);
 
       // PRIORITY 7: Include source data summary for preview transparency
       const sourceDataSummary = wines.map((w: any) => ({
