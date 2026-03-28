@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, CheckCircle2, XCircle, Grape, Plus, HelpCircle, Palette, Hash, Eye, EyeOff,
-  RefreshCw, ShieldCheck, ArrowRight,
+  RefreshCw, ShieldCheck, ArrowRight, Globe,
 } from "lucide-react";
+import AgoraGeographicFamilies, { type GeographicFamilyConfig } from "@/components/AgoraGeographicFamilies";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -18,7 +19,7 @@ interface FamilyMapping {
   agora_family_name: string | null;
 }
 
-export type FamilyStructureMode = "WINERIM_SEPARATE_FAMILIES" | "EXISTING_CUSTOMER_FAMILIES";
+export type FamilyStructureMode = "WINERIM_SEPARATE_FAMILIES" | "EXISTING_CUSTOMER_FAMILIES" | "GEOGRAPHIC_FAMILIES";
 
 /* ── Constants ── */
 const MAPPING_LABELS: Record<string, string> = {
@@ -79,7 +80,7 @@ function ModeSelector({ connectionId, mode, onModeChange }: { connectionId: stri
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium text-foreground">Family Structure Mode</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button
           onClick={() => handleChange("WINERIM_SEPARATE_FAMILIES")}
           disabled={saving}
@@ -112,6 +113,23 @@ function ModeSelector({ connectionId, mode, onModeChange }: { connectionId: stri
           </div>
           <p className="text-[10px] text-muted-foreground">
             Map wine types directly to the customer's own Agora families (TINTOS, BLANCOS, etc.).
+          </p>
+        </button>
+        <button
+          onClick={() => handleChange("GEOGRAPHIC_FAMILIES")}
+          disabled={saving}
+          className={`rounded-lg border p-3 text-left transition-all ${
+            mode === "GEOGRAPHIC_FAMILIES"
+              ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+              : "border-border bg-background hover:border-primary/40"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Globe className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs font-medium text-foreground">Geographic Families</span>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Auto-generate families by Type + Country/Region (e.g. "TINTO - Rioja", "BLANCO - Francia (Otras)").
           </p>
         </button>
       </div>
@@ -544,6 +562,7 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
   const [mappingsVersion, setMappingsVersion] = useState(0);
   const [mode, setMode] = useState<FamilyStructureMode>("WINERIM_SEPARATE_FAMILIES");
   const [loadingMode, setLoadingMode] = useState(true);
+  const [geoConfig, setGeoConfig] = useState<GeographicFamilyConfig | null>(null);
 
   // Load mode from provider_config
   useEffect(() => {
@@ -556,8 +575,11 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
         .single();
       const config = (data?.provider_config as Record<string, unknown>) || {};
       const savedMode = config.family_structure_mode as FamilyStructureMode | undefined;
-      if (savedMode === "EXISTING_CUSTOMER_FAMILIES" || savedMode === "WINERIM_SEPARATE_FAMILIES") {
+      if (savedMode === "EXISTING_CUSTOMER_FAMILIES" || savedMode === "WINERIM_SEPARATE_FAMILIES" || savedMode === "GEOGRAPHIC_FAMILIES") {
         setMode(savedMode);
+      }
+      if (config.geographic_config) {
+        setGeoConfig(config.geographic_config as unknown as GeographicFamilyConfig);
       }
       setLoadingMode(false);
     })();
@@ -572,18 +594,33 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
     );
   }
 
+  const modeLabel = mode === "WINERIM_SEPARATE_FAMILIES" ? "🔒 Separate mode"
+    : mode === "GEOGRAPHIC_FAMILIES" ? "🌍 Geographic mode"
+    : "🔗 Customer families";
+
   return (
     <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-5">
       <div className="flex items-center gap-2">
         <Grape className="h-4 w-4 text-primary" />
         <p className="text-xs font-medium text-foreground">Agora Family Manager</p>
         <Badge variant="outline" className="text-[9px] ml-auto">
-          {mode === "WINERIM_SEPARATE_FAMILIES" ? "🔒 Separate mode" : "🔗 Customer families"}
+          {modeLabel}
         </Badge>
       </div>
 
       {/* Mode selector */}
       <ModeSelector connectionId={connectionId} mode={mode} onModeChange={setMode} />
+
+      {/* Geographic families config */}
+      {mode === "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <AgoraGeographicFamilies
+            connectionId={connectionId}
+            config={geoConfig}
+            onConfigChange={setGeoConfig}
+          />
+        </div>
+      )}
 
       {/* Migration notice */}
       <MigrationNotice mode={mode} />
@@ -604,15 +641,19 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
         </div>
       )}
 
-      {/* Manual family creator — always available */}
-      <div className="border-t border-border pt-4">
-        <ManualFamilyCreator connectionId={connectionId} syncing={syncing} onSyncMasterData={onSyncMasterData} />
-      </div>
+      {/* Manual family creator — always available (not in geographic mode) */}
+      {mode !== "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <ManualFamilyCreator connectionId={connectionId} syncing={syncing} onSyncMasterData={onSyncMasterData} />
+        </div>
+      )}
 
-      {/* Mapping editor */}
-      <div className="border-t border-border pt-4">
-        <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} mode={mode} />
-      </div>
+      {/* Mapping editor (not in geographic mode — families are auto-determined) */}
+      {mode !== "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} mode={mode} />
+        </div>
+      )}
 
       {/* In EXISTING mode, show the quick setup as collapsed secondary option */}
       {mode === "EXISTING_CUSTOMER_FAMILIES" && (

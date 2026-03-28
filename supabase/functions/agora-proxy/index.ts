@@ -753,9 +753,55 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
   return null;
 }
 
+// ── GEOGRAPHIC FAMILY HELPERS ──
+const GEO_COUNTRY_NAMES: Record<string, string> = {
+  ES: "España", FR: "Francia", IT: "Italia", PT: "Portugal", DE: "Alemania",
+  AT: "Austria", CH: "Suiza", GR: "Grecia", US: "EEUU", AR: "Argentina",
+  CL: "Chile", AU: "Australia", NZ: "Nueva Zelanda", ZA: "Sudáfrica",
+  GB: "Reino Unido", HU: "Hungría", GE: "Georgia", LB: "Líbano",
+  IL: "Israel", AM: "Armenia", RO: "Rumanía", SI: "Eslovenia",
+  HR: "Croacia", MX: "México", UY: "Uruguay", BR: "Brasil",
+};
+
+const GEO_TYPE_LABELS: Record<string, string> = {
+  tinto: "TINTO", blanco: "BLANCO", rosado: "ROSADO",
+  espumoso: "ESPUMOSO", fortificado: "FORTIFICADO",
+  postre: "DULCE", dulce: "DULCE",
+};
+
+interface GeographicFamilyConfig {
+  family_naming_mode: string;
+  region_threshold: number;
+  selected_regions: string[];
+  excluded_regions: string[];
+}
+
+function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
+  const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
+  const cName = GEO_COUNTRY_NAMES[country] || country;
+  if (isTopRegion && region) {
+    return `${tLabel} - ${region}`;
+  }
+  return `${tLabel} - ${cName} (Otras)`;
+}
+
+// deno-lint-ignore no-explicit-any
+function isTopRegion(country: string, region: string, geoConfig: GeographicFamilyConfig, allWines: any[]): boolean {
+  const key = `${country}|${region}`;
+  if (geoConfig.excluded_regions?.includes(key)) return false;
+  if (geoConfig.selected_regions?.includes(key)) return true;
+  // Count wines in this region across all types
+  let count = 0;
+  for (const w of allWines) {
+    const raw = w.raw_payload || {};
+    if ((raw.country || "XX") === country && (raw.region || "Sin región") === region) count++;
+  }
+  return count >= (geoConfig.region_threshold || 10);
+}
+
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
@@ -814,7 +860,24 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
-  function findFamilyId(wineType: string | null, formatType?: string): { id: string; needsCreate: boolean; familyName: string } {
+  // deno-lint-ignore no-explicit-any
+  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string } {
+    // PRIORITY 0: Geographic families mode
+    if (geographicConfig && geographicConfig.family_naming_mode === "GEOGRAPHIC_FAMILIES" && wine) {
+      const raw = wine.raw_payload || {};
+      const country = (raw.country || "XX") as string;
+      const region = (raw.region || "Sin región") as string;
+      const winesPool = allWinesForGeo || wines;
+      const top = isTopRegion(country, region, geographicConfig, winesPool);
+      const familyName = buildGeoFamilyName(wineType || "otros", country, region, top);
+      // Check if this family already exists in master data
+      const existing = families.find(f => f.Name === familyName);
+      if (existing) return { id: existing.Id, needsCreate: false, familyName: existing.Name };
+      // Auto-create with deterministic ID
+      const newId = stableFamilyId(familyName);
+      return { id: newId, needsCreate: true, familyName };
+    }
+
     // PRIORITY 1: Use custom family mappings if available
     if (customFamilyMappings) {
       // Try format-specific key first (e.g. "copa", "magnum")
@@ -915,7 +978,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const isGlass = fmt === "GLASS";
       const productId = isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
-      const familyResult = findFamilyId(wineType, fmt);
+      const familyResult = findFamilyId(wineType, fmt, wine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
@@ -2766,7 +2829,9 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
+      const geoConfigPreview = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const isGeoModePreview = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigPreview;
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModePreview ? geoConfigPreview : undefined, isGeoModePreview ? wines : undefined);
 
       // PRIORITY 7: Include source data summary for preview transparency
       const sourceDataSummary = wines.map((w: any) => ({
@@ -2841,7 +2906,9 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings);
+      const geoConfigBulk = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const isGeoModeBulk = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigBulk;
+      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModeBulk ? geoConfigBulk : undefined, isGeoModeBulk ? wines : undefined);
 
       if (dryRun) {
         return new Response(
@@ -3140,7 +3207,9 @@ serve(async (req) => {
           }
           customFamilyMappings = overrideMapping;
         }
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
+        const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+        const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation, isGeoMode ? geoConfig : undefined, isGeoMode ? wineArr : undefined);
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
         const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
@@ -4053,7 +4122,9 @@ serve(async (req) => {
             .eq("connection_id", connectionId).eq("winerim_id", sampleMapping.winerim_wine_id).limit(1);
           if (sampleWines && sampleWines.length > 0) {
             const customMappings = await loadCustomFamilyMappings(connectionId);
-            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings);
+            const geoConfigSample = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+            const isGeoModeSample = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigSample;
+            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings, false, isGeoModeSample ? geoConfigSample : undefined, isGeoModeSample ? sampleWines : undefined);
             sampleXml = xml;
           }
         }
