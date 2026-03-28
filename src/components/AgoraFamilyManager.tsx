@@ -80,7 +80,7 @@ function ModeSelector({ connectionId, mode, onModeChange }: { connectionId: stri
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium text-foreground">Family Structure Mode</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button
           onClick={() => handleChange("WINERIM_SEPARATE_FAMILIES")}
           disabled={saving}
