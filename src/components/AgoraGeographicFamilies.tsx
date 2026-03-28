@@ -376,6 +376,39 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         </div>
       </div>
 
+      {/* Full wine-level preview */}
+      <details className="space-y-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground flex items-center gap-1.5 hover:text-foreground transition-colors">
+          <Search className="h-3 w-3" />
+          Ver detalle completo: cada vino → familia asignada
+        </summary>
+        <div className="mt-2 max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card divide-y divide-border">
+          {previewFamilies.map(family => (
+            <div key={family.name} className="p-2">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[11px] font-semibold text-foreground">{family.name}</span>
+                <Badge variant="outline" className="text-[9px]">{family.count}</Badge>
+              </div>
+              <div className="pl-3 space-y-0.5">
+                {regionStats
+                  .filter(s => {
+                    const regionKey = `${s.country}|${s.region}`;
+                    const isTop = topRegionKeys.has(regionKey);
+                    const fName = buildGeographicFamilyName(s.wine_type, s.country, s.region, isTop);
+                    return fName === family.name;
+                  })
+                  .map(s => (
+                    <div key={`${s.wine_type}|${s.country}|${s.region}`} className="text-[10px] text-muted-foreground">
+                      {countryName(s.country)} · {s.region} · <span className="capitalize">{s.wine_type}</span> ({s.count})
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          ))}
+        </div>
+      </details>
+
       {/* Save button */}
       <div className="flex gap-2">
         <Button size="sm" onClick={saveConfig} disabled={saving}>
