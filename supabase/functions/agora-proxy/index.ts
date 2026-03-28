@@ -896,7 +896,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   }
 
   const newFamilies: { id: string; name: string }[] = [];
-  const productXmls: string[] = [];
+  const productEntries: { wineName: string; formatOrder: number; xml: string }[] = [];
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
