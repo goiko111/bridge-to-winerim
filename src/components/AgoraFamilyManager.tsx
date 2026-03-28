@@ -562,6 +562,7 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
   const [mappingsVersion, setMappingsVersion] = useState(0);
   const [mode, setMode] = useState<FamilyStructureMode>("WINERIM_SEPARATE_FAMILIES");
   const [loadingMode, setLoadingMode] = useState(true);
+  const [geoConfig, setGeoConfig] = useState<GeographicFamilyConfig | null>(null);
 
   // Load mode from provider_config
   useEffect(() => {
@@ -574,8 +575,11 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
         .single();
       const config = (data?.provider_config as Record<string, unknown>) || {};
       const savedMode = config.family_structure_mode as FamilyStructureMode | undefined;
-      if (savedMode === "EXISTING_CUSTOMER_FAMILIES" || savedMode === "WINERIM_SEPARATE_FAMILIES") {
+      if (savedMode === "EXISTING_CUSTOMER_FAMILIES" || savedMode === "WINERIM_SEPARATE_FAMILIES" || savedMode === "GEOGRAPHIC_FAMILIES") {
         setMode(savedMode);
+      }
+      if (config.geographic_config) {
+        setGeoConfig(config.geographic_config as unknown as GeographicFamilyConfig);
       }
       setLoadingMode(false);
     })();
@@ -590,18 +594,33 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
     );
   }
 
+  const modeLabel = mode === "WINERIM_SEPARATE_FAMILIES" ? "🔒 Separate mode"
+    : mode === "GEOGRAPHIC_FAMILIES" ? "🌍 Geographic mode"
+    : "🔗 Customer families";
+
   return (
     <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-5">
       <div className="flex items-center gap-2">
         <Grape className="h-4 w-4 text-primary" />
         <p className="text-xs font-medium text-foreground">Agora Family Manager</p>
         <Badge variant="outline" className="text-[9px] ml-auto">
-          {mode === "WINERIM_SEPARATE_FAMILIES" ? "🔒 Separate mode" : "🔗 Customer families"}
+          {modeLabel}
         </Badge>
       </div>
 
       {/* Mode selector */}
       <ModeSelector connectionId={connectionId} mode={mode} onModeChange={setMode} />
+
+      {/* Geographic families config */}
+      {mode === "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <AgoraGeographicFamilies
+            connectionId={connectionId}
+            config={geoConfig}
+            onConfigChange={setGeoConfig}
+          />
+        </div>
+      )}
 
       {/* Migration notice */}
       <MigrationNotice mode={mode} />
@@ -622,15 +641,19 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
         </div>
       )}
 
-      {/* Manual family creator — always available */}
-      <div className="border-t border-border pt-4">
-        <ManualFamilyCreator connectionId={connectionId} syncing={syncing} onSyncMasterData={onSyncMasterData} />
-      </div>
+      {/* Manual family creator — always available (not in geographic mode) */}
+      {mode !== "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <ManualFamilyCreator connectionId={connectionId} syncing={syncing} onSyncMasterData={onSyncMasterData} />
+        </div>
+      )}
 
-      {/* Mapping editor */}
-      <div className="border-t border-border pt-4">
-        <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} mode={mode} />
-      </div>
+      {/* Mapping editor (not in geographic mode — families are auto-determined) */}
+      {mode !== "GEOGRAPHIC_FAMILIES" && (
+        <div className="border-t border-border pt-4">
+          <FamilyMappingSection connectionId={connectionId} families={families} mappingsVersion={mappingsVersion} mode={mode} />
+        </div>
+      )}
 
       {/* In EXISTING mode, show the quick setup as collapsed secondary option */}
       {mode === "EXISTING_CUSTOMER_FAMILIES" && (
