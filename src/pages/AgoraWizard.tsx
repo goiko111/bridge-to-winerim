@@ -4773,11 +4773,21 @@ export default function AgoraWizard() {
               connectionId={connectionId} saveWriteSettings={agoraMaster.saveWriteSettings} />
           )}
           {currentStep === 6 && (
-            <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
-              familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
-              scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
-              onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
-              catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
+            <div className="space-y-6">
+              {/* Agora Family Manager with Geographic Families */}
+              <AgoraFamilyManager
+                connectionId={connectionId}
+                families={agoraMaster.masterData.families}
+                onSyncMasterData={agoraMaster.syncMasterData}
+                syncing={agoraMaster.syncing}
+              />
+              {/* Wine Family Classification */}
+              <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
+                familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
+                scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
+                onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
+                catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
+            </div>
           )}
           {currentStep === 7 && (
             <StepSalesMapping connectionId={connectionId} daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
