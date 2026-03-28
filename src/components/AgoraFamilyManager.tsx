@@ -657,7 +657,7 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
       <MigrationNotice mode={mode} />
 
       {/* Existing families */}
-      <ExistingFamiliesList families={families} mode={mode} />
+      <ExistingFamiliesList connectionId={connectionId} families={families} mode={mode} onSyncMasterData={onSyncMasterData} syncing={syncing} />
 
       {/* WINERIM family setup — prominent in SEPARATE mode */}
       {mode === "WINERIM_SEPARATE_FAMILIES" && (
