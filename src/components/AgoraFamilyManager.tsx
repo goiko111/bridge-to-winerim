@@ -499,21 +499,52 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion, mode }:
 }
 
 /* ══════════════════════════════════════════════
-   Section 4: Existing Families List
+   Section 4: Existing Families List + Hide WINERIM
    ══════════════════════════════════════════════ */
-function ExistingFamiliesList({ families, mode }: { families: AgoraMasterItem[]; mode: FamilyStructureMode }) {
+function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, syncing }: { connectionId: string | null; families: AgoraMasterItem[]; mode: FamilyStructureMode; onSyncMasterData: () => void | Promise<any>; syncing: boolean }) {
   const [showAll, setShowAll] = useState(false);
+  const [hiding, setHiding] = useState(false);
   if (families.length === 0) return null;
   const shown = showAll ? families : families.slice(0, 12);
+  const winerimFamilies = families.filter(f => f.Name.toUpperCase().includes("WINERIM"));
+
+  const hideWinerimFamilies = async () => {
+    if (!connectionId || winerimFamilies.length === 0) return;
+    setHiding(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "hide-families", connectionId, familyIds: winerimFamilies.map(f => f.Id) },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast({ title: "Familias ocultadas", description: `${data.hidden?.length || 0} familias WINERIM ocultadas del TPV. Haz Sync Master Data para verificar.` });
+        await onSyncMasterData();
+      } else {
+        toast({ title: "Error", description: data?.error || "Error desconocido", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setHiding(false);
+    }
+  };
 
   return (
     <div className="space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">
-        Existing Agora Families ({families.length})
-        {mode === "WINERIM_SEPARATE_FAMILIES" && (
-          <span className="ml-2 text-[10px] text-amber-600">← Customer's families (will not be modified)</span>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-muted-foreground">
+          Existing Agora Families ({families.length})
+          {mode === "WINERIM_SEPARATE_FAMILIES" && (
+            <span className="ml-2 text-[10px] text-amber-600">← Customer's families (will not be modified)</span>
+          )}
+        </p>
+        {winerimFamilies.length > 0 && (
+          <Button variant="destructive" size="sm" className="h-6 text-[10px]" onClick={hideWinerimFamilies} disabled={hiding || syncing}>
+            {hiding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <EyeOff className="mr-1 h-3 w-3" />}
+            Ocultar {winerimFamilies.length} familias WINERIM del TPV
+          </Button>
         )}
-      </p>
+      </div>
       <div className="flex flex-wrap gap-1.5">
         {shown.map(f => {
           const isWinerim = f.Name.toUpperCase().includes("WINERIM");
@@ -626,7 +657,7 @@ export default function AgoraFamilyManager({ connectionId, families, onSyncMaste
       <MigrationNotice mode={mode} />
 
       {/* Existing families */}
-      <ExistingFamiliesList families={families} mode={mode} />
+      <ExistingFamiliesList connectionId={connectionId} families={families} mode={mode} onSyncMasterData={onSyncMasterData} syncing={syncing} />
 
       {/* WINERIM family setup — prominent in SEPARATE mode */}
       {mode === "WINERIM_SEPARATE_FAMILIES" && (

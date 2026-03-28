@@ -2753,6 +2753,56 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── HIDE FAMILIES (set ShowInPos=false) ──
+    if (action === "hide-families") {
+      const familyIds: string[] = payload.familyIds || [];
+      if (familyIds.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No familyIds provided" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      function escXmlH(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+
+      // Load current families to get names
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("families_json").eq("connection_id", connectionId).single();
+      const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string }[];
+
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+      const hidden: string[] = [];
+      for (const fId of familyIds) {
+        const fam = existingFamilies.find(f => f.Id === fId);
+        const name = fam?.Name || fId;
+        xml += `    <Family Id="${fId}" Name="${escXmlH(name)}" ShowInPos="false" ButtonText="${escXmlH(name.substring(0, 20))}" Color="#999999" Order="9999" />\n`;
+        hidden.push(name);
+      }
+      xml += `  </Families>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        return new Response(JSON.stringify({
+          success: parsed.success,
+          hidden,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlSent: xml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // ── CREATE SINGLE FAMILY (manual) ──
     if (action === "create-family") {
       const familyName = payload.familyName;
