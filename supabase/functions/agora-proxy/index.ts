@@ -978,7 +978,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const isGlass = fmt === "GLASS";
       const productId = isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
-      const familyResult = findFamilyId(wineType, fmt);
+      const familyResult = findFamilyId(wineType, fmt, wine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
