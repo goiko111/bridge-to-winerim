@@ -896,7 +896,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   }
 
   const newFamilies: { id: string; name: string }[] = [];
-  const productXmls: string[] = [];
+  const productEntries: { wineName: string; formatOrder: number; xml: string }[] = [];
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
@@ -947,14 +947,15 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      productXmls.push(`    <Product Id="${productId}" Name="${escapeXml(productName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+      const formatOrder = isMagnum ? 2 : isGlass ? 1 : 0; // BOT=0, COPA=1, MAG=2
+      productEntries.push({ wineName: wineName.toLowerCase(), formatOrder, xml: `    <Product Id="${productId}" Name="${escapeXml(productName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
       <CostPrices>
 ${costPricesXml}
       </CostPrices>
-    </Product>`);
+    </Product>` });
     }
   }
 
@@ -967,6 +968,14 @@ ${costPricesXml}
     }
     xml += `  </Families>\n`;
   }
+
+  // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
+  productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
+
+  // Inject SortOrder attribute into each <Product> based on sorted position
+  const productXmls = productEntries.map((entry, idx) => {
+    return entry.xml.replace('<Product Id=', `<Product SortOrder="${idx + 1}" Id=`);
+  });
 
   if (productXmls.length > 0) {
     xml += `  <Products>\n`;
