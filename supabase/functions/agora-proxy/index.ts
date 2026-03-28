@@ -3203,7 +3203,9 @@ serve(async (req) => {
           }
           customFamilyMappings = overrideMapping;
         }
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation);
+        const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+        const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
+        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation, isGeoMode ? geoConfig : undefined, isGeoMode ? wineArr : undefined);
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
         const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
