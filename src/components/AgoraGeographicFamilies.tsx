@@ -208,8 +208,8 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
           provider_config: {
             ...currentConfig,
             family_structure_mode: "GEOGRAPHIC_FAMILIES",
-            geographic_config: geoConfig,
-          },
+            geographic_config: geoConfig as unknown as Record<string, unknown>,
+          } as unknown as import("@/integrations/supabase/types").Json,
         })
         .eq("id", connectionId);
       onConfigChange(geoConfig);
