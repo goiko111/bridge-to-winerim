@@ -202,11 +202,6 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         selected_regions: Array.from(selectedRegions),
         excluded_regions: Array.from(excludedRegions),
       };
-        family_naming_mode: "GEOGRAPHIC_FAMILIES",
-        region_threshold: threshold,
-        selected_regions: Array.from(selectedRegions),
-        excluded_regions: Array.from(excludedRegions),
-      };
       await supabase
         .from("pos_connections")
         .update({
