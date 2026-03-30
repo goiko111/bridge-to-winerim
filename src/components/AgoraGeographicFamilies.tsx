@@ -163,8 +163,33 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
     return keys;
   }, [regionTotals, threshold, selectedRegions, excludedRegions]);
 
-  // Preview families
+  // Preview families (flat or hierarchical)
   const previewFamilies = useMemo(() => {
+    if (hierarchyMode === "HIERARCHICAL") {
+      // Build 3-level tree: Type > Country > Region/Otras
+      const tree = new Map<string, { count: number; countries: Map<string, { count: number; regions: Map<string, number> }> }>();
+      for (const s of regionStats) {
+        const regionKey = `${s.country}|${s.region}`;
+        const isTop = topRegionKeys.has(regionKey);
+        const tLabel = TYPE_LABELS[s.wine_type?.toLowerCase()] || (s.wine_type || "OTROS").toUpperCase();
+        const typeName = `${tLabel} WINERIM`;
+        const cName = countryName(s.country);
+
+        if (!tree.has(typeName)) tree.set(typeName, { count: 0, countries: new Map() });
+        const typeNode = tree.get(typeName)!;
+        typeNode.count += s.count;
+
+        const countryKey = `${tLabel} ${cName}`;
+        if (!typeNode.countries.has(countryKey)) typeNode.countries.set(countryKey, { count: 0, regions: new Map() });
+        const countryNode = typeNode.countries.get(countryKey)!;
+        countryNode.count += s.count;
+
+        const regionLabel = isTop ? s.region : "Otras";
+        countryNode.regions.set(regionLabel, (countryNode.regions.get(regionLabel) || 0) + s.count);
+      }
+      return { mode: "HIERARCHICAL" as const, tree };
+    }
+    // FLAT mode
     const familyMap = new Map<string, PreviewFamily>();
     for (const s of regionStats) {
       const regionKey = `${s.country}|${s.region}`;
@@ -184,8 +209,8 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         });
       }
     }
-    return Array.from(familyMap.values()).sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [regionStats, topRegionKeys]);
+    return { mode: "FLAT" as const, families: Array.from(familyMap.values()).sort((a, b) => a.name.localeCompare(b.name, "es")) };
+  }, [regionStats, topRegionKeys, hierarchyMode]);
 
   // Save config
   const saveConfig = async () => {
