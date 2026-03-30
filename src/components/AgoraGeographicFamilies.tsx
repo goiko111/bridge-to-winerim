@@ -240,8 +240,8 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
           } as unknown as import("@/integrations/supabase/types").Json,
         })
         .eq("id", connectionId);
-      onConfigChange(geoConfig);
-      toast({ title: "Geographic config saved", description: `${previewFamilies.length} families configured.` });
+      const familyCount = previewFamilies.mode === "FLAT" ? previewFamilies.families.length : previewFamilies.tree.size;
+      toast({ title: "Geographic config saved", description: `${familyCount} families configured.` });
     } catch (err: any) {
       toast({ title: "Error saving", description: err.message, variant: "destructive" });
     } finally {
