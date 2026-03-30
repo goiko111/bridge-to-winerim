@@ -884,7 +884,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const autoCreateFamilies = connection.auto_create_families ?? false;
 
   // deno-lint-ignore no-explicit-any
-  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string } {
+  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string } {
     // PRIORITY 0: Geographic families mode
     if (geographicConfig && geographicConfig.family_naming_mode === "GEOGRAPHIC_FAMILIES" && wine) {
       const raw = wine.raw_payload || {};
@@ -892,11 +892,48 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const region = (raw.region || "Sin región") as string;
       const winesPool = allWinesForGeo || wines;
       const top = isTopRegion(country, region, geographicConfig, winesPool);
+
+      if (geographicConfig.hierarchy_mode === "HIERARCHICAL") {
+        // 3-level hierarchy: Type Parent > Country Sub > Region Leaf
+        const typeParent = geoTypeParentName(wineType || "otros");
+        const typeParentId = stableFamilyId(typeParent);
+        const countrySub = geoCountrySubName(wineType || "otros", country);
+        const countrySubId = stableFamilyId(countrySub);
+
+        // Register type-level parent
+        if (!newFamilies.some(f => f.id === typeParentId)) {
+          newFamilies.push({ id: typeParentId, name: typeParent });
+        }
+        // Register country-level sub (parent = type)
+        if (!newFamilyHierarchy.some(f => f.id === countrySubId)) {
+          newFamilyHierarchy.push({ id: countrySubId, name: countrySub, parentId: typeParentId });
+        }
+
+        if (top && region) {
+          // Leaf: region family (parent = country)
+          const leafName = geoRegionLeafName(region);
+          const leafId = stableFamilyId(`${countrySub}_${leafName}`);
+          if (!newFamilyHierarchy.some(f => f.id === leafId)) {
+            newFamilyHierarchy.push({ id: leafId, name: leafName, parentId: countrySubId });
+          }
+          const existing = families.find(f => f.Name === leafName && f.Id === leafId);
+          return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: countrySubId, grandparentId: typeParentId };
+        } else {
+          // "Otras" leaf under country
+          const otrasName = geoCountryOtrasName(wineType || "otros", country);
+          const otrasId = stableFamilyId(otrasName);
+          if (!newFamilyHierarchy.some(f => f.id === otrasId)) {
+            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: countrySubId });
+          }
+          const existing = families.find(f => f.Id === otrasId);
+          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: countrySubId, grandparentId: typeParentId };
+        }
+      }
+
+      // FLAT mode (original behavior)
       const familyName = buildGeoFamilyName(wineType || "otros", country, region, top);
-      // Check if this family already exists in master data
       const existing = families.find(f => f.Name === familyName);
       if (existing) return { id: existing.Id, needsCreate: false, familyName: existing.Name };
-      // Auto-create with deterministic ID
       const newId = stableFamilyId(familyName);
       return { id: newId, needsCreate: true, familyName };
     }
