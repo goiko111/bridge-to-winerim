@@ -504,6 +504,7 @@ function FamilyMappingSection({ connectionId, families, mappingsVersion, mode }:
 function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, syncing }: { connectionId: string | null; families: AgoraMasterItem[]; mode: FamilyStructureMode; onSyncMasterData: () => void | Promise<any>; syncing: boolean }) {
   const [showAll, setShowAll] = useState(false);
   const [hiding, setHiding] = useState(false);
+  const [hidingSingle, setHidingSingle] = useState<string | null>(null);
   if (families.length === 0) return null;
   const shown = showAll ? families : families.slice(0, 12);
   const winerimFamilies = families.filter(f => f.Name.toUpperCase().includes("WINERIM"));
@@ -529,6 +530,27 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
     }
   };
 
+  const hideSingleFamily = async (familyId: string, familyName: string) => {
+    if (!connectionId) return;
+    setHidingSingle(familyId);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "hide-families", connectionId, familyIds: [familyId] },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast({ title: "Familia ocultada", description: `"${familyName}" ocultada del TPV.` });
+        await onSyncMasterData();
+      } else {
+        toast({ title: "Error", description: data?.error || "Error desconocido", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setHidingSingle(null);
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -549,14 +571,29 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
         {shown.map(f => {
           const isWinerim = f.Name.toUpperCase().includes("WINERIM");
           return (
-            <Badge
-              key={f.Id}
-              variant={isWinerim ? "default" : "outline"}
-              className={`text-[10px] font-mono ${isWinerim ? "bg-primary" : ""}`}
-            >
-              {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
-              {f.Id}: {f.Name}
-            </Badge>
+            <div key={f.Id} className="group relative inline-flex">
+              <Badge
+                variant={isWinerim ? "default" : "outline"}
+                className={`text-[10px] font-mono ${isWinerim ? "bg-primary pr-6" : ""}`}
+              >
+                {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
+                {f.Id}: {f.Name}
+              </Badge>
+              {isWinerim && (
+                <button
+                  onClick={() => hideSingleFamily(f.Id, f.Name)}
+                  disabled={hidingSingle === f.Id}
+                  className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
+                  title={`Ocultar "${f.Name}" del TPV`}
+                >
+                  {hidingSingle === f.Id ? (
+                    <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
+                  ) : (
+                    <EyeOff className="h-2.5 w-2.5 text-primary-foreground opacity-60 hover:opacity-100" />
+                  )}
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
