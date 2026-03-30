@@ -84,6 +84,7 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
   const [threshold, setThreshold] = useState(config?.region_threshold ?? 10);
   const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set(config?.selected_regions || []));
   const [excludedRegions, setExcludedRegions] = useState<Set<string>>(new Set(config?.excluded_regions || []));
+  const [hierarchyMode, setHierarchyMode] = useState<"FLAT" | "HIERARCHICAL">(config?.hierarchy_mode || "FLAT");
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
