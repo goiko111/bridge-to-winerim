@@ -301,14 +301,29 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         <Globe className="h-3.5 w-3.5 text-primary" />
         <p className="text-xs font-medium text-foreground">Geographic Family Configuration</p>
         <Badge variant="outline" className="text-[9px] ml-auto">
-          {previewFamilies.length} familias · {topRegionKeys.size} regiones top
+          {previewFamilies.mode === "FLAT" ? previewFamilies.families.length : previewFamilies.tree.size} familias · {topRegionKeys.size} regiones top
         </Badge>
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        Las familias se generan automáticamente como "TIPO - Región" para las regiones principales 
-        y "TIPO - País (Otras)" para el resto. Ajusta el umbral mínimo o selecciona regiones manualmente.
+        {hierarchyMode === "HIERARCHICAL"
+          ? "Las familias se crean en 3 niveles: TIPO WINERIM → País → Región. El camarero navega por la jerarquía en el TPV."
+          : 'Las familias se generan como "TIPO - Región" para las regiones principales y "TIPO - País (Otras)" para el resto.'}
       </p>
+
+      {/* Hierarchy mode toggle */}
+      <div className="flex items-center gap-3 rounded-lg border border-border p-2.5">
+        <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+        <div className="flex-1">
+          <p className="text-[11px] font-medium text-foreground">Familias jerárquicas (3 niveles)</p>
+          <p className="text-[10px] text-muted-foreground">TINTOS WINERIM → España → Rioja, Ribera…</p>
+        </div>
+        <Switch
+          checked={hierarchyMode === "HIERARCHICAL"}
+          onCheckedChange={(v) => setHierarchyMode(v ? "HIERARCHICAL" : "FLAT")}
+          className="scale-90"
+        />
+      </div>
 
       {/* Threshold slider */}
       <div className="space-y-2">
@@ -352,7 +367,6 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
           {filteredRegions.map(r => {
             const key = `${r.country}|${r.region}`;
             const isTop = topRegionKeys.has(key);
-            const isAutoTop = r.total >= threshold && !excludedRegions.has(key);
             const isManual = selectedRegions.has(key);
             const isExcluded = excludedRegions.has(key);
 
@@ -364,19 +378,10 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
                   isTop ? "bg-primary/5" : ""
                 } ${isExcluded ? "opacity-50" : ""}`}
               >
-                <Switch
-                  checked={isTop}
-                  className="scale-75 pointer-events-none"
-                />
-                <span className="text-[11px] text-foreground flex-1 truncate">
-                  {r.region}
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  {countryName(r.country)}
-                </span>
-                <Badge variant={isTop ? "default" : "secondary"} className="text-[9px] shrink-0">
-                  {r.total}
-                </Badge>
+                <Switch checked={isTop} className="scale-75 pointer-events-none" />
+                <span className="text-[11px] text-foreground flex-1 truncate">{r.region}</span>
+                <span className="text-[10px] text-muted-foreground">{countryName(r.country)}</span>
+                <Badge variant={isTop ? "default" : "secondary"} className="text-[9px] shrink-0">{r.total}</Badge>
                 {isManual && <Badge variant="outline" className="text-[8px]">manual</Badge>}
                 {isExcluded && <Badge variant="destructive" className="text-[8px]">excl.</Badge>}
               </button>
@@ -390,53 +395,47 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         <div className="flex items-center gap-2">
           <Eye className="h-3 w-3 text-muted-foreground" />
           <label className="text-[11px] font-medium text-foreground">
-            Preview de familias ({previewFamilies.length})
+            Preview {hierarchyMode === "HIERARCHICAL" ? "jerárquico" : "plano"}
           </label>
         </div>
-        <div className="max-h-[200px] overflow-y-auto rounded-lg border border-border bg-card p-2 space-y-0.5">
-          {previewFamilies.map(f => (
-            <div key={f.name} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-accent/30">
-              <span className={`text-[11px] font-medium ${f.isGrouped ? "text-muted-foreground" : "text-foreground"}`}>
-                {f.name}
-              </span>
-              <Badge variant="secondary" className="text-[9px] ml-auto">{f.count} vinos</Badge>
-            </div>
-          ))}
+        <div className="max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card p-2 space-y-0.5">
+          {previewFamilies.mode === "HIERARCHICAL" ? (
+            Array.from(previewFamilies.tree.entries()).map(([typeName, typeNode]) => (
+              <div key={typeName} className="mb-2">
+                <div className="flex items-center gap-2 px-1 py-1 rounded bg-primary/10">
+                  <span className="text-[11px] font-bold text-primary">📁 {typeName}</span>
+                  <Badge variant="default" className="text-[9px] ml-auto">{typeNode.count}</Badge>
+                </div>
+                {Array.from(typeNode.countries.entries()).map(([countryKey, countryNode]) => (
+                  <div key={countryKey} className="ml-4 mt-0.5">
+                    <div className="flex items-center gap-2 px-1 py-0.5 rounded bg-accent/30">
+                      <span className="text-[11px] font-medium text-foreground">📂 {countryKey}</span>
+                      <Badge variant="secondary" className="text-[9px] ml-auto">{countryNode.count}</Badge>
+                    </div>
+                    {Array.from(countryNode.regions.entries()).map(([regionName, count]) => (
+                      <div key={regionName} className="ml-4 flex items-center gap-2 px-1 py-0.5">
+                        <span className={`text-[10px] ${regionName === "Otras" ? "text-muted-foreground italic" : "text-foreground"}`}>
+                          🍷 {regionName}
+                        </span>
+                        <Badge variant="outline" className="text-[8px] ml-auto">{count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            previewFamilies.families.map(f => (
+              <div key={f.name} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-accent/30">
+                <span className={`text-[11px] font-medium ${f.isGrouped ? "text-muted-foreground" : "text-foreground"}`}>
+                  {f.name}
+                </span>
+                <Badge variant="secondary" className="text-[9px] ml-auto">{f.count} vinos</Badge>
+              </div>
+            ))
+          )}
         </div>
       </div>
-
-      {/* Full wine-level preview */}
-      <details className="space-y-2">
-        <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground flex items-center gap-1.5 hover:text-foreground transition-colors">
-          <Search className="h-3 w-3" />
-          Ver detalle completo: cada vino → familia asignada
-        </summary>
-        <div className="mt-2 max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card divide-y divide-border">
-          {previewFamilies.map(family => (
-            <div key={family.name} className="p-2">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[11px] font-semibold text-foreground">{family.name}</span>
-                <Badge variant="outline" className="text-[9px]">{family.count}</Badge>
-              </div>
-              <div className="pl-3 space-y-0.5">
-                {regionStats
-                  .filter(s => {
-                    const regionKey = `${s.country}|${s.region}`;
-                    const isTop = topRegionKeys.has(regionKey);
-                    const fName = buildGeographicFamilyName(s.wine_type, s.country, s.region, isTop);
-                    return fName === family.name;
-                  })
-                  .map(s => (
-                    <div key={`${s.wine_type}|${s.country}|${s.region}`} className="text-[10px] text-muted-foreground">
-                      {countryName(s.country)} · {s.region} · <span className="capitalize">{s.wine_type}</span> ({s.count})
-                    </div>
-                  ))
-                }
-              </div>
-            </div>
-          ))}
-        </div>
-      </details>
 
       {/* Save button */}
       <div className="flex gap-2">
