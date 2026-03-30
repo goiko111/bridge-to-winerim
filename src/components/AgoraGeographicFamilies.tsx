@@ -16,6 +16,7 @@ export interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[]; // manually selected regions that always get their own family
   excluded_regions: string[]; // manually excluded regions that never get their own family
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all at root; HIERARCHICAL = Type > Country > Region
 }
 
 interface RegionStats {
