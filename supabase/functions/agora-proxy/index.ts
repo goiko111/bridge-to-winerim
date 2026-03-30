@@ -1085,10 +1085,16 @@ ${costPricesXml}
 
   let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n`;
 
-  if (newFamilies.length > 0) {
+  const allFamiliesToCreate = [...newFamilies, ...newFamilyHierarchy];
+  if (allFamiliesToCreate.length > 0) {
     xml += `  <Families>\n`;
+    // First: root families (no parent)
     for (const f of newFamilies) {
       xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.name, 15))}" Color="#8B0000" Order="100" />\n`;
+    }
+    // Then: hierarchical families (with parent)
+    for (const f of newFamilyHierarchy) {
+      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.name, 15))}" Color="#8B0000" Order="100" ParentFamilyId="${f.parentId}" />\n`;
     }
     xml += `  </Families>\n`;
   }
