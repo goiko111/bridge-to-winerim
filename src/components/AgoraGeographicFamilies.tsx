@@ -223,11 +223,12 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         .eq("id", connectionId)
         .single();
       const currentConfig = (conn?.provider_config as Record<string, unknown>) || {};
-      const geoConfig = {
+      const geoConfig: GeographicFamilyConfig = {
         family_naming_mode: "GEOGRAPHIC_FAMILIES" as const,
         region_threshold: threshold,
         selected_regions: Array.from(selectedRegions),
         excluded_regions: Array.from(excludedRegions),
+        hierarchy_mode: hierarchyMode,
       };
       await supabase
         .from("pos_connections")
