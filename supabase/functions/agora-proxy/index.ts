@@ -774,6 +774,7 @@ interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[];
   excluded_regions: string[];
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type > Country > Region
 }
 
 function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
@@ -783,6 +784,28 @@ function buildGeoFamilyName(wineType: string, country: string, region: string | 
     return `${tLabel} - ${region}`;
   }
   return `${tLabel} - ${cName} (Otras)`;
+}
+
+// Hierarchical family name builders (for 3-level mode)
+function geoTypeParentName(wineType: string): string {
+  const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
+  return `${tLabel} WINERIM`;
+}
+
+function geoCountrySubName(wineType: string, country: string): string {
+  const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
+  const cName = GEO_COUNTRY_NAMES[country] || country;
+  return `${tLabel} ${cName}`;
+}
+
+function geoRegionLeafName(region: string): string {
+  return region;
+}
+
+function geoCountryOtrasName(wineType: string, country: string): string {
+  const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
+  const cName = GEO_COUNTRY_NAMES[country] || country;
+  return `${tLabel} ${cName} Otras`;
 }
 
 // deno-lint-ignore no-explicit-any
