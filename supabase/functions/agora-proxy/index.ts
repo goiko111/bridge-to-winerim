@@ -774,7 +774,7 @@ interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[];
   excluded_regions: string[];
-  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type > Country > Region
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type+Country > Region (2 levels only, Agora limit)
 }
 
 function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
@@ -894,39 +894,35 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const top = isTopRegion(country, region, geographicConfig, winesPool);
 
       if (geographicConfig.hierarchy_mode === "HIERARCHICAL") {
-        // 3-level hierarchy: Type Parent > Country Sub > Region Leaf
-        const typeParent = geoTypeParentName(wineType || "otros");
-        const typeParentId = stableFamilyId(typeParent);
-        const countrySub = geoCountrySubName(wineType || "otros", country);
-        const countrySubId = stableFamilyId(countrySub);
+        // 2-level hierarchy (Agora limit: no subfamilies of subfamilies):
+        // Level 1 (parent): "TINTO ESPAÑA", "BLANCO FRANCIA"...
+        // Level 2 (child):  "Ribera del Duero", "Rioja"... or "Otras"
+        const typeCountryParent = geoCountrySubName(wineType || "otros", country);
+        const typeCountryParentId = stableFamilyId(typeCountryParent);
 
-        // Register type-level parent
-        if (!newFamilies.some(f => f.id === typeParentId)) {
-          newFamilies.push({ id: typeParentId, name: typeParent });
-        }
-        // Register country-level sub (parent = type)
-        if (!newFamilyHierarchy.some(f => f.id === countrySubId)) {
-          newFamilyHierarchy.push({ id: countrySubId, name: countrySub, parentId: typeParentId });
+        // Register Type+Country as root parent
+        if (!newFamilies.some(f => f.id === typeCountryParentId)) {
+          newFamilies.push({ id: typeCountryParentId, name: typeCountryParent });
         }
 
         if (top && region) {
-          // Leaf: region family (parent = country)
+          // Region as direct child of Type+Country
           const leafName = geoRegionLeafName(region);
-          const leafId = stableFamilyId(`${countrySub}_${leafName}`);
+          const leafId = stableFamilyId(`${typeCountryParent}_${leafName}`);
           if (!newFamilyHierarchy.some(f => f.id === leafId)) {
-            newFamilyHierarchy.push({ id: leafId, name: leafName, parentId: countrySubId });
+            newFamilyHierarchy.push({ id: leafId, name: leafName, parentId: typeCountryParentId });
           }
           const existing = families.find(f => f.Name === leafName && f.Id === leafId);
-          return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: countrySubId, grandparentId: typeParentId };
+          return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: typeCountryParentId };
         } else {
-          // "Otras" leaf under country
+          // "Otras" child under Type+Country
           const otrasName = geoCountryOtrasName(wineType || "otros", country);
           const otrasId = stableFamilyId(otrasName);
           if (!newFamilyHierarchy.some(f => f.id === otrasId)) {
-            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: countrySubId });
+            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: typeCountryParentId });
           }
           const existing = families.find(f => f.Id === otrasId);
-          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: countrySubId, grandparentId: typeParentId };
+          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: typeCountryParentId };
         }
       }
 
