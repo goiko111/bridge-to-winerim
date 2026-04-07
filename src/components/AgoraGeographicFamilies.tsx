@@ -16,7 +16,7 @@ export interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[]; // manually selected regions that always get their own family
   excluded_regions: string[]; // manually excluded regions that never get their own family
-  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all at root; HIERARCHICAL = Type > Country > Region
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all at root; HIERARCHICAL = Type+Country > Region (2 levels)
 }
 
 interface RegionStats {
@@ -166,26 +166,22 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
   // Preview families (flat or hierarchical)
   const previewFamilies = useMemo(() => {
     if (hierarchyMode === "HIERARCHICAL") {
-      // Build 3-level tree: Type > Country > Region/Otras
-      const tree = new Map<string, { count: number; countries: Map<string, { count: number; regions: Map<string, number> }> }>();
+      // Build 2-level tree: Type+Country (parent) > Region/Otras (child)
+      // Agora only supports 2 levels of hierarchy (no subfamilies of subfamilies)
+      const tree = new Map<string, { count: number; regions: Map<string, number> }>();
       for (const s of regionStats) {
         const regionKey = `${s.country}|${s.region}`;
         const isTop = topRegionKeys.has(regionKey);
         const tLabel = TYPE_LABELS[s.wine_type?.toLowerCase()] || (s.wine_type || "OTROS").toUpperCase();
-        const typeName = `${tLabel} WINERIM`;
         const cName = countryName(s.country);
+        const parentName = `${tLabel} ${cName}`;
 
-        if (!tree.has(typeName)) tree.set(typeName, { count: 0, countries: new Map() });
-        const typeNode = tree.get(typeName)!;
-        typeNode.count += s.count;
-
-        const countryKey = `${tLabel} ${cName}`;
-        if (!typeNode.countries.has(countryKey)) typeNode.countries.set(countryKey, { count: 0, regions: new Map() });
-        const countryNode = typeNode.countries.get(countryKey)!;
-        countryNode.count += s.count;
+        if (!tree.has(parentName)) tree.set(parentName, { count: 0, regions: new Map() });
+        const parentNode = tree.get(parentName)!;
+        parentNode.count += s.count;
 
         const regionLabel = isTop ? s.region : "Otras";
-        countryNode.regions.set(regionLabel, (countryNode.regions.get(regionLabel) || 0) + s.count);
+        parentNode.regions.set(regionLabel, (parentNode.regions.get(regionLabel) || 0) + s.count);
       }
       return { mode: "HIERARCHICAL" as const, tree };
     }
@@ -307,7 +303,7 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
 
       <p className="text-[11px] text-muted-foreground">
         {hierarchyMode === "HIERARCHICAL"
-          ? "Las familias se crean en 3 niveles: TIPO WINERIM → País → Región. El camarero navega por la jerarquía en el TPV."
+          ? "Las familias se crean en 2 niveles: TIPO PAÍS (ej: TINTO España) → Región (Rioja, Ribera…). Compatible con Agora."
           : 'Las familias se generan como "TIPO - Región" para las regiones principales y "TIPO - País (Otras)" para el resto.'}
       </p>
 
@@ -315,8 +311,8 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
       <div className="flex items-center gap-3 rounded-lg border border-border p-2.5">
         <Layers className="h-3.5 w-3.5 text-muted-foreground" />
         <div className="flex-1">
-          <p className="text-[11px] font-medium text-foreground">Familias jerárquicas (3 niveles)</p>
-          <p className="text-[10px] text-muted-foreground">TINTOS WINERIM → España → Rioja, Ribera…</p>
+          <p className="text-[11px] font-medium text-foreground">Familias jerárquicas (2 niveles)</p>
+          <p className="text-[10px] text-muted-foreground">TINTO España → Rioja, Ribera… · BLANCO Francia → Borgoña…</p>
         </div>
         <Switch
           checked={hierarchyMode === "HIERARCHICAL"}
@@ -400,26 +396,18 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
         </div>
         <div className="max-h-[300px] overflow-y-auto rounded-lg border border-border bg-card p-2 space-y-0.5">
           {previewFamilies.mode === "HIERARCHICAL" ? (
-            Array.from(previewFamilies.tree.entries()).map(([typeName, typeNode]) => (
-              <div key={typeName} className="mb-2">
+            Array.from(previewFamilies.tree.entries()).map(([parentName, parentNode]) => (
+              <div key={parentName} className="mb-2">
                 <div className="flex items-center gap-2 px-1 py-1 rounded bg-primary/10">
-                  <span className="text-[11px] font-bold text-primary">📁 {typeName}</span>
-                  <Badge variant="default" className="text-[9px] ml-auto">{typeNode.count}</Badge>
+                  <span className="text-[11px] font-bold text-primary">📁 {parentName}</span>
+                  <Badge variant="default" className="text-[9px] ml-auto">{parentNode.count}</Badge>
                 </div>
-                {Array.from(typeNode.countries.entries()).map(([countryKey, countryNode]) => (
-                  <div key={countryKey} className="ml-4 mt-0.5">
-                    <div className="flex items-center gap-2 px-1 py-0.5 rounded bg-accent/30">
-                      <span className="text-[11px] font-medium text-foreground">📂 {countryKey}</span>
-                      <Badge variant="secondary" className="text-[9px] ml-auto">{countryNode.count}</Badge>
-                    </div>
-                    {Array.from(countryNode.regions.entries()).map(([regionName, count]) => (
-                      <div key={regionName} className="ml-4 flex items-center gap-2 px-1 py-0.5">
-                        <span className={`text-[10px] ${regionName === "Otras" ? "text-muted-foreground italic" : "text-foreground"}`}>
-                          🍷 {regionName}
-                        </span>
-                        <Badge variant="outline" className="text-[8px] ml-auto">{count}</Badge>
-                      </div>
-                    ))}
+                {Array.from(parentNode.regions.entries()).map(([regionName, count]) => (
+                  <div key={regionName} className="ml-4 flex items-center gap-2 px-1 py-0.5">
+                    <span className={`text-[10px] ${regionName === "Otras" ? "text-muted-foreground italic" : "text-foreground"}`}>
+                      🍷 {regionName}
+                    </span>
+                    <Badge variant="outline" className="text-[8px] ml-auto">{count}</Badge>
                   </div>
                 ))}
               </div>

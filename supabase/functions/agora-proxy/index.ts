@@ -774,7 +774,7 @@ interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[];
   excluded_regions: string[];
-  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type > Country > Region
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type+Country > Region (2 levels only, Agora limit)
 }
 
 function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
@@ -894,39 +894,35 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const top = isTopRegion(country, region, geographicConfig, winesPool);
 
       if (geographicConfig.hierarchy_mode === "HIERARCHICAL") {
-        // 3-level hierarchy: Type Parent > Country Sub > Region Leaf
-        const typeParent = geoTypeParentName(wineType || "otros");
-        const typeParentId = stableFamilyId(typeParent);
-        const countrySub = geoCountrySubName(wineType || "otros", country);
-        const countrySubId = stableFamilyId(countrySub);
+        // 2-level hierarchy (Agora limit: no subfamilies of subfamilies):
+        // Level 1 (parent): "TINTO ESPAÑA", "BLANCO FRANCIA"...
+        // Level 2 (child):  "Ribera del Duero", "Rioja"... or "Otras"
+        const typeCountryParent = geoCountrySubName(wineType || "otros", country);
+        const typeCountryParentId = stableFamilyId(typeCountryParent);
 
-        // Register type-level parent
-        if (!newFamilies.some(f => f.id === typeParentId)) {
-          newFamilies.push({ id: typeParentId, name: typeParent });
-        }
-        // Register country-level sub (parent = type)
-        if (!newFamilyHierarchy.some(f => f.id === countrySubId)) {
-          newFamilyHierarchy.push({ id: countrySubId, name: countrySub, parentId: typeParentId });
+        // Register Type+Country as root parent
+        if (!newFamilies.some(f => f.id === typeCountryParentId)) {
+          newFamilies.push({ id: typeCountryParentId, name: typeCountryParent });
         }
 
         if (top && region) {
-          // Leaf: region family (parent = country)
+          // Region as direct child of Type+Country
           const leafName = geoRegionLeafName(region);
-          const leafId = stableFamilyId(`${countrySub}_${leafName}`);
+          const leafId = stableFamilyId(`${typeCountryParent}_${leafName}`);
           if (!newFamilyHierarchy.some(f => f.id === leafId)) {
-            newFamilyHierarchy.push({ id: leafId, name: leafName, parentId: countrySubId });
+            newFamilyHierarchy.push({ id: leafId, name: leafName, parentId: typeCountryParentId });
           }
           const existing = families.find(f => f.Name === leafName && f.Id === leafId);
-          return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: countrySubId, grandparentId: typeParentId };
+          return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: typeCountryParentId };
         } else {
-          // "Otras" leaf under country
+          // "Otras" child under Type+Country
           const otrasName = geoCountryOtrasName(wineType || "otros", country);
           const otrasId = stableFamilyId(otrasName);
           if (!newFamilyHierarchy.some(f => f.id === otrasId)) {
-            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: countrySubId });
+            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: typeCountryParentId });
           }
           const existing = families.find(f => f.Id === otrasId);
-          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: countrySubId, grandparentId: typeParentId };
+          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: typeCountryParentId };
         }
       }
 
@@ -3376,10 +3372,29 @@ serve(async (req) => {
         const parsedResponse = parseAgoraImportResponse(importRes.status, responseBody);
 
         if (!parsedResponse.success) {
+          // ── IMPROVED ERROR CAPTURE: Include Agora's actual error message ──
+          const rawDetail = parsedResponse.rawPreview?.substring(0, 500) || "";
+          const agoraErrors = parsedResponse.errors.length > 0 
+            ? parsedResponse.errors.join("; ").substring(0, 300)
+            : "";
+          const errorMsg = rawDetail 
+            ? `HTTP ${importRes.status}: ${rawDetail}`
+            : (agoraErrors || `HTTP ${importRes.status}`);
+
+          // ── DUPLICATE KEY DETECTION: If Agora says duplicate, the product already exists ──
+          const isDuplicateKey = rawDetail.includes("UNIQUE KEY constraint") || rawDetail.includes("duplicate key");
+          if (isDuplicateKey) {
+            // Mark as BLOCKED with actionable message instead of retrying
+            await supabase.from("outbound_tasks").update({
+              status: "BLOCKED",
+              last_error: errorMsg,
+              blocked_reason: "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora con este nombre. Usa UPDATE en lugar de CREATE.",
+            }).eq("id", task.id);
+            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "DUPLICATE_KEY", parsedResponse }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+
           const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500;
-          const errorMsg = parsedResponse.errors.length > 0 
-            ? parsedResponse.errors.join("; ").substring(0, 500)
-            : `HTTP ${importRes.status}: ${parsedResponse.rawPreview.substring(0, 300)}`;
           
           // If it's a data error (4xx), don't retry - BLOCK
           const isDataError = importRes.status >= 400 && importRes.status < 500;
@@ -3858,6 +3873,52 @@ serve(async (req) => {
         .eq("status", "QUEUED");
 
       return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remaining || 0, done: (remaining || 0) === 0 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── RETRY/RESET FAILED TASKS ──
+    if (action === "retry-failed-tasks") {
+      const targetStatuses = payload.statuses || ["FAILED"];
+      const { count, error: countErr } = await supabase
+        .from("outbound_tasks").select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+      
+      if (countErr) {
+        return new Response(JSON.stringify({ error: countErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { error: updateErr } = await supabase
+        .from("outbound_tasks")
+        .update({ status: "QUEUED", attempts: 0, last_error: null, blocked_reason: null })
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+
+      if (updateErr) {
+        return new Response(JSON.stringify({ error: updateErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      return new Response(JSON.stringify({ success: true, reset: count || 0 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── DELETE ALL TASKS (clean slate) ──
+    if (action === "delete-all-tasks") {
+      const targetStatuses = payload.statuses || ["FAILED", "BLOCKED"];
+      const { error: delErr } = await supabase
+        .from("outbound_tasks")
+        .delete()
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+
+      if (delErr) {
+        return new Response(JSON.stringify({ error: delErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      return new Response(JSON.stringify({ success: true }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
