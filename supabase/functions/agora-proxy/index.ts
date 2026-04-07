@@ -3382,15 +3382,24 @@ serve(async (req) => {
             : (agoraErrors || `HTTP ${importRes.status}`);
 
           // ── DUPLICATE KEY DETECTION: If Agora says duplicate, the product already exists ──
-          const isDuplicateKey = rawDetail.includes("UNIQUE KEY constraint") || rawDetail.includes("duplicate key");
+          const duplicateDetail = `${rawDetail} ${agoraErrors}`.toLowerCase();
+          const isDuplicateKey = duplicateDetail.includes("unique key constraint") || duplicateDetail.includes("duplicate key");
           if (isDuplicateKey) {
+            const isFamilyDuplicate = duplicateDetail.includes("importar la familia") ||
+              duplicateDetail.includes("dbo.family") ||
+              duplicateDetail.includes("family with id") ||
+              duplicateDetail.includes("nombre 'otras'") ||
+              duplicateDetail.includes("nombre \"otras\"");
+
             // Mark as BLOCKED with actionable message instead of retrying
             await supabase.from("outbound_tasks").update({
               status: "BLOCKED",
               last_error: errorMsg,
-              blocked_reason: "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora con este nombre. Usa UPDATE en lugar de CREATE.",
+              blocked_reason: isFamilyDuplicate
+                ? "DUPLICATE_FAMILY_NAME_IN_AGORA: Agora está rechazando una familia duplicada (por ejemplo 'Otras'). Revisa la jerarquía/familia destino antes de reintentar."
+                : "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora con este nombre. Reencólalo como UPDATE si quieres refrescar sus datos.",
             }).eq("id", task.id);
-            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "DUPLICATE_KEY", parsedResponse }),
+            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: isFamilyDuplicate ? "DUPLICATE_FAMILY" : "DUPLICATE_KEY", parsedResponse }),
               { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
 
@@ -3818,11 +3827,15 @@ serve(async (req) => {
         });
         if (operationType === "CREATE") queuedCreate++; else queuedUpdate++;
 
-        // ── PUSH TRACKING: Mark QUEUED only for eligible formats ──
+        // ── PUSH TRACKING: Mark QUEUED only for formats that are not already present in Agora ──
+        // Existing published products keep their published status; pending UPDATEs are tracked via outbound_tasks.
         for (const fmt of eligibleFormats) {
-          await upsertPushTracking(supabase, connectionId, wineId, fmt, {
-            sync_status: "QUEUED",
-          });
+          const formatAlreadyExists = existingProductIds.has(formatProductIds[fmt] || "");
+          if (!formatAlreadyExists) {
+            await upsertPushTracking(supabase, connectionId, wineId, fmt, {
+              sync_status: "QUEUED",
+            });
+          }
         }
       }
 
