@@ -3876,6 +3876,52 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── RETRY/RESET FAILED TASKS ──
+    if (action === "retry-failed-tasks") {
+      const targetStatuses = payload.statuses || ["FAILED"];
+      const { count, error: countErr } = await supabase
+        .from("outbound_tasks").select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+      
+      if (countErr) {
+        return new Response(JSON.stringify({ error: countErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { error: updateErr } = await supabase
+        .from("outbound_tasks")
+        .update({ status: "QUEUED", attempts: 0, last_error: null, blocked_reason: null })
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+
+      if (updateErr) {
+        return new Response(JSON.stringify({ error: updateErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      return new Response(JSON.stringify({ success: true, reset: count || 0 }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── DELETE ALL TASKS (clean slate) ──
+    if (action === "delete-all-tasks") {
+      const targetStatuses = payload.statuses || ["FAILED", "BLOCKED"];
+      const { error: delErr } = await supabase
+        .from("outbound_tasks")
+        .delete()
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("status", targetStatuses);
+
+      if (delErr) {
+        return new Response(JSON.stringify({ error: delErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      return new Response(JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── BACKFILL PRICES (re-push UPDATE for products missing PriceList entries) ──
     if (action === "backfill-prices") {
       const winerimWineIds = payload.winerimWineIds || [];
