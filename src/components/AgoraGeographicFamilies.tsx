@@ -16,7 +16,7 @@ export interface GeographicFamilyConfig {
   region_threshold: number;
   selected_regions: string[]; // manually selected regions that always get their own family
   excluded_regions: string[]; // manually excluded regions that never get their own family
-  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all at root; HIERARCHICAL = Type > Country > Region
+  hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all at root; HIERARCHICAL = Type+Country > Region (2 levels)
 }
 
 interface RegionStats {
@@ -166,26 +166,22 @@ export default function AgoraGeographicFamilies({ connectionId, config, onConfig
   // Preview families (flat or hierarchical)
   const previewFamilies = useMemo(() => {
     if (hierarchyMode === "HIERARCHICAL") {
-      // Build 3-level tree: Type > Country > Region/Otras
-      const tree = new Map<string, { count: number; countries: Map<string, { count: number; regions: Map<string, number> }> }>();
+      // Build 2-level tree: Type+Country (parent) > Region/Otras (child)
+      // Agora only supports 2 levels of hierarchy (no subfamilies of subfamilies)
+      const tree = new Map<string, { count: number; regions: Map<string, number> }>();
       for (const s of regionStats) {
         const regionKey = `${s.country}|${s.region}`;
         const isTop = topRegionKeys.has(regionKey);
         const tLabel = TYPE_LABELS[s.wine_type?.toLowerCase()] || (s.wine_type || "OTROS").toUpperCase();
-        const typeName = `${tLabel} WINERIM`;
         const cName = countryName(s.country);
+        const parentName = `${tLabel} ${cName}`;
 
-        if (!tree.has(typeName)) tree.set(typeName, { count: 0, countries: new Map() });
-        const typeNode = tree.get(typeName)!;
-        typeNode.count += s.count;
-
-        const countryKey = `${tLabel} ${cName}`;
-        if (!typeNode.countries.has(countryKey)) typeNode.countries.set(countryKey, { count: 0, regions: new Map() });
-        const countryNode = typeNode.countries.get(countryKey)!;
-        countryNode.count += s.count;
+        if (!tree.has(parentName)) tree.set(parentName, { count: 0, regions: new Map() });
+        const parentNode = tree.get(parentName)!;
+        parentNode.count += s.count;
 
         const regionLabel = isTop ? s.region : "Otras";
-        countryNode.regions.set(regionLabel, (countryNode.regions.get(regionLabel) || 0) + s.count);
+        parentNode.regions.set(regionLabel, (parentNode.regions.get(regionLabel) || 0) + s.count);
       }
       return { mode: "HIERARCHICAL" as const, tree };
     }
