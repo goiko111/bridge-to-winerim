@@ -3372,10 +3372,29 @@ serve(async (req) => {
         const parsedResponse = parseAgoraImportResponse(importRes.status, responseBody);
 
         if (!parsedResponse.success) {
+          // ── IMPROVED ERROR CAPTURE: Include Agora's actual error message ──
+          const rawDetail = parsedResponse.rawPreview?.substring(0, 500) || "";
+          const agoraErrors = parsedResponse.errors.length > 0 
+            ? parsedResponse.errors.join("; ").substring(0, 300)
+            : "";
+          const errorMsg = rawDetail 
+            ? `HTTP ${importRes.status}: ${rawDetail}`
+            : (agoraErrors || `HTTP ${importRes.status}`);
+
+          // ── DUPLICATE KEY DETECTION: If Agora says duplicate, the product already exists ──
+          const isDuplicateKey = rawDetail.includes("UNIQUE KEY constraint") || rawDetail.includes("duplicate key");
+          if (isDuplicateKey) {
+            // Mark as BLOCKED with actionable message instead of retrying
+            await supabase.from("outbound_tasks").update({
+              status: "BLOCKED",
+              last_error: errorMsg,
+              blocked_reason: "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora con este nombre. Usa UPDATE en lugar de CREATE.",
+            }).eq("id", task.id);
+            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "DUPLICATE_KEY", parsedResponse }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+
           const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500;
-          const errorMsg = parsedResponse.errors.length > 0 
-            ? parsedResponse.errors.join("; ").substring(0, 500)
-            : `HTTP ${importRes.status}: ${parsedResponse.rawPreview.substring(0, 300)}`;
           
           // If it's a data error (4xx), don't retry - BLOCK
           const isDataError = importRes.status >= 400 && importRes.status < 500;
