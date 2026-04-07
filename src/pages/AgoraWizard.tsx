@@ -1361,6 +1361,13 @@ function StepWinerimCatalog({
     agora_family_id?: string | null;
     agora_family_name?: string | null;
   }>>>({});
+  const [taskStateByWine, setTaskStateByWine] = useState<Record<string, {
+    status: "QUEUED" | "RUNNING" | "BLOCKED";
+    operation: "CREATE" | "UPDATE";
+    format_types: string[];
+    blocked_reason: string | null;
+    last_error: string | null;
+  }>>({});
   const [loading, setLoading] = useState(false);
   const [fetchingCatalog, setFetchingCatalog] = useState(false);
   const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
@@ -1408,7 +1415,7 @@ function StepWinerimCatalog({
   const loadWines = useCallback(async () => {
     if (!connectionId) return;
     setLoading(true);
-    const [data, trackingData, masterData] = await Promise.all([
+    const [data, trackingData, masterData, outboundTaskRows] = await Promise.all([
       fetchAllWinerimWines(
         connectionId,
         "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
@@ -1435,6 +1442,26 @@ function StepWinerimCatalog({
         .eq("connection_id", connectionId)
         .maybeSingle()
         .then(r => r.data || null),
+      (async () => {
+        const PAGE = 1000;
+        let all: any[] = [];
+        let page = 0;
+        while (true) {
+          const { data: batch } = await supabase
+            .from("outbound_tasks" as any)
+            .select("payload_json, status, blocked_reason, last_error, updated_at")
+            .eq("connection_id", connectionId)
+            .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+            .in("status", ["QUEUED", "RUNNING", "BLOCKED"])
+            .order("updated_at", { ascending: false })
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (!batch || batch.length === 0) break;
+          all = all.concat(batch);
+          if (batch.length < PAGE) break;
+          page++;
+        }
+        return all;
+      })(),
     ]);
     const rows = data as WinerimCatalogWine[];
     setWines(rows);
@@ -1480,6 +1507,27 @@ function StepWinerimCatalog({
       };
     }
     setPushTracking(trackingMap);
+
+    const taskMap: Record<string, {
+      status: "QUEUED" | "RUNNING" | "BLOCKED";
+      operation: "CREATE" | "UPDATE";
+      format_types: string[];
+      blocked_reason: string | null;
+      last_error: string | null;
+    }> = {};
+    for (const task of outboundTaskRows as any[]) {
+      const payload = (task.payload_json || {}) as Record<string, any>;
+      const wineId = String(payload._winerim_wine_id || "");
+      if (!wineId || taskMap[wineId]) continue;
+      taskMap[wineId] = {
+        status: task.status,
+        operation: payload._operation === "UPDATE" ? "UPDATE" : "CREATE",
+        format_types: Array.isArray(payload._format_types) ? payload._format_types.map((fmt: unknown) => String(fmt)) : [],
+        blocked_reason: task.blocked_reason || null,
+        last_error: task.last_error || null,
+      };
+    }
+    setTaskStateByWine(taskMap);
 
     const latestEnriched = rows
       .filter((w) =>
@@ -1598,6 +1646,17 @@ function StepWinerimCatalog({
     if (statuses.every(s => s === "VERIFIED")) return "VERIFIED";
     return statuses[0] || "NOT_PUSHED";
   }, [pushTracking]);
+
+  const getPendingTaskMeta = useCallback((winerimId: string) => taskStateByWine[winerimId] || null, [taskStateByWine]);
+
+  const taskSummary = useMemo(() => {
+    const values = Object.values(taskStateByWine);
+    return {
+      queuedCreate: values.filter((t) => (t.status === "QUEUED" || t.status === "RUNNING") && t.operation === "CREATE").length,
+      queuedUpdate: values.filter((t) => (t.status === "QUEUED" || t.status === "RUNNING") && t.operation === "UPDATE").length,
+      blocked: values.filter((t) => t.status === "BLOCKED").length,
+    };
+  }, [taskStateByWine]);
 
   const filteredWines = useMemo(() => {
     let result = wines;
@@ -1883,6 +1942,27 @@ function StepWinerimCatalog({
             </div>
           );
         })()}
+        {(taskSummary.queuedCreate > 0 || taskSummary.queuedUpdate > 0 || taskSummary.blocked > 0) && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Pending CREATE</p>
+                <p className="text-sm font-bold text-foreground">{taskSummary.queuedCreate}</p>
+              </div>
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Pending UPDATE</p>
+                <p className="text-sm font-bold text-foreground">{taskSummary.queuedUpdate}</p>
+              </div>
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Blocked tasks</p>
+                <p className="text-sm font-bold text-destructive">{taskSummary.blocked}</p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              <strong>VERIFIED</strong> = ya publicado en Agora. <strong>Pending UPDATE</strong> = ya existe arriba y solo queda refrescar datos. <strong>Blocked</strong> = hay que revisar el motivo exacto.
+            </p>
+          </div>
+        )}
         {lastEnrichedAt && (
           <p className="text-[11px] text-muted-foreground">
             Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
@@ -2279,6 +2359,11 @@ function StepWinerimCatalog({
                 return w && w.pricing_status === "READY";
               });
               const failedIds = Array.from(selectedIds).filter(id => getWineSyncStatus(id) === "FAILED");
+              const updateIds = pushableIds.filter(id => {
+                const s = getWineSyncStatus(id);
+                return s === "VERIFIED" || s === "PUSHED";
+              });
+              const createIds = pushableIds.filter(id => !updateIds.includes(id));
               const blockedCount = selectedIds.size - pushableIds.length;
               return (
                 <>
@@ -2287,7 +2372,7 @@ function StepWinerimCatalog({
                     onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
                     disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
                     {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
-                    Push {pushableIds.length} to Agora
+                    Push {pushableIds.length} to Agora ({createIds.length} create · {updateIds.length} update)
                     {blockedCount > 0 && <span className="text-destructive ml-1">({blockedCount} blocked)</span>}
                   </Button>
                   {failedIds.length > 0 && (
@@ -2406,6 +2491,12 @@ function StepWinerimCatalog({
               if (!w.serve_by_glass) blockReasons.push("GLASS: serve_by_glass=false");
 
               const wineTracking = pushTracking[w.winerim_id] || {};
+              const pendingTask = getPendingTaskMeta(w.winerim_id);
+              const publishedFamilies = [...new Set(Object.values(wineTracking)
+                .filter((t) => t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")
+                .map((t) => t.agora_family_name)
+                .filter(Boolean))] as string[];
+              const isPublished = Object.values(wineTracking).some((t) => t.sync_status === "VERIFIED" || t.sync_status === "PUSHED");
               const getPushBadge = (fmt: string) => {
                 const t = wineTracking[fmt];
                 if (!t) return null;
@@ -2417,7 +2508,7 @@ function StepWinerimCatalog({
               const isExpanded = expandedWineId === w.winerim_id;
 
               return (
-                <div key={w.winerim_id} className={`bg-card hover:bg-secondary/30 transition-colors ${getWineSyncStatus(w.winerim_id) !== "NOT_PUSHED" ? "opacity-50" : ""}`}>
+                <div key={w.winerim_id} className={`bg-card hover:bg-secondary/30 transition-colors ${isPublished ? "bg-secondary/10" : ""}`}>
                   <div className="flex items-center gap-3 px-4 py-2.5 cursor-pointer" onClick={() => setExpandedWineId(isExpanded ? null : w.winerim_id)}>
                     <input type="checkbox" checked={selectedIds.has(w.winerim_id)}
                       onChange={(e) => { e.stopPropagation(); toggleWine(w.winerim_id); }}
@@ -2451,18 +2542,21 @@ function StepWinerimCatalog({
                         {/* Inline push status */}
                         {(() => {
                           const syncSt = getWineSyncStatus(w.winerim_id);
-                          if (syncSt === "NOT_PUSHED") return null;
+                          if (syncSt === "NOT_PUSHED" && !pendingTask) return null;
                           const variant = syncSt === "VERIFIED" ? "default" as const : syncSt === "FAILED" ? "destructive" as const : "outline" as const;
                           const icon = syncSt === "VERIFIED" ? "✓" : syncSt === "PUSHED" ? "↑" : syncSt === "QUEUED" ? "⏳" : syncSt === "FAILED" ? "✗" : "—";
-                          const trackedFamilies = Object.entries(wineTracking)
-                            .filter(([, t]) => !!t?.agora_family_name)
-                            .map(([fmt, t]) => `${fmt} → ${t.agora_family_name}`);
                           return (
                             <>
-                              <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>
-                              {trackedFamilies.map((label) => (
-                                <Badge key={label} variant="outline" className="text-[9px]">📁 {label}</Badge>
+                              {syncSt !== "NOT_PUSHED" && <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>}
+                              {publishedFamilies.map((family) => (
+                                <Badge key={family} variant="outline" className="text-[9px]">📁 Agora: {family}</Badge>
                               ))}
+                              {pendingTask && (pendingTask.status === "QUEUED" || pendingTask.status === "RUNNING") && (
+                                <Badge variant="outline" className="text-[9px]">⏳ Pending {pendingTask.operation}</Badge>
+                              )}
+                              {pendingTask?.status === "BLOCKED" && (
+                                <Badge variant="destructive" className="text-[9px]">✗ Blocked {pendingTask.operation}</Badge>
+                              )}
                             </>
                           );
                         })()}
@@ -2559,6 +2653,23 @@ function StepWinerimCatalog({
                                   </div>
                                 );
                               })}
+                            </div>
+                          </div>
+                        )}
+                        {pendingTask && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pending Task</p>
+                            <div className="rounded border border-border p-2 space-y-1">
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                                <span className="text-muted-foreground">operation</span>
+                                <span className="font-mono text-foreground">{pendingTask.operation}</span>
+                                <span className="text-muted-foreground">status</span>
+                                <span className={`font-mono ${pendingTask.status === "BLOCKED" ? "text-destructive" : "text-foreground"}`}>{pendingTask.status}</span>
+                                <span className="text-muted-foreground">formats</span>
+                                <span className="font-mono text-foreground">{pendingTask.format_types.join(", ") || "—"}</span>
+                              </div>
+                              {pendingTask.blocked_reason && <p className="text-[11px] text-destructive">{pendingTask.blocked_reason}</p>}
+                              {pendingTask.last_error && <p className="text-[11px] text-muted-foreground break-words">{pendingTask.last_error}</p>}
                             </div>
                           </div>
                         )}
