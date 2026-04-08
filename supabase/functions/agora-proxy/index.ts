@@ -4683,11 +4683,51 @@ serve(async (req) => {
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
+      let hidQueued = 0;
       for (const wine of wines) {
-        // Block inactive wines from auto-push
+        // ── INACTIVE WINE → queue HIDE task to set ShowInPos=false in Agora ──
         if (wine.is_active === false) {
+          // Check if already has a verified push (i.e. product exists in Agora)
+          const { data: existingPush } = await supabase
+            .from("winerim_push_tracking").select("format, agora_product_id")
+            .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+            .in("sync_status", ["VERIFIED", "PUSHED"]);
+          
+          if (existingPush && existingPush.length > 0) {
+            // Check no existing hide task queued
+            const { data: existingHide } = await supabase
+              .from("outbound_tasks").select("id")
+              .eq("connection_id", connectionId)
+              .eq("task_type", "AGORA_HIDE_PRODUCT")
+              .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
+              .in("status", ["QUEUED", "RUNNING"]).limit(1);
+            
+            if (!existingHide || existingHide.length === 0) {
+              const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
+              await supabase.from("outbound_tasks").insert({
+                connection_id: connectionId,
+                task_type: "AGORA_HIDE_PRODUCT",
+                payload_json: {
+                  _winerim_wine_id: wine.winerim_id,
+                  _product_ids: productIds,
+                  _wine_name: wine.name,
+                  _trigger_source: "AUTO_DEACTIVATION",
+                },
+                status: "QUEUED",
+              });
+              hidQueued++;
+              // Update tracking to reflect hidden status
+              for (const p of existingPush) {
+                await supabase.from("winerim_push_tracking")
+                  .update({ sync_status: "HIDDEN" })
+                  .eq("connection_id", connectionId)
+                  .eq("winerim_wine_id", wine.winerim_id)
+                  .eq("format", p.format);
+              }
+            }
+          }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive_hide_queued" });
           continue;
         }
 
