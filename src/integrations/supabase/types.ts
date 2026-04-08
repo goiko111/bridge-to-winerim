@@ -1040,7 +1040,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      schedule_next_queue_batch: {
+        Args: { conn_id: string; fn_url: string; service_key: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
