@@ -313,6 +313,24 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadOutboundTasks]);
 
+  const [requeueingBlocked, setRequeuingBlocked] = useState(false);
+  const requeueBlockedAsUpdate = useCallback(async () => {
+    if (!connectionId) return;
+    setRequeuingBlocked(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "requeue-blocked-as-update", connectionId },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to requeue blocked as update:", e);
+    } finally {
+      setRequeuingBlocked(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   return {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
@@ -326,5 +344,6 @@ export function useOutboundSync(connectionId: string | null) {
     fixingPrices, fixMissingPrices,
     reassigningFamilies, reassignFamilies,
     clearingQueue, clearQueue,
+    requeueingBlocked, requeueBlockedAsUpdate,
   };
 }

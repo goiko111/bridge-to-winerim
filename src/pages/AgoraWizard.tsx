@@ -2832,6 +2832,7 @@ function StepOutboundSync({
   fixingPrices, onFixMissingPrices,
   reassigningFamilies, onReassignFamilies,
   clearingQueue, onClearQueue,
+  requeueingBlocked, onRequeueBlockedAsUpdate,
 }: {
   connectionId: string | null;
   capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
@@ -2856,6 +2857,8 @@ function StepOutboundSync({
   onReassignFamilies: (winerimWineIds?: string[]) => Promise<any>;
   clearingQueue: boolean;
   onClearQueue: (statusFilter?: "FAILED" | "BLOCKED") => Promise<any>;
+  requeueingBlocked: boolean;
+  onRequeueBlockedAsUpdate: () => Promise<any>;
 }) {
   const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
   const [searchOutbound, setSearchOutbound] = useState("");
@@ -3074,6 +3077,19 @@ function StepOutboundSync({
         <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
           <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
         </Button>
+
+        {/* Requeue blocked duplicates as UPDATE */}
+        {outboundTasks.some(t => t.status === "BLOCKED" && t.blocked_reason?.includes("PRODUCT_ALREADY_EXISTS")) && (
+          <Button variant="outline" size="sm" disabled={requeueingBlocked}
+            className="text-blue-600 border-blue-300 hover:bg-blue-50"
+            onClick={async () => {
+              const res = await onRequeueBlockedAsUpdate();
+              if (res?.requeued) toast({ title: `${res.requeued} tareas re-encoladas como UPDATE` });
+            }}>
+            {requeueingBlocked ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Re-encolar como UPDATE ({outboundTasks.filter(t => t.status === "BLOCKED" && t.blocked_reason?.includes("PRODUCT_ALREADY_EXISTS")).length})
+          </Button>
+        )}
 
         {/* Clear Queue buttons */}
         {outboundTasks.some(t => t.status === "FAILED" || t.status === "BLOCKED") && (
@@ -4945,6 +4961,8 @@ export default function AgoraWizard() {
               onReassignFamilies={outbound.reassignFamilies}
               clearingQueue={outbound.clearingQueue}
               onClearQueue={outbound.clearQueue}
+              requeueingBlocked={outbound.requeueingBlocked}
+              onRequeueBlockedAsUpdate={outbound.requeueBlockedAsUpdate}
               queueProgress={outbound.queueProgress} />
           )}
           {currentStep === 12 && (
