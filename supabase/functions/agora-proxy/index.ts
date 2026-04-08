@@ -3887,9 +3887,9 @@ serve(async (req) => {
 
       while (Date.now() - startTime < TIME_BUDGET_MS) {
         const { data: tasks } = await supabase
-          .from("outbound_tasks").select("id")
+          .from("outbound_tasks").select("id, task_type")
           .eq("connection_id", connectionId)
-          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
           .eq("status", "QUEUED")
           .order("created_at").limit(BATCH_SIZE);
 
@@ -3898,11 +3898,51 @@ serve(async (req) => {
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           try {
-            const { data: result } = await supabase.functions.invoke("agora-proxy", {
-              body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
-            });
-            processed++;
-            if (result?.status === "SUCCESS") succeeded++; else failed++;
+            if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
+              // MIGRATE tasks are handled inline (lightweight XML with just FamilyId change)
+              const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
+              if (!fullTask) { failed++; processed++; continue; }
+              const p = fullTask.payload_json as Record<string, unknown>;
+              const productId = p.productId || fullTask.external_id;
+              const targetFamilyId = p.targetFamilyId;
+              const wineName = String(p.wineName || "");
+              const fmt = String(p.format || "BOTTLE");
+              const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
+              const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
+              const importUrl = `${baseUrlClean}/api/import/`;
+              const res = await fetchWithRetry(importUrl, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/xml" },
+                body: migrateXml,
+              });
+              const resBody = await res.text();
+
+              if (res.ok) {
+                await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                const winerimId = String(p.winerimWineId || "");
+                if (winerimId) {
+                  await supabase.from("winerim_push_tracking")
+                    .update({ sync_status: "VERIFIED", agora_family_id: String(targetFamilyId), verified_at: new Date().toISOString() })
+                    .eq("connection_id", connectionId)
+                    .eq("winerim_wine_id", winerimId)
+                    .eq("format", fmt);
+                }
+                succeeded++;
+              } else {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                failed++;
+              }
+              processed++;
+            } else {
+              const { data: result } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
+              });
+              processed++;
+              if (result?.status === "SUCCESS") succeeded++; else failed++;
+            }
           } catch (err) { failed++; processed++; }
         }
       }
@@ -3911,7 +3951,7 @@ serve(async (req) => {
       const { count: remaining } = await supabase
         .from("outbound_tasks").select("id", { count: "exact", head: true })
         .eq("connection_id", connectionId)
-        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
         .eq("status", "QUEUED");
 
       const remainingCount = remaining || 0;
