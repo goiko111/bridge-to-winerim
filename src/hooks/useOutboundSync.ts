@@ -190,6 +190,24 @@ export function useOutboundSync(connectionId: string | null) {
     }
   }, [connectionId, loadOutboundTasks]);
 
+  // Server-side queue processing: starts the loop on the server, no browser dependency
+  const processQueueServerSide = useCallback(async () => {
+    if (!connectionId) return;
+    setProcessingQueue(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+      });
+      if (error) throw error;
+      await loadOutboundTasks();
+      return data;
+    } catch (e) {
+      console.error("Failed to start server-side queue processing:", e);
+    } finally {
+      setProcessingQueue(false);
+    }
+  }, [connectionId, loadOutboundTasks]);
+
   const retryTask = useCallback(async (taskId: string) => {
     await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", taskId);
     await loadOutboundTasks();
