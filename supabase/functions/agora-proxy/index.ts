@@ -5389,10 +5389,30 @@ ${costPricesXml}
 
       console.log(`[auto-sync] ${connectionId}: ${batch.length} days, ${totalEvents} events, ${totalLines} lines, ${resolvedLines} resolved, ${unresolvedLines} unresolved`);
 
+      // ── Auto-trigger stock sync for synced days with resolved lines ──
+      let stockSyncResult = null;
+      if (resolvedLines > 0 && winerimToken) {
+        console.log(`[auto-sync] Triggering stock sync for ${batch.length} days with ${resolvedLines} resolved lines...`);
+        const stockResults = { synced: 0, skipped: 0, failed: 0 };
+        for (const day of batch) {
+          try {
+            const dayResult = await syncStockForDay(supabase, connectionId, day, winerimToken);
+            stockResults.synced += dayResult.synced;
+            stockResults.skipped += dayResult.skipped;
+            stockResults.failed += dayResult.failed;
+          } catch (e) {
+            console.error(`[auto-sync] Stock sync failed for ${day}:`, e);
+          }
+        }
+        stockSyncResult = stockResults;
+        console.log(`[auto-sync] Stock sync done: ${stockResults.synced} synced, ${stockResults.skipped} skipped, ${stockResults.failed} failed`);
+      }
+
       return new Response(JSON.stringify({
         success: true, daysSynced: batch.length, totalDaysPending: daysToSync.length,
         totalEvents, totalLines, resolvedLines, unresolvedLines,
         startDay: batch[0], endDay: batch[batch.length - 1], lastSynced: lastDaySynced,
+        stockSync: stockSyncResult,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
