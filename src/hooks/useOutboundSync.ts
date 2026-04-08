@@ -353,7 +353,7 @@ export function useOutboundSync(connectionId: string | null) {
     capabilities, detecting, detectionResults,
     loadCapabilities, detectCapabilities,
     outboundTasks, loadingTasks, loadOutboundTasks,
-    processingQueue, processQueue, queueProgress,
+    processingQueue, processQueue, processQueueServerSide, queueProgress,
     queuingProducts, queueProducts,
     exporting, exportProducts,
     retryTask,
