@@ -3887,9 +3887,9 @@ serve(async (req) => {
 
       while (Date.now() - startTime < TIME_BUDGET_MS) {
         const { data: tasks } = await supabase
-          .from("outbound_tasks").select("id")
+          .from("outbound_tasks").select("id, task_type")
           .eq("connection_id", connectionId)
-          .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
           .eq("status", "QUEUED")
           .order("created_at").limit(BATCH_SIZE);
 
@@ -3911,7 +3911,7 @@ serve(async (req) => {
       const { count: remaining } = await supabase
         .from("outbound_tasks").select("id", { count: "exact", head: true })
         .eq("connection_id", connectionId)
-        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
         .eq("status", "QUEUED");
 
       const remainingCount = remaining || 0;
