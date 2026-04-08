@@ -1801,8 +1801,25 @@ serve(async (req) => {
           .eq("id", connectionId);
       }
 
+      // Auto-trigger stock sync
+      let stockSyncResult = null;
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      if (resolvedLines > 0 && winerimToken) {
+        console.log(`[auto-sync] Triggering stock sync for ${pendingDays.length} days...`);
+        const stockResults = { synced: 0, skipped: 0, failed: 0 };
+        for (const day of pendingDays) {
+          try {
+            const dayResult = await syncStockForDay(supabase, connectionId, day, winerimToken);
+            stockResults.synced += dayResult.synced;
+            stockResults.skipped += dayResult.skipped;
+            stockResults.failed += dayResult.failed;
+          } catch (e) { console.error(`[auto-sync] Stock sync failed for ${day}:`, e); }
+        }
+        stockSyncResult = stockResults;
+      }
+
       return new Response(
-        JSON.stringify({ success: true, daysSynced: pendingDays.length, totalEvents, totalLines, resolvedLines, unresolvedLines }),
+        JSON.stringify({ success: true, daysSynced: pendingDays.length, totalEvents, totalLines, resolvedLines, unresolvedLines, stockSync: stockSyncResult }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
