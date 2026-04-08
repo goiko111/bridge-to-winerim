@@ -142,13 +142,13 @@ async function handleReadLocations(connId: string) {
   }
 }
 
-async function handleReadSales(connId: string, businessDay: string, endDate?: string) {
+async function handleReadSales(connId: string, businessDay: string, endDate?: string, manualTpvOverride?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId, source, locationCount } = resolveTpvId(cfg);
+  const { tpvId, source, locationCount } = resolveTpvId(cfg, manualTpvOverride);
   if (!tpvId) {
     const msg = locationCount > 1
       ? `Multiple locations discovered (${locationCount}) but no TPV explicitly selected. Please select one in the wizard.`
