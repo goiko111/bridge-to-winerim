@@ -2157,7 +2157,7 @@ serve(async (req) => {
       );
     }
 
-    // ── SYNC STOCK TO WINERIM ──
+    // ── SYNC STOCK TO WINERIM (Read-Modify-Write with real API) ──
     if (action === "sync-stock") {
       const day = businessDay;
       if (!day) {
@@ -2171,74 +2171,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const { data: events } = await supabase
-        .from("sales_events").select("id")
-        .eq("connection_id", connectionId).eq("business_day", day);
-
-      if (!events || events.length === 0) {
-        return new Response(JSON.stringify({ success: true, message: "No sales events for this day", synced: 0, skipped: 0, failed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      const eventIds = events.map((e: { id: string }) => e.id);
-      const { data: lines } = await supabase
-        .from("sales_line_items")
-        .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate")
-        .in("sales_event_id", eventIds);
-
-      if (!lines || lines.length === 0) {
-        return new Response(JSON.stringify({ success: true, message: "No line items found", synced: 0, skipped: 0, failed: 0 }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
-      let synced = 0, skipped = 0, failed = 0;
-
-      const winerimHeaders = {
-        "Authorization": `Bearer ${winerimToken}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      };
-
-      for (const line of mappedLines) {
-        const { data: existing } = await supabase
-          .from("stock_sync_log").select("id")
-          .eq("sales_line_item_id", (line as any).id).eq("status", "SUCCESS").limit(1);
-
-        if (existing && existing.length > 0) { skipped++; continue; }
-
-        const { data: logEntry } = await supabase
-          .from("stock_sync_log")
-          .insert({
-            connection_id: connectionId, sales_event_id: (line as any).sales_event_id,
-            sales_line_item_id: (line as any).id, provider_product_id: (line as any).provider_product_id,
-            winerim_product_id: (line as any).winerim_product_id, product_name: (line as any).name,
-            quantity: Math.abs(Number((line as any).quantity)), status: "PENDING",
-          }).select("id").single();
-
-        try {
-          const res = await fetch("https://api.winerim.com/api/v2/stock", {
-            method: "PUT", headers: winerimHeaders,
-            body: JSON.stringify({ product_id: (line as any).winerim_product_id, quantity_change: -Math.abs(Number((line as any).quantity)) }),
-          });
-          const responseBody = await res.text();
-          let parsed; try { parsed = JSON.parse(responseBody); } catch (_) { parsed = { raw: responseBody }; }
-
-          if (res.ok) {
-            await supabase.from("stock_sync_log").update({ status: "SUCCESS", winerim_response: parsed, synced_at: new Date().toISOString() }).eq("id", logEntry?.id);
-            synced++;
-          } else {
-            await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: responseBody.substring(0, 500), winerim_response: parsed }).eq("id", logEntry?.id);
-            failed++;
-          }
-        } catch (e) {
-          await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: String(e) }).eq("id", logEntry?.id);
-          failed++;
-        }
-      }
+      const result = await syncStockForDay(supabase, connectionId, day, winerimToken);
 
       return new Response(
-        JSON.stringify({ success: true, synced, skipped, failed, unmapped: lines.length - mappedLines.length, totalLines: lines.length, mappedLines: mappedLines.length }),
+        JSON.stringify({ success: true, ...result }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
