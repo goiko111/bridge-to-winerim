@@ -67,15 +67,23 @@ async function handleHealthcheck(connId: string) {
   const headers = buildHeaders(conn.api_token);
 
   try {
-    const res = await fetch(`${baseUrl}/getLocales`, {
+    const url = `${baseUrl}/getLocales`;
+    console.log("[numier-proxy] healthcheck URL:", url);
+    const res = await fetch(url, {
       method: "GET",
       headers,
       signal: AbortSignal.timeout(10_000),
     });
 
-    const body = await res.json();
+    const rawText = await res.text();
+    console.log("[numier-proxy] healthcheck status:", res.status, "body:", rawText.slice(0, 500));
 
-    if (res.ok && body.response === true) {
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(rawText); } catch { /* non-JSON */ }
+
+    // Accept: response===true (production) OR res.ok with any valid body (sandbox)
+    if (res.ok && (body.response === true || body.result || Array.isArray(body))) {
+      const locales = body.result || (Array.isArray(body) ? body : []);
       const updatedCfg = {
         ...cfg,
         verified_capabilities: { ...(cfg.verified_capabilities || {}), healthcheck: true },
@@ -86,14 +94,15 @@ async function handleHealthcheck(connId: string) {
         success: true,
         status: res.status,
         message: "Numier reachable",
-        localesCount: body.result?.length || 0,
+        localesCount: Array.isArray(locales) ? locales.length : 0,
       });
     }
 
     return json({
       success: false,
       status: res.status,
-      message: body.message || `Numier responded with ${res.status}`,
+      message: body.message || `Unexpected response shape: ${rawText.slice(0, 200)}`,
+      rawPreview: rawText.slice(0, 300),
     });
   } catch (err) {
     return json({ success: false, message: `Connection failed: ${(err as Error).message}` }, 502);
