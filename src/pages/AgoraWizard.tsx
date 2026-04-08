@@ -2826,7 +2826,7 @@ function StepCapabilities({
 function StepOutboundSync({
   connectionId, capabilities, outboundTasks, loadingTasks,
   processingQueue, queuingProducts, exporting, queueProgress,
-  onLoadTasks, onProcessQueue, onRetry, onRequeueWithCurrentScope, onExport,
+  onLoadTasks, onProcessQueue, onProcessQueueServerSide, onRetry, onRequeueWithCurrentScope, onExport,
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
@@ -2844,6 +2844,7 @@ function StepOutboundSync({
   exporting: boolean;
   onLoadTasks: () => Promise<OutboundTask[]>;
   onProcessQueue: () => Promise<{ success: boolean; processed: number; succeeded: number; failed: number } | undefined>;
+  onProcessQueueServerSide: () => Promise<any>;
   onRetry: (taskId: string) => void;
   onRequeueWithCurrentScope: (taskId: string) => Promise<any>;
   onExport: (format: "json" | "csv") => void;
@@ -3047,6 +3048,15 @@ function StepOutboundSync({
               disabled={processingQueue || queuedTasksTotal === 0}>
               {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
               Process Queue ({queuedTasksTotal})
+            </Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              await onProcessQueueServerSide();
+              toast({ title: "Cola iniciada en servidor", description: "El procesamiento continuará aunque cierres la pestaña. Refresca para ver el progreso." });
+            }}
+              disabled={processingQueue || queuedTasksTotal === 0}
+              title="Procesa la cola en el servidor — no necesita mantener la pestaña abierta">
+              {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+              Server Process
             </Button>
           </>
         )}
@@ -4947,7 +4957,7 @@ export default function AgoraWizard() {
               outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
               processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
               exporting={outbound.exporting}
-              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
+              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue} onProcessQueueServerSide={outbound.processQueueServerSide}
               onRetry={outbound.retryTask}
               onRequeueWithCurrentScope={outbound.requeueTaskWithCurrentScope}
               onExport={outbound.exportProducts}
