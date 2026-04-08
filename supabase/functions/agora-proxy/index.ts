@@ -3391,15 +3391,37 @@ serve(async (req) => {
               duplicateDetail.includes("nombre 'otras'") ||
               duplicateDetail.includes("nombre \"otras\"");
 
-            // Mark as BLOCKED with actionable message instead of retrying
+            if (isFamilyDuplicate) {
+              await supabase.from("outbound_tasks").update({
+                status: "BLOCKED",
+                last_error: errorMsg,
+                blocked_reason: "DUPLICATE_FAMILY_NAME_IN_AGORA: Agora está rechazando una familia duplicada (por ejemplo 'Otras'). Revisa la jerarquía/familia destino antes de reintentar.",
+              }).eq("id", task.id);
+              return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "DUPLICATE_FAMILY", parsedResponse }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            // ── AUTO-RETRY AS UPDATE: Product already exists, flip _operation and requeue ──
+            const currentOp = taskPayload._operation || "CREATE";
+            if (currentOp === "CREATE" && (task.attempts || 0) < 2) {
+              // Flip to UPDATE and requeue for automatic retry
+              await supabase.from("outbound_tasks").update({
+                status: "QUEUED",
+                last_error: `Auto-switching from CREATE→UPDATE: ${errorMsg.substring(0, 200)}`,
+                blocked_reason: null,
+                payload_json: { ...taskPayload, _operation: "UPDATE", _auto_switched_from_create: true },
+              }).eq("id", task.id);
+              return new Response(JSON.stringify({ success: false, status: "QUEUED", reason: "AUTO_SWITCHED_TO_UPDATE" }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            // If already UPDATE or max attempts reached, block
             await supabase.from("outbound_tasks").update({
               status: "BLOCKED",
               last_error: errorMsg,
-              blocked_reason: isFamilyDuplicate
-                ? "DUPLICATE_FAMILY_NAME_IN_AGORA: Agora está rechazando una familia duplicada (por ejemplo 'Otras'). Revisa la jerarquía/familia destino antes de reintentar."
-                : "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora con este nombre. Reencólalo como UPDATE si quieres refrescar sus datos.",
+              blocked_reason: "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora y el UPDATE también falló. Verifica los datos manualmente.",
             }).eq("id", task.id);
-            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: isFamilyDuplicate ? "DUPLICATE_FAMILY" : "DUPLICATE_KEY", parsedResponse }),
+            return new Response(JSON.stringify({ success: false, status: "BLOCKED", reason: "DUPLICATE_KEY", parsedResponse }),
               { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
 
@@ -3932,6 +3954,37 @@ serve(async (req) => {
       }
 
       return new Response(JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── REQUEUE BLOCKED DUPLICATE TASKS AS UPDATE ──
+    if (action === "requeue-blocked-as-update") {
+      // Find all BLOCKED tasks with PRODUCT_ALREADY_EXISTS reason
+      const { data: blockedTasks, error: fetchErr } = await supabase
+        .from("outbound_tasks").select("id, payload_json")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+        .eq("status", "BLOCKED")
+        .like("blocked_reason", "PRODUCT_ALREADY_EXISTS%");
+
+      if (fetchErr) {
+        return new Response(JSON.stringify({ error: fetchErr.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let requeued = 0;
+      for (const t of (blockedTasks || [])) {
+        const pl = t.payload_json as Record<string, unknown>;
+        await supabase.from("outbound_tasks").update({
+          status: "QUEUED",
+          attempts: 0,
+          last_error: null,
+          blocked_reason: null,
+          payload_json: { ...pl, _operation: "UPDATE", _requeued_from_blocked: true },
+        }).eq("id", t.id);
+        requeued++;
+      }
+
+      return new Response(JSON.stringify({ success: true, requeued }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
