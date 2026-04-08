@@ -5391,6 +5391,7 @@ ${costPricesXml}
 
       // ── Auto-trigger stock sync for synced days with resolved lines ──
       let stockSyncResult = null;
+      const winerimToken = (conn.winerim_api_token || "").trim();
       if (resolvedLines > 0 && winerimToken) {
         console.log(`[auto-sync] Triggering stock sync for ${batch.length} days with ${resolvedLines} resolved lines...`);
         const stockResults = { synced: 0, skipped: 0, failed: 0 };
