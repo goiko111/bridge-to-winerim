@@ -284,8 +284,8 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
  * SAVE_SALES — persist normalized sales to DB.
  * Delete + insert per event for idempotency without collisions.
  */
-async function handleSaveSales(connId: string, businessDay: string, endDate?: string) {
-  const fetchRes = await handleReadSales(connId, businessDay, endDate);
+async function handleSaveSales(connId: string, businessDay: string, endDate?: string, manualTpvOverride?: string) {
+  const fetchRes = await handleReadSales(connId, businessDay, endDate, manualTpvOverride);
   const fetchBody = await fetchRes.clone().json();
 
   if (!fetchBody.success) return fetchRes;
