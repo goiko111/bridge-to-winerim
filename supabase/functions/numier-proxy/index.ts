@@ -38,7 +38,7 @@ function json(body: unknown, status = 200) {
 function buildHeaders(apiKey: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "API-KEY": apiKey,
+    "apiKey": apiKey,
   };
 }
 
