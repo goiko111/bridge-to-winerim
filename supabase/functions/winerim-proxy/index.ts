@@ -653,6 +653,35 @@ serve(async (req) => {
 
       const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
 
+      // ── AUTO-PUSH TRIGGER: When enrichment is complete, evaluate auto-push for all wines ──
+      let autoPushResult: Record<string, unknown> | null = null;
+      if (complete) {
+        try {
+          // Get all winerim_ids for this connection
+          const { data: allWines } = await supabase
+            .from("winerim_wines").select("winerim_id")
+            .eq("connection_id", connectionId);
+          const allIds = (allWines || []).map((w: any) => w.winerim_id);
+          
+          if (allIds.length > 0) {
+            const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "evaluate-auto-push", connectionId, winerimWineIds: allIds, eventType: "UPDATE" },
+            });
+            autoPushResult = pushData;
+            console.log(`[winerim-proxy] auto-push triggered: queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0}`);
+            
+            // Auto-process the queue if anything was queued
+            if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+              });
+            }
+          }
+        } catch (e) {
+          console.error("[winerim-proxy] auto-push trigger failed:", e);
+        }
+      }
+
       console.log(
         `[winerim-proxy] fetch-catalog result: listFetched=${listWinesFetched} ` +
         `detailProcessed=${processedDetails}/${totalWines} bottleUpdated=${winesUpdatedWithBottlePrice} ` +
@@ -682,6 +711,7 @@ serve(async (req) => {
           detailsMissing: detailsResult.failed,
           newWines: 0,
           changedWines: 0,
+          autoPushResult,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
