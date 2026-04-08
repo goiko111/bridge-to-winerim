@@ -487,44 +487,53 @@ export default function SyncMonitor() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Product</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Attempts</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Error/Reason</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Actions</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Location</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Product</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Type</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Status</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Attempts</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Error/Reason</th>
+                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Created</th>
+                     <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {outboundTasks.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                      <Upload className="mx-auto h-8 w-8 mb-2 opacity-40" /> No outbound tasks yet.
-                    </td></tr>
-                  )}
-                  {outboundTasks.map((t: any) => (
-                    <tr key={t.id} className="hover:bg-secondary/30 transition-colors">
-                      <td className="px-4 py-3 text-foreground max-w-[200px] truncate">{t.payload_json?.Name || t.task_type}</td>
-                      <td className="px-4 py-3">
-                        <Badge variant={t.status === "SUCCESS" ? "default" : t.status === "FAILED" ? "destructive" : t.status === "BLOCKED" ? "outline" : "secondary"} className="text-[10px]">
-                          {t.status}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{t.attempts}/{t.max_attempts}</td>
-                      <td className="px-4 py-3 text-xs text-destructive max-w-[200px] truncate">{t.last_error || t.blocked_reason || "—"}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right">
-                        {(t.status === "FAILED" || t.status === "BLOCKED") && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7"
-                            onClick={async () => {
-                              await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", t.id);
-                              fetchData();
-                            }}>
-                            <RotateCcw className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                   {outboundTasks.length === 0 && (
+                     <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                       <Upload className="mx-auto h-8 w-8 mb-2 opacity-40" /> No outbound tasks yet.
+                     </td></tr>
+                   )}
+                   {outboundTasks.map((t: any) => {
+                     const loc = connections.find((c) => c.id === t.connection_id)?.location_name || "Unknown";
+                     return (
+                       <tr key={t.id} className="hover:bg-secondary/30 transition-colors">
+                         <td className="px-4 py-3 text-foreground text-xs">{loc}</td>
+                         <td className="px-4 py-3 text-foreground max-w-[200px] truncate">{t.payload_json?.Name || t.payload_json?.winerim_wine_name || "—"}</td>
+                         <td className="px-4 py-3">
+                           <Badge variant="secondary" className="text-[10px]">{t.task_type.replace("AGORA_", "")}</Badge>
+                         </td>
+                         <td className="px-4 py-3">
+                           <Badge variant={t.status === "SUCCESS" ? "default" : t.status === "FAILED" ? "destructive" : t.status === "BLOCKED" ? "outline" : "secondary"} className="text-[10px]">
+                             {t.status}
+                           </Badge>
+                         </td>
+                         <td className="px-4 py-3 text-xs text-muted-foreground">{t.attempts}/{t.max_attempts}</td>
+                         <td className="px-4 py-3 text-xs text-destructive max-w-[200px] truncate">{t.last_error || t.blocked_reason || "—"}</td>
+                         <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(t.created_at).toLocaleString()}</td>
+                         <td className="px-4 py-3 text-right">
+                           {(t.status === "FAILED" || t.status === "BLOCKED") && (
+                             <Button variant="ghost" size="icon" className="h-7 w-7"
+                               onClick={async () => {
+                                 await supabase.from("outbound_tasks").update({ status: "QUEUED", last_error: null, blocked_reason: null }).eq("id", t.id);
+                                 fetchData();
+                               }}>
+                               <RotateCcw className="h-3.5 w-3.5" />
+                             </Button>
+                           )}
+                         </td>
+                       </tr>
+                     );
+                   })}
                 </tbody>
               </table>
             </div>
