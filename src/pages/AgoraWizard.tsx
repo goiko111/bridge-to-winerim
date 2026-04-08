@@ -4948,7 +4948,7 @@ export default function AgoraWizard() {
               outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
               processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
               exporting={outbound.exporting}
-              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue}
+              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue} onProcessQueueServerSide={outbound.processQueueServerSide}
               onRetry={outbound.retryTask}
               onRequeueWithCurrentScope={outbound.requeueTaskWithCurrentScope}
               onExport={outbound.exportProducts}
