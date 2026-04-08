@@ -3889,7 +3889,7 @@ serve(async (req) => {
         const { data: tasks } = await supabase
           .from("outbound_tasks").select("id, task_type")
           .eq("connection_id", connectionId)
-          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
+          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"])
           .eq("status", "QUEUED")
           .order("created_at").limit(BATCH_SIZE);
 
@@ -3898,7 +3898,45 @@ serve(async (req) => {
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           try {
-            if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
+            if ((t as any).task_type === "AGORA_HIDE_PRODUCT") {
+              // HIDE tasks: set ShowInPos=false for products
+              const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
+              if (!fullTask) { failed++; processed++; continue; }
+              const p = fullTask.payload_json as Record<string, unknown>;
+              const productIds = (p._product_ids as string[]) || [];
+              const wineName = String(p._wine_name || "Unknown");
+              const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+              if (productIds.length === 0) {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: "No product IDs to hide" }).eq("id", t.id);
+                failed++; processed++; continue;
+              }
+
+              // Build XML to hide products (UseAsDirectSale=false, SaleableAsMain=false)
+              let productsXml = "";
+              for (const pid of productIds) {
+                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+              }
+              const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
+
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
+              const importUrl = `${baseUrlClean}/api/import/`;
+              const res = await fetchWithRetry(importUrl, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/xml" },
+                body: hideXml,
+              });
+              const resBody = await res.text();
+
+              if (res.ok) {
+                await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                succeeded++;
+              } else {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                failed++;
+              }
+              processed++;
+            } else if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
               // MIGRATE tasks are handled inline (lightweight XML with just FamilyId change)
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
               if (!fullTask) { failed++; processed++; continue; }
@@ -3951,7 +3989,7 @@ serve(async (req) => {
       const { count: remaining } = await supabase
         .from("outbound_tasks").select("id", { count: "exact", head: true })
         .eq("connection_id", connectionId)
-        .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
+        .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"])
         .eq("status", "QUEUED");
 
       const remainingCount = remaining || 0;
@@ -4683,11 +4721,51 @@ serve(async (req) => {
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
+      let hidQueued = 0;
       for (const wine of wines) {
-        // Block inactive wines from auto-push
+        // ── INACTIVE WINE → queue HIDE task to set ShowInPos=false in Agora ──
         if (wine.is_active === false) {
+          // Check if already has a verified push (i.e. product exists in Agora)
+          const { data: existingPush } = await supabase
+            .from("winerim_push_tracking").select("format, agora_product_id")
+            .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+            .in("sync_status", ["VERIFIED", "PUSHED"]);
+          
+          if (existingPush && existingPush.length > 0) {
+            // Check no existing hide task queued
+            const { data: existingHide } = await supabase
+              .from("outbound_tasks").select("id")
+              .eq("connection_id", connectionId)
+              .eq("task_type", "AGORA_HIDE_PRODUCT")
+              .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
+              .in("status", ["QUEUED", "RUNNING"]).limit(1);
+            
+            if (!existingHide || existingHide.length === 0) {
+              const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
+              await supabase.from("outbound_tasks").insert({
+                connection_id: connectionId,
+                task_type: "AGORA_HIDE_PRODUCT",
+                payload_json: {
+                  _winerim_wine_id: wine.winerim_id,
+                  _product_ids: productIds,
+                  _wine_name: wine.name,
+                  _trigger_source: "AUTO_DEACTIVATION",
+                },
+                status: "QUEUED",
+              });
+              hidQueued++;
+              // Update tracking to reflect hidden status
+              for (const p of existingPush) {
+                await supabase.from("winerim_push_tracking")
+                  .update({ sync_status: "HIDDEN" })
+                  .eq("connection_id", connectionId)
+                  .eq("winerim_wine_id", wine.winerim_id)
+                  .eq("format", p.format);
+              }
+            }
+          }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive_hide_queued" });
           continue;
         }
 
@@ -4773,10 +4851,10 @@ serve(async (req) => {
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
-        success: true, queued, skipped, skippedReasons,
+        success: true, queued, skipped, hidQueued, skippedReasons,
         totalWines: wines.length, eventType: evtType,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
