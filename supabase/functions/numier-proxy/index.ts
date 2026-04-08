@@ -341,9 +341,10 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
     }
   }
 
+  const lastDay = endDate || businessDay;
   await sb().from("pos_connections").update({
     last_sync_at: new Date().toISOString(),
-    last_business_day_synced: businessDay,
+    last_business_day_synced: lastDay,
   }).eq("id", connId);
 
   return json({
