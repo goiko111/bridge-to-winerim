@@ -4851,10 +4851,10 @@ serve(async (req) => {
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
-        success: true, queued, skipped, skippedReasons,
+        success: true, queued, skipped, hidQueued, skippedReasons,
         totalWines: wines.length, eventType: evtType,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
