@@ -3049,6 +3049,15 @@ function StepOutboundSync({
               {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
               Process Queue ({queuedTasksTotal})
             </Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              await onProcessQueueServerSide();
+              toast({ title: "Cola iniciada en servidor", description: "El procesamiento continuará aunque cierres la pestaña. Refresca para ver el progreso." });
+            }}
+              disabled={processingQueue || queuedTasksTotal === 0}
+              title="Procesa la cola en el servidor — no necesita mantener la pestaña abierta">
+              {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+              Server Process
+            </Button>
           </>
         )}
 
