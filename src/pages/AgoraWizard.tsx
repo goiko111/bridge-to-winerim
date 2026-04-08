@@ -2826,7 +2826,7 @@ function StepCapabilities({
 function StepOutboundSync({
   connectionId, capabilities, outboundTasks, loadingTasks,
   processingQueue, queuingProducts, exporting, queueProgress,
-  onLoadTasks, onProcessQueue, onRetry, onRequeueWithCurrentScope, onExport,
+  onLoadTasks, onProcessQueue, onProcessQueueServerSide, onRetry, onRequeueWithCurrentScope, onExport,
   winerimWines, onQueueProducts,
   backfillingPreparation, onBackfillPreparation,
   fixingPrices, onFixMissingPrices,
@@ -2844,6 +2844,7 @@ function StepOutboundSync({
   exporting: boolean;
   onLoadTasks: () => Promise<OutboundTask[]>;
   onProcessQueue: () => Promise<{ success: boolean; processed: number; succeeded: number; failed: number } | undefined>;
+  onProcessQueueServerSide: () => Promise<any>;
   onRetry: (taskId: string) => void;
   onRequeueWithCurrentScope: (taskId: string) => Promise<any>;
   onExport: (format: "json" | "csv") => void;
