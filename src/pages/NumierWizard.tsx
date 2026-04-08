@@ -663,3 +663,15 @@ function MetricRow({ label, value, warn }: { label: string; value: number | stri
     </div>
   );
 }
+
+function ValidationRow({ label, value, ok, warn }: { label: string; value: number | string; ok?: boolean; warn?: boolean }) {
+  const icon = ok === true ? "✅" : ok === false ? "❌" : warn ? "⚠️" : "";
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`font-mono ${warn ? "text-amber-600 dark:text-amber-400 font-semibold" : ok === false ? "text-destructive font-semibold" : "text-foreground"}`}>
+        {icon} {value}
+      </span>
+    </div>
+  );
+}
