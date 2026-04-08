@@ -251,6 +251,7 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       success: true,
       businessDay: startDate,
       endDate: end,
+      baseUrl,
       tpvId,
       tpvSource: source,
       salesEvents,
