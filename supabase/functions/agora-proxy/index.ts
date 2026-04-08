@@ -3879,8 +3879,9 @@ serve(async (req) => {
 
     // ── PROCESS XML OUTBOUND QUEUE (time-budgeted, auto-retry from UI) ──
     if (action === "process-xml-outbound-queue") {
+      const serverLoop = payload.serverLoop === true;
       const BATCH_SIZE = 10;
-      const TIME_BUDGET_MS = 20_000; // keep responses comfortably below browser/network timeouts
+      const TIME_BUDGET_MS = serverLoop ? 50_000 : 20_000; // server-side gets more budget
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
@@ -3913,7 +3914,23 @@ serve(async (req) => {
         .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
         .eq("status", "QUEUED");
 
-      return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remaining || 0, done: (remaining || 0) === 0 }),
+      const remainingCount = remaining || 0;
+      const isDone = remainingCount === 0;
+
+      // ── SERVER-SIDE AUTO-CONTINUATION via pg_net ──
+      if (serverLoop && !isDone) {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+        const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+        const fnUrl = `${supabaseUrl}/functions/v1/agora-proxy`;
+        // Fire-and-forget: use pg_net to schedule the next batch
+        await supabase.rpc("schedule_next_queue_batch" as never, {
+          fn_url: fnUrl,
+          service_key: serviceRoleKey,
+          conn_id: connectionId,
+        } as never);
+      }
+
+      return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remainingCount, done: isDone, serverLoop }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
