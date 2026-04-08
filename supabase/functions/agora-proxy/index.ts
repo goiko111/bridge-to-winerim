@@ -4020,6 +4020,117 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── CLEANUP AND PUSH GLASSES (only for serve_by_glass wines) ──
+    if (action === "cleanup-and-push-glasses") {
+      const targetFamilyId = payload.targetFamilyId; // e.g. "901954" for COPAS WINERIM
+      const targetFamilyName = payload.targetFamilyName || "COPAS WINERIM";
+      const deleteQueuedTracking = payload.deleteQueuedTracking !== false;
+
+      // 1) Delete all QUEUED tracking entries (both GLASS and BOTTLE)
+      if (deleteQueuedTracking) {
+        const { data: deleted } = await supabase
+          .from("winerim_push_tracking")
+          .delete()
+          .eq("connection_id", connectionId)
+          .eq("sync_status", "QUEUED")
+          .select("id");
+        console.log(`Deleted ${deleted?.length || 0} QUEUED tracking entries`);
+      }
+
+      // 2) Delete all QUEUED/FAILED outbound tasks
+      const { data: deletedTasks } = await supabase
+        .from("outbound_tasks")
+        .delete()
+        .eq("connection_id", connectionId)
+        .in("status", ["QUEUED", "FAILED"])
+        .select("id");
+      console.log(`Deleted ${deletedTasks?.length || 0} QUEUED/FAILED tasks`);
+
+      // 3) Find wines that serve by glass and have glass_sale_price
+      const { data: glassWines } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, wine_type, glass_sale_price")
+        .eq("connection_id", connectionId)
+        .eq("serve_by_glass", true)
+        .not("glass_sale_price", "is", null);
+
+      if (!glassWines || glassWines.length === 0) {
+        return new Response(JSON.stringify({ success: true, message: "No glass-eligible wines found", cleaned: deletedTasks?.length || 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 4) Check which already have a GLASS tracking entry (VERIFIED/PUSHED)
+      const { data: existingGlass } = await supabase
+        .from("winerim_push_tracking")
+        .select("winerim_wine_id")
+        .eq("connection_id", connectionId)
+        .eq("format", "GLASS");
+      const existingGlassSet = new Set((existingGlass || []).map((e: any) => e.winerim_wine_id));
+
+      // 5) Load master data for scope
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("products_summary_json, sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
+      const existingProducts = (masterData?.products_summary_json || []) as { Id: string; Name: string }[];
+      const existingProductIds = new Set(existingProducts.map((p: any) => String(p.Id)));
+      const scopePayload = buildAgoraVerificationScopePayload(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+      });
+
+      let created = 0, skipped = 0, queued = 0;
+      for (const wine of glassWines) {
+        if (existingGlassSet.has(wine.winerim_id)) {
+          skipped++;
+          continue;
+        }
+
+        // Create tracking entry
+        await supabase.from("winerim_push_tracking").insert({
+          connection_id: connectionId,
+          winerim_wine_id: wine.winerim_id,
+          format: "GLASS",
+          sync_status: "QUEUED",
+          source: "WINERIM",
+          agora_family_id: targetFamilyId,
+        });
+
+        // Build task - check if product already exists in Agora
+        const glassPrefix = connection.default_glass_format_name || "COPA";
+        const glassProductName = `${glassPrefix} ${wine.name}`;
+        const existingMatch = existingProducts.find((p: any) =>
+          String(p.Name).trim().toUpperCase() === glassProductName.trim().toUpperCase()
+        );
+        const operation = existingMatch ? "UPDATE" : "CREATE";
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "AGORA_XML_UPSERT_PRODUCT",
+          status: "QUEUED",
+          payload_json: {
+            _winerim_wine_id: wine.winerim_id,
+            _format_types: ["GLASS"],
+            _operation: operation,
+            _trigger_source: "CLEANUP_PUSH_GLASSES",
+            _family_override_id: targetFamilyId,
+            _family_override_name: targetFamilyName,
+            ...(existingMatch ? { _existing_agora_product_id: String(existingMatch.Id) } : {}),
+            ...scopePayload,
+          },
+        });
+        created++;
+        queued++;
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        glassEligible: glassWines.length,
+        trackingCreated: created,
+        trackingSkipped: skipped,
+        tasksQueued: queued,
+        tasksCleaned: deletedTasks?.length || 0,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── REQUEUE BLOCKED DUPLICATE TASKS AS UPDATE ──
     if (action === "requeue-blocked-as-update") {
       // Find all BLOCKED tasks with PRODUCT_ALREADY_EXISTS reason
