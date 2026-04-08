@@ -915,14 +915,16 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
           const existing = families.find(f => f.Name === leafName && f.Id === leafId);
           return { id: leafId, needsCreate: !existing, familyName: leafName, parentId: typeCountryParentId };
         } else {
-          // "Otras" child under Type+Country
-          const otrasName = geoCountryOtrasName(wineType || "otros", country);
-          const otrasId = stableFamilyId(otrasName);
+          // "Otras" child under Type+Country — use unique name to avoid duplicate key in Agora
+          const otrasFullName = geoCountryOtrasName(wineType || "otros", country);
+          const otrasId = stableFamilyId(otrasFullName);
+          // Use a short but unique display name: "Otras (TINTOS ESP)" to avoid Agora's UNIQUE constraint on family Name
+          const otrasDisplayName = `Otras (${typeCountryParent})`;
           if (!newFamilyHierarchy.some(f => f.id === otrasId)) {
-            newFamilyHierarchy.push({ id: otrasId, name: "Otras", parentId: typeCountryParentId });
+            newFamilyHierarchy.push({ id: otrasId, name: otrasDisplayName, parentId: typeCountryParentId });
           }
           const existing = families.find(f => f.Id === otrasId);
-          return { id: otrasId, needsCreate: !existing, familyName: "Otras", parentId: typeCountryParentId };
+          return { id: otrasId, needsCreate: !existing, familyName: otrasDisplayName, parentId: typeCountryParentId };
         }
       }
 
