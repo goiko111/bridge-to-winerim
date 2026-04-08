@@ -527,9 +527,79 @@ export default function NumierWizard() {
               </div>
             )}
 
-            {!loadingSales && salesEvents.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">No sales fetched yet. Configure dates and click Fetch.</p>
+            {!loadingSales && salesEvents.length === 0 && !validationReport && (
+              <p className="text-xs text-muted-foreground italic">No sales fetched yet. Configure dates and click Fetch, or run full Sandbox Validation.</p>
             )}
+
+            {/* ── Sandbox Validation ────────────────── */}
+            <div className="border-t border-border pt-4 space-y-3">
+              <Button
+                onClick={runSandboxValidation}
+                disabled={!canFetchSales || validation?.running || diagnosing}
+                className="w-full"
+                variant="default"
+              >
+                {(validation?.running || diagnosing) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Play className="mr-2 h-4 w-4" />
+                {validation?.running ? validation.phase : "Run Sandbox Validation"}
+              </Button>
+
+              {validationReport && !validationReport.running && (
+                <Card className="border-2 border-primary/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" /> Sandbox Validation Report
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                      <ValidationRow label="Sandbox reachable" value={validationReport.sandbox_reachable === true ? "yes" : validationReport.sandbox_reachable === false ? "no" : "—"} ok={validationReport.sandbox_reachable === true} />
+                      <ValidationRow label="TPV valid" value={validationReport.tpv_valid ?? "—"} ok={validationReport.tpv_valid === "yes"} warn={validationReport.tpv_valid === "suspicious"} />
+                      <ValidationRow label="Pages read" value={validationReport.pages_read ?? "—"} />
+                      <ValidationRow label="Tickets seen" value={validationReport.tickets_seen ?? "—"} />
+                      <ValidationRow label="Unique ticket IDs" value={validationReport.unique_ticket_ids ?? "—"} />
+                      <ValidationRow label="Duplicate tickets" value={validationReport.duplicate_tickets ?? "—"} warn={(validationReport.duplicate_tickets ?? 0) > 0} />
+                      <ValidationRow label="Events normalized" value={validationReport.events_normalized ?? "—"} />
+                      <ValidationRow label="Lines normalized" value={validationReport.lines_normalized ?? "—"} />
+                      <ValidationRow label="Events saved" value={validationReport.events_saved ?? "—"} />
+                      <ValidationRow label="Lines saved" value={validationReport.lines_saved ?? "—"} />
+                    </div>
+
+                    {validationReport.diagnosis_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Diagnosis error:</strong> {validationReport.diagnosis_error}</span>
+                      </div>
+                    )}
+                    {validationReport.fetch_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Fetch error:</strong> {validationReport.fetch_error}</span>
+                      </div>
+                    )}
+                    {validationReport.save_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Save error:</strong> {validationReport.save_error}</span>
+                      </div>
+                    )}
+
+                    {/* Save button inside report if not yet saved */}
+                    {validationReport.events_saved === null && salesEvents.length > 0 && (
+                      <Button
+                        onClick={() => saveSalesRange(startDate, endDate)}
+                        disabled={saving}
+                        variant="secondary"
+                        className="w-full"
+                      >
+                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        <Database className="mr-2 h-4 w-4" /> Save to Database
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
