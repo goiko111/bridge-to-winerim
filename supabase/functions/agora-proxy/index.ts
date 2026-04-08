@@ -3898,7 +3898,45 @@ serve(async (req) => {
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           try {
-            if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
+            if ((t as any).task_type === "AGORA_HIDE_PRODUCT") {
+              // HIDE tasks: set ShowInPos=false for products
+              const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
+              if (!fullTask) { failed++; processed++; continue; }
+              const p = fullTask.payload_json as Record<string, unknown>;
+              const productIds = (p._product_ids as string[]) || [];
+              const wineName = String(p._wine_name || "Unknown");
+              const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+              if (productIds.length === 0) {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: "No product IDs to hide" }).eq("id", t.id);
+                failed++; processed++; continue;
+              }
+
+              // Build XML to hide products (UseAsDirectSale=false, SaleableAsMain=false)
+              let productsXml = "";
+              for (const pid of productIds) {
+                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+              }
+              const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
+
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
+              const importUrl = `${baseUrlClean}/api/import/`;
+              const res = await fetchWithRetry(importUrl, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/xml" },
+                body: hideXml,
+              });
+              const resBody = await res.text();
+
+              if (res.ok) {
+                await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                succeeded++;
+              } else {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                failed++;
+              }
+              processed++;
+            } else if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
               // MIGRATE tasks are handled inline (lightweight XML with just FamilyId change)
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
               if (!fullTask) { failed++; processed++; continue; }
