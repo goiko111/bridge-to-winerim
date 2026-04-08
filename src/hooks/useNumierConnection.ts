@@ -42,6 +42,25 @@ export interface NumierCapabilities {
   write_catalog: boolean;
 }
 
+export interface SalesMetrics {
+  pagination: {
+    pages_read: number;
+    tickets_seen: number;
+    unique_ticket_ids: number;
+    duplicate_ticket_ids_count: number;
+  };
+  normalization: {
+    events_count: number;
+    total_lines: number;
+    tickets_without_lines: number;
+    lines_with_zero_price: number;
+    lines_without_product_id: number;
+    business_day_range: { min: string; max: string } | null;
+    events_saved?: number;
+    lines_saved?: number;
+  };
+}
+
 const DEFAULT_CAPABILITIES: NumierCapabilities = {
   healthcheck: false,
   read_locations: false,
@@ -59,12 +78,19 @@ export function useNumierConnection() {
   const [locations, setLocations] = useState<NumierLocation[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [selectedTpvId, setSelectedTpvId] = useState<string | null>(null);
+  const [manualTpvOverride, setManualTpvOverride] = useState<string>("");
 
   const [salesEvents, setSalesEvents] = useState<SalesEvent[]>([]);
   const [loadingSales, setLoadingSales] = useState(false);
+  const [salesMetrics, setSalesMetrics] = useState<SalesMetrics | null>(null);
 
   const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
+  const [saveResult, setSaveResult] = useState<{
+    savedEvents: number;
+    savedLines: number;
+    pagination?: SalesMetrics["pagination"];
+    normalization?: SalesMetrics["normalization"];
+  } | null>(null);
 
   const [capabilities, setCapabilities] = useState<NumierCapabilities>(DEFAULT_CAPABILITIES);
   const [config, setConfig] = useState<NumierConfig>({});
@@ -76,19 +102,20 @@ export function useNumierConnection() {
   // ── Derived: active TPV id and source ─────────────────────
 
   const activeTpvId = useMemo(() => {
+    if (manualTpvOverride.trim()) return manualTpvOverride.trim();
     if (selectedTpvId || config.selected_tpv_id) return selectedTpvId || config.selected_tpv_id || null;
     const locs = config.discovered_locations || [];
-    // Fallback only if exactly one location
     if (locs.length === 1 && locs[0]?.id) return locs[0].id;
     return null;
-  }, [selectedTpvId, config]);
+  }, [manualTpvOverride, selectedTpvId, config]);
 
-  const tpvSource = useMemo((): "selected" | "fallback_single" | "none" => {
+  const tpvSource = useMemo((): "manual_override" | "selected" | "fallback_single" | "none" => {
+    if (manualTpvOverride.trim()) return "manual_override";
     if (selectedTpvId || config.selected_tpv_id) return "selected";
     const locs = config.discovered_locations || [];
     if (locs.length === 1 && locs[0]?.id) return "fallback_single";
     return "none";
-  }, [selectedTpvId, config]);
+  }, [manualTpvOverride, selectedTpvId, config]);
 
   // ── Connection CRUD ───────────────────────────────────────
 
@@ -157,9 +184,12 @@ export function useNumierConnection() {
   // ── Proxy call helper ─────────────────────────────────────
 
   const invoke = async (action: string, extra: Record<string, unknown> = {}) => {
-    const { data, error } = await supabase.functions.invoke("numier-proxy", {
-      body: { action, connectionId, ...extra },
-    });
+    const body: Record<string, unknown> = { action, connectionId, ...extra };
+    // Always pass manual override if set
+    if (manualTpvOverride.trim()) {
+      body.manualTpvOverride = manualTpvOverride.trim();
+    }
+    const { data, error } = await supabase.functions.invoke("numier-proxy", { body });
     if (error) throw error;
     return data;
   };
@@ -237,7 +267,6 @@ export function useNumierConnection() {
         const locs = data.locations || [];
         setLocations(locs);
         setCapabilities((prev) => ({ ...prev, read_locations: true }));
-        // Auto-select if only one
         if (locs.length === 1 && !selectedTpvId) {
           await selectTpv(locs[0].id);
         }
@@ -249,42 +278,63 @@ export function useNumierConnection() {
     }
   }, [connectionId, selectedTpvId, selectTpv]);
 
-  // ── Read Sales ────────────────────────────────────────────
+  // ── Read Sales (date range) ───────────────────────────────
 
-  const fetchSalesForDay = useCallback(async (day: string) => {
+  const fetchSalesRange = useCallback(async (startDate: string, endDate: string) => {
     if (!connectionId) return;
     setLoadingSales(true);
     setSalesEvents([]);
+    setSalesMetrics(null);
     try {
-      const data = await invoke("fetch-day", { businessDay: day });
+      const data = await invoke("fetch-day", { businessDay: startDate, endDate });
       if (data?.success) {
         setSalesEvents(data.salesEvents || []);
         setCapabilities((prev) => ({ ...prev, read_sales: true }));
+        if (data.pagination || data.normalization) {
+          setSalesMetrics({
+            pagination: data.pagination,
+            normalization: data.normalization,
+          });
+        }
       }
     } catch (e) {
       console.error("Failed to fetch sales:", e);
     } finally {
       setLoadingSales(false);
     }
-  }, [connectionId]);
+  }, [connectionId, manualTpvOverride]);
 
-  // ── Save Sales ────────────────────────────────────────────
+  // Keep backward compat
+  const fetchSalesForDay = useCallback(async (day: string) => {
+    return fetchSalesRange(day, day);
+  }, [fetchSalesRange]);
 
-  const saveSalesToDb = useCallback(async (day: string) => {
+  // ── Save Sales (date range) ───────────────────────────────
+
+  const saveSalesRange = useCallback(async (startDate: string, endDate: string) => {
     if (!connectionId) return;
     setSaving(true);
     setSaveResult(null);
     try {
-      const data = await invoke("save-sales", { businessDay: day });
+      const data = await invoke("save-sales", { businessDay: startDate, endDate });
       if (data?.success) {
-        setSaveResult({ savedEvents: data.savedEvents || 0, savedLines: data.savedLines || 0 });
+        setSaveResult({
+          savedEvents: data.savedEvents || 0,
+          savedLines: data.savedLines || 0,
+          pagination: data.pagination,
+          normalization: data.normalization,
+        });
       }
     } catch (e) {
       console.error("Failed to save sales:", e);
     } finally {
       setSaving(false);
     }
-  }, [connectionId]);
+  }, [connectionId, manualTpvOverride]);
+
+  const saveSalesToDb = useCallback(async (day: string) => {
+    return saveSalesRange(day, day);
+  }, [saveSalesRange]);
 
   // ── Diagnose TPV ───────────────────────────────────────────
 
@@ -328,14 +378,19 @@ export function useNumierConnection() {
     selectTpv,
     activeTpvId,
     tpvSource,
+    manualTpvOverride,
+    setManualTpvOverride,
 
     salesEvents,
     loadingSales,
+    salesMetrics,
     fetchSalesForDay,
+    fetchSalesRange,
 
     saving,
     saveResult,
     saveSalesToDb,
+    saveSalesRange,
 
     saveConnection,
     updateConnection,

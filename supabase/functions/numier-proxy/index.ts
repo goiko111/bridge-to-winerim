@@ -50,7 +50,8 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
-function resolveTpvId(cfg: NumierConfig): { tpvId: string | null; source: "selected" | "fallback_single" | "none"; locationCount: number } {
+function resolveTpvId(cfg: NumierConfig, manualOverride?: string): { tpvId: string | null; source: "manual_override" | "selected" | "fallback_single" | "none"; locationCount: number } {
+  if (manualOverride) return { tpvId: manualOverride, source: "manual_override", locationCount: (cfg.discovered_locations || []).length };
   const locs = cfg.discovered_locations || [];
   if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
   if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
@@ -141,13 +142,13 @@ async function handleReadLocations(connId: string) {
   }
 }
 
-async function handleReadSales(connId: string, businessDay: string, endDate?: string) {
+async function handleReadSales(connId: string, businessDay: string, endDate?: string, manualTpvOverride?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
   const headers = buildHeaders(conn.api_token);
 
-  const { tpvId, source, locationCount } = resolveTpvId(cfg);
+  const { tpvId, source, locationCount } = resolveTpvId(cfg, manualTpvOverride);
   if (!tpvId) {
     const msg = locationCount > 1
       ? `Multiple locations discovered (${locationCount}) but no TPV explicitly selected. Please select one in the wizard.`
@@ -250,6 +251,7 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
       success: true,
       businessDay: startDate,
       endDate: end,
+      baseUrl,
       tpvId,
       tpvSource: source,
       salesEvents,
@@ -282,8 +284,8 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
  * SAVE_SALES — persist normalized sales to DB.
  * Delete + insert per event for idempotency without collisions.
  */
-async function handleSaveSales(connId: string, businessDay: string, endDate?: string) {
-  const fetchRes = await handleReadSales(connId, businessDay, endDate);
+async function handleSaveSales(connId: string, businessDay: string, endDate?: string, manualTpvOverride?: string) {
+  const fetchRes = await handleReadSales(connId, businessDay, endDate, manualTpvOverride);
   const fetchBody = await fetchRes.clone().json();
 
   if (!fetchBody.success) return fetchRes;
@@ -339,9 +341,10 @@ async function handleSaveSales(connId: string, businessDay: string, endDate?: st
     }
   }
 
+  const lastDay = endDate || businessDay;
   await sb().from("pos_connections").update({
     last_sync_at: new Date().toISOString(),
-    last_business_day_synced: businessDay,
+    last_business_day_synced: lastDay,
   }).eq("id", connId);
 
   return json({
@@ -716,15 +719,15 @@ serve(async (req) => {
 
       case "read-sales":
       case "fetch-day": {
-        const day = payload.businessDay || payload.date || payload.start_date;
-        if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleReadSales(connectionId, day, payload.endDate || payload.end_date);
+        const day = payload.businessDay || payload.startDate || payload.date || payload.start_date;
+        if (!day) return json({ error: "Missing businessDay or startDate" }, 400);
+        return await handleReadSales(connectionId, day, payload.endDate || payload.end_date, payload.manualTpvOverride);
       }
 
       case "save-sales": {
-        const day = payload.businessDay || payload.date;
-        if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleSaveSales(connectionId, day, payload.endDate);
+        const day = payload.businessDay || payload.startDate || payload.date;
+        if (!day) return json({ error: "Missing businessDay or startDate" }, 400);
+        return await handleSaveSales(connectionId, day, payload.endDate, payload.manualTpvOverride);
       }
 
       case "diagnose-tpv":
