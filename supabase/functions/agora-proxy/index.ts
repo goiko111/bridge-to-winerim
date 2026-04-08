@@ -3736,9 +3736,13 @@ serve(async (req) => {
         // ── PUSH TRACKING: Mark PUSHED (or VERIFIED if verification passed) per format ──
         const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
         for (const fmt of fmtTypes) {
+          const fmtProductId = fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
+            : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
+            : String(500000 + Number(winerimWineId || 0));
           await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
             sync_status: pushStatus,
             task_id: task.id,
+            agora_family_id: expectedFamilies[fmtProductId] || undefined,
             pushed_at: new Date().toISOString(),
             verified_at: taskVerification.success ? new Date().toISOString() : null,
             last_error: null,
