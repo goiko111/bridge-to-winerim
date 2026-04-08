@@ -80,6 +80,63 @@ export default function NumierWizard() {
 
   const canFetchSales = !!activeTpvId && dateRangeValid && !loadingSales;
 
+  // ── Sandbox Validation ────────────────────────────────────
+  const [validation, setValidation] = useState<ValidationReport | null>(null);
+
+  const runSandboxValidation = useCallback(async () => {
+    if (!connectionId || !activeTpvId || !dateRangeValid) return;
+
+    const report: ValidationReport = {
+      running: true, phase: "Diagnosing TPV…",
+      sandbox_reachable: null, tpv_valid: null, diagnosis_error: null,
+      pages_read: null, tickets_seen: null, unique_ticket_ids: null,
+      duplicate_tickets: null, events_normalized: null, lines_normalized: null,
+      fetch_error: null, events_saved: null, lines_saved: null, save_error: null,
+    };
+    setValidation({ ...report });
+
+    // Phase 1: diagnose
+    try {
+      await diagnoseTpv();
+    } catch (e) {
+      // diagnoseTpv sets diagnosisResult internally
+    }
+
+    // Phase 2: fetch sales
+    report.phase = "Fetching sales…";
+    setValidation({ ...report });
+    try {
+      await fetchSalesRange(startDate, endDate);
+    } catch (e) {
+      report.fetch_error = (e as Error).message;
+    }
+
+    report.running = false;
+    report.phase = "Done";
+    setValidation({ ...report });
+  }, [connectionId, activeTpvId, dateRangeValid, startDate, endDate, diagnoseTpv, fetchSalesRange]);
+
+  // Derive final report from latest state
+  const validationReport = useMemo(() => {
+    if (!validation) return null;
+    const diag = diagnosisResult;
+    const conclusion = diag?.conclusion as string | undefined;
+    return {
+      ...validation,
+      sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
+      tpv_valid: conclusion === "valid" ? "yes" as const : conclusion === "suspicious" ? "suspicious" as const : conclusion === "invalid" ? "no" as const : null,
+      diagnosis_error: diag && !diag.success ? ((diag.error || diag.message) as string) : null,
+      pages_read: salesMetrics?.pagination?.pages_read ?? null,
+      tickets_seen: salesMetrics?.pagination?.tickets_seen ?? null,
+      unique_ticket_ids: salesMetrics?.pagination?.unique_ticket_ids ?? null,
+      duplicate_tickets: salesMetrics?.pagination?.duplicate_ticket_ids_count ?? null,
+      events_normalized: salesMetrics?.normalization?.events_count ?? null,
+      lines_normalized: salesMetrics?.normalization?.total_lines ?? null,
+      events_saved: saveResult?.savedEvents ?? null,
+      lines_saved: saveResult?.savedLines ?? null,
+    };
+  }, [validation, diagnosisResult, salesMetrics, saveResult]);
+
   const tpvSourceLabel = useMemo(() => {
     switch (tpvSource) {
       case "manual_override": return "🔧 manual override";
