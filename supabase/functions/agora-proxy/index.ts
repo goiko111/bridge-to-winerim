@@ -3889,7 +3889,7 @@ serve(async (req) => {
         const { data: tasks } = await supabase
           .from("outbound_tasks").select("id, task_type")
           .eq("connection_id", connectionId)
-          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
+          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"])
           .eq("status", "QUEUED")
           .order("created_at").limit(BATCH_SIZE);
 
