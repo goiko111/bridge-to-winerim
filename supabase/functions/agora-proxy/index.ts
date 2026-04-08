@@ -209,6 +209,160 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
+// ── Winerim Stock Sync Helper (Read-Modify-Write) ──
+// deno-lint-ignore no-explicit-any
+async function syncStockForDay(supabase: any, connectionId: string, day: string, winerimToken: string) {
+  const WINERIM_BASE = "https://app.winerim.com/api/v2";
+  const winerimHeaders = {
+    "Authorization": `Bearer ${winerimToken}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+
+  const { data: events } = await supabase
+    .from("sales_events").select("id")
+    .eq("connection_id", connectionId).eq("business_day", day);
+
+  if (!events || events.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
+  }
+
+  const eventIds = events.map((e: { id: string }) => e.id);
+  const { data: lines } = await supabase
+    .from("sales_line_items")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .in("sales_event_id", eventIds);
+
+  if (!lines || lines.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
+  }
+
+  // deno-lint-ignore no-explicit-any
+  const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
+  let synced = 0, skipped = 0, failed = 0;
+
+  // Aggregate quantities by winerim_product_id to avoid multiple API calls for same wine
+  const aggregated = new Map<string, { totalQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
+  // deno-lint-ignore no-explicit-any
+  for (const line of mappedLines as any[]) {
+    const wId = line.winerim_product_id;
+    const existing = aggregated.get(wId);
+    if (existing) {
+      existing.totalQty += Math.abs(Number(line.quantity));
+      existing.lineIds.push(line.id);
+      if (!existing.eventIds.includes(line.sales_event_id)) existing.eventIds.push(line.sales_event_id);
+    } else {
+      aggregated.set(wId, {
+        totalQty: Math.abs(Number(line.quantity)),
+        lineIds: [line.id],
+        eventIds: [line.sales_event_id],
+        name: line.name,
+        providerProductId: line.provider_product_id || "",
+      });
+    }
+  }
+
+  for (const [winerimWineId, agg] of aggregated) {
+    // Check if already synced for these lines
+    const { data: existing } = await supabase
+      .from("stock_sync_log").select("id")
+      .eq("connection_id", connectionId)
+      .eq("winerim_product_id", winerimWineId)
+      .in("sales_event_id", agg.eventIds)
+      .eq("status", "SUCCESS").limit(1);
+
+    if (existing && existing.length > 0) { skipped++; continue; }
+
+    // Create log entry
+    const { data: logEntry } = await supabase
+      .from("stock_sync_log")
+      .insert({
+        connection_id: connectionId,
+        sales_event_id: agg.eventIds[0],
+        sales_line_item_id: agg.lineIds[0],
+        provider_product_id: agg.providerProductId,
+        winerim_product_id: winerimWineId,
+        product_name: agg.name,
+        quantity: agg.totalQty,
+        status: "PENDING",
+      }).select("id").single();
+
+    try {
+      // Step 1: GET current stock from Winerim
+      const stockRes = await fetch(`${WINERIM_BASE}/stock/wine/${winerimWineId}`, {
+        method: "GET", headers: winerimHeaders,
+      });
+
+      if (!stockRes.ok) {
+        const errBody = await stockRes.text();
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          error_message: `GET stock failed (${stockRes.status}): ${errBody.substring(0, 500)}`,
+        }).eq("id", logEntry?.id);
+        failed++;
+        continue;
+      }
+
+      const stockData = await stockRes.json();
+      // The API may return { data: { id, stock, ... } } or { id, stock, ... }
+      const stockObj = stockData?.data || stockData;
+      const stockId = stockObj?.id || stockObj?.stockId;
+      const currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
+
+      if (!stockId) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          error_message: `No stockId found in response: ${JSON.stringify(stockData).substring(0, 500)}`,
+        }).eq("id", logEntry?.id);
+        failed++;
+        continue;
+      }
+
+      // Step 2: Calculate new stock (never go below 0)
+      const newStock = Math.max(0, currentStock - agg.totalQty);
+
+      // Step 3: PUT absolute stock value
+      const putRes = await fetch(`${WINERIM_BASE}/stock/${stockId}`, {
+        method: "PUT", headers: winerimHeaders,
+        body: JSON.stringify({ stock: newStock }),
+      });
+
+      const putBody = await putRes.text();
+      let parsed; try { parsed = JSON.parse(putBody); } catch (_) { parsed = { raw: putBody }; }
+
+      if (putRes.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "SUCCESS",
+          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, stockId, ...parsed },
+          synced_at: new Date().toISOString(),
+        }).eq("id", logEntry?.id);
+        synced++;
+        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty})`);
+      } else {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          error_message: `PUT stock/${stockId} failed (${putRes.status}): ${putBody.substring(0, 500)}`,
+          winerim_response: parsed,
+        }).eq("id", logEntry?.id);
+        failed++;
+      }
+    } catch (e) {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED", error_message: String(e),
+      }).eq("id", logEntry?.id);
+      failed++;
+    }
+  }
+
+  return {
+    synced, skipped, failed,
+    unmapped: lines.length - mappedLines.length,
+    totalLines: lines.length,
+    mappedLines: mappedLines.length,
+    aggregatedProducts: aggregated.size,
+  };
+}
+
 // deno-lint-ignore no-explicit-any
 async function loadConfig(supabase: any, connectionId: string): Promise<ClassificationConfig> {
   const { data } = await supabase
