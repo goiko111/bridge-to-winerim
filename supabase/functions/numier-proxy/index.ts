@@ -718,15 +718,15 @@ serve(async (req) => {
 
       case "read-sales":
       case "fetch-day": {
-        const day = payload.businessDay || payload.date || payload.start_date;
-        if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleReadSales(connectionId, day, payload.endDate || payload.end_date);
+        const day = payload.businessDay || payload.startDate || payload.date || payload.start_date;
+        if (!day) return json({ error: "Missing businessDay or startDate" }, 400);
+        return await handleReadSales(connectionId, day, payload.endDate || payload.end_date, payload.manualTpvOverride);
       }
 
       case "save-sales": {
-        const day = payload.businessDay || payload.date;
-        if (!day) return json({ error: "Missing businessDay" }, 400);
-        return await handleSaveSales(connectionId, day, payload.endDate);
+        const day = payload.businessDay || payload.startDate || payload.date;
+        if (!day) return json({ error: "Missing businessDay or startDate" }, 400);
+        return await handleSaveSales(connectionId, day, payload.endDate, payload.manualTpvOverride);
       }
 
       case "diagnose-tpv":
