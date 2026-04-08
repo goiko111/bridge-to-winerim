@@ -1,13 +1,31 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3 } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
 import { useNavigate } from "react-router-dom";
+
+interface ValidationReport {
+  running: boolean;
+  phase: string;
+  sandbox_reachable: boolean | null;
+  tpv_valid: "yes" | "no" | "suspicious" | null;
+  diagnosis_error: string | null;
+  pages_read: number | null;
+  tickets_seen: number | null;
+  unique_ticket_ids: number | null;
+  duplicate_tickets: number | null;
+  events_normalized: number | null;
+  lines_normalized: number | null;
+  fetch_error: string | null;
+  events_saved: number | null;
+  lines_saved: number | null;
+  save_error: string | null;
+}
 
 const steps = [
   { label: "Connection", description: "Configure Numier API-KEY" },
@@ -61,6 +79,63 @@ export default function NumierWizard() {
   }, [startDate, endDate]);
 
   const canFetchSales = !!activeTpvId && dateRangeValid && !loadingSales;
+
+  // ── Sandbox Validation ────────────────────────────────────
+  const [validation, setValidation] = useState<ValidationReport | null>(null);
+
+  const runSandboxValidation = useCallback(async () => {
+    if (!connectionId || !activeTpvId || !dateRangeValid) return;
+
+    const report: ValidationReport = {
+      running: true, phase: "Diagnosing TPV…",
+      sandbox_reachable: null, tpv_valid: null, diagnosis_error: null,
+      pages_read: null, tickets_seen: null, unique_ticket_ids: null,
+      duplicate_tickets: null, events_normalized: null, lines_normalized: null,
+      fetch_error: null, events_saved: null, lines_saved: null, save_error: null,
+    };
+    setValidation({ ...report });
+
+    // Phase 1: diagnose
+    try {
+      await diagnoseTpv();
+    } catch (e) {
+      // diagnoseTpv sets diagnosisResult internally
+    }
+
+    // Phase 2: fetch sales
+    report.phase = "Fetching sales…";
+    setValidation({ ...report });
+    try {
+      await fetchSalesRange(startDate, endDate);
+    } catch (e) {
+      report.fetch_error = (e as Error).message;
+    }
+
+    report.running = false;
+    report.phase = "Done";
+    setValidation({ ...report });
+  }, [connectionId, activeTpvId, dateRangeValid, startDate, endDate, diagnoseTpv, fetchSalesRange]);
+
+  // Derive final report from latest state
+  const validationReport = useMemo(() => {
+    if (!validation) return null;
+    const diag = diagnosisResult;
+    const conclusion = diag?.conclusion as string | undefined;
+    return {
+      ...validation,
+      sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
+      tpv_valid: conclusion === "valid" ? "yes" as const : conclusion === "suspicious" ? "suspicious" as const : conclusion === "invalid" ? "no" as const : null,
+      diagnosis_error: diag && !diag.success ? ((diag.error || diag.message) as string) : null,
+      pages_read: salesMetrics?.pagination?.pages_read ?? null,
+      tickets_seen: salesMetrics?.pagination?.tickets_seen ?? null,
+      unique_ticket_ids: salesMetrics?.pagination?.unique_ticket_ids ?? null,
+      duplicate_tickets: salesMetrics?.pagination?.duplicate_ticket_ids_count ?? null,
+      events_normalized: salesMetrics?.normalization?.events_count ?? null,
+      lines_normalized: salesMetrics?.normalization?.total_lines ?? null,
+      events_saved: saveResult?.savedEvents ?? null,
+      lines_saved: saveResult?.savedLines ?? null,
+    };
+  }, [validation, diagnosisResult, salesMetrics, saveResult]);
 
   const tpvSourceLabel = useMemo(() => {
     switch (tpvSource) {
@@ -452,9 +527,79 @@ export default function NumierWizard() {
               </div>
             )}
 
-            {!loadingSales && salesEvents.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">No sales fetched yet. Configure dates and click Fetch.</p>
+            {!loadingSales && salesEvents.length === 0 && !validationReport && (
+              <p className="text-xs text-muted-foreground italic">No sales fetched yet. Configure dates and click Fetch, or run full Sandbox Validation.</p>
             )}
+
+            {/* ── Sandbox Validation ────────────────── */}
+            <div className="border-t border-border pt-4 space-y-3">
+              <Button
+                onClick={runSandboxValidation}
+                disabled={!canFetchSales || validation?.running || diagnosing}
+                className="w-full"
+                variant="default"
+              >
+                {(validation?.running || diagnosing) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Play className="mr-2 h-4 w-4" />
+                {validation?.running ? validation.phase : "Run Sandbox Validation"}
+              </Button>
+
+              {validationReport && !validationReport.running && (
+                <Card className="border-2 border-primary/30">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4" /> Sandbox Validation Report
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                      <ValidationRow label="Sandbox reachable" value={validationReport.sandbox_reachable === true ? "yes" : validationReport.sandbox_reachable === false ? "no" : "—"} ok={validationReport.sandbox_reachable === true} />
+                      <ValidationRow label="TPV valid" value={validationReport.tpv_valid ?? "—"} ok={validationReport.tpv_valid === "yes"} warn={validationReport.tpv_valid === "suspicious"} />
+                      <ValidationRow label="Pages read" value={validationReport.pages_read ?? "—"} />
+                      <ValidationRow label="Tickets seen" value={validationReport.tickets_seen ?? "—"} />
+                      <ValidationRow label="Unique ticket IDs" value={validationReport.unique_ticket_ids ?? "—"} />
+                      <ValidationRow label="Duplicate tickets" value={validationReport.duplicate_tickets ?? "—"} warn={(validationReport.duplicate_tickets ?? 0) > 0} />
+                      <ValidationRow label="Events normalized" value={validationReport.events_normalized ?? "—"} />
+                      <ValidationRow label="Lines normalized" value={validationReport.lines_normalized ?? "—"} />
+                      <ValidationRow label="Events saved" value={validationReport.events_saved ?? "—"} />
+                      <ValidationRow label="Lines saved" value={validationReport.lines_saved ?? "—"} />
+                    </div>
+
+                    {validationReport.diagnosis_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Diagnosis error:</strong> {validationReport.diagnosis_error}</span>
+                      </div>
+                    )}
+                    {validationReport.fetch_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Fetch error:</strong> {validationReport.fetch_error}</span>
+                      </div>
+                    )}
+                    {validationReport.save_error && (
+                      <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                        <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Save error:</strong> {validationReport.save_error}</span>
+                      </div>
+                    )}
+
+                    {/* Save button inside report if not yet saved */}
+                    {validationReport.events_saved === null && salesEvents.length > 0 && (
+                      <Button
+                        onClick={() => saveSalesRange(startDate, endDate)}
+                        disabled={saving}
+                        variant="secondary"
+                        className="w-full"
+                      >
+                        {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        <Database className="mr-2 h-4 w-4" /> Save to Database
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -514,6 +659,18 @@ function MetricRow({ label, value, warn }: { label: string; value: number | stri
       <span className="text-muted-foreground">{label}</span>
       <span className={`font-mono ${warn ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-foreground"}`}>
         {value}
+      </span>
+    </div>
+  );
+}
+
+function ValidationRow({ label, value, ok, warn }: { label: string; value: number | string; ok?: boolean; warn?: boolean }) {
+  const icon = ok === true ? "✅" : ok === false ? "❌" : warn ? "⚠️" : "";
+  return (
+    <div className="flex justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`font-mono ${warn ? "text-amber-600 dark:text-amber-400 font-semibold" : ok === false ? "text-destructive font-semibold" : "text-foreground"}`}>
+        {icon} {value}
       </span>
     </div>
   );
