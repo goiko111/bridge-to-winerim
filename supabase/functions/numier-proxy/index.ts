@@ -153,6 +153,182 @@ async function handleReadLocations(connId: string) {
   }
 }
 
+// ── Date chunking helpers ───────────────────────────────────
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBetween(start: string, end: string): number {
+  const a = new Date(start + "T00:00:00Z");
+  const b = new Date(end + "T00:00:00Z");
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+function buildChunks(start: string, end: string, chunkDays: number): { start: string; end: string }[] {
+  const chunks: { start: string; end: string }[] = [];
+  let cur = start;
+  while (cur <= end) {
+    const chunkEnd = addDays(cur, chunkDays - 1);
+    chunks.push({ start: cur, end: chunkEnd > end ? end : chunkEnd });
+    cur = addDays(chunkEnd > end ? end : chunkEnd, 1);
+  }
+  return chunks;
+}
+
+function isRangeTooLargeError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("intervalo temporal demasiado amplio") ||
+    lower.includes("range too large") ||
+    lower.includes("fechas más cercanas") ||
+    lower.includes("too wide");
+}
+
+// ── Shared: fetch one date range worth of sales (all pages) ──
+
+interface ChunkResult {
+  start: string;
+  end: string;
+  success: boolean;
+  error_type?: "range_too_large" | "api_error" | "permission_error" | "network_error";
+  error_message?: string;
+  tickets: Record<string, unknown>[];
+  pages_read: number;
+  total_pages: number;
+  unique_ticket_ids: number;
+  duplicate_count: number;
+}
+
+async function fetchSalesChunk(
+  baseUrl: string, tpvId: string, headers: Record<string, string>,
+  startDate: string, endDate: string
+): Promise<ChunkResult> {
+  const result: ChunkResult = {
+    start: startDate, end: endDate, success: false,
+    tickets: [], pages_read: 0, total_pages: 1,
+    unique_ticket_ids: 0, duplicate_count: 0,
+  };
+  const ticketIdSet = new Set<string>();
+
+  try {
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${startDate}&end_date=${endDate}&pag=${page}`;
+      console.log(`[numier] Fetching sales chunk ${startDate}→${endDate} page ${page}: ${url}`);
+
+      const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
+
+      if (!res.ok) {
+        const body = await res.text();
+        result.error_type = "api_error";
+        result.error_message = `HTTP ${res.status}: ${body.slice(0, 300)}`;
+        return result;
+      }
+
+      const data = await res.json();
+
+      if (!data.response) {
+        const msg = data.message || "API returned response=false";
+        if (isRangeTooLargeError(msg)) {
+          result.error_type = "range_too_large";
+          result.error_message = msg;
+        } else if (msg.includes("no pertenece") || msg.includes("not belong")) {
+          result.error_type = "permission_error";
+          result.error_message = msg;
+        } else {
+          result.error_type = "api_error";
+          result.error_message = msg;
+        }
+        return result;
+      }
+
+      const pageTickets = data.result || [];
+      for (const t of pageTickets) {
+        const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
+        if (ticketIdSet.has(tid)) result.duplicate_count++;
+        else ticketIdSet.add(tid);
+      }
+      result.tickets.push(...pageTickets);
+      totalPages = data.totalpages || data.totalPages || 1;
+      result.pages_read++;
+      page++;
+    } while (page <= totalPages);
+
+    result.total_pages = totalPages;
+    result.unique_ticket_ids = ticketIdSet.size;
+    result.success = true;
+    return result;
+  } catch (err) {
+    result.error_type = "network_error";
+    result.error_message = (err as Error).message;
+    return result;
+  }
+}
+
+// ── Normalize tickets to canonical shape ────────────────────
+
+function normalizeTickets(tickets: Record<string, unknown>[], fallbackDay: string) {
+  const salesEvents = tickets.map((ticket) => {
+    const invoiceItems = (ticket.InvoiceItems || []) as Record<string, unknown>[];
+    const totals = (ticket.Totals || {}) as Record<string, unknown>;
+
+    const lines = invoiceItems.map((item, idx) => ({
+      provider_product_id: String(item.idProduct || ""),
+      name: String(item.name || ""),
+      format: "UNIT",
+      family: String(item.idCategory || ""),
+      quantity: Number(item.units || 0),
+      unit_price: Number(item.price || 0),
+      total_amount: Number(item.amount || 0) || Number(item.units || 0) * Number(item.price || 0),
+      vat_rate: Number(item.vatType || 0),
+      is_wine_candidate: false,
+      _ordinal: idx,
+    }));
+
+    const serie = String(ticket.Serie || "");
+    const number = String(ticket.Number || "");
+
+    return {
+      provider_doc_id: ticket.TaxDocumentNumber
+        ? String(ticket.TaxDocumentNumber)
+        : `${serie}-${number}`,
+      business_day: String(ticket.BusinessDay || fallbackDay),
+      doc_type: String(ticket.DocumentType || "FS"),
+      total_amount: Number(totals.GrossAmount || 0),
+      total_tax: Number(totals.VatAmount || 0),
+      total_net: Number(totals.NetAmount || 0),
+      line_count: lines.length,
+      lines,
+    };
+  });
+
+  const ticketsWithNoLines = salesEvents.filter((e) => e.line_count === 0).length;
+  const allLines = salesEvents.flatMap((e) => e.lines);
+  const linesWithZeroPrice = allLines.filter((l) => l.unit_price === 0).length;
+  const linesWithoutProductId = allLines.filter((l) => !l.provider_product_id).length;
+  const businessDays = [...new Set(salesEvents.map((e) => e.business_day))].sort();
+
+  return {
+    salesEvents,
+    normalization: {
+      events_count: salesEvents.length,
+      total_lines: allLines.length,
+      tickets_without_lines: ticketsWithNoLines,
+      lines_with_zero_price: linesWithZeroPrice,
+      lines_without_product_id: linesWithoutProductId,
+      business_day_range: businessDays.length > 0
+        ? { min: businessDays[0], max: businessDays[businessDays.length - 1] }
+        : null,
+    },
+  };
+}
+
+// ── Read Sales (single range) ───────────────────────────────
+
 async function handleReadSales(connId: string, businessDay: string, endDate?: string, manualTpvOverride?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
@@ -170,125 +346,131 @@ async function handleReadSales(connId: string, businessDay: string, endDate?: st
   const startDate = businessDay;
   const end = endDate || businessDay;
 
-  try {
-    const allTickets: Record<string, unknown>[] = [];
-    const allTicketIds = new Set<string>();
-    let duplicateCount = 0;
-    let page = 1;
-    let totalPages = 1;
+  const chunk = await fetchSalesChunk(baseUrl, tpvId, headers, startDate, end);
 
-    do {
-      const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${startDate}&end_date=${end}&pag=${page}`;
-      console.log(`[numier] Fetching sales page ${page}: ${url}`);
-
-      const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(30_000) });
-
-      if (!res.ok) {
-        const body = await res.text();
-        return json({ success: false, message: `Sales API error (${res.status})`, body: body.slice(0, 500) });
-      }
-
-      const data = await res.json();
-
-      if (!data.response) {
-        return json({ success: false, message: data.message || "API returned response=false" });
-      }
-
-      const pageTickets = data.result || [];
-      for (const t of pageTickets) {
-        const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
-        if (allTicketIds.has(tid)) {
-          duplicateCount++;
-        } else {
-          allTicketIds.add(tid);
-        }
-      }
-      allTickets.push(...pageTickets);
-      totalPages = data.totalpages || 1;
-      page++;
-    } while (page <= totalPages);
-
-    // ── Normalize to canonical SalesEvent shape ──
-    const salesEvents = allTickets.map((ticket) => {
-      const invoiceItems = (ticket.InvoiceItems || []) as Record<string, unknown>[];
-      const totals = (ticket.Totals || {}) as Record<string, unknown>;
-
-      const lines = invoiceItems.map((item, idx) => ({
-        provider_product_id: String(item.idProduct || ""),
-        name: String(item.name || ""),
-        format: "UNIT",
-        family: String(item.idCategory || ""),
-        quantity: Number(item.units || 0),
-        unit_price: Number(item.price || 0),
-        total_amount: Number(item.amount || 0) || Number(item.units || 0) * Number(item.price || 0),
-        vat_rate: Number(item.vatType || 0),
-        is_wine_candidate: false,
-        _ordinal: idx,
-      }));
-
-      const serie = String(ticket.Serie || "");
-      const number = String(ticket.Number || "");
-
-      return {
-        provider_doc_id: ticket.TaxDocumentNumber
-          ? String(ticket.TaxDocumentNumber)
-          : `${serie}-${number}`,
-        business_day: String(ticket.BusinessDay || businessDay),
-        doc_type: String(ticket.DocumentType || "FS"),
-        total_amount: Number(totals.GrossAmount || 0),
-        total_tax: Number(totals.VatAmount || 0),
-        total_net: Number(totals.NetAmount || 0),
-        line_count: lines.length,
-        lines,
-      };
-    });
-
-    // ── Pagination & normalization metrics ──
-    const ticketsWithNoLines = salesEvents.filter((e) => e.line_count === 0).length;
-    const allLines = salesEvents.flatMap((e) => e.lines);
-    const linesWithZeroPrice = allLines.filter((l) => l.unit_price === 0).length;
-    const linesWithoutProductId = allLines.filter((l) => !l.provider_product_id).length;
-    const businessDays = [...new Set(salesEvents.map((e) => e.business_day))].sort();
-
-    if (salesEvents.length > 0) {
-      const updatedCfg = {
-        ...cfg,
-        verified_capabilities: { ...(cfg.verified_capabilities || {}), read_sales: true },
-      };
-      await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
-    }
-
+  if (!chunk.success) {
     return json({
-      success: true,
-      businessDay: startDate,
-      endDate: end,
-      baseUrl,
+      success: false,
+      error_type: chunk.error_type,
+      message: chunk.error_message,
       tpvId,
       tpvSource: source,
-      salesEvents,
-      count: salesEvents.length,
-      // Pagination metrics
-      pagination: {
-        pages_read: totalPages,
-        tickets_seen: allTickets.length,
-        unique_ticket_ids: allTicketIds.size,
-        duplicate_ticket_ids_count: duplicateCount,
-      },
-      // Normalization metrics
-      normalization: {
-        events_count: salesEvents.length,
-        total_lines: allLines.length,
-        tickets_without_lines: ticketsWithNoLines,
-        lines_with_zero_price: linesWithZeroPrice,
-        lines_without_product_id: linesWithoutProductId,
-        business_day_range: businessDays.length > 0
-          ? { min: businessDays[0], max: businessDays[businessDays.length - 1] }
-          : null,
-      },
+      startDate,
+      endDate: end,
     });
-  } catch (err) {
-    return json({ success: false, message: `Failed: ${(err as Error).message}` }, 502);
   }
+
+  const { salesEvents, normalization } = normalizeTickets(chunk.tickets, startDate);
+
+  if (salesEvents.length > 0) {
+    const updatedCfg = {
+      ...cfg,
+      verified_capabilities: { ...(cfg.verified_capabilities || {}), read_sales: true },
+    };
+    await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
+  }
+
+  return json({
+    success: true,
+    businessDay: startDate,
+    endDate: end,
+    baseUrl,
+    tpvId,
+    tpvSource: source,
+    salesEvents,
+    count: salesEvents.length,
+    pagination: {
+      pages_read: chunk.pages_read,
+      tickets_seen: chunk.tickets.length,
+      unique_ticket_ids: chunk.unique_ticket_ids,
+      duplicate_ticket_ids_count: chunk.duplicate_count,
+    },
+    normalization,
+  });
+}
+
+// ── Read Sales Chunked ──────────────────────────────────────
+
+async function handleReadSalesChunked(connId: string, startDate: string, endDate: string, chunkDays: number, manualTpvOverride?: string) {
+  const conn = await getConnection(connId);
+  const cfg = getNumierConfig(conn.provider_config);
+  const baseUrl = resolveBaseUrl(conn, cfg);
+  const headers = buildHeaders(conn.api_token);
+
+  const { tpvId, source, locationCount } = resolveTpvId(cfg, manualTpvOverride);
+  if (!tpvId) {
+    const msg = locationCount > 1
+      ? `Multiple locations discovered (${locationCount}) but no TPV explicitly selected.`
+      : "No TPV available. Discover locations first.";
+    return json({ success: false, message: msg }, 400);
+  }
+
+  const chunks = buildChunks(startDate, endDate, chunkDays);
+  const chunkResults: ChunkResult[] = [];
+  const allTickets: Record<string, unknown>[] = [];
+  const globalTicketIds = new Set<string>();
+  let globalDuplicates = 0;
+
+  for (const c of chunks) {
+    const result = await fetchSalesChunk(baseUrl, tpvId, headers, c.start, c.end);
+    chunkResults.push(result);
+
+    if (result.success) {
+      for (const t of result.tickets) {
+        const tid = String((t as any).TaxDocumentNumber || `${(t as any).Serie}-${(t as any).Number}`);
+        if (globalTicketIds.has(tid)) globalDuplicates++;
+        else globalTicketIds.add(tid);
+      }
+      allTickets.push(...result.tickets);
+    }
+  }
+
+  const { salesEvents, normalization } = normalizeTickets(allTickets, startDate);
+  const successfulChunks = chunkResults.filter((c) => c.success).length;
+  const failedChunks = chunkResults.filter((c) => !c.success);
+
+  if (salesEvents.length > 0) {
+    const updatedCfg = {
+      ...cfg,
+      verified_capabilities: { ...(cfg.verified_capabilities || {}), read_sales: true },
+    };
+    await sb().from("pos_connections").update({ provider_config: updatedCfg }).eq("id", connId);
+  }
+
+  return json({
+    success: true,
+    mode: "chunked",
+    businessDay: startDate,
+    endDate,
+    chunkDays,
+    tpvId,
+    tpvSource: source,
+    salesEvents,
+    count: salesEvents.length,
+    chunking: {
+      total_chunks: chunks.length,
+      successful_chunks: successfulChunks,
+      failed_chunks: failedChunks.length,
+      chunk_details: chunkResults.map((c) => ({
+        start: c.start,
+        end: c.end,
+        success: c.success,
+        error_type: c.error_type || null,
+        error_message: c.error_message || null,
+        tickets: c.tickets.length,
+        pages_read: c.pages_read,
+        unique_ticket_ids: c.unique_ticket_ids,
+        duplicate_count: c.duplicate_count,
+      })),
+    },
+    pagination: {
+      pages_read: chunkResults.reduce((s, c) => s + c.pages_read, 0),
+      tickets_seen: allTickets.length,
+      unique_ticket_ids: globalTicketIds.size,
+      duplicate_ticket_ids_count: globalDuplicates,
+    },
+    normalization,
+  });
 }
 
 /**
