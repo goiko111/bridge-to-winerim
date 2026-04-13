@@ -380,12 +380,12 @@ export function useNumierConnection() {
 
   // ── Diagnose TPV ───────────────────────────────────────────
 
-  const diagnoseTpv = useCallback(async () => {
+  const diagnoseTpv = useCallback(async (startDate?: string, endDate?: string) => {
     if (!connectionId) return;
     setDiagnosing(true);
     setDiagnosisResult(null);
     try {
-      const data = await invoke("diagnose-tpv", { tpvId: activeTpvId });
+      const data = await invoke("diagnose-tpv", { tpvId: activeTpvId, startDate, endDate });
       setDiagnosisResult(data);
     } catch (e) {
       console.error("Diagnosis failed:", e);
@@ -394,6 +394,26 @@ export function useNumierConnection() {
       setDiagnosing(false);
     }
   }, [connectionId, activeTpvId]);
+
+  // ── Probe Sales (page 1 only, no save) ────────────────────
+
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<Record<string, unknown> | null>(null);
+
+  const probeSales = useCallback(async (startDate: string, endDate: string) => {
+    if (!connectionId) return;
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const data = await invoke("probe-sales", { startDate, endDate });
+      setProbeResult(data);
+    } catch (e) {
+      console.error("Probe failed:", e);
+      setProbeResult({ success: false, error: (e as Error).message });
+    } finally {
+      setProbing(false);
+    }
+  }, [connectionId, manualTpvOverride]);
 
   // ── Enable Sync ───────────────────────────────────────────
 
@@ -449,5 +469,9 @@ export function useNumierConnection() {
     diagnosing,
     diagnosisResult,
     diagnoseTpv,
+
+    probing,
+    probeResult,
+    probeSales,
   };
 }
