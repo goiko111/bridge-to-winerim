@@ -988,6 +988,14 @@ serve(async (req) => {
       case "diagnose-tpv":
         return await handleDiagnoseTpv(connectionId, payload.tpvId || payload.selected_tpv_id, payload.startDate, payload.endDate);
 
+      case "fetch-chunked": {
+        const cs = payload.startDate || payload.businessDay;
+        const ce = payload.endDate;
+        if (!cs || !ce) return json({ error: "Missing startDate or endDate" }, 400);
+        const chunkDays = payload.chunkDays || 7;
+        return await handleReadSalesChunked(connectionId, cs, ce, chunkDays, payload.manualTpvOverride);
+      }
+
       case "probe-sales": {
         const ps = payload.startDate || payload.businessDay;
         const pe = payload.endDate || ps;
