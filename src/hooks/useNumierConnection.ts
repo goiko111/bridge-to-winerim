@@ -502,5 +502,9 @@ export function useNumierConnection() {
     probing,
     probeResult,
     probeSales,
+
+    loadingChunked,
+    chunkedResult,
+    fetchSalesChunked,
   };
 }
