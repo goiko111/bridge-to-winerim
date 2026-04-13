@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Search, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
+import { Loader2, Search, CheckCircle2, AlertTriangle, XCircle, Link2Off } from "lucide-react";
 
 interface DiagnoseProbe {
   endpoint: string;
@@ -13,20 +13,24 @@ interface DiagnoseProbe {
 
 interface Props {
   activeTpvId: string | null;
+  activeLocationId?: string | null;
   diagnosing: boolean;
   diagnosisResult: Record<string, unknown> | null;
   onDiagnose: () => void;
 }
 
-export default function NumierTpvDiagnostics({ activeTpvId, diagnosing, diagnosisResult, onDiagnose }: Props) {
+export default function NumierTpvDiagnostics({ activeTpvId, activeLocationId, diagnosing, diagnosisResult, onDiagnose }: Props) {
   const conclusion = diagnosisResult?.conclusion as string | undefined;
   const warnings = (diagnosisResult?.warnings || []) as string[];
   const probes = (diagnosisResult?.probes || []) as DiagnoseProbe[];
+  const locationIdsFromLocales = (diagnosisResult?.location_ids_from_locales || []) as string[];
 
   const conclusionIcon = conclusion === "valid"
     ? <CheckCircle2 className="h-5 w-5 text-emerald-500" />
     : conclusion === "suspicious"
     ? <AlertTriangle className="h-5 w-5 text-amber-500" />
+    : conclusion === "wrong_tpv_mapping"
+    ? <Link2Off className="h-5 w-5 text-amber-500" />
     : conclusion === "invalid"
     ? <XCircle className="h-5 w-5 text-destructive" />
     : null;
@@ -35,6 +39,8 @@ export default function NumierTpvDiagnostics({ activeTpvId, diagnosing, diagnosi
     ? <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">Valid</Badge>
     : conclusion === "suspicious"
     ? <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30">Suspicious</Badge>
+    : conclusion === "wrong_tpv_mapping"
+    ? <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30">Wrong TPV Mapping</Badge>
     : conclusion === "invalid"
     ? <Badge variant="destructive">Invalid</Badge>
     : null;
@@ -48,7 +54,12 @@ export default function NumierTpvDiagnostics({ activeTpvId, diagnosing, diagnosi
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Validates that the selected TPV id works correctly against Numier's sales, categories and products endpoints.
+          Validates that the TPV ID works correctly against Numier's sales, categories and products endpoints.
+          {activeLocationId && activeTpvId && activeLocationId !== activeTpvId && (
+            <span className="block mt-1 text-amber-700 dark:text-amber-400">
+              ⚠ Location ID ({activeLocationId}) ≠ TPV ID ({activeTpvId}) — this is expected if they are different identifiers.
+            </span>
+          )}
         </p>
 
         <Button onClick={onDiagnose} disabled={diagnosing || !activeTpvId} className="w-full">
@@ -65,12 +76,32 @@ export default function NumierTpvDiagnostics({ activeTpvId, diagnosing, diagnosi
                 <span className="text-sm font-medium text-foreground">
                   TPV <code className="text-xs bg-background px-1 rounded">{diagnosisResult.tpv_id as string}</code>
                 </span>
+                {locationIdsFromLocales.length > 0 && (
+                  <span className="text-xs text-muted-foreground ml-2">
+                    (getLocales IDs: {locationIdsFromLocales.join(", ")})
+                  </span>
+                )}
               </div>
               {conclusionBadge}
             </div>
 
+            {/* Wrong mapping explanation */}
+            {conclusion === "wrong_tpv_mapping" && (
+              <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 p-3 rounded-md border border-amber-500/30">
+                <Link2Off className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>
+                  <strong>Location ID ≠ TPV ID</strong>
+                  <p className="text-xs mt-1">
+                    getLocales returned location IDs [{locationIdsFromLocales.join(", ")}] but TPV {diagnosisResult.tpv_id as string} was rejected.
+                    The location ID from getLocales is NOT the operational TPV ID.
+                    Set the correct idTpv in the "TPV ID real" field.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Warnings */}
-            {warnings.length > 0 && (
+            {warnings.length > 0 && conclusion !== "wrong_tpv_mapping" && (
               <div className="space-y-1">
                 {warnings.map((w, i) => (
                   <div key={i} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded">

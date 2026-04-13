@@ -13,7 +13,7 @@ interface ValidationReport {
   running: boolean;
   phase: string;
   sandbox_reachable: boolean | null;
-  tpv_valid: "yes" | "no" | "suspicious" | null;
+  tpv_valid: "yes" | "no" | "suspicious" | "wrong_mapping" | null;
   diagnosis_error: string | null;
   pages_read: number | null;
   tickets_seen: number | null;
@@ -25,11 +25,15 @@ interface ValidationReport {
   events_saved: number | null;
   lines_saved: number | null;
   save_error: string | null;
+  location_id_used: string | null;
+  tpv_id_used: string | null;
+  tpv_id_source: string | null;
+  numier_message: string | null;
 }
 
 const steps = [
   { label: "Connection", description: "Configure Numier API-KEY" },
-  { label: "TPV Selection", description: "Choose your POS terminal" },
+  { label: "Location & TPV", description: "Discover location, set TPV ID" },
   { label: "Sales Preview", description: "Fetch and preview sales data" },
   { label: "Activate", description: "Enable automated sync" },
 ];
@@ -54,6 +58,9 @@ export default function NumierWizard() {
     locations,
     loadingLocations,
     fetchLocations,
+    selectedLocationId,
+    selectLocation,
+    activeLocationId,
     selectedTpvId,
     selectTpv,
     salesEvents,
@@ -92,6 +99,10 @@ export default function NumierWizard() {
       pages_read: null, tickets_seen: null, unique_ticket_ids: null,
       duplicate_tickets: null, events_normalized: null, lines_normalized: null,
       fetch_error: null, events_saved: null, lines_saved: null, save_error: null,
+      location_id_used: activeLocationId,
+      tpv_id_used: activeTpvId,
+      tpv_id_source: tpvSource,
+      numier_message: null,
     };
     setValidation({ ...report });
 
@@ -114,7 +125,7 @@ export default function NumierWizard() {
     report.running = false;
     report.phase = "Done";
     setValidation({ ...report });
-  }, [connectionId, activeTpvId, dateRangeValid, startDate, endDate, diagnoseTpv, fetchSalesRange]);
+  }, [connectionId, activeTpvId, activeLocationId, tpvSource, dateRangeValid, startDate, endDate, diagnoseTpv, fetchSalesRange]);
 
   // Derive final report from latest state
   const validationReport = useMemo(() => {
@@ -124,8 +135,15 @@ export default function NumierWizard() {
     return {
       ...validation,
       sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
-      tpv_valid: conclusion === "valid" ? "yes" as const : conclusion === "suspicious" ? "suspicious" as const : conclusion === "invalid" ? "no" as const : null,
+      tpv_valid: conclusion === "valid" ? "yes" as const
+        : conclusion === "suspicious" ? "suspicious" as const
+        : conclusion === "wrong_tpv_mapping" ? "wrong_mapping" as const
+        : conclusion === "invalid" ? "no" as const
+        : null,
       diagnosis_error: diag && !diag.success ? ((diag.error || diag.message) as string) : null,
+      numier_message: conclusion === "wrong_tpv_mapping"
+        ? ((diag?.warnings as string[])?.join(" · ") || "Location ID ≠ TPV ID")
+        : null,
       pages_read: salesMetrics?.pagination?.pages_read ?? null,
       tickets_seen: salesMetrics?.pagination?.tickets_seen ?? null,
       unique_ticket_ids: salesMetrics?.pagination?.unique_ticket_ids ?? null,
@@ -140,8 +158,7 @@ export default function NumierWizard() {
   const tpvSourceLabel = useMemo(() => {
     switch (tpvSource) {
       case "manual_override": return "🔧 manual override";
-      case "selected": return "✅ explicitly selected";
-      case "fallback_single": return "⚠ auto-selected (only 1 location)";
+      case "selected": return "✅ explicitly set";
       default: return "❌ not set";
     }
   }, [tpvSource]);
@@ -149,17 +166,12 @@ export default function NumierWizard() {
   const canNext = useMemo(() => {
     switch (step) {
       case 0: return testStatus === "success";
-      case 1: {
-        if (manualTpvOverride.trim()) return true;
-        if (selectedTpvId) return true;
-        if (locations.length === 1) return true;
-        return false;
-      }
+      case 1: return !!activeTpvId;
       case 2: return true;
       case 3: return true;
       default: return false;
     }
-  }, [step, testStatus, selectedTpvId, locations.length, manualTpvOverride]);
+  }, [step, testStatus, activeTpvId]);
 
   return (
     <div className="space-y-6 max-w-3xl mx-auto">
@@ -232,7 +244,7 @@ export default function NumierWizard() {
                 onChange={(e) => setApiToken(e.target.value)}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Se envía como header <code className="text-xs bg-muted px-1 rounded">API-KEY</code>. Solicítala desde tu panel de Numier.
+                Se envía como header <code className="text-xs bg-muted px-1 rounded">apiKey</code>. Solicítala desde tu panel de Numier.
               </p>
             </div>
 
@@ -259,92 +271,129 @@ export default function NumierWizard() {
         </Card>
       )}
 
-      {/* Step 1: TPV Selection */}
+      {/* Step 1: Location & TPV */}
       {step === 1 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <MapPin className="h-5 w-5" /> Select TPV / Establishment
+              <MapPin className="h-5 w-5" /> Location & TPV Configuration
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Manual TPV Override */}
-            <div className="rounded-md border border-dashed border-amber-500/50 bg-amber-500/5 p-4 space-y-2">
-              <label className="text-sm font-medium text-foreground flex items-center gap-2">
-                🔧 Manual TPV Override <Badge variant="outline" className="text-xs">Optional</Badge>
-              </label>
-              <Input
-                placeholder="e.g. 6191"
-                value={manualTpvOverride}
-                onChange={(e) => setManualTpvOverride(e.target.value)}
-              />
+          <CardContent className="space-y-5">
+            {/* Section A: Location Discovery */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                📍 Location Discovery
+                <Badge variant="outline" className="text-xs">Informational</Badge>
+              </h3>
               <p className="text-xs text-muted-foreground">
-                Si conoces el idTpv (ej. sandbox = <code className="bg-muted px-1 rounded">6191</code>), escríbelo aquí. Se usará en lugar de la selección automática.
+                Discover the establishments linked to your API-KEY. Note: the location ID from getLocales is <strong>NOT</strong> the same as the TPV ID used for sales/categories/products.
               </p>
+              <Button onClick={fetchLocations} disabled={loadingLocations} variant="secondary" size="sm">
+                {loadingLocations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Discover Locations
+              </Button>
+
+              {locations.length > 0 && (
+                <div className="space-y-2">
+                  {locations.map((loc) => {
+                    const isSelected = (selectedLocationId || activeLocationId) === loc.id;
+                    return (
+                      <button
+                        key={loc.id}
+                        onClick={() => selectLocation(loc.id)}
+                        className={`w-full flex items-center justify-between p-3 rounded-md border transition-colors text-left ${
+                          isSelected
+                            ? "border-blue-500/50 bg-blue-500/10"
+                            : "border-border bg-secondary/30 hover:bg-secondary/50"
+                        }`}
+                      >
+                        <div>
+                          <span className="font-medium text-foreground">{loc.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">Location ID: {loc.id}</Badge>
+                          {isSelected && <CheckCircle2 className="h-4 w-4 text-blue-500" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {activeLocationId && (
+                <div className="flex items-start gap-2 text-xs bg-blue-500/10 text-blue-700 dark:text-blue-400 p-2 rounded-md">
+                  <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>Location ID: <strong>{activeLocationId}</strong> — este es solo el identificador del local, NO el idTpv operativo.</span>
+                </div>
+              )}
             </div>
 
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
+            <div className="border-t border-border" />
+
+            {/* Section B: TPV ID (operational) */}
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                🖥️ TPV ID (Operational)
+                <Badge variant="outline" className="text-xs bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">Required</Badge>
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                El idTpv real que Numier usa para ventas, categorías y productos. En el sandbox es <code className="bg-muted px-1 rounded">6191</code>. Puede ser distinto del Location ID.
+              </p>
+
+              {/* Manual TPV Override */}
+              <div className="rounded-md border border-dashed border-amber-500/50 bg-amber-500/5 p-4 space-y-2">
+                <label className="text-sm font-medium text-foreground">TPV ID real</label>
+                <Input
+                  placeholder="e.g. 6191"
+                  value={manualTpvOverride}
+                  onChange={(e) => setManualTpvOverride(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Sandbox: <code className="bg-muted px-1 rounded">6191</code>. En producción, pide el idTpv correcto a Numier.
+                </p>
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">o descubrir automáticamente</span>
+
+              {/* Or set a persisted TPV ID */}
+              {!manualTpvOverride.trim() && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-muted-foreground">O establece un TPV ID fijo:</label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="TPV ID"
+                      value={selectedTpvId || ""}
+                      onChange={(e) => selectTpv(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border" />
+
+            {/* Summary */}
+            <div className="rounded-md border border-border bg-muted/50 p-3 space-y-1.5">
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">ID Summary</h4>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Location ID (getLocales)</span>
+                <span className="text-foreground font-mono">{activeLocationId || "—"}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">TPV ID (operational)</span>
+                <span className={`font-mono font-medium ${activeTpvId ? "text-foreground" : "text-destructive"}`}>
+                  {activeTpvId || "⛔ not set"}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">TPV ID source</span>
+                <span className="text-muted-foreground">{tpvSourceLabel}</span>
               </div>
             </div>
 
-            <p className="text-sm text-muted-foreground">
-              Discover the establishments linked to your API-KEY, then select the one to sync sales from.
-            </p>
-            <Button onClick={fetchLocations} disabled={loadingLocations} variant="secondary">
-              {loadingLocations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Discover Establishments
-            </Button>
-
-            {locations.length > 0 && (
-              <div className="space-y-2">
-                {locations.map((loc) => {
-                  const isSelected = selectedTpvId === loc.id && !manualTpvOverride.trim();
-                  return (
-                    <button
-                      key={loc.id}
-                      onClick={() => { setManualTpvOverride(""); selectTpv(loc.id); }}
-                      className={`w-full flex items-center justify-between p-3 rounded-md border transition-colors text-left ${
-                        isSelected
-                          ? "border-primary bg-primary/10"
-                          : "border-border bg-secondary/30 hover:bg-secondary/50"
-                      }`}
-                    >
-                      <div>
-                        <span className="font-medium text-foreground">{loc.name}</span>
-                        {loc.address && <span className="text-xs text-muted-foreground ml-2">{loc.address}</span>}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">{loc.id}</Badge>
-                        {isSelected && <CheckCircle2 className="h-4 w-4 text-primary" />}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Effective TPV summary */}
-            <div className="flex items-start gap-2 text-sm bg-muted p-3 rounded-md">
-              <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
-              <span className="text-muted-foreground">
-                TPV efectivo: <strong className="text-foreground">{activeTpvId || "ninguno"}</strong>
-                <span className="ml-1">({tpvSourceLabel})</span>
-              </span>
-            </div>
-
-            {!loadingLocations && locations.length === 0 && !manualTpvOverride.trim() && (
-              <p className="text-xs text-muted-foreground italic">No establishments found. Click Discover to fetch, or use the manual override above.</p>
-            )}
-
-            {locations.length > 1 && !selectedTpvId && !manualTpvOverride.trim() && (
-              <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-500/10 p-3 rounded-md">
+            {!activeTpvId && (
+              <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>Multiple locations found. Select one or use manual override.</span>
+                <span>Debes establecer un TPV ID para continuar. En sandbox usa <strong>6191</strong>.</span>
               </div>
             )}
           </CardContent>
@@ -368,8 +417,12 @@ export default function NumierWizard() {
                 <code className="text-foreground font-mono text-[11px] max-w-[300px] truncate">{apiBaseUrl}</code>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">TPV</span>
-                <span className="text-foreground font-medium">
+                <span className="text-muted-foreground">Location ID</span>
+                <span className="text-foreground font-mono">{activeLocationId || "—"}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">TPV ID</span>
+                <span className={`font-mono font-medium ${activeTpvId ? "text-foreground" : "text-destructive"}`}>
                   {activeTpvId || <span className="text-destructive">⛔ not set</span>}
                   <span className="ml-1 text-muted-foreground">({tpvSourceLabel})</span>
                 </span>
@@ -383,7 +436,7 @@ export default function NumierWizard() {
             {!activeTpvId && (
               <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 p-3 rounded-md">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>No TPV configured. Go back to Step 2 and select or enter a TPV id.</span>
+                <span>No TPV ID configured. Go back and set one.</span>
               </div>
             )}
 
@@ -397,6 +450,7 @@ export default function NumierWizard() {
             {/* TPV Diagnostics */}
             <NumierTpvDiagnostics
               activeTpvId={activeTpvId}
+              activeLocationId={activeLocationId}
               diagnosing={diagnosing}
               diagnosisResult={diagnosisResult}
               onDiagnose={diagnoseTpv}
@@ -552,9 +606,30 @@ export default function NumierWizard() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    {/* Context: IDs used */}
+                    <div className="rounded-md bg-muted/50 p-2 space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Location ID used</span>
+                        <span className="font-mono text-foreground">{validationReport.location_id_used || "—"}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">TPV ID used</span>
+                        <span className="font-mono font-medium text-foreground">{validationReport.tpv_id_used || "—"}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">TPV ID source</span>
+                        <span className="text-muted-foreground">{validationReport.tpv_id_source || "—"}</span>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
                       <ValidationRow label="Sandbox reachable" value={validationReport.sandbox_reachable === true ? "yes" : validationReport.sandbox_reachable === false ? "no" : "—"} ok={validationReport.sandbox_reachable === true} />
-                      <ValidationRow label="TPV valid" value={validationReport.tpv_valid ?? "—"} ok={validationReport.tpv_valid === "yes"} warn={validationReport.tpv_valid === "suspicious"} />
+                      <ValidationRow
+                        label="TPV valid"
+                        value={validationReport.tpv_valid === "wrong_mapping" ? "wrong mapping" : (validationReport.tpv_valid ?? "—")}
+                        ok={validationReport.tpv_valid === "yes"}
+                        warn={validationReport.tpv_valid === "suspicious" || validationReport.tpv_valid === "wrong_mapping"}
+                      />
                       <ValidationRow label="Pages read" value={validationReport.pages_read ?? "—"} />
                       <ValidationRow label="Tickets seen" value={validationReport.tickets_seen ?? "—"} />
                       <ValidationRow label="Unique ticket IDs" value={validationReport.unique_ticket_ids ?? "—"} />
@@ -564,6 +639,13 @@ export default function NumierWizard() {
                       <ValidationRow label="Events saved" value={validationReport.events_saved ?? "—"} />
                       <ValidationRow label="Lines saved" value={validationReport.lines_saved ?? "—"} />
                     </div>
+
+                    {validationReport.tpv_valid === "wrong_mapping" && validationReport.numier_message && (
+                      <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded">
+                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span><strong>Wrong TPV mapping:</strong> {validationReport.numier_message}</span>
+                      </div>
+                    )}
 
                     {validationReport.diagnosis_error && (
                       <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
@@ -584,7 +666,6 @@ export default function NumierWizard() {
                       </div>
                     )}
 
-                    {/* Save button inside report if not yet saved */}
                     {validationReport.events_saved === null && salesEvents.length > 0 && (
                       <Button
                         onClick={() => saveSalesRange(startDate, endDate)}

@@ -167,15 +167,19 @@ export interface NumierConfig {
   api_base_url?: string;
   /** Auth: API-KEY header. Only API_KEY supported by Numier. */
   auth_mode?: "API_KEY";
-  /** Selected TPV (POS terminal) id from discovered locations */
+  /** Location id from getLocales (informational — NOT the same as TPV id) */
+  selected_location_id?: string;
+  /** Real operational TPV id for sales/categories/products endpoints */
   selected_tpv_id?: string;
+  /** Manual override for TPV id (takes priority over selected_tpv_id) */
+  manual_tpv_override?: string;
   /** Legacy field */
   location_id?: string;
   /** Timezone for business-day calculation */
   timezone?: string;
   /** Hour at which the business day closes (0-23) */
   business_day_close_hour?: number;
-  /** Discovered businesses/TPVs from /getLocales */
+  /** Discovered businesses from /getLocales (location ids, NOT tpv ids) */
   discovered_locations?: { id: string; name: string }[];
   /** Capabilities explicitly verified against real API */
   verified_capabilities?: {

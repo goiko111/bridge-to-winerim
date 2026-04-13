@@ -77,6 +77,9 @@ export function useNumierConnection() {
 
   const [locations, setLocations] = useState<NumierLocation[]>([]);
   const [loadingLocations, setLoadingLocations] = useState(false);
+
+  // Separated: location_id vs tpv_id
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
   const [selectedTpvId, setSelectedTpvId] = useState<string | null>(null);
   const [manualTpvOverride, setManualTpvOverride] = useState<string>("");
 
@@ -99,23 +102,29 @@ export function useNumierConnection() {
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnosisResult, setDiagnosisResult] = useState<Record<string, unknown> | null>(null);
 
-  // ── Derived: active TPV id and source ─────────────────────
+  // ── Derived: active TPV id (for sales/categories/products) ──
+  // Priority: manual_tpv_override > selected_tpv_id > NOTHING
+  // We explicitly do NOT fall back to discovered_locations[0].id
 
   const activeTpvId = useMemo(() => {
     if (manualTpvOverride.trim()) return manualTpvOverride.trim();
     if (selectedTpvId || config.selected_tpv_id) return selectedTpvId || config.selected_tpv_id || null;
-    const locs = config.discovered_locations || [];
-    if (locs.length === 1 && locs[0]?.id) return locs[0].id;
     return null;
   }, [manualTpvOverride, selectedTpvId, config]);
 
-  const tpvSource = useMemo((): "manual_override" | "selected" | "fallback_single" | "none" => {
+  const tpvSource = useMemo((): "manual_override" | "selected" | "none" => {
     if (manualTpvOverride.trim()) return "manual_override";
     if (selectedTpvId || config.selected_tpv_id) return "selected";
-    const locs = config.discovered_locations || [];
-    if (locs.length === 1 && locs[0]?.id) return "fallback_single";
     return "none";
   }, [manualTpvOverride, selectedTpvId, config]);
+
+  // ── Derived: active location id (from getLocales, informational) ──
+  const activeLocationId = useMemo(() => {
+    if (selectedLocationId || config.selected_location_id) return selectedLocationId || config.selected_location_id || null;
+    const locs = config.discovered_locations || [];
+    if (locs.length === 1 && locs[0]?.id) return locs[0].id;
+    return null;
+  }, [selectedLocationId, config]);
 
   // ── Connection CRUD ───────────────────────────────────────
 
@@ -175,8 +184,14 @@ export function useNumierConnection() {
     if (cfg.discovered_locations) {
       setLocations(cfg.discovered_locations);
     }
+    if (cfg.selected_location_id) {
+      setSelectedLocationId(cfg.selected_location_id);
+    }
     if (cfg.selected_tpv_id) {
       setSelectedTpvId(cfg.selected_tpv_id);
+    }
+    if (cfg.manual_tpv_override) {
+      setManualTpvOverride(cfg.manual_tpv_override);
     }
     return data;
   }, []);
@@ -185,7 +200,6 @@ export function useNumierConnection() {
 
   const invoke = async (action: string, extra: Record<string, unknown> = {}) => {
     const body: Record<string, unknown> = { action, connectionId, ...extra };
-    // Always pass manual override if set
     if (manualTpvOverride.trim()) {
       body.manualTpvOverride = manualTpvOverride.trim();
     }
@@ -242,12 +256,40 @@ export function useNumierConnection() {
     }
   };
 
-  // ── Select TPV and persist ────────────────────────────────
+  // ── Select Location (from getLocales — informational only) ──
+
+  const selectLocation = useCallback(async (locationId: string) => {
+    setSelectedLocationId(locationId);
+    if (connectionId) {
+      const updatedConfig = { ...config, selected_location_id: locationId };
+      setConfig(updatedConfig);
+      await supabase
+        .from("pos_connections")
+        .update({ provider_config: updatedConfig })
+        .eq("id", connectionId);
+    }
+  }, [connectionId, config]);
+
+  // ── Select TPV (the real operational ID for sales/categories/products) ──
 
   const selectTpv = useCallback(async (tpvId: string) => {
     setSelectedTpvId(tpvId);
     if (connectionId) {
       const updatedConfig = { ...config, selected_tpv_id: tpvId };
+      setConfig(updatedConfig);
+      await supabase
+        .from("pos_connections")
+        .update({ provider_config: updatedConfig })
+        .eq("id", connectionId);
+    }
+  }, [connectionId, config]);
+
+  // ── Persist manual TPV override ──
+
+  const persistManualTpvOverride = useCallback(async (value: string) => {
+    setManualTpvOverride(value);
+    if (connectionId) {
+      const updatedConfig = { ...config, manual_tpv_override: value.trim() || undefined };
       setConfig(updatedConfig);
       await supabase
         .from("pos_connections")
@@ -267,8 +309,9 @@ export function useNumierConnection() {
         const locs = data.locations || [];
         setLocations(locs);
         setCapabilities((prev) => ({ ...prev, read_locations: true }));
-        if (locs.length === 1 && !selectedTpvId) {
-          await selectTpv(locs[0].id);
+        // Auto-select location if only one, but do NOT set it as TPV
+        if (locs.length === 1 && !selectedLocationId) {
+          await selectLocation(locs[0].id);
         }
       }
     } catch (e) {
@@ -276,7 +319,7 @@ export function useNumierConnection() {
     } finally {
       setLoadingLocations(false);
     }
-  }, [connectionId, selectedTpvId, selectTpv]);
+  }, [connectionId, selectedLocationId, selectLocation]);
 
   // ── Read Sales (date range) ───────────────────────────────
 
@@ -304,7 +347,6 @@ export function useNumierConnection() {
     }
   }, [connectionId, manualTpvOverride]);
 
-  // Keep backward compat
   const fetchSalesForDay = useCallback(async (day: string) => {
     return fetchSalesRange(day, day);
   }, [fetchSalesRange]);
@@ -374,12 +416,19 @@ export function useNumierConnection() {
     loadingLocations,
     fetchLocations,
 
+    // Location (from getLocales — informational)
+    selectedLocationId,
+    selectLocation,
+    activeLocationId,
+
+    // TPV (operational — for sales/categories/products)
     selectedTpvId,
     selectTpv,
     activeTpvId,
     tpvSource,
     manualTpvOverride,
     setManualTpvOverride,
+    persistManualTpvOverride,
 
     salesEvents,
     loadingSales,

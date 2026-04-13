@@ -50,11 +50,13 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
-function resolveTpvId(cfg: NumierConfig, manualOverride?: string): { tpvId: string | null; source: "manual_override" | "selected" | "fallback_single" | "none"; locationCount: number } {
+function resolveTpvId(cfg: NumierConfig, manualOverride?: string): { tpvId: string | null; source: "manual_override" | "selected" | "none"; locationCount: number } {
   if (manualOverride) return { tpvId: manualOverride, source: "manual_override", locationCount: (cfg.discovered_locations || []).length };
+  // Check manual_tpv_override persisted in config
+  if (cfg.manual_tpv_override) return { tpvId: cfg.manual_tpv_override, source: "manual_override", locationCount: (cfg.discovered_locations || []).length };
   const locs = cfg.discovered_locations || [];
   if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
-  if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
+  // Explicitly do NOT fall back to discovered_locations[0].id — location_id ≠ tpv_id
   return { tpvId: null, source: "none", locationCount: locs.length };
 }
 
@@ -650,13 +652,31 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
   const prodProbe = probes.find((p) => p.endpoint.startsWith("getProducts"));
   const locProbe = probes.find((p) => p.endpoint === "getLocales");
 
-  let conclusion: "valid" | "suspicious" | "invalid" = "valid";
+  let conclusion: "valid" | "suspicious" | "invalid" | "wrong_tpv_mapping" = "valid";
   const warnings: string[] = [];
 
-  if (!salesProbe?.success) {
+  // Detect the specific case: getLocales works but TPV-based endpoints fail with permission error
+  const localesOk = locProbe?.success === true;
+  const tpvEndpointsFailed = !salesProbe?.success || !catProbe?.success || !prodProbe?.success;
+  const tpvPermissionError = [salesProbe, catProbe, prodProbe].some(
+    (p) => p && !p.success && p.error && (
+      p.error.includes("no pertenece") || p.error.includes("not belong") || p.error.includes("Tpv no pertenece")
+    )
+  );
+
+  if (localesOk && tpvEndpointsFailed && tpvPermissionError) {
+    conclusion = "wrong_tpv_mapping";
+    const locIds = (locProbe?.detail?.location_ids || []) as string[];
+    warnings.push(
+      `getLocales returned location IDs [${locIds.join(", ")}] but TPV ${tpvId} is rejected by sales/categories/products. ` +
+      `The location ID from getLocales is NOT the same as the operational TPV ID. ` +
+      `Ask Numier for the correct idTpv, or try a different value in the Manual TPV Override field.`
+    );
+  } else if (!salesProbe?.success) {
     conclusion = "invalid";
-    warnings.push("Sales endpoint failed — this TPV id may not be valid for /v2/sales.");
+    warnings.push(`Sales endpoint failed — TPV ${tpvId} may not be valid. Error: ${salesProbe?.error || "unknown"}`);
   }
+
   if (salesProbe?.success && (salesProbe.detail.tickets_page1 as number) === 0) {
     warnings.push("Sales returned 0 tickets for yesterday. Possibly no sales or wrong TPV.");
     if (conclusion === "valid") conclusion = "suspicious";
@@ -665,17 +685,16 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
     warnings.push(`${salesProbe.detail.duplicate_ticket_ids} duplicate ticket IDs found across pages.`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
-  if (!catProbe?.success) {
-    warnings.push("Categories endpoint failed for this TPV id.");
+  if (!catProbe?.success && conclusion !== "wrong_tpv_mapping") {
+    warnings.push(`Categories endpoint failed for TPV ${tpvId}. Error: ${catProbe?.error || "unknown"}`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
-  if (!prodProbe?.success) {
-    warnings.push("Products endpoint failed for this TPV id.");
+  if (!prodProbe?.success && conclusion !== "wrong_tpv_mapping") {
+    warnings.push(`Products endpoint failed for TPV ${tpvId}. Error: ${prodProbe?.error || "unknown"}`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
-  if (locProbe?.success && !(locProbe.detail.tpv_id_found_in_locales as boolean)) {
-    warnings.push("Selected TPV id was NOT found in getLocales results.");
-    if (conclusion === "valid") conclusion = "suspicious";
+  if (locProbe?.success && !(locProbe.detail.tpv_id_found_in_locales as boolean) && conclusion !== "wrong_tpv_mapping") {
+    warnings.push("Selected TPV id was NOT found in getLocales results — this is expected if location_id ≠ tpv_id.");
   }
 
   // Persist diagnosis result
@@ -696,6 +715,8 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
     conclusion,
     warnings,
     probes,
+    // Extra context for the UI
+    location_ids_from_locales: locProbe?.detail?.location_ids || [],
   });
 }
 
