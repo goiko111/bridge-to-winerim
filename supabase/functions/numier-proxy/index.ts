@@ -854,7 +854,7 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string, startDa
   const prodProbe = probes.find((p) => p.endpoint.startsWith("getProducts"));
   const locProbe = probes.find((p) => p.endpoint === "getLocales");
 
-  let conclusion: "valid" | "valid_no_sales_in_range" | "suspicious" | "invalid" | "wrong_tpv_mapping" = "valid";
+  let conclusion: "valid" | "valid_no_sales_in_range" | "suspicious" | "invalid" | "wrong_tpv_mapping" | "range_too_large" = "valid";
   const warnings: string[] = [];
 
   const localesOk = locProbe?.success === true;
@@ -862,6 +862,7 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string, startDa
   const prodOk = prodProbe?.success === true;
   const salesOk = salesProbe?.success === true;
   const salesPermissionError = salesProbe?.detail?.is_permission_error === true;
+  const salesRangeTooLarge = !salesOk && salesProbe?.error && isRangeTooLargeError(salesProbe.error);
   const catPermissionError = catProbe && !catProbe.success && catProbe.error && (
     catProbe.error.includes("no pertenece") || catProbe.error.includes("not belong")
   );
@@ -869,8 +870,13 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string, startDa
     prodProbe.error.includes("no pertenece") || prodProbe.error.includes("not belong")
   );
 
+  // Case 0: Range too large — not a TPV problem
+  if (catOk && prodOk && salesRangeTooLarge) {
+    conclusion = "range_too_large";
+    warnings.push(`TPV ${tpvId} is valid (categories: ✅, products: ✅) but the date range is too large for Numier. Use chunked fetch or a shorter range.`);
+  }
   // Case 1: TPV-based endpoints all fail with permission errors
-  if (localesOk && (salesPermissionError || catPermissionError || prodPermissionError)) {
+  else if (localesOk && (salesPermissionError || catPermissionError || prodPermissionError)) {
     if (!catOk && !prodOk) {
       conclusion = "wrong_tpv_mapping";
       const locIds = (locProbe?.detail?.location_ids || []) as string[];
@@ -883,7 +889,7 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string, startDa
       warnings.push(`Categories and products work but sales endpoint rejects TPV ${tpvId}. Ask Numier for the correct sales idTpv.`);
     }
   }
-  // Case 2: Categories & products work, sales returns 0 tickets (valid TPV, just no data in range)
+  // Case 2: Categories & products work, sales returns 0 tickets
   else if (catOk && prodOk && salesOk && (salesProbe?.detail?.tickets_page1 as number) === 0) {
     conclusion = "valid_no_sales_in_range";
     warnings.push(`TPV ${tpvId} is valid (categories: ✅, products: ✅) but 0 sales found in range ${diagStart} → ${diagEnd}. Try a different date range.`);
