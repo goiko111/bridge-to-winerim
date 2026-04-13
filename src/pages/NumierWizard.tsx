@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle, Zap } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
@@ -13,7 +13,7 @@ interface ValidationReport {
   running: boolean;
   phase: string;
   sandbox_reachable: boolean | null;
-  tpv_valid: "yes" | "no" | "suspicious" | "wrong_mapping" | null;
+  tpv_valid: "yes" | "no" | "suspicious" | "wrong_mapping" | "valid_no_sales" | null;
   diagnosis_error: string | null;
   pages_read: number | null;
   tickets_seen: number | null;
@@ -78,6 +78,9 @@ export default function NumierWizard() {
     diagnosing,
     diagnosisResult,
     diagnoseTpv,
+    probing,
+    probeResult,
+    probeSales,
   } = useNumierConnection();
 
   const dateRangeValid = useMemo(() => {
@@ -106,9 +109,9 @@ export default function NumierWizard() {
     };
     setValidation({ ...report });
 
-    // Phase 1: diagnose
+    // Phase 1: diagnose (pass date range)
     try {
-      await diagnoseTpv();
+      await diagnoseTpv(startDate, endDate);
     } catch (e) {
       // diagnoseTpv sets diagnosisResult internally
     }
@@ -136,6 +139,7 @@ export default function NumierWizard() {
       ...validation,
       sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
       tpv_valid: conclusion === "valid" ? "yes" as const
+        : conclusion === "valid_no_sales_in_range" ? "valid_no_sales" as const
         : conclusion === "suspicious" ? "suspicious" as const
         : conclusion === "wrong_tpv_mapping" ? "wrong_mapping" as const
         : conclusion === "invalid" ? "no" as const
@@ -143,6 +147,8 @@ export default function NumierWizard() {
       diagnosis_error: diag && !diag.success ? ((diag.error || diag.message) as string) : null,
       numier_message: conclusion === "wrong_tpv_mapping"
         ? ((diag?.warnings as string[])?.join(" · ") || "Location ID ≠ TPV ID")
+        : conclusion === "valid_no_sales_in_range"
+        ? ((diag?.warnings as string[])?.join(" · ") || "No sales in selected range")
         : null,
       pages_read: salesMetrics?.pagination?.pages_read ?? null,
       tickets_seen: salesMetrics?.pagination?.tickets_seen ?? null,
@@ -453,8 +459,24 @@ export default function NumierWizard() {
               activeLocationId={activeLocationId}
               diagnosing={diagnosing}
               diagnosisResult={diagnosisResult}
-              onDiagnose={diagnoseTpv}
+              onDiagnose={() => diagnoseTpv(startDate, endDate)}
             />
+
+            {/* Sandbox date helper */}
+            {apiBaseUrl.includes("sandbox") && (
+              <div className="flex items-start gap-2 text-xs bg-blue-500/10 text-blue-700 dark:text-blue-400 p-2 rounded-md border border-blue-500/20">
+                <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>Sandbox data is available until <strong>2023-09-29</strong>. Make sure your date range falls within this period.</span>
+              </div>
+            )}
+
+            {/* Warn if range is outside sandbox data */}
+            {apiBaseUrl.includes("sandbox") && startDate > "2023-09-29" && (
+              <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded-md border border-amber-500/20">
+                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>⚠ Your start date ({startDate}) is after the sandbox data limit (2023-09-29). You will get 0 results.</span>
+              </div>
+            )}
 
             {/* Date range inputs */}
             <div className="grid grid-cols-2 gap-3">
@@ -468,14 +490,73 @@ export default function NumierWizard() {
               </div>
             </div>
 
-            <Button
-              onClick={() => fetchSalesRange(startDate, endDate)}
-              disabled={!canFetchSales}
-              className="w-full"
-            >
-              {loadingSales && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Fetch Sales ({startDate === endDate ? "1 day" : `${startDate} → ${endDate}`})
-            </Button>
+            {/* Probe & Fetch buttons */}
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                onClick={() => probeSales(startDate, endDate)}
+                disabled={!canFetchSales || probing}
+                variant="outline"
+                className="w-full"
+              >
+                {probing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Zap className="mr-2 h-4 w-4" />
+                Probe Page 1
+              </Button>
+              <Button
+                onClick={() => fetchSalesRange(startDate, endDate)}
+                disabled={!canFetchSales}
+                className="w-full"
+              >
+                {loadingSales && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Fetch All Sales
+              </Button>
+            </div>
+
+            {/* Probe result */}
+            {probeResult && (
+              <div className="rounded-md border border-border p-4 space-y-3">
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5" /> Sales Probe (Page 1 only — not saved)
+                </h4>
+                {probeResult.success ? (
+                  <div className="space-y-2">
+                    {(() => {
+                      const p = probeResult.probe as Record<string, unknown>;
+                      return (
+                        <>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                            <MetricRow label="Effective URL" value={String(p.effective_url || "—")} />
+                            <MetricRow label="HTTP Status" value={Number(p.http_status)} />
+                            <MetricRow label="API response" value={p.api_response === true ? "✅ true" : `❌ ${p.api_response}`} />
+                            <MetricRow label="Total pages" value={Number(p.total_pages)} />
+                            <MetricRow label="Tickets in page 1" value={Number(p.tickets_in_page1)} />
+                            <MetricRow label="Lines in 1st ticket" value={Number(p.first_ticket_lines)} />
+                            <MetricRow label="TPV ID" value={String(p.tpv_id)} />
+                            <MetricRow label="TPV source" value={String(p.tpv_source)} />
+                          </div>
+                          {p.api_message && (
+                            <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded">
+                              Numier message: {String(p.api_message)}
+                            </div>
+                          )}
+                          <div className="text-xs text-muted-foreground font-medium">Top-level keys: {(p.top_level_keys as string[])?.join(", ")}</div>
+                          {p.first_ticket_sample && (
+                            <details className="text-xs">
+                              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">First ticket sample (raw)</summary>
+                              <pre className="mt-1 bg-muted p-2 rounded overflow-x-auto text-[10px] leading-tight max-h-48">
+                                {String(p.first_ticket_sample)}
+                              </pre>
+                            </details>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div className="text-xs text-destructive">{String(probeResult.error || probeResult.message || "Probe failed")}</div>
+                )}
+              </div>
+            )}
 
             {/* Sales results */}
             {salesEvents.length > 0 && (
@@ -626,8 +707,10 @@ export default function NumierWizard() {
                       <ValidationRow label="Sandbox reachable" value={validationReport.sandbox_reachable === true ? "yes" : validationReport.sandbox_reachable === false ? "no" : "—"} ok={validationReport.sandbox_reachable === true} />
                       <ValidationRow
                         label="TPV valid"
-                        value={validationReport.tpv_valid === "wrong_mapping" ? "wrong mapping" : (validationReport.tpv_valid ?? "—")}
-                        ok={validationReport.tpv_valid === "yes"}
+                        value={validationReport.tpv_valid === "wrong_mapping" ? "wrong mapping"
+                          : validationReport.tpv_valid === "valid_no_sales" ? "valid (no sales in range)"
+                          : (validationReport.tpv_valid ?? "—")}
+                        ok={validationReport.tpv_valid === "yes" || validationReport.tpv_valid === "valid_no_sales"}
                         warn={validationReport.tpv_valid === "suspicious" || validationReport.tpv_valid === "wrong_mapping"}
                       />
                       <ValidationRow label="Pages read" value={validationReport.pages_read ?? "—"} />
@@ -644,6 +727,13 @@ export default function NumierWizard() {
                       <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded">
                         <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                         <span><strong>Wrong TPV mapping:</strong> {validationReport.numier_message}</span>
+                      </div>
+                    )}
+
+                    {validationReport.tpv_valid === "valid_no_sales" && validationReport.numier_message && (
+                      <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-400 bg-blue-500/10 p-2 rounded">
+                        <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>{validationReport.numier_message}</span>
                       </div>
                     )}
 
