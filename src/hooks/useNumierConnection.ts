@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { getNumierConfig, type NumierConfig } from "@/utils/providerConfig";
+import { persistNumierSalesEvents } from "@/utils/numierSalesPersistence";
 
 // ── Canonical types ─────────────────────────────────────────
 
@@ -351,53 +352,60 @@ export function useNumierConnection() {
     return fetchSalesRange(day, day);
   }, [fetchSalesRange]);
 
-  // ── Save Sales (chunked client-side, 5-day windows) ────────
+  // ── Save Sales (persist current preview) ───────────────────
 
   const saveSalesRange = useCallback(async (startDate: string, endDate: string) => {
     if (!connectionId) return;
     setSaving(true);
     setSaveResult(null);
-    try {
-      const chunkDays = 5;
-      const chunks: { start: string; end: string }[] = [];
-      let cursor = new Date(startDate);
-      const endD = new Date(endDate);
-      while (cursor <= endD) {
-        const chunkEnd = new Date(cursor);
-        chunkEnd.setDate(chunkEnd.getDate() + chunkDays - 1);
-        const effectiveEnd = chunkEnd > endD ? endD : chunkEnd;
-        chunks.push({
-          start: cursor.toISOString().slice(0, 10),
-          end: effectiveEnd.toISOString().slice(0, 10),
-        });
-        cursor = new Date(effectiveEnd);
-        cursor.setDate(cursor.getDate() + 1);
-      }
 
-      let totalEvents = 0;
-      let totalLines = 0;
-      for (const chunk of chunks) {
-        try {
-          const data = await invoke("save-sales", { businessDay: chunk.start, endDate: chunk.end });
-          if (data?.success) {
-            totalEvents += data.savedEvents || 0;
-            totalLines += data.savedLines || 0;
-          }
-        } catch (e) {
-          console.error(`Failed to save chunk ${chunk.start}→${chunk.end}:`, e);
+    try {
+      let eventsToPersist = salesEvents;
+      let metricsToUse = salesMetrics;
+
+      const currentRange = salesMetrics?.normalization?.business_day_range;
+      const previewMatchesRequestedRange =
+        currentRange?.min === startDate && currentRange?.max === endDate;
+
+      if (!previewMatchesRequestedRange || salesEvents.length === 0) {
+        const data = await invoke("fetch-day", { businessDay: startDate, endDate });
+        if (!data?.success) {
+          throw new Error(data?.message || "Failed to fetch sales before saving");
+        }
+        eventsToPersist = data.salesEvents || [];
+        metricsToUse = data.pagination || data.normalization
+          ? { pagination: data.pagination, normalization: data.normalization }
+          : null;
+        setSalesEvents(eventsToPersist);
+        if (metricsToUse) {
+          setSalesMetrics(metricsToUse);
         }
       }
 
+      const persistResult = await persistNumierSalesEvents({
+        connectionId,
+        salesEvents: eventsToPersist,
+        lastBusinessDay: endDate,
+      });
+
       setSaveResult({
-        savedEvents: totalEvents,
-        savedLines: totalLines,
+        savedEvents: persistResult.savedEvents,
+        savedLines: persistResult.savedLines,
+        pagination: metricsToUse?.pagination,
+        normalization: metricsToUse?.normalization
+          ? {
+              ...metricsToUse.normalization,
+              events_saved: persistResult.savedEvents,
+              lines_saved: persistResult.savedLines,
+            }
+          : undefined,
       });
     } catch (e) {
       console.error("Failed to save sales:", e);
     } finally {
       setSaving(false);
     }
-  }, [connectionId, manualTpvOverride]);
+  }, [connectionId, salesEvents, salesMetrics, manualTpvOverride]);
 
   const saveSalesToDb = useCallback(async (day: string) => {
     return saveSalesRange(day, day);
