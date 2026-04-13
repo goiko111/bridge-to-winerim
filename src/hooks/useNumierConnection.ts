@@ -351,22 +351,47 @@ export function useNumierConnection() {
     return fetchSalesRange(day, day);
   }, [fetchSalesRange]);
 
-  // ── Save Sales (date range) ───────────────────────────────
+  // ── Save Sales (chunked client-side, 5-day windows) ────────
 
   const saveSalesRange = useCallback(async (startDate: string, endDate: string) => {
     if (!connectionId) return;
     setSaving(true);
     setSaveResult(null);
     try {
-      const data = await invoke("save-sales", { businessDay: startDate, endDate });
-      if (data?.success) {
-        setSaveResult({
-          savedEvents: data.savedEvents || 0,
-          savedLines: data.savedLines || 0,
-          pagination: data.pagination,
-          normalization: data.normalization,
+      const chunkDays = 5;
+      const chunks: { start: string; end: string }[] = [];
+      let cursor = new Date(startDate);
+      const endD = new Date(endDate);
+      while (cursor <= endD) {
+        const chunkEnd = new Date(cursor);
+        chunkEnd.setDate(chunkEnd.getDate() + chunkDays - 1);
+        const effectiveEnd = chunkEnd > endD ? endD : chunkEnd;
+        chunks.push({
+          start: cursor.toISOString().slice(0, 10),
+          end: effectiveEnd.toISOString().slice(0, 10),
         });
+        cursor = new Date(effectiveEnd);
+        cursor.setDate(cursor.getDate() + 1);
       }
+
+      let totalEvents = 0;
+      let totalLines = 0;
+      for (const chunk of chunks) {
+        try {
+          const data = await invoke("save-sales", { businessDay: chunk.start, endDate: chunk.end });
+          if (data?.success) {
+            totalEvents += data.savedEvents || 0;
+            totalLines += data.savedLines || 0;
+          }
+        } catch (e) {
+          console.error(`Failed to save chunk ${chunk.start}→${chunk.end}:`, e);
+        }
+      }
+
+      setSaveResult({
+        savedEvents: totalEvents,
+        savedLines: totalLines,
+      });
     } catch (e) {
       console.error("Failed to save sales:", e);
     } finally {
