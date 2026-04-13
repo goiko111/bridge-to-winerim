@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle, Zap } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
 import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
@@ -13,7 +13,7 @@ interface ValidationReport {
   running: boolean;
   phase: string;
   sandbox_reachable: boolean | null;
-  tpv_valid: "yes" | "no" | "suspicious" | "wrong_mapping" | null;
+  tpv_valid: "yes" | "no" | "suspicious" | "wrong_mapping" | "valid_no_sales" | null;
   diagnosis_error: string | null;
   pages_read: number | null;
   tickets_seen: number | null;
@@ -78,6 +78,9 @@ export default function NumierWizard() {
     diagnosing,
     diagnosisResult,
     diagnoseTpv,
+    probing,
+    probeResult,
+    probeSales,
   } = useNumierConnection();
 
   const dateRangeValid = useMemo(() => {
@@ -106,9 +109,9 @@ export default function NumierWizard() {
     };
     setValidation({ ...report });
 
-    // Phase 1: diagnose
+    // Phase 1: diagnose (pass date range)
     try {
-      await diagnoseTpv();
+      await diagnoseTpv(startDate, endDate);
     } catch (e) {
       // diagnoseTpv sets diagnosisResult internally
     }
@@ -136,6 +139,7 @@ export default function NumierWizard() {
       ...validation,
       sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
       tpv_valid: conclusion === "valid" ? "yes" as const
+        : conclusion === "valid_no_sales_in_range" ? "valid_no_sales" as const
         : conclusion === "suspicious" ? "suspicious" as const
         : conclusion === "wrong_tpv_mapping" ? "wrong_mapping" as const
         : conclusion === "invalid" ? "no" as const
