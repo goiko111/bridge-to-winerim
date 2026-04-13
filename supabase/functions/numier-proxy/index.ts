@@ -484,8 +484,52 @@ async function handleReadProducts(connId: string) {
   }
 }
 
+// ── Probe Sales Page 1 (read-only, no save) ────────────────
+
+async function handleProbeSales(connId: string, startDate: string, endDate: string, manualTpvOverride?: string) {
+  const conn = await getConnection(connId);
+  const cfg = getNumierConfig(conn.provider_config);
+  const baseUrl = resolveBaseUrl(conn, cfg);
+  const headers = buildHeaders(conn.api_token);
+
+  const { tpvId, source } = resolveTpvId(cfg, manualTpvOverride);
+  if (!tpvId) return json({ success: false, message: "No TPV id available for probe." }, 400);
+
+  const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${startDate}&end_date=${endDate}&pag=1`;
+  try {
+    const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
+    const rawText = await res.text();
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(rawText); } catch { /* non-JSON */ }
+
+    const tickets = (body.result || []) as Record<string, unknown>[];
+    const firstTicket = tickets[0] || null;
+    const firstTicketLines = firstTicket ? ((firstTicket as any).InvoiceItems || []).length : 0;
+
+    return json({
+      success: true,
+      probe: {
+        effective_url: url,
+        http_status: res.status,
+        api_response: body.response ?? null,
+        api_message: body.message ?? null,
+        top_level_keys: Object.keys(body),
+        total_pages: body.totalpages ?? 1,
+        tickets_in_page1: tickets.length,
+        first_ticket_lines: firstTicketLines,
+        first_ticket_sample: firstTicket ? JSON.stringify(firstTicket).slice(0, 800) : null,
+        tpv_id: tpvId,
+        tpv_source: source,
+        start_date: startDate,
+        end_date: endDate,
+      },
+    });
+  } catch (err) {
+    return json({ success: false, message: `Probe failed: ${(err as Error).message}` }, 502);
+  }
+}
+
 // ── Diagnose TPV ────────────────────────────────────────────
-// Validates that a given TPV id actually works for sales, categories and products endpoints.
 
 interface DiagnoseProbe {
   endpoint: string;
@@ -495,7 +539,7 @@ interface DiagnoseProbe {
   detail: Record<string, unknown>;
 }
 
-async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
+async function handleDiagnoseTpv(connId: string, overrideTpvId?: string, startDate?: string, endDate?: string) {
   const conn = await getConnection(connId);
   const cfg = getNumierConfig(conn.provider_config);
   const baseUrl = resolveBaseUrl(conn, cfg);
@@ -506,10 +550,10 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
     return json({ success: false, message: "No TPV id provided for diagnosis." }, 400);
   }
 
-  // Yesterday as a safe short range
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const diagDay = yesterday.toISOString().slice(0, 10);
+  // Use provided date range, fallback to yesterday only as last resort
+  const diagStart = startDate || (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })();
+  const diagEnd = endDate || diagStart;
+  const usingProvidedRange = !!startDate;
 
   const probes: DiagnoseProbe[] = [];
 
@@ -533,52 +577,23 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
     probes.push({ endpoint: "getLocales", http_status: null, success: false, error: (err as Error).message, detail: {} });
   }
 
-  // ── Probe 2: v2/sales/{idTpv} (1 day, page 1) ──
+  // ── Probe 2: v2/sales/{idTpv} ──
   try {
-    const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${diagDay}&end_date=${diagDay}&pag=1`;
+    const url = `${baseUrl}/v2/sales/${tpvId}?start_date=${diagStart}&end_date=${diagEnd}&pag=1`;
     const res = await fetch(url, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
     const body = await res.json();
     const tickets = body.result || [];
     const totalPages = body.totalpages || 1;
 
-    // Pagination integrity: read ALL pages and check for duplicates
-    const allTicketIds: string[] = [];
     const ticketIdSet = new Set<string>();
     let duplicatesFound = 0;
-    let pagesRead = 1;
-
     for (const t of tickets) {
       const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
       if (ticketIdSet.has(tid)) duplicatesFound++;
       else ticketIdSet.add(tid);
-      allTicketIds.push(tid);
     }
 
-    // Read remaining pages if any
-    if (totalPages > 1) {
-      for (let p = 2; p <= Math.min(totalPages, 5); p++) {
-        try {
-          const pageUrl = `${baseUrl}/v2/sales/${tpvId}?start_date=${diagDay}&end_date=${diagDay}&pag=${p}`;
-          const pageRes = await fetch(pageUrl, { method: "GET", headers, signal: AbortSignal.timeout(15_000) });
-          const pageBody = await pageRes.json();
-          pagesRead++;
-          for (const t of (pageBody.result || [])) {
-            const tid = String(t.TaxDocumentNumber || `${t.Serie}-${t.Number}`);
-            if (ticketIdSet.has(tid)) duplicatesFound++;
-            else ticketIdSet.add(tid);
-            allTicketIds.push(tid);
-          }
-        } catch (_e) {
-          // swallow page errors — report what we got
-        }
-      }
-    }
-
-    // Line-level analysis on first page tickets
-    let totalLines = 0;
-    let linesZeroPrice = 0;
-    let linesNoProductId = 0;
-    let ticketsNoLines = 0;
+    let totalLines = 0, linesZeroPrice = 0, linesNoProductId = 0, ticketsNoLines = 0;
     for (const t of tickets) {
       const items = t.InvoiceItems || [];
       if (items.length === 0) ticketsNoLines++;
@@ -589,25 +604,30 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
       }
     }
 
+    // Check if the API returned an error message (permission denied etc.)
+    const isPermissionError = !body.response && body.message && (
+      String(body.message).includes("no pertenece") ||
+      String(body.message).includes("not belong") ||
+      String(body.message).includes("Tpv no pertenece")
+    );
+
     probes.push({
       endpoint: `v2/sales/${tpvId}`,
       http_status: res.status,
       success: res.ok && body.response === true,
       error: (!res.ok || !body.response) ? (body.message || `HTTP ${res.status}`) : null,
       detail: {
-        date_queried: diagDay,
+        date_range: `${diagStart} → ${diagEnd}`,
+        date_source: usingProvidedRange ? "wizard_selection" : "yesterday_fallback",
         total_pages_reported: totalPages,
-        pages_read: pagesRead,
         tickets_page1: tickets.length,
-        tickets_all_pages: allTicketIds.length,
         unique_ticket_ids: ticketIdSet.size,
         duplicate_ticket_ids: duplicatesFound,
-        // Line-level (page 1 only for speed)
         total_lines_page1: totalLines,
         tickets_without_lines: ticketsNoLines,
         lines_with_zero_price: linesZeroPrice,
         lines_without_product_id: linesNoProductId,
-        sample_ticket_id: allTicketIds[0] || null,
+        is_permission_error: isPermissionError || false,
       },
     });
   } catch (err) {
@@ -652,52 +672,69 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
   const prodProbe = probes.find((p) => p.endpoint.startsWith("getProducts"));
   const locProbe = probes.find((p) => p.endpoint === "getLocales");
 
-  let conclusion: "valid" | "suspicious" | "invalid" | "wrong_tpv_mapping" = "valid";
+  let conclusion: "valid" | "valid_no_sales_in_range" | "suspicious" | "invalid" | "wrong_tpv_mapping" = "valid";
   const warnings: string[] = [];
 
-  // Detect the specific case: getLocales works but TPV-based endpoints fail with permission error
   const localesOk = locProbe?.success === true;
-  const tpvEndpointsFailed = !salesProbe?.success || !catProbe?.success || !prodProbe?.success;
-  const tpvPermissionError = [salesProbe, catProbe, prodProbe].some(
-    (p) => p && !p.success && p.error && (
-      p.error.includes("no pertenece") || p.error.includes("not belong") || p.error.includes("Tpv no pertenece")
-    )
+  const catOk = catProbe?.success === true;
+  const prodOk = prodProbe?.success === true;
+  const salesOk = salesProbe?.success === true;
+  const salesPermissionError = salesProbe?.detail?.is_permission_error === true;
+  const catPermissionError = catProbe && !catProbe.success && catProbe.error && (
+    catProbe.error.includes("no pertenece") || catProbe.error.includes("not belong")
+  );
+  const prodPermissionError = prodProbe && !prodProbe.success && prodProbe.error && (
+    prodProbe.error.includes("no pertenece") || prodProbe.error.includes("not belong")
   );
 
-  if (localesOk && tpvEndpointsFailed && tpvPermissionError) {
-    conclusion = "wrong_tpv_mapping";
-    const locIds = (locProbe?.detail?.location_ids || []) as string[];
-    warnings.push(
-      `getLocales returned location IDs [${locIds.join(", ")}] but TPV ${tpvId} is rejected by sales/categories/products. ` +
-      `The location ID from getLocales is NOT the same as the operational TPV ID. ` +
-      `Ask Numier for the correct idTpv, or try a different value in the Manual TPV Override field.`
-    );
-  } else if (!salesProbe?.success) {
-    conclusion = "invalid";
-    warnings.push(`Sales endpoint failed — TPV ${tpvId} may not be valid. Error: ${salesProbe?.error || "unknown"}`);
+  // Case 1: TPV-based endpoints all fail with permission errors
+  if (localesOk && (salesPermissionError || catPermissionError || prodPermissionError)) {
+    if (!catOk && !prodOk) {
+      conclusion = "wrong_tpv_mapping";
+      const locIds = (locProbe?.detail?.location_ids || []) as string[];
+      warnings.push(
+        `getLocales returned location IDs [${locIds.join(", ")}] but TPV ${tpvId} is rejected. ` +
+        `Set the correct idTpv in the Manual TPV Override field.`
+      );
+    } else if (catOk && prodOk && salesPermissionError) {
+      conclusion = "wrong_tpv_mapping";
+      warnings.push(`Categories and products work but sales endpoint rejects TPV ${tpvId}. Ask Numier for the correct sales idTpv.`);
+    }
+  }
+  // Case 2: Categories & products work, sales returns 0 tickets (valid TPV, just no data in range)
+  else if (catOk && prodOk && salesOk && (salesProbe?.detail?.tickets_page1 as number) === 0) {
+    conclusion = "valid_no_sales_in_range";
+    warnings.push(`TPV ${tpvId} is valid (categories: ✅, products: ✅) but 0 sales found in range ${diagStart} → ${diagEnd}. Try a different date range.`);
+  }
+  // Case 3: Sales failed for non-permission reason
+  else if (!salesOk && conclusion === "valid") {
+    if (catOk && prodOk) {
+      conclusion = "valid_no_sales_in_range";
+      warnings.push(`Categories and products work but sales endpoint returned an error for ${diagStart} → ${diagEnd}: ${salesProbe?.error || "unknown"}`);
+    } else {
+      conclusion = "invalid";
+      warnings.push(`Sales endpoint failed — TPV ${tpvId} may not be valid. Error: ${salesProbe?.error || "unknown"}`);
+    }
   }
 
-  if (salesProbe?.success && (salesProbe.detail.tickets_page1 as number) === 0) {
-    warnings.push("Sales returned 0 tickets for yesterday. Possibly no sales or wrong TPV.");
+  // Additional warnings (non-blocking if cat+prod work)
+  if (salesProbe?.detail?.duplicate_ticket_ids && (salesProbe.detail.duplicate_ticket_ids as number) > 0) {
+    warnings.push(`${salesProbe.detail.duplicate_ticket_ids} duplicate ticket IDs found.`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
-  if (salesProbe?.detail.duplicate_ticket_ids && (salesProbe.detail.duplicate_ticket_ids as number) > 0) {
-    warnings.push(`${salesProbe.detail.duplicate_ticket_ids} duplicate ticket IDs found across pages.`);
-    if (conclusion === "valid") conclusion = "suspicious";
-  }
-  if (!catProbe?.success && conclusion !== "wrong_tpv_mapping") {
+  if (!catOk && conclusion !== "wrong_tpv_mapping") {
     warnings.push(`Categories endpoint failed for TPV ${tpvId}. Error: ${catProbe?.error || "unknown"}`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
-  if (!prodProbe?.success && conclusion !== "wrong_tpv_mapping") {
+  if (!prodOk && conclusion !== "wrong_tpv_mapping") {
     warnings.push(`Products endpoint failed for TPV ${tpvId}. Error: ${prodProbe?.error || "unknown"}`);
     if (conclusion === "valid") conclusion = "suspicious";
   }
   if (locProbe?.success && !(locProbe.detail.tpv_id_found_in_locales as boolean) && conclusion !== "wrong_tpv_mapping") {
-    warnings.push("Selected TPV id was NOT found in getLocales results — this is expected if location_id ≠ tpv_id.");
+    warnings.push("TPV id not found in getLocales — this is normal if location_id ≠ tpv_id.");
   }
 
-  // Persist diagnosis result
+  // Persist
   const diagResult = { conclusion, warnings, probes, diagnosed_at: new Date().toISOString() };
   const updatedCfg = {
     ...cfg,
@@ -715,7 +752,7 @@ async function handleDiagnoseTpv(connId: string, overrideTpvId?: string) {
     conclusion,
     warnings,
     probes,
-    // Extra context for the UI
+    date_range: { start: diagStart, end: diagEnd, source: usingProvidedRange ? "wizard" : "yesterday" },
     location_ids_from_locales: locProbe?.detail?.location_ids || [],
   });
 }
@@ -761,7 +798,14 @@ serve(async (req) => {
       }
 
       case "diagnose-tpv":
-        return await handleDiagnoseTpv(connectionId, payload.tpvId || payload.selected_tpv_id);
+        return await handleDiagnoseTpv(connectionId, payload.tpvId || payload.selected_tpv_id, payload.startDate, payload.endDate);
+
+      case "probe-sales": {
+        const ps = payload.startDate || payload.businessDay;
+        const pe = payload.endDate || ps;
+        if (!ps) return json({ error: "Missing startDate" }, 400);
+        return await handleProbeSales(connectionId, ps, pe, payload.manualTpvOverride);
+      }
 
       case "write-catalog":
         return json({ error: "write-catalog not demonstrated for Numier", status: "NOT_DEMONSTRATED" }, 501);
