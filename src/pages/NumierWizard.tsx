@@ -904,9 +904,19 @@ export default function NumierWizard() {
               ))}
             </div>
 
-            <Button onClick={enableSync} className="w-full">
-              Enable Automated Sync
-            </Button>
+            {syncEnabled ? (
+              <div className="flex items-center gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800">
+                <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                  Sincronización activada correctamente
+                </span>
+              </div>
+            ) : (
+              <Button onClick={enableSync} className="w-full" disabled={enablingSyncLoading}>
+                {enablingSyncLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Enable Automated Sync
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
