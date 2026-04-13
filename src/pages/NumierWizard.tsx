@@ -152,6 +152,7 @@ export default function NumierWizard() {
       sandbox_reachable: diag ? diag.success === true || !!conclusion : null,
       tpv_valid: conclusion === "valid" ? "yes" as const
         : conclusion === "valid_no_sales_in_range" ? "valid_no_sales" as const
+        : conclusion === "range_too_large" ? "valid_no_sales" as const
         : conclusion === "suspicious" ? "suspicious" as const
         : conclusion === "wrong_tpv_mapping" ? "wrong_mapping" as const
         : conclusion === "invalid" ? "no" as const
