@@ -147,6 +147,8 @@ export default function NumierWizard() {
       diagnosis_error: diag && !diag.success ? ((diag.error || diag.message) as string) : null,
       numier_message: conclusion === "wrong_tpv_mapping"
         ? ((diag?.warnings as string[])?.join(" · ") || "Location ID ≠ TPV ID")
+        : conclusion === "valid_no_sales_in_range"
+        ? ((diag?.warnings as string[])?.join(" · ") || "No sales in selected range")
         : null,
       pages_read: salesMetrics?.pagination?.pages_read ?? null,
       tickets_seen: salesMetrics?.pagination?.tickets_seen ?? null,
