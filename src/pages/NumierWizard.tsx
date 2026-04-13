@@ -81,14 +81,26 @@ export default function NumierWizard() {
     probing,
     probeResult,
     probeSales,
+    loadingChunked,
+    chunkedResult,
+    fetchSalesChunked,
   } = useNumierConnection();
+
+  const [chunkDays, setChunkDays] = useState(7);
 
   const dateRangeValid = useMemo(() => {
     if (!startDate || !endDate) return false;
     return startDate <= endDate;
   }, [startDate, endDate]);
 
-  const canFetchSales = !!activeTpvId && dateRangeValid && !loadingSales;
+  const rangeDays = useMemo(() => {
+    if (!startDate || !endDate) return 0;
+    const a = new Date(startDate);
+    const b = new Date(endDate);
+    return Math.round((b.getTime() - a.getTime()) / 86400000) + 1;
+  }, [startDate, endDate]);
+
+  const canFetchSales = !!activeTpvId && dateRangeValid && !loadingSales && !loadingChunked;
 
   // ── Sandbox Validation ────────────────────────────────────
   const [validation, setValidation] = useState<ValidationReport | null>(null);
