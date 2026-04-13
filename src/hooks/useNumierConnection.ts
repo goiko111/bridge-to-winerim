@@ -378,6 +378,35 @@ export function useNumierConnection() {
     return saveSalesRange(day, day);
   }, [saveSalesRange]);
 
+  // ── Fetch Sales Chunked ───────────────────────────────────
+
+  const [chunkedResult, setChunkedResult] = useState<Record<string, unknown> | null>(null);
+  const [loadingChunked, setLoadingChunked] = useState(false);
+
+  const fetchSalesChunked = useCallback(async (startDate: string, endDate: string, chunkDays = 7) => {
+    if (!connectionId) return;
+    setLoadingChunked(true);
+    setChunkedResult(null);
+    setSalesEvents([]);
+    setSalesMetrics(null);
+    try {
+      const data = await invoke("fetch-chunked", { startDate, endDate, chunkDays });
+      setChunkedResult(data);
+      if (data?.success) {
+        setSalesEvents(data.salesEvents || []);
+        setCapabilities((prev) => ({ ...prev, read_sales: true }));
+        if (data.pagination || data.normalization) {
+          setSalesMetrics({ pagination: data.pagination, normalization: data.normalization });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch chunked sales:", e);
+      setChunkedResult({ success: false, error: (e as Error).message });
+    } finally {
+      setLoadingChunked(false);
+    }
+  }, [connectionId, manualTpvOverride]);
+
   // ── Diagnose TPV ───────────────────────────────────────────
 
   const diagnoseTpv = useCallback(async (startDate?: string, endDate?: string) => {
@@ -473,5 +502,9 @@ export function useNumierConnection() {
     probing,
     probeResult,
     probeSales,
+
+    loadingChunked,
+    chunkedResult,
+    fetchSalesChunked,
   };
 }
