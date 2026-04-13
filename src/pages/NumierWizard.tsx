@@ -656,14 +656,6 @@ export default function NumierWizard() {
               </div>
             )}
 
-            {/* range_too_large error from single fetch */}
-            {!loadingSales && salesEvents.length === 0 && salesMetrics === null && probeResult?.probe && !(probeResult.probe as any).api_response && isRangeTooLargeMsg(String((probeResult.probe as any).api_message || "")) && (
-              <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded-md border border-amber-500/20">
-                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
-                <span>Numier returned "range too large". Use <strong>Fetch Chunked</strong> above to split into smaller blocks.</span>
-              </div>
-            )}
-
             {/* Sales results */}
             {salesEvents.length > 0 && (
               <div className="space-y-4">
