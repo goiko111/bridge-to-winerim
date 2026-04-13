@@ -730,6 +730,13 @@ export default function NumierWizard() {
                       </div>
                     )}
 
+                    {validationReport.tpv_valid === "valid_no_sales" && validationReport.numier_message && (
+                      <div className="flex items-start gap-2 text-xs text-blue-700 dark:text-blue-400 bg-blue-500/10 p-2 rounded">
+                        <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>{validationReport.numier_message}</span>
+                      </div>
+                    )}
+
                     {validationReport.diagnosis_error && (
                       <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
                         <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
