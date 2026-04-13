@@ -71,6 +71,8 @@ export default function NumierWizard() {
     saveResult,
     saveSalesRange,
     enableSync,
+    syncEnabled,
+    enablingSyncLoading,
     activeTpvId,
     tpvSource,
     manualTpvOverride,

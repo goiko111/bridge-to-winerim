@@ -612,6 +612,8 @@ export function useNumierConnection() {
     updateConnection,
     loadConnection,
     enableSync,
+    syncEnabled,
+    enablingSyncLoading,
 
     diagnosing,
     diagnosisResult,
