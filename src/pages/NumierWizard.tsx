@@ -705,8 +705,10 @@ export default function NumierWizard() {
                       <ValidationRow label="Sandbox reachable" value={validationReport.sandbox_reachable === true ? "yes" : validationReport.sandbox_reachable === false ? "no" : "—"} ok={validationReport.sandbox_reachable === true} />
                       <ValidationRow
                         label="TPV valid"
-                        value={validationReport.tpv_valid === "wrong_mapping" ? "wrong mapping" : (validationReport.tpv_valid ?? "—")}
-                        ok={validationReport.tpv_valid === "yes"}
+                        value={validationReport.tpv_valid === "wrong_mapping" ? "wrong mapping"
+                          : validationReport.tpv_valid === "valid_no_sales" ? "valid (no sales in range)"
+                          : (validationReport.tpv_valid ?? "—")}
+                        ok={validationReport.tpv_valid === "yes" || validationReport.tpv_valid === "valid_no_sales"}
                         warn={validationReport.tpv_valid === "suspicious" || validationReport.tpv_valid === "wrong_mapping"}
                       />
                       <ValidationRow label="Pages read" value={validationReport.pages_read ?? "—"} />
