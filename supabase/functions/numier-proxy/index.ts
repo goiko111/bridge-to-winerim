@@ -50,11 +50,13 @@ function resolveBaseUrl(conn: { base_url: string }, cfg: NumierConfig): string {
   return url;
 }
 
-function resolveTpvId(cfg: NumierConfig, manualOverride?: string): { tpvId: string | null; source: "manual_override" | "selected" | "fallback_single" | "none"; locationCount: number } {
+function resolveTpvId(cfg: NumierConfig, manualOverride?: string): { tpvId: string | null; source: "manual_override" | "selected" | "none"; locationCount: number } {
   if (manualOverride) return { tpvId: manualOverride, source: "manual_override", locationCount: (cfg.discovered_locations || []).length };
+  // Check manual_tpv_override persisted in config
+  if (cfg.manual_tpv_override) return { tpvId: cfg.manual_tpv_override, source: "manual_override", locationCount: (cfg.discovered_locations || []).length };
   const locs = cfg.discovered_locations || [];
   if (cfg.selected_tpv_id) return { tpvId: cfg.selected_tpv_id, source: "selected", locationCount: locs.length };
-  if (locs.length === 1 && locs[0]?.id) return { tpvId: locs[0].id, source: "fallback_single", locationCount: 1 };
+  // Explicitly do NOT fall back to discovered_locations[0].id — location_id ≠ tpv_id
   return { tpvId: null, source: "none", locationCount: locs.length };
 }
 
