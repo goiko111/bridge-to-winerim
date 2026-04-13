@@ -570,6 +570,100 @@ export default function NumierWizard() {
               </div>
             )}
 
+            {/* Range warning + Chunked fetch */}
+            {rangeDays > 7 && (
+              <div className="rounded-md border border-dashed border-amber-500/50 bg-amber-500/5 p-4 space-y-3">
+                <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>Range of <strong>{rangeDays} days</strong> may be too large for a single Numier request. Use chunked fetch to split into smaller blocks.</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-medium text-foreground whitespace-nowrap">Chunk size:</label>
+                  <select
+                    value={chunkDays}
+                    onChange={(e) => setChunkDays(Number(e.target.value))}
+                    className="text-xs border border-border rounded px-2 py-1 bg-background text-foreground"
+                  >
+                    <option value={3}>3 days</option>
+                    <option value={5}>5 days</option>
+                    <option value={7}>7 days</option>
+                    <option value={14}>14 days</option>
+                  </select>
+                  <span className="text-xs text-muted-foreground">
+                    = {Math.ceil(rangeDays / chunkDays)} chunks
+                  </span>
+                </div>
+                <Button
+                  onClick={() => fetchSalesChunked(startDate, endDate, chunkDays)}
+                  disabled={!canFetchSales || loadingChunked}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  {loadingChunked && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <BarChart3 className="mr-2 h-4 w-4" />
+                  Fetch Chunked ({Math.ceil(rangeDays / chunkDays)} blocks × {chunkDays}d)
+                </Button>
+              </div>
+            )}
+
+            {/* Chunked result details */}
+            {chunkedResult && (
+              <div className="rounded-md border border-border p-4 space-y-3">
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <BarChart3 className="h-3.5 w-3.5" /> Chunked Fetch Results
+                </h4>
+                {chunkedResult.success ? (() => {
+                  const ch = chunkedResult.chunking as { total_chunks: number; successful_chunks: number; failed_chunks: number; chunk_details: any[] };
+                  return (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="rounded-md border border-border p-2 text-center">
+                          <div className="text-sm font-bold text-foreground">{ch.total_chunks}</div>
+                          <div className="text-[10px] text-muted-foreground">Total chunks</div>
+                        </div>
+                        <div className="rounded-md border border-emerald-500/30 p-2 text-center">
+                          <div className="text-sm font-bold text-emerald-600">{ch.successful_chunks}</div>
+                          <div className="text-[10px] text-muted-foreground">Successful</div>
+                        </div>
+                        <div className={`rounded-md border p-2 text-center ${ch.failed_chunks > 0 ? "border-destructive/30" : "border-border"}`}>
+                          <div className={`text-sm font-bold ${ch.failed_chunks > 0 ? "text-destructive" : "text-foreground"}`}>{ch.failed_chunks}</div>
+                          <div className="text-[10px] text-muted-foreground">Failed</div>
+                        </div>
+                      </div>
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground font-medium">Chunk details ({ch.chunk_details.length})</summary>
+                        <div className="mt-2 space-y-1.5">
+                          {ch.chunk_details.map((d: any, i: number) => (
+                            <div key={i} className={`flex items-center justify-between p-2 rounded border text-[11px] ${d.success ? "border-border" : "border-destructive/30 bg-destructive/5"}`}>
+                              <span className="font-mono">{d.start} → {d.end}</span>
+                              <div className="flex items-center gap-2">
+                                {d.success ? (
+                                  <span className="text-muted-foreground">{d.tickets} tickets · {d.pages_read}p</span>
+                                ) : (
+                                  <span className="text-destructive">{d.error_type}: {d.error_message?.slice(0, 60)}</span>
+                                )}
+                                {d.success ? <CheckCircle2 className="h-3 w-3 text-emerald-500" /> : <XCircle className="h-3 w-3 text-destructive" />}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </div>
+                  );
+                })() : (
+                  <div className="text-xs text-destructive">{String(chunkedResult.error || chunkedResult.message || "Chunked fetch failed")}</div>
+                )}
+              </div>
+            )}
+
+            {/* range_too_large error from single fetch */}
+            {!loadingSales && salesEvents.length === 0 && salesMetrics === null && probeResult?.probe && !(probeResult.probe as any).api_response && isRangeTooLargeMsg(String((probeResult.probe as any).api_message || "")) && (
+              <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded-md border border-amber-500/20">
+                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>Numier returned "range too large". Use <strong>Fetch Chunked</strong> above to split into smaller blocks.</span>
+              </div>
+            )}
+
             {/* Sales results */}
             {salesEvents.length > 0 && (
               <div className="space-y-4">
