@@ -488,14 +488,73 @@ export default function NumierWizard() {
               </div>
             </div>
 
-            <Button
-              onClick={() => fetchSalesRange(startDate, endDate)}
-              disabled={!canFetchSales}
-              className="w-full"
-            >
-              {loadingSales && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Fetch Sales ({startDate === endDate ? "1 day" : `${startDate} → ${endDate}`})
-            </Button>
+            {/* Probe & Fetch buttons */}
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                onClick={() => probeSales(startDate, endDate)}
+                disabled={!canFetchSales || probing}
+                variant="outline"
+                className="w-full"
+              >
+                {probing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Zap className="mr-2 h-4 w-4" />
+                Probe Page 1
+              </Button>
+              <Button
+                onClick={() => fetchSalesRange(startDate, endDate)}
+                disabled={!canFetchSales}
+                className="w-full"
+              >
+                {loadingSales && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Fetch All Sales
+              </Button>
+            </div>
+
+            {/* Probe result */}
+            {probeResult && (
+              <div className="rounded-md border border-border p-4 space-y-3">
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5" /> Sales Probe (Page 1 only — not saved)
+                </h4>
+                {probeResult.success ? (
+                  <div className="space-y-2">
+                    {(() => {
+                      const p = probeResult.probe as Record<string, unknown>;
+                      return (
+                        <>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                            <MetricRow label="Effective URL" value={String(p.effective_url || "—")} />
+                            <MetricRow label="HTTP Status" value={Number(p.http_status)} />
+                            <MetricRow label="API response" value={p.api_response === true ? "✅ true" : `❌ ${p.api_response}`} />
+                            <MetricRow label="Total pages" value={Number(p.total_pages)} />
+                            <MetricRow label="Tickets in page 1" value={Number(p.tickets_in_page1)} />
+                            <MetricRow label="Lines in 1st ticket" value={Number(p.first_ticket_lines)} />
+                            <MetricRow label="TPV ID" value={String(p.tpv_id)} />
+                            <MetricRow label="TPV source" value={String(p.tpv_source)} />
+                          </div>
+                          {p.api_message && (
+                            <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded">
+                              Numier message: {String(p.api_message)}
+                            </div>
+                          )}
+                          <div className="text-xs text-muted-foreground font-medium">Top-level keys: {(p.top_level_keys as string[])?.join(", ")}</div>
+                          {p.first_ticket_sample && (
+                            <details className="text-xs">
+                              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">First ticket sample (raw)</summary>
+                              <pre className="mt-1 bg-muted p-2 rounded overflow-x-auto text-[10px] leading-tight max-h-48">
+                                {String(p.first_ticket_sample)}
+                              </pre>
+                            </details>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <div className="text-xs text-destructive">{String(probeResult.error || probeResult.message || "Probe failed")}</div>
+                )}
+              </div>
+            )}
 
             {/* Sales results */}
             {salesEvents.length > 0 && (
