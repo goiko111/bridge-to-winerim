@@ -378,7 +378,7 @@ export function useNumierConnection() {
     return saveSalesRange(day, day);
   }, [saveSalesRange]);
 
-  // ── Fetch Sales Chunked ───────────────────────────────────
+  // ── Fetch Sales Chunked (client-side loop) ─────────────────
 
   const [chunkedResult, setChunkedResult] = useState<Record<string, unknown> | null>(null);
   const [loadingChunked, setLoadingChunked] = useState(false);
@@ -389,16 +389,90 @@ export function useNumierConnection() {
     setChunkedResult(null);
     setSalesEvents([]);
     setSalesMetrics(null);
+
     try {
-      const data = await invoke("fetch-chunked", { startDate, endDate, chunkDays });
-      setChunkedResult(data);
-      if (data?.success) {
-        setSalesEvents(data.salesEvents || []);
-        setCapabilities((prev) => ({ ...prev, read_sales: true }));
-        if (data.pagination || data.normalization) {
-          setSalesMetrics({ pagination: data.pagination, normalization: data.normalization });
+      // Build chunks client-side
+      const chunks: { start: string; end: string }[] = [];
+      let cursor = new Date(startDate);
+      const endD = new Date(endDate);
+      while (cursor <= endD) {
+        const chunkEnd = new Date(cursor);
+        chunkEnd.setDate(chunkEnd.getDate() + chunkDays - 1);
+        const effectiveEnd = chunkEnd > endD ? endD : chunkEnd;
+        chunks.push({
+          start: cursor.toISOString().slice(0, 10),
+          end: effectiveEnd.toISOString().slice(0, 10),
+        });
+        cursor = new Date(effectiveEnd);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const allEvents: SalesEvent[] = [];
+      const chunkDetails: Record<string, unknown>[] = [];
+      let totalPagesRead = 0;
+      let totalTicketsSeen = 0;
+      let totalUniqueIds = 0;
+      let totalDuplicates = 0;
+      let successfulChunks = 0;
+      const globalTicketIds = new Set<string>();
+
+      for (const chunk of chunks) {
+        try {
+          const data = await invoke("fetch-day", { businessDay: chunk.start, endDate: chunk.end });
+          if (data?.success) {
+            successfulChunks++;
+            const events: SalesEvent[] = data.salesEvents || [];
+            for (const ev of events) {
+              if (globalTicketIds.has(ev.provider_doc_id)) {
+                totalDuplicates++;
+              } else {
+                globalTicketIds.add(ev.provider_doc_id);
+                allEvents.push(ev);
+              }
+            }
+            totalPagesRead += data.pagination?.pages_read || 0;
+            totalTicketsSeen += data.pagination?.tickets_seen || 0;
+            chunkDetails.push({ start: chunk.start, end: chunk.end, success: true, tickets: events.length });
+          } else {
+            chunkDetails.push({ start: chunk.start, end: chunk.end, success: false, error: data?.message || "Unknown" });
+          }
+        } catch (e) {
+          chunkDetails.push({ start: chunk.start, end: chunk.end, success: false, error: (e as Error).message });
         }
       }
+
+      totalUniqueIds = globalTicketIds.size;
+      const totalLines = allEvents.reduce((s, e) => s + (e.lines?.length || 0), 0);
+
+      const result = {
+        success: true,
+        mode: "chunked",
+        salesEvents: allEvents,
+        count: allEvents.length,
+        chunking: {
+          total_chunks: chunks.length,
+          successful_chunks: successfulChunks,
+          failed_chunks: chunks.length - successfulChunks,
+          chunk_details: chunkDetails,
+        },
+        pagination: {
+          pages_read: totalPagesRead,
+          tickets_seen: totalTicketsSeen,
+          unique_ticket_ids: totalUniqueIds,
+          duplicate_ticket_ids_count: totalDuplicates,
+        },
+        normalization: {
+          events_count: allEvents.length,
+          total_lines: totalLines,
+        },
+      };
+
+      setChunkedResult(result);
+      setSalesEvents(allEvents);
+      if (allEvents.length > 0) {
+        setCapabilities((prev) => ({ ...prev, read_sales: true }));
+      }
+      setSalesMetrics({ pagination: result.pagination, normalization: result.normalization as any });
     } catch (e) {
       console.error("Failed to fetch chunked sales:", e);
       setChunkedResult({ success: false, error: (e as Error).message });
