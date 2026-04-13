@@ -457,8 +457,24 @@ export default function NumierWizard() {
               activeLocationId={activeLocationId}
               diagnosing={diagnosing}
               diagnosisResult={diagnosisResult}
-              onDiagnose={diagnoseTpv}
+              onDiagnose={() => diagnoseTpv(startDate, endDate)}
             />
+
+            {/* Sandbox date helper */}
+            {apiBaseUrl.includes("sandbox") && (
+              <div className="flex items-start gap-2 text-xs bg-blue-500/10 text-blue-700 dark:text-blue-400 p-2 rounded-md border border-blue-500/20">
+                <Info className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>Sandbox data is available until <strong>2023-09-29</strong>. Make sure your date range falls within this period.</span>
+              </div>
+            )}
+
+            {/* Warn if range is outside sandbox data */}
+            {apiBaseUrl.includes("sandbox") && startDate > "2023-09-29" && (
+              <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 p-2 rounded-md border border-amber-500/20">
+                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>⚠ Your start date ({startDate}) is after the sandbox data limit (2023-09-29). You will get 0 results.</span>
+              </div>
+            )}
 
             {/* Date range inputs */}
             <div className="grid grid-cols-2 gap-3">
