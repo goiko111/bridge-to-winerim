@@ -553,9 +553,20 @@ export function useNumierConnection() {
 
   // ── Enable Sync ───────────────────────────────────────────
 
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [enablingSyncLoading, setEnablingSyncLoading] = useState(false);
+
   const enableSync = async () => {
     if (!connectionId) return;
-    await updateConnection(connectionId, { enabled: true });
+    setEnablingSyncLoading(true);
+    try {
+      await updateConnection(connectionId, { enabled: true });
+      setSyncEnabled(true);
+    } catch (e: any) {
+      console.error("enableSync error:", e);
+    } finally {
+      setEnablingSyncLoading(false);
+    }
   };
 
   return {
