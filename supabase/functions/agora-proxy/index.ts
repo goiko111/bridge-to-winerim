@@ -1734,8 +1734,10 @@ serve(async (req) => {
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
 
-        for (const inv of invoices) {
-          const docId = String(inv.InvoiceId || inv.Id || "");
+        for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+          const inv = invoices[invIdx];
+          const rawDocId = String(inv.InvoiceId || inv.Id || "");
+          const docId = rawDocId || `${day}_inv_${invIdx}`;
           const items = inv.InvoiceItems || [];
           let docTotal = 0;
           const lineData: Record<string, unknown>[] = [];
@@ -5332,8 +5334,10 @@ ${costPricesXml}
           const invoices = parseInvoices(rawData);
           if (invoices.length === 0) { lastDaySynced = day; continue; }
 
-          for (const inv of invoices) {
-            const docId = String(inv.InvoiceId || inv.Id || "");
+          for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+            const inv = invoices[invIdx];
+            const rawDocId = String(inv.InvoiceId || inv.Id || "");
+            const docId = rawDocId || `${day}_inv_${invIdx}`;
             const items = inv.InvoiceItems || [];
             let docTotal = 0;
             const lineData: Record<string, unknown>[] = [];
