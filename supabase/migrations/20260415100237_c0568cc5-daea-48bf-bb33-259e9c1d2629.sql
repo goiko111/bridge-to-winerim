@@ -1,0 +1,1 @@
+ALTER TABLE public.sales_line_items DROP CONSTRAINT IF EXISTS sales_line_items_event_provider_product_unique;
