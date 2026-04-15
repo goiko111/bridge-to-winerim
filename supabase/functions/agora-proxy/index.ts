@@ -214,7 +214,7 @@ function parseInvoices(raw: any): any[] {
 async function syncStockForDay(supabase: any, connectionId: string, day: string, winerimToken: string) {
   const WINERIM_BASE = "https://app.winerim.com/api/v2";
   const winerimHeaders = {
-    "Authorization": `Bearer ${winerimToken}`,
+    "WINERIM-API-TOKEN": winerimToken,
     "Content-Type": "application/json",
     "Accept": "application/json",
   };
