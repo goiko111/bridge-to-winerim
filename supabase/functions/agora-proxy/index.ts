@@ -304,10 +304,27 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       }
 
       const stockData = await stockRes.json();
-      // The API may return { data: { id, stock, ... } } or { id, stock, ... }
-      const stockObj = stockData?.data || stockData;
-      const stockId = stockObj?.id || stockObj?.stockId;
-      const currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
+      // Winerim returns { stocks: [{id, stock, stockActive, winePrice: {variant}},...] }
+      // or legacy { data: { id, stock } } or { id, stock }
+      let stockId: number | null = null;
+      let currentStock = 0;
+
+      const stocksArr = stockData?.stocks || stockData?.data?.stocks;
+      if (Array.isArray(stocksArr) && stocksArr.length > 0) {
+        // Prefer stockActive entry, then botella variant, then first entry
+        const active = stocksArr.find((s: Record<string, unknown>) => s.stockActive === true);
+        const botella = stocksArr.find((s: Record<string, unknown>) => {
+          const v = (s.winePrice as Record<string, unknown>)?.variant;
+          return v === "botella" || v === "botella-pequena";
+        });
+        const chosen = active || botella || stocksArr[0];
+        stockId = chosen.id as number;
+        currentStock = Number(chosen.stock ?? 0);
+      } else {
+        const stockObj = stockData?.data || stockData;
+        stockId = stockObj?.id || stockObj?.stockId;
+        currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
+      }
 
       if (!stockId) {
         await supabase.from("stock_sync_log").update({
