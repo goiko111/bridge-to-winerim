@@ -4981,6 +4981,9 @@ export default function AgoraWizard() {
             <StepSalesAnalytics connectionId={connectionId} />
           )}
           {currentStep === 13 && (
+            <AgoraTodaysSalesStock connectionId={connectionId} />
+          )}
+          {currentStep === 14 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
               salesEvents={salesEvents} selectedDay={selectedDay}
               onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
@@ -4998,7 +5001,7 @@ export default function AgoraWizard() {
         <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Previous
         </Button>
-        {currentStep < 13 && (
+        {currentStep < 14 && (
           <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
             Next <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
