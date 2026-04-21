@@ -52,7 +52,8 @@ const steps = [
   { id: 10, label: "Write Settings", icon: Wrench },
   { id: 11, label: "Outbound Sync", icon: Upload },
   { id: 12, label: "Sales Analytics", icon: BarChart3 },
-  { id: 13, label: "Go Live", icon: Power },
+  { id: 13, label: "Today's Sales & Stock", icon: Wine },
+  { id: 14, label: "Go Live", icon: Power },
 ];
 
 // Helper to fetch all rows from a table without limit
