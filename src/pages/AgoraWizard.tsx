@@ -31,6 +31,7 @@ import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
 import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
+import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
