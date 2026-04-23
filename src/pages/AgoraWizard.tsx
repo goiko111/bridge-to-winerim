@@ -4939,7 +4939,22 @@ export default function AgoraWizard() {
               lastClosedDay={lastClosedDay} />
           )}
           {currentStep === 8 && (
-            <StepWineMatching connectionId={connectionId} />
+            <Tabs defaultValue="auto" className="space-y-4">
+              <TabsList className="w-full">
+                <TabsTrigger value="auto" className="flex-1">
+                  <Zap className="mr-1.5 h-3.5 w-3.5" /> Auto / AI Matching
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="flex-1">
+                  <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Manual Side-by-Side
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="auto">
+                <StepWineMatching connectionId={connectionId} />
+              </TabsContent>
+              <TabsContent value="manual">
+                <AgoraManualMatchPanel connectionId={connectionId} />
+              </TabsContent>
+            </Tabs>
           )}
           {currentStep === 9 && (
             <StepWinerimCatalog connectionId={connectionId}
