@@ -1316,6 +1316,114 @@ Respond ONLY with the JSON array, no other text.`;
       );
     }
 
+    // ── CREATE MANUAL MAPPING ──
+    // Creates or updates a product_mappings row linking an Agora product to a Winerim wine
+    if (action === "create-manual-mapping") {
+      const {
+        providerProductId,
+        providerProductName,
+        winerimWineId,
+        winerimWineName,
+        formatType,
+      } = body as {
+        providerProductId?: string;
+        providerProductName?: string;
+        winerimWineId?: string;
+        winerimWineName?: string;
+        formatType?: string;
+      };
+
+      if (!connectionId || !providerProductId || !providerProductName || !winerimWineId) {
+        return new Response(
+          JSON.stringify({ error: "connectionId, providerProductId, providerProductName, winerimWineId required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      // Try to find existing mapping for same provider product
+      const { data: existing } = await supabase
+        .from("product_mappings")
+        .select("id")
+        .eq("connection_id", connectionId)
+        .eq("provider_product_id", providerProductId)
+        .maybeSingle();
+
+      const payload = {
+        connection_id: connectionId,
+        provider_product_id: providerProductId,
+        provider_product_name: providerProductName,
+        winerim_wine_id: winerimWineId,
+        winerim_wine_name: winerimWineName || "",
+        match_method: "MANUAL",
+        match_score: 100,
+        status: "CONFIRMED",
+        format_type: formatType || "BOTTLE",
+      };
+
+      let mappingId: string | null = null;
+      if (existing?.id) {
+        const { error } = await supabase
+          .from("product_mappings")
+          .update(payload)
+          .eq("id", existing.id);
+        if (error) {
+          return new Response(JSON.stringify({ error: error.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        mappingId = existing.id;
+      } else {
+        const { data: inserted, error } = await supabase
+          .from("product_mappings")
+          .insert(payload)
+          .select("id")
+          .single();
+        if (error) {
+          return new Response(JSON.stringify({ error: error.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        mappingId = inserted?.id ?? null;
+      }
+
+      // Backfill sales_line_items for this provider product
+      await supabase.from("sales_line_items")
+        .update({ winerim_product_id: winerimWineId, mapped: true })
+        .eq("connection_id", connectionId)
+        .eq("provider_product_id", providerProductId);
+
+      return new Response(
+        JSON.stringify({ success: true, mappingId, action: existing?.id ? "updated" : "created" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // ── UNLINK MAPPING (clears the winerim link, keeps row as REJECTED) ──
+    if (action === "unlink-mapping") {
+      const { providerProductId } = body as { providerProductId?: string };
+      if (!connectionId || !providerProductId) {
+        return new Response(JSON.stringify({ error: "connectionId, providerProductId required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      await supabase.from("product_mappings")
+        .update({
+          winerim_wine_id: null,
+          winerim_wine_name: null,
+          match_method: "MANUAL",
+          match_score: 0,
+          status: "REJECTED",
+        })
+        .eq("connection_id", connectionId)
+        .eq("provider_product_id", providerProductId);
+
+      await supabase.from("sales_line_items")
+        .update({ winerim_product_id: null, mapped: false })
+        .eq("connection_id", connectionId)
+        .eq("provider_product_id", providerProductId);
+
+      return new Response(JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(
       JSON.stringify({ error: "Unknown action" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
