@@ -139,10 +139,10 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
       ]);
       setWinerimWines(wines);
       setMappings(mappingsData);
-      const products = (master.data?.products_summary_json as AgoraProduct[] | null) || [];
-      const families = (master.data?.families_json as AgoraFamily[] | null) || [];
-      setAgoraProducts(products);
-      setAgoraFamilies(families);
+      const products = (master.data?.products_summary_json as unknown as AgoraProduct[] | null) || [];
+      const families = (master.data?.families_json as unknown as AgoraFamily[] | null) || [];
+      setAgoraProducts(Array.isArray(products) ? products : []);
+      setAgoraFamilies(Array.isArray(families) ? families : []);
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
