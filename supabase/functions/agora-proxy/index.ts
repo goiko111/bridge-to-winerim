@@ -5372,12 +5372,16 @@ ${costPricesXml}
 
     // ── AUTO SYNC SALES (scheduled or manual) ──
     if (action === "auto-sync-sales") {
-      // Find days to sync: from last_business_day_synced to yesterday
+      // Find days to sync: from last_business_day_synced to TODAY (inclusive)
+      // Today is included so intraday sales are deducted from Winerim stock in near real-time (5 min cycle).
+      // last_business_day_synced is only advanced for CLOSED days (yesterday and earlier),
+      // because today may still receive more invoices throughout the day.
       const lastSynced = conn.last_business_day_synced;
       const today = new Date();
+      const todayStr = today.toISOString().slice(0, 10);
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
-      const endDay = yesterday.toISOString().slice(0, 10);
+      const yesterdayStr = yesterday.toISOString().slice(0, 10);
 
       // Determine start day
       let startDate: Date;
@@ -5390,14 +5394,16 @@ ${costPricesXml}
         startDate.setDate(startDate.getDate() - (conn.backfill_days || 30));
       }
 
+      // Always include today so live sales flow into Winerim stock every 5 min
+      const endDay = todayStr;
       const startDay = startDate.toISOString().slice(0, 10);
       if (startDay > endDay) {
-        return new Response(JSON.stringify({ 
+        return new Response(JSON.stringify({
           success: true, message: "Already up to date", lastSynced, startDay, endDay, daysSynced: 0, totalEvents: 0, totalLines: 0, resolvedLines: 0, unresolvedLines: 0
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // Gather days to process
+      // Gather days to process (closed days + today)
       const daysToSync: string[] = [];
       const cursor = new Date(startDate);
       while (cursor.toISOString().slice(0, 10) <= endDay) {
