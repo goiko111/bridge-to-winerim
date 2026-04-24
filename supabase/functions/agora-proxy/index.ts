@@ -2944,6 +2944,107 @@ serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── SET FAMILY VISIBILITY (toggle ShowInPos per family, batched) ──
+    if (action === "set-family-visibility") {
+      const updates: { familyId: string; showInPos: boolean }[] = payload.updates || [];
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      function escXmlV(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("families_json").eq("connection_id", connectionId).single();
+      const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string; Color?: string; Order?: string; ButtonText?: string }[];
+
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+      const applied: { id: string; name: string; showInPos: boolean }[] = [];
+      for (const u of updates) {
+        const fam = existingFamilies.find(f => String(f.Id) === String(u.familyId));
+        if (!fam) continue;
+        const name = fam.Name || u.familyId;
+        const color = fam.Color || (u.showInPos ? "#8B0000" : "#999999");
+        const btn = fam.ButtonText || name.substring(0, 20);
+        const order = fam.Order || (u.showInPos ? "100" : "9999");
+        xml += `    <Family Id="${u.familyId}" Name="${escXmlV(name)}" ShowInPos="${u.showInPos}" ButtonText="${escXmlV(btn)}" Color="${color}" Order="${order}" />\n`;
+        applied.push({ id: u.familyId, name, showInPos: u.showInPos });
+      }
+      xml += `  </Families>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        return new Response(JSON.stringify({
+          success: parsed.success, applied,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlSent: xml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── ARCHIVE PRODUCTS (move all products of given family IDs to a hidden ARCHIVO family) ──
+    if (action === "archive-products") {
+      const sourceFamilyIds: string[] = (payload.sourceFamilyIds || []).map(String);
+      if (sourceFamilyIds.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No sourceFamilyIds provided" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      function escXmlA(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("products_summary_json, families_json").eq("connection_id", connectionId).single();
+      const products = ((masterData as any)?.products_summary_json || []) as { Id: string; Name: string; FamilyId?: string; VatId?: string }[];
+      const families = ((masterData as any)?.families_json || []) as { Id: string; Name: string }[];
+
+      // Find or create the ARCHIVO family
+      const ARCHIVE_NAME = "ARCHIVO WINERIM";
+      const ARCHIVE_ID = "999999"; // stable hidden id
+      const targetProducts = products.filter(p => sourceFamilyIds.includes(String(p.FamilyId || "")));
+
+      if (targetProducts.length === 0) {
+        return new Response(JSON.stringify({ success: true, archived: 0, message: "No products in those families" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 1) Ensure archive family exists and is hidden
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
+      xml += `    <Family Id="${ARCHIVE_ID}" Name="${escXmlA(ARCHIVE_NAME)}" ShowInPos="false" ButtonText="ARCHIVO" Color="#444444" Order="99999" />\n`;
+      xml += `  </Families>\n  <Products>\n`;
+      for (const p of targetProducts) {
+        xml += `    <Product Id="${p.Id}" Name="${escXmlA(p.Name)}" FamilyId="${ARCHIVE_ID}"`;
+        if (p.VatId) xml += ` VatId="${p.VatId}"`;
+        xml += ` />\n`;
+      }
+      xml += `  </Products>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 60000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        return new Response(JSON.stringify({
+          success: parsed.success,
+          archived: targetProducts.length,
+          archiveFamilyId: ARCHIVE_ID,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlPreview: xml.slice(0, 800),
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     // ── HIDE FAMILIES (set ShowInPos=false) ──
     if (action === "hide-families") {
       const familyIds: string[] = payload.familyIds || [];
