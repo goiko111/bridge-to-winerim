@@ -12,7 +12,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 interface DispatchBody {
-  job: "catalog" | "sales-stock";
+  job: "catalog" | "sales-stock" | "outbound-queue";
   connectionId?: string; // optional: limit to one connection (testing)
 }
 
@@ -24,8 +24,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = (await req.json().catch(() => ({}))) as DispatchBody;
     const job = body.job;
-    if (job !== "catalog" && job !== "sales-stock") {
-      return new Response(JSON.stringify({ error: "job must be 'catalog' or 'sales-stock'" }), {
+    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue") {
+      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock' or 'outbound-queue'" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -51,10 +51,11 @@ Deno.serve(async (req: Request) => {
 
     // Map job → target function + body factory
     const targetFn = job === "catalog" ? "winerim-proxy" : "agora-proxy";
-    const buildBody = (connectionId: string) =>
-      job === "catalog"
-        ? { action: "fetch-catalog", connectionId }
-        : { action: "auto-sync-sales", connectionId };
+    const buildBody = (connectionId: string) => {
+      if (job === "catalog") return { action: "fetch-catalog", connectionId };
+      if (job === "outbound-queue") return { action: "process-xml-outbound-queue", connectionId, serverLoop: true };
+      return { action: "auto-sync-sales", connectionId };
+    };
 
     // Fire-and-forget invocations (parallel) so the cron returns quickly
     const results = await Promise.allSettled(
