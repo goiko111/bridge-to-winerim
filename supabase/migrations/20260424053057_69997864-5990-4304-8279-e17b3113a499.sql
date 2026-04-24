@@ -1,0 +1,1 @@
+ALTER TABLE public.pos_connections ALTER COLUMN sync_frequency_minutes SET DEFAULT 5;
