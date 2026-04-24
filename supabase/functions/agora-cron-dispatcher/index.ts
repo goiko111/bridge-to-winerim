@@ -51,10 +51,11 @@ Deno.serve(async (req: Request) => {
 
     // Map job → target function + body factory
     const targetFn = job === "catalog" ? "winerim-proxy" : "agora-proxy";
-    const buildBody = (connectionId: string) =>
-      job === "catalog"
-        ? { action: "fetch-catalog", connectionId }
-        : { action: "auto-sync-sales", connectionId };
+    const buildBody = (connectionId: string) => {
+      if (job === "catalog") return { action: "fetch-catalog", connectionId };
+      if (job === "outbound-queue") return { action: "process-xml-outbound-queue", connectionId, serverLoop: true };
+      return { action: "auto-sync-sales", connectionId };
+    };
 
     // Fire-and-forget invocations (parallel) so the cron returns quickly
     const results = await Promise.allSettled(
