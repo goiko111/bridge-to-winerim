@@ -5525,10 +5525,20 @@ ${costPricesXml}
         }
       }
 
-      // Update connection
+      // Update connection. Only advance last_business_day_synced to a CLOSED day
+      // (i.e., not today). Today may still receive more invoices, so we keep re-pulling it.
+      const todayIso = new Date().toISOString().slice(0, 10);
       if (lastDaySynced) {
+        const advanceTo = lastDaySynced >= todayIso ? (lastSynced || null) : lastDaySynced;
+        const updatePayload: Record<string, unknown> = { last_sync_at: new Date().toISOString() };
+        if (advanceTo) updatePayload.last_business_day_synced = advanceTo;
         await supabase.from("pos_connections")
-          .update({ last_business_day_synced: lastDaySynced, last_sync_at: new Date().toISOString() })
+          .update(updatePayload)
+          .eq("id", connectionId);
+      } else {
+        // Even if no day completed, mark last_sync_at so we know cron ran
+        await supabase.from("pos_connections")
+          .update({ last_sync_at: new Date().toISOString() })
           .eq("id", connectionId);
       }
 
