@@ -5600,8 +5600,42 @@ ${costPricesXml}
     );
   } catch (err) {
     console.error("agora-proxy error:", err);
+    const raw = String(err);
+
+    // Detect network-level failures reaching the customer's Agora server
+    // and return a clean 502 with an actionable message instead of a 500 crash.
+    const isDnsError = /dns error|failed to lookup address/i.test(raw);
+    const isTimeout = /timed out|timeout/i.test(raw);
+    const isNoRoute = /no route to host|connection refused|network is unreachable|connection reset/i.test(raw);
+    const isConnectError = /tcp connect error|client error \(Connect\)/i.test(raw);
+
+    if (isDnsError || isTimeout || isNoRoute || isConnectError) {
+      let reason = "Cannot reach the Agora server";
+      let hint = "Verify the base_url, that the Agora server is running, and that the port is open on the customer's router/firewall.";
+      if (isDnsError) {
+        reason = "DNS lookup failed for the Agora host";
+        hint = "Check that the hostname/IP in base_url is correct and publicly resolvable (dynamic DNS up to date?).";
+      } else if (isTimeout) {
+        reason = "Connection to the Agora server timed out";
+        hint = "The host is reachable but not responding on that port. Check the Agora service is running and the port is forwarded.";
+      } else if (isNoRoute) {
+        reason = "No route to the Agora server (port closed or firewall blocking)";
+        hint = "Open the Agora port on the customer's router (port-forwarding) and ensure no firewall is blocking inbound connections.";
+      }
+
+      return new Response(
+        JSON.stringify({
+          error: reason,
+          hint,
+          details: raw,
+          kind: "NETWORK_UNREACHABLE",
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     return new Response(
-      JSON.stringify({ error: String(err) }),
+      JSON.stringify({ error: raw }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
