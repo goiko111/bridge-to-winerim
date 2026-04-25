@@ -1379,9 +1379,30 @@ serve(async (req) => {
     }
 
     const { base_url, api_token } = connection;
-    let baseUrlClean = base_url.trim().replace(/\/+$/, "");
+    let baseUrlClean = (base_url ?? "").trim().replace(/\/+$/, "");
     if (!/^https?:\/\//i.test(baseUrlClean)) {
       baseUrlClean = `http://${baseUrlClean}`;
+    }
+    // Validate host: reject placeholders and unresolvable single-label hostnames
+    try {
+      const parsed = new URL(baseUrlClean);
+      const host = parsed.hostname.toLowerCase();
+      const placeholderHosts = new Set(["tuip", "tu-ip", "your-ip", "yourip", "localhost.example", "ejemplo", "example"]);
+      const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(host);
+      const isFqdn = host.includes(".");
+      if (!host || placeholderHosts.has(host) || (!isIp && !isFqdn)) {
+        return new Response(
+          JSON.stringify({
+            error: `Invalid base_url for connection ${connection.id} (${connection.location_name}): "${base_url}". Configure a real IP or FQDN before invoking this connection.`,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+    } catch {
+      return new Response(
+        JSON.stringify({ error: `Malformed base_url for connection ${connection.id}: "${base_url}"` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
     const apiTokenClean = api_token.trim();
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
