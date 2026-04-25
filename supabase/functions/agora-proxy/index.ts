@@ -1433,17 +1433,50 @@ serve(async (req) => {
     if (action === "test") {
       const today = new Date().toISOString().split("T")[0];
       const url = `${baseUrlClean}/api/export/?business-day=${today}&filter=Invoices`;
-      let res = await fetch(url, { headers });
-      if (!res.ok) {
-        res = await fetch(`${baseUrlClean}/api/export/tickets/`, { headers });
-      }
-      if (!res.ok) {
+      try {
+        let res = await fetch(url, { headers });
+        if (!res.ok) {
+          res = await fetch(`${baseUrlClean}/api/export/tickets/`, { headers });
+        }
+        if (!res.ok) {
+          return new Response(
+            JSON.stringify({ success: false, status: res.status, message: `Agora responded ${res.status}` }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (err) {
+        const raw = String(err);
+        const isDnsError = /dns error|failed to lookup address/i.test(raw);
+        const isTimeout = /timed out|timeout/i.test(raw);
+        const isNoRoute = /no route to host|connection refused|network is unreachable|connection reset/i.test(raw);
+        const isConnectError = /tcp connect error|client error \(Connect\)/i.test(raw);
+
+        if (isDnsError || isTimeout || isNoRoute || isConnectError) {
+          let message = "Cannot reach the Agora server";
+          let hint = "Verify the base_url, that the Agora server is running, and that the port is open on the customer's router/firewall.";
+          if (isDnsError) {
+            message = "DNS lookup failed for the Agora host";
+            hint = "Check that the hostname/IP in base_url is correct and publicly resolvable.";
+          } else if (isTimeout) {
+            message = "Connection to the Agora server timed out";
+            hint = "Check the Agora service is running and the port is forwarded.";
+          } else if (isNoRoute) {
+            message = "No route to the Agora server (port closed or firewall blocking)";
+            hint = "Open port 8984 on the customer's router and firewall toward the PC running Agora.";
+          }
+
+          return new Response(
+            JSON.stringify({ success: false, status: 502, message, hint, details: raw, kind: "NETWORK_UNREACHABLE" }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
         return new Response(
-          JSON.stringify({ success: false, status: res.status, message: `Agora responded ${res.status}` }),
+          JSON.stringify({ success: false, status: 500, message: raw }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── FIND LAST BUSINESS DAY WITH SALES ──
