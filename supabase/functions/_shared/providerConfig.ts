@@ -34,7 +34,7 @@ export interface ToastConfig {
 }
 
 export function getToastConfig(raw: RawConfig): ToastConfig {
-  const c = parseJson(raw) as ToastConfig;
+  const c = parseJson(raw) as unknown as ToastConfig;
   c.api_hostname = c.api_hostname || "https://ws-api.toasttab.com";
   return c;
 }

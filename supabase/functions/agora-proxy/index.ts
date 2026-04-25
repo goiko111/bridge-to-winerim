@@ -3365,6 +3365,7 @@ serve(async (req) => {
         verified_prices: boolean;
         verified_family: boolean;
         verified_preparation: boolean;
+        verified_scope?: boolean;
         errors: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
         warnings: { code: string; message: string; field?: string; context?: Record<string, unknown> }[];
         summary: { checked: number; ok: number; failed: number; totalPriceListsChecked: number };
@@ -5397,7 +5398,7 @@ ${costPricesXml}
       // Today is included so intraday sales are deducted from Winerim stock in near real-time (5 min cycle).
       // last_business_day_synced is only advanced for CLOSED days (yesterday and earlier),
       // because today may still receive more invoices throughout the day.
-      const lastSynced = conn.last_business_day_synced;
+      const lastSynced = (connection as any).last_business_day_synced;
       const today = new Date();
       const todayStr = today.toISOString().slice(0, 10);
       const yesterday = new Date(today);
@@ -5412,7 +5413,7 @@ ${costPricesXml}
       } else {
         // Default: backfill_days from connection config
         startDate = new Date(today);
-        startDate.setDate(startDate.getDate() - (conn.backfill_days || 30));
+        startDate.setDate(startDate.getDate() - ((connection as any).backfill_days || 30));
       }
 
       // Always include today so live sales flow into Winerim stock every 5 min
@@ -5567,7 +5568,7 @@ ${costPricesXml}
 
       // ── Auto-trigger stock sync for synced days with resolved lines ──
       let stockSyncResult = null;
-      const winerimToken = (conn.winerim_api_token || "").trim();
+      const winerimToken = ((connection as any).winerim_api_token || "").trim();
       if (resolvedLines > 0 && winerimToken) {
         console.log(`[auto-sync] Triggering stock sync for ${batch.length} days with ${resolvedLines} resolved lines...`);
         const stockResults = { synced: 0, skipped: 0, failed: 0 };

@@ -229,7 +229,7 @@ serve(async (req) => {
         );
       } catch (e) {
         return new Response(
-          JSON.stringify({ success: false, message: e.message }),
+          JSON.stringify({ success: false, message: (e as Error).message }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -611,7 +611,7 @@ serve(async (req) => {
     );
   } catch (e) {
     return new Response(
-      JSON.stringify({ error: e.message }),
+      JSON.stringify({ error: (e as Error).message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

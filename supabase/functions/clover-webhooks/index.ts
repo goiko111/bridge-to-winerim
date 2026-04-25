@@ -115,7 +115,7 @@ serve(async (req) => {
     console.error("clover-webhooks error:", e);
     // Still return 200 to avoid Clover retries
     return new Response(
-      JSON.stringify({ success: false, error: e.message }),
+      JSON.stringify({ success: false, error: (e as Error).message }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
