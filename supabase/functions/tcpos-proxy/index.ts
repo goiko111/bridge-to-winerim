@@ -340,7 +340,7 @@ serve(async (req) => {
 
       const detectedFamilies = Array.from(allFamilies).map((f) => {
         const suggestion = suggestFamilyClassification(f);
-        const itemCount = (salesEvents as Array<{ lines: { family: string }[] }>).reduce((c: number, ev) =>
+        const itemCount = (salesEvents as unknown as Array<{ lines: { family: string }[] }>).reduce((c: number, ev) =>
           c + ev.lines.filter((l) => l.family === f).length, 0);
         return { name: f, ...suggestion, itemCount };
       });
