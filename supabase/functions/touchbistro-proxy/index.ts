@@ -408,10 +408,12 @@ async function handleDebugBundle(connId: string) {
   const cfg = getTouchBistroConfig(conn.provider_config);
 
   // Sanitize: remove tokens
-  const sanitizedSettings = { ...cfg };
-  delete sanitizedSettings.sftp?.password;
-  delete sanitizedSettings.private_api?.api_key;
-  delete sanitizedSettings.private_api?.client_secret;
+  const sanitizedSettings = { ...cfg } as Record<string, any>;
+  if (sanitizedSettings.sftp) delete sanitizedSettings.sftp.password;
+  if (sanitizedSettings.private_api) {
+    delete sanitizedSettings.private_api.api_key;
+    delete sanitizedSettings.private_api.client_secret;
+  }
 
   // Get recent sales events for reconciliation
   const { data: events } = await sb().from("sales_events")

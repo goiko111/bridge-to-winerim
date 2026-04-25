@@ -221,7 +221,7 @@ serve(async (req) => {
         );
       } catch (e) {
         return new Response(
-          JSON.stringify({ success: false, message: e.message }),
+          JSON.stringify({ success: false, message: (e as Error).message }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -340,8 +340,8 @@ serve(async (req) => {
 
       const detectedFamilies = Array.from(allFamilies).map((f) => {
         const suggestion = suggestFamilyClassification(f);
-        const itemCount = salesEvents.reduce((c: number, ev: { lines: { family: string }[] }) =>
-          c + ev.lines.filter((l: { family: string }) => l.family === f).length, 0);
+        const itemCount = (salesEvents as Array<{ lines: { family: string }[] }>).reduce((c: number, ev) =>
+          c + ev.lines.filter((l) => l.family === f).length, 0);
         return { name: f, ...suggestion, itemCount };
       });
 
@@ -454,7 +454,7 @@ serve(async (req) => {
     );
   } catch (err) {
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify({ error: (err as Error).message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

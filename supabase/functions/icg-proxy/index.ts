@@ -405,7 +405,7 @@ Deno.serve(async (req) => {
     // ═══════════ INCREMENTAL-SYNC ═══════════
     if (action === "incremental-sync") {
       const lastDay = conn.last_business_day_synced || null;
-      const lastTicketId = cfg.last_ticket_id || null;
+      const lastTicketId = (cfg as Record<string, unknown>).last_ticket_id as string | null || null;
       const query = buildIncrementalQuery(mapping, lastTicketId, lastDay);
       return ok({
         success: true, generatedSQL: query,
