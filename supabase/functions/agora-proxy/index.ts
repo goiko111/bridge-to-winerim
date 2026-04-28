@@ -4196,9 +4196,10 @@ serve(async (req) => {
               }
 
               // Build XML to hide products (UseAsDirectSale=false, SaleableAsMain=false)
+              const vatIdHide = String((connection as any).default_vat_id || "1");
               let productsXml = "";
               for (const pid of productIds) {
-                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" VatId="${vatIdHide}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
               }
               const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
 
