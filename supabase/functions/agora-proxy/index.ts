@@ -2618,7 +2618,8 @@ serve(async (req) => {
               const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
 
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+              const vatIdMig = String((connection as any).default_vat_id || "1");
+              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig}" />\n  </Products>\n</Import>`;
 
               await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: ((t as any).attempts || 0) + 1 }).eq("id", t.id);
 
