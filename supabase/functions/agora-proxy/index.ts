@@ -2618,14 +2618,15 @@ serve(async (req) => {
               const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
 
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+              const vatIdMig = String((connection as any).default_vat_id || "1");
+              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig}" />\n  </Products>\n</Import>`;
 
               await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: ((t as any).attempts || 0) + 1 }).eq("id", t.id);
 
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
               const resBody = await res.text();
@@ -4195,9 +4196,10 @@ serve(async (req) => {
               }
 
               // Build XML to hide products (UseAsDirectSale=false, SaleableAsMain=false)
+              const vatIdHide = String((connection as any).default_vat_id || "1");
               let productsXml = "";
               for (const pid of productIds) {
-                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" VatId="${vatIdHide}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
               }
               const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
 
@@ -4205,7 +4207,7 @@ serve(async (req) => {
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: hideXml,
               });
               const resBody = await res.text();
@@ -4229,13 +4231,14 @@ serve(async (req) => {
               const fmt = String(p.format || "BOTTLE");
               const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" />\n  </Products>\n</Import>`;
+              const vatIdMig2 = String((connection as any).default_vat_id || "1");
+              const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig2}" />\n  </Products>\n</Import>`;
 
               await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
               const resBody = await res.text();

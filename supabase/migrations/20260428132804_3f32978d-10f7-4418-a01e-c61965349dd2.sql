@@ -1,0 +1,1 @@
+UPDATE public.pos_connections SET enabled = true, updated_at = now() WHERE id = 'c9b23830-a00b-4786-a50b-43fe526c4d3c';
