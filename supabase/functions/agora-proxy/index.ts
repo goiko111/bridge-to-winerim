@@ -219,6 +219,13 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     "Accept": "application/json",
   };
 
+  // Load connection to know the glass→bottle conversion factor
+  const { data: conn } = await supabase
+    .from("pos_connections")
+    .select("estimated_glasses_per_bottle")
+    .eq("id", connectionId).maybeSingle();
+  const glassesPerBottle = Math.max(1, Number(conn?.estimated_glasses_per_bottle ?? 5));
+
   const { data: events } = await supabase
     .from("sales_events").select("id")
     .eq("connection_id", connectionId).eq("business_day", day);
@@ -241,19 +248,28 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
   let synced = 0, skipped = 0, failed = 0;
 
-  // Aggregate quantities by winerim_product_id to avoid multiple API calls for same wine
-  const aggregated = new Map<string, { totalQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
+  // Aggregate by winerim_product_id, converting glass quantities to fractional bottles.
+  // BOT/MAGNUM count as 1 bottle each. COPA counts as 1/glassesPerBottle of a bottle.
+  const aggregated = new Map<string, { totalQty: number; bottleQty: number; glassQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
   // deno-lint-ignore no-explicit-any
   for (const line of mappedLines as any[]) {
     const wId = line.winerim_product_id;
+    const qty = Math.abs(Number(line.quantity));
+    const fmt = String(line.format || "").toUpperCase();
+    const isGlass = fmt === "COPA" || fmt === "GLASS" || fmt.includes("COPA");
+    const bottleEquivalent = isGlass ? qty / glassesPerBottle : qty;
+
     const existing = aggregated.get(wId);
     if (existing) {
-      existing.totalQty += Math.abs(Number(line.quantity));
+      existing.totalQty += bottleEquivalent;
+      if (isGlass) existing.glassQty += qty; else existing.bottleQty += qty;
       existing.lineIds.push(line.id);
       if (!existing.eventIds.includes(line.sales_event_id)) existing.eventIds.push(line.sales_event_id);
     } else {
       aggregated.set(wId, {
-        totalQty: Math.abs(Number(line.quantity)),
+        totalQty: bottleEquivalent,
+        bottleQty: isGlass ? 0 : qty,
+        glassQty: isGlass ? qty : 0,
         lineIds: [line.id],
         eventIds: [line.sales_event_id],
         name: line.name,
@@ -350,11 +366,11 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       if (putRes.ok) {
         await supabase.from("stock_sync_log").update({
           status: "SUCCESS",
-          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, stockId, ...parsed },
+          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, bottleQty: agg.bottleQty, glassQty: agg.glassQty, glassesPerBottle, stockId, ...parsed },
           synced_at: new Date().toISOString(),
         }).eq("id", logEntry?.id);
         synced++;
-        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty})`);
+        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty.toFixed(3)}) [bot:${agg.bottleQty} copa:${agg.glassQty}/${glassesPerBottle}]`);
       } else {
         await supabase.from("stock_sync_log").update({
           status: "FAILED",
@@ -5627,6 +5643,138 @@ ${costPricesXml}
         totalEvents, totalLines, resolvedLines, unresolvedLines,
         startDay: batch[0], endDay: batch[batch.length - 1], lastSynced: lastDaySynced,
         stockSync: stockSyncResult,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Recompute stock from scratch using sales history (idempotent).
+    // For each wine that has historical stock_sync_log SUCCESS entries:
+    //   baseline = previousStock from the EARLIEST log entry (= stock before first ever deduction)
+    //   correctNet = sum over all sales_line_items of:
+    //                  bottles + (glasses / glassesPerBottle)   (only wine-candidate lines)
+    //   targetStock = max(0, baseline - correctNet)
+    // Then PUT targetStock to Winerim. Running this multiple times converges to the
+    // same correct value, so it's safe even if previous restore attempts double-applied.
+    if (action === "restore-glass-overdiscount") {
+      const winerimToken = ((connection as any).winerim_api_token || "").trim();
+      if (!winerimToken) {
+        return new Response(JSON.stringify({ error: "winerim_api_token missing" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const glassesPerBottle = Math.max(1, Number((connection as any).estimated_glasses_per_bottle ?? 5));
+      const apply = payload?.apply === true;
+
+      // 1. Gather all wine-candidate sales lines for this connection
+      const { data: rows } = await supabase
+        .from("sales_line_items")
+        .select("winerim_product_id, name, quantity, format")
+        .eq("connection_id", connectionId)
+        .eq("is_wine_candidate", true)
+        .not("winerim_product_id", "is", null);
+
+      // Per-wine totals: bottles, glasses, name
+      const perWine = new Map<string, { name: string; bottles: number; glasses: number }>();
+      for (const r of (rows || []) as any[]) {
+        const fmt = String(r.format || "").toUpperCase();
+        const isGlass = fmt === "COPA" || fmt.includes("COPA") || fmt === "GLASS";
+        const wId = String(r.winerim_product_id);
+        const q = Math.abs(Number(r.quantity || 0));
+        const e = perWine.get(wId);
+        if (e) {
+          if (isGlass) e.glasses += q; else e.bottles += q;
+        } else {
+          perWine.set(wId, { name: r.name, bottles: isGlass ? 0 : q, glasses: isGlass ? q : 0 });
+        }
+      }
+
+      // 2. Get earliest baseline (previousStock) per wine from stock_sync_log
+      const wineIds = Array.from(perWine.keys());
+      const baselineByWine = new Map<string, number>();
+      // Page through to avoid 1000-row cap
+      const CHUNK = 200;
+      for (let i = 0; i < wineIds.length; i += CHUNK) {
+        const slice = wineIds.slice(i, i + CHUNK);
+        const { data: logs } = await supabase
+          .from("stock_sync_log")
+          .select("winerim_product_id, winerim_response, created_at")
+          .eq("connection_id", connectionId)
+          .eq("status", "SUCCESS")
+          .in("winerim_product_id", slice)
+          .order("created_at", { ascending: true });
+        for (const l of (logs || []) as any[]) {
+          const wId = String(l.winerim_product_id);
+          if (baselineByWine.has(wId)) continue; // first one wins per wine
+          const prev = Number(l.winerim_response?.previousStock);
+          if (Number.isFinite(prev)) baselineByWine.set(wId, prev);
+        }
+      }
+
+      const WINERIM_BASE = "https://app.winerim.com/api/v2";
+      const winerimHeaders = {
+        "WINERIM-API-TOKEN": winerimToken,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      };
+
+      const plan: any[] = [];
+      let restored = 0, failed = 0, skipped = 0;
+
+      for (const [winerimWineId, agg] of perWine) {
+        const baseline = baselineByWine.get(winerimWineId);
+        if (baseline === undefined) { skipped++; continue; } // no historical deductions → nothing to fix
+        const correctNet = agg.bottles + (agg.glasses / glassesPerBottle);
+        const targetStock = Math.max(0, baseline - correctNet);
+
+        // Get current stockId
+        const stockRes = await fetch(`${WINERIM_BASE}/stock/wine/${winerimWineId}`, {
+          method: "GET", headers: winerimHeaders,
+        });
+        if (!stockRes.ok) {
+          failed++;
+          plan.push({ winerimWineId, name: agg.name, baseline, bottles: agg.bottles, glasses: agg.glasses, correctNet, targetStock, error: `GET ${stockRes.status}` });
+          continue;
+        }
+        const stockData = await stockRes.json();
+        let stockId: number | null = null;
+        let currentStock = 0;
+        const stocksArr = stockData?.stocks || stockData?.data?.stocks;
+        if (Array.isArray(stocksArr) && stocksArr.length > 0) {
+          const active = stocksArr.find((s: any) => s.stockActive === true);
+          const botella = stocksArr.find((s: any) => {
+            const v = (s.winePrice as any)?.variant;
+            return v === "botella" || v === "botella-pequena";
+          });
+          const chosen = active || botella || stocksArr[0];
+          stockId = chosen.id as number;
+          currentStock = Number(chosen.stock ?? 0);
+        } else {
+          const stockObj = stockData?.data || stockData;
+          stockId = stockObj?.id || stockObj?.stockId;
+          currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
+        }
+        if (!stockId) { failed++; plan.push({ winerimWineId, name: agg.name, baseline, error: "no stockId" }); continue; }
+
+        const delta = targetStock - currentStock;
+        plan.push({
+          winerimWineId, name: agg.name,
+          baseline, bottles: agg.bottles, glasses: agg.glasses,
+          correctNet: Number(correctNet.toFixed(3)),
+          currentStock, targetStock: Number(targetStock.toFixed(3)),
+          delta: Number(delta.toFixed(3)), stockId,
+        });
+
+        if (apply && Math.abs(delta) > 0.001) {
+          const putRes = await fetch(`${WINERIM_BASE}/stock/${stockId}`, {
+            method: "PUT", headers: winerimHeaders,
+            body: JSON.stringify({ stock: targetStock }),
+          });
+          if (putRes.ok) restored++; else failed++;
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true, apply, glassesPerBottle,
+        winesAffected: plan.length, skipped, restored, failed,
+        plan,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
