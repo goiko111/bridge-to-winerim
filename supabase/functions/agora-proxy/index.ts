@@ -5656,11 +5656,10 @@ ${costPricesXml}
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const glassesPerBottle = Math.max(1, Number((connection as any).estimated_glasses_per_bottle ?? 5));
-      const dryRun = body?.dryRun !== false ? false : false; // default false -> apply
-      const apply = body?.apply === true;
+      const apply = payload?.apply === true;
 
-      const { data: glassAgg } = await supabase.rpc("noop"); // placeholder unused
-      // Build aggregation directly via SQL through PostgREST
+      // Build aggregation directly via PostgREST
+
       const { data: rows } = await supabase
         .from("sales_line_items")
         .select("winerim_product_id, name, quantity, format")
