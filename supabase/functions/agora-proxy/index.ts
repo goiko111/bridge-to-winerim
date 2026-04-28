@@ -219,6 +219,13 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     "Accept": "application/json",
   };
 
+  // Load connection to know the glass→bottle conversion factor
+  const { data: conn } = await supabase
+    .from("pos_connections")
+    .select("estimated_glasses_per_bottle")
+    .eq("id", connectionId).maybeSingle();
+  const glassesPerBottle = Math.max(1, Number(conn?.estimated_glasses_per_bottle ?? 5));
+
   const { data: events } = await supabase
     .from("sales_events").select("id")
     .eq("connection_id", connectionId).eq("business_day", day);
@@ -241,19 +248,28 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
   let synced = 0, skipped = 0, failed = 0;
 
-  // Aggregate quantities by winerim_product_id to avoid multiple API calls for same wine
-  const aggregated = new Map<string, { totalQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
+  // Aggregate by winerim_product_id, converting glass quantities to fractional bottles.
+  // BOT/MAGNUM count as 1 bottle each. COPA counts as 1/glassesPerBottle of a bottle.
+  const aggregated = new Map<string, { totalQty: number; bottleQty: number; glassQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
   // deno-lint-ignore no-explicit-any
   for (const line of mappedLines as any[]) {
     const wId = line.winerim_product_id;
+    const qty = Math.abs(Number(line.quantity));
+    const fmt = String(line.format || "").toUpperCase();
+    const isGlass = fmt === "COPA" || fmt === "GLASS" || fmt.includes("COPA");
+    const bottleEquivalent = isGlass ? qty / glassesPerBottle : qty;
+
     const existing = aggregated.get(wId);
     if (existing) {
-      existing.totalQty += Math.abs(Number(line.quantity));
+      existing.totalQty += bottleEquivalent;
+      if (isGlass) existing.glassQty += qty; else existing.bottleQty += qty;
       existing.lineIds.push(line.id);
       if (!existing.eventIds.includes(line.sales_event_id)) existing.eventIds.push(line.sales_event_id);
     } else {
       aggregated.set(wId, {
-        totalQty: Math.abs(Number(line.quantity)),
+        totalQty: bottleEquivalent,
+        bottleQty: isGlass ? 0 : qty,
+        glassQty: isGlass ? qty : 0,
         lineIds: [line.id],
         eventIds: [line.sales_event_id],
         name: line.name,
