@@ -54,6 +54,7 @@ Deno.serve(async (req: Request) => {
     const buildBody = (connectionId: string) => {
       if (job === "catalog") return { action: "fetch-catalog", connectionId };
       if (job === "outbound-queue") return { action: "process-xml-outbound-queue", connectionId, serverLoop: true };
+      if (job === "restore-stock") return { action: "restore-glass-overdiscount", connectionId, apply: true };
       return { action: "auto-sync-sales", connectionId };
     };
 
