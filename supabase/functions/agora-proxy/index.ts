@@ -2626,7 +2626,7 @@ serve(async (req) => {
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
               const resBody = await res.text();
@@ -4207,7 +4207,7 @@ serve(async (req) => {
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: hideXml,
               });
               const resBody = await res.text();
@@ -4238,7 +4238,7 @@ serve(async (req) => {
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
-                headers: { ...headers, "Content-Type": "application/xml" },
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
               const resBody = await res.text();
