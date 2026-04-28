@@ -5646,9 +5646,14 @@ ${costPricesXml}
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── Restore stock that was over-discounted before the glass-vs-bottle fix ──
-    // For each wine where COPA sales were treated as full bottles, add back
-    // (glassesSold - glassesSold/glassesPerBottle) bottles of stock.
+    // ── Recompute stock from scratch using sales history (idempotent).
+    // For each wine that has historical stock_sync_log SUCCESS entries:
+    //   baseline = previousStock from the EARLIEST log entry (= stock before first ever deduction)
+    //   correctNet = sum over all sales_line_items of:
+    //                  bottles + (glasses / glassesPerBottle)   (only wine-candidate lines)
+    //   targetStock = max(0, baseline - correctNet)
+    // Then PUT targetStock to Winerim. Running this multiple times converges to the
+    // same correct value, so it's safe even if previous restore attempts double-applied.
     if (action === "restore-glass-overdiscount") {
       const winerimToken = ((connection as any).winerim_api_token || "").trim();
       if (!winerimToken) {
@@ -5658,8 +5663,7 @@ ${costPricesXml}
       const glassesPerBottle = Math.max(1, Number((connection as any).estimated_glasses_per_bottle ?? 5));
       const apply = payload?.apply === true;
 
-      // Build aggregation directly via PostgREST
-
+      // 1. Gather all wine-candidate sales lines for this connection
       const { data: rows } = await supabase
         .from("sales_line_items")
         .select("winerim_product_id, name, quantity, format")
@@ -5667,14 +5671,41 @@ ${costPricesXml}
         .eq("is_wine_candidate", true)
         .not("winerim_product_id", "is", null);
 
-      const perWine = new Map<string, { name: string; glasses: number }>();
+      // Per-wine totals: bottles, glasses, name
+      const perWine = new Map<string, { name: string; bottles: number; glasses: number }>();
       for (const r of (rows || []) as any[]) {
         const fmt = String(r.format || "").toUpperCase();
-        if (fmt !== "COPA" && !fmt.includes("COPA") && fmt !== "GLASS") continue;
+        const isGlass = fmt === "COPA" || fmt.includes("COPA") || fmt === "GLASS";
         const wId = String(r.winerim_product_id);
-        const e = perWine.get(wId);
         const q = Math.abs(Number(r.quantity || 0));
-        if (e) { e.glasses += q; } else perWine.set(wId, { name: r.name, glasses: q });
+        const e = perWine.get(wId);
+        if (e) {
+          if (isGlass) e.glasses += q; else e.bottles += q;
+        } else {
+          perWine.set(wId, { name: r.name, bottles: isGlass ? 0 : q, glasses: isGlass ? q : 0 });
+        }
+      }
+
+      // 2. Get earliest baseline (previousStock) per wine from stock_sync_log
+      const wineIds = Array.from(perWine.keys());
+      const baselineByWine = new Map<string, number>();
+      // Page through to avoid 1000-row cap
+      const CHUNK = 200;
+      for (let i = 0; i < wineIds.length; i += CHUNK) {
+        const slice = wineIds.slice(i, i + CHUNK);
+        const { data: logs } = await supabase
+          .from("stock_sync_log")
+          .select("winerim_product_id, winerim_response, created_at")
+          .eq("connection_id", connectionId)
+          .eq("status", "SUCCESS")
+          .in("winerim_product_id", slice)
+          .order("created_at", { ascending: true });
+        for (const l of (logs || []) as any[]) {
+          const wId = String(l.winerim_product_id);
+          if (baselineByWine.has(wId)) continue; // first one wins per wine
+          const prev = Number(l.winerim_response?.previousStock);
+          if (Number.isFinite(prev)) baselineByWine.set(wId, prev);
+        }
       }
 
       const WINERIM_BASE = "https://app.winerim.com/api/v2";
@@ -5685,18 +5716,21 @@ ${costPricesXml}
       };
 
       const plan: any[] = [];
-      let restored = 0, failed = 0, totalAddBack = 0;
+      let restored = 0, failed = 0, skipped = 0;
 
       for (const [winerimWineId, agg] of perWine) {
-        const addBack = agg.glasses - (agg.glasses / glassesPerBottle); // bottles to add back
-        if (addBack <= 0) continue;
+        const baseline = baselineByWine.get(winerimWineId);
+        if (baseline === undefined) { skipped++; continue; } // no historical deductions → nothing to fix
+        const correctNet = agg.bottles + (agg.glasses / glassesPerBottle);
+        const targetStock = Math.max(0, baseline - correctNet);
 
+        // Get current stockId
         const stockRes = await fetch(`${WINERIM_BASE}/stock/wine/${winerimWineId}`, {
           method: "GET", headers: winerimHeaders,
         });
         if (!stockRes.ok) {
           failed++;
-          plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack, error: `GET ${stockRes.status}` });
+          plan.push({ winerimWineId, name: agg.name, baseline, bottles: agg.bottles, glasses: agg.glasses, correctNet, targetStock, error: `GET ${stockRes.status}` });
           continue;
         }
         const stockData = await stockRes.json();
@@ -5717,16 +5751,21 @@ ${costPricesXml}
           stockId = stockObj?.id || stockObj?.stockId;
           currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
         }
-        if (!stockId) { failed++; plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack, error: "no stockId" }); continue; }
+        if (!stockId) { failed++; plan.push({ winerimWineId, name: agg.name, baseline, error: "no stockId" }); continue; }
 
-        const newStock = currentStock + addBack;
-        plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack: Number(addBack.toFixed(3)), currentStock, newStock: Number(newStock.toFixed(3)), stockId });
-        totalAddBack += addBack;
+        const delta = targetStock - currentStock;
+        plan.push({
+          winerimWineId, name: agg.name,
+          baseline, bottles: agg.bottles, glasses: agg.glasses,
+          correctNet: Number(correctNet.toFixed(3)),
+          currentStock, targetStock: Number(targetStock.toFixed(3)),
+          delta: Number(delta.toFixed(3)), stockId,
+        });
 
-        if (apply) {
+        if (apply && Math.abs(delta) > 0.001) {
           const putRes = await fetch(`${WINERIM_BASE}/stock/${stockId}`, {
             method: "PUT", headers: winerimHeaders,
-            body: JSON.stringify({ stock: newStock }),
+            body: JSON.stringify({ stock: targetStock }),
           });
           if (putRes.ok) restored++; else failed++;
         }
@@ -5734,8 +5773,8 @@ ${costPricesXml}
 
       return new Response(JSON.stringify({
         success: true, apply, glassesPerBottle,
-        winesAffected: plan.length, totalBottlesAddedBack: Number(totalAddBack.toFixed(3)),
-        restored, failed, plan,
+        winesAffected: plan.length, skipped, restored, failed,
+        plan,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
