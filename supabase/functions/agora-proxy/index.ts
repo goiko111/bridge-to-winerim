@@ -5646,6 +5646,100 @@ ${costPricesXml}
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // ── Restore stock that was over-discounted before the glass-vs-bottle fix ──
+    // For each wine where COPA sales were treated as full bottles, add back
+    // (glassesSold - glassesSold/glassesPerBottle) bottles of stock.
+    if (action === "restore-glass-overdiscount") {
+      const winerimToken = ((connection as any).winerim_api_token || "").trim();
+      if (!winerimToken) {
+        return new Response(JSON.stringify({ error: "winerim_api_token missing" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const glassesPerBottle = Math.max(1, Number((connection as any).estimated_glasses_per_bottle ?? 5));
+      const dryRun = body?.dryRun !== false ? false : false; // default false -> apply
+      const apply = body?.apply === true;
+
+      const { data: glassAgg } = await supabase.rpc("noop"); // placeholder unused
+      // Build aggregation directly via SQL through PostgREST
+      const { data: rows } = await supabase
+        .from("sales_line_items")
+        .select("winerim_product_id, name, quantity, format")
+        .eq("connection_id", connectionId)
+        .eq("is_wine_candidate", true)
+        .not("winerim_product_id", "is", null);
+
+      const perWine = new Map<string, { name: string; glasses: number }>();
+      for (const r of (rows || []) as any[]) {
+        const fmt = String(r.format || "").toUpperCase();
+        if (fmt !== "COPA" && !fmt.includes("COPA") && fmt !== "GLASS") continue;
+        const wId = String(r.winerim_product_id);
+        const e = perWine.get(wId);
+        const q = Math.abs(Number(r.quantity || 0));
+        if (e) { e.glasses += q; } else perWine.set(wId, { name: r.name, glasses: q });
+      }
+
+      const WINERIM_BASE = "https://app.winerim.com/api/v2";
+      const winerimHeaders = {
+        "WINERIM-API-TOKEN": winerimToken,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      };
+
+      const plan: any[] = [];
+      let restored = 0, failed = 0, totalAddBack = 0;
+
+      for (const [winerimWineId, agg] of perWine) {
+        const addBack = agg.glasses - (agg.glasses / glassesPerBottle); // bottles to add back
+        if (addBack <= 0) continue;
+
+        const stockRes = await fetch(`${WINERIM_BASE}/stock/wine/${winerimWineId}`, {
+          method: "GET", headers: winerimHeaders,
+        });
+        if (!stockRes.ok) {
+          failed++;
+          plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack, error: `GET ${stockRes.status}` });
+          continue;
+        }
+        const stockData = await stockRes.json();
+        let stockId: number | null = null;
+        let currentStock = 0;
+        const stocksArr = stockData?.stocks || stockData?.data?.stocks;
+        if (Array.isArray(stocksArr) && stocksArr.length > 0) {
+          const active = stocksArr.find((s: any) => s.stockActive === true);
+          const botella = stocksArr.find((s: any) => {
+            const v = (s.winePrice as any)?.variant;
+            return v === "botella" || v === "botella-pequena";
+          });
+          const chosen = active || botella || stocksArr[0];
+          stockId = chosen.id as number;
+          currentStock = Number(chosen.stock ?? 0);
+        } else {
+          const stockObj = stockData?.data || stockData;
+          stockId = stockObj?.id || stockObj?.stockId;
+          currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
+        }
+        if (!stockId) { failed++; plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack, error: "no stockId" }); continue; }
+
+        const newStock = currentStock + addBack;
+        plan.push({ winerimWineId, name: agg.name, glasses: agg.glasses, addBack: Number(addBack.toFixed(3)), currentStock, newStock: Number(newStock.toFixed(3)), stockId });
+        totalAddBack += addBack;
+
+        if (apply) {
+          const putRes = await fetch(`${WINERIM_BASE}/stock/${stockId}`, {
+            method: "PUT", headers: winerimHeaders,
+            body: JSON.stringify({ stock: newStock }),
+          });
+          if (putRes.ok) restored++; else failed++;
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true, apply, glassesPerBottle,
+        winesAffected: plan.length, totalBottlesAddedBack: Number(totalAddBack.toFixed(3)),
+        restored, failed, plan,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(
       JSON.stringify({ error: "Unknown action" }),
       { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
