@@ -748,6 +748,17 @@ serve(async (req) => {
       let enriched = 0;
       const failureReasons: Record<string, number> = {};
       const fieldsDiscovered: string[] = [];
+      const newlyReadyWineIds: string[] = []; // wines that just transitioned to READY
+
+      // Pre-fetch current pricing_status for the targets so we can detect transitions
+      const { data: priorRows } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, pricing_status")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", targetIds);
+      const priorStatus = new Map<string, string>(
+        (priorRows || []).map((r: any) => [String(r.winerim_id), String(r.pricing_status)])
+      );
 
       // Process successful details
       for (const [winerimId, detail] of detailsResult.details) {
@@ -809,7 +820,14 @@ serve(async (req) => {
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
-        if (pricingStatus === "READY") enriched++;
+        if (pricingStatus === "READY") {
+          enriched++;
+          // Track transition: was MISSING/FAILED/RETRYING/NOT_PUSHED → now READY
+          const prev = priorStatus.get(String(winerimId));
+          if (prev && prev !== "READY") {
+            newlyReadyWineIds.push(String(winerimId));
+          }
+        }
       }
 
       // Process failures - mark with reason
