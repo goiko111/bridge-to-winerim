@@ -366,11 +366,11 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       if (putRes.ok) {
         await supabase.from("stock_sync_log").update({
           status: "SUCCESS",
-          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, stockId, ...parsed },
+          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, bottleQty: agg.bottleQty, glassQty: agg.glassQty, glassesPerBottle, stockId, ...parsed },
           synced_at: new Date().toISOString(),
         }).eq("id", logEntry?.id);
         synced++;
-        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty})`);
+        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty.toFixed(3)}) [bot:${agg.bottleQty} copa:${agg.glassQty}/${glassesPerBottle}]`);
       } else {
         await supabase.from("stock_sync_log").update({
           status: "FAILED",
