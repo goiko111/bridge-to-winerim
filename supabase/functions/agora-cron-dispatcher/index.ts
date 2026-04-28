@@ -12,7 +12,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 interface DispatchBody {
-  job: "catalog" | "sales-stock" | "outbound-queue";
+  job: "catalog" | "sales-stock" | "outbound-queue" | "restore-stock";
   connectionId?: string; // optional: limit to one connection (testing)
 }
 
@@ -24,8 +24,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = (await req.json().catch(() => ({}))) as DispatchBody;
     const job = body.job;
-    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue") {
-      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock' or 'outbound-queue'" }), {
+    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue" && job !== "restore-stock") {
+      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock', 'outbound-queue' or 'restore-stock'" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -54,6 +54,7 @@ Deno.serve(async (req: Request) => {
     const buildBody = (connectionId: string) => {
       if (job === "catalog") return { action: "fetch-catalog", connectionId };
       if (job === "outbound-queue") return { action: "process-xml-outbound-queue", connectionId, serverLoop: true };
+      if (job === "restore-stock") return { action: "restore-glass-overdiscount", connectionId, apply: true };
       return { action: "auto-sync-sales", connectionId };
     };
 
