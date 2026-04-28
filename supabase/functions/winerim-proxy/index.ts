@@ -840,6 +840,40 @@ serve(async (req) => {
           .eq("winerim_id", winerimId);
       }
 
+
+      // ── AUTO-QUEUE newly-READY wines for push to the POS ──
+      // When a wine transitions MISSING/FAILED/RETRYING → READY (because the client
+      // just filled in the price), automatically queue it so it appears in the POS
+      // without requiring manual intervention. Provider-agnostic: only queues for
+      // providers whose proxy supports queue-xml-outbound (currently Agora).
+      let autoQueued = 0;
+      let autoQueueError: string | null = null;
+      if (newlyReadyWineIds.length > 0) {
+        try {
+          const { data: conn } = await supabase
+            .from("pos_connections")
+            .select("provider")
+            .eq("id", connectionId).maybeSingle();
+
+          if (conn?.provider === "agora") {
+            const { data: q, error: qErr } = await supabase.functions.invoke("agora-proxy", {
+              body: {
+                action: "queue-xml-outbound",
+                connectionId,
+                winerimWineIds: newlyReadyWineIds,
+                source: "auto-recheck-missing-price",
+              },
+            });
+            if (qErr) autoQueueError = qErr.message || String(qErr);
+            else autoQueued = q?.queued ?? newlyReadyWineIds.length;
+            console.log(`[fetch-wine-details] Auto-queued ${autoQueued} newly-READY wines for ${connectionId}`);
+          }
+        } catch (e) {
+          autoQueueError = String(e);
+          console.error(`[fetch-wine-details] auto-queue failed:`, e);
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -851,6 +885,9 @@ serve(async (req) => {
           detailRequestsFailed: detailsResult.failed,
           failureReasons,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
+          newlyReadyWineIds,
+          autoQueued,
+          autoQueueError,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
