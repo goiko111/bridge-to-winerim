@@ -3220,7 +3220,7 @@ serve(async (req) => {
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
       const winerimWineIds = payload.winerimWineIds || [];
-      const formatTypes = payload.formatTypes || ["BOTTLE"];
+      const formatTypes = payload.formatTypes || ["BOTTLE", "MAGNUM"];
 
       const customFamilyMappings = await loadCustomFamilyMappings(connectionId);
 
