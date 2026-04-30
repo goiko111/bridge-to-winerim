@@ -778,12 +778,14 @@ serve(async (req) => {
         const magnumEntry = prices.find((p: any) => p.variant === "magnum");
 
         const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(detail.bottle_sale_price ?? detail.sale_price ?? detail.pvp ?? detail.price);
+        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(detail.glass_sale_price ?? detail.glass_price);
+        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(detail.magnum_sale_price);
 
         // Determine pricing status
         let pricingStatus = "READY";
         let pricingMissingReason: string | null = null;
 
-        if (bottleSalePrice == null) {
+        if (bottleSalePrice == null && glassSalePrice == null && magnumSalePrice == null) {
           pricingStatus = "MISSING";
           if (prices.length === 0) {
             pricingMissingReason = Array.isArray(detail.prices) ? "prices_array_empty" : "no_prices_array";
@@ -801,9 +803,9 @@ serve(async (req) => {
           wine_type: rawType && typeof rawType === "string" ? String(rawType).toLowerCase() : undefined,
           bottle_sale_price: bottleSalePrice,
           bottle_purchase_price: toPositiveNumber(detail.bottle_purchase_price ?? detail.purchase_price ?? detail.cost_price ?? detail.cost),
-          glass_sale_price: toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(detail.glass_sale_price ?? detail.glass_price),
+          glass_sale_price: glassSalePrice,
           glass_cost_price: toPositiveNumber(detail.glass_cost_price ?? detail.glass_cost),
-          magnum_sale_price: toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(detail.magnum_sale_price),
+          magnum_sale_price: magnumSalePrice,
           magnum_purchase_price: toPositiveNumber(detail.magnum_purchase_price),
           serve_by_glass: !!glassEntry || detail.serve_by_glass === true || detail.by_glass === true || undefined,
           is_active: detail.active !== false && detail.is_active !== false ? true : false,
