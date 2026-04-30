@@ -1,6 +1,6 @@
 // Cron dispatcher for Agora connections
 // Iterates all enabled Agora connections and invokes the appropriate proxy actions
-// Triggered by pg_cron via HTTP every 5 min (catalog) and 15 min (sales/stock)
+// Triggered by pg_cron via HTTP every 5 min (catalog, sales/stock, outbound queue)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
 
 const corsHeaders = {
@@ -49,31 +49,51 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Map job → target function + body factory
-    const targetFn = job === "catalog" ? "winerim-proxy" : "agora-proxy";
-    const buildBody = (connectionId: string) => {
-      if (job === "catalog") return { action: "fetch-catalog", connectionId };
-      if (job === "outbound-queue") return { action: "process-xml-outbound-queue", connectionId, serverLoop: true };
-      if (job === "restore-stock") return { action: "restore-glass-overdiscount", connectionId, apply: true };
-      return { action: "auto-sync-sales", connectionId };
+    type DispatchRequest = {
+      connection_id: string;
+      name: string;
+      functionName: "winerim-proxy" | "agora-proxy";
+      body: Record<string, unknown>;
     };
+
+    // Map job → one or more target function calls.
+    // Catalog sync must refresh BOTH sides: Winerim wines and Agora master data.
+    const buildRequests = (connection: { id: string; location_name: string }): DispatchRequest[] => {
+      if (job === "catalog") {
+        return [
+          { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
+          { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "sync-master-data", connectionId: connection.id } },
+        ];
+      }
+      if (job === "outbound-queue") {
+        return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
+      }
+      if (job === "restore-stock") {
+        return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "restore-glass-overdiscount", connectionId: connection.id, apply: true } }];
+      }
+      return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } }];
+    };
+
+    const dispatchRequests = connections.flatMap((c) => buildRequests(c));
 
     // Fire-and-forget invocations (parallel) so the cron returns quickly
     const results = await Promise.allSettled(
-      connections.map(async (c) => {
-        const url = `${SUPABASE_URL}/functions/v1/${targetFn}`;
+      dispatchRequests.map(async (dispatch) => {
+        const url = `${SUPABASE_URL}/functions/v1/${dispatch.functionName}`;
         const resp = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${SERVICE_KEY}`,
           },
-          body: JSON.stringify(buildBody(c.id)),
+          body: JSON.stringify(dispatch.body),
         });
         const text = await resp.text();
         return {
-          connection_id: c.id,
-          name: c.location_name,
+          connection_id: dispatch.connection_id,
+          name: dispatch.name,
+          function: dispatch.functionName,
+          action: dispatch.body.action,
           status: resp.status,
           ok: resp.ok,
           preview: text.slice(0, 200),
@@ -90,7 +110,8 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         ok: true,
         job,
-        dispatched: connections.length,
+        connections: connections.length,
+        dispatched: dispatchRequests.length,
         succeeded: okCount,
         results: summary,
         timestamp: new Date().toISOString(),
