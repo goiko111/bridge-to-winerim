@@ -854,7 +854,7 @@ serve(async (req) => {
         try {
           const { data: conn } = await supabase
             .from("pos_connections")
-            .select("provider")
+            .select("provider, auto_push_bottle, auto_push_glass")
             .eq("id", connectionId).maybeSingle();
 
           if (conn?.provider === "agora") {
@@ -863,6 +863,11 @@ serve(async (req) => {
                 action: "queue-xml-outbound",
                 connectionId,
                 winerimWineIds: newlyReadyWineIds,
+                formatTypes: [
+                  ...(conn.auto_push_bottle !== false ? ["BOTTLE"] : []),
+                  ...(conn.auto_push_glass ? ["GLASS"] : []),
+                  "MAGNUM",
+                ],
                 source: "auto-recheck-missing-price",
               },
             });
