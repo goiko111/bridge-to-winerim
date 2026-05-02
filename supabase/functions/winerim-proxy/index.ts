@@ -653,32 +653,45 @@ serve(async (req) => {
 
       const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
 
-      // ── AUTO-PUSH TRIGGER: When enrichment is complete, evaluate auto-push for all wines ──
+      // ── AUTO-PUSH TRIGGER (INCREMENTAL): Evaluate auto-push for the wines processed in THIS batch ──
+      // Previously this only fired when complete=true, but with 1000+ wines we never reached that
+      // because each cron tick restarted from offset=0. Now we evaluate per-batch so new wines / price
+      // changes propagate within minutes, regardless of total catalog size.
       let autoPushResult: Record<string, unknown> | null = null;
-      if (complete) {
+      if (batchWineIds.length > 0) {
         try {
-          // Get all winerim_ids for this connection
-          const { data: allWines } = await supabase
-            .from("winerim_wines").select("winerim_id")
-            .eq("connection_id", connectionId);
-          const allIds = (allWines || []).map((w: any) => w.winerim_id);
-          
-          if (allIds.length > 0) {
-            const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
-              body: { action: "evaluate-auto-push", connectionId, winerimWineIds: allIds, eventType: "UPDATE" },
+          const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
+            body: { action: "evaluate-auto-push", connectionId, winerimWineIds: batchWineIds, eventType: "UPDATE" },
+          });
+          autoPushResult = pushData;
+          console.log(`[winerim-proxy] auto-push (batch=${batchWineIds.length}): queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0} complete=${complete}`);
+
+          if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
+            await supabase.functions.invoke("agora-proxy", {
+              body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
             });
-            autoPushResult = pushData;
-            console.log(`[winerim-proxy] auto-push triggered: queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0}`);
-            
-            // Auto-process the queue if anything was queued
-            if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
-              await supabase.functions.invoke("agora-proxy", {
-                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
-              });
-            }
           }
         } catch (e) {
           console.error("[winerim-proxy] auto-push trigger failed:", e);
+        }
+      }
+
+      // ── CHAIN NEXT BATCH via pg_net (fire-and-forget) ──
+      // Without this, cron always restarts at offset=0 and only the first 100 wines ever get
+      // re-enriched. Chaining lets a single cron tick walk the entire catalog over a few minutes.
+      if (!complete) {
+        try {
+          const fnUrl = `${supabaseUrl}/functions/v1/winerim-proxy`;
+          await supabase.rpc("schedule_next_catalog_batch" as never, {
+            fn_url: fnUrl,
+            service_key: supabaseKey,
+            conn_id: connectionId,
+            next_offset: detailOffset + batchWineIds.length,
+            next_batch_size: detailBatchSize,
+          } as never);
+          console.log(`[winerim-proxy] chained next batch: offset=${detailOffset + batchWineIds.length}`);
+        } catch (e) {
+          console.error("[winerim-proxy] chain next batch failed:", e);
         }
       }
 
