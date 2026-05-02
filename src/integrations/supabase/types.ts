@@ -1040,6 +1040,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      schedule_next_catalog_batch: {
+        Args: {
+          conn_id: string
+          fn_url: string
+          next_batch_size: number
+          next_offset: number
+          service_key: string
+        }
+        Returns: undefined
+      }
       schedule_next_queue_batch: {
         Args: { conn_id: string; fn_url: string; service_key: string }
         Returns: undefined
