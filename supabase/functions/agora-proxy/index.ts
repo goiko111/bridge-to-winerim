@@ -1825,9 +1825,13 @@ serve(async (req) => {
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       let lastDay = "";
 
+      let processingAborted = false;
       for (const day of pendingDays) {
+        if (Date.now() - actionStart > ACTION_DEADLINE_MS) { processingAborted = true; break; }
         const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-        const res = await fetch(url, { headers });
+        let res: Response;
+        try { res = await fetchWithRetry(url, { headers }, 10_000); }
+        catch { continue; }
         if (!res.ok) { await res.text(); continue; }
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
