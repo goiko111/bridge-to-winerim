@@ -6,6 +6,47 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// AGORA EXPORT-MASTER PRODUCTS CACHE (CRITICAL — protects local Agora SQL)
+// ─────────────────────────────────────────────────────────────────────
+// `/api/export-master/?filter=Products` returns the FULL product catalog as XML.
+// Calling it once per outbound task saturates the Agora SQL pool (incident 03/05/2026).
+// We cache the response per connection in memory for AGORA_PRODUCTS_CACHE_TTL_MS.
+// Edge Function instances are reused across invocations, so this cache survives
+// between tasks within the same isolate and dramatically reduces load on Agora.
+//
+// Trade-off: a write may be verified against a slightly stale snapshot (up to 60s old).
+// That is acceptable: if a product isn't yet visible, the next attempt will see it,
+// and Agora's own propagation has similar latency.
+const AGORA_PRODUCTS_CACHE_TTL_MS = 60_000; // 60s
+const agoraProductsXmlCache = new Map<string, { xml: string; fetchedAt: number; status: number }>();
+
+async function fetchAgoraProductsXmlCached(
+  connectionId: string,
+  baseUrlClean: string,
+  apiTokenClean: string,
+  fetchWithRetryFn: (url: string, init: RequestInit, timeoutMs: number) => Promise<Response>,
+  timeoutMs = 30000,
+  forceRefresh = false,
+): Promise<{ xml: string; ok: boolean; status: number; fromCache: boolean }> {
+  const now = Date.now();
+  const cached = agoraProductsXmlCache.get(connectionId);
+  if (!forceRefresh && cached && (now - cached.fetchedAt) < AGORA_PRODUCTS_CACHE_TTL_MS) {
+    return { xml: cached.xml, ok: cached.status >= 200 && cached.status < 300, status: cached.status, fromCache: true };
+  }
+  const url = `${baseUrlClean}/api/export-master/?filter=Products`;
+  const res = await fetchWithRetryFn(url, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, timeoutMs);
+  const xml = res.ok ? await res.text() : "";
+  if (res.ok) {
+    agoraProductsXmlCache.set(connectionId, { xml, fetchedAt: now, status: res.status });
+  }
+  return { xml, ok: res.ok, status: res.status, fromCache: false };
+}
+
+function invalidateAgoraProductsCache(connectionId: string) {
+  agoraProductsXmlCache.delete(connectionId);
+}
+
 // ── Default keyword lists ──
 const DEFAULT_WINE_FAMILIES = [
   "vino", "vinos", "bodega", "bodegas", "cava", "cavas", "champagne",
