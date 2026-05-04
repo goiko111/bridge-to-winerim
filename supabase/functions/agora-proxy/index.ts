@@ -1545,6 +1545,8 @@ serve(async (req) => {
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+      // RATE LIMIT: never exceed POS_MAX_REQS_PER_SECOND requests/sec to a single POS
+      await throttleConnection(connectionId);
       const controller1 = new AbortController();
       const t1 = setTimeout(() => controller1.abort(), timeoutMs);
       try {
@@ -1553,6 +1555,8 @@ serve(async (req) => {
         return r;
       } catch (_e1) {
         clearTimeout(t1);
+        // Throttle again before retry to avoid stacking
+        await throttleConnection(connectionId);
         const controller2 = new AbortController();
         const t2 = setTimeout(() => controller2.abort(), timeoutMs);
         try {
