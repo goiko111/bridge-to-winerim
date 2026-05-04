@@ -140,6 +140,7 @@ Deno.serve(async (req: Request) => {
         ok: true,
         job,
         connections: connections.length,
+        skippedByBreaker,
         dispatched: dispatchRequests.length,
         succeeded: okCount,
         results: summary,
