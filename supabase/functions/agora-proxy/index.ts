@@ -1757,13 +1757,18 @@ serve(async (req) => {
       const yesterday = new Date(today.getTime() - 86400000);
 
       // Scan from startDate to yesterday (closed days only)
+      // Wall-clock guard: bail out before edge runtime 150s idle timeout (504 IDLE_TIMEOUT)
+      const ACTION_DEADLINE_MS = 120_000;
+      const actionStart = Date.now();
       const pendingDays: string[] = [];
       const current = new Date(startDate);
+      let scanAborted = false;
       while (current <= yesterday && pendingDays.length < 30) {
+        if (Date.now() - actionStart > ACTION_DEADLINE_MS) { scanAborted = true; break; }
         const dayStr = current.toISOString().split("T")[0];
         const url = `${baseUrlClean}/api/export/?business-day=${dayStr}&filter=Invoices`;
         try {
-          const res = await fetch(url, { headers });
+          const res = await fetchWithRetry(url, { headers }, 10_000);
           if (res.ok) {
             const rawData = await res.json();
             const invoices = parseInvoices(rawData);
@@ -1773,6 +1778,12 @@ serve(async (req) => {
           }
         } catch (err) { /* skip */ }
         current.setDate(current.getDate() + 1);
+      }
+      if (scanAborted) {
+        return new Response(
+          JSON.stringify({ success: false, aborted: true, reason: "scan_deadline_exceeded", message: "Agora server unresponsive; aborted before timeout. Will retry next cron." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       if (pendingDays.length === 0) {
@@ -1814,9 +1825,13 @@ serve(async (req) => {
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       let lastDay = "";
 
+      let processingAborted = false;
       for (const day of pendingDays) {
+        if (Date.now() - actionStart > ACTION_DEADLINE_MS) { processingAborted = true; break; }
         const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-        const res = await fetch(url, { headers });
+        let res: Response;
+        try { res = await fetchWithRetry(url, { headers }, 10_000); }
+        catch { continue; }
         if (!res.ok) { await res.text(); continue; }
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
