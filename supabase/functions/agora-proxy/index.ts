@@ -3505,8 +3505,7 @@ serve(async (req) => {
 
       if (parsedResponse.success) {
         try {
-          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
-          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          const cachedProducts = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
 
           const { data: cachedMaster } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", connectionId).single();
@@ -3528,8 +3527,8 @@ serve(async (req) => {
             expectedFamilies[fMatch[1]] = fMatch[2];
           }
 
-          if (verifyRes.ok) {
-            const verifyXml = await verifyRes.text();
+          if (cachedProducts.ok) {
+            const verifyXml = cachedProducts.xml;
 
             // Build products list for unified verification
             const productsToVerify: AgoraProductToVerify[] = [];
@@ -3837,8 +3836,8 @@ serve(async (req) => {
         const actualPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
 
         try {
-          const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
-          const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+          const cachedProductsTask = await fetchAgoraProductsXmlCached(task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          const verifyRes = { ok: cachedProductsTask.ok, status: cachedProductsTask.status, text: async () => cachedProductsTask.xml };
 
           const { data: cachedMaster2 } = await supabase
             .from("agora_master_data").select("price_lists_json, sale_centers_json").eq("connection_id", task.connection_id).single();
@@ -4881,15 +4880,15 @@ serve(async (req) => {
       const priceListToSaleCenters = verificationScope.priceListToSaleCenters;
 
       // Re-fetch current products from Agora
-      const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
-      const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+      // On-demand verification (manual UI action) — bypass cache to get fresh data
+      const cachedProductsManual = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
       
-      if (!verifyRes.ok) {
-        return new Response(JSON.stringify({ success: false, error: `Agora responded ${verifyRes.status}` }),
+      if (!cachedProductsManual.ok) {
+        return new Response(JSON.stringify({ success: false, error: `Agora responded ${cachedProductsManual.status}` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      const verifyXml = await verifyRes.text();
+      const verifyXml = cachedProductsManual.xml;
       
       const { data: mappings } = await supabase
         .from("product_mappings").select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
@@ -4968,10 +4967,10 @@ serve(async (req) => {
 
       try {
         // Quick verification scan
-        const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
-        const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 20000);
-        if (verifyRes.ok) {
-          const verifyXml = await verifyRes.text();
+        // Quick verification scan (uses cache to avoid slamming Agora)
+        const cachedProductsScan = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 20000);
+        if (cachedProductsScan.ok) {
+          const verifyXml = cachedProductsScan.xml;
           for (const m of (mappings || []).slice(0, 50)) {
             const prodRegex = new RegExp(`<Product[^>]*Id="${m.provider_product_id}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
             const prodMatch = verifyXml.match(prodRegex);
@@ -5364,10 +5363,10 @@ ${costPricesXml}
       let productFoundInExport = false;
       let readBackRaw = "";
       try {
-        const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
-        const verifyRes = await fetchWithRetry(verifyUrl, { headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
-        if (verifyRes.ok) {
-          readBackRaw = await verifyRes.text();
+        // Probe action — force fresh fetch to get accurate post-write state
+        const cachedProductsProbe = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+        if (cachedProductsProbe.ok) {
+          readBackRaw = cachedProductsProbe.xml;
           const prodRegex = new RegExp(`<Product[^>]*Id="${probeProductId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i");
           const prodMatch = readBackRaw.match(prodRegex);
           if (prodMatch) {
