@@ -83,10 +83,15 @@ Deno.serve(async (req: Request) => {
 
     const dispatchRequests = connections.flatMap((c) => buildRequests(c));
 
-    // Fire-and-forget invocations (parallel) so the cron returns quickly
-    const results = await Promise.allSettled(
-      dispatchRequests.map(async (dispatch) => {
-        const url = `${SUPABASE_URL}/functions/v1/${dispatch.functionName}`;
+    // STAGGERED dispatch: process in chunks of CONCURRENCY with a small delay between chunks.
+    // Goal: never have more than CONCURRENCY in-flight HTTP calls at once, to protect
+    // both our edge function pool and downstream Agora SQL Server pools.
+    const CONCURRENCY = 10;
+    const CHUNK_DELAY_MS = 1500;
+
+    const invokeOne = async (dispatch: DispatchRequest) => {
+      const url = `${SUPABASE_URL}/functions/v1/${dispatch.functionName}`;
+      try {
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -105,13 +110,30 @@ Deno.serve(async (req: Request) => {
           ok: resp.ok,
           preview: text.slice(0, 200),
         };
-      })
-    );
+      } catch (e) {
+        return { connection_id: dispatch.connection_id, name: dispatch.name, ok: false, error: String(e) };
+      }
+    };
 
-    const summary = results.map((r) =>
-      r.status === "fulfilled" ? r.value : { error: String(r.reason) }
-    );
-    const okCount = results.filter((r) => r.status === "fulfilled" && (r.value as { ok: boolean }).ok).length;
+    const allResults: unknown[] = [];
+    let okCount = 0;
+    for (let i = 0; i < dispatchRequests.length; i += CONCURRENCY) {
+      const chunk = dispatchRequests.slice(i, i + CONCURRENCY);
+      const chunkResults = await Promise.allSettled(chunk.map(invokeOne));
+      for (const r of chunkResults) {
+        if (r.status === "fulfilled") {
+          allResults.push(r.value);
+          if ((r.value as { ok: boolean }).ok) okCount++;
+        } else {
+          allResults.push({ error: String(r.reason) });
+        }
+      }
+      // Pause between chunks to spread the load (skip on the last chunk)
+      if (i + CONCURRENCY < dispatchRequests.length) {
+        await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
+      }
+    }
+    const summary = allResults;
 
     return new Response(
       JSON.stringify({
