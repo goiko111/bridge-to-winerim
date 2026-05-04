@@ -5121,33 +5121,35 @@ serve(async (req) => {
         }
         if (formatTypes.length === 0) { skipped++; continue; }
 
-        // Debounce
-        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-        const { data: recentTask } = await supabase
+        // Strict idempotency: if there is ANY pending (QUEUED/RUNNING) task for this wine, skip.
+        // No time window — pending = pending, regardless of age.
+        const { data: pendingTask } = await supabase
           .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
           .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
           .in("status", ["QUEUED", "RUNNING"])
-          .gte("created_at", fiveMinAgo).limit(1);
+          .limit(1);
 
-        if (recentTask && recentTask.length > 0) {
+        if (pendingTask && pendingTask.length > 0) {
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "debounce_recent_task" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "already_pending_task" });
           continue;
         }
 
-        // Anti-spam
+        // Anti-spam: count failures in last 24h. If >=5, require manual intervention.
+        const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
         const { data: recentFailures } = await supabase
-          .from("outbound_tasks").select("id, status")
+          .from("outbound_tasks").select("id")
           .eq("connection_id", connectionId)
           .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
           .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
-          .order("created_at", { ascending: false }).limit(3);
+          .in("status", ["FAILED", "BLOCKED"])
+          .gte("created_at", dayAgo).limit(5);
 
-        if (recentFailures && recentFailures.length >= 3 && recentFailures.every((t: any) => t.status === "FAILED" || t.status === "BLOCKED")) {
+        if (recentFailures && recentFailures.length >= 5) {
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "too_many_failures_manual_intervention_required" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "too_many_failures_24h_manual_intervention_required" });
           continue;
         }
 
