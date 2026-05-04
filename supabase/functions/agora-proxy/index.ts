@@ -47,6 +47,86 @@ function invalidateAgoraProductsCache(connectionId: string) {
   agoraProductsXmlCache.delete(connectionId);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// PER-CONNECTION RATE LIMITER (CRITICAL — protects local Agora servers)
+// ─────────────────────────────────────────────────────────────────────
+// Hard cap on requests/second sent to any single client's POS server.
+// Prevents us from accidentally DDoS-ing a customer (Luruna incident, 03/05/2026).
+// In-memory only; survives across invocations within the same isolate.
+const POS_MAX_REQS_PER_SECOND = 2; // 2 req/s per connection = max 7200 req/h
+const posLastRequestAt = new Map<string, number[]>();
+
+async function throttleConnection(connectionId: string): Promise<void> {
+  const now = Date.now();
+  const windowMs = 1000;
+  const arr = posLastRequestAt.get(connectionId) || [];
+  const recent = arr.filter((t) => now - t < windowMs);
+  if (recent.length >= POS_MAX_REQS_PER_SECOND) {
+    const waitMs = windowMs - (now - recent[0]) + 50;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return throttleConnection(connectionId);
+  }
+  recent.push(now);
+  posLastRequestAt.set(connectionId, recent);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ERROR CLASSIFIER + INTELLIGENT CIRCUIT BREAKER
+// ─────────────────────────────────────────────────────────────────────
+type ErrorClass = "POS_DOWN" | "POS_OVERLOADED" | "BUSINESS_ERROR" | "UNKNOWN";
+
+function classifyPosError(errorText: string | null | undefined, httpStatus?: number): ErrorClass {
+  const msg = (errorText || "").toLowerCase();
+  if (msg.includes("connection refused") || msg.includes("no route to host") ||
+      msg.includes("connect error") || msg.includes("aborterror") ||
+      msg.includes("signal has been aborted") || msg.includes("network is unreachable")) {
+    return "POS_DOWN";
+  }
+  if (httpStatus === 500 || httpStatus === 501 || httpStatus === 502 || httpStatus === 503 ||
+      msg.includes("begin failed with sql exception") || msg.includes("sql pool")) {
+    return "POS_OVERLOADED";
+  }
+  if (msg.includes("familyid") || msg.includes("no ha sido dado de alta") ||
+      msg.includes("invalid") || msg.includes("validation")) {
+    return "BUSINESS_ERROR";
+  }
+  return "UNKNOWN";
+}
+
+async function applyCircuitBreaker(
+  supabase: any,
+  connectionId: string,
+  errorClass: ErrorClass,
+): Promise<{ paused: boolean; pauseMinutes: number }> {
+  if (errorClass !== "POS_DOWN" && errorClass !== "POS_OVERLOADED") {
+    if (errorClass === "BUSINESS_ERROR") {
+      await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+    }
+    return { paused: false, pauseMinutes: 0 };
+  }
+  const { data: conn } = await supabase
+    .from("pos_connections").select("consecutive_failures").eq("id", connectionId).single();
+  const newCount = ((conn?.consecutive_failures as number) || 0) + 1;
+  const threshold = errorClass === "POS_DOWN" ? 5 : 10;
+  const pauseMinutes = errorClass === "POS_DOWN" ? 60 : 15;
+  if (newCount >= threshold) {
+    const pausedUntil = new Date(Date.now() + pauseMinutes * 60_000).toISOString();
+    await supabase.from("pos_connections").update({
+      consecutive_failures: newCount,
+      circuit_breaker_paused_until: pausedUntil,
+      circuit_breaker_reason: `Auto-pause: ${errorClass} (${newCount} consecutive failures)`,
+    }).eq("id", connectionId);
+    console.log(`[CIRCUIT BREAKER] ${connectionId} paused ${pauseMinutes}min — ${errorClass}`);
+    return { paused: true, pauseMinutes };
+  }
+  await supabase.from("pos_connections").update({ consecutive_failures: newCount }).eq("id", connectionId);
+  return { paused: false, pauseMinutes: 0 };
+}
+
+async function resetFailureCounter(supabase: any, connectionId: string): Promise<void> {
+  await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+}
+
 // ── Default keyword lists ──
 const DEFAULT_WINE_FAMILIES = [
   "vino", "vinos", "bodega", "bodegas", "cava", "cavas", "champagne",
