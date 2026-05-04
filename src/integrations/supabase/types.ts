@@ -1052,6 +1052,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      rescue_zombie_outbound_tasks: { Args: never; Returns: number }
       schedule_next_catalog_batch: {
         Args: {
           conn_id: string
