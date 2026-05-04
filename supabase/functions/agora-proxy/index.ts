@@ -4196,17 +4196,24 @@ serve(async (req) => {
           });
         }
 
+        // Reset failure counter on success — connection is healthy again
+        await resetFailureCounter(supabase, task.connection_id);
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (e) {
-        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        const errMsg = String(e).substring(0, 500);
+        const errClass = classifyPosError(errMsg);
+        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
         await supabase.from("outbound_tasks").update({
           status: shouldRetry ? "QUEUED" : "FAILED",
-          last_error: String(e).substring(0, 500),
+          last_error: `[${errClass}] ${errMsg}`,
         }).eq("id", task.id);
-        return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const breakerResult = await applyCircuitBreaker(supabase, task.connection_id, errClass);
+        return new Response(JSON.stringify({
+          success: false, status: shouldRetry ? "QUEUED" : "FAILED",
+          errorClass: errClass, breakerTripped: breakerResult.paused,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
