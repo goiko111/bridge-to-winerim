@@ -142,6 +142,7 @@ export type Database = {
           id: string
           last_error: string | null
           max_attempts: number
+          next_retry_at: string | null
           payload_json: Json
           status: string
           task_type: string
@@ -156,6 +157,7 @@ export type Database = {
           id?: string
           last_error?: string | null
           max_attempts?: number
+          next_retry_at?: string | null
           payload_json?: Json
           status?: string
           task_type?: string
@@ -170,6 +172,7 @@ export type Database = {
           id?: string
           last_error?: string | null
           max_attempts?: number
+          next_retry_at?: string | null
           payload_json?: Json
           status?: string
           task_type?: string
@@ -200,6 +203,9 @@ export type Database = {
           catalog_product_count: number | null
           catalog_sync_enabled: boolean | null
           catalog_wine_candidate_count: number | null
+          circuit_breaker_paused_until: string | null
+          circuit_breaker_reason: string | null
+          consecutive_failures: number
           created_at: string
           default_bottle_format_name: string | null
           default_family_id: string | null
@@ -244,6 +250,9 @@ export type Database = {
           catalog_product_count?: number | null
           catalog_sync_enabled?: boolean | null
           catalog_wine_candidate_count?: number | null
+          circuit_breaker_paused_until?: string | null
+          circuit_breaker_reason?: string | null
+          consecutive_failures?: number
           created_at?: string
           default_bottle_format_name?: string | null
           default_family_id?: string | null
@@ -288,6 +297,9 @@ export type Database = {
           catalog_product_count?: number | null
           catalog_sync_enabled?: boolean | null
           catalog_wine_candidate_count?: number | null
+          circuit_breaker_paused_until?: string | null
+          circuit_breaker_reason?: string | null
+          consecutive_failures?: number
           created_at?: string
           default_bottle_format_name?: string | null
           default_family_id?: string | null
