@@ -47,6 +47,86 @@ function invalidateAgoraProductsCache(connectionId: string) {
   agoraProductsXmlCache.delete(connectionId);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// PER-CONNECTION RATE LIMITER (CRITICAL — protects local Agora servers)
+// ─────────────────────────────────────────────────────────────────────
+// Hard cap on requests/second sent to any single client's POS server.
+// Prevents us from accidentally DDoS-ing a customer (Luruna incident, 03/05/2026).
+// In-memory only; survives across invocations within the same isolate.
+const POS_MAX_REQS_PER_SECOND = 2; // 2 req/s per connection = max 7200 req/h
+const posLastRequestAt = new Map<string, number[]>();
+
+async function throttleConnection(connectionId: string): Promise<void> {
+  const now = Date.now();
+  const windowMs = 1000;
+  const arr = posLastRequestAt.get(connectionId) || [];
+  const recent = arr.filter((t) => now - t < windowMs);
+  if (recent.length >= POS_MAX_REQS_PER_SECOND) {
+    const waitMs = windowMs - (now - recent[0]) + 50;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return throttleConnection(connectionId);
+  }
+  recent.push(now);
+  posLastRequestAt.set(connectionId, recent);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ERROR CLASSIFIER + INTELLIGENT CIRCUIT BREAKER
+// ─────────────────────────────────────────────────────────────────────
+type ErrorClass = "POS_DOWN" | "POS_OVERLOADED" | "BUSINESS_ERROR" | "UNKNOWN";
+
+function classifyPosError(errorText: string | null | undefined, httpStatus?: number): ErrorClass {
+  const msg = (errorText || "").toLowerCase();
+  if (msg.includes("connection refused") || msg.includes("no route to host") ||
+      msg.includes("connect error") || msg.includes("aborterror") ||
+      msg.includes("signal has been aborted") || msg.includes("network is unreachable")) {
+    return "POS_DOWN";
+  }
+  if (httpStatus === 500 || httpStatus === 501 || httpStatus === 502 || httpStatus === 503 ||
+      msg.includes("begin failed with sql exception") || msg.includes("sql pool")) {
+    return "POS_OVERLOADED";
+  }
+  if (msg.includes("familyid") || msg.includes("no ha sido dado de alta") ||
+      msg.includes("invalid") || msg.includes("validation")) {
+    return "BUSINESS_ERROR";
+  }
+  return "UNKNOWN";
+}
+
+async function applyCircuitBreaker(
+  supabase: any,
+  connectionId: string,
+  errorClass: ErrorClass,
+): Promise<{ paused: boolean; pauseMinutes: number }> {
+  if (errorClass !== "POS_DOWN" && errorClass !== "POS_OVERLOADED") {
+    if (errorClass === "BUSINESS_ERROR") {
+      await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+    }
+    return { paused: false, pauseMinutes: 0 };
+  }
+  const { data: conn } = await supabase
+    .from("pos_connections").select("consecutive_failures").eq("id", connectionId).single();
+  const newCount = ((conn?.consecutive_failures as number) || 0) + 1;
+  const threshold = errorClass === "POS_DOWN" ? 5 : 10;
+  const pauseMinutes = errorClass === "POS_DOWN" ? 60 : 15;
+  if (newCount >= threshold) {
+    const pausedUntil = new Date(Date.now() + pauseMinutes * 60_000).toISOString();
+    await supabase.from("pos_connections").update({
+      consecutive_failures: newCount,
+      circuit_breaker_paused_until: pausedUntil,
+      circuit_breaker_reason: `Auto-pause: ${errorClass} (${newCount} consecutive failures)`,
+    }).eq("id", connectionId);
+    console.log(`[CIRCUIT BREAKER] ${connectionId} paused ${pauseMinutes}min — ${errorClass}`);
+    return { paused: true, pauseMinutes };
+  }
+  await supabase.from("pos_connections").update({ consecutive_failures: newCount }).eq("id", connectionId);
+  return { paused: false, pauseMinutes: 0 };
+}
+
+async function resetFailureCounter(supabase: any, connectionId: string): Promise<void> {
+  await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+}
+
 // ── Default keyword lists ──
 const DEFAULT_WINE_FAMILIES = [
   "vino", "vinos", "bodega", "bodegas", "cava", "cavas", "champagne",
@@ -1465,6 +1545,8 @@ serve(async (req) => {
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+      // RATE LIMIT: never exceed POS_MAX_REQS_PER_SECOND requests/sec to a single POS
+      await throttleConnection(connectionId);
       const controller1 = new AbortController();
       const t1 = setTimeout(() => controller1.abort(), timeoutMs);
       try {
@@ -1473,6 +1555,8 @@ serve(async (req) => {
         return r;
       } catch (_e1) {
         clearTimeout(t1);
+        // Throttle again before retry to avoid stacking
+        await throttleConnection(connectionId);
         const controller2 = new AbortController();
         const t2 = setTimeout(() => controller2.abort(), timeoutMs);
         try {
@@ -2646,16 +2730,25 @@ serve(async (req) => {
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null, external_id: externalId ? String(externalId) : null,
         }).eq("id", task.id);
+        // Reset failure counter on success — connection is healthy again
+        await resetFailureCounter(supabase, connectionId);
 
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", externalId, responsePreview: resPreview }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (e) {
-        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        const errMsg = String(e).substring(0, 500);
+        const errClass = classifyPosError(errMsg);
+        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
         await supabase.from("outbound_tasks").update({
-          status: shouldRetry ? "QUEUED" : "FAILED", last_error: String(e).substring(0, 500),
+          status: shouldRetry ? "QUEUED" : "FAILED",
+          last_error: `[${errClass}] ${errMsg}`,
         }).eq("id", task.id);
-        return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        // Trip circuit breaker if POS is down/overloaded
+        const breakerResult = await applyCircuitBreaker(supabase, connectionId, errClass);
+        return new Response(JSON.stringify({
+          success: false, status: shouldRetry ? "QUEUED" : "FAILED",
+          errorClass: errClass, breakerTripped: breakerResult.paused,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
@@ -3781,22 +3874,30 @@ serve(async (req) => {
               { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
 
-          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500;
+          const errClassHttp = classifyPosError(errorMsg, importRes.status);
+          const isBusinessError = errClassHttp === "BUSINESS_ERROR";
+          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500 && !isBusinessError;
           
           // If it's a data error (4xx), don't retry - BLOCK
           const isDataError = importRes.status >= 400 && importRes.status < 500;
           await supabase.from("outbound_tasks").update({
-            status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
-            last_error: errorMsg,
-            blocked_reason: isDataError ? `Data error: ${errorMsg}` : null,
+            status: isDataError || isBusinessError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
+            last_error: `[${errClassHttp}] ${errorMsg}`,
+            blocked_reason: isDataError || isBusinessError ? `Data error: ${errorMsg}` : null,
           }).eq("id", task.id);
 
           if (importRes.status === 404 || importRes.status === 405) {
             await supabase.from("provider_capabilities").update({ can_write_products: "NO" }).eq("connection_id", task.connection_id);
           }
 
-          return new Response(JSON.stringify({ success: false, status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"), parsedResponse }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          // Trip circuit breaker if POS is overloaded (HTTP 500/501)
+          const breakerResult = await applyCircuitBreaker(supabase, task.connection_id, errClassHttp);
+
+          return new Response(JSON.stringify({
+            success: false,
+            status: isDataError || isBusinessError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
+            errorClass: errClassHttp, breakerTripped: breakerResult.paused, parsedResponse,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
@@ -4103,17 +4204,24 @@ serve(async (req) => {
           });
         }
 
+        // Reset failure counter on success — connection is healthy again
+        await resetFailureCounter(supabase, task.connection_id);
         return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (e) {
-        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+        const errMsg = String(e).substring(0, 500);
+        const errClass = classifyPosError(errMsg);
+        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
         await supabase.from("outbound_tasks").update({
           status: shouldRetry ? "QUEUED" : "FAILED",
-          last_error: String(e).substring(0, 500),
+          last_error: `[${errClass}] ${errMsg}`,
         }).eq("id", task.id);
-        return new Response(JSON.stringify({ success: false, status: shouldRetry ? "QUEUED" : "FAILED" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const breakerResult = await applyCircuitBreaker(supabase, task.connection_id, errClass);
+        return new Response(JSON.stringify({
+          success: false, status: shouldRetry ? "QUEUED" : "FAILED",
+          errorClass: errClass, breakerTripped: breakerResult.paused,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 
