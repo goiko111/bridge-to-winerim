@@ -33,18 +33,25 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-    // Load enabled Agora connections
+    // Load enabled Agora connections, EXCLUDING those paused by circuit breaker
+    const nowIso = new Date().toISOString();
     let query = supabase
       .from("pos_connections")
-      .select("id, location_name")
+      .select("id, location_name, circuit_breaker_paused_until")
       .eq("provider", "agora")
       .eq("enabled", true);
     if (body.connectionId) query = query.eq("id", body.connectionId);
 
-    const { data: connections, error: connErr } = await query;
+    const { data: allConnections, error: connErr } = await query;
     if (connErr) throw connErr;
+
+    const connections = (allConnections || []).filter((c: any) =>
+      !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso
+    );
+    const skippedByBreaker = (allConnections?.length || 0) - connections.length;
+
     if (!connections || connections.length === 0) {
-      return new Response(JSON.stringify({ ok: true, dispatched: 0, job }), {
+      return new Response(JSON.stringify({ ok: true, dispatched: 0, job, skippedByBreaker }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
