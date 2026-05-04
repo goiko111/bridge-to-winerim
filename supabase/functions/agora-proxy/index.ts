@@ -3874,22 +3874,30 @@ serve(async (req) => {
               { headers: { ...corsHeaders, "Content-Type": "application/json" } });
           }
 
-          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500;
+          const errClassHttp = classifyPosError(errorMsg, importRes.status);
+          const isBusinessError = errClassHttp === "BUSINESS_ERROR";
+          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500 && !isBusinessError;
           
           // If it's a data error (4xx), don't retry - BLOCK
           const isDataError = importRes.status >= 400 && importRes.status < 500;
           await supabase.from("outbound_tasks").update({
-            status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
-            last_error: errorMsg,
-            blocked_reason: isDataError ? `Data error: ${errorMsg}` : null,
+            status: isDataError || isBusinessError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
+            last_error: `[${errClassHttp}] ${errorMsg}`,
+            blocked_reason: isDataError || isBusinessError ? `Data error: ${errorMsg}` : null,
           }).eq("id", task.id);
 
           if (importRes.status === 404 || importRes.status === 405) {
             await supabase.from("provider_capabilities").update({ can_write_products: "NO" }).eq("connection_id", task.connection_id);
           }
 
-          return new Response(JSON.stringify({ success: false, status: isDataError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"), parsedResponse }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          // Trip circuit breaker if POS is overloaded (HTTP 500/501)
+          const breakerResult = await applyCircuitBreaker(supabase, task.connection_id, errClassHttp);
+
+          return new Response(JSON.stringify({
+            success: false,
+            status: isDataError || isBusinessError ? "BLOCKED" : (shouldRetry ? "QUEUED" : "FAILED"),
+            errorClass: errClassHttp, breakerTripped: breakerResult.paused, parsedResponse,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
