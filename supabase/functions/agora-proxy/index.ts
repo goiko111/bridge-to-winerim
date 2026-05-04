@@ -4195,25 +4195,73 @@ serve(async (req) => {
     if (action === "process-xml-outbound-queue") {
       const serverLoop = payload.serverLoop === true;
       const BATCH_SIZE = 10;
-      const TIME_BUDGET_MS = serverLoop ? 50_000 : 20_000; // server-side gets more budget
+      const TIME_BUDGET_MS = serverLoop ? 50_000 : 20_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
+      // ── CIRCUIT BREAKER CHECK ──
+      // If this connection is paused (recent repeated failures), exit early.
+      const nowIso = new Date().toISOString();
+      const breakerPausedUntil = (connection as any).circuit_breaker_paused_until as string | null;
+      if (breakerPausedUntil && breakerPausedUntil > nowIso) {
+        return new Response(JSON.stringify({
+          success: true, processed: 0, succeeded: 0, failed: 0,
+          skipped: true, breakerPausedUntil,
+          reason: (connection as any).circuit_breaker_reason || "circuit_breaker_active",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Helper: compute exponential backoff delay (in seconds)
+      const backoffDelaySec = (attempts: number) =>
+        Math.min(60 * 60, Math.pow(2, attempts) * 60); // 2,4,8,16,32 min, cap 60min
+
+      // Helper: register a failure and possibly trip the circuit breaker
+      let runConsecutiveFailures = (connection as any).consecutive_failures || 0;
+      const registerFailure = async (taskId: string, errorMsg: string, attempts: number) => {
+        const nextRetry = new Date(Date.now() + backoffDelaySec(attempts) * 1000).toISOString();
+        await supabase.from("outbound_tasks").update({
+          status: attempts >= 5 ? "FAILED" : "QUEUED", // back to QUEUED with backoff if retries left
+          last_error: errorMsg.substring(0, 500),
+          next_retry_at: nextRetry,
+        }).eq("id", taskId);
+        runConsecutiveFailures++;
+        // Trip breaker after 10 consecutive failures within this run → pause 15 min
+        if (runConsecutiveFailures >= 10) {
+          const pauseUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          await supabase.from("pos_connections").update({
+            circuit_breaker_paused_until: pauseUntil,
+            circuit_breaker_reason: `Auto-paused: ${runConsecutiveFailures} consecutive failures. Last error: ${errorMsg.substring(0, 200)}`,
+            consecutive_failures: runConsecutiveFailures,
+          }).eq("id", connectionId);
+        }
+      };
+
+      const registerSuccess = async () => {
+        if (runConsecutiveFailures > 0) {
+          runConsecutiveFailures = 0;
+          await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+        }
+      };
+
       while (Date.now() - startTime < TIME_BUDGET_MS) {
+        // Re-check breaker each loop in case it tripped mid-run
+        if (runConsecutiveFailures >= 10) break;
+
         const { data: tasks } = await supabase
           .from("outbound_tasks").select("id, task_type")
           .eq("connection_id", connectionId)
           .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"])
           .eq("status", "QUEUED")
+          .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
           .order("created_at").limit(BATCH_SIZE);
 
         if (!tasks || tasks.length === 0) break;
 
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
+          if (runConsecutiveFailures >= 10) break;
           try {
             if ((t as any).task_type === "AGORA_HIDE_PRODUCT") {
-              // HIDE tasks: set ShowInPos=false for products
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
               if (!fullTask) { failed++; processed++; continue; }
               const p = fullTask.payload_json as Record<string, unknown>;
@@ -4226,7 +4274,6 @@ serve(async (req) => {
                 failed++; processed++; continue;
               }
 
-              // Build XML to hide products (UseAsDirectSale=false, SaleableAsMain=false)
               const vatIdHide = String((connection as any).default_vat_id || "1");
               let productsXml = "";
               for (const pid of productIds) {
@@ -4234,7 +4281,8 @@ serve(async (req) => {
               }
               const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
 
-              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
+              const newAttempts = (fullTask.attempts || 0) + 1;
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
@@ -4245,14 +4293,14 @@ serve(async (req) => {
 
               if (res.ok) {
                 await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                await registerSuccess();
                 succeeded++;
               } else {
-                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                await registerFailure(t.id, `HTTP ${res.status}: ${resBody}`, newAttempts);
                 failed++;
               }
               processed++;
             } else if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
-              // MIGRATE tasks are handled inline (lightweight XML with just FamilyId change)
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
               if (!fullTask) { failed++; processed++; continue; }
               const p = fullTask.payload_json as Record<string, unknown>;
@@ -4265,7 +4313,8 @@ serve(async (req) => {
               const vatIdMig2 = String((connection as any).default_vat_id || "1");
               const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig2}" />\n  </Products>\n</Import>`;
 
-              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: (fullTask.attempts || 0) + 1 }).eq("id", t.id);
+              const newAttempts = (fullTask.attempts || 0) + 1;
+              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
@@ -4284,9 +4333,10 @@ serve(async (req) => {
                     .eq("winerim_wine_id", winerimId)
                     .eq("format", fmt);
                 }
+                await registerSuccess();
                 succeeded++;
               } else {
-                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: `HTTP ${res.status}: ${resBody.substring(0, 500)}` }).eq("id", t.id);
+                await registerFailure(t.id, `HTTP ${res.status}: ${resBody}`, newAttempts);
                 failed++;
               }
               processed++;
@@ -4295,13 +4345,28 @@ serve(async (req) => {
                 body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
               });
               processed++;
-              if (result?.status === "SUCCESS") succeeded++; else failed++;
+              if (result?.status === "SUCCESS") {
+                await registerSuccess();
+                succeeded++;
+              } else {
+                // The sub-task already wrote FAILED; just count it for breaker tracking
+                runConsecutiveFailures++;
+                if (runConsecutiveFailures >= 10) {
+                  const pauseUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+                  await supabase.from("pos_connections").update({
+                    circuit_breaker_paused_until: pauseUntil,
+                    circuit_breaker_reason: `Auto-paused: ${runConsecutiveFailures} consecutive task failures.`,
+                    consecutive_failures: runConsecutiveFailures,
+                  }).eq("id", connectionId);
+                }
+                failed++;
+              }
             }
           } catch (err) { failed++; processed++; }
         }
       }
 
-      // Check if there are remaining tasks
+      // Remaining ready-to-run tasks
       const { count: remaining } = await supabase
         .from("outbound_tasks").select("id", { count: "exact", head: true })
         .eq("connection_id", connectionId)
@@ -4309,14 +4374,13 @@ serve(async (req) => {
         .eq("status", "QUEUED");
 
       const remainingCount = remaining || 0;
-      const isDone = remainingCount === 0;
+      const breakerTripped = runConsecutiveFailures >= 10;
+      const isDone = remainingCount === 0 || breakerTripped;
 
-      // ── SERVER-SIDE AUTO-CONTINUATION via pg_net ──
       if (serverLoop && !isDone) {
         const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
         const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
         const fnUrl = `${supabaseUrl}/functions/v1/agora-proxy`;
-        // Fire-and-forget: use pg_net to schedule the next batch
         await supabase.rpc("schedule_next_queue_batch" as never, {
           fn_url: fnUrl,
           service_key: serviceRoleKey,
@@ -4324,8 +4388,10 @@ serve(async (req) => {
         } as never);
       }
 
-      return new Response(JSON.stringify({ success: true, processed, succeeded, failed, remaining: remainingCount, done: isDone, serverLoop }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({
+        success: true, processed, succeeded, failed,
+        remaining: remainingCount, done: isDone, serverLoop, breakerTripped,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── RETRY/RESET FAILED TASKS ──
