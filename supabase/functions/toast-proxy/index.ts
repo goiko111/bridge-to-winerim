@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getToastConfig, type ToastConfig } from "../_shared/providerConfig.ts";
+import { isConnectionPaused } from "../_shared/resilience.ts";
 
 // HMAC SHA-256 using built-in Web Crypto (no external deps)
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
