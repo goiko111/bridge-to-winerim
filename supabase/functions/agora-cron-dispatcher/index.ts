@@ -169,6 +169,7 @@ Deno.serve(async (req: Request) => {
         job,
         connections: connections.length,
         skippedByBreaker,
+        skippedByPreflight,
         dispatched: dispatchRequests.length,
         succeeded: okCount,
         results: summary,
