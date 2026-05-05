@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getNumierConfig, type NumierConfig } from "../_shared/providerConfig.ts";
+import { isConnectionPaused } from "../_shared/resilience.ts";
 
 const NUMIER_BASE = "https://www.numier.com/api/public/index.php/api";
 
