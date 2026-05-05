@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getToastConfig, type ToastConfig } from "../_shared/providerConfig.ts";
+import { isConnectionPaused } from "../_shared/resilience.ts";
 
 // HMAC SHA-256 using built-in Web Crypto (no external deps)
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
@@ -859,6 +860,14 @@ Deno.serve(async (req) => {
 
     const payload = await req.json();
     const { action, connection_id } = payload;
+
+    // Circuit-breaker guard (skip for credential setup actions and webhook router above)
+    if (connection_id && !["store-credentials"].includes(action)) {
+      const cbState = await isConnectionPaused(sb(), connection_id);
+      if (cbState.paused) {
+        return json({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }, 503);
+      }
+    }
 
     switch (action) {
       case "store-credentials":

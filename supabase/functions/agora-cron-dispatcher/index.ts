@@ -37,7 +37,7 @@ Deno.serve(async (req: Request) => {
     const nowIso = new Date().toISOString();
     let query = supabase
       .from("pos_connections")
-      .select("id, location_name, circuit_breaker_paused_until")
+      .select("id, location_name, base_url, api_token, circuit_breaker_paused_until")
       .eq("provider", "agora")
       .eq("enabled", true);
     if (body.connectionId) query = query.eq("id", body.connectionId);
@@ -45,13 +45,41 @@ Deno.serve(async (req: Request) => {
     const { data: allConnections, error: connErr } = await query;
     if (connErr) throw connErr;
 
-    const connections = (allConnections || []).filter((c: any) =>
+    let connections = (allConnections || []).filter((c: any) =>
       !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso
     );
     const skippedByBreaker = (allConnections?.length || 0) - connections.length;
 
+    // ── PRE-FLIGHT (Layer 4): for jobs that hit the customer POS (outbound-queue,
+    // sales-stock, restore-stock), do a 5s reachability probe per connection BEFORE
+    // dispatching. If unreachable, skip this round (the breaker will eventually
+    // pause it on the natural call path; we just avoid filling the queue with FAILED).
+    let skippedByPreflight = 0;
+    if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock" || job === "restore-stock")) {
+      const checks = await Promise.all(connections.map(async (c: any) => {
+        const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
+        if (!baseUrl) return { id: c.id, ok: false };
+        const url = `${(baseUrl.startsWith("http") ? baseUrl : `http://${baseUrl}`)}/api/`;
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 5000);
+        try {
+          const r = await fetch(url, { method: "GET", headers: { "Api-Token": (c.api_token || "").trim() }, signal: ctrl.signal });
+          clearTimeout(t);
+          // Any HTTP response means the POS is reachable.
+          return { id: c.id, ok: true, status: r.status };
+        } catch {
+          clearTimeout(t);
+          return { id: c.id, ok: false };
+        }
+      }));
+      const reachableIds = new Set(checks.filter((x) => x.ok).map((x) => x.id));
+      const before = connections.length;
+      connections = connections.filter((c: any) => reachableIds.has(c.id));
+      skippedByPreflight = before - connections.length;
+    }
+
     if (!connections || connections.length === 0) {
-      return new Response(JSON.stringify({ ok: true, dispatched: 0, job, skippedByBreaker }), {
+      return new Response(JSON.stringify({ ok: true, dispatched: 0, job, skippedByBreaker, skippedByPreflight }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -141,6 +169,7 @@ Deno.serve(async (req: Request) => {
         job,
         connections: connections.length,
         skippedByBreaker,
+        skippedByPreflight,
         dispatched: dispatchRequests.length,
         succeeded: okCount,
         results: summary,

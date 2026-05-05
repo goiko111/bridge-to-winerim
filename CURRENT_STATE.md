@@ -2,43 +2,47 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-05-05_
+_Última actualización: 2026-05-05 (sesión tarde)_
 
 ## Hechos (qué está desplegado y verificado)
 
-### Sistema de resiliencia Agora (activo)
-- **Cache XML productos** (`fetchAgoraProductsXmlCached`, TTL 60s) en `agora-proxy/index.ts`. Reduce descargas del catálogo Agora ~10x (~600/h → ~60/h por conexión).
-- **Rate limiter** por `connection_id`: máx **2 req/s** dentro de `fetchWithRetry`.
-- **Clasificador de errores** (`classifyPosError`): `POS_DOWN` | `POS_OVERLOADED` | `BUSINESS_ERROR`.
-- **Circuit breaker** (`applyCircuitBreaker`):
-  - `POS_DOWN` → pausa 60 min tras 5 fallos consecutivos.
-  - `POS_OVERLOADED` → pausa 15 min tras 10 fallos consecutivos.
-  - Se respeta en `agora-cron-dispatcher` (filtra por `circuit_breaker_paused_until`).
-- **Cron rescate de zombies**: `rescue_zombie_outbound_tasks()` cada 10 min marca `RUNNING > 15 min` como `FAILED`.
+### Sistema de resiliencia Agora (activo, sin cambios)
+- Cache XML productos `fetchAgoraProductsXmlCached` (TTL 60s).
+- Rate limiter 2 req/s por `connection_id`.
+- Clasificador `classifyPosError` y `applyCircuitBreaker` (POS_DOWN 60min / POS_OVERLOADED 15min).
+- Cron `rescue_zombie_outbound_tasks()` cada 10 min.
 
-### Limpieza realizada
-- 43 tareas zombie liberadas.
-- ~11.500 tareas redundantes/fallidas (Sa Vida / Sa Pedrera / Kava) marcadas como `BLOCKED` o `FAILED`.
+### Capa 3 — Resiliencia compartida (NUEVO, desplegado)
+- Nuevo módulo `supabase/functions/_shared/resilience.ts` exportando:
+  - `createResilientFetch(connectionId)` — throttle 2 req/s + retry + timeout.
+  - `classifyPosError`, `applyCircuitBreaker`, `resetFailureCounter`.
+  - `isConnectionPaused(supabase, connectionId)` — guard reusable.
+  - `preflightCheck(url, init, timeoutMs)` — sonda de alcance.
+- Guard `isConnectionPaused` integrado en handlers principales de:
+  - `bdp-proxy` (tras validar connectionId)
+  - `revo-proxy` (tras cargar conexión)
+  - `toast-proxy` (tras leer payload, salvo `store-credentials`)
+  - `numier-proxy` (tras validar connectionId)
+  - `icg-proxy` (tras cargar conexión)
+- Si la conexión está pausada por breaker, los proxies devuelven HTTP 503 con `code: CIRCUIT_BREAKER_OPEN`.
 
-### Estado por conexión Agora
-- **Luruna**: operativo. Sin saturación de SQL pool.
-- **Sa Vida / Sa Pedrera**: con "Connection refused" — POS local probablemente apagado. Se autorrecuperarán al primer task OK.
-- **Kava**: ver últimas tareas.
+### Capa 4 — Pre-flight en agora-cron-dispatcher (NUEVO, desplegado)
+- Para jobs `outbound-queue`, `sales-stock` y `restore-stock`, antes de despachar se hace `GET <baseUrl>/api/` con timeout 5s por conexión.
+- Conexiones inalcanzables se saltan en este ciclo y se reportan en `skippedByPreflight`.
+- Job `catalog` no se filtra (Winerim siempre debe sincronizarse aunque el POS esté caído).
 
-## Decisiones recientes
-Ver `DECISIONS_LOG.md`.
+### Capa 5 — Panel de salud por conexión (NUEVO)
+- Nuevo componente `src/components/ConnectionHealthPanel.tsx` (genérico, multi-provider).
+- Métricas: estado (Healthy/Degraded/Disabled/Circuit breaker open), último sync, queued, running, failed 24h, blocked, consecutive failures, último error.
+- Auto-refresh 15s.
+- Renderizado en `AgoraWizard` justo bajo el header cuando hay `connectionId`.
+- Reusable: cualquier wizard de otro provider puede importarlo y pasarle `connectionId`.
 
 ## Hipótesis abiertas
-- Las IPs AWS reportadas por el cliente Agora corresponden a Edge Functions de Supabase — **confirmado**, ya no es hipótesis.
-- Con cache + rate limit + breaker no debería volver a saturarse el SQL pool del cliente. **Pendiente de validar 7 días sin incidentes.**
+- Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
+- 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).
 
-## Riesgos / pendientes de monitorizar
-- Capa 4 (pre-flight health-check ligero) no implementada.
-- Capa 5 (dashboard estado conexiones en tiempo real) no implementada.
-- Otros proveedores (BDP, Revo, Toast, etc.) NO tienen aún el patrón rate-limit + breaker. No auditados aún.
+## Riesgos / pendientes
+- Los proxies aplicados solo tienen el guard de breaker, NO usan aún `createResilientFetch` en sus llamadas internas. Próxima iteración: reemplazar `fetch(...)` por la versión throttle dentro de cada proxy.
+- Toast tiene su propio breaker alternativo en `provider_config.circuit_breaker` — coexiste con el global. Decidir si unificar.
 
-## Estado documentos
-- `PROJECT_CONTEXT.md`: creado.
-- `CURRENT_STATE.md`: este archivo, creado.
-- `DECISIONS_LOG.md`: creado con histórico reciente.
-- `NEXT_STEPS.md`: creado.

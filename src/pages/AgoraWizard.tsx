@@ -35,6 +35,7 @@ import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
 import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
 import AgoraManualMatchPanel from "@/components/AgoraManualMatchPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
   ReadinessBadgeRow, OverallReadinessBadge,
@@ -4849,7 +4850,8 @@ export default function AgoraWizard() {
         <div>
           <h1 className="text-xl font-bold text-foreground">Connect Agora POS</h1>
           <p className="text-sm text-muted-foreground">Set up your Agora integration in a few steps.</p>
-        </div>
+      </div>
+      {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
       </div>
       <div className="flex items-center gap-1">
         {steps.map((step, i) => {

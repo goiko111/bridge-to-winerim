@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getBdpConfig, type BdpEndpointRecord } from "../_shared/providerConfig.ts";
+import { isConnectionPaused, classifyPosError, applyCircuitBreaker } from "../_shared/resilience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -212,6 +213,12 @@ serve(async (req) => {
 
     if (!connectionId) {
       return err({ success: false, message: "Missing connectionId" });
+    }
+
+    // Circuit-breaker guard: short-circuit if connection is currently paused.
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return err({ success: false, code: "CIRCUIT_BREAKER_OPEN", message: `Connection paused until ${cbState.until}: ${cbState.reason || "auto-pause"}` }, 503);
     }
 
     // Load connection

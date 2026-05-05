@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isConnectionPaused } from "../_shared/resilience.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -173,6 +174,13 @@ serve(async (req) => {
     if (connError || !connection) {
       return new Response(JSON.stringify({ error: "Connection not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Circuit-breaker guard
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return new Response(JSON.stringify({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Parse compound token: "tenant|access_token|client_token|webhook_secret"
