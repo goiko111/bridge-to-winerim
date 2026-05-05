@@ -218,6 +218,15 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Circuit-breaker guard
+  const cbState = await isConnectionPaused(sb, connectionId);
+  if (cbState.paused) {
+    return new Response(JSON.stringify({ success: false, code: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 503,
+    });
+  }
+
   const cfg = getIcgConfig(conn.provider_config);
   const host = (cfg.host || "").trim();
   const port = (cfg.port || "1433").trim();
