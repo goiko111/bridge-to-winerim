@@ -3176,7 +3176,7 @@ serve(async (req) => {
       }
       const { data: masterData } = await supabase
         .from("agora_master_data").select("families_json").eq("connection_id", connectionId).single();
-      const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string; Color?: string; Order?: string; ButtonText?: string }[];
+      const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string; Color?: string; Order?: string; ButtonText?: string; ParentFamilyId?: string }[];
 
       let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
       const applied: { id: string; name: string; showInPos: boolean }[] = [];
@@ -3187,7 +3187,8 @@ serve(async (req) => {
         const color = fam.Color || (u.showInPos ? "#8B0000" : "#999999");
         const btn = fam.ButtonText || name.substring(0, 20);
         const order = fam.Order || (u.showInPos ? "100" : "9999");
-        xml += `    <Family Id="${u.familyId}" Name="${escXmlV(name)}" ShowInPos="${u.showInPos}" ButtonText="${escXmlV(btn)}" Color="${color}" Order="${order}" />\n`;
+        const parentAttr = fam.ParentFamilyId ? ` ParentFamilyId="${fam.ParentFamilyId}"` : "";
+        xml += `    <Family Id="${u.familyId}" Name="${escXmlV(name)}" ShowInPos="${u.showInPos}" ButtonText="${escXmlV(btn)}" Color="${color}" Order="${order}"${parentAttr} />\n`;
         applied.push({ id: u.familyId, name, showInPos: u.showInPos });
       }
       xml += `  </Families>\n</Import>`;
