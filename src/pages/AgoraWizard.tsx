@@ -35,6 +35,7 @@ import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
 import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
 import AgoraManualMatchPanel from "@/components/AgoraManualMatchPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import {
   RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
   ReadinessBadgeRow, OverallReadinessBadge,
