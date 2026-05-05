@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getSimphonyConfig } from "@/utils/providerConfig";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";

@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getHioposConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
