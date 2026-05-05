@@ -176,6 +176,13 @@ serve(async (req) => {
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Circuit-breaker guard
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return new Response(JSON.stringify({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // Parse compound token: "tenant|access_token|client_token|webhook_secret"
     const tokenParts = connection.api_token.trim().split("|");
     const tenant = tokenParts[0] || "";
