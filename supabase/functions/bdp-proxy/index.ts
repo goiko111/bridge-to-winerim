@@ -215,6 +215,12 @@ serve(async (req) => {
       return err({ success: false, message: "Missing connectionId" });
     }
 
+    // Circuit-breaker guard: short-circuit if connection is currently paused.
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return err({ success: false, code: "CIRCUIT_BREAKER_OPEN", message: `Connection paused until ${cbState.until}: ${cbState.reason || "auto-pause"}` }, 503);
+    }
+
     // Load connection
     const { data: conn, error: connErr } = await supabase
       .from("pos_connections")
