@@ -687,6 +687,7 @@ export default function HioposWizard() {
             <p className="text-sm text-muted-foreground">No data yet. Click "Refresh Diagnostics" to load.</p>
           )}
 
+          {hiopos.connectionId && <ConnectionHealthPanel connectionId={hiopos.connectionId} />}
           <ProviderReadinessPanel connectionId={hiopos.connectionId} provider="hiopos" />
 
           <div className="flex justify-between pt-4 border-t">

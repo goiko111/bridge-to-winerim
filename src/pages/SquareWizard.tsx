@@ -443,6 +443,7 @@ export default function SquareWizard() {
                 <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
                 <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Square integration configured. Enable sync to import orders every {frequency} minutes.</p>
               </div>
+              {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
               <ProviderReadinessPanel connectionId={connectionId} provider="square" />
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>

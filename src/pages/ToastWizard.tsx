@@ -509,6 +509,7 @@ export default function ToastWizard() {
       case 8:
         return (
           <div className="space-y-6">
+            {toast.connectionId && <ConnectionHealthPanel connectionId={toast.connectionId} />}
             <ProviderReadinessPanel connectionId={toast.connectionId} provider="toast" />
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

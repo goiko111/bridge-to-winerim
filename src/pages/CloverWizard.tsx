@@ -582,6 +582,7 @@ function StepGoLive({
           Clover integration is configured{merchantName ? ` for ${merchantName}` : ""}. Enable sync to start importing orders every {frequency} minutes.
         </p>
       </div>
+      {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
       <ProviderReadinessPanel connectionId={connectionId} provider="clover" />
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Auth</span><span className="font-medium text-success">OAuth ✓</span></div>
