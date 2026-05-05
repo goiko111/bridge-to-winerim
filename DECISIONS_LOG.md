@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-05-05 (tarde) · Extraer resiliencia a `_shared/resilience.ts`
+- **Decisión**: Mover `fetchWithRetry`/`classifyPosError`/`applyCircuitBreaker` (originales en agora-proxy) a un módulo compartido + añadir `isConnectionPaused` y `preflightCheck`.
+- **Razón**: Necesario para extender el patrón a BDP, Revo, Toast, Numier, ICG sin duplicar código.
+- **Alternativa descartada**: copiar las funciones en cada proxy (deuda técnica inmediata).
+
+## 2026-05-05 (tarde) · Aplicar SOLO guard de breaker en los 5 proxies (no reemplazar todos los fetch)
+- **Decisión**: Añadir `isConnectionPaused` al inicio de cada handler. No reemplazar las llamadas `fetch(...)` internas todavía.
+- **Razón**: Cubre el 80% del beneficio (cortar tráfico a un POS pausado) con cambio mínimo y reversible. Reescribir todas las llamadas en 6.3k LOC en una sola sesión es alto riesgo.
+- **Alternativa descartada**: refactor masivo de cada proxy para usar `createResilientFetch` (queda como P1 siguiente).
+
+## 2026-05-05 (tarde) · Pre-flight solo en jobs que tocan POS del cliente
+- **Decisión**: En `agora-cron-dispatcher` añadir `GET /api/` con timeout 5s solo para `outbound-queue`, `sales-stock`, `restore-stock`. `catalog` queda sin filtro.
+- **Razón**: `catalog` también sincroniza Winerim (no solo Agora); aunque el POS esté caído, el lado Winerim debe correr.
+- **Alternativa descartada**: pre-flight en todos los jobs.
+
+## 2026-05-05 (tarde) · Panel de salud genérico (no específico de Agora)
+- **Decisión**: `ConnectionHealthPanel` recibe solo `connectionId`. Misma componente reutilizable para todos los providers.
+- **Razón**: La Capa 3 ya marca a los 5 proxies con la misma semántica de breaker → un panel sirve para todos.
+- **Alternativa descartada**: panel específico de Agora (no escalaba al resto).
+
+
+
 ## 2026-05-05 · Adoptar protocolo de 4 documentos de sesión
 - **Decisión**: Trabajar con `PROJECT_CONTEXT.md`, `CURRENT_STATE.md`, `DECISIONS_LOG.md`, `NEXT_STEPS.md` como fuente de verdad. Leerlos al inicio y actualizarlos al cierre de cada sesión.
 - **Razón**: Evitar asumir estado no documentado entre sesiones; trazabilidad de decisiones.
