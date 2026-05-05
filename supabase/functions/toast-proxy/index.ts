@@ -861,6 +861,14 @@ Deno.serve(async (req) => {
     const payload = await req.json();
     const { action, connection_id } = payload;
 
+    // Circuit-breaker guard (skip for credential setup actions and webhook router above)
+    if (connection_id && !["store-credentials"].includes(action)) {
+      const cbState = await isConnectionPaused(sb(), connection_id);
+      if (cbState.paused) {
+        return json({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }, 503);
+      }
+    }
+
     switch (action) {
       case "store-credentials":
         return await handleStoreCredentials(connection_id, payload.client_id, payload.client_secret);
