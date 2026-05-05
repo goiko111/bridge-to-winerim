@@ -959,6 +959,12 @@ serve(async (req) => {
 
     if (!connectionId) return json({ error: "Missing connectionId" }, 400);
 
+    // Circuit-breaker guard
+    const cbState = await isConnectionPaused(sb(), connectionId);
+    if (cbState.paused) {
+      return json({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }, 503);
+    }
+
     switch (action) {
       case "test":
       case "healthcheck":
