@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getTouchBistroConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
@@ -550,6 +551,7 @@ export default function TouchBistroWizard() {
       case 10:
         return (
            <div className="space-y-6">
+            {tb.connectionId && <ConnectionHealthPanel connectionId={tb.connectionId} />}
             <ProviderReadinessPanel connectionId={tb.connectionId} provider="touchbistro" />
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

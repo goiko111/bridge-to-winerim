@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getToastConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
@@ -509,6 +510,7 @@ export default function ToastWizard() {
       case 8:
         return (
           <div className="space-y-6">
+            {toast.connectionId && <ConnectionHealthPanel connectionId={toast.connectionId} />}
             <ProviderReadinessPanel connectionId={toast.connectionId} provider="toast" />
             <div className="rounded-lg border border-border bg-card p-5 space-y-4">
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">

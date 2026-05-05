@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getSimphonyConfig } from "@/utils/providerConfig";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1393,6 +1394,7 @@ export default function SimphonyWizard() {
                 <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
                 <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Simphony integration fully configured with STS Gen2 + OIDC + C&C + Notifications.</p>
               </div>
+              {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
               <ProviderReadinessPanel connectionId={connectionId} provider="simphony" />
               {!preflightAllPass && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive max-w-sm mx-auto space-y-2">

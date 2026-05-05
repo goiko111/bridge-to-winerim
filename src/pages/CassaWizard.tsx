@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -331,6 +332,7 @@ export default function CassaWizard() {
                   Enable the connection to start syncing sales and products from Cassa in Cloud automatically.
                 </p>
               </div>
+              {hook.connectionId && <ConnectionHealthPanel connectionId={hook.connectionId} />}
               <ProviderReadinessPanel connectionId={hook.connectionId} provider="cassa" />
               <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left space-y-2">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">

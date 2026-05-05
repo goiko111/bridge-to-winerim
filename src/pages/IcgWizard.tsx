@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { getIcgConfig } from "@/utils/providerConfig";
 import { useNavigate } from "react-router-dom";
 import {
@@ -492,6 +493,7 @@ export default function IcgWizard() {
         <p className="text-sm text-muted-foreground mt-1">Review and enable sync.</p>
       </div>
 
+      {icg.connectionId && <ConnectionHealthPanel connectionId={icg.connectionId} />}
       <ProviderReadinessPanel connectionId={icg.connectionId} provider="icg" />
 
       {/* Checklist */}

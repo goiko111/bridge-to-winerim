@@ -12,6 +12,7 @@ import BdpEndpointDiagnostics from "@/components/BdpEndpointDiagnostics";
 import BdpFamilyMapping from "@/components/BdpFamilyMapping";
 import BdpRepairActionsPanel from "@/components/BdpRepairActionsPanel";
 import BdpReadinessPanel from "@/components/BdpReadinessPanel";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import BdpPilotRun from "@/components/BdpPilotRun";
 import BdpSetupChecklist from "@/components/BdpSetupChecklist";
 import { Button } from "@/components/ui/button";
@@ -975,6 +976,8 @@ function StepGoLive({ connectionId, onEnable }: { connectionId: string | null; o
           Review readiness, run the pilot validation, and enable automatic sync.
         </p>
       </div>
+
+      {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
 
       {/* Readiness checks */}
       <BdpReadinessPanel connectionId={connectionId} />

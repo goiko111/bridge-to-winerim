@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertTriangle, Loader2, ArrowLeft, ArrowRight, MapPin, ShoppingCart, Info, Database, BarChart3, Play, XCircle, Zap } from "lucide-react";
 import { useNumierConnection } from "@/hooks/useNumierConnection";
 import ProviderReadinessPanel from "@/components/ProviderReadinessPanel";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import NumierTpvDiagnostics from "@/components/NumierTpvDiagnostics";
 import { useNavigate } from "react-router-dom";
 
@@ -888,7 +889,10 @@ export default function NumierWizard() {
             </p>
 
             {connectionId && (
-              <ProviderReadinessPanel connectionId={connectionId} provider="numier" />
+              <>
+                <ConnectionHealthPanel connectionId={connectionId} />
+                <ProviderReadinessPanel connectionId={connectionId} provider="numier" />
+              </>
             )}
 
             {/* Capabilities summary */}

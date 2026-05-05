@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -540,6 +541,7 @@ function StepGoLive({
           L'integrazione TCPOS è configurata. Attiva la sync per iniziare a importare vendite ogni {frequency} minuti.
         </p>
       </div>
+      {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
       <ProviderReadinessPanel connectionId={connectionId} provider="tcpos" />
       <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
         <div className="flex justify-between text-xs"><span className="text-muted-foreground">Modalità</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Solo Pull" : "Bidirezionale"}</span></div>
