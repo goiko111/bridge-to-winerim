@@ -4851,6 +4851,21 @@ export default function AgoraWizard() {
           <h1 className="text-xl font-bold text-foreground">Connect Agora POS</h1>
           <p className="text-sm text-muted-foreground">Set up your Agora integration in a few steps.</p>
       </div>
+      {connectionId && (
+        <div className="ml-auto flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+          <div className="text-right">
+            <p className="text-xs font-medium text-foreground">Conexión activa (cron)</p>
+            <p className="text-[10px] text-muted-foreground">{enabled ? "El cron sincroniza esta conexión cada 5 min" : "Pausada — el cron no entra"}</p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={async (v) => {
+              setEnabled(v);
+              await updateConnection(connectionId, { enabled: v });
+            }}
+          />
+        </div>
+      )}
       {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
       </div>
       <div className="flex items-center gap-1">
