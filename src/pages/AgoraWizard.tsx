@@ -28,6 +28,7 @@ import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 import AgoraFamilyVisibilityPanel from "@/components/AgoraFamilyVisibilityPanel";
+import AgoraProductVisibilityPanel from "@/components/AgoraProductVisibilityPanel";
 import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
@@ -4245,6 +4246,9 @@ function StepMasterData({
 
       {/* ── Family Visibility Panel (hide legacy families / archive products) ── */}
       <AgoraFamilyVisibilityPanel connectionId={connectionId} />
+
+      {/* ── Product Visibility Panel (hide individual legacy products) ── */}
+      <AgoraProductVisibilityPanel connectionId={connectionId} />
 
       {sections.map(({ label, data, icon: Icon }) => {
         const filtered = filterItems(data);

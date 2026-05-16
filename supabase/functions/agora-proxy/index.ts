@@ -3014,6 +3014,10 @@ serve(async (req) => {
 
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
+        UseAsDirectSale: (p as any).UseAsDirectSale,
+        SaleableAsMain: (p as any).SaleableAsMain,
+        ButtonText: (p as any).ButtonText,
+        Color: (p as any).Color,
       }));
 
       await supabase.from("agora_master_data").upsert({
@@ -3210,7 +3214,53 @@ serve(async (req) => {
       }
     }
 
-    // ── ARCHIVE PRODUCTS (move all products of given family IDs to a hidden ARCHIVO family) ──
+    // ── SET PRODUCT VISIBILITY (toggle UseAsDirectSale + SaleableAsMain per product, batched) ──
+    if (action === "set-product-visibility") {
+      const updates: { productId: string; visible: boolean }[] = payload.updates || [];
+      if (!Array.isArray(updates) || updates.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      function escXmlP(s: string): string {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      }
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("products_summary_json").eq("connection_id", connectionId).single();
+      const existingProducts = ((masterData as any)?.products_summary_json || []) as {
+        Id: string; Name: string; FamilyId?: string; VatId?: string; ButtonText?: string; Color?: string;
+      }[];
+
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n`;
+      const applied: { id: string; name: string; visible: boolean }[] = [];
+      for (const u of updates) {
+        const p = existingProducts.find(x => String(x.Id) === String(u.productId));
+        if (!p) continue;
+        const name = p.Name || u.productId;
+        const flag = u.visible ? "true" : "false";
+        xml += `    <Product Id="${u.productId}" Name="${escXmlP(name)}"`;
+        if (p.FamilyId) xml += ` FamilyId="${p.FamilyId}"`;
+        if (p.VatId) xml += ` VatId="${p.VatId}"`;
+        xml += ` UseAsDirectSale="${flag}" SaleableAsMain="${flag}" />\n`;
+        applied.push({ id: u.productId, name, visible: u.visible });
+      }
+      xml += `  </Products>\n</Import>`;
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
+      try {
+        const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 60000);
+        const responseBody = await importRes.text().catch(() => "");
+        const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        return new Response(JSON.stringify({
+          success: parsed.success, applied,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
+          xmlPreview: xml.slice(0, 800),
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
     if (action === "archive-products") {
       const sourceFamilyIds: string[] = (payload.sourceFamilyIds || []).map(String);
       if (sourceFamilyIds.length === 0) {
