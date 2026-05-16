@@ -3014,6 +3014,10 @@ serve(async (req) => {
 
       const productsSummary = products.map(p => ({
         Id: p.Id, Name: p.Name, FamilyId: p.FamilyId, VatId: p.VatId,
+        UseAsDirectSale: (p as any).UseAsDirectSale,
+        SaleableAsMain: (p as any).SaleableAsMain,
+        ButtonText: (p as any).ButtonText,
+        Color: (p as any).Color,
       }));
 
       await supabase.from("agora_master_data").upsert({
