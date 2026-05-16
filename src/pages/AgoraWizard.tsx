@@ -4246,6 +4246,9 @@ function StepMasterData({
       {/* ── Family Visibility Panel (hide legacy families / archive products) ── */}
       <AgoraFamilyVisibilityPanel connectionId={connectionId} />
 
+      {/* ── Product Visibility Panel (hide individual legacy products) ── */}
+      <AgoraProductVisibilityPanel connectionId={connectionId} />
+
       {sections.map(({ label, data, icon: Icon }) => {
         const filtered = filterItems(data);
         if (searchMaster.trim() && filtered.length === 0) return null;
