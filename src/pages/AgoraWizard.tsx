@@ -28,6 +28,7 @@ import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
 import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
 import AgoraFamilyManager from "@/components/AgoraFamilyManager";
 import AgoraFamilyVisibilityPanel from "@/components/AgoraFamilyVisibilityPanel";
+import AgoraProductVisibilityPanel from "@/components/AgoraProductVisibilityPanel";
 import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
 import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
