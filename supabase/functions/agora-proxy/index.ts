@@ -4648,12 +4648,28 @@ serve(async (req) => {
             }
           } catch (err) {
             const errMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-            console.error(`[process-xml-outbound-queue] task ${t.id} threw:`, errMsg);
+            // Respect max_attempts to prevent infinite loops (e.g. malformed payloads that always throw)
+            const { data: cur } = await supabase
+              .from("outbound_tasks").select("attempts, max_attempts").eq("id", t.id).single();
+            const curAttempts = (cur?.attempts || 0) + 1;
+            const curMax = cur?.max_attempts || 10;
+            const exhausted = curAttempts >= curMax;
+            if (exhausted) {
+              console.error(`[process-xml-outbound-queue] task ${t.id} BLOCKED after ${curAttempts} attempts:`, errMsg);
+            }
             try {
               await supabase.from("outbound_tasks")
-                .update({ status: "QUEUED", last_error: `EXCEPTION: ${errMsg}`, updated_at: new Date().toISOString() })
+                .update({
+                  status: exhausted ? "BLOCKED" : "QUEUED",
+                  attempts: curAttempts,
+                  last_error: `EXCEPTION: ${errMsg}`,
+                  blocked_reason: exhausted ? `Exhausted ${curMax} attempts. Last error: ${errMsg}` : null,
+                  next_retry_at: exhausted ? null : new Date(Date.now() + Math.min(60_000, 2000 * curAttempts)).toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
                 .eq("id", t.id);
             } catch (_) { /* swallow */ }
+            if (exhausted) runConsecutiveFailures++;
             failed++; processed++;
           }
         }
