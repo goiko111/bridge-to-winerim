@@ -53,6 +53,15 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
   const [archiving, setArchiving] = useState(false);
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggleExpand = (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const loadData = async () => {
     setLoading(true);
