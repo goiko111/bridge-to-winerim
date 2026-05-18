@@ -634,12 +634,21 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
             <span className="ml-2 text-[10px] text-amber-600">← Customer's families (will not be modified)</span>
           )}
         </p>
-        {winerimFamilies.length > 0 && (
-          <Button variant="destructive" size="sm" className="h-6 text-[10px]" onClick={hideWinerimFamilies} disabled={hiding || syncing}>
-            {hiding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <EyeOff className="mr-1 h-3 w-3" />}
-            Ocultar {winerimFamilies.length} familias WINERIM del TPV
-          </Button>
-        )}
+        <div className="flex gap-1.5">
+          {winerimFamilies.some(isHidden) && (
+            <Button variant="outline" size="sm" className="h-6 text-[10px] border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
+              onClick={showAllHiddenWinerim} disabled={showingAll || syncing}>
+              {showingAll ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+              Mostrar {winerimFamilies.filter(isHidden).length} WINERIM ocultas en TPV
+            </Button>
+          )}
+          {winerimFamilies.length > 0 && (
+            <Button variant="destructive" size="sm" className="h-6 text-[10px]" onClick={hideWinerimFamilies} disabled={hiding || syncing}>
+              {hiding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <EyeOff className="mr-1 h-3 w-3" />}
+              Ocultar {winerimFamilies.length} familias WINERIM del TPV
+            </Button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {shown.map(f => {
