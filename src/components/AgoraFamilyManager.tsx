@@ -653,6 +653,7 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
       <div className="flex flex-wrap gap-1.5">
         {shown.map(f => {
           const isWinerim = f.Name.toUpperCase().includes("WINERIM");
+          const hidden = isHidden(f);
           const count = productsByFamily.get(String(f.Id))?.length || 0;
           const isOpen = expandedFamilyId === String(f.Id);
           return (
@@ -662,30 +663,46 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
                 onClick={() => setExpandedFamilyId(isOpen ? null : String(f.Id))}
                 className={`inline-flex items-center rounded-md border text-[10px] font-mono px-2 py-0.5 transition-colors ${
                   isWinerim
-                    ? "bg-primary text-primary-foreground border-primary pr-6 hover:bg-primary/90"
+                    ? `bg-primary text-primary-foreground border-primary pr-6 hover:bg-primary/90 ${hidden ? "opacity-50 line-through decoration-1" : ""}`
                     : "bg-background text-foreground border-border hover:bg-muted"
                 } ${isOpen ? "ring-1 ring-primary/60" : ""}`}
-                title={`Ver ${count} producto(s) de "${f.Name}"`}
+                title={`${hidden ? "[OCULTA] " : ""}Ver ${count} producto(s) de "${f.Name}"`}
               >
                 {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
                 {f.Id}: {f.Name}
+                {hidden && <span className="ml-1 text-[8px] uppercase font-bold">hidden</span>}
                 <span className={`ml-1.5 rounded px-1 ${isWinerim ? "bg-primary-foreground/20" : "bg-muted text-muted-foreground"}`}>
                   {count}
                 </span>
               </button>
               {isWinerim && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); hideSingleFamily(f.Id, f.Name); }}
-                  disabled={hidingSingle === f.Id}
-                  className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
-                  title={`Ocultar "${f.Name}" del TPV`}
-                >
-                  {hidingSingle === f.Id ? (
-                    <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
-                  ) : (
-                    <EyeOff className="h-2.5 w-2.5 text-primary-foreground opacity-60 hover:opacity-100" />
-                  )}
-                </button>
+                hidden ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); showSingleFamily(f.Id, f.Name); }}
+                    disabled={showingSingle === f.Id}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-emerald-500/30 transition-colors"
+                    title={`Mostrar "${f.Name}" en el TPV`}
+                  >
+                    {showingSingle === f.Id ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
+                    ) : (
+                      <Eye className="h-2.5 w-2.5 text-primary-foreground opacity-80 hover:opacity-100" />
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); hideSingleFamily(f.Id, f.Name); }}
+                    disabled={hidingSingle === f.Id}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
+                    title={`Ocultar "${f.Name}" del TPV`}
+                  >
+                    {hidingSingle === f.Id ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
+                    ) : (
+                      <EyeOff className="h-2.5 w-2.5 text-primary-foreground opacity-60 hover:opacity-100" />
+                    )}
+                  </button>
+                )
               )}
             </div>
           );
