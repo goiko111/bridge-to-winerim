@@ -12,7 +12,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 interface DispatchBody {
-  job: "catalog" | "sales-stock" | "outbound-queue" | "restore-stock";
+  job: "catalog" | "sales-stock" | "outbound-queue";
   connectionId?: string; // optional: limit to one connection (testing)
 }
 
@@ -24,8 +24,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = (await req.json().catch(() => ({}))) as DispatchBody;
     const job = body.job;
-    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue" && job !== "restore-stock") {
-      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock', 'outbound-queue' or 'restore-stock'" }), {
+    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue") {
+      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock' or 'outbound-queue'" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -55,7 +55,7 @@ Deno.serve(async (req: Request) => {
     // dispatching. If unreachable, skip this round (the breaker will eventually
     // pause it on the natural call path; we just avoid filling the queue with FAILED).
     let skippedByPreflight = 0;
-    if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock" || job === "restore-stock")) {
+    if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock")) {
       const checks = await Promise.all(connections.map(async (c: any) => {
         const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
         if (!baseUrl) return { id: c.id, ok: false };
@@ -102,9 +102,6 @@ Deno.serve(async (req: Request) => {
       }
       if (job === "outbound-queue") {
         return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
-      }
-      if (job === "restore-stock") {
-        return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "restore-glass-overdiscount", connectionId: connection.id, apply: true } }];
       }
       return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } }];
     };

@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-05-18 · Desactivar cron `agora-dispatch-restore-stock` y eliminar `restore-stock` del dispatcher
+- **Decisión**: `cron.unschedule('agora-dispatch-restore-stock')` (jobid 12) y eliminar el case `"restore-stock"` del `agora-cron-dispatcher` + del tipo `DispatchBody`. La acción `restore-glass-overdiscount` sigue existiendo en `agora-proxy` pero solo se puede invocar manualmente.
+- **Razón**: El cron corría cada 5min con `apply: true` y reescribía el stock de Winerim en Sa Vida como `max(0, baseline - allHistoricalSales)`, dejando a 0 los vinos más vendidos cada vez que el cliente los reponía manualmente. Era una herramienta one-shot programada por error como recurrente.
+- **Alternativa descartada**: subir el TTL del baseline o filtrar por fecha — sigue siendo destructivo para ajustes manuales del cliente.
+
+---
+
 ## 2026-05-18 · Agora Kava no expone ventas en tiempo real → mantener flujo diario + proponer doble cierre
 - **Decisión**: Confirmar que la versión de Agora desplegada en Kava SOLO devuelve datos por `/api/export/?filter=Invoices` (tras cierre de caja). Los filtros `Tickets`, `Orders`, `OpenInvoices`, `Receipts` devuelven HTTP 500. Mantener `auto-sync-sales` con scan hasta D-1 y proponer al cliente realizar doble cierre (comida + cena) para tener visibilidad 2 veces/día.
 - **Razón**: No existe endpoint público en esta versión de Agora para tickets en curso. Forzar SQL directo al servidor del cliente requiere abrir puertos y rompe el contrato API-only.
