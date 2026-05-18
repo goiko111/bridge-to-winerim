@@ -486,7 +486,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
         </p>
         <p className="flex items-start gap-1.5">
           <Archive className="h-3 w-3 mt-0.5 text-amber-500 flex-shrink-0" />
-          <span><strong>Archivar productos</strong> garantiza que no aparezcan en buscador moviéndolos a una familia oculta llamada "ARCHIVO WINERIM". Acción irreversible vía panel (requiere reasignar familia en Agora si arrepientes).</span>
+          <span><strong>Archivar familia + productos</strong> oculta la familia (ShowInPos=false) y marca todos sus productos como no vendibles (UseAsDirectSale/SaleableAsMain=false). <strong>Totalmente reversible</strong> — pulsa "Restaurar" o reactiva los switches para volver a ponerlo visible. No se borra nada, el histórico se conserva.</span>
         </p>
       </div>
 
@@ -495,9 +495,9 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Archivar {productsToArchive} producto(s)?</AlertDialogTitle>
             <AlertDialogDescription>
-              Los productos de las {bulkSelected.size} familia(s) seleccionada(s) se moverán a la familia oculta
-              <strong> "ARCHIVO WINERIM"</strong> (ID 999999, ShowInPos=false). No se borran de Agora — el histórico de ventas se conserva.
-              Para deshacer, deberás reasignar manualmente la familia de cada producto en Agora.
+              Se ocultarán las {bulkSelected.size} familia(s) seleccionada(s) y sus {productsToArchive} producto(s) en Agora
+              (ShowInPos=false + UseAsDirectSale/SaleableAsMain=false). No se borran — el histórico de ventas se conserva
+              y es <strong>totalmente reversible</strong> desde este mismo panel.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
