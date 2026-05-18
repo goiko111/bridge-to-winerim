@@ -303,10 +303,10 @@ function normalizeLineFormat(productName: string, saleFormatName: string): strin
   const pn = (productName || "").toUpperCase().trim();
   const sf = (saleFormatName || "").toUpperCase().trim();
 
-  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …")
-  if (pn.startsWith("BOT.") || pn.startsWith("BOT ")) return "BOT";
-  if (pn.startsWith("COPA ") || pn.startsWith("COPA.")) return "COPA";
-  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM")) return "MAGNUM";
+  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …", or new "B …", "C …", "M …")
+  if (pn.startsWith("BOT.") || pn.startsWith("BOT ") || pn.startsWith("B ")) return "BOT";
+  if (pn.startsWith("COPA ") || pn.startsWith("COPA.") || pn.startsWith("C ")) return "COPA";
+  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM") || pn.startsWith("M ")) return "MAGNUM";
 
   // Fallback to SaleFormatName
   if (sf.includes("COPA") || sf.includes("GLASS") || sf.includes("VERRE")) return "COPA";
