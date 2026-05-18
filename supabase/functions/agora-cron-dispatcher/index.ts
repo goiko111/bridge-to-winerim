@@ -24,8 +24,8 @@ Deno.serve(async (req: Request) => {
   try {
     const body = (await req.json().catch(() => ({}))) as DispatchBody;
     const job = body.job;
-    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue" && job !== "restore-stock") {
-      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock', 'outbound-queue' or 'restore-stock'" }), {
+    if (job !== "catalog" && job !== "sales-stock" && job !== "outbound-queue") {
+      return new Response(JSON.stringify({ error: "job must be 'catalog', 'sales-stock' or 'outbound-queue'" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
