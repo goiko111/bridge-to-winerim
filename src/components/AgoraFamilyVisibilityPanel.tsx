@@ -96,6 +96,19 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
     return m;
   }, [products]);
 
+  const productsByFamily = useMemo(() => {
+    const m = new Map<string, ProductRow[]>();
+    for (const p of products) {
+      const k = String(p.FamilyId || "");
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(p);
+    }
+    for (const arr of m.values()) {
+      arr.sort((a, b) => (a.Name || "").localeCompare(b.Name || ""));
+    }
+    return m;
+  }, [products]);
+
   const enriched = useMemo(() => {
     return families.map(f => {
       const id = String(f.Id);
