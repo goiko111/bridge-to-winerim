@@ -421,8 +421,31 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
                 </div>
                 {isOpen && famProducts.length > 0 && (
                   <div className="bg-muted/20 border-t border-border px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
-                      Productos en esta familia ({famProducts.length})
+                    <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Productos en esta familia ({famProducts.length})
+                      </div>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[10px] px-2 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
+                          disabled={archiving}
+                          onClick={() => archiveFamilies([f._id], false)}
+                        >
+                          {archiving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Archive className="mr-1 h-3 w-3" />}
+                          Archivar familia + productos
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[10px] px-2 text-emerald-600 hover:bg-emerald-500/10"
+                          disabled={archiving}
+                          onClick={() => archiveFamilies([f._id], true)}
+                        >
+                          <Eye className="mr-1 h-3 w-3" /> Restaurar
+                        </Button>
+                      </div>
                     </div>
                     <div className="max-h-[260px] overflow-y-auto rounded-md border border-border bg-background/40 divide-y divide-border">
                       {famProducts.slice(0, 500).map(p => {
