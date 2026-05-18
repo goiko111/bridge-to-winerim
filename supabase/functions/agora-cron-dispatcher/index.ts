@@ -12,7 +12,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 interface DispatchBody {
-  job: "catalog" | "sales-stock" | "outbound-queue" | "restore-stock";
+  job: "catalog" | "sales-stock" | "outbound-queue";
   connectionId?: string; // optional: limit to one connection (testing)
 }
 
