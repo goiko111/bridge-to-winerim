@@ -303,10 +303,10 @@ function normalizeLineFormat(productName: string, saleFormatName: string): strin
   const pn = (productName || "").toUpperCase().trim();
   const sf = (saleFormatName || "").toUpperCase().trim();
 
-  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …")
-  if (pn.startsWith("BOT.") || pn.startsWith("BOT ")) return "BOT";
-  if (pn.startsWith("COPA ") || pn.startsWith("COPA.")) return "COPA";
-  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM")) return "MAGNUM";
+  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …", or new "B …", "C …", "M …")
+  if (pn.startsWith("BOT.") || pn.startsWith("BOT ") || pn.startsWith("B ")) return "BOT";
+  if (pn.startsWith("COPA ") || pn.startsWith("COPA.") || pn.startsWith("C ")) return "COPA";
+  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM") || pn.startsWith("M ")) return "MAGNUM";
 
   // Fallback to SaleFormatName
   if (sf.includes("COPA") || sf.includes("GLASS") || sf.includes("VERRE")) return "COPA";
@@ -316,6 +316,14 @@ function normalizeLineFormat(productName: string, saleFormatName: string): strin
   // If SaleFormatName is non-empty, keep as-is normalized
   if (saleFormatName.trim()) return saleFormatName.trim();
   return "";
+}
+
+// ── PRODUCT NAME BUILDER: prefix B (botella) / C (copa) / M (magnum) ──
+function formatProductName(fmt: string, wineName: string): string {
+  const f = String(fmt || "").toUpperCase();
+  if (f === "MAGNUM") return `M ${wineName}`;
+  if (f === "GLASS" || f === "COPA") return `C ${wineName}`;
+  return `B ${wineName}`;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -1350,7 +1358,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
 
-      const productName = isMagnum ? `MAG. ${wineName}` : isGlass ? `COPA ${wineName}` : `BOT. ${wineName}`;
+      const productName = formatProductName(isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE", wineName);
       const buttonText = truncate(productName, 20);
 
       // Use REAL prices from normalized fields, never invent
@@ -2780,7 +2788,7 @@ serve(async (req) => {
               const targetFamilyId = p.targetFamilyId;
               const wineName = String(p.wineName || "");
               const fmt = String(p.format || "BOTTLE");
-              const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
+              const productName = formatProductName(fmt, wineName);
 
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
               const vatIdMig = String((connection as any).default_vat_id || "1");
@@ -3660,7 +3668,7 @@ serve(async (req) => {
             : fmt === "GLASS" 
             ? String(700000 + Number(wine.winerim_id || 0))
             : String(500000 + Number(wine.winerim_id || 0));
-          const productName = fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`;
+          const productName = formatProductName(fmt, wine.name);
 
           await supabase.from("product_mappings").upsert({
             connection_id: connectionId,
@@ -3762,7 +3770,7 @@ serve(async (req) => {
                   : String(500000 + Number(wine.winerim_id || 0));
                 productsToVerify.push({
                   productId,
-                  productName: fmt === "MAGNUM" ? `MAG. ${wine.name}` : fmt === "GLASS" ? `COPA ${wine.name}` : `BOT. ${wine.name}`,
+                  productName: formatProductName(fmt, wine.name),
                   format: fmt,
                   erpId: `${wine.winerim_id}:${fmt}`,
                   expectedFamilyId: expectedFamilies[productId] || undefined,
@@ -4286,7 +4294,7 @@ serve(async (req) => {
             : fmt === "GLASS"
             ? String(700000 + Number(winerimWineId || 0))
             : String(500000 + Number(winerimWineId || 0));
-          const productName = fmt === "MAGNUM" ? `MAG. ${wineArr[0].name}` : fmt === "GLASS" ? `COPA ${wineArr[0].name}` : `BOT. ${wineArr[0].name}`;
+          const productName = formatProductName(fmt, wineArr[0].name);
 
           await supabase.from("product_mappings").upsert({
             connection_id: task.connection_id,
@@ -4584,7 +4592,7 @@ serve(async (req) => {
               const targetFamilyId = p.targetFamilyId;
               const wineName = String(p.wineName || "");
               const fmt = String(p.format || "BOTTLE");
-              const productName = fmt === "MAGNUM" ? `MAG. ${wineName}` : fmt === "GLASS" ? `COPA ${wineName}` : `BOT. ${wineName}`;
+              const productName = formatProductName(fmt, wineName);
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
               const vatIdMig2 = String((connection as any).default_vat_id || "1");
               const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig2}" />\n  </Products>\n</Import>`;
