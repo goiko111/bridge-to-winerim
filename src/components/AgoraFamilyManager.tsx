@@ -578,6 +578,53 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
     }
   };
 
+  const setFamilyVisibility = async (familyId: string, showInPos: boolean) => {
+    const { data, error } = await supabase.functions.invoke("agora-proxy", {
+      body: { action: "set-family-visibility", connectionId, updates: [{ familyId, showInPos }] },
+    });
+    if (error) throw error;
+    if (!data?.success) throw new Error(data?.error || "Error desconocido");
+    return data;
+  };
+
+  const showSingleFamily = async (familyId: string, familyName: string) => {
+    if (!connectionId) return;
+    setShowingSingle(familyId);
+    try {
+      await setFamilyVisibility(familyId, true);
+      toast({ title: "Familia visible", description: `"${familyName}" ahora visible en el TPV.` });
+      await onSyncMasterData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setShowingSingle(null);
+    }
+  };
+
+  const showAllHiddenWinerim = async () => {
+    if (!connectionId) return;
+    const hidden = winerimFamilies.filter(isHidden);
+    if (hidden.length === 0) return;
+    setShowingAll(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: {
+          action: "set-family-visibility",
+          connectionId,
+          updates: hidden.map(f => ({ familyId: f.Id, showInPos: true })),
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error desconocido");
+      toast({ title: "Familias visibles", description: `${data.applied?.length || hidden.length} familias WINERIM vueltas a visibles.` });
+      await onSyncMasterData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setShowingAll(false);
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
