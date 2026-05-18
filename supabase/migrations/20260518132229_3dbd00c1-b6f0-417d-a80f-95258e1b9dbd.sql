@@ -1,0 +1,1 @@
+UPDATE public.provider_capabilities SET can_write_products='YES', last_verified_at=now(), updated_at=now() WHERE connection_id='f1ce42a4-ffe2-44ea-bb3d-e22b306b1d8c';
