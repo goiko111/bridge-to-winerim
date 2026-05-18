@@ -343,48 +343,91 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
           )}
           {filtered.map(f => {
             const originalVisible = String(f.ShowInPos).toLowerCase() === "true";
+            const isOpen = expanded.has(f._id);
+            const famProducts = productsByFamily.get(f._id) || [];
             return (
-              <div
-                key={f._id}
-                className={`grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center hover:bg-muted/30 ${f._dirty ? "bg-primary/5" : ""}`}
-              >
-                <div className="col-span-1">
-                  <input
-                    type="checkbox"
-                    checked={bulkSelected.has(f._id)}
-                    onChange={() => toggleBulk(f._id)}
-                    disabled={f._productCount === 0}
-                    className="h-3.5 w-3.5 accent-primary"
-                  />
+              <div key={f._id} className={f._dirty ? "bg-primary/5" : ""}>
+                <div className={`grid grid-cols-12 gap-2 px-3 py-2 text-xs items-center hover:bg-muted/30`}>
+                  <div className="col-span-1">
+                    <input
+                      type="checkbox"
+                      checked={bulkSelected.has(f._id)}
+                      onChange={() => toggleBulk(f._id)}
+                      disabled={f._productCount === 0}
+                      className="h-3.5 w-3.5 accent-primary"
+                    />
+                  </div>
+                  <div className="col-span-5 truncate flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => f._productCount > 0 && toggleExpand(f._id)}
+                      disabled={f._productCount === 0}
+                      className="flex-shrink-0 p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                      aria-label={isOpen ? "Colapsar" : "Expandir"}
+                    >
+                      {isOpen
+                        ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+                    </button>
+                    <span className="text-foreground font-medium truncate">{f.Name || "(sin nombre)"}</span>
+                    {f._winerim ? (
+                      <Badge variant="secondary" className="ml-1 text-[9px] bg-primary/10 text-primary border-primary/20">Winerim</Badge>
+                    ) : (
+                      <Badge variant="outline" className="ml-1 text-[9px]">Legacy</Badge>
+                    )}
+                  </div>
+                  <div className="col-span-2 font-mono text-[10px] text-muted-foreground">{f._id}</div>
+                  <div className="col-span-2">
+                    {f._productCount > 0 ? (
+                      <span className="text-foreground">{f._productCount}</span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </div>
+                  <div className="col-span-2 flex items-center justify-end gap-2">
+                    {f._dirty && (
+                      <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">
+                        {originalVisible ? "→ ocultar" : "→ mostrar"}
+                      </Badge>
+                    )}
+                    <Switch
+                      checked={f._visible}
+                      onCheckedChange={(v) => toggleOne(f._id, v, originalVisible)}
+                    />
+                    {f._visible ? <Eye className="h-3 w-3 text-emerald-500" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
+                  </div>
                 </div>
-                <div className="col-span-5 truncate">
-                  <span className="text-foreground font-medium">{f.Name || "(sin nombre)"}</span>
-                  {f._winerim ? (
-                    <Badge variant="secondary" className="ml-2 text-[9px] bg-primary/10 text-primary border-primary/20">Winerim</Badge>
-                  ) : (
-                    <Badge variant="outline" className="ml-2 text-[9px]">Legacy</Badge>
-                  )}
-                </div>
-                <div className="col-span-2 font-mono text-[10px] text-muted-foreground">{f._id}</div>
-                <div className="col-span-2">
-                  {f._productCount > 0 ? (
-                    <span className="text-foreground">{f._productCount}</span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </div>
-                <div className="col-span-2 flex items-center justify-end gap-2">
-                  {f._dirty && (
-                    <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">
-                      {originalVisible ? "→ ocultar" : "→ mostrar"}
-                    </Badge>
-                  )}
-                  <Switch
-                    checked={f._visible}
-                    onCheckedChange={(v) => toggleOne(f._id, v, originalVisible)}
-                  />
-                  {f._visible ? <Eye className="h-3 w-3 text-emerald-500" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
-                </div>
+                {isOpen && famProducts.length > 0 && (
+                  <div className="bg-muted/20 border-t border-border px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+                      Productos en esta familia ({famProducts.length})
+                    </div>
+                    <div className="max-h-[260px] overflow-y-auto rounded-md border border-border bg-background/40 divide-y divide-border">
+                      {famProducts.slice(0, 500).map(p => {
+                        const pid = String(p.Id);
+                        const visibleProd =
+                          (p.UseAsDirectSale === undefined || String(p.UseAsDirectSale).toLowerCase() === "true") &&
+                          (p.SaleableAsMain === undefined || String(p.SaleableAsMain).toLowerCase() === "true");
+                        return (
+                          <div key={pid} className="grid grid-cols-12 gap-2 px-2 py-1 text-[11px] items-center">
+                            <div className="col-span-8 truncate text-foreground">{p.Name || "(sin nombre)"}</div>
+                            <div className="col-span-2 font-mono text-[10px] text-muted-foreground truncate">{pid}</div>
+                            <div className="col-span-2 flex justify-end">
+                              {visibleProd
+                                ? <Badge variant="outline" className="text-[9px] border-emerald-500/30 text-emerald-500">Visible</Badge>
+                                : <Badge variant="outline" className="text-[9px] border-muted-foreground/30 text-muted-foreground">Oculto</Badge>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {famProducts.length > 500 && (
+                        <div className="px-2 py-1 text-[10px] text-muted-foreground text-center">
+                          … {famProducts.length - 500} más (acota usando el panel de visibilidad de productos).
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
