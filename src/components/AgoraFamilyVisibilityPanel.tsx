@@ -188,29 +188,51 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
     }
   };
 
-  const archiveSelected = async () => {
-    if (bulkSelected.size === 0) return;
+  // Reversible archive: hides all products in a family (UseAsDirectSale/SaleableAsMain=false)
+  // AND hides the family itself (ShowInPos=false). To recover, run with restore=true.
+  const archiveFamilies = async (familyIds: string[], restore = false) => {
+    if (familyIds.length === 0) return;
     setArchiving(true);
     try {
-      const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "archive-products", connectionId, sourceFamilyIds: Array.from(bulkSelected) },
+      const productUpdates: { productId: string; visible: boolean }[] = [];
+      for (const fId of familyIds) {
+        const prods = productsByFamily.get(fId) || [];
+        for (const p of prods) productUpdates.push({ productId: String(p.Id), visible: restore });
+      }
+      // Batches of 200 to keep XML manageable
+      for (let i = 0; i < productUpdates.length; i += 200) {
+        const slice = productUpdates.slice(i, i + 200);
+        const { data, error } = await supabase.functions.invoke("agora-proxy", {
+          body: { action: "set-product-visibility", connectionId, updates: slice },
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Falló cambiar visibilidad de productos");
+      }
+      const famUpdates = familyIds.map(familyId => ({ familyId, showInPos: restore }));
+      const { data: famData, error: famErr } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "set-family-visibility", connectionId, updates: famUpdates },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Falló el archivado");
+      if (famErr) throw famErr;
+      if (!famData?.success) throw new Error(famData?.error || "Falló cambiar visibilidad de familias");
+
       toast({
-        title: "Productos archivados",
-        description: `${data.archived} producto(s) movidos a la familia oculta "ARCHIVO WINERIM".`,
+        title: restore ? "Familias restauradas" : "Archivado completo",
+        description: restore
+          ? `${familyIds.length} familia(s) y ${productUpdates.length} producto(s) vueltos a visibles.`
+          : `${familyIds.length} familia(s) y ${productUpdates.length} producto(s) ocultos en Agora. Reversible.`,
       });
       setBulkSelected(new Set());
       setArchiveDialogOpen(false);
       await supabase.functions.invoke("agora-proxy", { body: { action: "sync-master-data", connectionId } });
       await loadData();
     } catch (e) {
-      toast({ title: "Error archivando", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+      toast({ title: "Error", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
       setArchiving(false);
     }
   };
+
+  const archiveSelected = () => archiveFamilies(Array.from(bulkSelected), false);
 
   const toggleBulk = (id: string) => {
     setBulkSelected(prev => {
@@ -399,8 +421,31 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
                 </div>
                 {isOpen && famProducts.length > 0 && (
                   <div className="bg-muted/20 border-t border-border px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
-                      Productos en esta familia ({famProducts.length})
+                    <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Productos en esta familia ({famProducts.length})
+                      </div>
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-[10px] px-2 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
+                          disabled={archiving}
+                          onClick={() => archiveFamilies([f._id], false)}
+                        >
+                          {archiving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Archive className="mr-1 h-3 w-3" />}
+                          Archivar familia + productos
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 text-[10px] px-2 text-emerald-600 hover:bg-emerald-500/10"
+                          disabled={archiving}
+                          onClick={() => archiveFamilies([f._id], true)}
+                        >
+                          <Eye className="mr-1 h-3 w-3" /> Restaurar
+                        </Button>
+                      </div>
                     </div>
                     <div className="max-h-[260px] overflow-y-auto rounded-md border border-border bg-background/40 divide-y divide-border">
                       {famProducts.slice(0, 500).map(p => {
@@ -441,7 +486,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
         </p>
         <p className="flex items-start gap-1.5">
           <Archive className="h-3 w-3 mt-0.5 text-amber-500 flex-shrink-0" />
-          <span><strong>Archivar productos</strong> garantiza que no aparezcan en buscador moviéndolos a una familia oculta llamada "ARCHIVO WINERIM". Acción irreversible vía panel (requiere reasignar familia en Agora si arrepientes).</span>
+          <span><strong>Archivar familia + productos</strong> oculta la familia (ShowInPos=false) y marca todos sus productos como no vendibles (UseAsDirectSale/SaleableAsMain=false). <strong>Totalmente reversible</strong> — pulsa "Restaurar" o reactiva los switches para volver a ponerlo visible. No se borra nada, el histórico se conserva.</span>
         </p>
       </div>
 
@@ -450,9 +495,9 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Archivar {productsToArchive} producto(s)?</AlertDialogTitle>
             <AlertDialogDescription>
-              Los productos de las {bulkSelected.size} familia(s) seleccionada(s) se moverán a la familia oculta
-              <strong> "ARCHIVO WINERIM"</strong> (ID 999999, ShowInPos=false). No se borran de Agora — el histórico de ventas se conserva.
-              Para deshacer, deberás reasignar manualmente la familia de cada producto en Agora.
+              Se ocultarán las {bulkSelected.size} familia(s) seleccionada(s) y sus {productsToArchive} producto(s) en Agora
+              (ShowInPos=false + UseAsDirectSale/SaleableAsMain=false). No se borran — el histórico de ventas se conserva
+              y es <strong>totalmente reversible</strong> desde este mismo panel.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
