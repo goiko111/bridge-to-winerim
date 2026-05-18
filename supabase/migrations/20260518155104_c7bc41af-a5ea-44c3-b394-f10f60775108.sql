@@ -1,0 +1,1 @@
+UPDATE public.outbound_tasks SET status='BLOCKED', blocked_reason='Runaway task: 10833 attempts with unexpected end of file. Manually blocked.', updated_at=now() WHERE id='4b2e7c20-ce5e-4c04-9b3d-b775baab835c';
