@@ -188,29 +188,51 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
     }
   };
 
-  const archiveSelected = async () => {
-    if (bulkSelected.size === 0) return;
+  // Reversible archive: hides all products in a family (UseAsDirectSale/SaleableAsMain=false)
+  // AND hides the family itself (ShowInPos=false). To recover, run with restore=true.
+  const archiveFamilies = async (familyIds: string[], restore = false) => {
+    if (familyIds.length === 0) return;
     setArchiving(true);
     try {
-      const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "archive-products", connectionId, sourceFamilyIds: Array.from(bulkSelected) },
+      const productUpdates: { productId: string; visible: boolean }[] = [];
+      for (const fId of familyIds) {
+        const prods = productsByFamily.get(fId) || [];
+        for (const p of prods) productUpdates.push({ productId: String(p.Id), visible: restore });
+      }
+      // Batches of 200 to keep XML manageable
+      for (let i = 0; i < productUpdates.length; i += 200) {
+        const slice = productUpdates.slice(i, i + 200);
+        const { data, error } = await supabase.functions.invoke("agora-proxy", {
+          body: { action: "set-product-visibility", connectionId, updates: slice },
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Falló cambiar visibilidad de productos");
+      }
+      const famUpdates = familyIds.map(familyId => ({ familyId, showInPos: restore }));
+      const { data: famData, error: famErr } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "set-family-visibility", connectionId, updates: famUpdates },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Falló el archivado");
+      if (famErr) throw famErr;
+      if (!famData?.success) throw new Error(famData?.error || "Falló cambiar visibilidad de familias");
+
       toast({
-        title: "Productos archivados",
-        description: `${data.archived} producto(s) movidos a la familia oculta "ARCHIVO WINERIM".`,
+        title: restore ? "Familias restauradas" : "Archivado completo",
+        description: restore
+          ? `${familyIds.length} familia(s) y ${productUpdates.length} producto(s) vueltos a visibles.`
+          : `${familyIds.length} familia(s) y ${productUpdates.length} producto(s) ocultos en Agora. Reversible.`,
       });
       setBulkSelected(new Set());
       setArchiveDialogOpen(false);
       await supabase.functions.invoke("agora-proxy", { body: { action: "sync-master-data", connectionId } });
       await loadData();
     } catch (e) {
-      toast({ title: "Error archivando", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+      toast({ title: "Error", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally {
       setArchiving(false);
     }
   };
+
+  const archiveSelected = () => archiveFamilies(Array.from(bulkSelected), false);
 
   const toggleBulk = (id: string) => {
     setBulkSelected(prev => {
