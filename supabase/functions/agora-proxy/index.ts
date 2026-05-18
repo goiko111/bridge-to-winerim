@@ -4638,7 +4638,16 @@ serve(async (req) => {
                 failed++;
               }
             }
-          } catch (err) { failed++; processed++; }
+          } catch (err) {
+            const errMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+            console.error(`[process-xml-outbound-queue] task ${t.id} threw:`, errMsg);
+            try {
+              await supabase.from("outbound_tasks")
+                .update({ status: "QUEUED", last_error: `EXCEPTION: ${errMsg}`, updated_at: new Date().toISOString() })
+                .eq("id", t.id);
+            } catch (_) { /* swallow */ }
+            failed++; processed++;
+          }
         }
       }
 
