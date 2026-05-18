@@ -3178,24 +3178,73 @@ serve(async (req) => {
       function escXmlV(s: string): string {
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
       }
+
+      // Fetch full Families XML from Agora — reuse the complete <Family .../> element to avoid
+      // HTTP 500 from missing required attributes (Color, Order, ButtonText, ParentFamilyId, etc.)
+      const famUrl = `${baseUrlClean}/api/export-master/?filter=Families`;
+      let famXmlSrc = "";
+      try {
+        const famRes = await fetchWithRetry(famUrl, { method: "GET", headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } }, 30000);
+        famXmlSrc = await famRes.text().catch(() => "");
+        if (!famRes.ok || !famXmlSrc) {
+          return new Response(JSON.stringify({ success: false, error: `No se pudo leer familias Agora: HTTP ${famRes.status}` }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: `Fetch familias falló: ${String(e)}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // Index every <Family .../> by Id
+      const famElById = new Map<string, string>();
+      const famRegex = /<Family\b[^>]*\/>|<Family\b[^>]*>[\s\S]*?<\/Family>/g;
+      const idAttr = /\bId="([^"]+)"/;
+      let mFam: RegExpExecArray | null;
+      while ((mFam = famRegex.exec(famXmlSrc)) !== null) {
+        const full = mFam[0];
+        const idm = idAttr.exec(full);
+        if (idm) famElById.set(String(idm[1]), full);
+      }
+
+      const setAttr = (el: string, attr: string, value: string): string => {
+        const re = new RegExp(`\\b${attr}="[^"]*"`);
+        if (re.test(el)) return el.replace(re, `${attr}="${value}"`);
+        return el.replace(/(\s*\/?>)$/, ` ${attr}="${value}"$1`);
+      };
+
+      // Fallback metadata (only used if a familyId isn't present in export-master)
       const { data: masterData } = await supabase
         .from("agora_master_data").select("families_json").eq("connection_id", connectionId).single();
       const existingFamilies = ((masterData as any)?.families_json || []) as { Id: string; Name: string; Color?: string; Order?: string; ButtonText?: string; ParentFamilyId?: string }[];
 
       let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
-      const applied: { id: string; name: string; showInPos: boolean }[] = [];
+      const applied: { id: string; showInPos: boolean }[] = [];
+      const skipped: string[] = [];
       for (const u of updates) {
+        const flag = u.showInPos ? "true" : "false";
+        const original = famElById.get(String(u.familyId));
+        if (original) {
+          xml += `    ${setAttr(original, "ShowInPos", flag)}\n`;
+          applied.push({ id: u.familyId, showInPos: u.showInPos });
+          continue;
+        }
+        // Fallback: synthesize from cached families_json
         const fam = existingFamilies.find(f => String(f.Id) === String(u.familyId));
-        if (!fam) continue;
+        if (!fam) { skipped.push(u.familyId); continue; }
         const name = fam.Name || u.familyId;
         const color = fam.Color || (u.showInPos ? "#8B0000" : "#999999");
         const btn = fam.ButtonText || name.substring(0, 20);
         const order = fam.Order || (u.showInPos ? "100" : "9999");
         const parentAttr = fam.ParentFamilyId ? ` ParentFamilyId="${fam.ParentFamilyId}"` : "";
-        xml += `    <Family Id="${u.familyId}" Name="${escXmlV(name)}" ShowInPos="${u.showInPos}" ButtonText="${escXmlV(btn)}" Color="${color}" Order="${order}"${parentAttr} />\n`;
-        applied.push({ id: u.familyId, name, showInPos: u.showInPos });
+        xml += `    <Family Id="${u.familyId}" Name="${escXmlV(name)}" ShowInPos="${flag}" ButtonText="${escXmlV(btn)}" Color="${color}" Order="${order}"${parentAttr} />\n`;
+        applied.push({ id: u.familyId, showInPos: u.showInPos });
       }
       xml += `  </Families>\n</Import>`;
+
+      if (applied.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: `Ninguna familia encontrada (skipped=${skipped.length})`, skipped }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       const importUrl = `${baseUrlClean}/api/import/`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
@@ -3204,9 +3253,9 @@ serve(async (req) => {
         const responseBody = await importRes.text().catch(() => "");
         const parsed = parseAgoraImportResponse(importRes.status, responseBody);
         return new Response(JSON.stringify({
-          success: parsed.success, applied,
-          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
-          xmlSent: xml,
+          success: parsed.success, applied, skipped,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`),
+          xmlPreview: xml.slice(0, 1000),
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (e) {
         return new Response(JSON.stringify({ success: false, error: String(e) }),
