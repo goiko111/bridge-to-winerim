@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-05-18 · Agora Kava no expone ventas en tiempo real → mantener flujo diario + proponer doble cierre
+- **Decisión**: Confirmar que la versión de Agora desplegada en Kava SOLO devuelve datos por `/api/export/?filter=Invoices` (tras cierre de caja). Los filtros `Tickets`, `Orders`, `OpenInvoices`, `Receipts` devuelven HTTP 500. Mantener `auto-sync-sales` con scan hasta D-1 y proponer al cliente realizar doble cierre (comida + cena) para tener visibilidad 2 veces/día.
+- **Razón**: No existe endpoint público en esta versión de Agora para tickets en curso. Forzar SQL directo al servidor del cliente requiere abrir puertos y rompe el contrato API-only.
+- **Alternativa descartada**: (a) acceso SQL Server directo al backend de Agora — alto riesgo operativo y de seguridad; (b) polling especulativo de filtros no documentados — ya probado, devuelve 500.
+
+---
+
 ## 2026-05-05 (tarde) · Extraer resiliencia a `_shared/resilience.ts`
 - **Decisión**: Mover `fetchWithRetry`/`classifyPosError`/`applyCircuitBreaker` (originales en agora-proxy) a un módulo compartido + añadir `isConnectionPaused` y `preflightCheck`.
 - **Razón**: Necesario para extender el patrón a BDP, Revo, Toast, Numier, ICG sin duplicar código.
