@@ -23,7 +23,10 @@ interface FamilyRow {
 
 interface ProductRow {
   Id: string;
+  Name?: string;
   FamilyId?: string;
+  UseAsDirectSale?: string | boolean;
+  SaleableAsMain?: string | boolean;
 }
 
 interface Props {
