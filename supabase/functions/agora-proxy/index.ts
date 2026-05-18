@@ -3215,35 +3215,61 @@ serve(async (req) => {
     }
 
     // ── SET PRODUCT VISIBILITY (toggle UseAsDirectSale + SaleableAsMain per product, batched) ──
+    // Pulls the FULL <Product .../> element from Agora's export-master XML (cached) and only
+    // overrides the two visibility attributes. Minimal product XML is rejected by Agora (HTTP 500)
+    // because required attributes (Price, Vat, ButtonText, Color, etc.) are missing.
     if (action === "set-product-visibility") {
       const updates: { productId: string; visible: boolean }[] = payload.updates || [];
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      function escXmlP(s: string): string {
-        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-      }
-      const { data: masterData } = await supabase
-        .from("agora_master_data").select("products_summary_json").eq("connection_id", connectionId).single();
-      const existingProducts = ((masterData as any)?.products_summary_json || []) as {
-        Id: string; Name: string; FamilyId?: string; VatId?: string; ButtonText?: string; Color?: string;
-      }[];
 
+      // 1) Fetch full products XML from Agora (cached)
+      const cached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+      if (!cached.ok) {
+        return new Response(JSON.stringify({ success: false, error: `No se pudo leer catálogo Agora: HTTP ${cached.status}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 2) Index every <Product .../> element by Id
+      const productElByIdLocal = new Map<string, string>();
+      const productRegex = /<Product\b[^>]*\/>|<Product\b[^>]*>[\s\S]*?<\/Product>/g;
+      const idAttr = /\bId="([^"]+)"/;
+      let mProd: RegExpExecArray | null;
+      while ((mProd = productRegex.exec(cached.xml)) !== null) {
+        const full = mProd[0];
+        const idm = idAttr.exec(full);
+        if (idm) productElByIdLocal.set(String(idm[1]), full);
+      }
+
+      const setAttr = (el: string, attr: string, value: string): string => {
+        const re = new RegExp(`\\b${attr}="[^"]*"`);
+        if (re.test(el)) return el.replace(re, `${attr}="${value}"`);
+        // Insert before closing /> or >
+        return el.replace(/(\s*\/?>)$/, ` ${attr}="${value}"$1`);
+      };
+
+      // 3) Build patched import XML — reuse full element, override two attrs only
       let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n`;
-      const applied: { id: string; name: string; visible: boolean }[] = [];
+      const applied: { id: string; visible: boolean }[] = [];
+      const skipped: string[] = [];
       for (const u of updates) {
-        const p = existingProducts.find(x => String(x.Id) === String(u.productId));
-        if (!p) continue;
-        const name = p.Name || u.productId;
+        const pid = String(u.productId);
+        const original = productElByIdLocal.get(pid);
+        if (!original) { skipped.push(pid); continue; }
         const flag = u.visible ? "true" : "false";
-        xml += `    <Product Id="${u.productId}" Name="${escXmlP(name)}"`;
-        if (p.FamilyId) xml += ` FamilyId="${p.FamilyId}"`;
-        if (p.VatId) xml += ` VatId="${p.VatId}"`;
-        xml += ` UseAsDirectSale="${flag}" SaleableAsMain="${flag}" />\n`;
-        applied.push({ id: u.productId, name, visible: u.visible });
+        let patched = setAttr(original, "UseAsDirectSale", flag);
+        patched = setAttr(patched, "SaleableAsMain", flag);
+        xml += `    ${patched}\n`;
+        applied.push({ id: pid, visible: u.visible });
       }
       xml += `  </Products>\n</Import>`;
+
+      if (applied.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: `Ningún producto encontrado en catálogo Agora (skipped=${skipped.length})`, skipped }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
 
       const importUrl = `${baseUrlClean}/api/import/`;
       const xmlHeaders = { "Api-Token": apiTokenClean, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" };
@@ -3251,10 +3277,12 @@ serve(async (req) => {
         const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 60000);
         const responseBody = await importRes.text().catch(() => "");
         const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        // Invalidate cache so the next batch sees the patched UseAsDirectSale flag
+        if (parsed.success) invalidateAgoraProductsCache(connectionId);
         return new Response(JSON.stringify({
-          success: parsed.success, applied,
-          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}`),
-          xmlPreview: xml.slice(0, 800),
+          success: parsed.success, applied, skipped,
+          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`),
+          xmlPreview: xml.slice(0, 1000),
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (e) {
         return new Response(JSON.stringify({ success: false, error: String(e) }),
