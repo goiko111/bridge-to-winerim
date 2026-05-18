@@ -1671,6 +1671,48 @@ serve(async (req) => {
     }
 
     // ── FETCH & PARSE SALES FOR A BUSINESS DAY ──
+    // ── DISCOVER LIVE SALES ENDPOINTS ──
+    // Tests multiple Agora endpoints to find one that returns sales BEFORE cash close.
+    // Read-only probe; does not mutate any data.
+    if (action === "discover-live-sales") {
+      const day = businessDay || new Date().toISOString().slice(0, 10);
+      const filters = [
+        "Invoices", "Tickets", "Orders", "Receipts",
+        "OpenInvoices", "OpenTickets", "OpenOrders", "PendingInvoices",
+        "CurrentTickets", "LiveTickets", "Sales", "Documents",
+      ];
+      const results: any[] = [];
+      for (const f of filters) {
+        const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=${f}`;
+        try {
+          const r = await fetch(url, { headers });
+          const ct = r.headers.get("content-type") || "";
+          let count = 0;
+          let sampleKeys: string[] = [];
+          let bodyPreview = "";
+          if (r.ok) {
+            const txt = await r.text();
+            bodyPreview = txt.slice(0, 200);
+            if (ct.includes("json")) {
+              try {
+                const j = JSON.parse(txt);
+                const arr = Array.isArray(j) ? j : (j?.Invoices || j?.Items || j?.Data || []);
+                count = Array.isArray(arr) ? arr.length : 0;
+                if (count > 0 && typeof arr[0] === "object") sampleKeys = Object.keys(arr[0]).slice(0, 12);
+              } catch (_e) { /* not json */ }
+            }
+          }
+          results.push({ filter: f, status: r.status, ok: r.ok, contentType: ct, count, sampleKeys, bodyPreview });
+        } catch (e: any) {
+          results.push({ filter: f, error: String(e?.message || e) });
+        }
+      }
+      return new Response(
+        JSON.stringify({ businessDay: day, baseUrl: baseUrlClean, results }, null, 2),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     if (action === "fetch-day") {
       const day = businessDay;
       if (!day) {
