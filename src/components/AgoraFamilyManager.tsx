@@ -505,6 +505,29 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
   const [showAll, setShowAll] = useState(false);
   const [hiding, setHiding] = useState(false);
   const [hidingSingle, setHidingSingle] = useState<string | null>(null);
+  const [expandedFamilyId, setExpandedFamilyId] = useState<string | null>(null);
+  const [productsByFamily, setProductsByFamily] = useState<Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>>(new Map());
+
+  useEffect(() => {
+    if (!connectionId) return;
+    (async () => {
+      const { data } = await supabase
+        .from("agora_master_data")
+        .select("products_summary_json")
+        .eq("connection_id", connectionId)
+        .maybeSingle();
+      const prods = ((data?.products_summary_json as any[]) || []) as any[];
+      const m = new Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>();
+      for (const p of prods) {
+        const k = String(p.FamilyId || "");
+        if (!m.has(k)) m.set(k, []);
+        m.get(k)!.push({ Id: String(p.Id), Name: p.Name || "(sin nombre)", UseAsDirectSale: p.UseAsDirectSale, SaleableAsMain: p.SaleableAsMain });
+      }
+      for (const arr of m.values()) arr.sort((a, b) => a.Name.localeCompare(b.Name));
+      setProductsByFamily(m);
+    })();
+  }, [connectionId, syncing]);
+
   if (families.length === 0) return null;
   const shown = showAll ? families : families.slice(0, 12);
   const winerimFamilies = families.filter(f => f.Name.toUpperCase().includes("WINERIM"));
@@ -570,18 +593,29 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
       <div className="flex flex-wrap gap-1.5">
         {shown.map(f => {
           const isWinerim = f.Name.toUpperCase().includes("WINERIM");
+          const count = productsByFamily.get(String(f.Id))?.length || 0;
+          const isOpen = expandedFamilyId === String(f.Id);
           return (
             <div key={f.Id} className="group relative inline-flex">
-              <Badge
-                variant={isWinerim ? "default" : "outline"}
-                className={`text-[10px] font-mono ${isWinerim ? "bg-primary pr-6" : ""}`}
+              <button
+                type="button"
+                onClick={() => setExpandedFamilyId(isOpen ? null : String(f.Id))}
+                className={`inline-flex items-center rounded-md border text-[10px] font-mono px-2 py-0.5 transition-colors ${
+                  isWinerim
+                    ? "bg-primary text-primary-foreground border-primary pr-6 hover:bg-primary/90"
+                    : "bg-background text-foreground border-border hover:bg-muted"
+                } ${isOpen ? "ring-1 ring-primary/60" : ""}`}
+                title={`Ver ${count} producto(s) de "${f.Name}"`}
               >
                 {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
                 {f.Id}: {f.Name}
-              </Badge>
+                <span className={`ml-1.5 rounded px-1 ${isWinerim ? "bg-primary-foreground/20" : "bg-muted text-muted-foreground"}`}>
+                  {count}
+                </span>
+              </button>
               {isWinerim && (
                 <button
-                  onClick={() => hideSingleFamily(f.Id, f.Name)}
+                  onClick={(e) => { e.stopPropagation(); hideSingleFamily(f.Id, f.Name); }}
                   disabled={hidingSingle === f.Id}
                   className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
                   title={`Ocultar "${f.Name}" del TPV`}
@@ -602,6 +636,50 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
           {showAll ? "Show less" : `Show all ${families.length}`}
         </button>
       )}
+
+      {expandedFamilyId && (() => {
+        const fam = families.find(f => String(f.Id) === expandedFamilyId);
+        const prods = productsByFamily.get(expandedFamilyId) || [];
+        if (!fam) return null;
+        return (
+          <div className="mt-2 rounded-md border border-border bg-background/40 p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[11px] font-medium text-foreground">
+                {fam.Name} <span className="text-muted-foreground font-mono">#{fam.Id}</span>
+                <span className="ml-2 text-muted-foreground">— {prods.length} producto(s)</span>
+              </div>
+              <button onClick={() => setExpandedFamilyId(null)} className="text-[10px] text-muted-foreground hover:text-foreground">
+                Cerrar
+              </button>
+            </div>
+            {prods.length === 0 ? (
+              <div className="text-[11px] text-muted-foreground py-2 text-center">Sin productos en esta familia.</div>
+            ) : (
+              <div className="max-h-[260px] overflow-y-auto rounded border border-border divide-y divide-border">
+                {prods.slice(0, 500).map(p => {
+                  const visibleProd =
+                    (p.UseAsDirectSale === undefined || String(p.UseAsDirectSale).toLowerCase() === "true") &&
+                    (p.SaleableAsMain === undefined || String(p.SaleableAsMain).toLowerCase() === "true");
+                  return (
+                    <div key={p.Id} className="grid grid-cols-12 gap-2 px-2 py-1 text-[11px] items-center bg-card/30">
+                      <div className="col-span-8 truncate text-foreground">{p.Name}</div>
+                      <div className="col-span-2 font-mono text-[10px] text-muted-foreground truncate">{p.Id}</div>
+                      <div className="col-span-2 text-right">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded border ${visibleProd ? "border-emerald-500/30 text-emerald-500" : "border-muted-foreground/30 text-muted-foreground"}`}>
+                          {visibleProd ? "Visible" : "Oculto"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {prods.length > 500 && (
+                  <div className="px-2 py-1 text-[10px] text-muted-foreground text-center">… {prods.length - 500} más.</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
