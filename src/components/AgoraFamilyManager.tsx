@@ -505,8 +505,12 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
   const [showAll, setShowAll] = useState(false);
   const [hiding, setHiding] = useState(false);
   const [hidingSingle, setHidingSingle] = useState<string | null>(null);
+  const [showingAll, setShowingAll] = useState(false);
+  const [showingSingle, setShowingSingle] = useState<string | null>(null);
   const [expandedFamilyId, setExpandedFamilyId] = useState<string | null>(null);
   const [productsByFamily, setProductsByFamily] = useState<Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>>(new Map());
+
+  const isHidden = (f: AgoraMasterItem) => String(f.ShowInPos ?? "true").toLowerCase() === "false";
 
   useEffect(() => {
     if (!connectionId) return;
@@ -574,6 +578,53 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
     }
   };
 
+  const setFamilyVisibility = async (familyId: string, showInPos: boolean) => {
+    const { data, error } = await supabase.functions.invoke("agora-proxy", {
+      body: { action: "set-family-visibility", connectionId, updates: [{ familyId, showInPos }] },
+    });
+    if (error) throw error;
+    if (!data?.success) throw new Error(data?.error || "Error desconocido");
+    return data;
+  };
+
+  const showSingleFamily = async (familyId: string, familyName: string) => {
+    if (!connectionId) return;
+    setShowingSingle(familyId);
+    try {
+      await setFamilyVisibility(familyId, true);
+      toast({ title: "Familia visible", description: `"${familyName}" ahora visible en el TPV.` });
+      await onSyncMasterData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setShowingSingle(null);
+    }
+  };
+
+  const showAllHiddenWinerim = async () => {
+    if (!connectionId) return;
+    const hidden = winerimFamilies.filter(isHidden);
+    if (hidden.length === 0) return;
+    setShowingAll(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: {
+          action: "set-family-visibility",
+          connectionId,
+          updates: hidden.map(f => ({ familyId: f.Id, showInPos: true })),
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Error desconocido");
+      toast({ title: "Familias visibles", description: `${data.applied?.length || hidden.length} familias WINERIM vueltas a visibles.` });
+      await onSyncMasterData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setShowingAll(false);
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -583,16 +634,26 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
             <span className="ml-2 text-[10px] text-amber-600">← Customer's families (will not be modified)</span>
           )}
         </p>
-        {winerimFamilies.length > 0 && (
-          <Button variant="destructive" size="sm" className="h-6 text-[10px]" onClick={hideWinerimFamilies} disabled={hiding || syncing}>
-            {hiding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <EyeOff className="mr-1 h-3 w-3" />}
-            Ocultar {winerimFamilies.length} familias WINERIM del TPV
-          </Button>
-        )}
+        <div className="flex gap-1.5">
+          {winerimFamilies.some(isHidden) && (
+            <Button variant="outline" size="sm" className="h-6 text-[10px] border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10"
+              onClick={showAllHiddenWinerim} disabled={showingAll || syncing}>
+              {showingAll ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+              Mostrar {winerimFamilies.filter(isHidden).length} WINERIM ocultas en TPV
+            </Button>
+          )}
+          {winerimFamilies.length > 0 && (
+            <Button variant="destructive" size="sm" className="h-6 text-[10px]" onClick={hideWinerimFamilies} disabled={hiding || syncing}>
+              {hiding ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <EyeOff className="mr-1 h-3 w-3" />}
+              Ocultar {winerimFamilies.length} familias WINERIM del TPV
+            </Button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {shown.map(f => {
           const isWinerim = f.Name.toUpperCase().includes("WINERIM");
+          const hidden = isHidden(f);
           const count = productsByFamily.get(String(f.Id))?.length || 0;
           const isOpen = expandedFamilyId === String(f.Id);
           return (
@@ -602,30 +663,46 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
                 onClick={() => setExpandedFamilyId(isOpen ? null : String(f.Id))}
                 className={`inline-flex items-center rounded-md border text-[10px] font-mono px-2 py-0.5 transition-colors ${
                   isWinerim
-                    ? "bg-primary text-primary-foreground border-primary pr-6 hover:bg-primary/90"
+                    ? `bg-primary text-primary-foreground border-primary pr-6 hover:bg-primary/90 ${hidden ? "opacity-50 line-through decoration-1" : ""}`
                     : "bg-background text-foreground border-border hover:bg-muted"
                 } ${isOpen ? "ring-1 ring-primary/60" : ""}`}
-                title={`Ver ${count} producto(s) de "${f.Name}"`}
+                title={`${hidden ? "[OCULTA] " : ""}Ver ${count} producto(s) de "${f.Name}"`}
               >
                 {isWinerim && <Grape className="mr-1 h-2.5 w-2.5" />}
                 {f.Id}: {f.Name}
+                {hidden && <span className="ml-1 text-[8px] uppercase font-bold">hidden</span>}
                 <span className={`ml-1.5 rounded px-1 ${isWinerim ? "bg-primary-foreground/20" : "bg-muted text-muted-foreground"}`}>
                   {count}
                 </span>
               </button>
               {isWinerim && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); hideSingleFamily(f.Id, f.Name); }}
-                  disabled={hidingSingle === f.Id}
-                  className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
-                  title={`Ocultar "${f.Name}" del TPV`}
-                >
-                  {hidingSingle === f.Id ? (
-                    <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
-                  ) : (
-                    <EyeOff className="h-2.5 w-2.5 text-primary-foreground opacity-60 hover:opacity-100" />
-                  )}
-                </button>
+                hidden ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); showSingleFamily(f.Id, f.Name); }}
+                    disabled={showingSingle === f.Id}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-emerald-500/30 transition-colors"
+                    title={`Mostrar "${f.Name}" en el TPV`}
+                  >
+                    {showingSingle === f.Id ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
+                    ) : (
+                      <Eye className="h-2.5 w-2.5 text-primary-foreground opacity-80 hover:opacity-100" />
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); hideSingleFamily(f.Id, f.Name); }}
+                    disabled={hidingSingle === f.Id}
+                    className="absolute right-0.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 hover:bg-destructive/20 transition-colors"
+                    title={`Ocultar "${f.Name}" del TPV`}
+                  >
+                    {hidingSingle === f.Id ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-primary-foreground" />
+                    ) : (
+                      <EyeOff className="h-2.5 w-2.5 text-primary-foreground opacity-60 hover:opacity-100" />
+                    )}
+                  </button>
+                )
               )}
             </div>
           );
