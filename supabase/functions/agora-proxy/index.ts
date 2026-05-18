@@ -318,6 +318,14 @@ function normalizeLineFormat(productName: string, saleFormatName: string): strin
   return "";
 }
 
+// ── PRODUCT NAME BUILDER: prefix B (botella) / C (copa) / M (magnum) ──
+function formatProductName(fmt: string, wineName: string): string {
+  const f = String(fmt || "").toUpperCase();
+  if (f === "MAGNUM") return `M ${wineName}`;
+  if (f === "GLASS" || f === "COPA") return `C ${wineName}`;
+  return `B ${wineName}`;
+}
+
 // deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
