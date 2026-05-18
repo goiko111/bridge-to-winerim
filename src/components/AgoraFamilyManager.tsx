@@ -505,8 +505,12 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
   const [showAll, setShowAll] = useState(false);
   const [hiding, setHiding] = useState(false);
   const [hidingSingle, setHidingSingle] = useState<string | null>(null);
+  const [showingAll, setShowingAll] = useState(false);
+  const [showingSingle, setShowingSingle] = useState<string | null>(null);
   const [expandedFamilyId, setExpandedFamilyId] = useState<string | null>(null);
   const [productsByFamily, setProductsByFamily] = useState<Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>>(new Map());
+
+  const isHidden = (f: AgoraMasterItem) => String(f.ShowInPos ?? "true").toLowerCase() === "false";
 
   useEffect(() => {
     if (!connectionId) return;
