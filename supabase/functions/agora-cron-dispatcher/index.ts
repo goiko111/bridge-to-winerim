@@ -103,9 +103,6 @@ Deno.serve(async (req: Request) => {
       if (job === "outbound-queue") {
         return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
       }
-      if (job === "restore-stock") {
-        return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "restore-glass-overdiscount", connectionId: connection.id, apply: true } }];
-      }
       return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } }];
     };
 
