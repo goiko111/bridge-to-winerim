@@ -505,6 +505,29 @@ function ExistingFamiliesList({ connectionId, families, mode, onSyncMasterData, 
   const [showAll, setShowAll] = useState(false);
   const [hiding, setHiding] = useState(false);
   const [hidingSingle, setHidingSingle] = useState<string | null>(null);
+  const [expandedFamilyId, setExpandedFamilyId] = useState<string | null>(null);
+  const [productsByFamily, setProductsByFamily] = useState<Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>>(new Map());
+
+  useEffect(() => {
+    if (!connectionId) return;
+    (async () => {
+      const { data } = await supabase
+        .from("agora_master_data")
+        .select("products_summary_json")
+        .eq("connection_id", connectionId)
+        .maybeSingle();
+      const prods = ((data?.products_summary_json as any[]) || []) as any[];
+      const m = new Map<string, { Id: string; Name: string; UseAsDirectSale?: any; SaleableAsMain?: any }[]>();
+      for (const p of prods) {
+        const k = String(p.FamilyId || "");
+        if (!m.has(k)) m.set(k, []);
+        m.get(k)!.push({ Id: String(p.Id), Name: p.Name || "(sin nombre)", UseAsDirectSale: p.UseAsDirectSale, SaleableAsMain: p.SaleableAsMain });
+      }
+      for (const arr of m.values()) arr.sort((a, b) => a.Name.localeCompare(b.Name));
+      setProductsByFamily(m);
+    })();
+  }, [connectionId, syncing]);
+
   if (families.length === 0) return null;
   const shown = showAll ? families : families.slice(0, 12);
   const winerimFamilies = families.filter(f => f.Name.toUpperCase().includes("WINERIM"));
