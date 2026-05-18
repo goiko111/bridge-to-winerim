@@ -526,6 +526,42 @@ serve(async (req) => {
           listWinesUpserted++;
         }
 
+        // ── RECONCILIATION: detect wines deleted from Winerim ──
+        // Any wine in our DB (still is_active=true) that no longer appears in /wines
+        // was deleted in Winerim → mark inactive and queue HIDE for Agora.
+        const fetchedIds = new Set<string>(wines.map((w: any) => String(w.id || "")).filter(Boolean));
+        const { data: dbActiveWines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id")
+          .eq("connection_id", connectionId)
+          .eq("is_active", true);
+        const missingFromWinerim = (dbActiveWines || [])
+          .map((r: any) => String(r.winerim_id))
+          .filter((id: string) => id && !fetchedIds.has(id));
+
+        if (missingFromWinerim.length > 0) {
+          console.log(`[winerim-proxy] reconciliation: ${missingFromWinerim.length} wines deleted in Winerim → marking inactive`);
+          await supabase
+            .from("winerim_wines")
+            .update({ is_active: false, pricing_status: "MISSING", pricing_missing_reason: "deleted_in_winerim" })
+            .eq("connection_id", connectionId)
+            .in("winerim_id", missingFromWinerim);
+
+          try {
+            const { data: hideResult } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "evaluate-auto-push", connectionId, winerimWineIds: missingFromWinerim, eventType: "DELETE" },
+            });
+            console.log(`[winerim-proxy] reconciliation auto-hide: hidQueued=${hideResult?.hidQueued || 0}`);
+            if ((hideResult?.hidQueued || 0) > 0) {
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+              });
+            }
+          } catch (e) {
+            console.error("[winerim-proxy] reconciliation auto-hide failed:", e);
+          }
+        }
+
         batchWineIds = wines
           .map((w) => String(w.id || ""))
           .filter(Boolean)
