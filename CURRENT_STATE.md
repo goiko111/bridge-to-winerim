@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-05-05 (sesión tarde)_
+_Última actualización: 2026-05-19_
 
 ## Hechos (qué está desplegado y verificado)
 
@@ -37,6 +37,12 @@ _Última actualización: 2026-05-05 (sesión tarde)_
 - Auto-refresh 15s.
 - Renderizado en `AgoraWizard` justo bajo el header cuando hay `connectionId`.
 - Reusable: cualquier wizard de otro provider puede importarlo y pasarle `connectionId`.
+
+### Katsu Izakaya — visibilidad legacy vinos en Agora
+- Conexión `982f1e63-5f15-48b8-b35f-037eafd4593e` verificada tras master data `2026-05-19T10:05:09Z`.
+- Familias legacy vino `VINOS` IDs `11` y `33`, y `VINOS POR COPAS` ID `37`, tienen `ShowInPos=false`.
+- En `products_summary_json`, familias `33` y `37` suman 190 productos y todos están no vendibles (`UseAsDirectSale=false` o `SaleableAsMain=false`); 0 siguen vendibles.
+- `Hidden` puede venir `null` en Agora y no debe usarse como señal principal: la UI/TPV se controla por `ShowInPos`, `UseAsDirectSale` y `SaleableAsMain`.
 
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
