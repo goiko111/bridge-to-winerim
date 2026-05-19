@@ -15,7 +15,7 @@ interface ProductRow {
   UseAsDirectSale?: string | boolean;
   SaleableAsMain?: string | boolean;
 }
-interface FamilyRow { Id: string; Name: string; }
+interface FamilyRow { Id: string; Name: string; ShowInPos?: string | boolean; DeletionDate?: string; }
 
 interface Props { connectionId: string; }
 
@@ -74,26 +74,39 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
     return m;
   }, [families]);
 
+  const familyVisible = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const f of families) {
+      const show = asBool((f as any).ShowInPos, true) && !(f as any).DeletionDate;
+      m.set(String(f.Id), show);
+    }
+    return m;
+  }, [families]);
+
   const enriched = useMemo(() => {
     return products.map(p => {
       const id = String(p.Id);
-      const originallyVisible = asBool(p.UseAsDirectSale, true) && asBool(p.SaleableAsMain, true);
+      const famId = String(p.FamilyId || "");
+      const productLevelVisible = asBool(p.UseAsDirectSale, true) && asBool(p.SaleableAsMain, true);
+      const famVisible = familyVisible.has(famId) ? familyVisible.get(famId)! : true;
+      const originallyVisible = productLevelVisible && famVisible;
       const visible = pendingChanges[id] !== undefined ? pendingChanges[id] : originallyVisible;
       const isWinerim = winerimAgoraIds.has(id);
       return {
         ...p,
         _id: id,
         _name: p.Name || "(sin nombre)",
-        _famId: String(p.FamilyId || ""),
-        _famName: familyName.get(String(p.FamilyId || "")) || "—",
+        _famId: famId,
+        _famName: familyName.get(famId) || "—",
+        _famHidden: !famVisible,
         _visible: visible,
         _origVisible: originallyVisible,
         _winerim: isWinerim,
         _dirty: pendingChanges[id] !== undefined,
-        _archived: String(p.FamilyId || "") === ARCHIVE_FAMILY_ID,
+        _archived: famId === ARCHIVE_FAMILY_ID,
       };
     });
-  }, [products, pendingChanges, winerimAgoraIds, familyName]);
+  }, [products, pendingChanges, winerimAgoraIds, familyName, familyVisible]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -316,7 +329,12 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
                   <Badge variant="outline" className="ml-2 text-[9px] border-amber-500/40 text-amber-500">Archivado</Badge>
                 )}
               </div>
-              <div className="col-span-3 truncate text-muted-foreground">{p._famName}</div>
+              <div className="col-span-3 truncate text-muted-foreground">
+                {p._famName}
+                {p._famHidden && (
+                  <Badge variant="outline" className="ml-1 text-[9px] border-amber-500/40 text-amber-500">familia oculta</Badge>
+                )}
+              </div>
               <div className="col-span-2 font-mono text-[10px] text-muted-foreground">{p._id}</div>
               <div className="col-span-2 flex items-center justify-end gap-2">
                 {p._dirty && (
