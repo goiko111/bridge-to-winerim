@@ -329,7 +329,12 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
                   <Badge variant="outline" className="ml-2 text-[9px] border-amber-500/40 text-amber-500">Archivado</Badge>
                 )}
               </div>
-              <div className="col-span-3 truncate text-muted-foreground">{p._famName}</div>
+              <div className="col-span-3 truncate text-muted-foreground">
+                {p._famName}
+                {p._famHidden && (
+                  <Badge variant="outline" className="ml-1 text-[9px] border-amber-500/40 text-amber-500">familia oculta</Badge>
+                )}
+              </div>
               <div className="col-span-2 font-mono text-[10px] text-muted-foreground">{p._id}</div>
               <div className="col-span-2 flex items-center justify-end gap-2">
                 {p._dirty && (
