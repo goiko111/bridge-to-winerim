@@ -1,0 +1,1 @@
+UPDATE public.pos_connections SET sync_frequency_minutes=5, catalog_sync_enabled=true, auto_push_on_create=true, auto_push_on_update=true, auto_push_glass=true WHERE id='982f1e63-5f15-48b8-b35f-037eafd4593e';
