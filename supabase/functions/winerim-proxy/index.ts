@@ -731,6 +731,34 @@ serve(async (req) => {
         }
       }
 
+      // ── SELF-HEALING PASS ──
+      // When the full linear walk finishes (complete=true), run a top-up pass that
+      // re-enriches every wine still flagged MISSING / FAILED / RETRYING. This catches
+      // wines whose detail fetch failed transiently in earlier cycles (Winerim 503s,
+      // partial responses without `prices`, etc.) and wines whose price was added in
+      // Winerim AFTER the original enrich. It is fire-and-forget so it never blocks
+      // the current request.
+      if (complete) {
+        try {
+          supabase.functions.invoke("winerim-proxy", {
+            body: { action: "fetch-wine-details", connectionId },
+          }).then(({ data, error }) => {
+            if (error) {
+              console.error("[winerim-proxy] self-healing pass failed:", error);
+            } else {
+              console.log(
+                `[winerim-proxy] self-healing pass: requested=${data?.requested || 0} ` +
+                `enriched=${data?.enriched || 0} autoQueued=${data?.autoQueued || 0}`,
+              );
+            }
+          }).catch((e) => console.error("[winerim-proxy] self-healing invoke threw:", e));
+          console.log(`[winerim-proxy] self-healing pass dispatched for ${connectionId}`);
+        } catch (e) {
+          console.error("[winerim-proxy] self-healing dispatch failed:", e);
+        }
+      }
+
+
       console.log(
         `[winerim-proxy] fetch-catalog result: listFetched=${listWinesFetched} ` +
         `detailProcessed=${processedDetails}/${totalWines} bottleUpdated=${winesUpdatedWithBottlePrice} ` +
