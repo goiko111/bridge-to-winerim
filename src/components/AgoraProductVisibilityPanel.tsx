@@ -15,7 +15,7 @@ interface ProductRow {
   UseAsDirectSale?: string | boolean;
   SaleableAsMain?: string | boolean;
 }
-interface FamilyRow { Id: string; Name: string; }
+interface FamilyRow { Id: string; Name: string; ShowInPos?: string | boolean; DeletionDate?: string; }
 
 interface Props { connectionId: string; }
 
