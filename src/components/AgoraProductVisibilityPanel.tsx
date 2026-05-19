@@ -74,26 +74,39 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
     return m;
   }, [families]);
 
+  const familyVisible = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const f of families) {
+      const show = asBool((f as any).ShowInPos, true) && !(f as any).DeletionDate;
+      m.set(String(f.Id), show);
+    }
+    return m;
+  }, [families]);
+
   const enriched = useMemo(() => {
     return products.map(p => {
       const id = String(p.Id);
-      const originallyVisible = asBool(p.UseAsDirectSale, true) && asBool(p.SaleableAsMain, true);
+      const famId = String(p.FamilyId || "");
+      const productLevelVisible = asBool(p.UseAsDirectSale, true) && asBool(p.SaleableAsMain, true);
+      const famVisible = familyVisible.has(famId) ? familyVisible.get(famId)! : true;
+      const originallyVisible = productLevelVisible && famVisible;
       const visible = pendingChanges[id] !== undefined ? pendingChanges[id] : originallyVisible;
       const isWinerim = winerimAgoraIds.has(id);
       return {
         ...p,
         _id: id,
         _name: p.Name || "(sin nombre)",
-        _famId: String(p.FamilyId || ""),
-        _famName: familyName.get(String(p.FamilyId || "")) || "—",
+        _famId: famId,
+        _famName: familyName.get(famId) || "—",
+        _famHidden: !famVisible,
         _visible: visible,
         _origVisible: originallyVisible,
         _winerim: isWinerim,
         _dirty: pendingChanges[id] !== undefined,
-        _archived: String(p.FamilyId || "") === ARCHIVE_FAMILY_ID,
+        _archived: famId === ARCHIVE_FAMILY_ID,
       };
     });
-  }, [products, pendingChanges, winerimAgoraIds, familyName]);
+  }, [products, pendingChanges, winerimAgoraIds, familyName, familyVisible]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
