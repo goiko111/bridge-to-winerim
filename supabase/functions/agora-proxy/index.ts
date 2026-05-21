@@ -5537,6 +5537,16 @@ serve(async (req) => {
             }
           }
         }
+        // MAGNUM gate: auto-enabled when wine has magnum_sale_price (no per-connection toggle yet).
+        // Mirrors the implicit policy: si Winerim tiene precio de magnum, Agora debe tenerlo.
+        if (wine.magnum_sale_price && Number(wine.magnum_sale_price) > 0) {
+          const magnumValidation = validateWineForAgora(wine, "MAGNUM", connection);
+          if (magnumValidation.valid) {
+            formatTypes.push("MAGNUM");
+          } else {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `magnum_validation_failed:${magnumValidation.missingFields.join(",")}` });
+          }
+        }
         if (formatTypes.length === 0) { skipped++; continue; }
 
         // Strict idempotency: if there is ANY pending (QUEUED/RUNNING) task for this wine, skip.
