@@ -5443,7 +5443,7 @@ serve(async (req) => {
       });
 
       const { data: wines } = await supabase
-        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active")
+        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
