@@ -5405,11 +5405,12 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // FIX PRIORITY 7: Must have can_write_products=YES AND auto_push_verified_ready=true
+      // Gate: only skip if explicitly NO. UNKNOWN passes because write_mode=XML_IMPORT
+      // and readiness_status=READY (validated above) already proves we can write.
       const { data: caps } = await supabase
         .from("provider_capabilities").select("can_write_products").eq("connection_id", connectionId).single();
-      if (!caps || caps.can_write_products !== "YES") {
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: "can_write_products is not YES" }),
+      if (caps?.can_write_products === "NO") {
+        return new Response(JSON.stringify({ success: true, skipped: true, reason: "can_write_products is NO" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
