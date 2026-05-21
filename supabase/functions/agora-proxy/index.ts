@@ -5443,7 +5443,7 @@ serve(async (req) => {
       });
 
       const { data: wines } = await supabase
-        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, serve_by_glass, is_active")
+        .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
       if (!wines || wines.length === 0) {
@@ -5535,6 +5535,16 @@ serve(async (req) => {
             } else {
               skippedReasons.push({ winerim_id: wine.winerim_id, reason: `glass_validation_failed:${glassValidation.missingFields.join(",")}` });
             }
+          }
+        }
+        // MAGNUM gate: auto-enabled when wine has magnum_sale_price (no per-connection toggle yet).
+        // Mirrors the implicit policy: si Winerim tiene precio de magnum, Agora debe tenerlo.
+        if (wine.magnum_sale_price && Number(wine.magnum_sale_price) > 0) {
+          const magnumValidation = validateWineForAgora(wine, "MAGNUM", connection);
+          if (magnumValidation.valid) {
+            formatTypes.push("MAGNUM");
+          } else {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `magnum_validation_failed:${magnumValidation.missingFields.join(",")}` });
           }
         }
         if (formatTypes.length === 0) { skipped++; continue; }
