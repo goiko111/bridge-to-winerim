@@ -526,6 +526,9 @@ serve(async (req) => {
           if (nf.magnumSalePrice != null) upsertPayload.magnum_sale_price = nf.magnumSalePrice;
           if (nf.magnumPurchasePrice != null) upsertPayload.magnum_purchase_price = nf.magnumPurchasePrice;
           if (nf.stockQuantity != null) upsertPayload.stock_quantity = nf.stockQuantity;
+          if (nf.bottleStockId != null) upsertPayload.bottle_stock_id = nf.bottleStockId;
+          if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
+          if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
           await supabase
             .from("winerim_wines")
