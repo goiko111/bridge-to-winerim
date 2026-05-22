@@ -902,6 +902,9 @@ serve(async (req) => {
           serve_by_glass: !!glassEntry || detail.serve_by_glass === true || detail.by_glass === true || undefined,
           is_active: detail.active !== false && detail.is_active !== false ? true : false,
           stock_quantity: bottleEntry?.erpStock?.stock ?? undefined,
+          bottle_stock_id: bottleStockId,
+          glass_stock_id: glassStockId,
+          magnum_stock_id: magnumStockId,
           pricing_status: pricingStatus,
           pricing_missing_reason: pricingMissingReason,
         };
