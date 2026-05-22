@@ -338,7 +338,10 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
-// ── Winerim Stock Sync Helper (Read-Modify-Write) ──
+// ── Winerim Stock Sync Helper (variant-aware, bulk-write) ──
+// Winerim API v2: each wine exposes prices[] with variants ("copa","botella","magnum") and
+// each variant has its own erpStock.id. We must update the correct stockId per variant with
+// INTEGER quantities (Winerim rejects decimals). No more fractional bottle conversion.
 // deno-lint-ignore no-explicit-any
 async function syncStockForDay(supabase: any, connectionId: string, day: string, winerimToken: string) {
   const WINERIM_BASE = "https://app.winerim.com/api/v2";
@@ -347,13 +350,6 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     "Content-Type": "application/json",
     "Accept": "application/json",
   };
-
-  // Load connection to know the glass→bottle conversion factor
-  const { data: conn } = await supabase
-    .from("pos_connections")
-    .select("estimated_glasses_per_bottle")
-    .eq("id", connectionId).maybeSingle();
-  const glassesPerBottle = Math.max(1, Number(conn?.estimated_glasses_per_bottle ?? 5));
 
   const { data: events } = await supabase
     .from("sales_events").select("id")
@@ -375,30 +371,49 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
   // deno-lint-ignore no-explicit-any
   const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
-  let synced = 0, skipped = 0, failed = 0;
 
-  // Aggregate by winerim_product_id, converting glass quantities to fractional bottles.
-  // BOT/MAGNUM count as 1 bottle each. COPA counts as 1/glassesPerBottle of a bottle.
-  const aggregated = new Map<string, { totalQty: number; bottleQty: number; glassQty: number; lineIds: string[]; eventIds: string[]; name: string; providerProductId: string }>();
+  // Map Agora format → canonical Winerim variant
+  const variantFor = (fmt: string | null | undefined): "copa" | "botella" | "magnum" => {
+    const f = String(fmt || "").toUpperCase();
+    if (f === "COPA" || f === "GLASS" || f.includes("COPA") || f.includes("GLASS")) return "copa";
+    if (f === "MAGNUM" || f.includes("MAGNUM")) return "magnum";
+    return "botella"; // BOT, BOTELLA, default
+  };
+
+  // Variant aliases as they may come back from Winerim
+  const variantAliases: Record<string, string[]> = {
+    copa: ["copa", "glass"],
+    botella: ["botella", "bottle", "botella-pequena", "media-botella"],
+    magnum: ["magnum"],
+  };
+
+  // Aggregate by (winerimWineId, variant) — INTEGER qty per group
+  type Agg = {
+    winerimWineId: string;
+    variant: "copa" | "botella" | "magnum";
+    qty: number;
+    lineIds: string[];
+    eventIds: string[];
+    name: string;
+    providerProductId: string;
+  };
+  const aggregated = new Map<string, Agg>();
   // deno-lint-ignore no-explicit-any
   for (const line of mappedLines as any[]) {
-    const wId = line.winerim_product_id;
-    const qty = Math.abs(Number(line.quantity));
-    const fmt = String(line.format || "").toUpperCase();
-    const isGlass = fmt === "COPA" || fmt === "GLASS" || fmt.includes("COPA");
-    const bottleEquivalent = isGlass ? qty / glassesPerBottle : qty;
-
-    const existing = aggregated.get(wId);
+    const variant = variantFor(line.format);
+    const key = `${line.winerim_product_id}::${variant}`;
+    const qty = Math.ceil(Math.abs(Number(line.quantity || 0))); // round UP to safe integer
+    if (qty <= 0) continue;
+    const existing = aggregated.get(key);
     if (existing) {
-      existing.totalQty += bottleEquivalent;
-      if (isGlass) existing.glassQty += qty; else existing.bottleQty += qty;
+      existing.qty += qty;
       existing.lineIds.push(line.id);
       if (!existing.eventIds.includes(line.sales_event_id)) existing.eventIds.push(line.sales_event_id);
     } else {
-      aggregated.set(wId, {
-        totalQty: bottleEquivalent,
-        bottleQty: isGlass ? 0 : qty,
-        glassQty: isGlass ? qty : 0,
+      aggregated.set(key, {
+        winerimWineId: line.winerim_product_id,
+        variant,
+        qty,
         lineIds: [line.id],
         eventIds: [line.sales_event_id],
         name: line.name,
@@ -407,112 +422,163 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     }
   }
 
-  for (const [winerimWineId, agg] of aggregated) {
-    // Check if already synced for these lines
+  // Skip groups already synced successfully (idempotency)
+  const toProcess: Agg[] = [];
+  let skipped = 0;
+  for (const agg of aggregated.values()) {
     const { data: existing } = await supabase
       .from("stock_sync_log").select("id")
       .eq("connection_id", connectionId)
-      .eq("winerim_product_id", winerimWineId)
+      .eq("winerim_product_id", agg.winerimWineId)
       .in("sales_event_id", agg.eventIds)
       .eq("status", "SUCCESS").limit(1);
-
     if (existing && existing.length > 0) { skipped++; continue; }
+    toProcess.push(agg);
+  }
 
-    // Create log entry
-    const { data: logEntry } = await supabase
-      .from("stock_sync_log")
-      .insert({
-        connection_id: connectionId,
-        sales_event_id: agg.eventIds[0],
-        sales_line_item_id: agg.lineIds[0],
-        provider_product_id: agg.providerProductId,
-        winerim_product_id: winerimWineId,
-        product_name: agg.name,
-        quantity: agg.totalQty,
-        status: "PENDING",
-      }).select("id").single();
+  if (toProcess.length === 0) {
+    return {
+      synced: 0, skipped, failed: 0,
+      unmapped: lines.length - mappedLines.length,
+      totalLines: lines.length,
+      mappedLines: mappedLines.length,
+      aggregatedProducts: aggregated.size,
+      message: "All groups already synced",
+    };
+  }
 
+  // Pre-create PENDING log entries; remember their ids per (wine,variant)
+  const logIds = new Map<string, string>();
+  for (const agg of toProcess) {
+    const { data: logEntry } = await supabase.from("stock_sync_log").insert({
+      connection_id: connectionId,
+      sales_event_id: agg.eventIds[0],
+      sales_line_item_id: agg.lineIds[0],
+      provider_product_id: agg.providerProductId,
+      winerim_product_id: agg.winerimWineId,
+      product_name: `${agg.name} [${agg.variant}]`,
+      quantity: agg.qty,
+      status: "PENDING",
+    }).select("id").single();
+    if (logEntry?.id) logIds.set(`${agg.winerimWineId}::${agg.variant}`, logEntry.id);
+  }
+
+  let failed = 0;
+
+  // GET stock per unique wine — cache per wineId
+  const uniqueWineIds = Array.from(new Set(toProcess.map(p => p.winerimWineId)));
+  type StockEntry = { id: number; stock: number; variant: string };
+  const wineStockCache = new Map<string, StockEntry[]>();
+  const wineFetchErrors = new Map<string, string>();
+
+  for (const wineId of uniqueWineIds) {
     try {
-      // Step 1: GET current stock from Winerim
-      const stockRes = await fetch(`${WINERIM_BASE}/stock/wine/${winerimWineId}`, {
-        method: "GET", headers: winerimHeaders,
-      });
-
-      if (!stockRes.ok) {
-        const errBody = await stockRes.text();
-        await supabase.from("stock_sync_log").update({
-          status: "FAILED",
-          error_message: `GET stock failed (${stockRes.status}): ${errBody.substring(0, 500)}`,
-        }).eq("id", logEntry?.id);
-        failed++;
+      const r = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
+      if (!r.ok) {
+        wineFetchErrors.set(wineId, `GET /stock/wine/${wineId} → ${r.status}: ${(await r.text()).substring(0, 200)}`);
         continue;
       }
+      const data = await r.json();
+      // Possible shapes: { stocks: [...] } | { data: { stocks: [...] } } | raw array
+      const stocksArr = data?.stocks || data?.data?.stocks || (Array.isArray(data) ? data : []);
+      const normalized: StockEntry[] = (Array.isArray(stocksArr) ? stocksArr : []).map((s: Record<string, unknown>) => ({
+        id: Number(s.id),
+        stock: Number(s.stock ?? 0),
+        variant: String(
+          // deno-lint-ignore no-explicit-any
+          ((s.winePrice as any)?.variant) || (s as any).variant || ""
+        ).toLowerCase(),
+      })).filter((s: StockEntry) => Number.isFinite(s.id) && s.id > 0);
+      wineStockCache.set(wineId, normalized);
+    } catch (e) {
+      wineFetchErrors.set(wineId, String(e));
+    }
+  }
 
-      const stockData = await stockRes.json();
-      // Winerim returns { stocks: [{id, stock, stockActive, winePrice: {variant}},...] }
-      // or legacy { data: { id, stock } } or { id, stock }
-      let stockId: number | null = null;
-      let currentStock = 0;
+  // Resolve stockId per (wine,variant) and build bulk PUT items
+  type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
+  const bulkItems: BulkItem[] = [];
+  for (const agg of toProcess) {
+    const logId = logIds.get(`${agg.winerimWineId}::${agg.variant}`);
+    if (wineFetchErrors.has(agg.winerimWineId)) {
+      if (logId) await supabase.from("stock_sync_log").update({
+        status: "FAILED", error_message: wineFetchErrors.get(agg.winerimWineId),
+      }).eq("id", logId);
+      failed++; continue;
+    }
+    const stocks = wineStockCache.get(agg.winerimWineId) || [];
+    const aliases = variantAliases[agg.variant] || [agg.variant];
+    const match = stocks.find(s => aliases.includes(s.variant));
+    if (!match) {
+      if (logId) await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        error_message: `Variant '${agg.variant}' not found in Winerim for wine ${agg.winerimWineId}. Available: [${stocks.map(s=>s.variant).join(",") || "none"}]`,
+      }).eq("id", logId);
+      failed++; continue;
+    }
+    const newStock = Math.max(0, Math.floor(match.stock - agg.qty));
+    bulkItems.push({ id: match.id, newStock, previousStock: match.stock, agg });
+  }
 
-      const stocksArr = stockData?.stocks || stockData?.data?.stocks;
-      if (Array.isArray(stocksArr) && stocksArr.length > 0) {
-        // Prefer stockActive entry, then botella variant, then first entry
-        const active = stocksArr.find((s: Record<string, unknown>) => s.stockActive === true);
-        const botella = stocksArr.find((s: Record<string, unknown>) => {
-          const v = (s.winePrice as Record<string, unknown>)?.variant;
-          return v === "botella" || v === "botella-pequena";
-        });
-        const chosen = active || botella || stocksArr[0];
-        stockId = chosen.id as number;
-        currentStock = Number(chosen.stock ?? 0);
+  // Bulk PUT to Winerim — chunks of 100
+  let synced = 0;
+  const CHUNK = 100;
+  for (let i = 0; i < bulkItems.length; i += CHUNK) {
+    const chunk = bulkItems.slice(i, i + CHUNK);
+    const body = { items: chunk.map(c => ({ id: c.id, stock: c.newStock })) };
+    let r: Response;
+    let txt = "";
+    // deno-lint-ignore no-explicit-any
+    let parsed: any;
+    try {
+      r = await fetch(`${WINERIM_BASE}/stock/bulk`, { method: "PUT", headers: winerimHeaders, body: JSON.stringify(body) });
+      txt = await r.text();
+      try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt }; }
+    } catch (e) {
+      for (const item of chunk) {
+        const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
+        if (logId) await supabase.from("stock_sync_log").update({
+          status: "FAILED", error_message: `Bulk PUT exception: ${String(e)}`,
+        }).eq("id", logId);
+        failed++;
+      }
+      continue;
+    }
+
+    // Map per-item errors returned by Winerim
+    const errMap = new Map<number, string>();
+    if (Array.isArray(parsed?.errors)) {
+      for (const e of parsed.errors) {
+        if (e?.id) errMap.set(Number(e.id), e.error || "unknown error");
+      }
+    }
+
+    for (const item of chunk) {
+      const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
+      if (!logId) continue;
+      const err = errMap.get(item.id);
+      if (!r.ok || err) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          error_message: err || `Bulk PUT failed (${r.status}): ${txt.substring(0, 300)}`,
+          winerim_response: parsed,
+        }).eq("id", logId);
+        failed++;
       } else {
-        const stockObj = stockData?.data || stockData;
-        stockId = stockObj?.id || stockObj?.stockId;
-        currentStock = Number(stockObj?.stock ?? stockObj?.quantity ?? 0);
-      }
-
-      if (!stockId) {
-        await supabase.from("stock_sync_log").update({
-          status: "FAILED",
-          error_message: `No stockId found in response: ${JSON.stringify(stockData).substring(0, 500)}`,
-        }).eq("id", logEntry?.id);
-        failed++;
-        continue;
-      }
-
-      // Step 2: Calculate new stock (never go below 0)
-      const newStock = Math.max(0, currentStock - agg.totalQty);
-
-      // Step 3: PUT absolute stock value
-      const putRes = await fetch(`${WINERIM_BASE}/stock/${stockId}`, {
-        method: "PUT", headers: winerimHeaders,
-        body: JSON.stringify({ stock: newStock }),
-      });
-
-      const putBody = await putRes.text();
-      let parsed; try { parsed = JSON.parse(putBody); } catch (_) { parsed = { raw: putBody }; }
-
-      if (putRes.ok) {
         await supabase.from("stock_sync_log").update({
           status: "SUCCESS",
-          winerim_response: { previousStock: currentStock, newStock, soldQty: agg.totalQty, bottleQty: agg.bottleQty, glassQty: agg.glassQty, glassesPerBottle, stockId, ...parsed },
+          winerim_response: {
+            previousStock: item.previousStock,
+            newStock: item.newStock,
+            soldQty: item.agg.qty,
+            variant: item.agg.variant,
+            stockId: item.id,
+          },
           synced_at: new Date().toISOString(),
-        }).eq("id", logEntry?.id);
+        }).eq("id", logId);
         synced++;
-        console.log(`[sync-stock] ${agg.name}: ${currentStock} → ${newStock} (-${agg.totalQty.toFixed(3)}) [bot:${agg.bottleQty} copa:${agg.glassQty}/${glassesPerBottle}]`);
-      } else {
-        await supabase.from("stock_sync_log").update({
-          status: "FAILED",
-          error_message: `PUT stock/${stockId} failed (${putRes.status}): ${putBody.substring(0, 500)}`,
-          winerim_response: parsed,
-        }).eq("id", logEntry?.id);
-        failed++;
+        console.log(`[sync-stock] ${item.agg.name} [${item.agg.variant}]: ${item.previousStock} → ${item.newStock} (-${item.agg.qty})`);
       }
-    } catch (e) {
-      await supabase.from("stock_sync_log").update({
-        status: "FAILED", error_message: String(e),
-      }).eq("id", logEntry?.id);
-      failed++;
     }
   }
 
