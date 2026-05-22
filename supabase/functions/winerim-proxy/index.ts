@@ -860,10 +860,14 @@ serve(async (req) => {
           return n > 0 ? n : null;
         }
 
-        const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
+        const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
         const bottleEntry = prices.find((p: any) => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
         const glassEntry = prices.find((p: any) => p.variant === "copa");
         const magnumEntry = prices.find((p: any) => p.variant === "magnum");
+
+        const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : undefined;
+        const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : undefined;
+        const magnumStockId = Number.isFinite(Number(magnumEntry?.erpStock?.id)) ? Number(magnumEntry!.erpStock!.id) : undefined;
 
         const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(detail.bottle_sale_price ?? detail.sale_price ?? detail.pvp ?? detail.price);
         const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(detail.glass_sale_price ?? detail.glass_price);
