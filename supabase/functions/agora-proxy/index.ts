@@ -465,13 +465,44 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
   let failed = 0;
 
-  // GET stock per unique wine — cache per wineId
+  // ── Resolve stockId per (wine,variant) ──
+  // Step 1: prefer cached stockIds from winerim_wines (populated by catalog sync).
+  // Step 2: for wines missing cached IDs, fall back to GET /stock/wine/{id}.
   const uniqueWineIds = Array.from(new Set(toProcess.map(p => p.winerimWineId)));
   type StockEntry = { id: number; stock: number; variant: string };
   const wineStockCache = new Map<string, StockEntry[]>();
   const wineFetchErrors = new Map<string, string>();
 
-  for (const wineId of uniqueWineIds) {
+  const { data: cachedWines } = await supabase
+    .from("winerim_wines")
+    .select("winerim_id, bottle_stock_id, glass_stock_id, magnum_stock_id")
+    .eq("connection_id", connectionId)
+    .in("winerim_id", uniqueWineIds);
+  const cacheMap = new Map<string, { bottle?: number; glass?: number; magnum?: number }>();
+  // deno-lint-ignore no-explicit-any
+  for (const w of (cachedWines || []) as any[]) {
+    cacheMap.set(String(w.winerim_id), {
+      bottle: w.bottle_stock_id ?? undefined,
+      glass: w.glass_stock_id ?? undefined,
+      magnum: w.magnum_stock_id ?? undefined,
+    });
+  }
+
+  // Which wines still need a GET because at least one needed variant has no cached id?
+  const variantsNeededByWine = new Map<string, Set<"copa" | "botella" | "magnum">>();
+  for (const agg of toProcess) {
+    const set = variantsNeededByWine.get(agg.winerimWineId) || new Set<"copa" | "botella" | "magnum">();
+    set.add(agg.variant);
+    variantsNeededByWine.set(agg.winerimWineId, set);
+  }
+  const winesNeedingFetch: string[] = [];
+  for (const [wineId, vset] of variantsNeededByWine) {
+    const cache = cacheMap.get(wineId);
+    const missing = Array.from(vset).some(v => !cache || cache[v] == null);
+    if (missing) winesNeedingFetch.push(wineId);
+  }
+
+  for (const wineId of winesNeedingFetch) {
     try {
       const r = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
       if (!r.ok) {
@@ -479,7 +510,6 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         continue;
       }
       const data = await r.json();
-      // Possible shapes: { stocks: [...] } | { data: { stocks: [...] } } | raw array
       const stocksArr = data?.stocks || data?.data?.stocks || (Array.isArray(data) ? data : []);
       const normalized: StockEntry[] = (Array.isArray(stocksArr) ? stocksArr : []).map((s: Record<string, unknown>) => ({
         id: Number(s.id),
@@ -490,35 +520,76 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         ).toLowerCase(),
       })).filter((s: StockEntry) => Number.isFinite(s.id) && s.id > 0);
       wineStockCache.set(wineId, normalized);
+
+      // Backfill DB cache for next runs
+      const upd: Record<string, number> = {};
+      const findId = (aliases: string[]) => normalized.find(s => aliases.includes(s.variant))?.id;
+      const bId = findId(variantAliases.botella);
+      const gId = findId(variantAliases.copa);
+      const mId = findId(variantAliases.magnum);
+      if (bId) upd.bottle_stock_id = bId;
+      if (gId) upd.glass_stock_id  = gId;
+      if (mId) upd.magnum_stock_id = mId;
+      if (Object.keys(upd).length > 0) {
+        await supabase.from("winerim_wines").update(upd)
+          .eq("connection_id", connectionId).eq("winerim_id", wineId);
+      }
     } catch (e) {
       wineFetchErrors.set(wineId, String(e));
     }
   }
 
-  // Resolve stockId per (wine,variant) and build bulk PUT items
+  // Build bulk PUT items. We still need the CURRENT stock value, so for wines that
+  // had cached ids we must GET /stock/{id} once to read the baseline.
   type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
   const bulkItems: BulkItem[] = [];
+
   for (const agg of toProcess) {
     const logId = logIds.get(`${agg.winerimWineId}::${agg.variant}`);
-    if (wineFetchErrors.has(agg.winerimWineId)) {
-      if (logId) await supabase.from("stock_sync_log").update({
-        status: "FAILED", error_message: wineFetchErrors.get(agg.winerimWineId),
-      }).eq("id", logId);
+    const cached = cacheMap.get(agg.winerimWineId);
+    let stockId: number | undefined = cached?.[agg.variant];
+    let previousStock: number | undefined;
+
+    // If we already fetched the wine, use that cache
+    const fetchedStocks = wineStockCache.get(agg.winerimWineId);
+    if (fetchedStocks) {
+      const aliases = variantAliases[agg.variant] || [agg.variant];
+      const match = fetchedStocks.find(s => aliases.includes(s.variant));
+      if (match) { stockId = match.id; previousStock = match.stock; }
+    }
+
+    if (!stockId) {
+      const err = wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
+      if (logId) await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).eq("id", logId);
       failed++; continue;
     }
-    const stocks = wineStockCache.get(agg.winerimWineId) || [];
-    const aliases = variantAliases[agg.variant] || [agg.variant];
-    const match = stocks.find(s => aliases.includes(s.variant));
-    if (!match) {
-      if (logId) await supabase.from("stock_sync_log").update({
-        status: "FAILED",
-        error_message: `Variant '${agg.variant}' not found in Winerim for wine ${agg.winerimWineId}. Available: [${stocks.map(s=>s.variant).join(",") || "none"}]`,
-      }).eq("id", logId);
-      failed++; continue;
+
+    // Need to fetch baseline for cached-only path
+    if (previousStock === undefined) {
+      try {
+        const r = await fetch(`${WINERIM_BASE}/stock/${stockId}`, { method: "GET", headers: winerimHeaders });
+        if (r.ok) {
+          const j = await r.json();
+          previousStock = Number(j?.stock ?? j?.data?.stock ?? 0);
+        } else {
+          if (logId) await supabase.from("stock_sync_log").update({
+            status: "FAILED",
+            error_message: `GET /stock/${stockId} → ${r.status}`,
+          }).eq("id", logId);
+          failed++; continue;
+        }
+      } catch (e) {
+        if (logId) await supabase.from("stock_sync_log").update({
+          status: "FAILED", error_message: `GET /stock/${stockId} exception: ${String(e)}`,
+        }).eq("id", logId);
+        failed++; continue;
+      }
     }
-    const newStock = Math.max(0, Math.floor(match.stock - agg.qty));
-    bulkItems.push({ id: match.id, newStock, previousStock: match.stock, agg });
+
+    const newStock = Math.max(0, Math.floor((previousStock || 0) - agg.qty));
+    bulkItems.push({ id: stockId, newStock, previousStock: previousStock || 0, agg });
   }
+
 
   // PUT per stockId (individual). Winerim v2 docs describe /stock/bulk but it is NOT yet
   // deployed in production (returns HTML login page). When Winerim ships it, swap this loop

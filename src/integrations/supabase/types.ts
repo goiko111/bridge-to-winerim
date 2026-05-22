@@ -961,17 +961,20 @@ export type Database = {
         Row: {
           bottle_purchase_price: number | null
           bottle_sale_price: number | null
+          bottle_stock_id: number | null
           connection_id: string
           created_at: string
           ean: string | null
           format: string | null
           glass_cost_price: number | null
           glass_sale_price: number | null
+          glass_stock_id: number | null
           grape_variety: string | null
           id: string
           is_active: boolean
           magnum_purchase_price: number | null
           magnum_sale_price: number | null
+          magnum_stock_id: number | null
           name: string
           price: number | null
           pricing_missing_reason: string | null
@@ -990,17 +993,20 @@ export type Database = {
         Insert: {
           bottle_purchase_price?: number | null
           bottle_sale_price?: number | null
+          bottle_stock_id?: number | null
           connection_id: string
           created_at?: string
           ean?: string | null
           format?: string | null
           glass_cost_price?: number | null
           glass_sale_price?: number | null
+          glass_stock_id?: number | null
           grape_variety?: string | null
           id?: string
           is_active?: boolean
           magnum_purchase_price?: number | null
           magnum_sale_price?: number | null
+          magnum_stock_id?: number | null
           name: string
           price?: number | null
           pricing_missing_reason?: string | null
@@ -1019,17 +1025,20 @@ export type Database = {
         Update: {
           bottle_purchase_price?: number | null
           bottle_sale_price?: number | null
+          bottle_stock_id?: number | null
           connection_id?: string
           created_at?: string
           ean?: string | null
           format?: string | null
           glass_cost_price?: number | null
           glass_sale_price?: number | null
+          glass_stock_id?: number | null
           grape_variety?: string | null
           id?: string
           is_active?: boolean
           magnum_purchase_price?: number | null
           magnum_sale_price?: number | null
+          magnum_stock_id?: number | null
           name?: string
           price?: number | null
           pricing_missing_reason?: string | null
