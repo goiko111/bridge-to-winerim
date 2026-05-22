@@ -414,7 +414,7 @@ serve(async (req) => {
         const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
         const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
-        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { stock?: number } }[] : [];
+        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
         const bottleEntry = prices.find(p => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
         const glassEntry = prices.find(p => p.variant === "copa");
         const magnumEntry = prices.find(p => p.variant === "magnum");
@@ -430,6 +430,10 @@ serve(async (req) => {
         const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
         const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
 
+        const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : null;
+        const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : null;
+        const magnumStockId = Number.isFinite(Number(magnumEntry?.erpStock?.id)) ? Number(magnumEntry!.erpStock!.id) : null;
+
         return {
           wineType,
           bottleSalePrice,
@@ -441,8 +445,12 @@ serve(async (req) => {
           serveByGlass,
           isActive,
           stockQuantity,
+          bottleStockId,
+          glassStockId,
+          magnumStockId,
         };
       }
+
 
       let listWinesFetched = 0;
       let listWinesUpserted = 0;
