@@ -520,66 +520,59 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     bulkItems.push({ id: match.id, newStock, previousStock: match.stock, agg });
   }
 
-  // Bulk PUT to Winerim — chunks of 100
+  // PUT per stockId (individual). Winerim v2 docs describe /stock/bulk but it is NOT yet
+  // deployed in production (returns HTML login page). When Winerim ships it, swap this loop
+  // for a chunked PUT to /api/v2/stock/bulk with { items: [{id, stock}] }.
+  // Throttle: ~250ms gap → 4 req/s, comfortably under Winerim's 5 req/s rate limit.
   let synced = 0;
-  const CHUNK = 100;
-  for (let i = 0; i < bulkItems.length; i += CHUNK) {
-    const chunk = bulkItems.slice(i, i + CHUNK);
-    const body = { items: chunk.map(c => ({ id: c.id, stock: c.newStock })) };
+  for (let i = 0; i < bulkItems.length; i++) {
+    const item = bulkItems[i];
+    const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
     let r: Response;
     let txt = "";
     // deno-lint-ignore no-explicit-any
     let parsed: any;
     try {
-      r = await fetch(`${WINERIM_BASE}/stock/bulk`, { method: "PUT", headers: winerimHeaders, body: JSON.stringify(body) });
+      r = await fetch(`${WINERIM_BASE}/stock/${item.id}`, {
+        method: "PUT",
+        headers: winerimHeaders,
+        body: JSON.stringify({ stock: item.newStock }),
+      });
       txt = await r.text();
-      try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt }; }
+      try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt.substring(0, 300) }; }
     } catch (e) {
-      for (const item of chunk) {
-        const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
-        if (logId) await supabase.from("stock_sync_log").update({
-          status: "FAILED", error_message: `Bulk PUT exception: ${String(e)}`,
-        }).eq("id", logId);
-        failed++;
-      }
+      if (logId) await supabase.from("stock_sync_log").update({
+        status: "FAILED", error_message: `PUT exception: ${String(e)}`,
+      }).eq("id", logId);
+      failed++;
       continue;
     }
 
-    // Map per-item errors returned by Winerim
-    const errMap = new Map<number, string>();
-    if (Array.isArray(parsed?.errors)) {
-      for (const e of parsed.errors) {
-        if (e?.id) errMap.set(Number(e.id), e.error || "unknown error");
-      }
+    if (r.ok) {
+      if (logId) await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        winerim_response: {
+          previousStock: item.previousStock,
+          newStock: item.newStock,
+          soldQty: item.agg.qty,
+          variant: item.agg.variant,
+          stockId: item.id,
+        },
+        synced_at: new Date().toISOString(),
+      }).eq("id", logId);
+      synced++;
+      console.log(`[sync-stock] ${item.agg.name} [${item.agg.variant}]: ${item.previousStock} → ${item.newStock} (-${item.agg.qty})`);
+    } else {
+      if (logId) await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        error_message: `PUT /stock/${item.id} failed (${r.status}): ${txt.substring(0, 300)}`,
+        winerim_response: parsed,
+      }).eq("id", logId);
+      failed++;
     }
 
-    for (const item of chunk) {
-      const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
-      if (!logId) continue;
-      const err = errMap.get(item.id);
-      if (!r.ok || err) {
-        await supabase.from("stock_sync_log").update({
-          status: "FAILED",
-          error_message: err || `Bulk PUT failed (${r.status}): ${txt.substring(0, 300)}`,
-          winerim_response: parsed,
-        }).eq("id", logId);
-        failed++;
-      } else {
-        await supabase.from("stock_sync_log").update({
-          status: "SUCCESS",
-          winerim_response: {
-            previousStock: item.previousStock,
-            newStock: item.newStock,
-            soldQty: item.agg.qty,
-            variant: item.agg.variant,
-            stockId: item.id,
-          },
-          synced_at: new Date().toISOString(),
-        }).eq("id", logId);
-        synced++;
-        console.log(`[sync-stock] ${item.agg.name} [${item.agg.variant}]: ${item.previousStock} → ${item.newStock} (-${item.agg.qty})`);
-      }
-    }
+    // Throttle to stay below 5 req/s
+    if (i < bulkItems.length - 1) await new Promise((res) => setTimeout(res, 250));
   }
 
   return {
