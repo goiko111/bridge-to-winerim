@@ -121,7 +121,7 @@
 - [x] Confirmar que Cienvinos y Baco seguían `enabled=false` tras el redeploy, antes de la activación operativa posterior.
 - [x] Activar Cienvinos y Baco: `enabled=true`, `auto_push_verified_ready=true`, `auto_push_on_create=true`, `auto_push_on_update=false`, `last_business_day_synced=2026-05-27`.
 - [x] Ejecutar dispatcher manual `sales-stock` por conexión: ambos jobs responden OK, sin breaker, sin preflight fallido y sin días pendientes.
-- [x] Procesar las 234 tareas `AGORA_XML_UPSERT_PRODUCT` de actualización que aparecieron para Cienvinos tras los lotes de catálogo/enriquecimiento; resultado final 234 `SUCCESS`, 0 tareas abiertas.
+- [x] Procesar las 374 tareas `AGORA_XML_UPSERT_PRODUCT` de actualización que aparecieron para Cienvinos tras los lotes de catálogo/enriquecimiento; resultado final 374 `SUCCESS`, 0 tareas abiertas.
 - [x] Restaurar/confirmar `provider_capabilities.can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT` en Cienvinos y Baco.
 - [x] Corregir `process-xml-outbound-queue` para no dejar tareas `RUNNING` al agotarse el presupuesto temporal.
 - [x] Corregir `sync-master-data` para no degradar `can_write_products=YES` a `UNKNOWN` tras una importación XML verificada.

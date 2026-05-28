@@ -68,9 +68,9 @@ _Última actualización: 2026-05-28_
 - Validación manual post-activación:
   - Dispatcher `sales-stock` por conexión: `succeeded=1`, `skippedByBreaker=0`, `skippedByPreflight=0`, `daysSynced=0`, mensaje `No pending days to sync`.
   - Dispatcher inicial `outbound-queue` por conexión: `processed=0`, `remaining=0`, `breakerTripped=false`.
-  - Al completarse los lotes de catálogo/enriquecimiento de Cienvinos se generaron 234 tareas `AGORA_XML_UPSERT_PRODUCT` de actualización (`UPDATE`, origen histórico `MANUAL`) en 3 tandas: 82, 77 y 75. Se procesaron todas contra Agora con resultado `SUCCESS`; Baco no dejó tareas abiertas.
+  - Al completarse los lotes de catálogo/enriquecimiento de Cienvinos se generaron 374 tareas `AGORA_XML_UPSERT_PRODUCT` de actualización (`UPDATE`, origen histórico `MANUAL`) en 5 tandas: 82, 77, 75, 75 y 65. Se procesaron todas contra Agora con resultado `SUCCESS`; Baco no dejó tareas abiertas.
   - Durante el procesamiento se detectó un caso de tareas reclamadas que quedaban en `RUNNING` al agotarse el presupuesto temporal de la Edge Function. Las tareas afectadas se procesaron individualmente por el flujo normal de importación/verificación, sin marcarlas manualmente como éxito.
-  - Lectura final en Lovable Cloud: ambas conexiones `enabled=true`, `can_write_products=YES`, `readiness_status=READY`, sin breakers, sin tareas abiertas (`QUEUED/RUNNING/FAILED/BLOCKED`) y sin `stock_sync_log` nuevos el 2026-05-28.
+  - Lectura final en Lovable Cloud (2026-05-28 05:17 UTC): ambas conexiones `enabled=true`, `can_write_products=YES`, `readiness_status=READY`, sin breakers, sin tareas abiertas (`QUEUED/RUNNING/FAILED/BLOCKED`) y sin `stock_sync_log` nuevos el 2026-05-28.
 - Correcciones de código preparadas para evitar regresión:
   - `agora-proxy.process-xml-outbound-queue` y la cola legacy no reclaman nuevos lotes si queda poco presupuesto de ejecución, y devuelven a `QUEUED` las tareas reclamadas pero no procesadas para no dejar zombies `RUNNING`.
   - `agora-proxy.sync-master-data` preserva un `can_write_products=YES` ya verificado; una lectura de master data no debe degradar una conexión que ya probó un XML import real.
