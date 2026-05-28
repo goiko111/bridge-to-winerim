@@ -120,7 +120,13 @@
 - [x] Revertir en fuente los cambios generados por Lovable en `src/integrations/supabase/types.ts` y `AgoraTodaysSalesStock`, conservando el redeploy ya aplicado en Cloud.
 - [x] Confirmar que Cienvinos y Baco seguían `enabled=false` tras el redeploy, antes de la activación operativa posterior.
 - [x] Activar Cienvinos y Baco: `enabled=true`, `auto_push_verified_ready=true`, `auto_push_on_create=true`, `auto_push_on_update=false`, `last_business_day_synced=2026-05-27`.
-- [x] Ejecutar dispatcher manual `sales-stock` y `outbound-queue` por conexión: ambos jobs responden OK, sin breaker, sin preflight fallido y con 0 tareas pendientes.
+- [x] Ejecutar dispatcher manual `sales-stock` por conexión: ambos jobs responden OK, sin breaker, sin preflight fallido y sin días pendientes.
+- [x] Procesar las 234 tareas `AGORA_XML_UPSERT_PRODUCT` de actualización que aparecieron para Cienvinos tras los lotes de catálogo/enriquecimiento; resultado final 234 `SUCCESS`, 0 tareas abiertas.
+- [x] Restaurar/confirmar `provider_capabilities.can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT` en Cienvinos y Baco.
+- [x] Corregir `process-xml-outbound-queue` para no dejar tareas `RUNNING` al agotarse el presupuesto temporal.
+- [x] Corregir `sync-master-data` para no degradar `can_write_products=YES` a `UNKNOWN` tras una importación XML verificada.
+- [x] Cambiar auto-queue de vinos recién `READY` para pasar por `evaluate-auto-push` y respetar gates automáticos.
+- [ ] Confirmar en Lovable Cloud que `agora-proxy` y `winerim-proxy` quedaron redeployados con los hotfixes de cola/capacidades.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -165,7 +171,7 @@
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
 - Baco Getafe: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
-- Lovable Cloud: P0 aplicado; Cienvinos/Baco activos. Bloqueo restante: validación real del primer descuento de stock WINERIM y auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
+- Lovable Cloud: P0 aplicado; Cienvinos/Baco activos y sin tareas abiertas. Bloqueo restante: confirmar redeploy de hotfixes de cola/capacidades, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.

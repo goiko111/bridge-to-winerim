@@ -265,3 +265,13 @@
 - **Decisión**: No activar todavía `auto_push_on_update` en Cienvinos/Baco aunque sí se active el cron general y el auto-create.
 - **Razón**: La implementación actual de `fetch-catalog` llama `evaluate-auto-push` con `eventType=UPDATE` para cada lote procesado, no solo para vinos cambiados. Encender `auto_push_on_update` ahora podría reencolar/reimportar muchos productos en cada sincronización de catálogo y cargar Agora innecesariamente.
 - **Alternativa descartada**: encender `auto_push_on_update=true` para lograr automatización total inmediata. Es funcionalmente tentador, pero aumenta el riesgo de sobreescrituras masivas y de carga POS; la mejora correcta es detectar cambios reales antes de encolar updates.
+
+## 2026-05-28 · Evitar zombies `RUNNING` en colas Agora por agotamiento de tiempo
+- **Decisión**: Modificar los procesadores de cola Agora para no reclamar lotes cuando queda poco presupuesto de ejecución y reencolar cualquier tarea ya reclamada que no llegue a procesarse.
+- **Razón**: Durante la activación de Cienvinos, el procesador completó imports correctamente pero dejó tareas en `RUNNING` al agotar tiempo después de reclamar un lote. El resultado operativo era una cola aparentemente atascada sin error real.
+- **Alternativa descartada**: esperar al cron de rescate de zombies. Funciona como red de seguridad, pero para clientes nuevos en producción es mejor que el procesador no cree zombies en condiciones normales.
+
+## 2026-05-28 · Preservar capacidades verificadas y usar gates automáticos para vinos recién READY
+- **Decisión**: `sync-master-data` no debe degradar `can_write_products=YES` a `UNKNOWN` si ya hubo XML import verificado. Además, los vinos que pasan de pricing incompleto a `READY` se evalúan con `evaluate-auto-push` (`CREATE`) en vez de llamar al encolador manual directo.
+- **Razón**: Baco había importado correctamente pero una lectura de master data volvió a mostrar la capacidad de escritura como `UNKNOWN`. El encolado directo de newly-ready también podía saltarse gates como `auto_push_on_create`, `auto_push_verified_ready` o `write_mode`.
+- **Alternativa descartada**: corregir solo los valores en base de datos. Arregla la foto puntual, pero no evita que una sincronización futura vuelva a degradar capacidades o encolar fuera de las reglas automáticas.

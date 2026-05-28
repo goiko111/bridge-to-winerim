@@ -953,21 +953,16 @@ serve(async (req) => {
         try {
           const { data: conn } = await supabase
             .from("pos_connections")
-            .select("provider, auto_push_bottle, auto_push_glass")
+            .select("provider")
             .eq("id", connectionId).maybeSingle();
 
           if (conn?.provider === "agora") {
             const { data: q, error: qErr } = await supabase.functions.invoke("agora-proxy", {
               body: {
-                action: "queue-xml-outbound",
+                action: "evaluate-auto-push",
                 connectionId,
                 winerimWineIds: newlyReadyWineIds,
-                formatTypes: [
-                  ...(conn.auto_push_bottle !== false ? ["BOTTLE"] : []),
-                  ...(conn.auto_push_glass ? ["GLASS"] : []),
-                  "MAGNUM",
-                ],
-                source: "auto-recheck-missing-price",
+                eventType: "CREATE",
               },
             });
             if (qErr) autoQueueError = qErr.message || String(qErr);

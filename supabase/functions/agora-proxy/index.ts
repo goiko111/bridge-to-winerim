@@ -3187,10 +3187,13 @@ serve(async (req) => {
 
       const BATCH_SIZE = 10;
       const TIME_BUDGET_MS = 20_000;
+      const MIN_TIME_FOR_CLAIM_MS = 3_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
       while (Date.now() - startTime < TIME_BUDGET_MS) {
+        if (TIME_BUDGET_MS - (Date.now() - startTime) < MIN_TIME_FOR_CLAIM_MS) break;
+
         const taskTypes = ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"];
         const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
           p_connection_id: connectionId,
@@ -3210,8 +3213,15 @@ serve(async (req) => {
 
         if (!tasks || tasks.length === 0) break;
 
+        const unprocessedClaimedTasks = usedAtomicClaim ? [...(tasks as any[])] : [];
+        const forgetClaimedTask = (taskId: string) => {
+          const idx = unprocessedClaimedTasks.findIndex((task: any) => task.id === taskId);
+          if (idx >= 0) unprocessedClaimedTasks.splice(idx, 1);
+        };
+
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
+          forgetClaimedTask(t.id);
           try {
             if (t.task_type === "AGORA_MIGRATE_FAMILY") {
               const p = t.payload_json as Record<string, unknown>;
@@ -3270,6 +3280,18 @@ serve(async (req) => {
               if (result?.status === "SUCCESS") succeeded++; else failed++;
             }
           } catch (err) { failed++; processed++; }
+        }
+
+        if (unprocessedClaimedTasks.length > 0) {
+          for (const pending of unprocessedClaimedTasks) {
+            await supabase.from("outbound_tasks").update({
+              status: "QUEUED",
+              attempts: Math.max(((pending as any).attempts || 1) - 1, 0),
+              next_retry_at: null,
+              updated_at: new Date().toISOString(),
+            }).eq("id", (pending as any).id).eq("status", "RUNNING");
+          }
+          break;
         }
       }
 
@@ -3477,11 +3499,17 @@ serve(async (req) => {
           write_mode: "XML_IMPORT",
         }).eq("id", connectionId).eq("write_mode", "NONE");
 
-        // Set capabilities to UNKNOWN (not YES) - only a real POST proves write
+        // Preserve verified write capability. Master-data reads prove catalog access,
+        // but must not downgrade a connection that already completed a real XML import.
+        const { data: existingCaps } = await supabase
+          .from("provider_capabilities")
+          .select("can_write_products")
+          .eq("connection_id", connectionId)
+          .maybeSingle();
         await supabase.from("provider_capabilities").upsert({
           connection_id: connectionId, provider: "AGORA",
           can_read_sales: true, can_read_catalog: true,
-          can_write_products: "UNKNOWN",
+          can_write_products: existingCaps?.can_write_products || "UNKNOWN",
           write_endpoint: "/api/import/",
           last_checked_at: new Date().toISOString(),
         }, { onConflict: "connection_id" });
@@ -4917,6 +4945,7 @@ serve(async (req) => {
       const serverLoop = payload.serverLoop === true;
       const BATCH_SIZE = 10;
       const TIME_BUDGET_MS = serverLoop ? 50_000 : 20_000;
+      const MIN_TIME_FOR_CLAIM_MS = 3_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
 
@@ -4967,6 +4996,7 @@ serve(async (req) => {
       while (Date.now() - startTime < TIME_BUDGET_MS) {
         // Re-check breaker each loop in case it tripped mid-run
         if (runConsecutiveFailures >= 10) break;
+        if (TIME_BUDGET_MS - (Date.now() - startTime) < MIN_TIME_FOR_CLAIM_MS) break;
 
         const taskTypes = ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"];
         const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
@@ -4990,9 +5020,16 @@ serve(async (req) => {
 
         if (!tasks || tasks.length === 0) break;
 
+        const unprocessedClaimedTasks = usedAtomicClaim ? [...(tasks as any[])] : [];
+        const forgetClaimedTask = (taskId: string) => {
+          const idx = unprocessedClaimedTasks.findIndex((task: any) => task.id === taskId);
+          if (idx >= 0) unprocessedClaimedTasks.splice(idx, 1);
+        };
+
         for (const t of tasks) {
           if (Date.now() - startTime >= TIME_BUDGET_MS) break;
           if (runConsecutiveFailures >= 10) break;
+          forgetClaimedTask(t.id);
           try {
             if ((t as any).task_type === "AGORA_HIDE_PRODUCT") {
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
@@ -5125,6 +5162,18 @@ serve(async (req) => {
             if (exhausted) runConsecutiveFailures++;
             failed++; processed++;
           }
+        }
+
+        if (unprocessedClaimedTasks.length > 0) {
+          for (const pending of unprocessedClaimedTasks) {
+            await supabase.from("outbound_tasks").update({
+              status: "QUEUED",
+              attempts: Math.max(((pending as any).attempts || 1) - 1, 0),
+              next_retry_at: null,
+              updated_at: new Date().toISOString(),
+            }).eq("id", (pending as any).id).eq("status", "RUNNING");
+          }
+          break;
         }
       }
 
