@@ -63,3 +63,170 @@
 ## 2026-05-05 · Confirmar que las IPs AWS del informe del cliente son nuestras Edge Functions
 - **Decisión**: Asumir responsabilidad y arreglar (no esquivar).
 - **Razón**: Coincidencia con rangos de Supabase Edge Functions; patrón de carga coherente con nuestro proxy.
+
+---
+
+## 2026-05-26 · Registrar auditoría como revisión no invasiva antes de tocar stock/colas/seguridad
+- **Decisión**: Documentar los hallazgos P0/P1 y dejar las acciones en `NEXT_STEPS.md`, sin aplicar cambios funcionales en esta misma pasada.
+- **Razón**: Los hallazgos principales afectan deducción absoluta de stock, idempotencia, colas outbound y seguridad de datos. Son áreas críticas que requieren cambios pequeños, migraciones revisadas y pruebas de regresión antes de desplegar.
+- **Alternativa descartada**: aplicar varios hotfixes en bloque durante la auditoría. Aumentaría el riesgo de romper flujos que hoy están funcionando en clientes reales.
+
+## 2026-05-26 · Priorizar bugs de stock/idempotencia y contrato Agora antes de continuar mejoras P1
+- **Decisión**: Añadir una sección P0 específica de auditoría en `NEXT_STEPS.md`, por encima de la extensión de Capa 3 a otros proxies.
+- **Razón**: La resiliencia P1 sigue siendo importante, pero los problemas detectados pueden causar deducciones incorrectas, tareas duplicadas o incumplimiento de reglas duras ya acordadas.
+- **Alternativa descartada**: mantener el backlog anterior sin reordenar; ocultaría riesgos más urgentes detrás de mejoras de infraestructura.
+
+## 2026-05-26 · Incorporar documentación local Winerim API Token v2 como referencia, validando bulk contra producción
+- **Decisión**: Registrar `/Users/GOIKO/Downloads/API_TOKEN_V2_DOCUMENTATION.html` como referencia técnica local para Winerim API v2, pero no activar automáticamente `stock/bulk` hasta probarlo con una conexión real.
+- **Razón**: El HTML documenta `POST /wines/bulk` y `PUT /stock/bulk`, además de confirmar stock por variante con `erpStock.id`; sin embargo, el estado previo del proyecto indica que `stock/bulk` devolvía HTML/login en producción.
+- **Alternativa descartada**: migrar directamente el flujo de stock a bulk solo porque el HTML lo documenta. El riesgo es dejar actualizaciones parciales sin trazabilidad suficiente o romper una integración que hoy funciona con PUT individual.
+
+## 2026-05-26 · Hacer el P0 de stock con compatibilidad legacy y rollback explícito
+- **Decisión**: Añadir idempotencia por línea/variante (`idempotency_key`) y mantener un guard de compatibilidad que respeta logs `SUCCESS` antiguos sin clave.
+- **Razón**: Sin compatibilidad, reejecutar días históricos podría descontar dos veces ventas ya sincronizadas antes de la migración. La prioridad es no romper stock que ya funciona.
+- **Alternativa descartada**: backfill agresivo de claves sobre logs antiguos. No hay suficiente información en todas las filas antiguas para reconstruir línea/variante sin ambigüedad.
+
+## 2026-05-26 · Mantener `auto-sync-sales` en comportamiento efectivo D-1 y eliminar rama intradía muerta
+- **Decisión**: Eliminar la segunda rama `auto-sync-sales`, que era inalcanzable, y conservar el flujo efectivo actual de días cerrados.
+- **Razón**: Kava solo expone `Invoices` post-cierre y activar intradía sin verificación puede reabrir deducciones parciales o inconsistentes.
+- **Alternativa descartada**: activar hoy intradía globalmente. Queda para una feature flag por conexión tras pruebas reales.
+
+## 2026-05-26 · Añadir claim atómico con fallback para colas outbound
+- **Decisión**: Crear `claim_outbound_tasks(...)` con `FOR UPDATE SKIP LOCKED` y usarlo en colas Agora/Revo, manteniendo fallback al selector anterior si la función no existe aún.
+- **Razón**: Evita que dos invocaciones procesen la misma tarea a la vez sin bloquear despliegues donde la migración todavía no se haya aplicado.
+- **Alternativa descartada**: cambiar todos los procesadores a RPC sin fallback; habría roto entornos si se desplegaban funciones antes que migraciones.
+
+## 2026-05-26 · Bloquear escrituras de `restore-glass-overdiscount` salvo flag explícito
+- **Decisión**: `restore-glass-overdiscount` queda dry-run por defecto; `apply=true` solo escribe si se añade `allowLegacyFractionalRestore=true`.
+- **Razón**: La acción conserva lógica fraccional antigua y puede sobrescribir stock real del cliente. El bloqueo reduce riesgo sin borrar la herramienta de emergencia.
+- **Alternativa descartada**: eliminar la acción por completo; podría ser útil para diagnóstico histórico mientras se reescribe variant-aware.
+
+## 2026-05-26 · Auditar front Agora sin aplicar cambios funcionales inmediatos
+- **Decisión**: Registrar hallazgos del front Agora en `CURRENT_STATE.md` y tareas P0/P1 en `NEXT_STEPS.md`, sin tocar todavía UI/backends asociados.
+- **Razón**: Varios hallazgos afectan flujos operativos sensibles (guardado manual de ventas, stock, publicación de catálogo, visibilidad en TPV). Aplicarlos en bloque podría cambiar comportamiento que usan clientes reales.
+- **Alternativa descartada**: corregir navegación, stock manual, magnum y visibilidad en una misma pasada. Se prioriza una secuencia pequeña y verificable, con rollback sencillo por cada cambio.
+
+## 2026-05-26 · Cursor Agora condicionado a stock confirmado
+- **Decisión**: `save-sales` y `auto-sync-sales` solo avanzan `last_business_day_synced` cuando el stock Winerim del día termina sin fallos. Si stock falla, el cursor queda atrás y el cron reintenta.
+- **Razón**: Antes se podían guardar ventas y avanzar cursor sin descontar stock, obligando a intervención manual. El objetivo operativo es que cada cliente Agora funcione solo con cierres de caja.
+- **Alternativa descartada**: mantener `Save to DB` como acción solo de persistencia. Es más cómodo para depurar, pero deja una vía real para saltarse stock.
+
+## 2026-05-26 · Catch-up idempotente de stock para días ya guardados
+- **Decisión**: `auto-sync-sales` revisa días recientes ya guardados con líneas de vino resueltas y ejecuta `syncStockForDay`, que salta lo ya sincronizado.
+- **Razón**: Corrige casos históricos donde el cursor pudo avanzar antes de confirmar stock. La ejecución es barata cuando todo está ya en `SUCCESS` porque no llega a llamar a Winerim.
+- **Alternativa descartada**: crear un cron nuevo separado para “stock pending”. Añade superficie operativa y configuración; se puede extraer más adelante si crece el volumen.
+
+## 2026-05-26 · Guard anti doble-descuento por evento/vino/variante
+- **Decisión**: además de `idempotency_key` por línea/variante, `syncStockForDay` considera sincronizado cualquier grupo `sales_event_id + winerim_product_id + variant` con `SUCCESS` previo.
+- **Razón**: Las ventas se re-guardan borrando/reinsertando `sales_line_items`; los IDs de línea cambian y una clave solo por línea permitiría descontar dos veces al reejecutar un día.
+- **Alternativa descartada**: recalcular deltas si un ticket cerrado cambia. Es más exacto en teoría, pero abre riesgo de doble deducción; para Agora post-cierre se asume ticket cerrado estable.
+
+## 2026-05-26 · Activar MAGNUM en acciones principales de Agora
+- **Decisión**: Preview/push/backfill principales envían `MAGNUM` junto a `BOTTLE` y `GLASS`.
+- **Razón**: Backend y Winerim API v2 ya soportan variante magnum; dejarla fuera de los botones principales hacía que un formato “listo” no se automatizara.
+- **Alternativa descartada**: añadir un toggle nuevo `write_magnum` ahora. Requiere migración/configuración extra; el backend ya valida por precio y elegibilidad, así que el riesgo funcional es bajo.
+
+## 2026-05-26 · Mappings manuales deben declarar formato
+- **Decisión**: `AgoraManualMatchPanel` permite elegir `BOTTLE`/`GLASS`/`MAGNUM` y deriva una propuesta inicial del nombre del producto Agora.
+- **Razón**: Guardar siempre `BOTTLE` hacía ambiguas las ventas manualmente mapeadas de copa o magnum.
+- **Alternativa descartada**: inferir siempre en backend sin mostrarlo. La inferencia por nombre es útil, pero debe ser visible/corregible por el operador.
+
+## 2026-05-26 · Test de conexión sin basura operativa
+- **Decisión**: las filas creadas durante `testConnection` nacen deshabilitadas y se eliminan si el test falla.
+- **Razón**: Evita conexiones inválidas “New Location” que podrían aparecer en listados o diagnósticos.
+- **Alternativa descartada**: crear un action backend que pruebe credenciales sin `connectionId`. Es más limpio, pero requiere reordenar el contrato del proxy; la limpieza en fallo es menor cambio y reversible.
+
+## 2026-05-26 · Extraer reglas críticas de stock a utilidades puras testeables
+- **Decisión**: mover la clave estable de grupo y la decisión de avance de cursor a `_shared/stockSyncUtils.ts`, con tests unitarios.
+- **Razón**: Son reglas de seguridad operativa: no descontar dos veces y no avanzar cursor si stock falla. Deben quedar verificadas fuera del flujo completo de Edge Function.
+- **Alternativa descartada**: dejar la lógica inline solo en `agora-proxy`. Funciona, pero dificulta detectar regresiones pequeñas.
+
+## 2026-05-27 · Crear Cienvinos deshabilitado hasta completar despliegue P0
+- **Decisión**: Crear la conexión Agora de `Restaurante Cienvinos Ecija` con credenciales reales, pero dejar `enabled=false`, auto-push desactivado y revisión manual obligatoria.
+- **Razón**: La conexión y credenciales funcionan, pero Lovable Cloud aún no tiene aplicadas las migraciones de idempotencia variant-aware (`stock_sync_log.variant/stock_id/idempotency_key`) ni `user_roles/has_role()`. Activar cron antes de ese despliegue pondría en riesgo el stock automático.
+- **Alternativa descartada**: activar inmediatamente la conexión por tener `test` correcto. El test solo valida alcance/credenciales, no garantiza deducción idempotente de stock ni seguridad de reintentos.
+
+## 2026-05-27 · Backfill directo de stockIds Cienvinos como corrección de metadatos, no de stock
+- **Decisión**: Consultar Winerim `GET /api/v2/stock/wine/{wineId}` para los 378 vinos y rellenar `bottle_stock_id`, `glass_stock_id`, `magnum_stock_id` en `winerim_wines`.
+- **Razón**: El `winerim-proxy` actualmente desplegado leyó el catálogo, pero no persistió `erpStock.id`; la API real sí devolvió esos IDs. Sin stockIds, el flujo variant-aware no puede descontar la variante correcta.
+- **Alternativa descartada**: esperar a una nueva sincronización automática con el proxy desplegado actual. Ya se comprobó que esa versión no capturaba los IDs, así que repetirla no aportaría valor.
+
+## 2026-05-27 · Preparar XML de Cienvinos con familias automáticas deterministas
+- **Decisión**: Configurar `auto_create_families=true`, IVA `Reducido` 10%, preparación `BARRA/BEBIDAS`, almacén general y sale centers Barra/Sala/Terraza; validar por `preview-xml` antes de cualquier import real.
+- **Razón**: Agora Cienvinos devuelve 0 familias en master data y 3 listas de precio activas. Sin autocreación de familias, el XML quedaría sin una clasificación fiable; con IDs deterministas el resultado es repetible y reversible.
+- **Alternativa descartada**: crear manualmente familias desde la interfaz antes de preview. Es más lento y no mejora la seguridad mientras no haya import real.
+
+## 2026-05-27 · No escribir catálogo real en Agora Cienvinos hasta lote piloto verificado
+- **Decisión**: Detenerse en preview global correcto (428 productos, 6 familias, 0 IDs duplicados) y no ejecutar `xml-import` todavía.
+- **Razón**: Importar 428 productos modifica el TPV productivo. Aunque el XML sea válido, el primer write debe ser un lote piloto pequeño con verificación post-write y plan de rollback.
+- **Alternativa descartada**: importar el catálogo completo de una vez. Ahorra tiempo, pero aumenta el impacto si el cliente no quiere todos los sale centers, familias o nombres generados.
+
+## 2026-05-27 · Usar familias dedicadas WINERIM para Cienvinos
+- **Decisión**: Crear familias `... WINERIM` dedicadas y mapear todo el catálogo de Winerim a esas familias, en lugar de mezclarlo con familias existentes del cliente.
+- **Razón**: Es el despliegue más reversible: permite ver claramente qué productos vienen de Winerim y ocultar/restaurar ese bloque completo sin tocar comida/bebidas.
+- **Alternativa descartada**: usar las familias genéricas auto-creadas `Vinos Tinto`, `Vinos Blanco`, etc. Cumplían técnicamente, pero no dejaban tan claro el origen WINERIM pedido por el usuario.
+
+## 2026-05-27 · No ocultar productos previos de Cienvinos que no sean vino real
+- **Decisión**: No ocultar los 177 productos preexistentes de Agora Cienvinos, porque no hay familias antiguas de vino y los candidatos por texto eran falsos positivos (`tinto limón`, `copa cerveza`, infusiones/licores).
+- **Razón**: Ocultar por heurística habría podido romper bebidas/carta activa del cliente. El objetivo era ocultar vino legacy, no elementos operativos no-Winerim.
+- **Alternativa descartada**: ocultar cualquier producto que contuviera palabras como `tinto`, `copa` o `manzanilla`. Esa regla habría sido demasiado agresiva.
+
+## 2026-05-27 · Importar Cienvinos por formato y lotes pequeños
+- **Decisión**: Tras fallar el XML global con HTTP 500, importar por formato (`BOTTLE`, `GLASS`, `MAGNUM`) y por lotes pequeños, verificando cada lote contra las 3 listas de precio.
+- **Razón**: Agora aceptó los lotes pequeños y permitió aislar errores individuales sin repetir importaciones masivas ni dejar el catálogo a medias.
+- **Alternativa descartada**: reintentar el XML global completo. Habría repetido el mismo 500 y aumentado carga sobre el POS.
+
+## 2026-05-27 · Desambiguar nombres duplicados de Winerim con sufijo corto en Agora
+- **Decisión**: Importar las 12 botellas duplicadas de nombre con sufijo corto basado en el ID Winerim visible en Agora, restaurando después los nombres originales en el catálogo cacheado local.
+- **Razón**: Agora rechaza nombres duplicados aunque el `Id` de producto sea distinto. El sufijo mantiene todos los vinos vendibles sin borrar duplicados de Winerim.
+- **Alternativa descartada**: saltar los duplicados o borrar uno de cada par. No era seguro asumir que son duplicados descartables; pueden representar añadas, precios o fichas distintas.
+
+## 2026-05-27 · No activar cron global de Cienvinos hasta completar migraciones P0
+- **Decisión**: Mantener `enabled=false` en Cienvinos aunque el catálogo ya esté importado y `provider_capabilities` esté en `READY/XML_IMPORT`.
+- **Razón**: En Lovable Cloud aún faltan las columnas variant-aware de `stock_sync_log` y `user_roles/has_role()`. Además, el dispatcher Agora usa `enabled=true` para `catalog`, `sales-stock` y `outbound-queue`; no hay un interruptor seguro para encender solo catálogo sin ventas/stock.
+- **Alternativa descartada**: activar Cienvinos inmediatamente por petición operativa. Habría podido lanzar `auto-sync-sales`/colas con idempotencia de stock incompleta.
+
+## 2026-05-27 · Cerrar cola Cienvinos supersedida por import verificado
+- **Decisión**: Marcar como `SUCCESS` las 75 tareas `AGORA_XML_UPSERT_PRODUCT` de Cienvinos que seguían `QUEUED`.
+- **Razón**: Todas correspondían a botellas ya importadas y registradas como `PUSHED` en `winerim_push_tracking`. Dejarlas pendientes habría reintentado creates antiguos al activar la cola y podía provocar errores por productos ya existentes.
+- **Alternativa descartada**: dejarlas en `QUEUED` o pasarlas a `BLOCKED`. `QUEUED` reabría el riesgo de duplicado; `BLOCKED` ensuciaría los paneles con una alarma que ya no requiere acción operativa.
+
+## 2026-05-27 · Sa Vida queda marcada como no conectada pese a credenciales actualizadas
+- **Decisión**: Cargar las credenciales nuevas de Sa Vida, pero marcar su capacidad Agora como `UNKNOWN/NOT_CONNECTED/NONE` tras recibir HTTP `501` en endpoints de catálogo y ventas.
+- **Razón**: El servidor responde, pero la API REST de Agora no está disponible en los endpoints usados por el middleware. Presentarla como `READY` sería engañoso y fomentaría reintentos de escritura destinados a fallar.
+- **Alternativa descartada**: forzar `READY/XML_IMPORT` por tener credenciales nuevas. Las credenciales no bastan si el módulo/API del POS responde `501`.
+
+## 2026-05-27 · Limpiar breakers obsoletos en instalaciones Agora sanas
+- **Decisión**: Resetear `consecutive_failures`, `circuit_breaker_paused_until` y `circuit_breaker_reason` en Kava, Luruna y Sa Pedrera tras comprobar endpoints operativos.
+- **Razón**: Los breakers estaban caducados y los contadores eran residuo de incidentes anteriores; mantenerlos generaba señales falsas de degradación en paneles y diagnósticos.
+- **Alternativa descartada**: esperar a que un flujo futuro los resetee automáticamente. Ya se había comprobado salud básica y el reset manual reduce ruido sin cambiar credenciales ni catálogo.
+
+## 2026-05-27 · Desambiguación automática de nombres duplicados en XML Agora
+- **Decisión**: Añadir una utilidad pura para que `generateImportXml` mantenga nombres únicos sin cambios, conserve el nombre al actualizar el mismo `Product Id` y añada sufijo corto determinista solo cuando haya duplicados reales o colisión con otro producto existente.
+- **Razón**: Cienvinos demostró que Agora rechaza nombres duplicados aunque el `Id` sea distinto. Resolverlo manualmente funciona una vez, pero auto-push/actualizaciones futuras necesitaban la misma regla para no reintroducir HTTP 500.
+- **Alternativa descartada**: sufijar todos los productos siempre. Sería más simple, pero cambiaría nombres que ya funcionan y haría más ruidoso el TPV.
+
+## 2026-05-27 · Crear Baco Getafe deshabilitado y con catálogo controlado
+- **Decisión**: Crear `Baco Getafe` en Lovable Cloud con `enabled=false`, importar catálogo Winerim manualmente y no activar cron global.
+- **Razón**: La conexión Agora y Winerim funcionan, pero Lovable Cloud sigue sin migraciones P0 de stock idempotente. Activar `enabled=true` lanzaría también ventas/stock y colas automáticas.
+- **Alternativa descartada**: activar la conexión al terminar la importación de catálogo. El catálogo está verificado, pero el stock automático aún no tiene la garantía de idempotencia por variante en producción.
+
+## 2026-05-27 · Baco usa familias WINERIM separadas y oculta legado por familia/producto
+- **Decisión**: Crear 8 familias WINERIM dedicadas, importar 118 productos Winerim ahí y ocultar las familias legacy `VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS` junto con sus 348 productos.
+- **Razón**: Es el despliegue más reversible y cumple la petición de dejar el vino antiguo fuera del TPV sin borrar histórico.
+- **Alternativa descartada**: reutilizar las familias legacy existentes. Mezclar nuevo y viejo habría hecho más difícil verificar y revertir.
+
+## 2026-05-27 · Excluir `Personal` y `MUS` de los sale centers Baco
+- **Decisión**: Publicar precios en los sale centers `Cafet.`, `Restaurante` y `Terraza`, excluyendo `Personal` y `MUS`.
+- **Razón**: Los tres primeros son centros de venta de cliente con price lists activas; `Personal` y `MUS` parecen operativos/internos o especiales. Publicar vinos ahí sin confirmación podría alterar flujos no comerciales.
+- **Alternativa descartada**: publicar en los 5 sale centers por defecto. Es más amplio, pero menos conservador.
+
+## 2026-05-27 · Corregir tracking tras timeout de importación Baco
+- **Decisión**: Tras un HTTP `546` del `xml-import`, verificar directamente `export-master` y reconstruir `winerim_push_tracking`/`product_mappings` según productos realmente existentes.
+- **Razón**: El XML se aplicó en Agora, pero el timeout dejó tracking local con falsos positivos para formatos no exportables. Corregirlo evita que el panel y futuras colas crean que hay 285 formatos publicados cuando solo hay 118.
+- **Alternativa descartada**: reintentar la importación global. Habría duplicado carga y podía generar errores por productos ya existentes.
+
+## 2026-05-27 · Desambiguar duplicados Baco temporalmente y restaurar nombres Winerim
+- **Decisión**: Importar `Alión` y `Villacardiel` duplicados con sufijo corto en Agora (`M Alión 054`, `B Villacardiel 977`) y restaurar después los nombres Winerim locales originales.
+- **Razón**: Agora rechaza nombres duplicados aunque los productos tengan `Id` distinto. El sufijo solo afecta al nombre visible del producto Agora necesario para distinguir variantes/fichas duplicadas.
+- **Alternativa descartada**: saltar uno de los duplicados. No era seguro asumir que son equivalentes; en Baco representan productos/precios distintos.

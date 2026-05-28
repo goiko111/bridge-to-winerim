@@ -19,8 +19,9 @@ Flujo principal:
 ## 3. Arquitectura clave
 - Cada POS tiene su `*-proxy` edge function + hook `use*Connection.ts`.
 - Tabla central: `pos_connections` (con `circuit_breaker_paused_until`, credenciales cifradas).
-- Tareas asíncronas en cola `outbound_sync_tasks` (idempotente, con reintentos).
+- Tareas asíncronas en cola `outbound_tasks` (idempotente, con reintentos).
 - Dispatcher común para Agora: `agora-cron-dispatcher` (chunks de 10, 1.5s entre chunks).
+- Agora opera en automático sobre días cerrados (`Invoices`): guardar ventas y descontar stock Winerim son un único flujo operativo. El cursor `last_business_day_synced` no debe avanzar si el stock del día no queda confirmado.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.
@@ -38,3 +39,6 @@ Flujo principal:
 - `NEXT_STEPS.md` — tareas pendientes priorizadas para la próxima sesión.
 
 Separar siempre: **Hechos | Decisiones | Hipótesis | Tareas**.
+
+## 6. Referencias técnicas locales
+- Winerim API Token v2: `/Users/GOIKO/Downloads/API_TOKEN_V2_DOCUMENTATION.html` (v2.0.1, última actualización indicada en el HTML: julio 2025).

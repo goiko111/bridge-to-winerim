@@ -21,7 +21,7 @@ interface Props { connectionId: string; }
 
 const ARCHIVE_FAMILY_ID = "999999";
 
-function asBool(v: any, defaultTrue = true): boolean {
+function asBool(v: unknown, defaultTrue = true): boolean {
   if (v === undefined || v === null || v === "") return defaultTrue;
   const s = String(v).toLowerCase();
   return s === "true" || s === "1";
@@ -53,11 +53,11 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
       ]);
       if (mErr) throw mErr;
       if (pErr) throw pErr;
-      const prods = ((master?.products_summary_json as any[]) || []) as ProductRow[];
-      const fams = ((master?.families_json as any[]) || []) as FamilyRow[];
+      const prods = ((master?.products_summary_json as unknown as ProductRow[]) || []);
+      const fams = ((master?.families_json as unknown as FamilyRow[]) || []);
       setProducts(prods);
       setFamilies(fams);
-      setWinerimAgoraIds(new Set((pushRows || []).map((r: any) => String(r.agora_product_id))));
+      setWinerimAgoraIds(new Set(((pushRows || []) as { agora_product_id: string | number | null }[]).map((r) => String(r.agora_product_id))));
       setPendingChanges({});
     } catch (e) {
       toast({ title: "Error cargando productos", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
@@ -77,7 +77,7 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
   const familyVisible = useMemo(() => {
     const m = new Map<string, boolean>();
     for (const f of families) {
-      const show = asBool((f as any).ShowInPos, true) && !(f as any).DeletionDate;
+      const show = asBool(f.ShowInPos, true) && !f.DeletionDate;
       m.set(String(f.Id), show);
     }
     return m;
@@ -145,7 +145,14 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
       .sort((a, b) => b.count - a.count);
   }, [enriched, familyName]);
 
-  const toggleOne = (id: string, value: boolean, originalVisible: boolean) => {
+  const toggleOne = (id: string, value: boolean, originalVisible: boolean, familyHidden: boolean) => {
+    if (value && familyHidden) {
+      toast({
+        title: "Familia oculta",
+        description: "Para mostrar este producto, primero muestra su familia en Agora.",
+      });
+      return;
+    }
     setPendingChanges(prev => {
       const next = { ...prev };
       if (value === originalVisible) delete next[id]; else next[id] = value;
@@ -344,7 +351,8 @@ export default function AgoraProductVisibilityPanel({ connectionId }: Props) {
                 )}
                 <Switch
                   checked={p._visible}
-                  onCheckedChange={(v) => toggleOne(p._id, v, p._origVisible)}
+                  disabled={p._famHidden}
+                  onCheckedChange={(v) => toggleOne(p._id, v, p._origVisible, p._famHidden)}
                 />
                 {p._visible ? <Eye className="h-3 w-3 text-emerald-500" /> : <EyeOff className="h-3 w-3 text-muted-foreground" />}
               </div>

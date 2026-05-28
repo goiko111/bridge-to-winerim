@@ -1,5 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  findEntryForVariant,
+  normalizeWinerimVariant,
+} from "../_shared/stockSyncUtils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -415,9 +419,9 @@ serve(async (req) => {
         const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
         const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = prices.find(p => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
-        const glassEntry = prices.find(p => p.variant === "copa");
-        const magnumEntry = prices.find(p => p.variant === "magnum");
+        const bottleEntry = findEntryForVariant(prices, "botella");
+        const glassEntry = findEntryForVariant(prices, "copa");
+        const magnumEntry = findEntryForVariant(prices, "magnum");
 
         const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
         const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
@@ -491,7 +495,7 @@ serve(async (req) => {
           } else if (listPrices.length > 0) {
             // Has prices array but no recognized price extracted
             const variants = listPrices.map((p: any) => p?.variant).filter(Boolean);
-            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            const hasRecognized = variants.some((v: string) => normalizeWinerimVariant(v) !== null);
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
           } else if (Array.isArray(w.prices)) {
             pricingMissingReason = "prices_array_empty";
@@ -654,7 +658,7 @@ serve(async (req) => {
           } else {
             // Had prices but none had a valid sale price
             const variants = prices.map((p: any) => p?.variant).filter(Boolean);
-            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            const hasRecognized = variants.some((v: string) => normalizeWinerimVariant(v) !== null);
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
           }
         }
@@ -861,9 +865,9 @@ serve(async (req) => {
         }
 
         const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = prices.find((p: any) => p.variant === "botella" || p.variant === "botella-pequena" || p.variant === "media-botella");
-        const glassEntry = prices.find((p: any) => p.variant === "copa");
-        const magnumEntry = prices.find((p: any) => p.variant === "magnum");
+        const bottleEntry = findEntryForVariant(prices, "botella");
+        const glassEntry = findEntryForVariant(prices, "copa");
+        const magnumEntry = findEntryForVariant(prices, "magnum");
 
         const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : undefined;
         const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : undefined;
@@ -883,7 +887,7 @@ serve(async (req) => {
             pricingMissingReason = Array.isArray(detail.prices) ? "prices_array_empty" : "no_prices_array";
           } else {
             const variants = prices.map((p: any) => p?.variant).filter(Boolean);
-            const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+            const hasRecognized = variants.some((v: string) => normalizeWinerimVariant(v) !== null);
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
           }
           failureReasons[pricingMissingReason] = (failureReasons[pricingMissingReason] || 0) + 1;
@@ -1330,12 +1334,15 @@ Respond ONLY with the JSON array, no other text.`;
           headers: winerimHeaders,
           body: JSON.stringify({ items: chunk }),
         });
-        const data = await res.json();
-        results.push(data);
+        const responseBody = await res.text();
+        let parsed;
+        try { parsed = JSON.parse(responseBody); } catch { parsed = { raw: responseBody.substring(0, 500) }; }
+        results.push({ success: res.ok, status: res.status, response: parsed });
       }
 
+      const allOk = results.every((r) => r.success);
       return new Response(
-        JSON.stringify({ success: true, results }),
+        JSON.stringify({ success: allOk, results }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -1424,7 +1431,7 @@ Respond ONLY with the JSON array, no other text.`;
           reason = "prices_array_empty";
         } else {
           const variants = prices.map((p: any) => p?.variant).filter(Boolean);
-          const hasRecognized = variants.some((v: string) => ["botella", "botella-pequena", "media-botella", "copa", "magnum"].includes(v));
+          const hasRecognized = variants.some((v: string) => normalizeWinerimVariant(v) !== null);
           if (hasRecognized) {
             reason = "sale_price_missing";
           } else if (variants.length > 0) {

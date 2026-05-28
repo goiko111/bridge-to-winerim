@@ -2,6 +2,120 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Integración Agora Cienvinos Ecija
+- [x] Crear conexión en Lovable Cloud con credenciales reales y dejarla deshabilitada.
+- [x] Probar alcance/credenciales Agora con `agora-proxy test`.
+- [x] Sincronizar catálogo Winerim: 378 vinos leídos.
+- [x] Backfill seguro de stockIds por variante desde Winerim: 372 botellas, 49 copas, 7 magnums.
+- [x] Sincronizar master data Agora: 177 productos, 4 IVAs, 3 price lists, 1 almacén, 3 sale centers.
+- [x] Configurar escritura inicial reversible: IVA 10%, `BARRA/BEBIDAS`, almacén general, Barra/Sala/Terraza, familias automáticas.
+- [x] Ejecutar preview XML de muestra y preview global sin escribir en Agora.
+- [x] Documentar rollback en `ROLLBACK_CIENVINOS_AGORA_2026-05-27.md`.
+- [x] Crear familias dedicadas WINERIM en Agora y guardar mapping por tipo/formato.
+- [x] Importar catálogo Winerim completo en Agora: 428 productos verificados.
+- [x] Confirmar que no hay productos/familias legacy de vino fuera de WINERIM que ocultar.
+- [x] Resolver 12 nombres duplicados de Winerim con sufijo corto en Agora.
+- [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
+- [x] Cerrar 75 tareas `AGORA_XML_UPSERT_PRODUCT` supersedidas por la importación verificada para dejar la cola sin pendientes.
+- [x] Codificar desambiguación automática de nombres duplicados en `generateImportXml` antes de activar auto-push/actualizaciones automáticas de catálogo.
+- [ ] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [ ] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
+- [ ] Confirmar tras despliegue que un preview XML con vinos duplicados genera sufijos deterministas y que Agora no devuelve HTTP 500 por nombre duplicado.
+- [ ] Repetir `winerim-proxy fetch-catalog` tras despliegue y confirmar que el proxy ya captura `bottle/glass/magnum_stock_id` sin backfill manual.
+- [x] Verificar post-write en Agora: familias creadas, productos visibles, precios en Barra/Sala/Terraza, IVA y preparation correctos.
+- [ ] Ejecutar venta/cierre de prueba o esperar primer día cerrado; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
+- [ ] Reejecutar el mismo día y confirmar que no hay doble deducción.
+- [ ] Activar `enabled=true` solo tras import piloto, ventas cerradas y stock idempotente verificados.
+- [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
+
+## P0 — Revisión flota Agora 2026-05-27
+- [x] Actualizar credenciales Sa Vida en Lovable Cloud sin documentar secretos.
+- [x] Probar Sa Vida con `agora-proxy test` y `sync-master-data`: endpoints Agora devuelven HTTP `501`.
+- [x] Marcar Sa Vida como `UNKNOWN/NOT_CONNECTED/NONE` en `provider_capabilities` para no mostrarla lista.
+- [x] Resetear breakers obsoletos de Kava, Luruna y Sa Pedrera tras comprobar endpoints operativos.
+- [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`.
+- [ ] Reprobar Sa Vida cuando el POS responda 200: `test`, `sync-master-data`, `find-last-business-day`, preview XML y backfill de stockIds antes de cualquier write masivo.
+- [ ] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con el `winerim-proxy` actualizado o script controlado.
+- [ ] Revisar tareas residuales por instalación:
+  - Kava: `QUEUED`/`BLOCKED` y 1 `RUNNING` observado durante procesamiento.
+  - Luruna: 5 `QUEUED`.
+  - Sa Pedrera: 5 `FAILED`.
+  - Sa Vida: backlog grande `QUEUED`/`FAILED`/`BLOCKED`, no procesar hasta resolver HTTP 501.
+- [ ] Decidir limpieza de la conexión `New Location` deshabilitada con URL inválida.
+- [ ] Revisar por qué Katsu y La Candela tienen tracking verificado pero `provider_capabilities` en `UNKNOWN/NOT_CONNECTED`; marcar `READY` solo tras verificación de escritura actual.
+
+## P0 — Integración Agora Baco Getafe
+- [x] Crear conexión en Lovable Cloud con credenciales reales y dejarla deshabilitada.
+- [x] Probar alcance/credenciales Agora con `agora-proxy test`.
+- [x] Confirmar endpoints Agora: `Products`, core master, `Invoices` y `Tickets` responden HTTP 200.
+- [x] Sincronizar catálogo Winerim: 95 vinos leídos/enriquecidos.
+- [x] Backfill seguro de stockIds por variante desde payload Winerim: 83 botellas, 21 copas, 19 magnums.
+- [x] Sincronizar master data Agora: 40 familias iniciales, 3.785 productos iniciales, 4 IVAs, 3 price lists, 1 almacén, 5 sale centers.
+- [x] Configurar escritura reversible: IVA 10%, `Barra/Bebidas`, almacén general, sale centers `Cafet.`, `Restaurante`, `Terraza`.
+- [x] Crear familias dedicadas WINERIM y guardar mappings.
+- [x] Ejecutar preview XML global: 118 productos exportables, 0 IDs duplicados tras desambiguación, 82 botellas, 21 copas, 15 magnums.
+- [x] Importar catálogo Winerim en Agora y verificar post-write: 118/118 productos presentes, precios en listas 1/2/3, IVA/preparación correctos.
+- [x] Corregir tracking/mappings tras timeout de importación: 118 mappings confirmados, formatos no exportables como `NOT_PUSHED`.
+- [x] Ocultar familias legacy `VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`.
+- [x] Ocultar 348 productos legacy de vino; verificación final 0 legacy visible/vendible.
+- [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
+- [x] Documentar rollback en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
+- [ ] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [ ] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
+- [ ] Validar con el cliente si los vinos deben publicarse también en `MUS` o `Personal`; por ahora quedan excluidos.
+- [ ] Ejecutar venta/cierre de prueba; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key`.
+- [ ] Evaluar en una fase posterior si Baco puede usar `Tickets` intradía con feature flag por conexión; no activar globalmente.
+- [ ] Activar `enabled=true` solo tras migraciones, despliegue y prueba real de stock idempotente.
+
+## P0 — Front Agora audit 2026-05-26
+- [x] Corregir navegación del wizard: `handleNext` permite llegar al paso 14 `Go Live` (`Math.min(14, s + 1)`).
+- [ ] Añadir prueba/render smoke para navegación 13→14.
+- [x] Resolver el riesgo de `Save to DB`: el guardado manual sincroniza stock y no actualiza `last_business_day_synced` si Winerim falla.
+- [x] Corregir `AgoraTodaysSalesStock` para aceptar `SUCCESS` como estado sincronizado y mostrar `variant`, `stock_id`, `previousStock/newStock` cuando existan.
+- [x] Revisar el cálculo de stock del panel de hoy: ya no mezcla botella/copa/magnum en un “stock antes” calculado; muestra stock por variante desde log o stock global como referencia.
+- [x] Ajustar copy de Sales & Mapping / Today: indica días cerrados/post-cierre y evita prometer “today/15 min” como tiempo real.
+- [x] Definir soporte MAGNUM en UI de catálogo: preview/push/backfill principales envían `MAGNUM` y backend valida elegibilidad.
+- [x] Normalizar booleanos de master data en `AgoraFamilyVisibilityPanel` usando helper tipo `asBool(value, true)` para que `ShowInPos` ausente/null no se marque como oculto.
+- [x] Bloquear en `AgoraProductVisibilityPanel` que un producto quede visible si su familia está oculta.
+- [x] Añadir confirmación a acciones individuales de “Archivar familia + productos” y corregir el texto que habla de mover a `ARCHIVO WINERIM`.
+- [x] En `AgoraManualMatchPanel`, permitir elegir/derivar `formatType` (`BOTTLE`/`GLASS`/`MAGNUM`) en mapping manual.
+- [x] Evitar conexiones basura en test: la fila temporal nace deshabilitada y se elimina si el test falla.
+- [x] Añadir test unitario para decisión de cursor: stock OK avanza, stock FAILED o token ausente no avanza.
+- [x] Añadir test unitario para re-guardar un día ya sincronizado: la clave de grupo `sales_event_id + winerim_product_id + variant` es estable aunque cambie el `sales_line_item_id`.
+- [ ] Añadir test/integración mock de `agora-proxy.save-sales` completo con cliente DB/fetch simulado.
+- [ ] Añadir test/integración mock de `syncStockForDay`: al re-guardar un día ya `SUCCESS`, debe saltar el grupo y no hacer nuevo PUT.
+
+## P0 — Auditoría Codex 2026-05-26
+- [x] Unificar las dos ramas `auto-sync-sales` de `agora-proxy`: se eliminó la rama intradía inalcanzable y se conservó D-1/post-cierre.
+- [x] Hacer `stock_sync_log` variant-aware: añadidos `variant`, `stock_id`, `idempotency_key`, índice parcial y compatibilidad con logs legacy.
+- [x] Añadir claim/lock atómico para deducciones de stock y colas outbound antes de ejecutar writes externos; colas Agora/Revo usan `claim_outbound_tasks(...)` con fallback.
+- [x] Desactivar o refactorizar `restore-glass-overdiscount`: queda dry-run por defecto y solo escribe con `allowLegacyFractionalRestore=true`.
+- [x] Cambiar `sync-master-data` para que cualquier lectura de `Products` use `fetchAgoraProductsXmlCached` (con `forceRefresh` solo si se justifica).
+- [x] Normalizar aliases de variantes Winerim también en `winerim-proxy` (`copa/glass`, `botella/bottle`, `magnum`) para capturar precio y `erpStock.id` aunque la API devuelva nombres en inglés.
+- [x] Validar si `GET /api/v2/stock/{stockId}` existe realmente; decisión defensiva: se eliminó la dependencia para baseline y se usa `GET /stock/wine/{wineId}`.
+- [x] Corregir `package-lock.json` para que `npm ci` pase en local/CI.
+- [ ] Eliminar `.env` de artefactos/repositorio si está versionado y rotar secretos si los valores del ZIP eran reales. (`.gitignore` ya ignora `.env` y `.env.*`.)
+- [x] Implementar base `user_roles` + `has_role() SECURITY DEFINER` sin reemplazar todavía policies `Allow all`.
+- [ ] Reemplazar policies `Allow all` por RLS multi-tenant cuando exista modelo de usuarios/roles confirmado.
+- [ ] Revisar migraciones con datos operativos de clientes y separar schema/data fixes para evitar mutaciones inesperadas al recrear entornos.
+- [x] Corregir bug de incremento de `attempts` en `revo-proxy`.
+- [ ] Añadir prueba de regresión específica para el contador `attempts` de Revo.
+- [ ] Validar contra Agora si `SortOrder` debe ser `Order`; cambiar solo tras prueba de import XML en conexión controlada.
+- [x] Crear tests mínimos de utilidades variant-aware, idempotency key, group key y decisión de cursor.
+- [ ] Crear tests de integración/mock para deducción completa, reintentos, doble venta copa+botella del mismo vino, `auto-sync-sales` D-1/intradía, y cache obligatoria de `Products`.
+- [ ] Definir estrategia gradual para lint: bloquear errores nuevos y corregir primero hooks/dependencias, `no-explicit-any` en shared/proxies críticos y warnings de Fast Refresh.
+
+## P0 — Despliegue seguro post-cambios
+- [ ] Aplicar primero migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [ ] Desplegar edge functions después de las migraciones.
+- [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
+- [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
+- [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
+- [ ] Simular fallo Winerim/token ausente en conexión de prueba y confirmar que `last_business_day_synced` no avanza.
+- [ ] Confirmar que el catch-up de `auto-sync-sales` rescata días guardados recientes con stock pendiente sin llamadas PUT nuevas para líneas ya `SUCCESS`.
+- [ ] Revisar que `restore-glass-overdiscount` con `apply=true` devuelve `LEGACY_RESTORE_DISABLED` si no se pasa `allowLegacyFractionalRestore=true`.
+- [ ] Vigilar 24h `stock_sync_log` por `FAILED` nuevos y `outbound_tasks` por tareas `RUNNING` antiguas.
+
 ## P0 — Validación
 - [ ] Monitorizar 7 días (Agora): invocaciones a `/api/export-master`, breaker activations, zombies rescatados.
 - [ ] Confirmar con Luruna que no ven más IPs AWS saturando su SQL Server.
@@ -18,6 +132,12 @@
   - [ ] icg-proxy (664 LOC)
 - [ ] En cada uno: tras error de fetch, llamar `classifyPosError` + `applyCircuitBreaker`. Tras éxito, llamar `resetFailureCounter`.
 
+## P1 — Winerim API v2
+- [ ] Probar `POST /api/v2/wines/bulk` con token real y, si devuelve JSON correcto, usarlo para enriquecer lotes de hasta 100 vinos en vez de hacer detalle uno a uno.
+- [ ] Probar `PUT /api/v2/stock/bulk` con token real y payload pequeño; confirmar que no devuelve HTML/login y que `errors[]` reporta éxitos parciales como indica la documentación.
+- [ ] Si `stock/bulk` queda validado, migrar `syncStockForDay` a chunks de 100 con manejo por item, conservando fallback a PUT individual por feature flag.
+- [ ] Capturar `erpStock.identifier` por variante y decidir si mapearlo como SKU/EAN/código externo en Agora.
+
 ## P1 — Panel salud en otros wizards
 - [ ] Montar `<ConnectionHealthPanel connectionId={...} />` en BdpWizard, RevoWizard, ToastWizard, NumierWizard, IcgWizard, CloverWizard, SimphonyWizard, SquareWizard, CassaWizard, TcposWizard, HioposWizard, TouchBistroWizard.
 
@@ -27,7 +147,11 @@
 - [ ] Vista "fleet status" en `/integrations` con un `ConnectionHealthPanel` por cada conexión activa.
 
 ## Bloqueos / esperando
-- (ninguno)
+- Cienvinos: catálogo importado completo; no activar automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales en Lovable Cloud.
+- Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
+- Baco Getafe: catálogo importado y legacy oculto; no activar automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales en Lovable Cloud.
+- Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
+- Lovable Cloud: faltan migraciones `stock_sync_log` variant-aware y `user_roles/has_role()`; sin ellas no se debe encender el modo automático completo en nuevas conexiones.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.

@@ -42,6 +42,12 @@ function isWinerimFamily(id: string, name: string): boolean {
   return false;
 }
 
+function asBool(v: unknown, defaultTrue = true): boolean {
+  if (v === undefined || v === null || v === "") return defaultTrue;
+  const s = String(v).trim().toLowerCase();
+  return s === "true" || s === "1" || s === "yes" || s === "y";
+}
+
 export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
   const [loading, setLoading] = useState(true);
   const [families, setFamilies] = useState<FamilyRow[]>([]);
@@ -52,6 +58,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [singleArchiveTarget, setSingleArchiveTarget] = useState<{ id: string; name: string; restore: boolean; products: number } | null>(null);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -72,8 +79,8 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
         .eq("connection_id", connectionId)
         .maybeSingle();
       if (error) throw error;
-      const fams = ((data?.families_json as any[]) || []) as FamilyRow[];
-      const prods = ((data?.products_summary_json as any[]) || []) as ProductRow[];
+      const fams = ((data?.families_json as unknown as FamilyRow[]) || []);
+      const prods = ((data?.products_summary_json as unknown as ProductRow[]) || []);
       setFamilies(fams);
       setProducts(prods);
       setPendingChanges({});
@@ -114,7 +121,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
       const id = String(f.Id);
       const visible = pendingChanges[id] !== undefined
         ? pendingChanges[id]
-        : (String(f.ShowInPos).toLowerCase() === "true");
+        : asBool(f.ShowInPos, true);
       return {
         ...f,
         _id: id,
@@ -223,6 +230,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
       });
       setBulkSelected(new Set());
       setArchiveDialogOpen(false);
+      setSingleArchiveTarget(null);
       await supabase.functions.invoke("agora-proxy", { body: { action: "sync-master-data", connectionId } });
       await loadData();
     } catch (e) {
@@ -335,7 +343,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
       {bulkSelected.size > 0 && (
         <div className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
           <span className="text-foreground">
-            <strong>{bulkSelected.size}</strong> familia(s) seleccionadas — <strong>{productsToArchive}</strong> producto(s) se moverán a "ARCHIVO WINERIM" (oculto).
+            <strong>{bulkSelected.size}</strong> familia(s) seleccionadas — <strong>{productsToArchive}</strong> producto(s) se ocultarán en Agora.
           </span>
           <div className="flex gap-2">
             <Button size="sm" variant="ghost" className="h-7" onClick={() => setBulkSelected(new Set())}>Cancelar</Button>
@@ -364,7 +372,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
             <div className="p-6 text-center text-xs text-muted-foreground">No hay familias que coincidan.</div>
           )}
           {filtered.map(f => {
-            const originalVisible = String(f.ShowInPos).toLowerCase() === "true";
+            const originalVisible = asBool(f.ShowInPos, true);
             const isOpen = expanded.has(f._id);
             const famProducts = productsByFamily.get(f._id) || [];
             return (
@@ -431,7 +439,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
                           variant="outline"
                           className="h-6 text-[10px] px-2 border-amber-500/40 text-amber-600 hover:bg-amber-500/10"
                           disabled={archiving}
-                          onClick={() => archiveFamilies([f._id], false)}
+                          onClick={() => setSingleArchiveTarget({ id: f._id, name: f.Name || "(sin nombre)", restore: false, products: f._productCount })}
                         >
                           {archiving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Archive className="mr-1 h-3 w-3" />}
                           Archivar familia + productos
@@ -441,7 +449,7 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
                           variant="ghost"
                           className="h-6 text-[10px] px-2 text-emerald-600 hover:bg-emerald-500/10"
                           disabled={archiving}
-                          onClick={() => archiveFamilies([f._id], true)}
+                          onClick={() => setSingleArchiveTarget({ id: f._id, name: f.Name || "(sin nombre)", restore: true, products: f._productCount })}
                         >
                           <Eye className="mr-1 h-3 w-3" /> Restaurar
                         </Button>
@@ -451,8 +459,8 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
                       {famProducts.slice(0, 500).map(p => {
                         const pid = String(p.Id);
                         const visibleProd =
-                          (p.UseAsDirectSale === undefined || String(p.UseAsDirectSale).toLowerCase() === "true") &&
-                          (p.SaleableAsMain === undefined || String(p.SaleableAsMain).toLowerCase() === "true");
+                          asBool(p.UseAsDirectSale, true) &&
+                          asBool(p.SaleableAsMain, true);
                         return (
                           <div key={pid} className="grid grid-cols-12 gap-2 px-2 py-1 text-[11px] items-center">
                             <div className="col-span-8 truncate text-foreground">{p.Name || "(sin nombre)"}</div>
@@ -505,6 +513,31 @@ export default function AgoraFamilyVisibilityPanel({ connectionId }: Props) {
             <AlertDialogAction onClick={archiveSelected} disabled={archiving}>
               {archiving ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Archive className="mr-2 h-3 w-3" />}
               Archivar productos
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!singleArchiveTarget} onOpenChange={(open) => !open && setSingleArchiveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {singleArchiveTarget?.restore ? "¿Restaurar familia?" : "¿Archivar familia?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {singleArchiveTarget?.restore
+                ? `Se volverá a mostrar "${singleArchiveTarget.name}" y sus ${singleArchiveTarget.products} producto(s) en Agora.`
+                : `Se ocultará "${singleArchiveTarget?.name}" y sus ${singleArchiveTarget?.products} producto(s) en Agora. No se borra nada y se puede restaurar desde este panel.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => singleArchiveTarget && archiveFamilies([singleArchiveTarget.id], singleArchiveTarget.restore)}
+              disabled={archiving}
+            >
+              {archiving ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : singleArchiveTarget?.restore ? <Eye className="mr-2 h-3 w-3" /> : <Archive className="mr-2 h-3 w-3" />}
+              {singleArchiveTarget?.restore ? "Restaurar" : "Archivar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

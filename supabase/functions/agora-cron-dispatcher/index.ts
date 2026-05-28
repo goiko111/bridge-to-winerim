@@ -51,7 +51,7 @@ Deno.serve(async (req: Request) => {
     const skippedByBreaker = (allConnections?.length || 0) - connections.length;
 
     // ── PRE-FLIGHT (Layer 4): for jobs that hit the customer POS (outbound-queue,
-    // sales-stock, restore-stock), do a 5s reachability probe per connection BEFORE
+    // sales-stock), do a 5s reachability probe per connection BEFORE
     // dispatching. If unreachable, skip this round (the breaker will eventually
     // pause it on the natural call path; we just avoid filling the queue with FAILED).
     let skippedByPreflight = 0;

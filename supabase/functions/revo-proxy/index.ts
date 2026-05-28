@@ -924,9 +924,14 @@ serve(async (req) => {
         if (!res.ok) {
           const errBody = await res.text();
           if (taskId) {
+            const { data: attemptsRow } = await supabase
+              .from("outbound_tasks")
+              .select("attempts")
+              .eq("id", taskId)
+              .single();
             await supabase.from("outbound_tasks").update({
               status: "FAILED", last_error: `Revo ${res.status}: ${errBody.substring(0, 300)}`,
-              attempts: (await supabase.from("outbound_tasks").select("attempts").eq("id", taskId).single()).data?.attempts || 0 + 1,
+              attempts: ((attemptsRow as any)?.attempts ?? 0) + 1,
             } as any).eq("id", taskId);
           }
           return json({ success: false, error: errBody.substring(0, 300) });
@@ -992,19 +997,33 @@ serve(async (req) => {
 
     // ── PROCESS OUTBOUND QUEUE ──
     if (action === "process-outbound-queue") {
-      const { data: tasks } = await supabase
-        .from("outbound_tasks")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .eq("status", "QUEUED")
-        .order("created_at")
-        .limit(20);
+      const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
+        p_connection_id: connectionId,
+        p_task_types: ["REVO_UPSERT_ITEM"],
+        p_limit: 20,
+      });
+      const usedAtomicClaim = !claimErr;
+      let tasks = claimedTasks;
+      if (claimErr) {
+        console.warn(`[revo process-outbound-queue] atomic claim unavailable, falling back: ${claimErr.message}`);
+        const { data: fallbackTasks } = await supabase
+          .from("outbound_tasks")
+          .select("*")
+          .eq("connection_id", connectionId)
+          .eq("status", "QUEUED")
+          .order("created_at")
+          .limit(20);
+        tasks = fallbackTasks;
+      }
 
       if (!tasks?.length) return json({ processed: 0 });
 
       let processed = 0, blocked = 0;
       for (const task of tasks) {
-        await supabase.from("outbound_tasks").update({ status: "RUNNING" }).eq("id", task.id);
+        const currentAttempts = usedAtomicClaim ? (task.attempts || 1) : ((task.attempts || 0) + 1);
+        if (!usedAtomicClaim) {
+          await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: currentAttempts }).eq("id", task.id);
+        }
         const payload = task.payload_json as any;
 
         // Pre-write dependency check
@@ -1015,7 +1034,7 @@ serve(async (req) => {
             status: "BLOCKED",
             blocked_reason: reason,
             last_error: `Dependency check: ${deps.missing.length} missing`,
-            attempts: task.attempts + 1,
+            attempts: currentAttempts,
           }).eq("id", task.id);
           blocked++;
           continue;
@@ -1038,24 +1057,24 @@ serve(async (req) => {
           if (!res.ok) {
             const err = await res.text();
             await supabase.from("outbound_tasks").update({
-              status: task.attempts + 1 >= task.max_attempts ? "FAILED" : "QUEUED",
+              status: currentAttempts >= task.max_attempts ? "FAILED" : "QUEUED",
               last_error: `Revo ${res.status}: ${err.substring(0, 300)}`,
-              attempts: task.attempts + 1,
+              attempts: currentAttempts,
             }).eq("id", task.id);
           } else {
             const result = await res.json();
             await supabase.from("outbound_tasks").update({
               status: "SUCCESS",
               external_id: String(result.id || result.data?.id || ""),
-              attempts: task.attempts + 1,
+              attempts: currentAttempts,
             }).eq("id", task.id);
             processed++;
           }
         } catch (e) {
           await supabase.from("outbound_tasks").update({
-            status: task.attempts + 1 >= task.max_attempts ? "FAILED" : "QUEUED",
+            status: currentAttempts >= task.max_attempts ? "FAILED" : "QUEUED",
             last_error: (e as Error).message,
-            attempts: task.attempts + 1,
+            attempts: currentAttempts,
           }).eq("id", task.id);
         }
       }

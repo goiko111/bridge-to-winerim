@@ -1,5 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import {
+  buildStockSyncGroupKey,
+  buildStockSyncIdempotencyKey,
+  decideSalesCursorAdvance,
+  findStockForVariant,
+  parseWinerimStockRows,
+  variantForAgoraFormat,
+  type WinerimVariant,
+} from "../_shared/stockSyncUtils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -338,7 +348,7 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
-// ── Winerim Stock Sync Helper (variant-aware, bulk-write) ──
+// ── Winerim Stock Sync Helper (variant-aware, line-idempotent) ──
 // Winerim API v2: each wine exposes prices[] with variants ("copa","botella","magnum") and
 // each variant has its own erpStock.id. We must update the correct stockId per variant with
 // INTEGER quantities (Winerim rejects decimals). No more fractional bottle conversion.
@@ -370,71 +380,161 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   // deno-lint-ignore no-explicit-any
-  const mappedLines = lines.filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
+  const mappedLines = (lines as any[]).filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
 
-  // Map Agora format → canonical Winerim variant
-  const variantFor = (fmt: string | null | undefined): "copa" | "botella" | "magnum" => {
-    const f = String(fmt || "").toUpperCase();
-    if (f === "COPA" || f === "GLASS" || f.includes("COPA") || f.includes("GLASS")) return "copa";
-    if (f === "MAGNUM" || f.includes("MAGNUM")) return "magnum";
-    return "botella"; // BOT, BOTELLA, default
+  type Claim = {
+    id: string;
+    logId: string;
+    salesEventId: string;
+    winerimWineId: string;
+    variant: WinerimVariant;
+    qty: number;
+    name: string;
+    providerProductId: string;
   };
 
-  // Variant aliases as they may come back from Winerim
-  const variantAliases: Record<string, string[]> = {
-    copa: ["copa", "glass"],
-    botella: ["botella", "bottle", "botella-pequena", "media-botella"],
-    magnum: ["magnum"],
-  };
-
-  // Aggregate by (winerimWineId, variant) — INTEGER qty per group
   type Agg = {
     winerimWineId: string;
-    variant: "copa" | "botella" | "magnum";
+    variant: WinerimVariant;
     qty: number;
+    logIds: string[];
     lineIds: string[];
     eventIds: string[];
     name: string;
     providerProductId: string;
   };
-  const aggregated = new Map<string, Agg>();
-  // deno-lint-ignore no-explicit-any
-  for (const line of mappedLines as any[]) {
-    const variant = variantFor(line.format);
-    const key = `${line.winerim_product_id}::${variant}`;
-    const qty = Math.ceil(Math.abs(Number(line.quantity || 0))); // round UP to safe integer
-    if (qty <= 0) continue;
-    const existing = aggregated.get(key);
-    if (existing) {
-      existing.qty += qty;
-      existing.lineIds.push(line.id);
-      if (!existing.eventIds.includes(line.sales_event_id)) existing.eventIds.push(line.sales_event_id);
-    } else {
-      aggregated.set(key, {
-        winerimWineId: line.winerim_product_id,
+
+  // Rescue stale line claims before trying a retry. Fresh PENDING rows are left alone
+  // so concurrent invocations cannot claim the same sales line.
+  const stalePendingBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase
+    .from("stock_sync_log")
+    .update({ status: "FAILED", error_message: "Stale PENDING claim rescued before retry" })
+    .eq("connection_id", connectionId)
+    .eq("status", "PENDING")
+    .lt("created_at", stalePendingBefore);
+
+  const lineCandidates = mappedLines
+    .map((line: any) => {
+      const variant = variantForAgoraFormat(line.format);
+      const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
+      return {
+        line,
         variant,
         qty,
-        lineIds: [line.id],
-        eventIds: [line.sales_event_id],
-        name: line.name,
-        providerProductId: line.provider_product_id || "",
+        idempotencyKey: buildStockSyncIdempotencyKey(connectionId, String(line.id), variant),
+      };
+    })
+    .filter((entry) => entry.qty > 0);
+
+  let skipped = 0;
+  const claimKeys = lineCandidates.map((entry) => entry.idempotencyKey);
+  const candidateWineIds = Array.from(new Set(lineCandidates.map((entry) => String(entry.line.winerim_product_id))));
+  const alreadySynced = new Set<string>();
+  const alreadySyncedGroups = new Set<string>();
+  const legacySynced = new Set<string>();
+  for (let i = 0; i < claimKeys.length; i += 200) {
+    const chunk = claimKeys.slice(i, i + 200);
+    const { data: existing } = await supabase
+      .from("stock_sync_log")
+      .select("idempotency_key")
+      .eq("connection_id", connectionId)
+      .in("idempotency_key", chunk)
+      .eq("status", "SUCCESS");
+    for (const row of (existing || []) as { idempotency_key: string }[]) {
+      alreadySynced.add(row.idempotency_key);
+    }
+  }
+
+  // Compatibility guard for re-saved events. sales_line_items are replaced when
+  // a day is saved again, so line-id idempotency keys change. A prior successful
+  // event+wine+variant group must never be deducted again.
+  if (candidateWineIds.length > 0) {
+    const { data: syncedRows } = await supabase
+      .from("stock_sync_log")
+      .select("sales_event_id, winerim_product_id, variant, idempotency_key")
+      .eq("connection_id", connectionId)
+      .eq("status", "SUCCESS")
+      .in("sales_event_id", eventIds)
+      .in("winerim_product_id", candidateWineIds);
+    for (const row of (syncedRows || []) as { sales_event_id: string; winerim_product_id: string; variant?: WinerimVariant | null; idempotency_key?: string | null }[]) {
+      if (row.variant) {
+        alreadySyncedGroups.add(buildStockSyncGroupKey(row.sales_event_id, row.winerim_product_id, row.variant));
+      } else {
+        legacySynced.add(`${row.sales_event_id}:${row.winerim_product_id}`);
+      }
+    }
+  }
+
+  const claimedLines: Claim[] = [];
+  for (const entry of lineCandidates) {
+    if (alreadySynced.has(entry.idempotencyKey)) {
+      skipped++;
+      continue;
+    }
+
+    const line = entry.line;
+    const groupKey = buildStockSyncGroupKey(line.sales_event_id, line.winerim_product_id, entry.variant);
+    if (alreadySyncedGroups.has(groupKey) || legacySynced.has(`${line.sales_event_id}:${line.winerim_product_id}`)) {
+      skipped++;
+      continue;
+    }
+
+    const { data: logEntry, error: claimError } = await supabase.from("stock_sync_log").insert({
+      connection_id: connectionId,
+      sales_event_id: line.sales_event_id,
+      sales_line_item_id: line.id,
+      provider_product_id: line.provider_product_id || "",
+      winerim_product_id: line.winerim_product_id,
+      product_name: `${line.name} [${entry.variant}]`,
+      quantity: entry.qty,
+      variant: entry.variant,
+      idempotency_key: entry.idempotencyKey,
+      status: "PENDING",
+    }).select("id").single();
+
+    if (claimError || !logEntry?.id) {
+      skipped++;
+      console.warn(`[sync-stock] skipped claimed line ${line.id}: ${claimError?.message || "no log id"}`);
+      continue;
+    }
+
+    claimedLines.push({
+      id: line.id,
+      logId: logEntry.id,
+      salesEventId: line.sales_event_id,
+      winerimWineId: line.winerim_product_id,
+      variant: entry.variant,
+      qty: entry.qty,
+      name: line.name,
+      providerProductId: line.provider_product_id || "",
+    });
+  }
+
+  const aggregated = new Map<string, Agg>();
+  for (const claim of claimedLines) {
+    const key = `${claim.winerimWineId}::${claim.variant}`;
+    const existing = aggregated.get(key);
+    if (existing) {
+      existing.qty += claim.qty;
+      existing.logIds.push(claim.logId);
+      existing.lineIds.push(claim.id);
+      if (!existing.eventIds.includes(claim.salesEventId)) existing.eventIds.push(claim.salesEventId);
+    } else {
+      aggregated.set(key, {
+        winerimWineId: claim.winerimWineId,
+        variant: claim.variant,
+        qty: claim.qty,
+        logIds: [claim.logId],
+        lineIds: [claim.id],
+        eventIds: [claim.salesEventId],
+        name: claim.name,
+        providerProductId: claim.providerProductId,
       });
     }
   }
 
-  // Skip groups already synced successfully (idempotency)
-  const toProcess: Agg[] = [];
-  let skipped = 0;
-  for (const agg of aggregated.values()) {
-    const { data: existing } = await supabase
-      .from("stock_sync_log").select("id")
-      .eq("connection_id", connectionId)
-      .eq("winerim_product_id", agg.winerimWineId)
-      .in("sales_event_id", agg.eventIds)
-      .eq("status", "SUCCESS").limit(1);
-    if (existing && existing.length > 0) { skipped++; continue; }
-    toProcess.push(agg);
-  }
+  const toProcess = Array.from(aggregated.values());
 
   if (toProcess.length === 0) {
     return {
@@ -443,66 +543,23 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       totalLines: lines.length,
       mappedLines: mappedLines.length,
       aggregatedProducts: aggregated.size,
+      claimedLines: claimedLines.length,
       message: "All groups already synced",
     };
-  }
-
-  // Pre-create PENDING log entries; remember their ids per (wine,variant)
-  const logIds = new Map<string, string>();
-  for (const agg of toProcess) {
-    const { data: logEntry } = await supabase.from("stock_sync_log").insert({
-      connection_id: connectionId,
-      sales_event_id: agg.eventIds[0],
-      sales_line_item_id: agg.lineIds[0],
-      provider_product_id: agg.providerProductId,
-      winerim_product_id: agg.winerimWineId,
-      product_name: `${agg.name} [${agg.variant}]`,
-      quantity: agg.qty,
-      status: "PENDING",
-    }).select("id").single();
-    if (logEntry?.id) logIds.set(`${agg.winerimWineId}::${agg.variant}`, logEntry.id);
   }
 
   let failed = 0;
 
   // ── Resolve stockId per (wine,variant) ──
-  // Step 1: prefer cached stockIds from winerim_wines (populated by catalog sync).
-  // Step 2: for wines missing cached IDs, fall back to GET /stock/wine/{id}.
+  // We fetch /stock/wine/{id} for every wine we are about to mutate. It is documented,
+  // gives both stockId and current stock for every variant, and avoids relying on the
+  // undocumented GET /stock/{stockId} baseline read.
   const uniqueWineIds = Array.from(new Set(toProcess.map(p => p.winerimWineId)));
-  type StockEntry = { id: number; stock: number; variant: string };
+  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
   const wineStockCache = new Map<string, StockEntry[]>();
   const wineFetchErrors = new Map<string, string>();
 
-  const { data: cachedWines } = await supabase
-    .from("winerim_wines")
-    .select("winerim_id, bottle_stock_id, glass_stock_id, magnum_stock_id")
-    .eq("connection_id", connectionId)
-    .in("winerim_id", uniqueWineIds);
-  const cacheMap = new Map<string, { bottle?: number; glass?: number; magnum?: number }>();
-  // deno-lint-ignore no-explicit-any
-  for (const w of (cachedWines || []) as any[]) {
-    cacheMap.set(String(w.winerim_id), {
-      bottle: w.bottle_stock_id ?? undefined,
-      glass: w.glass_stock_id ?? undefined,
-      magnum: w.magnum_stock_id ?? undefined,
-    });
-  }
-
-  // Which wines still need a GET because at least one needed variant has no cached id?
-  const variantsNeededByWine = new Map<string, Set<"copa" | "botella" | "magnum">>();
-  for (const agg of toProcess) {
-    const set = variantsNeededByWine.get(agg.winerimWineId) || new Set<"copa" | "botella" | "magnum">();
-    set.add(agg.variant);
-    variantsNeededByWine.set(agg.winerimWineId, set);
-  }
-  const winesNeedingFetch: string[] = [];
-  for (const [wineId, vset] of variantsNeededByWine) {
-    const cache = cacheMap.get(wineId);
-    const missing = Array.from(vset).some(v => !cache || cache[v] == null);
-    if (missing) winesNeedingFetch.push(wineId);
-  }
-
-  for (const wineId of winesNeedingFetch) {
+  for (const wineId of uniqueWineIds) {
     try {
       const r = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
       if (!r.ok) {
@@ -510,23 +567,29 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         continue;
       }
       const data = await r.json();
-      const stocksArr = data?.stocks || data?.data?.stocks || (Array.isArray(data) ? data : []);
-      const normalized: StockEntry[] = (Array.isArray(stocksArr) ? stocksArr : []).map((s: Record<string, unknown>) => ({
-        id: Number(s.id),
-        stock: Number(s.stock ?? 0),
-        variant: String(
-          // deno-lint-ignore no-explicit-any
-          ((s.winePrice as any)?.variant) || (s as any).variant || ""
-        ).toLowerCase(),
-      })).filter((s: StockEntry) => Number.isFinite(s.id) && s.id > 0);
+      const normalized = parseWinerimStockRows(data)
+        .map((s) => {
+          const canonical = findStockForVariant([s], "copa")
+            ? "copa"
+            : findStockForVariant([s], "botella")
+              ? "botella"
+              : findStockForVariant([s], "magnum")
+                ? "magnum"
+                : null;
+          return {
+            id: Number(s.id),
+            stock: Number(s.stock ?? 0),
+            variant: canonical,
+          };
+        })
+        .filter((s): s is StockEntry => Number.isFinite(s.id) && s.id > 0 && !!s.variant);
       wineStockCache.set(wineId, normalized);
 
       // Backfill DB cache for next runs
       const upd: Record<string, number> = {};
-      const findId = (aliases: string[]) => normalized.find(s => aliases.includes(s.variant))?.id;
-      const bId = findId(variantAliases.botella);
-      const gId = findId(variantAliases.copa);
-      const mId = findId(variantAliases.magnum);
+      const bId = normalized.find(s => s.variant === "botella")?.id;
+      const gId = normalized.find(s => s.variant === "copa")?.id;
+      const mId = normalized.find(s => s.variant === "magnum")?.id;
       if (bId) upd.bottle_stock_id = bId;
       if (gId) upd.glass_stock_id  = gId;
       if (mId) upd.magnum_stock_id = mId;
@@ -539,55 +602,22 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     }
   }
 
-  // Build bulk PUT items. We still need the CURRENT stock value, so for wines that
-  // had cached ids we must GET /stock/{id} once to read the baseline.
   type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
   const bulkItems: BulkItem[] = [];
 
   for (const agg of toProcess) {
-    const logId = logIds.get(`${agg.winerimWineId}::${agg.variant}`);
-    const cached = cacheMap.get(agg.winerimWineId);
-    let stockId: number | undefined = cached?.[agg.variant];
-    let previousStock: number | undefined;
-
-    // If we already fetched the wine, use that cache
     const fetchedStocks = wineStockCache.get(agg.winerimWineId);
-    if (fetchedStocks) {
-      const aliases = variantAliases[agg.variant] || [agg.variant];
-      const match = fetchedStocks.find(s => aliases.includes(s.variant));
-      if (match) { stockId = match.id; previousStock = match.stock; }
-    }
+    const match = fetchedStocks?.find(s => s.variant === agg.variant);
 
-    if (!stockId) {
+    if (!match) {
       const err = wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
-      if (logId) await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).eq("id", logId);
+      await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).in("id", agg.logIds);
       failed++; continue;
     }
 
-    // Need to fetch baseline for cached-only path
-    if (previousStock === undefined) {
-      try {
-        const r = await fetch(`${WINERIM_BASE}/stock/${stockId}`, { method: "GET", headers: winerimHeaders });
-        if (r.ok) {
-          const j = await r.json();
-          previousStock = Number(j?.stock ?? j?.data?.stock ?? 0);
-        } else {
-          if (logId) await supabase.from("stock_sync_log").update({
-            status: "FAILED",
-            error_message: `GET /stock/${stockId} → ${r.status}`,
-          }).eq("id", logId);
-          failed++; continue;
-        }
-      } catch (e) {
-        if (logId) await supabase.from("stock_sync_log").update({
-          status: "FAILED", error_message: `GET /stock/${stockId} exception: ${String(e)}`,
-        }).eq("id", logId);
-        failed++; continue;
-      }
-    }
-
-    const newStock = Math.max(0, Math.floor((previousStock || 0) - agg.qty));
-    bulkItems.push({ id: stockId, newStock, previousStock: previousStock || 0, agg });
+    const previousStock = match.stock;
+    const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
+    bulkItems.push({ id: match.id, newStock, previousStock, agg });
   }
 
 
@@ -598,7 +628,6 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   let synced = 0;
   for (let i = 0; i < bulkItems.length; i++) {
     const item = bulkItems[i];
-    const logId = logIds.get(`${item.agg.winerimWineId}::${item.agg.variant}`);
     let r: Response;
     let txt = "";
     // deno-lint-ignore no-explicit-any
@@ -612,16 +641,18 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       txt = await r.text();
       try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt.substring(0, 300) }; }
     } catch (e) {
-      if (logId) await supabase.from("stock_sync_log").update({
+      await supabase.from("stock_sync_log").update({
         status: "FAILED", error_message: `PUT exception: ${String(e)}`,
-      }).eq("id", logId);
+        stock_id: item.id,
+      }).in("id", item.agg.logIds);
       failed++;
       continue;
     }
 
     if (r.ok) {
-      if (logId) await supabase.from("stock_sync_log").update({
+      await supabase.from("stock_sync_log").update({
         status: "SUCCESS",
+        stock_id: item.id,
         winerim_response: {
           previousStock: item.previousStock,
           newStock: item.newStock,
@@ -630,15 +661,16 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
           stockId: item.id,
         },
         synced_at: new Date().toISOString(),
-      }).eq("id", logId);
+      }).in("id", item.agg.logIds);
       synced++;
       console.log(`[sync-stock] ${item.agg.name} [${item.agg.variant}]: ${item.previousStock} → ${item.newStock} (-${item.agg.qty})`);
     } else {
-      if (logId) await supabase.from("stock_sync_log").update({
+      await supabase.from("stock_sync_log").update({
         status: "FAILED",
+        stock_id: item.id,
         error_message: `PUT /stock/${item.id} failed (${r.status}): ${txt.substring(0, 300)}`,
         winerim_response: parsed,
-      }).eq("id", logId);
+      }).in("id", item.agg.logIds);
       failed++;
     }
 
@@ -652,7 +684,74 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     totalLines: lines.length,
     mappedLines: mappedLines.length,
     aggregatedProducts: aggregated.size,
+    claimedLines: claimedLines.length,
   };
+}
+
+type StockSyncTotals = {
+  synced: number;
+  skipped: number;
+  failed: number;
+  checkedDays: number;
+  errors: string[];
+};
+
+// deno-lint-ignore no-explicit-any
+async function findSavedStockCandidateDays(supabase: any, connectionId: string, fromDay: string, toDay: string): Promise<string[]> {
+  const { data: events } = await supabase
+    .from("sales_events")
+    .select("id, business_day")
+    .eq("connection_id", connectionId)
+    .gte("business_day", fromDay)
+    .lte("business_day", toDay)
+    .order("business_day", { ascending: true })
+    .limit(10000);
+
+  if (!events || events.length === 0) return [];
+
+  const dayByEventId = new Map<string, string>();
+  const eventIds: string[] = [];
+  for (const ev of events as { id: string; business_day: string }[]) {
+    eventIds.push(ev.id);
+    dayByEventId.set(ev.id, ev.business_day);
+  }
+
+  const days = new Set<string>();
+  for (let i = 0; i < eventIds.length; i += 500) {
+    const chunk = eventIds.slice(i, i + 500);
+    const { data: rows } = await supabase
+      .from("sales_line_items")
+      .select("sales_event_id")
+      .eq("connection_id", connectionId)
+      .eq("is_wine_candidate", true)
+      .not("winerim_product_id", "is", null)
+      .in("sales_event_id", chunk);
+
+    for (const row of (rows || []) as { sales_event_id: string }[]) {
+      const day = dayByEventId.get(row.sales_event_id);
+      if (day) days.add(day);
+    }
+  }
+
+  return Array.from(days).sort();
+}
+
+// deno-lint-ignore no-explicit-any
+async function syncStockForDays(supabase: any, connectionId: string, days: string[], winerimToken: string): Promise<StockSyncTotals> {
+  const totals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
+  for (const day of days) {
+    try {
+      const result = await syncStockForDay(supabase, connectionId, day, winerimToken);
+      totals.synced += Number(result.synced || 0);
+      totals.skipped += Number(result.skipped || 0);
+      totals.failed += Number(result.failed || 0);
+      totals.checkedDays++;
+    } catch (e) {
+      totals.failed++;
+      totals.errors.push(`${day}: ${String(e)}`);
+    }
+  }
+  return totals;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -1464,7 +1563,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   const newFamilies: { id: string; name: string }[] = [];
   const newFamilyHierarchy: { id: string; name: string; parentId: string }[] = [];
-  const productEntries: { wineName: string; formatOrder: number; xml: string }[] = [];
+  const productEntries: {
+    wineName: string;
+    formatOrder: number;
+    productId: string;
+    productName: string;
+    winerimId: string;
+    renderXml: (finalProductName: string) => string;
+  }[] = [];
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
@@ -1489,8 +1595,6 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       }
 
       const productName = formatProductName(isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE", wineName);
-      const buttonText = truncate(productName, 20);
-
       // Use REAL prices from normalized fields, never invent
       let mainPrice: string;
       let costPrice: string;
@@ -1516,14 +1620,24 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       ).join("\n");
 
       const formatOrder = isMagnum ? 2 : isGlass ? 1 : 0; // BOT=0, COPA=1, MAG=2
-      productEntries.push({ wineName: wineName.toLowerCase(), formatOrder, xml: `    <Product Id="${productId}" Name="${escapeXml(productName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+      productEntries.push({
+        wineName: wineName.toLowerCase(),
+        formatOrder,
+        productId: String(productId),
+        productName,
+        winerimId: String(winerimId),
+        renderXml: (finalProductName: string) => {
+          const buttonText = truncate(finalProductName, 20);
+          return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
       <CostPrices>
 ${costPricesXml}
       </CostPrices>
-    </Product>` });
+    </Product>`;
+        },
+      });
     }
   }
 
@@ -1546,9 +1660,19 @@ ${costPricesXml}
   // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
   productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
 
+  const duplicateSafeProductNames = buildDuplicateSafeAgoraProductNames(
+    productEntries.map((entry) => ({
+      productId: entry.productId,
+      baseName: entry.productName,
+      winerimId: entry.winerimId,
+    })),
+    existingProducts,
+  );
+
   // Inject SortOrder attribute into each <Product> based on sorted position
   const productXmls = productEntries.map((entry, idx) => {
-    return entry.xml.replace('<Product Id=', `<Product SortOrder="${idx + 1}" Id=`);
+    const finalProductName = duplicateSafeProductNames[entry.productId] || entry.productName;
+    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product SortOrder="${idx + 1}" Id=`);
   });
 
   if (productXmls.length > 0) {
@@ -2041,12 +2165,48 @@ serve(async (req) => {
         }
       }
 
+      let stockSyncResult: StockSyncTotals | null = null;
+      let warning: string | null = null;
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      const skipStockSync = payload.skipStockSync === true;
+      const shouldSyncStock = !skipStockSync && resolvedLines > 0;
+
+      if (shouldSyncStock && winerimToken) {
+        stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken);
+      }
+
+      const cursorDecision = decideSalesCursorAdvance({
+        resolvedLines,
+        skipStockSync,
+        hasWinerimToken: Boolean(winerimToken),
+        stockFailed: stockSyncResult?.failed || 0,
+      });
+      const cursorAdvanced = cursorDecision.advance;
+      if (cursorDecision.reason === "missing_winerim_token") {
+        warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
+      } else if (cursorDecision.reason === "stock_failed") {
+        warning = "Sales saved but Winerim stock sync had failures. Cursor was not advanced, so cron will retry.";
+      }
+
+      const connectionUpdate = cursorAdvanced
+        ? { last_business_day_synced: day, last_sync_at: new Date().toISOString() }
+        : { last_sync_at: new Date().toISOString() };
       await supabase.from("pos_connections")
-        .update({ last_business_day_synced: day, last_sync_at: new Date().toISOString() })
+        .update(connectionUpdate)
         .eq("id", connectionId);
 
       return new Response(
-        JSON.stringify({ success: true, savedEvents, savedLines, resolvedLines, unresolvedLines, businessDay: day }),
+        JSON.stringify({
+          success: true,
+          savedEvents,
+          savedLines,
+          resolvedLines,
+          unresolvedLines,
+          businessDay: day,
+          stockSync: stockSyncResult,
+          cursorAdvanced,
+          warning,
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -2092,8 +2252,32 @@ serve(async (req) => {
       }
 
       if (pendingDays.length === 0) {
+        const winerimToken = (connection.winerim_api_token || "").trim();
+        let stockSyncResult: StockSyncTotals | null = null;
+
+        if (winerimToken) {
+          const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
+          const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
+          const toDay = yesterday.toISOString().split("T")[0];
+          const stockCandidateDays = await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay);
+          if (stockCandidateDays.length > 0) {
+            stockSyncResult = await syncStockForDays(supabase, connectionId, stockCandidateDays, winerimToken);
+          }
+        }
+
         return new Response(
-          JSON.stringify({ success: true, daysSynced: 0, message: "No pending days to sync" }),
+          JSON.stringify({
+            success: true,
+            daysSynced: 0,
+            totalEvents: 0,
+            totalLines: 0,
+            resolvedLines: 0,
+            unresolvedLines: 0,
+            stockSync: stockSyncResult,
+            message: stockSyncResult?.checkedDays
+              ? "No pending sales days; checked saved days for stock catch-up"
+              : "No pending days to sync",
+          }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -2128,7 +2312,20 @@ serve(async (req) => {
       }
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
-      let lastDay = "";
+      const syncedDays: string[] = [];
+      const stockDaysAttempted = new Set<string>();
+      let stockBlockedDay: string | null = null;
+      let saveBlockedDay: string | null = null;
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      const stockSyncTotals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
+
+      const addStockTotals = (partial: StockSyncTotals) => {
+        stockSyncTotals.synced += partial.synced;
+        stockSyncTotals.skipped += partial.skipped;
+        stockSyncTotals.failed += partial.failed;
+        stockSyncTotals.checkedDays += partial.checkedDays;
+        stockSyncTotals.errors.push(...partial.errors);
+      };
 
       let processingAborted = false;
       for (const day of pendingDays) {
@@ -2136,10 +2333,12 @@ serve(async (req) => {
         const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
         let res: Response;
         try { res = await fetchWithRetry(url, { headers }, 10_000); }
-        catch { continue; }
-        if (!res.ok) { await res.text(); continue; }
+        catch { saveBlockedDay = day; break; }
+        if (!res.ok) { await res.text(); saveBlockedDay = day; break; }
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
+        let dayEvents = 0;
+        let dayResolvedLines = 0;
 
         for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
           const inv = invoices[invIdx];
@@ -2166,7 +2365,12 @@ serve(async (req) => {
               const resolution = resolutionMap.get(productId);
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
-              if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
+              if (isResolved) {
+                resolvedLines++;
+                dayResolvedLines++;
+              } else if (wr.candidate) {
+                unresolvedLines++;
+              }
 
               lineData.push({
                 provider_product_id: productId,
@@ -2193,6 +2397,7 @@ serve(async (req) => {
 
           if (eventErr || !eventRow) continue;
           totalEvents++;
+          dayEvents++;
 
           await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
           const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
@@ -2201,34 +2406,72 @@ serve(async (req) => {
             if (!lineErr) totalLines += linesToInsert.length;
           }
         }
-        lastDay = day;
-      }
 
-      if (lastDay) {
-        await supabase.from("pos_connections")
-          .update({ last_business_day_synced: lastDay, last_sync_at: new Date().toISOString() })
-          .eq("id", connectionId);
-      }
-
-      // Auto-trigger stock sync
-      let stockSyncResult = null;
-      const winerimToken = (connection.winerim_api_token || "").trim();
-      if (resolvedLines > 0 && winerimToken) {
-        console.log(`[auto-sync] Triggering stock sync for ${pendingDays.length} days...`);
-        const stockResults = { synced: 0, skipped: 0, failed: 0 };
-        for (const day of pendingDays) {
-          try {
-            const dayResult = await syncStockForDay(supabase, connectionId, day, winerimToken);
-            stockResults.synced += dayResult.synced;
-            stockResults.skipped += dayResult.skipped;
-            stockResults.failed += dayResult.failed;
-          } catch (e) { console.error(`[auto-sync] Stock sync failed for ${day}:`, e); }
+        if (invoices.length > 0 && dayEvents === 0) {
+          saveBlockedDay = day;
+          break;
         }
-        stockSyncResult = stockResults;
+
+        let stockOk = true;
+        if (dayResolvedLines > 0) {
+          if (!winerimToken) {
+            stockOk = false;
+            stockSyncTotals.failed++;
+            stockSyncTotals.errors.push(`${day}: missing Winerim API token`);
+          } else {
+            const dayStock = await syncStockForDays(supabase, connectionId, [day], winerimToken);
+            stockDaysAttempted.add(day);
+            addStockTotals(dayStock);
+            stockOk = dayStock.failed === 0;
+          }
+        }
+
+        if (!stockOk) {
+          stockBlockedDay = day;
+          break;
+        }
+
+        await supabase.from("pos_connections")
+          .update({ last_business_day_synced: day, last_sync_at: new Date().toISOString() })
+          .eq("id", connectionId);
+        syncedDays.push(day);
       }
+
+      if (!stockBlockedDay && !saveBlockedDay && winerimToken && Date.now() - actionStart < ACTION_DEADLINE_MS) {
+        const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
+        const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
+        const toDay = yesterday.toISOString().split("T")[0];
+        const catchupDays = (await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay))
+          .filter((day) => !stockDaysAttempted.has(day));
+        if (catchupDays.length > 0) {
+          addStockTotals(await syncStockForDays(supabase, connectionId, catchupDays, winerimToken));
+        }
+      }
+
+      const stockSyncResult = stockSyncTotals.checkedDays > 0 || stockSyncTotals.failed > 0 ? stockSyncTotals : null;
 
       return new Response(
-        JSON.stringify({ success: true, daysSynced: pendingDays.length, totalEvents, totalLines, resolvedLines, unresolvedLines, stockSync: stockSyncResult }),
+        JSON.stringify({
+          success: !processingAborted && !stockBlockedDay && !saveBlockedDay,
+          daysSynced: syncedDays.length,
+          pendingDaysFound: pendingDays.length,
+          syncedDays,
+          totalEvents,
+          totalLines,
+          resolvedLines,
+          unresolvedLines,
+          stockSync: stockSyncResult,
+          blockedByStockFailure: stockBlockedDay,
+          blockedBySaveFailure: saveBlockedDay,
+          aborted: processingAborted,
+          message: stockBlockedDay
+            ? `Stock sync failed for ${stockBlockedDay}. Cursor was not advanced and cron will retry.`
+            : saveBlockedDay
+              ? `Sales save failed for ${saveBlockedDay}. Cursor was not advanced and cron will retry.`
+              : processingAborted
+                ? "Processing deadline reached. Cursor was advanced only through completed days."
+                : undefined,
+        }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -2818,6 +3061,7 @@ serve(async (req) => {
     // ── PROCESS OUTBOUND TASK (legacy JSON mode) ──
     if (action === "process-outbound-task") {
       const taskId = payload.taskId;
+      const alreadyClaimed = payload.alreadyClaimed === true;
 
       const { data: task, error: taskErr } = await supabase
         .from("outbound_tasks").select("*").eq("id", taskId).single();
@@ -2852,7 +3096,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
+      const currentAttempts = alreadyClaimed ? (task.attempts || 0) : ((task.attempts || 0) + 1);
+      if (!alreadyClaimed) {
+        await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: currentAttempts }).eq("id", task.id);
+      }
       const taskPayload = task.payload_json;
 
       try {
@@ -2892,7 +3139,7 @@ serve(async (req) => {
         }
 
         if (!res.ok) {
-          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3);
+          const shouldRetry = currentAttempts < (task.max_attempts || 3);
           await supabase.from("outbound_tasks").update({
             status: shouldRetry ? "QUEUED" : "FAILED",
             last_error: `HTTP ${res.status}: ${resPreview}`,
@@ -2918,7 +3165,7 @@ serve(async (req) => {
       } catch (e) {
         const errMsg = String(e).substring(0, 500);
         const errClass = classifyPosError(errMsg);
-        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
+        const shouldRetry = currentAttempts < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
         await supabase.from("outbound_tasks").update({
           status: shouldRetry ? "QUEUED" : "FAILED",
           last_error: `[${errClass}] ${errMsg}`,
@@ -2944,10 +3191,22 @@ serve(async (req) => {
       let processed = 0, succeeded = 0, failed = 0;
 
       while (Date.now() - startTime < TIME_BUDGET_MS) {
-        const { data: tasks } = await supabase
-          .from("outbound_tasks").select("id, task_type, payload_json, external_id, attempts")
-          .eq("connection_id", connectionId).in("task_type", ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"])
-          .eq("status", "QUEUED").order("created_at").limit(BATCH_SIZE);
+        const taskTypes = ["AGORA_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY"];
+        const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
+          p_connection_id: connectionId,
+          p_task_types: taskTypes,
+          p_limit: BATCH_SIZE,
+        });
+        const usedAtomicClaim = !claimErr;
+        let tasks = claimedTasks;
+        if (claimErr) {
+          console.warn(`[process-outbound-queue] atomic claim unavailable, falling back: ${claimErr.message}`);
+          const { data: fallbackTasks } = await supabase
+            .from("outbound_tasks").select("id, task_type, payload_json, external_id, attempts")
+            .eq("connection_id", connectionId).in("task_type", taskTypes)
+            .eq("status", "QUEUED").order("created_at").limit(BATCH_SIZE);
+          tasks = fallbackTasks;
+        }
 
         if (!tasks || tasks.length === 0) break;
 
@@ -2966,7 +3225,10 @@ serve(async (req) => {
               const vatIdMig = String((connection as any).default_vat_id || "1");
               const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig}" />\n  </Products>\n</Import>`;
 
-              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: ((t as any).attempts || 0) + 1 }).eq("id", t.id);
+              const currentAttempts = usedAtomicClaim ? (((t as any).attempts || 1)) : (((t as any).attempts || 0) + 1);
+              if (!usedAtomicClaim) {
+                await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: currentAttempts }).eq("id", t.id);
+              }
 
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
@@ -3002,7 +3264,7 @@ serve(async (req) => {
               processed++;
             } else {
               const { data: result } = await supabase.functions.invoke("agora-proxy", {
-                body: { action: "process-outbound-task", connectionId, taskId: t.id },
+                body: { action: "process-outbound-task", connectionId, taskId: t.id, alreadyClaimed: usedAtomicClaim },
               });
               processed++;
               if (result?.status === "SUCCESS") succeeded++; else failed++;
@@ -3125,18 +3387,17 @@ serve(async (req) => {
         );
       }
 
-      // ── Fetch 2: Products separately (can be large) ──
-      const productsUrl = `${baseUrlClean}/api/export-master/?filter=Products`;
+      // ── Fetch 2: Products separately (can be large; always cached) ──
       let productsXml = "";
       try {
-        const prodRes = await fetchWithRetry(productsUrl, { headers: xmlHeaders }, 30000);
-        if (prodRes.ok) {
-          productsXml = await prodRes.text();
+        const cachedProducts = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+        if (cachedProducts.ok) {
+          productsXml = cachedProducts.xml;
           if (!productsXml.trimEnd().endsWith(">")) {
             truncationWarnings.push(`Products XML appears truncated (${productsXml.length} bytes)`);
           }
         } else {
-          console.warn(`[sync-master-data] Products fetch returned ${prodRes.status}`);
+          console.warn(`[sync-master-data] Products fetch returned ${cachedProducts.status}`);
         }
       } catch (e) {
         console.warn(`[sync-master-data] Products fetch failed: ${e}`);
@@ -4017,6 +4278,7 @@ serve(async (req) => {
     // ── PROCESS XML OUTBOUND TASK ──
     if (action === "process-xml-outbound-task") {
       const taskId = payload.taskId;
+      const alreadyClaimed = payload.alreadyClaimed === true;
 
       const { data: task, error: taskErr } = await supabase
         .from("outbound_tasks").select("*").eq("id", taskId).single();
@@ -4036,7 +4298,10 @@ serve(async (req) => {
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: task.attempts + 1 }).eq("id", task.id);
+      const currentAttempts = alreadyClaimed ? (task.attempts || 0) : ((task.attempts || 0) + 1);
+      if (!alreadyClaimed) {
+        await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: currentAttempts }).eq("id", task.id);
+      }
 
       try {
         const { data: masterData } = await supabase
@@ -4160,7 +4425,7 @@ serve(async (req) => {
 
             // ── AUTO-RETRY AS UPDATE: Product already exists, flip _operation and requeue ──
             const currentOp = taskPayload._operation || "CREATE";
-            if (currentOp === "CREATE" && (task.attempts || 0) < 2) {
+            if (currentOp === "CREATE" && currentAttempts <= 2) {
               // Flip to UPDATE and requeue for automatic retry
               await supabase.from("outbound_tasks").update({
                 status: "QUEUED",
@@ -4184,7 +4449,7 @@ serve(async (req) => {
 
           const errClassHttp = classifyPosError(errorMsg, importRes.status);
           const isBusinessError = errClassHttp === "BUSINESS_ERROR";
-          const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && importRes.status >= 500 && !isBusinessError;
+          const shouldRetry = currentAttempts < (task.max_attempts || 3) && importRes.status >= 500 && !isBusinessError;
           
           // If it's a data error (4xx), don't retry - BLOCK
           const isDataError = importRes.status >= 400 && importRes.status < 500;
@@ -4520,7 +4785,7 @@ serve(async (req) => {
       } catch (e) {
         const errMsg = String(e).substring(0, 500);
         const errClass = classifyPosError(errMsg);
-        const shouldRetry = task.attempts + 1 < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
+        const shouldRetry = currentAttempts < (task.max_attempts || 3) && errClass !== "BUSINESS_ERROR";
         await supabase.from("outbound_tasks").update({
           status: shouldRetry ? "QUEUED" : "FAILED",
           last_error: `[${errClass}] ${errMsg}`,
@@ -4703,13 +4968,25 @@ serve(async (req) => {
         // Re-check breaker each loop in case it tripped mid-run
         if (runConsecutiveFailures >= 10) break;
 
-        const { data: tasks } = await supabase
-          .from("outbound_tasks").select("id, task_type")
-          .eq("connection_id", connectionId)
-          .in("task_type", ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"])
-          .eq("status", "QUEUED")
-          .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
-          .order("created_at").limit(BATCH_SIZE);
+        const taskTypes = ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"];
+        const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
+          p_connection_id: connectionId,
+          p_task_types: taskTypes,
+          p_limit: BATCH_SIZE,
+        });
+        const usedAtomicClaim = !claimErr;
+        let tasks = claimedTasks;
+        if (claimErr) {
+          console.warn(`[process-xml-outbound-queue] atomic claim unavailable, falling back: ${claimErr.message}`);
+          const { data: fallbackTasks } = await supabase
+            .from("outbound_tasks").select("id, task_type")
+            .eq("connection_id", connectionId)
+            .in("task_type", taskTypes)
+            .eq("status", "QUEUED")
+            .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
+            .order("created_at").limit(BATCH_SIZE);
+          tasks = fallbackTasks;
+        }
 
         if (!tasks || tasks.length === 0) break;
 
@@ -4737,8 +5014,10 @@ serve(async (req) => {
               }
               const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
 
-              const newAttempts = (fullTask.attempts || 0) + 1;
-              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
+              const newAttempts = usedAtomicClaim ? (fullTask.attempts || 1) : ((fullTask.attempts || 0) + 1);
+              if (!usedAtomicClaim) {
+                await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
+              }
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
@@ -4769,8 +5048,10 @@ serve(async (req) => {
               const vatIdMig2 = String((connection as any).default_vat_id || "1");
               const migrateXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    <Product Id="${productId}" Name="${escXml(productName)}" FamilyId="${targetFamilyId}" VatId="${vatIdMig2}" />\n  </Products>\n</Import>`;
 
-              const newAttempts = (fullTask.attempts || 0) + 1;
-              await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
+              const newAttempts = usedAtomicClaim ? (fullTask.attempts || 1) : ((fullTask.attempts || 0) + 1);
+              if (!usedAtomicClaim) {
+                await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
+              }
               const importUrl = `${baseUrlClean}/api/import/`;
               const res = await fetchWithRetry(importUrl, {
                 method: "POST",
@@ -4798,7 +5079,7 @@ serve(async (req) => {
               processed++;
             } else {
               const { data: result } = await supabase.functions.invoke("agora-proxy", {
-                body: { action: "process-xml-outbound-task", connectionId, taskId: t.id },
+                body: { action: "process-xml-outbound-task", connectionId, taskId: t.id, alreadyClaimed: usedAtomicClaim },
               });
               processed++;
               if (result?.status === "SUCCESS") {
@@ -5066,7 +5347,7 @@ serve(async (req) => {
     // ── BACKFILL PRICES (re-push UPDATE for products missing PriceList entries) ──
     if (action === "backfill-prices") {
       const winerimWineIds = payload.winerimWineIds || [];
-      const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS"];
+      const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS", "MAGNUM"];
 
       const { data: masterData } = await supabase
         .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
@@ -5443,7 +5724,7 @@ serve(async (req) => {
             const customMappings = await loadCustomFamilyMappings(connectionId);
             const geoConfigSample = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
             const isGeoModeSample = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigSample;
-            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS"], customMappings, false, isGeoModeSample ? geoConfigSample : undefined, isGeoModeSample ? sampleWines : undefined);
+            const { xml } = generateImportXml(sampleWines, masterData, connection, ["BOTTLE", "GLASS", "MAGNUM"], customMappings, false, isGeoModeSample ? geoConfigSample : undefined, isGeoModeSample ? sampleWines : undefined);
             sampleXml = xml;
           }
         }
@@ -6019,208 +6300,6 @@ ${costPricesXml}
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── AUTO SYNC SALES (scheduled or manual) ──
-    if (action === "auto-sync-sales") {
-      // Find days to sync: from last_business_day_synced to TODAY (inclusive)
-      // Today is included so intraday sales are deducted from Winerim stock in near real-time (5 min cycle).
-      // last_business_day_synced is only advanced for CLOSED days (yesterday and earlier),
-      // because today may still receive more invoices throughout the day.
-      const lastSynced = (connection as any).last_business_day_synced;
-      const today = new Date();
-      const todayStr = today.toISOString().slice(0, 10);
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().slice(0, 10);
-
-      // Determine start day
-      let startDate: Date;
-      if (lastSynced) {
-        startDate = new Date(lastSynced);
-        startDate.setDate(startDate.getDate() + 1); // day after last synced
-      } else {
-        // Default: backfill_days from connection config
-        startDate = new Date(today);
-        startDate.setDate(startDate.getDate() - ((connection as any).backfill_days || 30));
-      }
-
-      // Always include today so live sales flow into Winerim stock every 5 min
-      const endDay = todayStr;
-      const startDay = startDate.toISOString().slice(0, 10);
-      if (startDay > endDay) {
-        return new Response(JSON.stringify({
-          success: true, message: "Already up to date", lastSynced, startDay, endDay, daysSynced: 0, totalEvents: 0, totalLines: 0, resolvedLines: 0, unresolvedLines: 0
-        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      // Gather days to process (closed days + today)
-      const daysToSync: string[] = [];
-      const cursor = new Date(startDate);
-      while (cursor.toISOString().slice(0, 10) <= endDay) {
-        daysToSync.push(cursor.toISOString().slice(0, 10));
-        cursor.setDate(cursor.getDate() + 1);
-      }
-
-      // Cap at 30 days per run to avoid timeouts
-      const batch = daysToSync.slice(0, 30);
-
-      // Build resolution lookup once
-      const { data: familyRules } = await supabase
-        .from("wine_family_rules")
-        .select("family_name, is_wine")
-        .eq("connection_id", connectionId);
-      const customWineFamilies = familyRules
-        ?.filter((r: { is_wine: boolean }) => r.is_wine)
-        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
-      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
-
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-
-      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
-      for (const t of (trackingRows || [])) {
-        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
-          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
-        }
-      }
-      for (const m of (mappingRows || [])) {
-        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
-          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
-        }
-      }
-
-      let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
-      let lastDaySynced = lastSynced || "";
-
-      for (const day of batch) {
-        try {
-          const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-          const res = await fetch(url, { headers });
-          if (!res.ok) { console.log(`[auto-sync] ${day}: Agora ${res.status}`); continue; }
-
-          const rawData = await res.json();
-          const invoices = parseInvoices(rawData);
-          if (invoices.length === 0) { lastDaySynced = day; continue; }
-
-          for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
-            const inv = invoices[invIdx];
-            const rawDocId = String(inv.InvoiceId || inv.Id || "");
-            const docId = rawDocId || `${day}_inv_${invIdx}`;
-            const items = inv.InvoiceItems || [];
-            let docTotal = 0;
-            const lineData: Record<string, unknown>[] = [];
-
-            for (const item of items) {
-              for (const line of (item.Lines || [])) {
-                const rawTotal = Number(line.TotalAmount || 0);
-                const uP = Number(line.UnitPrice || 0);
-                const qty = Number(line.Quantity || 0);
-                const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
-                docTotal += lineTotal;
-                const pName = String(line.ProductName || "");
-                const fName = String(line.SaleFormatName || "");
-                const normalizedFmt = normalizeLineFormat(pName, fName);
-                const fam = String(line.FamilyName || "");
-                const productId = String(line.ProductId || "");
-                const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-
-                const resolution = resolutionMap.get(productId);
-                const winerimProductId = resolution?.winerim_wine_id || null;
-                const isResolved = !!winerimProductId;
-                if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
-
-                lineData.push({
-                  provider_product_id: productId,
-                  name: pName, format: normalizedFmt, family: fam,
-                  quantity: qty, unit_price: uP, total_amount: lineTotal,
-                  vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
-                  winerim_product_id: winerimProductId,
-                  mapped: isResolved,
-                });
-              }
-            }
-
-            const { data: eventRow, error: eventErr } = await supabase
-              .from("sales_events")
-              .upsert({
-                connection_id: connectionId, provider_doc_id: docId, business_day: day,
-                doc_type: String(inv.Type || "BasicInvoice"),
-                total_amount: Number(inv.TotalAmount || docTotal),
-                total_tax: Number(inv.TotalTaxAmount || 0),
-                total_net: Number(inv.TotalNetAmount || 0),
-                line_count: lineData.length, raw_json: inv,
-              }, { onConflict: "connection_id,provider_doc_id" })
-              .select("id").single();
-
-            if (eventErr || !eventRow) continue;
-            totalEvents++;
-
-            await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-            const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
-            if (linesToInsert.length > 0) {
-              const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-              if (!lineErr) totalLines += linesToInsert.length;
-            }
-          }
-
-          lastDaySynced = day;
-        } catch (dayErr) {
-          console.error(`[auto-sync] ${day} error:`, dayErr);
-        }
-      }
-
-      // Update connection. Only advance last_business_day_synced to a CLOSED day
-      // (i.e., not today). Today may still receive more invoices, so we keep re-pulling it.
-      const todayIso = new Date().toISOString().slice(0, 10);
-      if (lastDaySynced) {
-        const advanceTo = lastDaySynced >= todayIso ? (lastSynced || null) : lastDaySynced;
-        const updatePayload: Record<string, unknown> = { last_sync_at: new Date().toISOString() };
-        if (advanceTo) updatePayload.last_business_day_synced = advanceTo;
-        await supabase.from("pos_connections")
-          .update(updatePayload)
-          .eq("id", connectionId);
-      } else {
-        // Even if no day completed, mark last_sync_at so we know cron ran
-        await supabase.from("pos_connections")
-          .update({ last_sync_at: new Date().toISOString() })
-          .eq("id", connectionId);
-      }
-
-      console.log(`[auto-sync] ${connectionId}: ${batch.length} days, ${totalEvents} events, ${totalLines} lines, ${resolvedLines} resolved, ${unresolvedLines} unresolved`);
-
-      // ── Auto-trigger stock sync for synced days with resolved lines ──
-      let stockSyncResult = null;
-      const winerimToken = ((connection as any).winerim_api_token || "").trim();
-      if (resolvedLines > 0 && winerimToken) {
-        console.log(`[auto-sync] Triggering stock sync for ${batch.length} days with ${resolvedLines} resolved lines...`);
-        const stockResults = { synced: 0, skipped: 0, failed: 0 };
-        for (const day of batch) {
-          try {
-            const dayResult = await syncStockForDay(supabase, connectionId, day, winerimToken);
-            stockResults.synced += dayResult.synced;
-            stockResults.skipped += dayResult.skipped;
-            stockResults.failed += dayResult.failed;
-          } catch (e) {
-            console.error(`[auto-sync] Stock sync failed for ${day}:`, e);
-          }
-        }
-        stockSyncResult = stockResults;
-        console.log(`[auto-sync] Stock sync done: ${stockResults.synced} synced, ${stockResults.skipped} skipped, ${stockResults.failed} failed`);
-      }
-
-      return new Response(JSON.stringify({
-        success: true, daysSynced: batch.length, totalDaysPending: daysToSync.length,
-        totalEvents, totalLines, resolvedLines, unresolvedLines,
-        startDay: batch[0], endDay: batch[batch.length - 1], lastSynced: lastDaySynced,
-        stockSync: stockSyncResult,
-      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
     // ── Recompute stock from scratch using sales history (idempotent).
     // For each wine that has historical stock_sync_log SUCCESS entries:
     //   baseline = previousStock from the EARLIEST log entry (= stock before first ever deduction)
@@ -6235,8 +6314,16 @@ ${costPricesXml}
         return new Response(JSON.stringify({ error: "winerim_api_token missing" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+      if (payload?.apply === true && payload?.allowLegacyFractionalRestore !== true) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "LEGACY_RESTORE_DISABLED",
+          message: "restore-glass-overdiscount still uses legacy fractional bottle logic. It is dry-run only unless allowLegacyFractionalRestore=true is passed explicitly.",
+          rollback: "Pass allowLegacyFractionalRestore=true for the old manual behavior, or restore the previous agora-proxy version.",
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const glassesPerBottle = Math.max(1, Number((connection as any).estimated_glasses_per_bottle ?? 5));
-      const apply = payload?.apply === true;
+      const apply = payload?.apply === true && payload?.allowLegacyFractionalRestore === true;
 
       // 1. Gather all wine-candidate sales lines for this connection
       const { data: rows } = await supabase

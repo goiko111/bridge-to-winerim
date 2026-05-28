@@ -189,6 +189,7 @@ export function useAgoraMasterData(connectionId: string | null) {
       const formatTypes = [];
       if (writeSettings.write_bottle) formatTypes.push("BOTTLE");
       if (writeSettings.write_glass) formatTypes.push("GLASS");
+      formatTypes.push("MAGNUM");
       if (formatTypes.length === 0) formatTypes.push("BOTTLE");
 
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
@@ -216,6 +217,7 @@ export function useAgoraMasterData(connectionId: string | null) {
       const formatTypes = [];
       if (writeSettings.write_bottle) formatTypes.push("BOTTLE");
       if (writeSettings.write_glass) formatTypes.push("GLASS");
+      formatTypes.push("MAGNUM");
       if (formatTypes.length === 0) formatTypes.push("BOTTLE");
 
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
@@ -246,6 +248,7 @@ export function useAgoraMasterData(connectionId: string | null) {
     const formatTypes = [];
     if (writeSettings.write_bottle) formatTypes.push("BOTTLE");
     if (writeSettings.write_glass) formatTypes.push("GLASS");
+    formatTypes.push("MAGNUM");
     if (formatTypes.length === 0) formatTypes.push("BOTTLE");
 
     const { data, error } = await supabase.functions.invoke("agora-proxy", {

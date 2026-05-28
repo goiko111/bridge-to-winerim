@@ -53,6 +53,8 @@ interface ProductMapping {
   format_type: string;
 }
 
+type FormatType = "BOTTLE" | "GLASS" | "MAGNUM";
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -97,6 +99,13 @@ function normalize(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
+function inferFormatFromAgoraProduct(product?: AgoraProduct): FormatType {
+  const name = normalize(product?.Name || "");
+  if (/\b(copa|glass|calice|by glass)\b/.test(name) || name.startsWith("c ")) return "GLASS";
+  if (/\b(magnum|mag)\b/.test(name) || name.startsWith("m ")) return "MAGNUM";
+  return "BOTTLE";
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Component
 // ──────────────────────────────────────────────────────────────────────────────
@@ -119,6 +128,7 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
     fromSide: "winerim" | "agora";
     winerim?: WinerimWine;
     agora?: AgoraProduct;
+    formatType: FormatType;
   } | null>(null);
   const [linkSearch, setLinkSearch] = useState("");
   const [saving, setSaving] = useState(false);
@@ -233,15 +243,15 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
 
   // ────────────────────────────── Actions ──────────────────────────────
   const openLinkFromWinerim = (w: WinerimWine) => {
-    setLinkDialog({ fromSide: "winerim", winerim: w });
+    setLinkDialog({ fromSide: "winerim", winerim: w, formatType: "BOTTLE" });
     setLinkSearch(w.name);
   };
   const openLinkFromAgora = (p: AgoraProduct) => {
-    setLinkDialog({ fromSide: "agora", agora: p });
+    setLinkDialog({ fromSide: "agora", agora: p, formatType: inferFormatFromAgoraProduct(p) });
     setLinkSearch(p.Name);
   };
 
-  const performLink = async (winerim: WinerimWine, agora: AgoraProduct) => {
+  const performLink = async (winerim: WinerimWine, agora: AgoraProduct, formatType: FormatType) => {
     if (!connectionId) return;
     setSaving(true);
     try {
@@ -253,7 +263,7 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
           providerProductName: agora.Name,
           winerimWineId: winerim.winerim_id,
           winerimWineName: winerim.name,
-          formatType: "BOTTLE",
+          formatType,
         },
       });
       if (error) throw error;
@@ -562,6 +572,24 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
             />
           </div>
 
+          {linkDialog && (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/20 px-3 py-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">Formato de venta</p>
+                <p className="text-[10px] text-muted-foreground">Define qué stockId de Winerim se descontará para este producto Agora.</p>
+              </div>
+              <select
+                value={linkDialog.formatType}
+                onChange={(e) => setLinkDialog((prev) => prev ? { ...prev, formatType: e.target.value as FormatType } : prev)}
+                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+              >
+                <option value="BOTTLE">Botella</option>
+                <option value="GLASS">Copa</option>
+                <option value="MAGNUM">Magnum</option>
+              </select>
+            </div>
+          )}
+
           <div className="rounded-lg border border-border max-h-[400px] overflow-y-auto divide-y divide-border">
             {linkDialog?.fromSide === "winerim" ? (
               // searching Agora products
@@ -581,7 +609,7 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
                       key={p.Id}
                       type="button"
                       disabled={saving}
-                      onClick={() => linkDialog?.winerim && performLink(linkDialog.winerim, p)}
+                      onClick={() => linkDialog?.winerim && performLink(linkDialog.winerim, p, linkDialog.formatType)}
                       className="w-full text-left px-3 py-2 hover:bg-secondary/40 transition-colors disabled:opacity-50"
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -619,7 +647,7 @@ export default function AgoraManualMatchPanel({ connectionId }: { connectionId: 
                       key={w.winerim_id}
                       type="button"
                       disabled={saving}
-                      onClick={() => linkDialog?.agora && performLink(w, linkDialog.agora)}
+                      onClick={() => linkDialog?.agora && performLink(w, linkDialog.agora, linkDialog.formatType)}
                       className="w-full text-left px-3 py-2 hover:bg-secondary/40 transition-colors disabled:opacity-50"
                     >
                       <div className="flex items-center justify-between gap-2">

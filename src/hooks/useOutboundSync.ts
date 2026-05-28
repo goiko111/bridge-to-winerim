@@ -113,7 +113,7 @@ export function useOutboundSync(connectionId: string | null) {
     setQueuingProducts(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "queue-xml-outbound", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS"], familyOverrideId: familyOverrideId || null },
+        body: { action: "queue-xml-outbound", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId: familyOverrideId || null },
       });
       if (error) throw error;
       await loadOutboundTasks();
@@ -188,7 +188,7 @@ export function useOutboundSync(connectionId: string | null) {
       setProcessingQueue(false);
       setQueueProgress(null);
     }
-  }, [connectionId, loadOutboundTasks]);
+  }, [connectionId, loadOutboundTasks, outboundTasks]);
 
   // Server-side queue processing: starts the loop on the server, no browser dependency
   const processQueueServerSide = useCallback(async () => {
@@ -283,7 +283,7 @@ export function useOutboundSync(connectionId: string | null) {
     setFixingPrices(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "backfill-prices", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS"] },
+        body: { action: "backfill-prices", connectionId, winerimWineIds, formatTypes: formatTypes || ["BOTTLE", "GLASS", "MAGNUM"] },
       });
       if (error) throw error;
       await loadOutboundTasks();

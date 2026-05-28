@@ -646,7 +646,15 @@ function StepSalesMapping({
   daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
   loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
   onFetchDay: (day: string) => void; onSaveSales: (day: string) => void;
-  saving: boolean; saveResult: { savedEvents: number; savedLines: number } | null;
+  saving: boolean; saveResult: {
+    savedEvents: number;
+    savedLines: number;
+    resolvedLines?: number;
+    unresolvedLines?: number;
+    stockSync?: { synced: number; skipped: number; failed: number; checkedDays?: number; errors?: string[] } | null;
+    cursorAdvanced?: boolean;
+    warning?: string | null;
+  } | null;
   familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
   catalogProducts: ProviderProduct[];
   onOverride: (id: string, override: "WINE" | "NOT_WINE" | "AUTO") => void;
@@ -748,7 +756,7 @@ function StepSalesMapping({
       <div>
         <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Sales are auto-synced every 15 min. You can also sync manually or browse by day.
+          Las ventas se sincronizan automáticamente desde cierres de caja. En Agora se procesa el último día cerrado y se reintenta si el stock no queda confirmado.
         </p>
       </div>
 
@@ -769,7 +777,7 @@ function StepSalesMapping({
           {autoSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
           Sync All Pending Days
         </Button>
-        <span className="text-[11px] text-muted-foreground">Auto-runs every 15 min</span>
+        <span className="text-[11px] text-muted-foreground">Automático vía cron para días cerrados</span>
       </div>
 
       {autoSyncResult && (
@@ -781,6 +789,11 @@ function StepSalesMapping({
               <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Synced {autoSyncResult.daysSynced} days</p>
               <p className="text-muted-foreground">{autoSyncResult.totalEvents} events · {autoSyncResult.totalLines} lines · ✓{autoSyncResult.resolvedLines} resolved · ⚠{autoSyncResult.unresolvedLines} unresolved</p>
             </>
+          )}
+          {(autoSyncResult as any).stockSync && (
+            <p className="text-muted-foreground">
+              Stock: ✓{(autoSyncResult as any).stockSync.synced || 0} synced · {(autoSyncResult as any).stockSync.skipped || 0} skipped · ⚠{(autoSyncResult as any).stockSync.failed || 0} failed
+            </p>
           )}
         </div>
       )}
@@ -963,8 +976,11 @@ function StepSalesMapping({
           </div>
           <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
-            {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines${(saveResult as any).resolvedLines != null ? ` · ✓${(saveResult as any).resolvedLines} resolved · ⚠${(saveResult as any).unresolvedLines} unresolved` : ""}` : "Save to DB"}
+            {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines · ✓${saveResult.resolvedLines || 0} resolved · ⚠${saveResult.unresolvedLines || 0} unresolved${saveResult.stockSync ? ` · stock ✓${saveResult.stockSync.synced}/⚠${saveResult.stockSync.failed}` : ""}` : "Save to DB + sync stock"}
           </Button>
+          {saveResult?.warning && (
+            <p className="text-xs text-amber-600">{saveResult.warning}</p>
+          )}
         </div>
       )}
       {selectedDay && !loadingSales && salesEvents.length === 0 && (
@@ -1857,8 +1873,8 @@ function StepWinerimCatalog({
     setGeneratingXml(true);
     setPreviewXml(null);
     try {
-      // Always send both formats — backend validates per-wine eligibility
-      const formatTypes = ["BOTTLE", "GLASS"];
+      // Always send all supported formats — backend validates per-wine eligibility.
+      const formatTypes = ["BOTTLE", "GLASS", "MAGNUM"];
 
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds), formatTypes },
@@ -2375,7 +2391,7 @@ function StepWinerimCatalog({
                 <>
                   <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
                   <Button variant="secondary" size="sm"
-                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
+                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); clearSelection(); }}
                     disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
                     {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
                     Push {pushableIds.length} to Agora ({createIds.length} create · {updateIds.length} update)
@@ -2383,7 +2399,7 @@ function StepWinerimCatalog({
                   </Button>
                   {failedIds.length > 0 && (
                     <Button variant="outline" size="sm"
-                      onClick={() => { onQueueProducts(failedIds, ["BOTTLE", "GLASS"], familyOverrideId || undefined); clearSelection(); }}
+                      onClick={() => { onQueueProducts(failedIds, ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); clearSelection(); }}
                       disabled={queuingProducts} className="h-7 text-[11px] border-destructive/30 text-destructive">
                       <RefreshCw className="mr-1 h-3 w-3" />
                       Requeue {failedIds.length} Failed
@@ -2414,14 +2430,14 @@ function StepWinerimCatalog({
                   <>
                     <Button variant="outline" size="sm" className="h-7 text-[11px]"
                       disabled={queuingProducts || notPushedReady.length === 0}
-                      onClick={() => { onQueueProducts(notPushedReady.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                      onClick={() => { onQueueProducts(notPushedReady.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
                       <Send className="mr-1 h-3 w-3" />
                       Push all not pushed ({notPushedReady.length})
                     </Button>
                     {failedAll.length > 0 && (
                       <Button variant="outline" size="sm" className="h-7 text-[11px] border-destructive/30 text-destructive"
                         disabled={queuingProducts}
-                        onClick={() => { onQueueProducts(failedAll.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                        onClick={() => { onQueueProducts(failedAll.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
                         <RefreshCw className="mr-1 h-3 w-3" />
                         Requeue all failed ({failedAll.length})
                       </Button>
@@ -2432,7 +2448,7 @@ function StepWinerimCatalog({
                       return typeNotPushed.length > 0 ? (
                         <Button variant="outline" size="sm" className="h-7 text-[11px]"
                           disabled={queuingProducts}
-                          onClick={() => { onQueueProducts(typeNotPushed.map(w => w.winerim_id), ["BOTTLE", "GLASS"], familyOverrideId || undefined); }}>
+                          onClick={() => { onQueueProducts(typeNotPushed.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
                           <Send className="mr-1 h-3 w-3" />
                           Push {filterWineType} not pushed ({typeNotPushed.length})
                         </Button>
@@ -3199,7 +3215,7 @@ function StepOutboundSync({
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
               onClick={async () => {
-                const result = await onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS"]);
+                const result = await onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS", "MAGNUM"]);
                 const r = result as any;
                 if (r) {
                   toast({
@@ -3755,7 +3771,7 @@ function StepMasterData({
     setBackfilling(true);
     try {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
-        body: { action: "backfill-prices", connectionId, formatTypes: ["BOTTLE", "GLASS"] },
+        body: { action: "backfill-prices", connectionId, formatTypes: ["BOTTLE", "GLASS", "MAGNUM"] },
       });
       if (error) throw error;
       toast({ title: "Backfill queued", description: `${data?.queued || 0} products queued for re-push` });
@@ -4647,7 +4663,7 @@ function StepSalesAnalytics({ connectionId }: { connectionId: string | null }) {
   );
 }
 
-// ── Step 13: Go Live ──
+// ── Step 14: Go Live ──
 function StepGoLive({
   syncMode, frequency, backfill, salesEvents, selectedDay,
   onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
@@ -4670,7 +4686,7 @@ function StepGoLive({
       </div>
       <div>
         <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
-        <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Enable sync to start pulling sales data every {frequency} minutes.</p>
+        <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Activa la conexión para que el cron procese automáticamente los días cerrados y reintente si Winerim no confirma stock.</p>
       </div>
 
       {/* Readiness summary */}
@@ -4841,7 +4857,7 @@ export default function AgoraWizard() {
       }));
       if (families.length > 0) await saveFamilyRules(families);
     }
-    setCurrentStep((s) => Math.min(13, s + 1));
+    setCurrentStep((s) => Math.min(14, s + 1));
   };
 
   return (
@@ -4903,7 +4919,7 @@ export default function AgoraWizard() {
             <StepConnection locationName={locationName} setLocationName={setLocationName}
               baseUrl={baseUrl} setBaseUrl={setBaseUrl} apiToken={apiToken} setApiToken={setApiToken}
               winerimApiToken={winerimApiToken} setWinerimApiToken={setWinerimApiToken}
-              testStatus={testStatus} testError={testError} onTest={() => testConnection(baseUrl, apiToken, winerimApiToken)} />
+              testStatus={testStatus} testError={testError} onTest={() => testConnection(baseUrl, apiToken, winerimApiToken, locationName)} />
           )}
           {currentStep === 2 && (
             <StepSyncSettings syncMode={syncMode} setSyncMode={setSyncMode}

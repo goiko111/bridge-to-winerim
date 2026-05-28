@@ -35,11 +35,15 @@ interface WinerimWine {
 
 interface StockSyncEntry {
   id: string;
+  sales_event_id: string | null;
   sales_line_item_id: string | null;
   winerim_product_id: string | null;
+  variant: string | null;
+  stock_id: number | null;
   quantity: number;
   status: string;
   error_message: string | null;
+  winerim_response: unknown;
   synced_at: string | null;
   created_at: string;
 }
@@ -56,7 +60,7 @@ interface AggregatedWine {
   isActive: boolean;
 }
 
-interface UnmappedLine extends SaleLine {}
+type UnmappedLine = SaleLine;
 
 const FORMAT_ICON: Record<string, typeof Wine> = {
   BOTTLE: Wine,
@@ -70,6 +74,35 @@ function todayISO(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function isSuccessStatus(status: string): boolean {
+  return status === "SUCCESS" || status === "SYNCED";
+}
+
+function isErrorStatus(status: string): boolean {
+  return status === "ERROR" || status === "FAILED";
+}
+
+function formatToVariant(format: string): string {
+  const f = format.toUpperCase();
+  if (f === "COPA" || f === "GLASS") return "copa";
+  if (f === "MAGNUM" || f === "MAG") return "magnum";
+  return "botella";
+}
+
+function readStockTransition(entry?: StockSyncEntry): { previousStock: number; newStock: number; stockId?: number } | null {
+  if (!entry || !entry.winerim_response || typeof entry.winerim_response !== "object") return null;
+  const response = entry.winerim_response as { previousStock?: unknown; newStock?: unknown; stockId?: unknown };
+  const previousStock = Number(response.previousStock);
+  const newStock = Number(response.newStock);
+  if (!Number.isFinite(previousStock) || !Number.isFinite(newStock)) return null;
+  const stockId = Number(response.stockId ?? entry.stock_id);
+  return {
+    previousStock,
+    newStock,
+    stockId: Number.isFinite(stockId) ? stockId : undefined,
+  };
 }
 
 export default function AgoraTodaysSalesStock({ connectionId }: Props) {
@@ -110,7 +143,7 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
         .eq("is_wine_candidate", true)
         .order("created_at", { ascending: true });
 
-      const lines = (linesRaw ?? []).map((l: any) => ({
+      const lines = ((linesRaw ?? []) as SaleLine[]).map((l) => ({
         ...l,
         business_day: businessDay,
       })) as SaleLine[];
@@ -134,14 +167,14 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
       }
 
       // 5. Stock sync log entries for today's lines
-      const lineIds = mappedLines.map((l) => l.id);
       let syncLog: StockSyncEntry[] = [];
-      if (lineIds.length > 0) {
+      if (winerimIds.length > 0) {
         const { data: logRaw } = await supabase
           .from("stock_sync_log")
-          .select("id, sales_line_item_id, winerim_product_id, quantity, status, error_message, synced_at, created_at")
+          .select("id, sales_event_id, sales_line_item_id, winerim_product_id, variant, stock_id, quantity, status, error_message, winerim_response, synced_at, created_at")
           .eq("connection_id", connectionId)
-          .in("sales_line_item_id", lineIds);
+          .in("sales_event_id", eventIds)
+          .in("winerim_product_id", winerimIds);
         syncLog = (logRaw ?? []) as StockSyncEntry[];
       }
 
@@ -183,12 +216,16 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
         if (entries.length === 0) {
           entry.syncStatus = "PENDING";
         } else {
-          const allSynced = entries.every((e) => e.status === "SYNCED");
-          const anyError = entries.some((e) => e.status === "ERROR" || e.status === "FAILED");
-          const anyPending = entries.some((e) => e.status === "PENDING" || e.status === "QUEUED");
-          if (anyError) entry.syncStatus = "ERROR";
-          else if (anyPending && !allSynced) entry.syncStatus = "PARTIAL";
-          else if (allSynced) entry.syncStatus = "SYNCED";
+          const requiredVariants = Object.keys(entry.byFormat).map(formatToVariant);
+          const variantHasSuccess = (variant: string) => entries.some((e) => (e.variant === variant || !e.variant) && isSuccessStatus(e.status));
+          const variantHasError = (variant: string) => entries.some((e) => e.variant === variant && isErrorStatus(e.status));
+          const variantHasPending = (variant: string) => entries.some((e) => e.variant === variant && (e.status === "PENDING" || e.status === "QUEUED"));
+          const allSynced = requiredVariants.every(variantHasSuccess);
+          const anyErrorWithoutSuccess = requiredVariants.some((variant) => variantHasError(variant) && !variantHasSuccess(variant));
+          const anyPendingWithoutSuccess = requiredVariants.some((variant) => variantHasPending(variant) && !variantHasSuccess(variant));
+          if (allSynced) entry.syncStatus = "SYNCED";
+          else if (anyErrorWithoutSuccess) entry.syncStatus = "ERROR";
+          else if (anyPendingWithoutSuccess) entry.syncStatus = "PARTIAL";
           else entry.syncStatus = "PENDING";
         }
       }
@@ -245,9 +282,9 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Ventas de vinos del día · Stock</h2>
+          <h2 className="text-lg font-semibold text-foreground">Ventas guardadas del día · Stock</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Vinos Winerim vendidos hoy en Agora con stock actual y estado de sincronización a Winerim.
+            Vinos Winerim guardados desde Agora con stock por variante cuando existe log de sincronización.
           </p>
         </div>
         <div className="flex items-end gap-2">
@@ -294,7 +331,7 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
         <div className="text-center py-10 rounded-lg border border-border bg-secondary/20">
           <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
           <p className="text-sm text-muted-foreground">Sin ventas de vino para {businessDay}.</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Las ventas se cargan cada 15 min desde Agora.</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">Se alimenta de ventas ya guardadas por el cron de días cerrados.</p>
         </div>
       )}
 
@@ -302,13 +339,18 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
       {aggregated.length > 0 && (
         <div className="rounded-lg border border-border bg-card overflow-hidden">
           <div className="px-4 py-2.5 bg-secondary/30 border-b border-border flex items-center justify-between">
-            <p className="text-xs font-semibold text-foreground">Vinos vendidos hoy ({aggregated.length})</p>
-            <p className="text-[10px] text-muted-foreground">Stock antes = stock actual + vendido hoy</p>
+            <p className="text-xs font-semibold text-foreground">Vinos guardados ({aggregated.length})</p>
+            <p className="text-[10px] text-muted-foreground">Stock por variante desde log Winerim; stock global solo como referencia</p>
           </div>
           <div className="divide-y divide-border">
             {aggregated.map((w) => {
               const stockNow = w.currentStock ?? null;
-              const stockBefore = stockNow !== null ? stockNow + w.totalSoldQty : null;
+              const latestSuccessByVariant = new Map<string, StockSyncEntry>();
+              for (const entry of w.syncEntries) {
+                if (entry.variant && isSuccessStatus(entry.status) && !latestSuccessByVariant.has(entry.variant)) {
+                  latestSuccessByVariant.set(entry.variant, entry);
+                }
+              }
               return (
                 <details key={w.winerim_id} className="group">
                   <summary className="px-4 py-3 cursor-pointer hover:bg-secondary/30 list-none">
@@ -322,20 +364,26 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
                         <div className="flex items-center gap-2">
                           {Object.entries(w.byFormat).map(([fmt, data]) => {
                             const Icon = FORMAT_ICON[fmt] ?? Wine;
+                            const transition = readStockTransition(latestSuccessByVariant.get(formatToVariant(fmt)));
                             return (
                               <div key={fmt} className="flex items-center gap-1 px-2 py-0.5 rounded bg-secondary/50 border border-border">
                                 <Icon className="h-3 w-3 text-muted-foreground" />
                                 <span className="font-mono text-foreground">{data.soldQty}</span>
                                 <span className="text-[10px] text-muted-foreground">{fmt}</span>
+                                {transition && (
+                                  <span className="text-[10px] text-muted-foreground font-mono" title={transition.stockId ? `stockId ${transition.stockId}` : undefined}>
+                                    {transition.previousStock}→{transition.newStock}
+                                  </span>
+                                )}
                               </div>
                             );
                           })}
                         </div>
                         {/* Stock */}
                         <div className="text-right">
-                          <p className="text-[10px] text-muted-foreground">Stock antes → ahora</p>
+                          <p className="text-[10px] text-muted-foreground">Stock global cache</p>
                           <p className="font-mono text-foreground">
-                            {stockBefore !== null ? stockBefore.toFixed(0) : "—"} → <strong>{stockNow !== null ? stockNow.toFixed(0) : "—"}</strong>
+                            <strong>{stockNow !== null ? stockNow.toFixed(0) : "—"}</strong>
                           </p>
                         </div>
                         {/* Amount */}
@@ -353,7 +401,10 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
                     <div className="space-y-1">
                       {Object.entries(w.byFormat).flatMap(([fmt, data]) =>
                         data.lines.map((line) => {
-                          const syncEntry = w.syncEntries.find((s) => s.sales_line_item_id === line.id);
+                          const variant = formatToVariant(fmt);
+                          const syncEntry = w.syncEntries.find((s) => s.sales_line_item_id === line.id)
+                            || w.syncEntries.find((s) => s.variant === variant && isSuccessStatus(s.status))
+                            || w.syncEntries.find((s) => s.variant === variant);
                           return (
                             <div key={line.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-background/50 border border-border/50">
                               <div className="flex items-center gap-2">
@@ -366,9 +417,9 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-foreground">€{Number(line.total_amount).toFixed(2)}</span>
                                 {syncEntry ? (
-                                  syncEntry.status === "SYNCED" ? (
+                                  isSuccessStatus(syncEntry.status) ? (
                                     <span className="text-[10px] text-success flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> sync</span>
-                                  ) : syncEntry.status === "ERROR" || syncEntry.status === "FAILED" ? (
+                                  ) : isErrorStatus(syncEntry.status) ? (
                                     <span className="text-[10px] text-destructive flex items-center gap-1" title={syncEntry.error_message ?? ""}>
                                       <XCircle className="h-3 w-3" /> {syncEntry.status.toLowerCase()}
                                     </span>

@@ -109,7 +109,15 @@ export function useAgoraConnection() {
   const [loadingSales, setLoadingSales] = useState(false);
 
   const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ savedEvents: number; savedLines: number } | null>(null);
+  const [saveResult, setSaveResult] = useState<{
+    savedEvents: number;
+    savedLines: number;
+    resolvedLines: number;
+    unresolvedLines: number;
+    stockSync?: { synced: number; skipped: number; failed: number; checkedDays?: number; errors?: string[] } | null;
+    cursorAdvanced?: boolean;
+    warning?: string | null;
+  } | null>(null);
 
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>({
     catalogEndpoint: null, lastCatalogSyncAt: null, catalogProductCount: 0,
@@ -139,6 +147,7 @@ export function useAgoraConnection() {
         location_name: data.locationName, base_url: data.baseUrl, api_token: data.apiToken,
         winerim_api_token: data.winerimApiToken || null, sync_mode: data.syncMode,
         sync_frequency_minutes: data.syncFrequency, backfill_days: data.backfillDays,
+        provider: "agora", enabled: false,
       } as any)
       .select().single();
     if (error) throw error;
@@ -151,16 +160,23 @@ export function useAgoraConnection() {
     if (error) throw error;
   };
 
-  const testConnection = async (baseUrl: string, apiToken: string, winerimApiToken?: string) => {
+  const testConnection = async (baseUrl: string, apiToken: string, winerimApiToken?: string, locationName?: string) => {
     setTestStatus("testing");
     setTestError(null);
     let connId = connectionId;
+    let createdForTest = false;
+    const cleanupFailedTestConnection = async () => {
+      if (!createdForTest || !connId) return;
+      await supabase.from("pos_connections").delete().eq("id", connId);
+      setConnectionId(null);
+    };
     if (!connId) {
       try {
         connId = await saveConnection({
-          locationName: "New Location", baseUrl, apiToken, winerimApiToken,
+          locationName: locationName?.trim() || "New Agora Location", baseUrl, apiToken, winerimApiToken,
           syncMode: "PULL_ONLY", syncFrequency: 15, backfillDays: 30,
         });
+        createdForTest = true;
       } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
     } else {
       await updateConnection(connId, { base_url: baseUrl, api_token: apiToken, winerim_api_token: winerimApiToken || null });
@@ -169,10 +185,10 @@ export function useAgoraConnection() {
       const { data, error } = await supabase.functions.invoke("agora-proxy", {
         body: { action: "test", connectionId: connId },
       });
-      if (error) { setTestStatus("error"); setTestError(error.message); return false; }
+      if (error) { await cleanupFailedTestConnection(); setTestStatus("error"); setTestError(error.message); return false; }
       if (data?.success) { setTestStatus("success"); return true; }
-      else { setTestStatus("error"); setTestError(data?.message || "Connection failed"); return false; }
-    } catch (e: any) { setTestStatus("error"); setTestError(e.message); return false; }
+      else { await cleanupFailedTestConnection(); setTestStatus("error"); setTestError(data?.message || "Connection failed"); return false; }
+    } catch (e: any) { await cleanupFailedTestConnection(); setTestStatus("error"); setTestError(e.message); return false; }
   };
 
   const findDaysWithSales = useCallback(async (daysBack = 60) => {
@@ -214,7 +230,15 @@ export function useAgoraConnection() {
         body: { action: "save-sales", connectionId, businessDay: day },
       });
       if (error) throw error;
-      setSaveResult({ savedEvents: data?.savedEvents || 0, savedLines: data?.savedLines || 0 });
+      setSaveResult({
+        savedEvents: data?.savedEvents || 0,
+        savedLines: data?.savedLines || 0,
+        resolvedLines: data?.resolvedLines || 0,
+        unresolvedLines: data?.unresolvedLines || 0,
+        stockSync: data?.stockSync || null,
+        cursorAdvanced: data?.cursorAdvanced,
+        warning: data?.warning || null,
+      });
     } catch (e) { console.error("Failed to save sales:", e); }
     finally { setSaving(false); }
   }, [connectionId]);
