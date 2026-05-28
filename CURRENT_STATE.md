@@ -22,7 +22,7 @@ _Última actualización: 2026-05-28_
   - `stock_sync_log.variant` devuelve error de columna inexistente.
   - `user_roles` devuelve tabla inexistente.
 - El push a GitHub deja el código y las migraciones disponibles para Lovable, pero no confirma por sí solo que Lovable Cloud haya aplicado DDL ni redeployado Edge Functions.
-- Por seguridad, no se ha activado `enabled=true` en Cienvinos ni Baco.
+- En ese checkpoint inicial no se activó `enabled=true` en Cienvinos ni Baco; ambos se activaron después en la sección "Activación operativa Cienvinos y Baco".
 
 ### Lovable Cloud P0 aplicado y verificado — 2026-05-28
 - La sesión autenticada de Lovable Cloud quedó disponible en Chrome externo; el navegador integrado seguía sin sesión útil.
@@ -42,7 +42,35 @@ _Última actualización: 2026-05-28_
   - Cienvinos `find-last-business-day` 7 días: 0 facturas cerradas.
   - Baco `find-last-business-day` 7 días: días `2026-05-27` a `2026-05-22`, 449 facturas.
   - Baco `fetch-day` para `2026-05-27`: 86 eventos, 436 líneas, 95 candidatas a vino, 0 resueltas contra productos Winerim; no se ejecutó `save-sales` ni ninguna escritura de stock.
-- Nuevo bloqueo de activación: falta validar una venta/cierre real con producto WINERIM resuelto para comprobar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y ausencia de doble deducción antes de poner `enabled=true`.
+- La activación automática quedó pendiente en ese momento hasta nueva instrucción operativa del usuario.
+
+### Activación operativa Cienvinos y Baco — 2026-05-28
+- A petición del usuario, `Restaurante Cienvinos Ecija` y `Baco Getafe` quedaron activos en Lovable Cloud:
+  - `enabled=true`.
+  - `write_mode=XML_IMPORT`.
+  - `catalog_sync_enabled=true`.
+  - `auto_push_verified_ready=true`.
+  - `auto_push_on_create=true`.
+  - `auto_push_on_update=false`.
+  - `last_business_day_synced=2026-05-27`.
+- Razón del cursor inicial `2026-05-27`:
+  - Cienvinos no tiene facturas cerradas en los últimos 30 días; dejar el cursor vacío haría que el cron reescanee histórico vacío en cada ciclo.
+  - Baco tiene 29 días con facturas recientes y 2.239 facturas en 30 días, pero son cierres legacy previos/sin líneas resueltas contra WINERIM; procesarlos no validaría stock y sí añadiría carga innecesaria al POS.
+  - Desde el siguiente cierre real, el flujo automático empezará a procesar días nuevos.
+- Checks antes de activar:
+  - `agora-proxy test` correcto en ambas conexiones.
+  - Capacidad de escritura `provider_capabilities`: `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
+  - Sin breakers activos (`circuit_breaker_paused_until=null`, `consecutive_failures=0`).
+  - Sin tareas abiertas (`QUEUED/RUNNING/FAILED/BLOCKED`) en ambas conexiones.
+  - StockIds cacheados:
+    - Cienvinos: 378 vinos, 373 `READY`, 372 bottle stockIds, 49 glass stockIds, 7 magnum stockIds.
+    - Baco: 95 vinos, 94 `READY`, 83 bottle stockIds, 21 glass stockIds, 19 magnum stockIds.
+- Validación manual post-activación:
+  - Dispatcher `sales-stock` por conexión: `succeeded=1`, `skippedByBreaker=0`, `skippedByPreflight=0`, `daysSynced=0`, mensaje `No pending days to sync`.
+  - Dispatcher `outbound-queue` por conexión: `processed=0`, `remaining=0`, `breakerTripped=false`.
+  - Lectura final: ambas conexiones `enabled=true`, sin tareas abiertas y sin `stock_sync_log` nuevos el 2026-05-28.
+- Decisión operativa importante:
+  - `auto_push_on_update` queda apagado temporalmente. En el código actual, `fetch-catalog` evalúa el lote procesado como `UPDATE` aunque no haya cambios reales; encenderlo ahora podría reencolar/reimportar muchos vinos en cada sincronización de catálogo. Siguiente mejora: auto-update diferencial por cambios reales de precio/nombre/formato antes de activarlo.
 
 ### Sistema de resiliencia Agora (activo, sin cambios)
 - Cache XML productos `fetchAgoraProductsXmlCached` (TTL 60s).
@@ -262,15 +290,16 @@ _Última actualización: 2026-05-28_
   - `provider_capabilities` corregido tras verificación real: `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
   - Los 177 productos preexistentes no se han ocultado porque no hay familias antiguas de vino ni productos de vino detectados fuera de las familias WINERIM. Los candidatos por texto eran falsos positivos (`tinto limón`, `copa cerveza`, infusiones/licores).
   - 12 botellas duplicadas de nombre en Winerim fueron importadas con sufijo corto visible en Agora para evitar el `HTTP 500` por nombre duplicado de Agora: ejemplo `B Alión 276`. El catálogo local Winerim se restauró con sus nombres originales tras la importación temporal.
-- Bloqueo antes de activar automático:
+- Estado tras activación automática:
   - Las migraciones P0 y funciones actuales ya están desplegadas en Lovable Cloud.
-  - Cienvinos no tiene facturas cerradas en la prueba read-only de 7 días; falta una venta/cierre real con productos WINERIM para validar deducción de stock por variante antes de activar cron.
+  - Cienvinos queda activo desde cursor `2026-05-27`.
+  - Cienvinos no tiene facturas cerradas en la prueba read-only de 30 días; falta una venta/cierre real con productos WINERIM para validar deducción de stock por variante.
   - El siguiente `winerim-proxy fetch-catalog` debe confirmar que el proxy desplegado ya captura `erpStock.id` sin backfill manual.
 - Rollback documentado en `ROLLBACK_CIENVINOS_AGORA_2026-05-27.md`.
 
 ### Revisión flota Agora — 2026-05-27 / actualizada 2026-05-28
 - Las migraciones P0 y las funciones actuales ya están aplicadas/redeployadas en Lovable Cloud.
-- El dispatcher Agora no permite activar solo catálogo: `enabled=true` incluye `catalog`, `sales-stock` y `outbound-queue`. Por seguridad, Cienvinos y Baco siguen con `enabled=false` hasta prueba real de stock idempotente.
+- El dispatcher Agora no permite activar solo catálogo: `enabled=true` incluye `catalog`, `sales-stock` y `outbound-queue`. Cienvinos y Baco ya están activos por instrucción operativa; el riesgo se controla con cursor `2026-05-27`, cola vacía y monitorización del primer cierre nuevo.
 - Cienvinos:
   - El catálogo Winerim ya está importado y verificado en Agora: 428 productos en 8 familias WINERIM.
   - StockIds por variante ya cacheados: 372 botella, 49 copa, 7 magnum.
@@ -308,7 +337,7 @@ _Última actualización: 2026-05-28_
 - Cliente: `Baco Getafe`.
 - Conexión creada en Lovable Cloud con `connection_id=32f46d47-3984-413a-8c18-b5502418dadc`.
 - Credenciales reales de Agora y Winerim cargadas en la fila de conexión. No se documentan tokens en archivos de sesión.
-- Estado operativo dejado en modo seguro:
+- Estado operativo inicial dejado en modo seguro (2026-05-27):
   - `enabled=false`.
   - `write_mode=XML_IMPORT`.
   - `catalog_sync_enabled=true`.
@@ -360,8 +389,10 @@ _Última actualización: 2026-05-28_
   - 348 productos legacy de esas familias quedaron no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
   - Verificación final: 0 productos legacy siguen visibles/vendibles.
 - Rollback documentado en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
-- Bloqueo antes de activar automático:
-  - Igual que Cienvinos, no activar `enabled=true` hasta aplicar migraciones P0 (`stock_sync_log` variant-aware + `user_roles/has_role()`), desplegar funciones actuales y probar stock con venta/cierre real.
+- Estado tras activación automática:
+  - Baco queda activo desde cursor `2026-05-27`.
+  - El cierre `2026-05-27` tenía 0 líneas resueltas contra productos WINERIM; falta validar el primer cierre nuevo con venta WINERIM real.
+  - `auto_push_on_update=false` hasta implementar detección diferencial de cambios reales de catálogo.
 
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
@@ -373,7 +404,7 @@ _Última actualización: 2026-05-28_
 - `Order` vs `SortOrder` en XML Agora sigue pendiente de prueba controlada.
 - Cienvinos parece tener Agora con `export-master` moderno y sin catálogo legacy por filtros `export`; comportamiento similar al caso Kava, pero todavía no hay ventas cerradas para validar `Invoices`.
 - El IVA 10%, preparation `BARRA/BEBIDAS`, almacén general y sale centers Barra/Sala/Terraza son la mejor configuración inicial observada desde master data, pendiente de confirmación operativa del cliente si quisieran publicar solo en una sala/tarifa.
-- Agora rechaza productos con nombres duplicados aunque tengan `Id` distinto; en Cienvinos se resolvió manualmente para 12 botellas duplicadas con sufijo corto. La desambiguación ya está codificada localmente en `generateImportXml`, pendiente de despliegue junto con el resto de funciones.
+- Agora rechaza productos con nombres duplicados aunque tengan `Id` distinto; en Cienvinos se resolvió manualmente para 12 botellas duplicadas con sufijo corto. La desambiguación ya está codificada y desplegada en `generateImportXml`.
 - Sa Vida parece tener el módulo/API REST de Agora no disponible en el puerto facilitado, o una versión de Agora que no expone esos endpoints. El servidor responde, así que la hipótesis principal no es red caída sino API no habilitada, puerto/base URL incorrecto o versión no compatible.
 - Todas las instalaciones Agora existentes salvo Cienvinos tienen 0 stockIds por variante en `winerim_wines`. Mientras no se haga backfill/re-sync con el `winerim-proxy` actualizado, el stock variant-aware puede depender de fallback runtime y no está preparado con la misma seguridad que Cienvinos.
 - Baco Getafe expone `/api/export/tickets/` además de `Invoices`; podría soportar visibilidad intradía en una fase futura, pero no se activa ahora porque la política global Agora sigue priorizando días cerrados e idempotencia de stock.
@@ -384,7 +415,6 @@ _Última actualización: 2026-05-28_
 - Los fixes P0 detectados por auditoría afectan stock, colas y seguridad. Deben aplicarse por lotes pequeños con pruebas/regresiones específicas, no como refactor masivo.
 - La documentación Winerim v2 añade oportunidades de rendimiento (`wines/bulk`, `stock/bulk`), pero activarlas sin validar formato real de respuesta y manejo de éxitos parciales puede dejar stocks a medio sincronizar.
 - Orden de despliegue recomendado: migraciones primero, edge functions después. Si se invierte el orden, las funciones pueden no encontrar columnas/RPC nuevas.
-- Cienvinos no debe activarse (`enabled=true`) hasta aplicar migraciones P0 y desplegar funciones actuales. Activarlo antes puede reabrir el riesgo de ventas guardadas sin stock idempotente por variante.
-- Cienvinos ya tiene catálogo Winerim importado en Agora, pero no debe activarse el automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales.
+- Cienvinos ya está activo; riesgo pendiente: primer cierre nuevo con producto WINERIM debe confirmar stock idempotente por variante.
 - Sa Vida no debe tratarse como lista ni reintentar importaciones masivas hasta que Agora devuelva 200 en `export-master`/`Invoices`. Forzar escrituras ahora solo aumentaría cola fallida y ruido de breaker.
-- Baco Getafe ya tiene catálogo Winerim importado y legacy oculto, pero no debe activarse `enabled=true` por el mismo bloqueo de migraciones P0.
+- Baco Getafe ya está activo; riesgo pendiente: primer cierre nuevo con producto WINERIM debe confirmar stock idempotente por variante.

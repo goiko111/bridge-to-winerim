@@ -255,3 +255,13 @@
 - **Decisión**: Mantener `enabled=false` en Cienvinos y Baco tras migraciones y redeploy. La siguiente activación requiere una venta/cierre con producto WINERIM resuelto y verificación de `stock_sync_log.variant`, `stock_id`, `idempotency_key` y reejecución sin doble descuento.
 - **Razón**: Cienvinos no tiene facturas cerradas recientes y Baco tiene cierres legacy con 0 líneas resueltas contra productos WINERIM. No existe aún una prueba real de deducción de stock por variante en estas instalaciones nuevas.
 - **Alternativa descartada**: activar cron global inmediatamente. `enabled=true` dispara catálogo, ventas/stock y cola outbound juntos; sin prueba real de stock, el riesgo operativo sigue siendo innecesario.
+
+## 2026-05-28 · Activar Cienvinos y Baco en producción controlada
+- **Decisión**: Tras instrucción explícita del usuario, activar `enabled=true` en Cienvinos y Baco, marcar `auto_push_verified_ready=true`, encender `auto_push_on_create=true`, dejar `auto_push_on_update=false`, y fijar `last_business_day_synced=2026-05-27`.
+- **Razón**: Las migraciones P0 y Edge Functions actuales ya están desplegadas, ambas conexiones están `READY/XML_IMPORT`, sin breakers y sin cola abierta. El cursor inicial evita reescaneos históricos inútiles: Cienvinos no tiene facturas cerradas recientes y Baco tiene histórico legacy sin líneas WINERIM resueltas.
+- **Alternativa descartada**: dejar ambas conexiones apagadas hasta una venta real WINERIM. Era la postura más conservadora, pero el usuario priorizó que funcionen ya con normalidad; se compensa arrancando desde el último día cerrado y monitorizando el primer cierre nuevo.
+
+## 2026-05-28 · Mantener auto-update de catálogo apagado hasta hacerlo diferencial
+- **Decisión**: No activar todavía `auto_push_on_update` en Cienvinos/Baco aunque sí se active el cron general y el auto-create.
+- **Razón**: La implementación actual de `fetch-catalog` llama `evaluate-auto-push` con `eventType=UPDATE` para cada lote procesado, no solo para vinos cambiados. Encender `auto_push_on_update` ahora podría reencolar/reimportar muchos productos en cada sincronización de catálogo y cargar Agora innecesariamente.
+- **Alternativa descartada**: encender `auto_push_on_update=true` para lograr automatización total inmediata. Es funcionalmente tentador, pero aumenta el riesgo de sobreescrituras masivas y de carga POS; la mejora correcta es detectar cambios reales antes de encolar updates.

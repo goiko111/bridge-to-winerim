@@ -25,7 +25,8 @@
 - [x] Verificar post-write en Agora: familias creadas, productos visibles, precios en Barra/Sala/Terraza, IVA y preparation correctos.
 - [ ] Ejecutar venta/cierre de prueba con producto WINERIM o esperar primer día cerrado con líneas resueltas; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Reejecutar el mismo día y confirmar que no hay doble deducción.
-- [ ] Activar `enabled=true` solo tras import piloto, ventas cerradas y stock idempotente verificados.
+- [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos.
+- [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
 
 ## P0 — Revisión flota Agora 2026-05-27
@@ -66,7 +67,8 @@
 - [ ] Validar con el cliente si los vinos deben publicarse también en `MUS` o `Personal`; por ahora quedan excluidos.
 - [ ] Ejecutar venta/cierre de prueba con producto WINERIM resuelto; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key`.
 - [ ] Evaluar en una fase posterior si Baco puede usar `Tickets` intradía con feature flag por conexión; no activar globalmente.
-- [ ] Activar `enabled=true` solo tras migraciones, despliegue y prueba real de stock idempotente.
+- [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos legacy.
+- [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 
 ## P0 — Front Agora audit 2026-05-26
 - [x] Corregir navegación del wizard: `handleNext` permite llegar al paso 14 `Go Live` (`Math.min(14, s + 1)`).
@@ -116,7 +118,9 @@
 - [x] Confirmar contra backend real que existen `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key`, tabla `user_roles` y función `has_role()`.
 - [x] Confirmar `claim_outbound_tasks(...)` con firma `p_task_types TEXT[]` usando conexión fake y sin reclamar tareas reales.
 - [x] Revertir en fuente los cambios generados por Lovable en `src/integrations/supabase/types.ts` y `AgoraTodaysSalesStock`, conservando el redeploy ya aplicado en Cloud.
-- [x] Confirmar que Cienvinos y Baco siguen `enabled=false` tras el redeploy.
+- [x] Confirmar que Cienvinos y Baco seguían `enabled=false` tras el redeploy, antes de la activación operativa posterior.
+- [x] Activar Cienvinos y Baco: `enabled=true`, `auto_push_verified_ready=true`, `auto_push_on_create=true`, `auto_push_on_update=false`, `last_business_day_synced=2026-05-27`.
+- [x] Ejecutar dispatcher manual `sales-stock` y `outbound-queue` por conexión: ambos jobs responden OK, sin breaker, sin preflight fallido y con 0 tareas pendientes.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -124,6 +128,7 @@
 - [ ] Confirmar que el catch-up de `auto-sync-sales` rescata días guardados recientes con stock pendiente sin llamadas PUT nuevas para líneas ya `SUCCESS`.
 - [ ] Revisar que `restore-glass-overdiscount` con `apply=true` devuelve `LEGACY_RESTORE_DISABLED` si no se pasa `allowLegacyFractionalRestore=true`.
 - [ ] Vigilar 24h `stock_sync_log` por `FAILED` nuevos y `outbound_tasks` por tareas `RUNNING` antiguas.
+- [ ] Implementar auto-update diferencial de catálogo antes de poner `auto_push_on_update=true` en Cienvinos/Baco.
 
 ## P0 — Validación
 - [ ] Monitorizar 7 días (Agora): invocaciones a `/api/export-master`, breaker activations, zombies rescatados.
@@ -156,11 +161,11 @@
 - [ ] Vista "fleet status" en `/integrations` con un `ConnectionHealthPanel` por cada conexión activa.
 
 ## Bloqueos / esperando
-- Cienvinos: catálogo importado completo; migraciones y funciones ya desplegadas. No activar automático de ventas/stock hasta primera venta/cierre con producto WINERIM resuelto y stock idempotente validado.
+- Cienvinos: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
-- Baco Getafe: catálogo importado y legacy oculto; migraciones y funciones ya desplegadas. El cierre `2026-05-27` tiene 0 líneas resueltas contra WINERIM, así que falta una venta real WINERIM para validar stock antes de activar.
+- Baco Getafe: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
-- Lovable Cloud: P0 aplicado; el bloqueo restante ya no es de despliegue, sino de validación real de stock con ventas WINERIM.
+- Lovable Cloud: P0 aplicado; Cienvinos/Baco activos. Bloqueo restante: validación real del primer descuento de stock WINERIM y auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.
