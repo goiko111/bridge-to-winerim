@@ -51,6 +51,10 @@ _Última actualización: 2026-05-28_
 - Cambios de código preparados en esta sesión:
   - `agora-proxy.auto-sync-sales` actualiza `last_sync_at` también cuando no hay días pendientes, sin avanzar `last_business_day_synced`.
   - `SyncMonitor` muestra ubicación en la pestaña `Stock Sync` y, si una conexión tiene cursor diario pero no `last_sync_at`, muestra `Checked through <fecha>` en vez de `Never`.
+- Despliegue/publicación de esta sesión:
+  - Commit `b0a2c7b` (`Clarify Agora sync monitor state`) subido a GitHub `main`.
+  - A las `2026-05-28T06:03Z`, Lovable Cloud aún no había redeployado el nuevo `agora-proxy`: una invocación `auto-sync-sales` en Baco respondió OK pero no actualizó `last_sync_at`.
+  - Mientras seguía activo el runtime anterior, Cienvinos volvió a reencolar updates de catálogo; se drenaron de nuevo (`48 OK`, `2 OK`, y 2 `RUNNING` residuales procesadas individualmente). Verificación final tras limpieza: Baco/Cienvinos con 0 tareas abiertas y `can_write_products=YES`.
 - Validación local de estos cambios:
   - `npm test -- --run src/test/stockSyncUtils.test.ts src/test/agoraProductNaming.test.ts` pasa: 12 tests.
   - `npx tsc --noEmit` pasa.
