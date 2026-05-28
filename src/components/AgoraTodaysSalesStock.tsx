@@ -143,7 +143,7 @@ export default function AgoraTodaysSalesStock({ connectionId }: Props) {
         .eq("is_wine_candidate", true)
         .order("created_at", { ascending: true });
 
-      const lines = ((linesRaw ?? []) as SaleLine[]).map((l) => ({
+      const lines = (linesRaw ?? []).map((l) => ({
         ...l,
         business_day: businessDay,
       })) as SaleLine[];
