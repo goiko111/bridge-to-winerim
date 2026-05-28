@@ -6,6 +6,56 @@ _Última actualización: 2026-05-28_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Auditoría Sync Monitor / flota Agora — 2026-05-28 07:59 CEST
+- Se revisó el estado real en Lovable Cloud tras el reporte del Sync Monitor con `Baco Getafe` y `Restaurante Cienvinos Ecija` mostrando `Last Sync Never` y la pestaña `Stock Sync` mostrando 100 fallos.
+- Causa de `Last Sync Never` en Baco/Cienvinos:
+  - Ambas conexiones tenían `last_business_day_synced=2026-05-27` y estaban activas, pero `last_sync_at=null`.
+  - `auto-sync-sales` respondía correctamente `No pending days to sync`, pero no actualizaba `last_sync_at` cuando no había días pendientes. Era un problema de semántica/visualización del monitor, no una prueba de desconexión.
+  - Se ejecutó `auto-sync-sales` manualmente en ambas: resultado `success=true`, `daysSynced=0`, `stockSync=null`, `No pending days to sync`.
+  - Se actualizó `last_sync_at` en ambas a `2026-05-28T05:54:58.655Z` después de ese chequeo real.
+- Estado final Baco Getafe:
+  - `enabled=true`, `last_business_day_synced=2026-05-27`, `last_sync_at=2026-05-28T05:54:58.655Z`, sin breaker, `consecutive_failures=0`.
+  - Capacidades restauradas a `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
+  - Catálogo Winerim: 95 vinos, 94 `READY`; stockIds cacheados: 83 botella, 21 copa, 19 magnum.
+  - Mappings: 118 confirmados (82 botella, 21 copa, 15 magnum).
+  - Cola abierta: 0 tareas `QUEUED/RUNNING/FAILED/BLOCKED`.
+  - Stock hoy: 0 logs, porque todavía no hay venta/cierre nuevo con producto WINERIM tras la activación.
+- Estado final Restaurante Cienvinos Ecija:
+  - `enabled=true`, `last_business_day_synced=2026-05-27`, `last_sync_at=2026-05-28T05:54:58.655Z`, sin breaker, `consecutive_failures=0`.
+  - Capacidades `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
+  - Catálogo Winerim: 378 vinos, 373 `READY`; stockIds cacheados: 372 botella, 49 copa, 7 magnum.
+  - Mappings: 428 confirmados (372 botella, 49 copa, 7 magnum).
+  - Se drenaron las tareas de actualización de catálogo que reaparecieron para Cienvinos:
+    - `process-xml-outbound-queue`: 22 OK, 0 fallos.
+    - `process-xml-outbound-queue`: 51 OK, 0 fallos.
+    - `process-xml-outbound-queue`: 5 OK, 0 fallos.
+    - 16 tareas residuales `RUNNING` se procesaron individualmente con `process-xml-outbound-task` y terminaron `SUCCESS`.
+  - Estado final de cola: 0 tareas `QUEUED/RUNNING/FAILED/BLOCKED`.
+  - Stock hoy: 0 logs, porque todavía no hay venta/cierre nuevo con producto WINERIM tras la activación.
+- Los fallos visibles en la pestaña `Stock Sync` de la captura NO eran de Baco ni de Cienvinos.
+  - En las últimas 100 filas globales del monitor, el reparto observado era: Sa Vida 72 `FAILED`, Sa Pedrera 21 `FAILED`, Kava 7 `FAILED`.
+  - La pantalla no mostraba columna de ubicación, por eso parecía que el fallo podía pertenecer a cualquier conexión visible.
+- Causa técnica de esos fallos de stock:
+  - `GET /stock/wine/{winerim_id} -> 404` significa que el token Winerim de esa conexión no tiene acceso a ese vino o el mapping apunta a un `winerim_id` que ya no pertenece al menú/token actual.
+  - `Variant 'copa' not found for wine ...` significa que la venta resuelta apunta a copa, pero Winerim no expone stock de copa para ese vino bajo ese token.
+  - No es un fallo de descuento fraccional ni de Baco/Cienvinos; es inconsistencia de mapping/catálogo/variante en instalaciones existentes.
+- Stock con éxito sí se está registrando en instalaciones existentes:
+  - Ejemplos de 2026-05-28 muestran `status=SUCCESS`, `variant`, `stock_id` y `winerim_response.previousStock/newStock/soldQty` en `stock_sync_log`.
+  - En esos casos el middleware emite `PUT /api/v2/stock/{stockId}` y deja trazabilidad local en `stock_sync_log`.
+- Estado de flota Agora, no apto para declarar "todo listo" todavía:
+  - Baco y Cienvinos quedan operativamente limpios para catálogo automático y preparados para procesar el siguiente cierre; falta validar una venta real WINERIM.
+  - Katsu y La Candela guardan ventas, pero tienen 0 stockIds cacheados; requieren backfill/re-sync de catálogo Winerim antes de considerarlas sanas para stock variant-aware.
+  - Kava y Sa Pedrera tienen stock successes, pero también fallos `404`/variante y colas/backlogs históricos; requieren reparación de mappings/stockIds.
+  - Luruna guarda ventas, pero mantiene stockIds incompletos y backlog histórico.
+  - Sa Vida sigue siendo contradictoria: `enabled=true` en `pos_connections`, pero `provider_capabilities.readiness_status=NOT_CONNECTED`, `write_mode=NONE`, último sync real `2026-05-04`, backlog muy grande y fallos repetidos de stock. No debe darse por sana hasta resolver API REST/HTTP 501 y mappings.
+- Cambios de código preparados en esta sesión:
+  - `agora-proxy.auto-sync-sales` actualiza `last_sync_at` también cuando no hay días pendientes, sin avanzar `last_business_day_synced`.
+  - `SyncMonitor` muestra ubicación en la pestaña `Stock Sync` y, si una conexión tiene cursor diario pero no `last_sync_at`, muestra `Checked through <fecha>` en vez de `Never`.
+- Validación local de estos cambios:
+  - `npm test -- --run src/test/stockSyncUtils.test.ts src/test/agoraProductNaming.test.ts` pasa: 12 tests.
+  - `npx tsc --noEmit` pasa.
+  - `npm run build` pasa con warnings conocidos de Browserslist desactualizado y bundle principal >500 kB.
+
 ### Despliegue P0 vía GitHub — 2026-05-28
 - Se comprobó que el navegador integrado no tenía sesión autenticada en Lovable Cloud; el acceso al proyecto redirigía a login.
 - Se verificó que el repositorio oficial `goiko111/bridge-to-winerim` estaba por detrás de la copia de auditoría: no contenía las migraciones P0, fixes de Agora, tests ni documentos de rollback.

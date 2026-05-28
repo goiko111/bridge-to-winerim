@@ -26,6 +26,8 @@
 - [ ] Ejecutar venta/cierre de prueba con producto WINERIM o esperar primer día cerrado con líneas resueltas; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Reejecutar el mismo día y confirmar que no hay doble deducción.
 - [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos.
+- [x] Resolver el `Last Sync Never` operativo: `auto-sync-sales` comprobado manualmente sin días pendientes y `last_sync_at` actualizado tras chequeo real.
+- [x] Drenar cola de actualización reaparecida: tareas Cienvinos `AGORA_XML_UPSERT_PRODUCT` terminan en 0 abiertas y 0 fallos.
 - [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
 
@@ -37,6 +39,12 @@
 - [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`.
 - [ ] Reprobar Sa Vida cuando el POS responda 200: `test`, `sync-master-data`, `find-last-business-day`, preview XML y backfill de stockIds antes de cualquier write masivo.
 - [ ] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con el `winerim-proxy` actualizado o script controlado.
+- [ ] Reparar fallos actuales de `stock_sync_log` antes de declarar la flota Agora sana:
+  - Sa Vida: fallos `GET /stock/wine/{id} -> 404` y `Variant 'copa' not found`, `readiness_status=NOT_CONNECTED`, backlog muy grande.
+  - Sa Pedrera: fallos de variante copa y backlog de outbound.
+  - Kava: fallos `404` en Winerim para mappings existentes.
+- [ ] Añadir guard anti-spam para fallos terminales de stock (`wine not found`, `variant not found`) sin avanzar cursor ni crear 100 logs repetidos cada ciclo.
+- [ ] Decidir si Sa Vida debe pausarse/deshabilitarse hasta resolver HTTP 501/API REST y mappings, porque hoy aparece `enabled=true` aunque las capacidades están `NOT_CONNECTED`.
 - [ ] Revisar tareas residuales por instalación:
   - Kava: `QUEUED`/`BLOCKED` y 1 `RUNNING` observado durante procesamiento.
   - Luruna: 5 `QUEUED`.
@@ -69,6 +77,8 @@
 - [ ] Ejecutar venta/cierre de prueba con producto WINERIM resuelto; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key`.
 - [ ] Evaluar en una fase posterior si Baco puede usar `Tickets` intradía con feature flag por conexión; no activar globalmente.
 - [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos legacy.
+- [x] Resolver el `Last Sync Never` operativo: `auto-sync-sales` comprobado manualmente sin días pendientes y `last_sync_at` actualizado tras chequeo real.
+- [x] Restaurar `provider_capabilities.can_write_products=YES` tras detectar degradación visual a `UNKNOWN`.
 - [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 
 ## P0 — Front Agora audit 2026-05-26
@@ -76,6 +86,8 @@
 - [ ] Añadir prueba/render smoke para navegación 13→14.
 - [x] Resolver el riesgo de `Save to DB`: el guardado manual sincroniza stock y no actualiza `last_business_day_synced` si Winerim falla.
 - [x] Corregir `AgoraTodaysSalesStock` para aceptar `SUCCESS` como estado sincronizado y mostrar `variant`, `stock_id`, `previousStock/newStock` cuando existan.
+- [x] Corregir `SyncMonitor` para mostrar la ubicación en cada fila de `Stock Sync` y no confundir fallos de Sa Vida/Sa Pedrera/Kava con Baco/Cienvinos.
+- [x] Corregir visualización de conexiones sin `last_sync_at`: si hay cursor diario, muestra `Checked through <fecha>` en vez de `Never`.
 - [x] Revisar el cálculo de stock del panel de hoy: ya no mezcla botella/copa/magnum en un “stock antes” calculado; muestra stock por variante desde log o stock global como referencia.
 - [x] Ajustar copy de Sales & Mapping / Today: indica días cerrados/post-cierre y evita prometer “today/15 min” como tiempo real.
 - [x] Definir soporte MAGNUM en UI de catálogo: preview/push/backfill principales envían `MAGNUM` y backend valida elegibilidad.
@@ -128,6 +140,8 @@
 - [x] Corregir `sync-master-data` para no degradar `can_write_products=YES` a `UNKNOWN` tras una importación XML verificada.
 - [x] Cambiar auto-queue de vinos recién `READY` para pasar por `evaluate-auto-push` y respetar gates automáticos.
 - [ ] Confirmar en Lovable Cloud que `agora-proxy` y `winerim-proxy` quedaron redeployados con los hotfixes de cola/capacidades.
+- [ ] Confirmar en Lovable Cloud que el nuevo cambio de `auto-sync-sales` queda desplegado: una conexión sin días pendientes debe actualizar `last_sync_at`.
+- [ ] Confirmar en preview que `SyncMonitor > Stock Sync` muestra columna Location.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.

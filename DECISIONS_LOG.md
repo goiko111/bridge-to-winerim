@@ -280,3 +280,18 @@
 - **Decisión**: Forzar `ShowInPos=false` en las familias legacy de vino de Baco (`VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`) y `ShowInPos=true` en las familias dedicadas `... WINERIM`.
 - **Razón**: El vídeo del cliente mostraba productos legacy antiguos en la familia `VINO`. En Lovable Cloud esos productos ya estaban no vendibles, pero varias familias legacy seguían visibles, lo que mantenía ruido visual y podía confundir al equipo de sala.
 - **Alternativa descartada**: dejarlo como estaba porque `UseAsDirectSale=false` y `SaleableAsMain=false` ya impedían vender legacy. Técnicamente evitaba cobros, pero no cumplía la petición operativa de que las familias/vinos antiguos desaparezcan del TPV.
+
+## 2026-05-28 · Interpretar `last_sync_at` como último chequeo operativo aunque no haya días pendientes
+- **Decisión**: Cambiar `auto-sync-sales` para que actualice `last_sync_at` cuando el POS responde y no hay días cerrados pendientes, sin mover `last_business_day_synced`.
+- **Razón**: Baco y Cienvinos estaban sanos y con cursor `2026-05-27`, pero el Sync Monitor mostraba `Never` porque el flujo no escribía `last_sync_at` en el camino "No pending days to sync". Eso confundía activación con fallo operativo.
+- **Alternativa descartada**: rellenar `last_sync_at` solo a mano en base de datos. Arregla la foto puntual, pero deja el mismo síntoma en el siguiente cliente nuevo o en cualquier conexión sin cierres pendientes.
+
+## 2026-05-28 · Hacer visible la conexión origen en fallos de `stock_sync_log`
+- **Decisión**: Añadir ubicación a la pestaña `Stock Sync` del Sync Monitor.
+- **Razón**: La pestaña mostraba las últimas 100 filas globales sin indicar conexión; los fallos de Sa Vida/Sa Pedrera/Kava podían parecer fallos de Baco o Cienvinos.
+- **Alternativa descartada**: explicar el origen solo en documentación. La UI debe mostrar la conexión para evitar diagnósticos falsos durante soporte.
+
+## 2026-05-28 · No declarar toda la flota Agora como lista hasta reparar mappings/stockIds antiguos
+- **Decisión**: Separar el estado de Baco/Cienvinos (limpios y preparados para primer cierre nuevo) del resto de instalaciones Agora, que aún tienen deuda operativa.
+- **Razón**: Sa Vida, Sa Pedrera y Kava tienen fallos reales de stock; Katsu/La Candela/Luruna tienen stockIds incompletos o capacidades inconsistentes. Decir "todo listo" ocultaría riesgos de stock no descontado o reintentos repetidos.
+- **Alternativa descartada**: considerar `enabled=true` y token Winerim como suficiente. La preparación real exige cursor, mappings, stockIds por variante, capacidades de escritura y logs sin fallos recientes.

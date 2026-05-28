@@ -61,6 +61,7 @@ interface StockSyncLog {
   error_message: string | null;
   created_at: string;
   synced_at: string | null;
+  location_name?: string;
 }
 
 const statusConfig: Record<string, { icon: typeof CheckCircle2; class: string; badgeVariant: "default" | "destructive" | "secondary" | "outline" }> = {
@@ -166,7 +167,11 @@ export default function SyncMonitor() {
       location_name: conns.find((c) => c.id === e.connection_id)?.location_name || "Unknown",
     }));
     setSalesEvents(events);
-    setStockLogs((logsRes.data || []) as unknown as StockSyncLog[]);
+    const logs = (logsRes.data || []).map((log: any) => ({
+      ...log,
+      location_name: conns.find((c) => c.id === log.connection_id)?.location_name || "Unknown",
+    }));
+    setStockLogs(logs as StockSyncLog[]);
     setOutboundTasks(outboundRes.data || []);
     setLoading(false);
   };
@@ -307,7 +312,11 @@ export default function SyncMonitor() {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {conn.last_sync_at ? new Date(conn.last_sync_at).toLocaleString() : "Never"}
+                          {conn.last_sync_at
+                            ? new Date(conn.last_sync_at).toLocaleString()
+                            : conn.last_business_day_synced
+                              ? `Checked through ${conn.last_business_day_synced}`
+                              : "Never"}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                           {conn.last_business_day_synced || "—"}
@@ -414,6 +423,7 @@ export default function SyncMonitor() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Location</th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Product</th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Qty</th>
                     <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Winerim ID</th>
@@ -425,7 +435,7 @@ export default function SyncMonitor() {
                 <tbody className="divide-y divide-border">
                   {stockLogs.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                      <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                         <Wine className="mx-auto h-8 w-8 mb-2 opacity-40" />
                         No stock sync logs yet. Sync sales with mapped wines to see deductions here.
                       </td>
@@ -440,6 +450,9 @@ export default function SyncMonitor() {
                       : "text-warning";
                     return (
                       <tr key={log.id} className="hover:bg-secondary/30 transition-colors">
+                        <td className="px-4 py-3 text-foreground max-w-[160px] truncate" title={log.location_name || ""}>
+                          {log.location_name || "Unknown"}
+                        </td>
                         <td className="px-4 py-3 text-foreground max-w-[200px] truncate" title={log.product_name}>
                           {log.product_name}
                         </td>

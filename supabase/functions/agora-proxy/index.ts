@@ -2265,6 +2265,10 @@ serve(async (req) => {
           }
         }
 
+        await supabase.from("pos_connections")
+          .update({ last_sync_at: new Date().toISOString() })
+          .eq("id", connectionId);
+
         return new Response(
           JSON.stringify({
             success: true,
