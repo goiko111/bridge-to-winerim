@@ -322,6 +322,11 @@
 - **Alternativa descartada**: borrar las tareas o marcarlas `SUCCESS` sin verificación. Borrarlas pierde trazabilidad; cerrarlas sin comprobar tracking podría ocultar productos realmente pendientes.
 
 ## 2026-05-28 · Baco: productos Winerim presentes pero no direct-sale
-- **Decisión**: Forzar `UseAsDirectSale=true` y `SaleableAsMain=true` en los 118 productos Winerim de Baco reutilizando el producto completo de Agora con `set-product-visibility`.
-- **Razón**: La verificación directa mostraba 118/118 productos presentes y familias WINERIM visibles, pero todos los productos tenían `UseAsDirectSale=false`, lo que podía explicar que el cliente los viera pero tuviera problemas al venderlos como botones directos.
-- **Alternativa descartada**: reimportar todo el catálogo Winerim. No era necesario tocar precios, familias, IVA ni stock para corregir este problema puntual de vendibilidad.
+- **Decisión**: Esta decisión queda corregida por la decisión siguiente. El intento de forzar `UseAsDirectSale=true` resolvía botones directos, pero provocaba duplicado visual en la pantalla raíz.
+- **Razón**: En Agora, `UseAsDirectSale=true` no significa solo "vendible"; significa que el producto aparece también como venta directa fuera de su familia. La vendibilidad dentro de familia depende de `SaleableAsMain=true`.
+- **Alternativa descartada**: mantener `UseAsDirectSale=true`. El cliente confirmó duplicidad visual: los vinos aparecían dentro de `TINTOS WINERIM` y también abajo en la pantalla principal.
+
+## 2026-05-28 · Baco: quitar duplicados raíz manteniendo venta dentro de familia
+- **Decisión**: Dejar los 118 productos Winerim de Baco con `UseAsDirectSale=false` y `SaleableAsMain=true`.
+- **Razón**: Así desaparecen los botones duplicados de la pantalla principal y los vinos siguen vendibles cuando se entra en su familia WINERIM (`TINTOS WINERIM`, `BLANCOS WINERIM`, `COPAS WINERIM`, etc.).
+- **Alternativa descartada**: reimportar catálogo completo o ocultar productos. Reimportar era innecesario y ocultar productos rompería la venta dentro de familia.

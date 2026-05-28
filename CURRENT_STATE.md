@@ -434,7 +434,8 @@ _Última actualización: 2026-05-28_
   - Primer `xml-import` global devolvió HTTP `546` por timeout de runtime, pero el XML sí se aplicó en Agora.
   - Verificación posterior directa sobre `export-master` confirmó 118/118 productos esperados presentes.
   - Verificación estricta: 0 productos faltantes, 0 productos con fallos de IVA/preparación/precios/visibilidad.
-  - Todos los productos Winerim importados tienen precios en price lists `1`, `2`, `3`, `VatId=3`, `PreparationTypeId=1`, `PreparationOrderId=1`, `UseAsDirectSale=true`, `SaleableAsMain=true`.
+  - Todos los productos Winerim importados tienen precios en price lists `1`, `2`, `3`, `VatId=3`, `PreparationTypeId=1`, `PreparationOrderId=1`.
+  - Política visual corregida: `UseAsDirectSale=false` para que no salgan duplicados como botones raíz; `SaleableAsMain=true` para que sean vendibles dentro de sus familias WINERIM.
   - Se corrigió el tracking local tras el timeout: `winerim_push_tracking` queda con 82 `BOTTLE:PUSHED`, 21 `GLASS:PUSHED`, 15 `MAGNUM:PUSHED`; formatos no exportables quedan `NOT_PUSHED`.
   - `product_mappings` queda con 118 mappings `CONFIRMED` y sin mappings falsos para formatos no exportables.
   - `provider_capabilities` marcado `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
@@ -464,6 +465,12 @@ _Última actualización: 2026-05-28_
   - Incidencia detectada: los 118 productos Winerim estaban presentes pero con `UseAsDirectSale=false` en el XML vivo de Agora, aunque `SaleableAsMain=true`.
   - Corrección aplicada con `set-product-visibility`: 118/118 productos Winerim actualizados a `UseAsDirectSale=true` y `SaleableAsMain=true`, sin tocar precios, familias, IVA ni stock.
   - Verificación posterior directa: 118 presentes, `notDirect=0`, `notMain=0`, `hiddenFamily=0`.
+- Corrección por duplicado visual en Baco — 2026-05-28:
+  - El cliente reportó que dentro de `TINTOS WINERIM` aparecía lo mismo que en la pantalla principal.
+  - Causa: `UseAsDirectSale=true` hace que Agora muestre los productos también como botones directos en la pantalla raíz, además de dentro de la familia.
+  - Corrección aplicada directamente en Agora: 118/118 productos Winerim con `UseAsDirectSale=false` y `SaleableAsMain=true`, reutilizando los elementos XML completos para no tocar precios/familias/IVA/stock.
+  - Verificación posterior: 118 presentes, `directRootButtons=0`, `notSaleableAsMain=0`, `hiddenFamily=0`.
+  - Backup local sin secretos: `.codex-backups/baco-winerim-direct-sale-before-2026-05-28T13-21-44-119Z.json`.
 - Rollback documentado en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - Estado tras activación automática:
   - Baco queda activo desde cursor `2026-05-27`.
