@@ -75,6 +75,7 @@ _Última actualización: 2026-05-28_
   - `agora-proxy.process-xml-outbound-queue` y la cola legacy no reclaman nuevos lotes si queda poco presupuesto de ejecución, y devuelven a `QUEUED` las tareas reclamadas pero no procesadas para no dejar zombies `RUNNING`.
   - `agora-proxy.sync-master-data` preserva un `can_write_products=YES` ya verificado; una lectura de master data no debe degradar una conexión que ya probó un XML import real.
   - `winerim-proxy` cambia el auto-queue de vinos que pasan a `READY` para usar `evaluate-auto-push` en modo `CREATE`, respetando `auto_push_on_create`, `auto_push_verified_ready`, `write_mode` y capacidades, en lugar de llamar al encolador manual directamente.
+  - Commit `e1633d9` subido a GitHub con estos hotfixes. Prueba posterior en Lovable Cloud (`sync-master-data` Baco) indicó que el runtime aún no había redeployado el nuevo `agora-proxy`; se restauró el valor operativo `can_write_products=YES` en ambas conexiones y queda pendiente confirmar redeploy.
 - Decisión operativa importante:
   - `auto_push_on_update` queda apagado temporalmente. En el código actual, `fetch-catalog` evalúa el lote procesado como `UPDATE` aunque no haya cambios reales; encenderlo ahora podría reencolar/reimportar muchos vinos en cada sincronización de catálogo. Siguiente mejora: auto-update diferencial por cambios reales de precio/nombre/formato antes de activarlo.
 
