@@ -320,3 +320,8 @@
 - **Decisión**: Marcar como `SUCCESS` las 82 tareas abiertas de Cienvinos generadas por el runtime antiguo únicamente después de comprobar que todos sus formatos ya estaban `PUSHED` o `VERIFIED` en `winerim_push_tracking`.
 - **Razón**: Eran updates `MANUAL` de productos ya importados; procesarlos otra vez habría cargado Agora sin aportar cambios y mantenerlos abiertos hacía parecer que Cienvinos estaba atascado.
 - **Alternativa descartada**: borrar las tareas o marcarlas `SUCCESS` sin verificación. Borrarlas pierde trazabilidad; cerrarlas sin comprobar tracking podría ocultar productos realmente pendientes.
+
+## 2026-05-28 · Baco: productos Winerim presentes pero no direct-sale
+- **Decisión**: Forzar `UseAsDirectSale=true` y `SaleableAsMain=true` en los 118 productos Winerim de Baco reutilizando el producto completo de Agora con `set-product-visibility`.
+- **Razón**: La verificación directa mostraba 118/118 productos presentes y familias WINERIM visibles, pero todos los productos tenían `UseAsDirectSale=false`, lo que podía explicar que el cliente los viera pero tuviera problemas al venderlos como botones directos.
+- **Alternativa descartada**: reimportar todo el catálogo Winerim. No era necesario tocar precios, familias, IVA ni stock para corregir este problema puntual de vendibilidad.

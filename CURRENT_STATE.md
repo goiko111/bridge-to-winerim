@@ -459,6 +459,11 @@ _Última actualización: 2026-05-28_
     - Legacy `ARROCAL TINTO FINO` / `ARROCAL SELECCION` → Winerim `B Arrocal`, `C Arrocal`, `B Arrocal Selección`.
     - Legacy `JOSE PARIENTE` / `JOSE PARIENTE COPA` → Winerim `B José Pariente Verdejo` y `C José Pariente Verdejo`.
     - Duplicados Winerim: `Alión` conserva `B Alión`, `M Alión` y `M Alión 054`; `Villacardiel` conserva `B Villacardiel` y `B Villacardiel 977`.
+- Corrección por reporte de problemas en Baco — 2026-05-28:
+  - Verificación directa contra Agora `export-master`: 118/118 productos Winerim presentes, 0 faltantes; 8 familias WINERIM visibles; familias legacy de vino ocultas.
+  - Incidencia detectada: los 118 productos Winerim estaban presentes pero con `UseAsDirectSale=false` en el XML vivo de Agora, aunque `SaleableAsMain=true`.
+  - Corrección aplicada con `set-product-visibility`: 118/118 productos Winerim actualizados a `UseAsDirectSale=true` y `SaleableAsMain=true`, sin tocar precios, familias, IVA ni stock.
+  - Verificación posterior directa: 118 presentes, `notDirect=0`, `notMain=0`, `hiddenFamily=0`.
 - Rollback documentado en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - Estado tras activación automática:
   - Baco queda activo desde cursor `2026-05-27`.
