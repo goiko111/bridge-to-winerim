@@ -395,6 +395,16 @@ _Última actualización: 2026-05-28_
   - Familias legacy ocultas (`ShowInPos=false`): `VINO` (`2`), `FINOS` (`4`), `ROSADOS` (`5`), `TINTOS` (`6`), `CHAMPAGNE` (`7`), `BLANCOS` (`29`).
   - 348 productos legacy de esas familias quedaron no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
   - Verificación final: 0 productos legacy siguen visibles/vendibles.
+- Revisión por reporte visual del cliente — 2026-05-28:
+  - Imagen recibida: tablet con familias `TINTOS WINERIM`, `COPAS WINERIM`, `ROSADOS WINERIM`, `DULCE WINERIM`, `BLANCOS WINERIM`, `MAGNUM WINERIM`, etc., y botones nuevos tipo `B Altún Crianza`, `B Villacardiel`, `B Muga Crianza`.
+  - Vídeo recibido: pantalla Agora con familia legacy `VINO` y botones antiguos tipo `TAMARAL CRIANZA`, `ARROCAL TINTO FINO`, `ALTUN (RIOJA)`, `JOSE PARIENTE`, `CIRCE`. En master data esos productos ya estaban no vendibles, pero varias familias legacy seguían con `ShowInPos=true`.
+  - Corrección aplicada en Lovable Cloud: forzar `ShowInPos=false` en familias legacy `VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`; forzar `ShowInPos=true` en las 8 familias `... WINERIM`.
+  - Verificación posterior: 48 familias, 3.903 productos; las 6 familias legacy están ocultas, las 8 familias WINERIM visibles, 348 productos legacy siguen no vendibles y 0 productos legacy quedan vendibles.
+  - Ejemplos de naming actual:
+    - Legacy `ALTUN` / `ALTUN COPA` → Winerim `B Altún Crianza` y `C Altún Crianza`.
+    - Legacy `ARROCAL TINTO FINO` / `ARROCAL SELECCION` → Winerim `B Arrocal`, `C Arrocal`, `B Arrocal Selección`.
+    - Legacy `JOSE PARIENTE` / `JOSE PARIENTE COPA` → Winerim `B José Pariente Verdejo` y `C José Pariente Verdejo`.
+    - Duplicados Winerim: `Alión` conserva `B Alión`, `M Alión` y `M Alión 054`; `Villacardiel` conserva `B Villacardiel` y `B Villacardiel 977`.
 - Rollback documentado en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - Estado tras activación automática:
   - Baco queda activo desde cursor `2026-05-27`.

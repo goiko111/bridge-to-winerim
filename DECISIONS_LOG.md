@@ -275,3 +275,8 @@
 - **Decisión**: `sync-master-data` no debe degradar `can_write_products=YES` a `UNKNOWN` si ya hubo XML import verificado. Además, los vinos que pasan de pricing incompleto a `READY` se evalúan con `evaluate-auto-push` (`CREATE`) en vez de llamar al encolador manual directo.
 - **Razón**: Baco había importado correctamente pero una lectura de master data volvió a mostrar la capacidad de escritura como `UNKNOWN`. El encolado directo de newly-ready también podía saltarse gates como `auto_push_on_create`, `auto_push_verified_ready` o `write_mode`.
 - **Alternativa descartada**: corregir solo los valores en base de datos. Arregla la foto puntual, pero no evita que una sincronización futura vuelva a degradar capacidades o encolar fuera de las reglas automáticas.
+
+## 2026-05-28 · Reforzar visibilidad de familias Baco tras reporte visual
+- **Decisión**: Forzar `ShowInPos=false` en las familias legacy de vino de Baco (`VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`) y `ShowInPos=true` en las familias dedicadas `... WINERIM`.
+- **Razón**: El vídeo del cliente mostraba productos legacy antiguos en la familia `VINO`. En Lovable Cloud esos productos ya estaban no vendibles, pero varias familias legacy seguían visibles, lo que mantenía ruido visual y podía confundir al equipo de sala.
+- **Alternativa descartada**: dejarlo como estaba porque `UseAsDirectSale=false` y `SaleableAsMain=false` ya impedían vender legacy. Técnicamente evitaba cobros, pero no cumplía la petición operativa de que las familias/vinos antiguos desaparezcan del TPV.
