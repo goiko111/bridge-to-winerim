@@ -106,8 +106,13 @@
 - [ ] Definir estrategia gradual para lint: bloquear errores nuevos y corregir primero hooks/dependencias, `no-explicit-any` en shared/proxies críticos y warnings de Fast Refresh.
 
 ## P0 — Despliegue seguro post-cambios
-- [ ] Aplicar primero migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [x] Publicar cambios P0 en el repo oficial GitHub (`main`, commit `5ecee98`) para que Lovable tenga código, migraciones, tests y rollback.
+- [x] Confirmar tras el push que `.env` no se modificó ni se volvió a copiar desde la auditoría.
+- [x] Validar en copia limpia antes del push: install, tests unitarios, TypeScript, build, lint acotado y parse TS de Edge Functions críticas.
+- [ ] Iniciar sesión en Lovable Cloud desde el navegador integrado para poder operar el panel Cloud.
+- [ ] Aplicar primero migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql` en Lovable Cloud.
 - [ ] Desplegar edge functions después de las migraciones.
+- [ ] Confirmar contra backend real que existen `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key`, tabla `user_roles` y función `has_role()`.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -152,6 +157,7 @@
 - Baco Getafe: catálogo importado y legacy oculto; no activar automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales en Lovable Cloud.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
 - Lovable Cloud: faltan migraciones `stock_sync_log` variant-aware y `user_roles/has_role()`; sin ellas no se debe encender el modo automático completo en nuevas conexiones.
+- Lovable Cloud UI: el navegador integrado está en login GitHub/Lovable; se necesita que el usuario inicie sesión para ejecutar SQL desde Cloud si no hay otra credencial administrativa disponible.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.

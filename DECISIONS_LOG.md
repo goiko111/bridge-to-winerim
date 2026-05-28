@@ -230,3 +230,13 @@
 - **Decisión**: Importar `Alión` y `Villacardiel` duplicados con sufijo corto en Agora (`M Alión 054`, `B Villacardiel 977`) y restaurar después los nombres Winerim locales originales.
 - **Razón**: Agora rechaza nombres duplicados aunque los productos tengan `Id` distinto. El sufijo solo afecta al nombre visible del producto Agora necesario para distinguir variantes/fichas duplicadas.
 - **Alternativa descartada**: saltar uno de los duplicados. No era seguro asumir que son equivalentes; en Baco representan productos/precios distintos.
+
+## 2026-05-28 · Publicar cambios P0 en GitHub antes de tocar activación automática
+- **Decisión**: Empujar al repo oficial `goiko111/bridge-to-winerim` los cambios P0 ya validados localmente, excluyendo `.env`, mediante el commit `5ecee98` (`Stabilize Agora automation and stock sync`).
+- **Razón**: El README del proyecto indica que los pushes a GitHub se reflejan en Lovable. La UI de Lovable Cloud requería login en el navegador integrado, así que GitHub era la vía disponible para dejar código, migraciones, tests y rollback en la fuente oficial sin esperar credenciales.
+- **Alternativa descartada**: activar Cienvinos/Baco solo con el catálogo importado. El backend real seguía sin columnas `stock_sync_log.variant/stock_id/idempotency_key` ni `user_roles`, por lo que activar `enabled=true` habría encendido ventas/stock con garantías incompletas.
+
+## 2026-05-28 · No asumir que GitHub aplica DDL en Lovable Cloud
+- **Decisión**: Tratar el push a GitHub como publicación de código/migraciones, pero no como prueba de migración aplicada. Se validó contra backend real después del push y las columnas/tablas seguían faltando.
+- **Razón**: La seguridad operativa depende del esquema real, no de que los archivos existan en el repositorio. La verificación por REST demostró que `stock_sync_log.variant` y `user_roles` aún no están disponibles.
+- **Alternativa descartada**: esperar pasivamente y activar cuando el repo estuviera actualizado. Sin confirmación de DDL y redeploy de funciones, el riesgo de romper stock automático sigue abierto.

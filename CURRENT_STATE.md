@@ -2,9 +2,32 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-05-27_
+_Última actualización: 2026-05-28_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Despliegue P0 vía GitHub — 2026-05-28
+- Se comprobó que el navegador integrado no tenía sesión autenticada en Lovable Cloud; el acceso al proyecto redirigía a login.
+- Se verificó que el repositorio oficial `goiko111/bridge-to-winerim` estaba por detrás de la copia de auditoría: no contenía las migraciones P0, fixes de Agora, tests ni documentos de rollback.
+- Se clonó una copia limpia del repo oficial en `/tmp/bridge-to-winerim-remote`, se copiaron los cambios P0 excluyendo `.env`, y se comprobó que el hash de `.env` no cambió.
+- Validaciones ejecutadas en la copia limpia antes de publicar:
+  - `npm ci --ignore-scripts --no-audit --no-fund` pasa.
+  - `npm test -- --run src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` pasa: 12 tests.
+  - `npx tsc --noEmit` pasa.
+  - `npm run build` pasa con warnings conocidos de Browserslist desactualizado y bundle principal >500 kB.
+  - Lint acotado de los archivos nuevos críticos pasa.
+  - Parse TypeScript de `agora-proxy`, `agora-cron-dispatcher` y `winerim-proxy` pasa.
+- Se hizo push a `main` del repo oficial con commit `5ecee98` (`Stabilize Agora automation and stock sync`).
+- Tras esperar sincronización, el backend real seguía sin tener aplicadas las migraciones SQL:
+  - `stock_sync_log.variant` devuelve error de columna inexistente.
+  - `user_roles` devuelve tabla inexistente.
+- El push a GitHub deja el código y las migraciones disponibles para Lovable, pero no confirma por sí solo que Lovable Cloud haya aplicado DDL ni redeployado Edge Functions.
+- Por seguridad, no se ha activado `enabled=true` en Cienvinos ni Baco.
+
+### Bloqueo activo Lovable Cloud — 2026-05-28
+- Para ejecutar SQL y confirmar despliegue desde la UI se necesita una sesión Lovable Cloud autenticada.
+- El navegador integrado quedó visible en la pantalla de login GitHub/Lovable para que el usuario pueda iniciar sesión sin compartir credenciales.
+- Tras login, las acciones pendientes son aplicar las dos migraciones P0, confirmar que el esquema cambia y validar/redeployar funciones antes de activar cualquier automatismo.
 
 ### Sistema de resiliencia Agora (activo, sin cambios)
 - Cache XML productos `fetchAgoraProductsXmlCached` (TTL 60s).
