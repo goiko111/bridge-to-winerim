@@ -505,7 +505,7 @@ _Última actualización: 2026-05-28_
 - No se tocó stock real: toda la reparación fue lectura de Winerim + metadatos locales de mapping/stockId.
 
 #### Hipótesis / riesgos
-- El runtime antiguo de Lovable Cloud sigue ejecutándose: `auto-sync-sales` responde "No pending days to sync" pero no actualiza `last_sync_at` (`redeployLikely=false` en prueba posterior al push `ae827fd`). Los hotfixes están en GitHub, pero falta redeploy efectivo de Edge Functions.
+- El runtime antiguo de Lovable Cloud sigue ejecutándose: `auto-sync-sales` responde "No pending days to sync" pero no actualiza `last_sync_at` (`redeployLikely=false` en prueba posterior al push de los hotfixes; último commit documentado `dbb0c30`). Los hotfixes están en GitHub, pero falta redeploy efectivo de Edge Functions.
 - Sa Vida no puede declararse lista desde middleware: el servidor responde, pero la API REST Agora devuelve HTTP 501. El bloqueo requiere corrección externa de POS/puerto/módulo.
 - Kava, Luruna y Sa Pedrera tienen stockIds/mappings corregidos, pero todavía arrastran backlog outbound y breakers/residuos de cola que deben limpiarse después del redeploy para no mezclar deuda antigua con fallos nuevos.
 
