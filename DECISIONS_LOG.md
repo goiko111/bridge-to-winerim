@@ -240,3 +240,18 @@
 - **Decisión**: Tratar el push a GitHub como publicación de código/migraciones, pero no como prueba de migración aplicada. Se validó contra backend real después del push y las columnas/tablas seguían faltando.
 - **Razón**: La seguridad operativa depende del esquema real, no de que los archivos existan en el repositorio. La verificación por REST demostró que `stock_sync_log.variant` y `user_roles` aún no están disponibles.
 - **Alternativa descartada**: esperar pasivamente y activar cuando el repo estuviera actualizado. Sin confirmación de DDL y redeploy de funciones, el riesgo de romper stock automático sigue abierto.
+
+## 2026-05-28 · Aplicar migraciones P0 antes de activar conexiones Agora
+- **Decisión**: Ejecutar en Lovable Cloud las migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`, verificar columnas/tabla/RPCs contra el backend real y mantener Cienvinos/Baco deshabilitados.
+- **Razón**: El stock automático depende de `variant`, `stock_id`, `idempotency_key` y del claim atómico de colas. Activar sin ese esquema podía provocar deducciones ambiguas o reintentos no idempotentes.
+- **Alternativa descartada**: activar `enabled=true` tras importar catálogo, confiando en que el código con fallback bastaría. El fallback protege despliegues parciales, pero no es la garantía correcta para clientes productivos.
+
+## 2026-05-28 · Redeploy de Edge Functions tras migraciones y corrección de cambios generados por Lovable
+- **Decisión**: Redeployar `agora-proxy`, `winerim-proxy`, `agora-cron-dispatcher` y `revo-proxy` desde Lovable Cloud después de aplicar DDL. Al detectar que Lovable generó cambios en `src/integrations/supabase/types.ts` y un cast menor de UI, revertir esos cambios en fuente porque el protocolo del proyecto prohíbe tocar `src/integrations/supabase/{client,types}.ts`.
+- **Razón**: El redeploy era necesario para que el backend ejecutase la lógica P0 actual, pero no justifica romper una regla dura de mantenimiento ni dejar cambios no solicitados en archivos generados.
+- **Alternativa descartada**: conservar los tipos actualizados generados automáticamente. Aunque reflejan el nuevo esquema, contradicen la regla explícita del proyecto y pueden introducir churn/confianza falsa en tipos generados.
+
+## 2026-05-28 · No activar automático hasta una venta WINERIM real validada
+- **Decisión**: Mantener `enabled=false` en Cienvinos y Baco tras migraciones y redeploy. La siguiente activación requiere una venta/cierre con producto WINERIM resuelto y verificación de `stock_sync_log.variant`, `stock_id`, `idempotency_key` y reejecución sin doble descuento.
+- **Razón**: Cienvinos no tiene facturas cerradas recientes y Baco tiene cierres legacy con 0 líneas resueltas contra productos WINERIM. No existe aún una prueba real de deducción de stock por variante en estas instalaciones nuevas.
+- **Alternativa descartada**: activar cron global inmediatamente. `enabled=true` dispara catálogo, ventas/stock y cola outbound juntos; sin prueba real de stock, el riesgo operativo sigue siendo innecesario.

@@ -24,10 +24,25 @@ _Última actualización: 2026-05-28_
 - El push a GitHub deja el código y las migraciones disponibles para Lovable, pero no confirma por sí solo que Lovable Cloud haya aplicado DDL ni redeployado Edge Functions.
 - Por seguridad, no se ha activado `enabled=true` en Cienvinos ni Baco.
 
-### Bloqueo activo Lovable Cloud — 2026-05-28
-- Para ejecutar SQL y confirmar despliegue desde la UI se necesita una sesión Lovable Cloud autenticada.
-- El navegador integrado quedó visible en la pantalla de login GitHub/Lovable para que el usuario pueda iniciar sesión sin compartir credenciales.
-- Tras login, las acciones pendientes son aplicar las dos migraciones P0, confirmar que el esquema cambia y validar/redeployar funciones antes de activar cualquier automatismo.
+### Lovable Cloud P0 aplicado y verificado — 2026-05-28
+- La sesión autenticada de Lovable Cloud quedó disponible en Chrome externo; el navegador integrado seguía sin sesión útil.
+- Se aplicaron en Lovable Cloud SQL editor las migraciones:
+  - `20260526090000_stock_sync_variant_idempotency.sql`.
+  - `20260526091000_user_roles_has_role.sql`.
+- La alerta de operación destructiva del editor se debió al texto `ON DELETE CASCADE` de la foreign key de `user_roles`; no se ejecutó ningún borrado de datos.
+- Verificación REST contra el backend real:
+  - `stock_sync_log` acepta `variant`, `stock_id`, `idempotency_key` (`HTTP 200`).
+  - `user_roles` existe (`HTTP 200`).
+  - `has_role(fake_user, admin)` devuelve `false` (`HTTP 200`).
+  - `claim_outbound_tasks(fake_connection, ["NOOP"])` devuelve `[]` (`HTTP 200`); la firma correcta es `p_task_types TEXT[]`.
+- Lovable Cloud redeployó `agora-proxy`, `winerim-proxy`, `agora-cron-dispatcher` y `revo-proxy`; la lista de Edge Functions mostró esas 4 funciones actualizadas hace segundos.
+- Lovable generó commits de redeploy (`8dff6d3`, `a7cefe8`, merge `164d092`) que tocaron `src/integrations/supabase/types.ts` y un cast menor en `AgoraTodaysSalesStock`. Esos cambios de fuente se revierten porque el protocolo del proyecto prohíbe editar `src/integrations/supabase/{client,types}.ts`.
+- Cienvinos y Baco se verificaron después del redeploy y siguen `enabled=false`, `write_mode=XML_IMPORT`; no se activó cron ni se tocaron credenciales.
+- Validación read-only tras el redeploy:
+  - Cienvinos `find-last-business-day` 7 días: 0 facturas cerradas.
+  - Baco `find-last-business-day` 7 días: días `2026-05-27` a `2026-05-22`, 449 facturas.
+  - Baco `fetch-day` para `2026-05-27`: 86 eventos, 436 líneas, 95 candidatas a vino, 0 resueltas contra productos Winerim; no se ejecutó `save-sales` ni ninguna escritura de stock.
+- Nuevo bloqueo de activación: falta validar una venta/cierre real con producto WINERIM resuelto para comprobar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y ausencia de doble deducción antes de poner `enabled=true`.
 
 ### Sistema de resiliencia Agora (activo, sin cambios)
 - Cache XML productos `fetchAgoraProductsXmlCached` (TTL 60s).
@@ -248,16 +263,14 @@ _Última actualización: 2026-05-28_
   - Los 177 productos preexistentes no se han ocultado porque no hay familias antiguas de vino ni productos de vino detectados fuera de las familias WINERIM. Los candidatos por texto eran falsos positivos (`tinto limón`, `copa cerveza`, infusiones/licores).
   - 12 botellas duplicadas de nombre en Winerim fueron importadas con sufijo corto visible en Agora para evitar el `HTTP 500` por nombre duplicado de Agora: ejemplo `B Alión 276`. El catálogo local Winerim se restauró con sus nombres originales tras la importación temporal.
 - Bloqueo antes de activar automático:
-  - En producción todavía faltan columnas `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key`.
-  - En producción todavía falta tabla/función `user_roles` / `has_role()`.
-  - El `winerim-proxy` desplegado no capturó `erpStock.id` durante `fetch-catalog`; se compensó con backfill directo de stockIds, pero debe desplegarse la función actualizada.
+  - Las migraciones P0 y funciones actuales ya están desplegadas en Lovable Cloud.
+  - Cienvinos no tiene facturas cerradas en la prueba read-only de 7 días; falta una venta/cierre real con productos WINERIM para validar deducción de stock por variante antes de activar cron.
+  - El siguiente `winerim-proxy fetch-catalog` debe confirmar que el proxy desplegado ya captura `erpStock.id` sin backfill manual.
 - Rollback documentado en `ROLLBACK_CIENVINOS_AGORA_2026-05-27.md`.
 
-### Revisión flota Agora — 2026-05-27
-- Producción Lovable Cloud sigue sin tener aplicadas las migraciones P0:
-  - `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key` no existen todavía.
-  - `user_roles` / `has_role()` no existen todavía.
-- El dispatcher Agora no permite activar solo catálogo: `enabled=true` incluye `catalog`, `sales-stock` y `outbound-queue`. Por seguridad, Cienvinos sigue con `enabled=false` hasta migraciones + funciones desplegadas + prueba de stock.
+### Revisión flota Agora — 2026-05-27 / actualizada 2026-05-28
+- Las migraciones P0 y las funciones actuales ya están aplicadas/redeployadas en Lovable Cloud.
+- El dispatcher Agora no permite activar solo catálogo: `enabled=true` incluye `catalog`, `sales-stock` y `outbound-queue`. Por seguridad, Cienvinos y Baco siguen con `enabled=false` hasta prueba real de stock idempotente.
 - Cienvinos:
   - El catálogo Winerim ya está importado y verificado en Agora: 428 productos en 8 familias WINERIM.
   - StockIds por variante ya cacheados: 372 botella, 49 copa, 7 magnum.
@@ -268,7 +281,7 @@ _Última actualización: 2026-05-28_
     - `generateImportXml` mantiene nombres únicos intactos, conserva el nombre al actualizar el mismo `Product Id` y añade sufijo corto determinista a duplicados reales (`... 276`, etc.).
     - Tests añadidos en `src/test/agoraProductNaming.test.ts`.
     - Validación local: `npm test -- --run src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` pasa (12 tests), `npx tsc --noEmit` pasa, lint acotado de los archivos nuevos pasa, parse TypeScript de `agora-proxy` pasa, `npm run build` pasa con los warnings conocidos de Browserslist/bundle grande.
-    - Pendiente desplegar `agora-proxy` actualizado en Lovable Cloud tras aplicar migraciones P0.
+    - `agora-proxy` actualizado ya está desplegado en Lovable Cloud.
 - Sa Vida:
   - Credenciales Agora y token Winerim actualizados en Lovable Cloud con los valores facilitados por el usuario. No se documentan secretos.
   - El host responde, pero los endpoints Agora devuelven `501`:
@@ -335,6 +348,9 @@ _Última actualización: 2026-05-28_
   - Se corrigió el tracking local tras el timeout: `winerim_push_tracking` queda con 82 `BOTTLE:PUSHED`, 21 `GLASS:PUSHED`, 15 `MAGNUM:PUSHED`; formatos no exportables quedan `NOT_PUSHED`.
   - `product_mappings` queda con 118 mappings `CONFIRMED` y sin mappings falsos para formatos no exportables.
   - `provider_capabilities` marcado `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
+- Validación read-only post-redeploy:
+  - `find-last-business-day` 7 días devuelve días cerrados de `2026-05-27` a `2026-05-22`.
+  - `fetch-day` de `2026-05-27` devuelve 86 eventos, 436 líneas y 95 candidatas a vino, pero 0 líneas resueltas contra productos WINERIM. No se ejecutó `save-sales` porque no aportaría una validación real de stock Winerim.
 - Duplicados:
   - Preview inicial detectó dos nombres duplicados que Agora habría rechazado: `M Alión` y `B Villacardiel`.
   - Se desambiguaron temporalmente en la caché local para importar como `M Alión 054` y `B Villacardiel 977`.

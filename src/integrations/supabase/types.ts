@@ -727,16 +727,13 @@ export type Database = {
           created_at: string
           error_message: string | null
           id: string
-          idempotency_key: string | null
           product_name: string
           provider_product_id: string | null
           quantity: number
           sales_event_id: string | null
           sales_line_item_id: string | null
           status: string
-          stock_id: number | null
           synced_at: string | null
-          variant: string | null
           winerim_product_id: string | null
           winerim_response: Json | null
         }
@@ -745,16 +742,13 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
-          idempotency_key?: string | null
           product_name: string
           provider_product_id?: string | null
           quantity?: number
           sales_event_id?: string | null
           sales_line_item_id?: string | null
           status?: string
-          stock_id?: number | null
           synced_at?: string | null
-          variant?: string | null
           winerim_product_id?: string | null
           winerim_response?: Json | null
         }
@@ -763,16 +757,13 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
-          idempotency_key?: string | null
           product_name?: string
           provider_product_id?: string | null
           quantity?: number
           sales_event_id?: string | null
           sales_line_item_id?: string | null
           status?: string
-          stock_id?: number | null
           synced_at?: string | null
-          variant?: string | null
           winerim_product_id?: string | null
           winerim_response?: Json | null
         }
@@ -789,38 +780,6 @@ export type Database = {
             columns: ["sales_line_item_id"]
             isOneToOne: false
             referencedRelation: "sales_line_items"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      user_roles: {
-        Row: {
-          connection_id: string | null
-          created_at: string
-          id: string
-          role: string
-          user_id: string
-        }
-        Insert: {
-          connection_id?: string | null
-          created_at?: string
-          id?: string
-          role: string
-          user_id: string
-        }
-        Update: {
-          connection_id?: string | null
-          created_at?: string
-          id?: string
-          role?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "user_roles_connection_id_fkey"
-            columns: ["connection_id"]
-            isOneToOne: false
-            referencedRelation: "pos_connections"
             referencedColumns: ["id"]
           },
         ]
@@ -1102,35 +1061,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      claim_outbound_tasks: {
-        Args: {
-          p_connection_id: string
-          p_limit?: number
-          p_task_types: string[]
-        }
-        Returns: {
-          attempts: number
-          blocked_reason: string | null
-          connection_id: string
-          created_at: string
-          external_id: string | null
-          id: string
-          last_error: string | null
-          max_attempts: number
-          next_retry_at: string | null
-          payload_json: Json
-          status: string
-          task_type: string
-          updated_at: string
-        }[]
-        SetofOptions: {
-          from: "*"
-          to: "outbound_tasks"
-          isOneToOne: false
-          isSetofReturn: true
-        }
-      }
-      has_role: { Args: { _role: string; _user_id: string }; Returns: boolean }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
       schedule_next_catalog_batch: {
         Args: {

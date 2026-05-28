@@ -18,12 +18,12 @@
 - [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
 - [x] Cerrar 75 tareas `AGORA_XML_UPSERT_PRODUCT` supersedidas por la importación verificada para dejar la cola sin pendientes.
 - [x] Codificar desambiguación automática de nombres duplicados en `generateImportXml` antes de activar auto-push/actualizaciones automáticas de catálogo.
-- [ ] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
-- [ ] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
+- [x] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [x] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
 - [ ] Confirmar tras despliegue que un preview XML con vinos duplicados genera sufijos deterministas y que Agora no devuelve HTTP 500 por nombre duplicado.
 - [ ] Repetir `winerim-proxy fetch-catalog` tras despliegue y confirmar que el proxy ya captura `bottle/glass/magnum_stock_id` sin backfill manual.
 - [x] Verificar post-write en Agora: familias creadas, productos visibles, precios en Barra/Sala/Terraza, IVA y preparation correctos.
-- [ ] Ejecutar venta/cierre de prueba o esperar primer día cerrado; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
+- [ ] Ejecutar venta/cierre de prueba con producto WINERIM o esperar primer día cerrado con líneas resueltas; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Reejecutar el mismo día y confirmar que no hay doble deducción.
 - [ ] Activar `enabled=true` solo tras import piloto, ventas cerradas y stock idempotente verificados.
 - [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
@@ -60,10 +60,11 @@
 - [x] Ocultar 348 productos legacy de vino; verificación final 0 legacy visible/vendible.
 - [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
 - [x] Documentar rollback en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
-- [ ] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
-- [ ] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
+- [x] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
+- [x] Desplegar edge functions actuales después de migraciones, especialmente `agora-proxy`, `winerim-proxy` y `agora-cron-dispatcher`.
+- [x] Validar post-redeploy en modo lectura: Baco tiene días cerrados, pero el cierre `2026-05-27` devuelve 0 líneas resueltas contra productos WINERIM; no sirve todavía como prueba real de stock.
 - [ ] Validar con el cliente si los vinos deben publicarse también en `MUS` o `Personal`; por ahora quedan excluidos.
-- [ ] Ejecutar venta/cierre de prueba; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key`.
+- [ ] Ejecutar venta/cierre de prueba con producto WINERIM resuelto; validar `save-sales` + `syncStockForDay` con `stock_sync_log.variant`, `stock_id`, `idempotency_key`.
 - [ ] Evaluar en una fase posterior si Baco puede usar `Tickets` intradía con feature flag por conexión; no activar globalmente.
 - [ ] Activar `enabled=true` solo tras migraciones, despliegue y prueba real de stock idempotente.
 
@@ -109,10 +110,13 @@
 - [x] Publicar cambios P0 en el repo oficial GitHub (`main`, commit `5ecee98`) para que Lovable tenga código, migraciones, tests y rollback.
 - [x] Confirmar tras el push que `.env` no se modificó ni se volvió a copiar desde la auditoría.
 - [x] Validar en copia limpia antes del push: install, tests unitarios, TypeScript, build, lint acotado y parse TS de Edge Functions críticas.
-- [ ] Iniciar sesión en Lovable Cloud desde el navegador integrado para poder operar el panel Cloud.
-- [ ] Aplicar primero migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql` en Lovable Cloud.
-- [ ] Desplegar edge functions después de las migraciones.
-- [ ] Confirmar contra backend real que existen `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key`, tabla `user_roles` y función `has_role()`.
+- [x] Conseguir sesión Lovable Cloud autenticada en Chrome externo para operar el panel Cloud.
+- [x] Aplicar primero migraciones `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql` en Lovable Cloud.
+- [x] Desplegar edge functions después de las migraciones.
+- [x] Confirmar contra backend real que existen `stock_sync_log.variant`, `stock_sync_log.stock_id`, `stock_sync_log.idempotency_key`, tabla `user_roles` y función `has_role()`.
+- [x] Confirmar `claim_outbound_tasks(...)` con firma `p_task_types TEXT[]` usando conexión fake y sin reclamar tareas reales.
+- [x] Revertir en fuente los cambios generados por Lovable en `src/integrations/supabase/types.ts` y `AgoraTodaysSalesStock`, conservando el redeploy ya aplicado en Cloud.
+- [x] Confirmar que Cienvinos y Baco siguen `enabled=false` tras el redeploy.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -152,12 +156,11 @@
 - [ ] Vista "fleet status" en `/integrations` con un `ConnectionHealthPanel` por cada conexión activa.
 
 ## Bloqueos / esperando
-- Cienvinos: catálogo importado completo; no activar automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales en Lovable Cloud.
+- Cienvinos: catálogo importado completo; migraciones y funciones ya desplegadas. No activar automático de ventas/stock hasta primera venta/cierre con producto WINERIM resuelto y stock idempotente validado.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
-- Baco Getafe: catálogo importado y legacy oculto; no activar automático de ventas/stock hasta aplicar migraciones P0 y desplegar funciones actuales en Lovable Cloud.
+- Baco Getafe: catálogo importado y legacy oculto; migraciones y funciones ya desplegadas. El cierre `2026-05-27` tiene 0 líneas resueltas contra WINERIM, así que falta una venta real WINERIM para validar stock antes de activar.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
-- Lovable Cloud: faltan migraciones `stock_sync_log` variant-aware y `user_roles/has_role()`; sin ellas no se debe encender el modo automático completo en nuevas conexiones.
-- Lovable Cloud UI: el navegador integrado está en login GitHub/Lovable; se necesita que el usuario inicie sesión para ejecutar SQL desde Cloud si no hay otra credencial administrativa disponible.
+- Lovable Cloud: P0 aplicado; el bloqueo restante ya no es de despliegue, sino de validación real de stock con ventas WINERIM.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.
