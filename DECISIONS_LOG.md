@@ -295,3 +295,23 @@
 - **Decisión**: Separar el estado de Baco/Cienvinos (limpios y preparados para primer cierre nuevo) del resto de instalaciones Agora, que aún tienen deuda operativa.
 - **Razón**: Sa Vida, Sa Pedrera y Kava tienen fallos reales de stock; Katsu/La Candela/Luruna tienen stockIds incompletos o capacidades inconsistentes. Decir "todo listo" ocultaría riesgos de stock no descontado o reintentos repetidos.
 - **Alternativa descartada**: considerar `enabled=true` y token Winerim como suficiente. La preparación real exige cursor, mappings, stockIds por variante, capacidades de escritura y logs sin fallos recientes.
+
+## 2026-05-28 · Tratar fallos terminales de stock Winerim como bloqueados, no reintentables
+- **Decisión**: Clasificar `wine not found`, `not accessible` y `Variant '<formato>' not found` como fallos terminales de stock; bloquear su repetición en `syncStockForDay` y marcar logs históricos como `BLOCKED_TERMINAL`.
+- **Razón**: Reintentar cada ciclo no corrige un vino inaccesible ni una variante que no existe en Winerim; solo genera ruido en Sync Monitor, alertas falsas y riesgo de no ver fallos nuevos reales.
+- **Alternativa descartada**: dejar todos los errores como `FAILED` recuperables. Era más simple, pero mantenía bucles de reintento y mezclaba datos obsoletos con incidencias operativas reales.
+
+## 2026-05-28 · Un mapping `REJECTED` tiene prioridad sobre tracking histórico
+- **Decisión**: Cambiar la resolución de ventas Agora para que `product_mappings.REJECTED` bloquee el uso de `winerim_push_tracking` aunque el producto figure como `PUSHED` o `VERIFIED`.
+- **Razón**: El tracking demuestra que un producto se creó en Agora, no que el vino/variante siga siendo descontable con el token Winerim actual. Los fallos de Sa Vida/Sa Pedrera/Kava demostraron que tracking histórico podía volver a mapear productos obsoletos.
+- **Alternativa descartada**: actualizar solo `product_mappings`. Sin cambiar la prioridad, el mismo producto podía resolverse por tracking y volver a fallar stock.
+
+## 2026-05-28 · Reparar stockIds y mappings por lectura, sin tocar inventario real
+- **Decisión**: Ejecutar una reparación controlada con `GET /api/v2/stock/wine/{wineId}` para backfill de `bottle/glass/magnum_stock_id`, rechazar mappings imposibles y limpiar líneas históricas ya rechazadas, sin hacer ningún `PUT /stock`.
+- **Razón**: La preparación automática de ventas requiere stockIds por variante y mappings válidos; escribir cantidades de stock durante una reparación de metadata habría sido innecesario y arriesgado.
+- **Alternativa descartada**: forzar un re-sync completo de catálogo y ventas. Habría mezclado lectura, escritura y colas POS, aumentando el blast radius cuando el problema concreto era metadata/mapping.
+
+## 2026-05-28 · Respetar `auto_push_on_update=false` desde `winerim-proxy`
+- **Decisión**: El enriquecimiento de catálogo solo invoca `evaluate-auto-push` con `eventType=UPDATE` cuando la conexión es Agora y `auto_push_on_update=true`.
+- **Razón**: Cienvinos volvió a reencolar updates masivos pese a tener auto-update apagado. La automatización debe crear vinos nuevos, pero no reimportar todo cada día hasta tener detección diferencial de cambios.
+- **Alternativa descartada**: limpiar la cola manualmente cada vez que reaparezca. Corrige la foto puntual, pero deja la causa viva en cada ciclo de catálogo.

@@ -6,6 +6,8 @@ import {
   buildStockSyncIdempotencyKey,
   decideSalesCursorAdvance,
   findStockForVariant,
+  isTerminalStockSyncError,
+  normalizeWinerimVariant,
   parseWinerimStockRows,
   variantForAgoraFormat,
   type WinerimVariant,
@@ -337,6 +339,36 @@ function formatProductName(fmt: string, wineName: string): string {
 }
 
 // deno-lint-ignore no-explicit-any
+function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mappingRows: any[] | null | undefined): Map<string, { winerim_wine_id: string; format: string }> {
+  const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
+  const rejectedProductIds = new Set<string>();
+
+  for (const m of (mappingRows || [])) {
+    if (m.provider_product_id && m.status === "REJECTED") {
+      rejectedProductIds.add(String(m.provider_product_id));
+    }
+  }
+
+  for (const t of (trackingRows || [])) {
+    const productId = String(t.agora_product_id || "");
+    if (!productId || rejectedProductIds.has(productId)) continue;
+    if (t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
+      resolutionMap.set(productId, { winerim_wine_id: t.winerim_wine_id, format: t.format });
+    }
+  }
+
+  for (const m of (mappingRows || [])) {
+    const productId = String(m.provider_product_id || "");
+    if (!productId || rejectedProductIds.has(productId)) continue;
+    if (m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(productId)) {
+      resolutionMap.set(productId, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
+    }
+  }
+
+  return resolutionMap;
+}
+
+// deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
@@ -433,6 +465,8 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const alreadySynced = new Set<string>();
   const alreadySyncedGroups = new Set<string>();
   const legacySynced = new Set<string>();
+  const terminalFailedGroups = new Set<string>();
+  const terminalBlockedGroups = new Set<string>();
   for (let i = 0; i < claimKeys.length; i += 200) {
     const chunk = claimKeys.slice(i, i + 200);
     const { data: existing } = await supabase
@@ -443,6 +477,24 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       .eq("status", "SUCCESS");
     for (const row of (existing || []) as { idempotency_key: string }[]) {
       alreadySynced.add(row.idempotency_key);
+    }
+  }
+
+  if (candidateWineIds.length > 0) {
+    const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    const { data: failedRows } = await supabase
+      .from("stock_sync_log")
+      .select("sales_event_id, winerim_product_id, variant, error_message")
+      .eq("connection_id", connectionId)
+      .in("status", ["FAILED", "BLOCKED"])
+      .gte("created_at", recentTerminalCutoff)
+      .in("sales_event_id", eventIds)
+      .in("winerim_product_id", candidateWineIds);
+    for (const row of (failedRows || []) as { sales_event_id: string; winerim_product_id: string; variant?: string | null; error_message?: string | null }[]) {
+      if (!isTerminalStockSyncError(row.error_message)) continue;
+      const rowVariant = normalizeWinerimVariant(row.variant);
+      if (!rowVariant) continue;
+      terminalFailedGroups.add(buildStockSyncGroupKey(row.sales_event_id, row.winerim_product_id, rowVariant));
     }
   }
 
@@ -477,6 +529,11 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     const groupKey = buildStockSyncGroupKey(line.sales_event_id, line.winerim_product_id, entry.variant);
     if (alreadySyncedGroups.has(groupKey) || legacySynced.has(`${line.sales_event_id}:${line.winerim_product_id}`)) {
       skipped++;
+      continue;
+    }
+    if (terminalFailedGroups.has(groupKey)) {
+      skipped++;
+      terminalBlockedGroups.add(groupKey);
       continue;
     }
 
@@ -535,20 +592,20 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   const toProcess = Array.from(aggregated.values());
+  let failed = terminalBlockedGroups.size;
 
   if (toProcess.length === 0) {
     return {
-      synced: 0, skipped, failed: 0,
+      synced: 0, skipped, failed,
       unmapped: lines.length - mappedLines.length,
       totalLines: lines.length,
       mappedLines: mappedLines.length,
       aggregatedProducts: aggregated.size,
       claimedLines: claimedLines.length,
-      message: "All groups already synced",
+      terminalBlocked: terminalBlockedGroups.size,
+      message: failed > 0 ? "All processable groups already synced; terminal stock failures remain blocked" : "All groups already synced",
     };
   }
-
-  let failed = 0;
 
   // ── Resolve stockId per (wine,variant) ──
   // We fetch /stock/wine/{id} for every wine we are about to mutate. It is documented,
@@ -2085,20 +2142,7 @@ serve(async (req) => {
         .select("provider_product_id, winerim_wine_id, format_type, status")
         .eq("connection_id", connectionId);
 
-      // Build lookup map: agora_product_id -> { winerim_wine_id, format }
-      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
-      // Priority 1: push tracking (verified/pushed products)
-      for (const t of (trackingRows || [])) {
-        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
-          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
-        }
-      }
-      // Priority 2: product mappings (confirmed matches)
-      for (const m of (mappingRows || [])) {
-        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
-          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
-        }
-      }
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -2303,17 +2347,7 @@ serve(async (req) => {
         .select("provider_product_id, winerim_wine_id, format_type, status")
         .eq("connection_id", connectionId);
 
-      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
-      for (const t of (trackingRows || [])) {
-        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
-          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
-        }
-      }
-      for (const m of (mappingRows || [])) {
-        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
-          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
-        }
-      }
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       const syncedDays: string[] = [];
@@ -2492,17 +2526,7 @@ serve(async (req) => {
         .select("provider_product_id, winerim_wine_id, format_type, status")
         .eq("connection_id", connectionId);
 
-      const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
-      for (const t of (trackingRows || [])) {
-        if (t.agora_product_id && t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
-          resolutionMap.set(String(t.agora_product_id), { winerim_wine_id: t.winerim_wine_id, format: t.format });
-        }
-      }
-      for (const m of (mappingRows || [])) {
-        if (m.provider_product_id && m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(m.provider_product_id)) {
-          resolutionMap.set(m.provider_product_id, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
-        }
-      }
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
 
       // Fetch unresolved wine candidate lines
       const { data: unresolvedLines } = await supabase
@@ -3507,13 +3531,16 @@ serve(async (req) => {
         // but must not downgrade a connection that already completed a real XML import.
         const { data: existingCaps } = await supabase
           .from("provider_capabilities")
-          .select("can_write_products")
+          .select("can_write_products, readiness_status, write_mode")
           .eq("connection_id", connectionId)
           .maybeSingle();
+        const existingWriteConfirmed = existingCaps?.can_write_products === "YES";
         await supabase.from("provider_capabilities").upsert({
           connection_id: connectionId, provider: "AGORA",
           can_read_sales: true, can_read_catalog: true,
           can_write_products: existingCaps?.can_write_products || "UNKNOWN",
+          readiness_status: existingWriteConfirmed ? "READY" : (existingCaps?.readiness_status || "UNKNOWN"),
+          write_mode: existingWriteConfirmed ? "XML_IMPORT" : (existingCaps?.write_mode || "XML_IMPORT"),
           write_endpoint: "/api/import/",
           last_checked_at: new Date().toISOString(),
         }, { onConflict: "connection_id" });
@@ -4782,6 +4809,8 @@ serve(async (req) => {
           can_read_sales: true,
           can_read_catalog: true,
           can_write_products: "YES",
+          readiness_status: "READY",
+          write_mode: "XML_IMPORT",
           write_endpoint: "/api/import/",
           last_checked_at: new Date().toISOString(),
         }, { onConflict: "connection_id" });

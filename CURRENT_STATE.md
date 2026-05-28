@@ -465,6 +465,56 @@ _Última actualización: 2026-05-28_
   - El cierre `2026-05-27` tenía 0 líneas resueltas contra productos WINERIM; falta validar el primer cierre nuevo con venta WINERIM real.
   - `auto_push_on_update=false` hasta implementar detección diferencial de cambios reales de catálogo.
 
+### Reparación flota Agora stock/mappings — 2026-05-28 08:51 CEST
+
+#### Hechos
+- Se hizo una reparación controlada de datos en Lovable Cloud sin ningún `PUT` de stock a Winerim:
+  - 1.881 pares `connection_id` + `winerim_wine_id` verificados con `GET /api/v2/stock/wine/{wineId}`.
+  - 1.598 lecturas correctas, 283 terminales (`wine not found`, `not accessible` o variante inexistente), 0 errores transitorios.
+  - 1.359 filas de `winerim_wines` actualizadas con stockIds reales: 1.345 botella, 197 copa, 19 magnum.
+  - 1.197 `product_mappings` obsoletos marcados como `REJECTED` con `last_sync_error=terminal_stock_mapping_rejected...`.
+  - 224 filas de `winerim_push_tracking` marcadas como `FAILED` para que el runtime antiguo no vuelva a resolver productos terminales mientras se despliega el hotfix.
+  - 144 `sales_line_items` históricos limpiados (`mapped=false`, `winerim_product_id=null`) porque apuntaban a mappings ya rechazados.
+  - 367 logs terminales de `stock_sync_log` pasaron de `FAILED` a `BLOCKED` con prefijo `BLOCKED_TERMINAL`.
+- Backups locales sin secretos:
+  - `.codex-backups/agora-terminal-mapping-repair-2026-05-28T06-32-11-676Z.json`
+  - `.codex-backups/agora-terminal-sales-log-cleanup-2026-05-28T06-49-37-524Z.json`
+- Auditoría posterior:
+  - `stock_sync_log` últimos 24h: `FAILED=0`, `BLOCKED=364`.
+  - `sales_line_items` todavía apuntando a mappings rechazados: 0.
+  - Todos los mappings `CONFIRMED` restantes tienen el stockId requerido por su formato (`missingNeededStockId=0`) en Baco, Cienvinos, Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida.
+- Estado por conexión tras la reparación:
+  - Baco Getafe: 95 vinos, 94 `READY`, 118 mappings `CONFIRMED`, 0 rechazados, 0 stockIds faltantes para mappings, 0 tareas abiertas, sin breaker.
+  - Restaurante Cienvinos Ecija: 378 vinos, 373 `READY`, 428 mappings `CONFIRMED`, 0 rechazados, 0 stockIds faltantes para mappings, sin breaker. El runtime antiguo volvió a generar cola de updates (`65 QUEUED`, `7 RUNNING`) mientras `auto_push_on_update=false`.
+  - Katsu Izakaya: 64 vinos objetivo revisados; 40 mappings `CONFIRMED`, 28 `REJECTED`, 0 stockIds faltantes para mappings, sin cola abierta.
+  - Kava: 255 mappings `CONFIRMED`, 12 `REJECTED`, 0 stockIds faltantes para mappings. Quedan tareas outbound (`203 QUEUED`, `7 FAILED`, `9 BLOCKED`) y breaker antiguo visible.
+  - La Candela de Triana: 77 mappings `CONFIRMED`, 1 `REJECTED`, 0 stockIds faltantes para mappings.
+  - Luruna: 124 mappings `CONFIRMED`, 1 `REJECTED`, 0 stockIds faltantes para mappings. Queda backlog outbound (`117 QUEUED`, `10 FAILED`, `58 BLOCKED`) y breaker antiguo visible.
+  - Sa Pedrera: 463 mappings `CONFIRMED`, 291 `REJECTED`, 0 stockIds faltantes para mappings. Queda backlog outbound grande (`201 RUNNING`, `294 FAILED`, `111 BLOCKED`) y breaker `POS_OVERLOADED`.
+  - Sa Vida: 1.205 mappings `CONFIRMED`, 866 `REJECTED`, 0 stockIds faltantes para mappings confirmados. Sigue `NOT_CONNECTED/NONE`, con API Agora HTTP 501 y backlog muy grande (`1044 QUEUED`, `3322 FAILED`, `1861 BLOCKED`).
+- Cambios de código preparados y validados localmente:
+  - `agora-proxy`: los fallos terminales de stock (`FAILED` o `BLOCKED`) se consideran no reintentables durante 24h para no crear logs repetidos; las resoluciones de venta respetan `product_mappings.REJECTED` incluso si existe `winerim_push_tracking` histórico.
+  - `winerim-proxy`: el enriquecimiento de catálogo persiste `bottle_stock_id`, `glass_stock_id`, `magnum_stock_id`; el auto-push de `UPDATE` solo se invoca si la conexión tiene `auto_push_on_update=true`.
+  - `_shared/stockSyncUtils.ts`: clasificador `isTerminalStockSyncError`.
+  - Validación: parse TypeScript de edge functions OK, `npm test -- --run src/test/stockSyncUtils.test.ts` OK (8 tests), `npx tsc --noEmit` OK, `npm run build` OK con warnings conocidos de Browserslist/bundle grande.
+
+#### Decisiones
+- Los mappings que Winerim confirma como inaccesibles o sin variante de stock se marcan `REJECTED`; no se borran para conservar trazabilidad y permitir rollback.
+- Los fallos de stock terminales históricos se marcan `BLOCKED_TERMINAL`, no `FAILED`, porque no son reintentos recuperables.
+- `winerim_push_tracking` no puede tener prioridad absoluta sobre `product_mappings`: un mapping `REJECTED` debe bloquear la resolución de ventas aunque el producto se hubiese importado en Agora en el pasado.
+- No se tocó stock real: toda la reparación fue lectura de Winerim + metadatos locales de mapping/stockId.
+
+#### Hipótesis / riesgos
+- El runtime antiguo de Lovable Cloud parece seguir ejecutándose en algunos ciclos: reencola updates de Cienvinos aunque `auto_push_on_update=false` y vuelve a degradar alguna capacidad visual a `UNKNOWN`. Esto debería cesar tras desplegar los hotfixes actuales.
+- Sa Vida no puede declararse lista desde middleware: el servidor responde, pero la API REST Agora devuelve HTTP 501. El bloqueo requiere corrección externa de POS/puerto/módulo.
+- Kava, Luruna y Sa Pedrera tienen stockIds/mappings corregidos, pero todavía arrastran backlog outbound y breakers/residuos de cola que deben limpiarse después del redeploy para no mezclar deuda antigua con fallos nuevos.
+
+#### Tareas pendientes inmediatas
+- Publicar hotfix actual en GitHub y confirmar redeploy de `agora-proxy` y `winerim-proxy` en Lovable Cloud.
+- Tras redeploy, volver a marcar capacidades verificadas (`can_write_products=YES`) en Baco/Kava/Luruna si el runtime antiguo las hubiese degradado.
+- Drenar o bloquear de forma controlada las colas outbound antiguas de Cienvinos, Kava, Luruna, Sa Pedrera y Sa Vida según estado real de cada POS.
+- Ejecutar un ciclo manual `auto-sync-sales` en Baco y Cienvinos después del redeploy para confirmar que `last_sync_at` se actualiza sin días pendientes y que no se recrean updates masivos.
+
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).

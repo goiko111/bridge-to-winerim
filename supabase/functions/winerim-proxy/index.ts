@@ -688,6 +688,9 @@ serve(async (req) => {
         if (nf.magnumSalePrice != null) updateData.magnum_sale_price = nf.magnumSalePrice;
         if (nf.magnumPurchasePrice != null) updateData.magnum_purchase_price = nf.magnumPurchasePrice;
         if (nf.stockQuantity != null) updateData.stock_quantity = nf.stockQuantity;
+        if (nf.bottleStockId != null) updateData.bottle_stock_id = nf.bottleStockId;
+        if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
+        if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
         await supabase
           .from("winerim_wines")
@@ -711,16 +714,27 @@ serve(async (req) => {
       let autoPushResult: Record<string, unknown> | null = null;
       if (batchWineIds.length > 0) {
         try {
-          const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
-            body: { action: "evaluate-auto-push", connectionId, winerimWineIds: batchWineIds, eventType: "UPDATE" },
-          });
-          autoPushResult = pushData;
-          console.log(`[winerim-proxy] auto-push (batch=${batchWineIds.length}): queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0} complete=${complete}`);
+          const { data: conn } = await supabase
+            .from("pos_connections")
+            .select("provider, auto_push_on_update")
+            .eq("id", connectionId)
+            .maybeSingle();
 
-          if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
-            await supabase.functions.invoke("agora-proxy", {
-              body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+          if (conn?.provider === "agora" && conn?.auto_push_on_update === true) {
+            const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "evaluate-auto-push", connectionId, winerimWineIds: batchWineIds, eventType: "UPDATE" },
             });
+            autoPushResult = pushData;
+            console.log(`[winerim-proxy] auto-push update (batch=${batchWineIds.length}): queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0} complete=${complete}`);
+
+            if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+              });
+            }
+          } else {
+            autoPushResult = { skipped: true, reason: "auto_push_on_update disabled or non-agora provider" };
+            console.log(`[winerim-proxy] auto-push update skipped for ${connectionId}: auto_push_on_update disabled or non-agora provider`);
           }
         } catch (e) {
           console.error("[winerim-proxy] auto-push trigger failed:", e);

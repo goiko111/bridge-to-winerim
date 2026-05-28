@@ -5,6 +5,7 @@ import {
   findEntryForVariant,
   findStockForVariant,
   isStockGroupAlreadySynced,
+  isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
   variantForAgoraFormat,
@@ -98,5 +99,11 @@ describe("stock sync utils", () => {
       hasWinerimToken: false,
       stockFailed: 0,
     })).toEqual({ advance: true, reason: "stock_not_required" });
+  });
+
+  it("classifies terminal stock failures that should not be logged repeatedly", () => {
+    expect(isTerminalStockSyncError("GET /stock/wine/123 -> 404: Wine not found")).toBe(true);
+    expect(isTerminalStockSyncError("Variant 'copa' not found for wine 123")).toBe(true);
+    expect(isTerminalStockSyncError("timeout connecting to Winerim")).toBe(false);
   });
 });

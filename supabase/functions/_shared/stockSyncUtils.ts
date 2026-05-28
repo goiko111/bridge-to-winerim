@@ -79,6 +79,17 @@ export function isStockGroupAlreadySynced(
   });
 }
 
+export function isTerminalStockSyncError(error: unknown): boolean {
+  const msg = String(error || "").toLowerCase();
+  return (
+    msg.includes("wine not found") ||
+    msg.includes("not found or not accessible") ||
+    msg.includes("variant 'copa' not found") ||
+    msg.includes("variant 'botella' not found") ||
+    msg.includes("variant 'magnum' not found")
+  );
+}
+
 export type SalesCursorDecisionReason =
   | "stock_not_required"
   | "stock_sync_skipped"

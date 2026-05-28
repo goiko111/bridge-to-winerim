@@ -22,6 +22,7 @@ Flujo principal:
 - Tareas asíncronas en cola `outbound_tasks` (idempotente, con reintentos).
 - Dispatcher común para Agora: `agora-cron-dispatcher` (chunks de 10, 1.5s entre chunks).
 - Agora opera en automático sobre días cerrados (`Invoices`): guardar ventas y descontar stock Winerim son un único flujo operativo. El cursor `last_business_day_synced` no debe avanzar si el stock del día no queda confirmado.
+- En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.

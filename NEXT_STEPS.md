@@ -38,18 +38,19 @@
 - [x] Resetear breakers obsoletos de Kava, Luruna y Sa Pedrera tras comprobar endpoints operativos.
 - [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`.
 - [ ] Reprobar Sa Vida cuando el POS responda 200: `test`, `sync-master-data`, `find-last-business-day`, preview XML y backfill de stockIds antes de cualquier write masivo.
-- [ ] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con el `winerim-proxy` actualizado o script controlado.
-- [ ] Reparar fallos actuales de `stock_sync_log` antes de declarar la flota Agora sana:
-  - Sa Vida: fallos `GET /stock/wine/{id} -> 404` y `Variant 'copa' not found`, `readiness_status=NOT_CONNECTED`, backlog muy grande.
-  - Sa Pedrera: fallos de variante copa y backlog de outbound.
-  - Kava: fallos `404` en Winerim para mappings existentes.
-- [ ] Añadir guard anti-spam para fallos terminales de stock (`wine not found`, `variant not found`) sin avanzar cursor ni crear 100 logs repetidos cada ciclo.
+- [x] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con script controlado: 1.881 pares conexión/vino revisados, 1.359 filas actualizadas, 0 errores transitorios.
+- [x] Reparar fallos actuales de `stock_sync_log` antes de declarar la flota Agora sana:
+  - Sa Vida/Sa Pedrera/Kava/Katsu/La Candela/Luruna: mappings inaccesibles o sin variante marcados `REJECTED`; logs terminales recientes marcados `BLOCKED_TERMINAL`.
+  - Auditoría posterior: `FAILED` últimos 24h = 0; mappings confirmados con stockId requerido faltante = 0.
+- [x] Añadir guard anti-spam para fallos terminales de stock (`wine not found`, `variant not found`) sin avanzar cursor ni crear logs repetidos cada ciclo.
+- [ ] Publicar y confirmar redeploy de los hotfixes de `agora-proxy`/`winerim-proxy` que respetan mappings `REJECTED` y `auto_push_on_update=false`.
 - [ ] Decidir si Sa Vida debe pausarse/deshabilitarse hasta resolver HTTP 501/API REST y mappings, porque hoy aparece `enabled=true` aunque las capacidades están `NOT_CONNECTED`.
-- [ ] Revisar tareas residuales por instalación:
-  - Kava: `QUEUED`/`BLOCKED` y 1 `RUNNING` observado durante procesamiento.
-  - Luruna: 5 `QUEUED`.
-  - Sa Pedrera: 5 `FAILED`.
-  - Sa Vida: backlog grande `QUEUED`/`FAILED`/`BLOCKED`, no procesar hasta resolver HTTP 501.
+- [ ] Revisar tareas residuales por instalación tras redeploy:
+  - Cienvinos: el runtime antiguo volvió a generar `65 QUEUED` y `7 RUNNING`; drenar/bloquear después de confirmar hotfix.
+  - Kava: `203 QUEUED`, `7 FAILED`, `9 BLOCKED`.
+  - Luruna: `117 QUEUED`, `10 FAILED`, `58 BLOCKED`.
+  - Sa Pedrera: `201 RUNNING`, `294 FAILED`, `111 BLOCKED`.
+  - Sa Vida: backlog grande (`1044 QUEUED`, `3322 FAILED`, `1861 BLOCKED`), no procesar hasta resolver HTTP 501.
 - [ ] Decidir limpieza de la conexión `New Location` deshabilitada con URL inválida.
 - [ ] Revisar por qué Katsu y La Candela tienen tracking verificado pero `provider_capabilities` en `UNKNOWN/NOT_CONNECTED`; marcar `READY` solo tras verificación de escritura actual.
 
@@ -139,10 +140,13 @@
 - [x] Corregir `process-xml-outbound-queue` para no dejar tareas `RUNNING` al agotarse el presupuesto temporal.
 - [x] Corregir `sync-master-data` para no degradar `can_write_products=YES` a `UNKNOWN` tras una importación XML verificada.
 - [x] Cambiar auto-queue de vinos recién `READY` para pasar por `evaluate-auto-push` y respetar gates automáticos.
-- [ ] Confirmar en Lovable Cloud que `agora-proxy` y `winerim-proxy` quedaron redeployados con los hotfixes de cola/capacidades.
+- [x] Reparar en datos Lovable Cloud los mappings/stockIds antiguos de flota Agora sin tocar stock real: 1.359 filas de `winerim_wines` actualizadas, 1.197 mappings rechazados, 367 logs terminales bloqueados.
+- [x] Validar tras reparación que `stock_sync_log` tiene `FAILED=0` en últimas 24h y que no quedan líneas históricas apuntando a mappings rechazados.
+- [ ] Confirmar en Lovable Cloud que `agora-proxy` y `winerim-proxy` quedaron redeployados con los hotfixes de cola/capacidades/terminal-stock.
 - [ ] Confirmar en Lovable Cloud que el nuevo cambio de `auto-sync-sales` queda desplegado: una conexión sin días pendientes debe actualizar `last_sync_at`.
+- [ ] Tras redeploy, reestablecer capacidades verificadas si el runtime antiguo las volvió a degradar (`Baco`, `Kava`, `Luruna`) y confirmar que no se degradan en el siguiente `sync-master-data`.
 - [ ] Confirmar en preview que `SyncMonitor > Stock Sync` muestra columna Location.
-- [ ] Tras confirmar redeploy, vigilar Cienvinos durante un ciclo de cron de catálogo y comprobar que no se reencolan updates masivos con `_trigger_source=MANUAL` mientras `auto_push_on_update=false`.
+- [ ] Tras confirmar redeploy, vigilar Cienvinos durante un ciclo de cron de catálogo y comprobar que no se reencolan updates masivos mientras `auto_push_on_update=false`; drenar las tareas abiertas generadas por el runtime anterior.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -185,9 +189,10 @@
 ## Bloqueos / esperando
 - Cienvinos: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
+- Cienvinos: tras la reparación, el runtime antiguo volvió a dejar cola abierta (`65 QUEUED`, `7 RUNNING`). Esperar redeploy del hotfix `auto_push_on_update=false` y drenar.
 - Baco Getafe: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
-- Lovable Cloud: P0 aplicado; Cienvinos/Baco activos y sin tareas abiertas. Bloqueo restante: confirmar redeploy de hotfixes de cola/capacidades, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
+- Lovable Cloud: reparación de stock/mappings aplicada; bloqueo restante: publicar/redeployar hotfixes actuales, drenar colas residuales antiguas, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
 
 ## Notas
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.
