@@ -46,7 +46,7 @@
 - [ ] Publicar y confirmar redeploy de los hotfixes de `agora-proxy`/`winerim-proxy` que respetan mappings `REJECTED` y `auto_push_on_update=false`.
 - [ ] Decidir si Sa Vida debe pausarse/deshabilitarse hasta resolver HTTP 501/API REST y mappings, porque hoy aparece `enabled=true` aunque las capacidades están `NOT_CONNECTED`.
 - [ ] Revisar tareas residuales por instalación tras redeploy:
-  - Cienvinos: el runtime antiguo volvió a generar `65 QUEUED` y `7 RUNNING`; drenar/bloquear después de confirmar hotfix.
+  - Cienvinos: el runtime antiguo generó 82 updates `MANUAL`; ya se marcaron `SUCCESS` tras verificar que estaban publicados. Vigilar que no reaparezcan hasta redeploy.
   - Kava: `203 QUEUED`, `7 FAILED`, `9 BLOCKED`.
   - Luruna: `117 QUEUED`, `10 FAILED`, `58 BLOCKED`.
   - Sa Pedrera: `201 RUNNING`, `294 FAILED`, `111 BLOCKED`.
@@ -144,9 +144,10 @@
 - [x] Validar tras reparación que `stock_sync_log` tiene `FAILED=0` en últimas 24h y que no quedan líneas históricas apuntando a mappings rechazados.
 - [ ] Confirmar en Lovable Cloud que `agora-proxy` y `winerim-proxy` quedaron redeployados con los hotfixes de cola/capacidades/terminal-stock.
 - [ ] Confirmar en Lovable Cloud que el nuevo cambio de `auto-sync-sales` queda desplegado: una conexión sin días pendientes debe actualizar `last_sync_at`.
-- [ ] Tras redeploy, reestablecer capacidades verificadas si el runtime antiguo las volvió a degradar (`Baco`, `Kava`, `Luruna`) y confirmar que no se degradan en el siguiente `sync-master-data`.
+- [x] Reestablecer capacidades verificadas tras la reparación (`Baco`, `Cienvinos`, `Kava`, `Luruna`, `Sa Pedrera`) a `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
+- [ ] Tras redeploy, confirmar que esas capacidades no se degradan en el siguiente `sync-master-data`.
 - [ ] Confirmar en preview que `SyncMonitor > Stock Sync` muestra columna Location.
-- [ ] Tras confirmar redeploy, vigilar Cienvinos durante un ciclo de cron de catálogo y comprobar que no se reencolan updates masivos mientras `auto_push_on_update=false`; drenar las tareas abiertas generadas por el runtime anterior.
+- [ ] Tras confirmar redeploy, vigilar Cienvinos durante un ciclo de cron de catálogo y comprobar que no se reencolan updates masivos mientras `auto_push_on_update=false`.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
 - [ ] Ejecutar `save-sales` manual en conexión controlada y confirmar que devuelve `cursorAdvanced=true` solo con `stockSync.failed=0`.
@@ -189,7 +190,7 @@
 ## Bloqueos / esperando
 - Cienvinos: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
-- Cienvinos: tras la reparación, el runtime antiguo volvió a dejar cola abierta (`65 QUEUED`, `7 RUNNING`). Esperar redeploy del hotfix `auto_push_on_update=false` y drenar.
+- Cienvinos: tras la reparación, el runtime antiguo dejó 82 updates abiertos; ya se marcaron `SUCCESS` al estar publicados/verificados. Esperar redeploy del hotfix `auto_push_on_update=false` y vigilar que no reaparezcan.
 - Baco Getafe: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
 - Lovable Cloud: reparación de stock/mappings aplicada; bloqueo restante: publicar/redeployar hotfixes actuales, drenar colas residuales antiguas, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.

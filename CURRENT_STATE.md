@@ -485,7 +485,7 @@ _Última actualización: 2026-05-28_
   - Todos los mappings `CONFIRMED` restantes tienen el stockId requerido por su formato (`missingNeededStockId=0`) en Baco, Cienvinos, Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida.
 - Estado por conexión tras la reparación:
   - Baco Getafe: 95 vinos, 94 `READY`, 118 mappings `CONFIRMED`, 0 rechazados, 0 stockIds faltantes para mappings, 0 tareas abiertas, sin breaker.
-  - Restaurante Cienvinos Ecija: 378 vinos, 373 `READY`, 428 mappings `CONFIRMED`, 0 rechazados, 0 stockIds faltantes para mappings, sin breaker. El runtime antiguo volvió a generar cola de updates (`65 QUEUED`, `7 RUNNING`) mientras `auto_push_on_update=false`.
+  - Restaurante Cienvinos Ecija: 378 vinos, 373 `READY`, 428 mappings `CONFIRMED`, 0 rechazados, 0 stockIds faltantes para mappings, sin breaker. El runtime antiguo volvió a generar 82 tareas de update con `_trigger_source=MANUAL`; se marcaron `SUCCESS` solo tras comprobar que todos los formatos ya estaban `PUSHED/VERIFIED`. Estado final: 0 tareas abiertas.
   - Katsu Izakaya: 64 vinos objetivo revisados; 40 mappings `CONFIRMED`, 28 `REJECTED`, 0 stockIds faltantes para mappings, sin cola abierta.
   - Kava: 255 mappings `CONFIRMED`, 12 `REJECTED`, 0 stockIds faltantes para mappings. Quedan tareas outbound (`203 QUEUED`, `7 FAILED`, `9 BLOCKED`) y breaker antiguo visible.
   - La Candela de Triana: 77 mappings `CONFIRMED`, 1 `REJECTED`, 0 stockIds faltantes para mappings.
@@ -505,14 +505,14 @@ _Última actualización: 2026-05-28_
 - No se tocó stock real: toda la reparación fue lectura de Winerim + metadatos locales de mapping/stockId.
 
 #### Hipótesis / riesgos
-- El runtime antiguo de Lovable Cloud parece seguir ejecutándose en algunos ciclos: reencola updates de Cienvinos aunque `auto_push_on_update=false` y vuelve a degradar alguna capacidad visual a `UNKNOWN`. Esto debería cesar tras desplegar los hotfixes actuales.
+- El runtime antiguo de Lovable Cloud sigue ejecutándose: `auto-sync-sales` responde "No pending days to sync" pero no actualiza `last_sync_at` (`redeployLikely=false` en prueba posterior al push `ae827fd`). Los hotfixes están en GitHub, pero falta redeploy efectivo de Edge Functions.
 - Sa Vida no puede declararse lista desde middleware: el servidor responde, pero la API REST Agora devuelve HTTP 501. El bloqueo requiere corrección externa de POS/puerto/módulo.
 - Kava, Luruna y Sa Pedrera tienen stockIds/mappings corregidos, pero todavía arrastran backlog outbound y breakers/residuos de cola que deben limpiarse después del redeploy para no mezclar deuda antigua con fallos nuevos.
 
 #### Tareas pendientes inmediatas
 - Publicar hotfix actual en GitHub y confirmar redeploy de `agora-proxy` y `winerim-proxy` en Lovable Cloud.
-- Tras redeploy, volver a marcar capacidades verificadas (`can_write_products=YES`) en Baco/Kava/Luruna si el runtime antiguo las hubiese degradado.
-- Drenar o bloquear de forma controlada las colas outbound antiguas de Cienvinos, Kava, Luruna, Sa Pedrera y Sa Vida según estado real de cada POS.
+- Tras redeploy, volver a probar Baco/Cienvinos: `auto-sync-sales` sin días pendientes debe actualizar `last_sync_at`.
+- Drenar o bloquear de forma controlada las colas outbound antiguas de Kava, Luruna, Sa Pedrera y Sa Vida según estado real de cada POS.
 - Ejecutar un ciclo manual `auto-sync-sales` en Baco y Cienvinos después del redeploy para confirmar que `last_sync_at` se actualiza sin días pendientes y que no se recrean updates masivos.
 
 ## Hipótesis abiertas

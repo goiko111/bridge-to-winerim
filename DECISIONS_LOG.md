@@ -315,3 +315,8 @@
 - **Decisión**: El enriquecimiento de catálogo solo invoca `evaluate-auto-push` con `eventType=UPDATE` cuando la conexión es Agora y `auto_push_on_update=true`.
 - **Razón**: Cienvinos volvió a reencolar updates masivos pese a tener auto-update apagado. La automatización debe crear vinos nuevos, pero no reimportar todo cada día hasta tener detección diferencial de cambios.
 - **Alternativa descartada**: limpiar la cola manualmente cada vez que reaparezca. Corrige la foto puntual, pero deja la causa viva en cada ciclo de catálogo.
+
+## 2026-05-28 · Cerrar updates Cienvinos supersedidos solo si ya están publicados
+- **Decisión**: Marcar como `SUCCESS` las 82 tareas abiertas de Cienvinos generadas por el runtime antiguo únicamente después de comprobar que todos sus formatos ya estaban `PUSHED` o `VERIFIED` en `winerim_push_tracking`.
+- **Razón**: Eran updates `MANUAL` de productos ya importados; procesarlos otra vez habría cargado Agora sin aportar cambios y mantenerlos abiertos hacía parecer que Cienvinos estaba atascado.
+- **Alternativa descartada**: borrar las tareas o marcarlas `SUCCESS` sin verificación. Borrarlas pierde trazabilidad; cerrarlas sin comprobar tracking podría ocultar productos realmente pendientes.
