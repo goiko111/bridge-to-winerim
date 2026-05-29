@@ -2,9 +2,30 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-05-28_
+_Última actualización: 2026-05-29_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Rollback Baco Getafe a legacy Agora — 2026-05-29 10:47 CEST
+- A petición del usuario, se revirtió operativamente la integración Winerim de `Baco Getafe` y se dejó el TPV en modo legacy. Este estado sustituye al estado anterior donde Baco estaba activo con familias `... WINERIM`.
+- No se borraron productos ni familias en Agora; todo se hizo por visibilidad/vendibilidad para conservar histórico y permitir volver atrás.
+- Copias locales de seguridad creadas antes de los cambios:
+  - `.codex-backups/baco-rollback-winerim-to-legacy-before-2026-05-29T08-31-53-116Z.json`.
+  - `.codex-backups/baco-legacy-normalize-before-2026-05-29T08-44-26-592Z.json`.
+- Resultado verificado contra Agora:
+  - 118 productos Winerim siguen existiendo, pero 0 quedan visibles/vendibles.
+  - 8 familias Winerim quedan ocultas (`TINTOS/BLANCOS/ROSADOS/ESPUMOSOS/DULCE/FORTIFICADOS/COPAS/MAGNUM WINERIM`).
+  - 6 familias legacy quedan visibles: `VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`.
+  - 348 productos en familias legacy revisados: 249 activos quedan vendibles, 99 con `DeletionDate` quedan no vendibles para no resucitar artículos borrados.
+- Resultado verificado en Lovable Cloud para la conexión `Baco Getafe` (`32f46d47-3984-413a-8c18-b5502418dadc`):
+  - `enabled=false`.
+  - `catalog_sync_enabled=false`.
+  - `write_mode=NONE`.
+  - `auto_push_on_create=false`.
+  - `auto_push_on_update=false`.
+  - `auto_push_verified_ready=false`.
+- `winerim_push_tracking` de los productos Baco importados se marcó como `HIDDEN` con `last_error=rollback_to_legacy`, para que el estado local refleje que ya no están operativos en TPV.
+- Nota operativa: Baco debe cerrar y reabrir la comandera/app de Agora si la tablet mantiene caché visual de botones. En backend y export Agora el rollback ya está aplicado.
 
 ### Auditoría Sync Monitor / flota Agora — 2026-05-28 07:59 CEST
 - Se revisó el estado real en Lovable Cloud tras el reporte del Sync Monitor con `Baco Getafe` y `Restaurante Cienvinos Ecija` mostrando `Last Sync Never` y la pestaña `Stock Sync` mostrando 100 fallos.

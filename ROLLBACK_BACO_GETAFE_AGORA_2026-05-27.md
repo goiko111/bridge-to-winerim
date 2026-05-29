@@ -57,3 +57,38 @@
 ## Notas
 - No borrar productos salvo indicación explícita: ocultar es reversible y conserva histórico.
 - No activar `enabled=true` hasta que Lovable Cloud tenga migraciones P0 aplicadas y stock idempotente por variante verificado.
+
+## Rollback ejecutado — 2026-05-29
+- Ejecutado rollback operativo a legacy por petición del usuario.
+- No se borraron productos ni familias.
+- Backups locales creados antes de modificar visibilidad:
+  - `.codex-backups/baco-rollback-winerim-to-legacy-before-2026-05-29T08-31-53-116Z.json`.
+  - `.codex-backups/baco-legacy-normalize-before-2026-05-29T08-44-26-592Z.json`.
+- Estado verificado en Agora tras rollback:
+  - 118 productos Winerim existentes, 0 visibles/vendibles.
+  - 8 familias Winerim ocultas.
+  - 6 familias legacy visibles.
+  - 348 productos legacy revisados: 249 activos vendibles, 99 con `DeletionDate` no vendibles.
+- Estado verificado en Lovable Cloud:
+  - `enabled=false`.
+  - `catalog_sync_enabled=false`.
+  - `write_mode=NONE`.
+  - `auto_push_on_create=false`.
+  - `auto_push_on_update=false`.
+  - `auto_push_verified_ready=false`.
+  - Tracking Winerim marcado como `HIDDEN` para Baco.
+
+## Ruta de vuelta a Winerim si el rollback causara problemas
+1. Mantener la conexión apagada mientras se restaura (`enabled=false`).
+2. Restaurar desde los backups locales si se necesita el XML exacto anterior.
+3. Reimportar productos Winerim con `UseAsDirectSale=false` y `SaleableAsMain=true`.
+4. Mostrar familias WINERIM y ocultar familias legacy de vino.
+5. Confirmar que los 118 productos Winerim quedan visibles solo dentro de sus familias, no como botones raíz.
+6. Rehabilitar Lovable Cloud solo tras verificación:
+   - `enabled=true`.
+   - `catalog_sync_enabled=true`.
+   - `write_mode=XML_IMPORT`.
+   - `auto_push_verified_ready=true`.
+   - `auto_push_on_create=true`.
+   - `auto_push_on_update=false` hasta que exista update diferencial.
+7. Validar una venta/cierre real con producto Winerim antes de considerar Baco de nuevo en automático.

@@ -71,7 +71,7 @@
 - [x] Revisar reporte visual del cliente: el vídeo mostraba familias legacy aún visibles aunque productos no vendibles; se reforzó `ShowInPos=false` en legacy y `ShowInPos=true` en familias `... WINERIM`.
 - [x] Corregir reporte de duplicado visual: 118/118 productos Winerim quedan con `UseAsDirectSale=false` para no salir como botones raíz y `SaleableAsMain=true` para seguir vendibles dentro de familias WINERIM; verificado `directRootButtons=0`, `notSaleableAsMain=0`.
 - [x] Revisar reporte `Tamaral Crianza copas`: no existe copa de `Tamaral`/Crianza en Winerim; sí existe `C Tamaral Roble (RIBERA)` y `C Tamaral Verdejo` en `COPAS WINERIM`.
-- [ ] Confirmar con Baco si quieren que Winerim cree/active variante copa para `Tamaral`/Crianza o si `C Tamaral Roble (RIBERA)` es el producto correcto que deben usar.
+- [ ] Si Baco decide reactivar Winerim más adelante, confirmar primero si quieren que Winerim cree/active variante copa para `Tamaral`/Crianza o si `C Tamaral Roble (RIBERA)` era el producto correcto.
 - [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
 - [x] Documentar rollback en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - [x] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
@@ -83,7 +83,10 @@
 - [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos legacy.
 - [x] Resolver el `Last Sync Never` operativo: `auto-sync-sales` comprobado manualmente sin días pendientes y `last_sync_at` actualizado tras chequeo real.
 - [x] Restaurar `provider_capabilities.can_write_products=YES` tras detectar degradación visual a `UNKNOWN`.
-- [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
+- [x] Revertir Baco a legacy por petición del usuario (2026-05-29): familias/productos Winerim ocultos, legacy restaurado y automatización Winerim apagada.
+- [x] Verificar rollback contra Agora: 118 productos Winerim existentes pero 0 visibles/vendibles; 6 familias legacy visibles; 249 productos legacy activos vendibles; 99 productos legacy borrados no reactivados.
+- [x] Verificar rollback en Lovable Cloud: `enabled=false`, `catalog_sync_enabled=false`, `write_mode=NONE`, `auto_push_on_create=false`, `auto_push_on_update=false`, `auto_push_verified_ready=false`.
+- [ ] Si se decide reactivar Baco con Winerim, hacerlo como nuevo piloto controlado: restaurar visibilidad Winerim desde backup, ocultar legacy, activar conexión y validar una venta/cierre real antes de darlo por automático.
 
 ## P0 — Front Agora audit 2026-05-26
 - [x] Corregir navegación del wizard: `handleNext` permite llegar al paso 14 `Go Live` (`Math.min(14, s + 1)`).
@@ -195,7 +198,7 @@
 - Cienvinos: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
 - Cienvinos: tras la reparación, el runtime antiguo dejó 82 updates abiertos; ya se marcaron `SUCCESS` al estar publicados/verificados. Esperar redeploy del hotfix `auto_push_on_update=false` y vigilar que no reaparezcan.
-- Baco Getafe: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
+- Baco Getafe: revertido a legacy el 2026-05-29; integración Winerim desactivada en Lovable Cloud y oculta en Agora. Cualquier reactivación Winerim requiere nuevo piloto controlado.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
 - Lovable Cloud: reparación de stock/mappings aplicada; bloqueo restante: publicar/redeployar hotfixes actuales, drenar colas residuales antiguas, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.
 

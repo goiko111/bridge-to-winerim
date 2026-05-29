@@ -340,3 +340,8 @@
 - **Decisión**: Cambiar `generateImportXml` para emitir `UseAsDirectSale=false` y `SaleableAsMain=true` en productos Winerim.
 - **Razón**: Es la política validada en Baco: evita duplicados en la pantalla raíz y conserva la venta dentro de `... WINERIM`.
 - **Alternativa descartada**: mantener el generador con `UseAsDirectSale=true` y corregir manualmente cada cliente. Eso reintroduciría duplicados en futuras reimportaciones o nuevos clientes Agora.
+
+## 2026-05-29 · Revertir Baco Getafe a catálogo legacy sin borrar Winerim
+- **Decisión**: Revertir operativamente Baco Getafe a su catálogo legacy: ocultar familias/productos Winerim, restaurar familias legacy, dejar vendibles los productos legacy activos, mantener no vendibles los legacy ya borrados y desactivar la automatización Winerim de esa conexión.
+- **Razón**: El cliente reportó problemas operativos tras la integración Winerim. La vía más segura era quitar Winerim de la pantalla y devolver la operativa conocida sin eliminar histórico ni productos creados, dejando una ruta reversible si se decide reactivar Winerim más adelante.
+- **Alternativa descartada**: borrar productos/familias Winerim o seguir ajustando nombres/visibilidad sobre la marcha. Borrar perdería trazabilidad y complicaría una vuelta atrás; seguir corrigiendo sobre producción mantenía al cliente en una operativa que ya había pedido revertir.
