@@ -345,3 +345,8 @@
 - **Decisión**: Revertir operativamente Baco Getafe a su catálogo legacy: ocultar familias/productos Winerim, restaurar familias legacy, dejar vendibles los productos legacy activos, mantener no vendibles los legacy ya borrados y desactivar la automatización Winerim de esa conexión.
 - **Razón**: El cliente reportó problemas operativos tras la integración Winerim. La vía más segura era quitar Winerim de la pantalla y devolver la operativa conocida sin eliminar histórico ni productos creados, dejando una ruta reversible si se decide reactivar Winerim más adelante.
 - **Alternativa descartada**: borrar productos/familias Winerim o seguir ajustando nombres/visibilidad sobre la marcha. Borrar perdería trazabilidad y complicaría una vuelta atrás; seguir corrigiendo sobre producción mantenía al cliente en una operativa que ya había pedido revertir.
+
+## 2026-05-29 · Baco legacy debe vender dentro de `VINO`, no como venta directa
+- **Decisión**: Corregir el rollback de Baco para dejar todos los productos legacy de vino con `UseAsDirectSale=false`, mantener `SaleableAsMain=true` solo para los productos legacy esperados y colgar `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE` y `BLANCOS` bajo la familia raíz `VINO`.
+- **Razón**: El cliente confirmó que el estado anterior no tenía cinco pantallas de vinos en el frontal; los vinos estaban dentro de la categoría `VINO`. En Agora, `UseAsDirectSale=true` crea botones directos en la pantalla principal, que fue justo el problema visible tras el primer rollback.
+- **Alternativa descartada**: mantener todos los productos activos como direct-sale. Aunque eran vendibles, rompía la operativa de sala y reactivaba visualmente referencias que el cliente no quería ver en el frontal.

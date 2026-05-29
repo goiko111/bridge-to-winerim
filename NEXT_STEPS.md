@@ -84,8 +84,9 @@
 - [x] Resolver el `Last Sync Never` operativo: `auto-sync-sales` comprobado manualmente sin días pendientes y `last_sync_at` actualizado tras chequeo real.
 - [x] Restaurar `provider_capabilities.can_write_products=YES` tras detectar degradación visual a `UNKNOWN`.
 - [x] Revertir Baco a legacy por petición del usuario (2026-05-29): familias/productos Winerim ocultos, legacy restaurado y automatización Winerim apagada.
-- [x] Verificar rollback contra Agora: 118 productos Winerim existentes pero 0 visibles/vendibles; 6 familias legacy visibles; 249 productos legacy activos vendibles; 99 productos legacy borrados no reactivados.
+- [x] Verificar rollback contra Agora: 118 productos Winerim existentes pero 0 visibles/vendibles; 6 familias legacy visibles.
 - [x] Verificar rollback en Lovable Cloud: `enabled=false`, `catalog_sync_enabled=false`, `write_mode=NONE`, `auto_push_on_create=false`, `auto_push_on_update=false`, `auto_push_verified_ready=false`.
+- [x] Corregir rollback legacy tras feedback del cliente: 0 vinos legacy con `UseAsDirectSale=true`, subfamilias de vino bajo `VINO`, 195 productos legacy vendibles solo dentro de familia y 0 antiguos/borrados reactivados.
 - [ ] Si se decide reactivar Baco con Winerim, hacerlo como nuevo piloto controlado: restaurar visibilidad Winerim desde backup, ocultar legacy, activar conexión y validar una venta/cierre real antes de darlo por automático.
 
 ## P0 — Front Agora audit 2026-05-26

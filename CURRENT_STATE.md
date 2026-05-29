@@ -6,17 +6,21 @@ _Última actualización: 2026-05-29_
 
 ## Hechos (qué está desplegado y verificado)
 
-### Rollback Baco Getafe a legacy Agora — 2026-05-29 10:47 CEST
+### Rollback Baco Getafe a legacy Agora — 2026-05-29 11:37 CEST
 - A petición del usuario, se revirtió operativamente la integración Winerim de `Baco Getafe` y se dejó el TPV en modo legacy. Este estado sustituye al estado anterior donde Baco estaba activo con familias `... WINERIM`.
 - No se borraron productos ni familias en Agora; todo se hizo por visibilidad/vendibilidad para conservar histórico y permitir volver atrás.
 - Copias locales de seguridad creadas antes de los cambios:
   - `.codex-backups/baco-rollback-winerim-to-legacy-before-2026-05-29T08-31-53-116Z.json`.
   - `.codex-backups/baco-legacy-normalize-before-2026-05-29T08-44-26-592Z.json`.
+  - `.codex-backups/baco-fix-legacy-frontal-before-2026-05-29T09-34-07-292Z.json`.
+- Tras el primer rollback, el cliente confirmó que el estado no coincidía con el legacy real: los vinos no debían salir como botones sueltos en el frontal, sino dentro de la categoría `VINO`. Se corrigió usando `UseAsDirectSale=false` para productos legacy de vino.
 - Resultado verificado contra Agora:
   - 118 productos Winerim siguen existiendo, pero 0 quedan visibles/vendibles.
   - 8 familias Winerim quedan ocultas (`TINTOS/BLANCOS/ROSADOS/ESPUMOSOS/DULCE/FORTIFICADOS/COPAS/MAGNUM WINERIM`).
-  - 6 familias legacy quedan visibles: `VINO`, `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE`, `BLANCOS`.
-  - 348 productos en familias legacy revisados: 249 activos quedan vendibles, 99 con `DeletionDate` quedan no vendibles para no resucitar artículos borrados.
+  - 6 familias legacy quedan visibles y ordenadas bajo `VINO`: `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE` y `BLANCOS` tienen `ParentFamilyId=2`; `VINO` queda como categoría raíz.
+  - 348 productos legacy revisados: 0 quedan con `UseAsDirectSale=true`, por lo que no salen como botones directos en el frontal.
+  - 195 productos legacy quedan vendibles dentro de su familia (`SaleableAsMain=true`) al estar en la lista legacy de rollback y no tener `DeletionDate`.
+  - 0 productos legacy fuera de esa lista o con `DeletionDate` quedan visibles/vendibles, para evitar reactivar vinos antiguos que el cliente ya no vende.
 - Resultado verificado en Lovable Cloud para la conexión `Baco Getafe` (`32f46d47-3984-413a-8c18-b5502418dadc`):
   - `enabled=false`.
   - `catalog_sync_enabled=false`.

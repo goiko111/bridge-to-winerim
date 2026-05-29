@@ -64,11 +64,14 @@
 - Backups locales creados antes de modificar visibilidad:
   - `.codex-backups/baco-rollback-winerim-to-legacy-before-2026-05-29T08-31-53-116Z.json`.
   - `.codex-backups/baco-legacy-normalize-before-2026-05-29T08-44-26-592Z.json`.
+  - `.codex-backups/baco-fix-legacy-frontal-before-2026-05-29T09-34-07-292Z.json`.
 - Estado verificado en Agora tras rollback:
   - 118 productos Winerim existentes, 0 visibles/vendibles.
   - 8 familias Winerim ocultas.
   - 6 familias legacy visibles.
-  - 348 productos legacy revisados: 249 activos vendibles, 99 con `DeletionDate` no vendibles.
+  - Corrección posterior tras feedback del cliente: los vinos legacy no deben salir en el frontal; deben estar dentro de `VINO`.
+  - `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE` y `BLANCOS` cuelgan de `VINO` (`ParentFamilyId=2`).
+  - 348 productos legacy revisados: 0 con `UseAsDirectSale=true`; 195 vendibles dentro de familia (`SaleableAsMain=true`); 0 productos antiguos/borrados reactivados.
 - Estado verificado en Lovable Cloud:
   - `enabled=false`.
   - `catalog_sync_enabled=false`.
