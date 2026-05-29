@@ -330,3 +330,13 @@
 - **Decisión**: Dejar los 118 productos Winerim de Baco con `UseAsDirectSale=false` y `SaleableAsMain=true`.
 - **Razón**: Así desaparecen los botones duplicados de la pantalla principal y los vinos siguen vendibles cuando se entra en su familia WINERIM (`TINTOS WINERIM`, `BLANCOS WINERIM`, `COPAS WINERIM`, etc.).
 - **Alternativa descartada**: reimportar catálogo completo o ocultar productos. Reimportar era innecesario y ocultar productos rompería la venta dentro de familia.
+
+## 2026-05-29 · Baco: no crear `C Tamaral Crianza` sin variante copa en Winerim
+- **Decisión**: No crear manualmente un producto `C Tamaral Crianza` en Agora mientras Winerim no exponga una variante copa para el vino correspondiente (`Tamaral`/Crianza).
+- **Razón**: En Winerim, la copa publicada es `Tamaral Roble` (`C Tamaral Roble (RIBERA)` en `COPAS WINERIM`). El vino `Tamaral` no tiene `glass_sale_price` ni `glass_stock_id`, por lo que crear una copa manual rompería la trazabilidad y el descuento de stock por variante.
+- **Alternativa descartada**: renombrar `C Tamaral Roble` a `C Tamaral Crianza` o crear un producto alias. Podría resolver la queja visual, pero introduciría una equivalencia de negocio no confirmada y stock posiblemente incorrecto.
+
+## 2026-05-29 · Generar Winerim en Agora como vendible dentro de familia, no como botón raíz
+- **Decisión**: Cambiar `generateImportXml` para emitir `UseAsDirectSale=false` y `SaleableAsMain=true` en productos Winerim.
+- **Razón**: Es la política validada en Baco: evita duplicados en la pantalla raíz y conserva la venta dentro de `... WINERIM`.
+- **Alternativa descartada**: mantener el generador con `UseAsDirectSale=true` y corregir manualmente cada cliente. Eso reintroduciría duplicados en futuras reimportaciones o nuevos clientes Agora.

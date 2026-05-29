@@ -471,6 +471,19 @@ _Última actualización: 2026-05-28_
   - Corrección aplicada directamente en Agora: 118/118 productos Winerim con `UseAsDirectSale=false` y `SaleableAsMain=true`, reutilizando los elementos XML completos para no tocar precios/familias/IVA/stock.
   - Verificación posterior: 118 presentes, `directRootButtons=0`, `notSaleableAsMain=0`, `hiddenFamily=0`.
   - Backup local sin secretos: `.codex-backups/baco-winerim-direct-sale-before-2026-05-28T13-21-44-119Z.json`.
+- Reporte `Tamaral Crianza copas` Baco — 2026-05-29:
+  - Verificación en Winerim/Lovable Cloud:
+    - `Tamaral Roble` (`winerim_id=163818`) tiene copa: `glass_sale_price=3.80`, `glass_stock_id=190387`, `serve_by_glass=true`.
+    - `Tamaral` (`winerim_id=163823`, probable Crianza por histórico legacy) NO tiene copa en Winerim: `glass_sale_price=null`, `glass_stock_id=null`, `serve_by_glass=false`; solo botella y magnum.
+    - `Tamaral Reserva` (`winerim_id=178798`) solo botella.
+    - `Tamaral Verdejo` (`winerim_id=163820`) sí tiene copa.
+  - Verificación directa en Agora:
+    - Existe `C Tamaral Roble` / botón `C Tamaral Roble (RIBERA)` (`ProductId=863818`) en `COPAS WINERIM`, familia visible, `SaleableAsMain=true`, `UseAsDirectSale=false`.
+    - Existe `C Tamaral Verdejo` (`ProductId=863820`) en `COPAS WINERIM`.
+    - No existe `C Tamaral Crianza` porque Winerim no expone variante copa para `Tamaral`/Crianza.
+    - El legacy `TAMARAL CRIANZA` (`ProductId=3538`) sigue oculto/no vendible en familia legacy `TINTOS`.
+  - Cambio de código local: `generateImportXml` pasa a generar productos Winerim con `UseAsDirectSale=false` y `SaleableAsMain=true`, para conservar la política corregida de no duplicar productos en raíz en futuras importaciones.
+  - Validación local: parse TypeScript de `agora-proxy` OK; `npm test -- --run src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK (13 tests).
 - Rollback documentado en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - Estado tras activación automática:
   - Baco queda activo desde cursor `2026-05-27`.

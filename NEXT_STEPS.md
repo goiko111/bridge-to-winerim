@@ -70,6 +70,8 @@
 - [x] Ocultar 348 productos legacy de vino; verificación final 0 legacy visible/vendible.
 - [x] Revisar reporte visual del cliente: el vídeo mostraba familias legacy aún visibles aunque productos no vendibles; se reforzó `ShowInPos=false` en legacy y `ShowInPos=true` en familias `... WINERIM`.
 - [x] Corregir reporte de duplicado visual: 118/118 productos Winerim quedan con `UseAsDirectSale=false` para no salir como botones raíz y `SaleableAsMain=true` para seguir vendibles dentro de familias WINERIM; verificado `directRootButtons=0`, `notSaleableAsMain=0`.
+- [x] Revisar reporte `Tamaral Crianza copas`: no existe copa de `Tamaral`/Crianza en Winerim; sí existe `C Tamaral Roble (RIBERA)` y `C Tamaral Verdejo` en `COPAS WINERIM`.
+- [ ] Confirmar con Baco si quieren que Winerim cree/active variante copa para `Tamaral`/Crianza o si `C Tamaral Roble (RIBERA)` es el producto correcto que deben usar.
 - [x] Marcar capacidad de escritura Agora como verificada (`can_write_products=YES`, `readiness_status=READY`).
 - [x] Documentar rollback en `ROLLBACK_BACO_GETAFE_AGORA_2026-05-27.md`.
 - [x] Aplicar migraciones P0 en Lovable Cloud antes de activar automático: `20260526090000_stock_sync_variant_idempotency.sql` y `20260526091000_user_roles_has_role.sql`.
@@ -148,6 +150,7 @@
 - [x] Reestablecer capacidades verificadas tras la reparación (`Baco`, `Cienvinos`, `Kava`, `Luruna`, `Sa Pedrera`) a `can_write_products=YES`, `readiness_status=READY`, `write_mode=XML_IMPORT`.
 - [ ] Tras redeploy, confirmar que esas capacidades no se degradan en el siguiente `sync-master-data`.
 - [ ] Confirmar en preview que `SyncMonitor > Stock Sync` muestra columna Location.
+- [ ] Confirmar redeploy de `agora-proxy` con `generateImportXml` emitiendo `UseAsDirectSale=false` / `SaleableAsMain=true`.
 - [ ] Tras confirmar redeploy, vigilar Cienvinos durante un ciclo de cron de catálogo y comprobar que no se reencolan updates masivos mientras `auto_push_on_update=false`.
 - [ ] Ejecutar una venta de prueba copa+botella en conexión controlada y verificar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `winerim_response.previousStock/newStock`.
 - [ ] Reejecutar el mismo día de ventas y confirmar que `skipped` aumenta sin nuevo PUT a Winerim.
