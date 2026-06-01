@@ -1379,6 +1379,29 @@ interface GeographicFamilyConfig {
   hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type+Country > Region (2 levels only, Agora limit)
 }
 
+interface AgoraFamilyRoutingRule {
+  enabled?: boolean;
+  format?: string;
+  formats?: string[];
+  wine_type?: string;
+  wine_types?: string[];
+  country?: string;
+  countries?: string[];
+  region?: string;
+  regions?: string[];
+  region_contains?: string | string[];
+  family_id?: string;
+  family_name?: string;
+}
+
+function normalizeRoutingText(value: unknown): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
 function buildGeoFamilyName(wineType: string, country: string, region: string | null, isTopRegion: boolean): string {
   const tLabel = GEO_TYPE_LABELS[wineType?.toLowerCase()] || (wineType || "OTROS").toUpperCase();
   const cName = GEO_COUNTRY_NAMES[country] || country;
@@ -1536,6 +1559,55 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       if (existing) return { id: existing.Id, needsCreate: false, familyName: existing.Name };
       const newId = stableFamilyId(familyName);
       return { id: newId, needsCreate: true, familyName };
+    }
+
+    // PRIORITY 0B: Explicit per-connection routing rules.
+    // Used for clients that already have a production family tree in Agora
+    // (for example, type + region families) and must keep that visual layout.
+    const providerConfig = (connection?.provider_config || {}) as Record<string, unknown>;
+    const routingRules = Array.isArray(providerConfig.agora_family_routing_rules)
+      ? providerConfig.agora_family_routing_rules as AgoraFamilyRoutingRule[]
+      : [];
+    if (routingRules.length > 0 && wine) {
+      const raw = wine.raw_payload || {};
+      const currentFormat = normalizeRoutingText(formatType || "BOTTLE");
+      const currentType = normalizeRoutingText(wineType || wine.wine_type || raw.type || "");
+      const currentCountry = normalizeRoutingText(raw.country || wine.country || "");
+      const currentRegion = normalizeRoutingText(wine.region || raw.region || "");
+
+      const listMatches = (expected: unknown[] | undefined, actual: string): boolean => {
+        if (!expected || expected.length === 0) return true;
+        return expected.map(normalizeRoutingText).includes(actual);
+      };
+      const singleMatches = (expected: unknown, actual: string): boolean => {
+        if (!expected) return true;
+        return normalizeRoutingText(expected) === actual;
+      };
+      const containsMatches = (expected: string | string[] | undefined, actual: string): boolean => {
+        if (!expected) return true;
+        const needles = Array.isArray(expected) ? expected : [expected];
+        return needles.map(normalizeRoutingText).some(needle => needle && actual.includes(needle));
+      };
+
+      for (const rule of routingRules) {
+        if (rule.enabled === false) continue;
+        if (!rule.family_id && !rule.family_name) continue;
+        if (!singleMatches(rule.format, currentFormat)) continue;
+        if (!listMatches(rule.formats, currentFormat)) continue;
+        if (!singleMatches(rule.wine_type, currentType)) continue;
+        if (!listMatches(rule.wine_types, currentType)) continue;
+        if (!singleMatches(rule.country, currentCountry)) continue;
+        if (!listMatches(rule.countries, currentCountry)) continue;
+        if (!singleMatches(rule.region, currentRegion)) continue;
+        if (!listMatches(rule.regions, currentRegion)) continue;
+        if (!containsMatches(rule.region_contains, currentRegion)) continue;
+
+        const found = families.find(f =>
+          (rule.family_id && String(f.Id) === String(rule.family_id)) ||
+          (rule.family_name && normalizeRoutingText(f.Name) === normalizeRoutingText(rule.family_name))
+        );
+        if (found) return { id: found.Id, needsCreate: false, familyName: found.Name };
+      }
     }
 
     // PRIORITY 1: Use custom family mappings if available
@@ -5492,7 +5564,7 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── BACKFILL PREPARATION FIELDS (fix both empty to prevent TPV crash) ──
+    // ── BACKFILL PREPARATION FIELDS (re-push with the configured prep pair) ──
     if (action === "backfill-preparation") {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE", "GLASS", "MAGNUM"];
@@ -5526,7 +5598,11 @@ serve(async (req) => {
         verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
-      // Queue UPDATE tasks with a special flag to force empty preparation fields
+      const hasPrepPair = Boolean(connection.default_preparation_type_id && connection.default_preparation_order_id);
+      const forceEmptyPreparation = payload.forceEmptyPreparation === true || !hasPrepPair;
+
+      // Queue UPDATE tasks. If the connection has a valid default pair, generateImportXml
+      // writes it into each product; otherwise both preparation fields stay empty.
       let queued = 0;
       let skipped = 0;
       for (const wineId of targetWineIds) {
@@ -5548,7 +5624,7 @@ serve(async (req) => {
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
             _trigger_source: "BACKFILL_PREPARATION",
-            _force_empty_preparation: true,
+            _force_empty_preparation: forceEmptyPreparation,
             ...prepScopePayload,
           },
           status: "QUEUED",
@@ -5556,7 +5632,7 @@ serve(async (req) => {
         queued++;
       }
 
-      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets: targetWineIds.length }),
+      return new Response(JSON.stringify({ success: true, queued, skipped, totalTargets: targetWineIds.length, forceEmptyPreparation, hasPrepPair }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

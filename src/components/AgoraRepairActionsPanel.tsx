@@ -28,7 +28,7 @@ const REPAIR_ACTIONS = [
   {
     id: "preparation",
     label: "Fix Preparation Fields",
-    description: "Forces PreparationTypeId and PreparationOrderId to both empty or both set for all pushed products.",
+    description: "Re-pushes products with the configured Preparation Type/Order pair; if none is configured, both fields stay empty.",
     icon: Settings2,
     variant: "outline" as const,
   },
