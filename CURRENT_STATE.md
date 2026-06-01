@@ -28,6 +28,19 @@ _Última actualización: 2026-06-01_
   - StockIds de vinos activos con precio: botella `359/359`, copa `19/19`, magnum `26/26`; faltantes `0` por formato activo/preciado.
   - Desde 2026-05-26: stock Winerim con éxito en `14` botellas, `15` copas y `3` logs legacy sin variante; hay `78` bloqueos terminales de copa de `COPA B304-Nounat [copa]` porque Winerim no expone variante `copa` para ese vino. No son fallos reintentables.
 
+### Dry-run matching legacy Sa Pedrera — 2026-06-01 12:16 CEST
+- Se hizo una pasada solo lectura sobre `230` productos legacy vendibles en familias de vino de Sa Pedrera.
+- Resultado:
+  - `120` legacy ya tienen mapping `CONFIRMED`; una venta por esos productos puede resolver contra Winerim y descontar stock si el formato/stockId existe.
+  - `13` están `PENDING`; no deben considerarse seguros hasta confirmación manual.
+  - `1` está `REJECTED`.
+  - `96` no tienen fila de mapping.
+  - De esos `96`, el dry-run detecta `40` candidatos fuertes con variante Winerim válida; podrían confirmarse en un lote seguro tras revisar muestras.
+  - `35` tienen candidato de vino, pero falta variante/stockId para el formato inferido (muchos son copas vendidas desde familia no-copa o magnums sin variante); no se deben confirmar hasta corregir Winerim o reclasificar formato.
+  - `21` quedan débiles/ambiguos y requieren revisión manual.
+- Riesgo operativo: cualquier legacy no `CONFIRMED` vendido en Agora puede no descontar stock en Winerim. Confirmar un mapping incorrecto es peor: descontaría stock del vino equivocado.
+- Recomendación operativa: aplicar primero solo los `40` candidatos fuertes con variante válida, después revisar `PENDING` y ambiguos con el cliente/listado, y dejar bloqueados los casos sin variante Winerim.
+
 ### Auditoría copas y legacy Agora — 2026-06-01 11:40 CEST
 - Se revisó Lovable Cloud para distinguir entre:
   - conexiones con copa técnicamente preparada (`glass_stock_id` cacheado y mapping confirmado);
