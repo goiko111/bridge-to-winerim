@@ -6,6 +6,28 @@ _Última actualización: 2026-06-01_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Clarificación estado Agora por conexión — 2026-06-01 11:55 CEST
+- No todas las integraciones Agora están "igual" ni se deben comunicar como "perfectas" en bloque:
+  - `Katsu Izakaya`: activa; `last_business_day_synced=2026-05-30`, que coincide con el último día con ventas encontrado en la sonda de 10 días. Sin stock logs recientes de productos Winerim.
+  - `Kava`: activa; `last_business_day_synced=2026-05-30`, coincide con último día con ventas. Tiene descuentos de stock reales (`copa` y `botella`) y legacy directo residual ya oculto.
+  - `La Candela de Triana`: activa; `last_business_day_synced=2026-05-31`. La sonda viva de último día abortó por timeout en esta comprobación, pero el cursor está actualizado a día cerrado reciente.
+  - `Luruna`: activa; `last_business_day_synced=2026-05-31`. La sonda detectó ventas en `2026-06-01`; al ser el día en curso no se trata todavía como cierre ordinario D-1.
+  - `Restaurante Cienvinos Ecija`: activa; `last_business_day_synced=2026-05-27`; sonda de 10 días sin facturas y lecturas vivas de master data intermitentes por timeout/abort.
+  - `Sa Pedrera`: activa; `last_business_day_synced=2026-05-30`, coincide con último día con ventas encontrado en la sonda de 10 días.
+  - `Baco Getafe`: desactivada por rollback legacy (`enabled=false`, `write_mode=NONE`).
+  - `Sa Vida`: no operativa; cursor antiguo (`2026-05-03`) y API Agora sigue pendiente de resolver.
+- `Sa Pedrera` mantiene legacy visible por diseño operativo:
+  - Familias legacy/regionales visibles incluyen `Vinos Por Copas`, `Espumosos`, `Vinos Blancos`, `Vinos Rosados`, `Vinos Tintos`, `Vino Dulce`, `T Ribera C.Leon`, `T Rioja Navarra`, `B Rioja Navarra`, `Copas Tinto`, `Copas Blanco`, `Copas Rosado`, `Copas Cava`, entre otras.
+  - Hay `231` productos legacy vendibles dentro de esas familias; no hay productos de vino como botón directo raíz (`directWineLikeProducts=[]`).
+  - Los productos Winerim se han enrutado a esas familias para conservar la organización regional del cliente, no a familias `... WINERIM` separadas.
+- Matching Sa Pedrera:
+  - `product_mappings` confirmados: `417` botella, `21` copa, `25` magnum.
+  - Rechazados/bloqueados: `273` copa, `13` botella, `5` magnum; se tratan como productos legacy o variantes/vinos no válidos para Winerim y no deben forzar descuento.
+  - Pendientes: `20` botella.
+  - Tracking publicado/verificado: `352` botella, `16` copa, `25` magnum.
+  - StockIds de vinos activos con precio: botella `359/359`, copa `19/19`, magnum `26/26`; faltantes `0` por formato activo/preciado.
+  - Desde 2026-05-26: stock Winerim con éxito en `14` botellas, `15` copas y `3` logs legacy sin variante; hay `78` bloqueos terminales de copa de `COPA B304-Nounat [copa]` porque Winerim no expone variante `copa` para ese vino. No son fallos reintentables.
+
 ### Auditoría copas y legacy Agora — 2026-06-01 11:40 CEST
 - Se revisó Lovable Cloud para distinguir entre:
   - conexiones con copa técnicamente preparada (`glass_stock_id` cacheado y mapping confirmado);
