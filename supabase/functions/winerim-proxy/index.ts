@@ -455,6 +455,63 @@ serve(async (req) => {
         };
       }
 
+      const autoCreateCandidateIds = new Set<string>();
+      const autoUpdateCandidateIds = new Set<string>();
+      const readyProcessedIds = new Set<string>();
+
+      const comparableCatalogFields = [
+        "name",
+        "wine_type",
+        "region",
+        "vintage",
+        "winery",
+        "serve_by_glass",
+        "is_active",
+        "bottle_sale_price",
+        "glass_sale_price",
+        "magnum_sale_price",
+      ];
+
+      const normalizeComparable = (value: unknown): string => {
+        if (value === undefined) return "__undefined__";
+        if (value === null) return "__null__";
+        if (typeof value === "boolean") return value ? "true" : "false";
+        if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(4) : String(value);
+        const numeric = Number(value);
+        if (typeof value === "string" && value.trim() !== "" && Number.isFinite(numeric)) {
+          return numeric.toFixed(4);
+        }
+        return String(value).trim();
+      };
+
+      const hasRelevantCatalogChange = (
+        previous: Record<string, unknown> | undefined,
+        next: Record<string, unknown>,
+      ): boolean => {
+        if (!previous) return false;
+        return comparableCatalogFields.some((field) => {
+          if (!(field in next)) return false;
+          return normalizeComparable(previous[field]) !== normalizeComparable(next[field]);
+        });
+      };
+
+      const loadExistingWineRows = async (ids: string[]): Promise<Map<string, Record<string, unknown>>> => {
+        const result = new Map<string, Record<string, unknown>>();
+        const cleanIds = Array.from(new Set(ids.map(String).filter(Boolean)));
+        for (let i = 0; i < cleanIds.length; i += 500) {
+          const chunk = cleanIds.slice(i, i + 500);
+          const { data: rows } = await supabase
+            .from("winerim_wines")
+            .select("winerim_id, name, wine_type, region, vintage, winery, serve_by_glass, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price, pricing_status")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", chunk);
+          for (const row of (rows || []) as Record<string, unknown>[]) {
+            result.set(String(row.winerim_id), row);
+          }
+        }
+        return result;
+      };
+
 
       let listWinesFetched = 0;
       let listWinesUpserted = 0;
@@ -466,6 +523,9 @@ serve(async (req) => {
         const wines = await fetchAllWines(winerimHeaders);
         listWinesFetched = wines.length;
         totalWines = wines.length;
+        const existingBeforeList = await loadExistingWineRows(
+          wines.map((w) => String(w.id || "")).filter(Boolean),
+        );
 
         console.log(`[winerim-proxy] fetch-catalog start: wines fetched from list=${listWinesFetched}`);
 
@@ -533,6 +593,13 @@ serve(async (req) => {
           if (nf.bottleStockId != null) upsertPayload.bottle_stock_id = nf.bottleStockId;
           if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
+
+          const previous = existingBeforeList.get(winerimId);
+          if (!previous && pricingStatus === "READY") {
+            autoCreateCandidateIds.add(winerimId);
+          } else if (hasRelevantCatalogChange(previous, upsertPayload)) {
+            autoUpdateCandidateIds.add(winerimId);
+          }
 
           await supabase
             .from("winerim_wines")
@@ -611,6 +678,7 @@ serve(async (req) => {
       const detailsResult = batchWineIds.length > 0
         ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
         : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
+      const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
 
       console.log(
         `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +
@@ -692,6 +760,17 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
+        if (pricingStatus === "READY") {
+          readyProcessedIds.add(winerimId);
+        }
+
+        const previous = existingBeforeDetails.get(winerimId);
+        if (!previous && pricingStatus === "READY") {
+          autoCreateCandidateIds.add(winerimId);
+        } else if (hasRelevantCatalogChange(previous, updateData)) {
+          autoUpdateCandidateIds.add(winerimId);
+        }
+
         await supabase
           .from("winerim_wines")
           .update(updateData)
@@ -707,38 +786,88 @@ serve(async (req) => {
 
       const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
 
-      // ── AUTO-PUSH TRIGGER (INCREMENTAL): Evaluate auto-push for the wines processed in THIS batch ──
-      // Previously this only fired when complete=true, but with 1000+ wines we never reached that
-      // because each cron tick restarted from offset=0. Now we evaluate per-batch so new wines / price
-      // changes propagate within minutes, regardless of total catalog size.
+      if (readyProcessedIds.size > 0) {
+        const readyIds = Array.from(readyProcessedIds);
+        const publishedOrQueued = new Set<string>();
+        for (let i = 0; i < readyIds.length; i += 500) {
+          const chunk = readyIds.slice(i, i + 500);
+          const { data: trackedRows } = await supabase
+            .from("winerim_push_tracking")
+            .select("winerim_wine_id, sync_status")
+            .eq("connection_id", connectionId)
+            .in("winerim_wine_id", chunk)
+            .in("sync_status", ["QUEUED", "PUSHED", "VERIFIED"]);
+          for (const row of (trackedRows || []) as { winerim_wine_id: string }[]) {
+            publishedOrQueued.add(String(row.winerim_wine_id));
+          }
+        }
+        for (const id of readyIds) {
+          if (!publishedOrQueued.has(String(id))) autoCreateCandidateIds.add(String(id));
+        }
+      }
+
+      // ── AUTO-PUSH TRIGGER (INCREMENTAL, differential) ──
+      // Only queue wines that are new/unpublished or whose catalog-visible fields
+      // actually changed. This keeps price/name updates automatic without reimporting
+      // every processed batch on every cron pass.
       let autoPushResult: Record<string, unknown> | null = null;
-      if (batchWineIds.length > 0) {
+      const autoCreateIds = Array.from(autoCreateCandidateIds);
+      const autoUpdateIds = Array.from(autoUpdateCandidateIds)
+        .filter((id) => !autoCreateCandidateIds.has(id));
+      if (autoCreateIds.length > 0 || autoUpdateIds.length > 0) {
         try {
           const { data: conn } = await supabase
             .from("pos_connections")
-            .select("provider, auto_push_on_update")
+            .select("provider, auto_push_on_create, auto_push_on_update")
             .eq("id", connectionId)
             .maybeSingle();
 
-          if (conn?.provider === "agora" && conn?.auto_push_on_update === true) {
-            const { data: pushData } = await supabase.functions.invoke("agora-proxy", {
-              body: { action: "evaluate-auto-push", connectionId, winerimWineIds: batchWineIds, eventType: "UPDATE" },
-            });
-            autoPushResult = pushData;
-            console.log(`[winerim-proxy] auto-push update (batch=${batchWineIds.length}): queued=${pushData?.queued || 0} hidQueued=${pushData?.hidQueued || 0} complete=${complete}`);
+          if (conn?.provider === "agora") {
+            const parts: Record<string, unknown>[] = [];
+            let queuedTotal = 0;
+            let hidQueuedTotal = 0;
 
-            if ((pushData?.queued || 0) > 0 || (pushData?.hidQueued || 0) > 0) {
+            if (autoCreateIds.length > 0 && conn?.auto_push_on_create === true) {
+              const { data: createData } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoCreateIds, eventType: "CREATE" },
+              });
+              parts.push({ eventType: "CREATE", ids: autoCreateIds.length, result: createData });
+              queuedTotal += Number(createData?.queued || 0);
+              hidQueuedTotal += Number(createData?.hidQueued || 0);
+            }
+
+            if (autoUpdateIds.length > 0 && conn?.auto_push_on_update === true) {
+              const { data: updateData } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoUpdateIds, eventType: "UPDATE" },
+              });
+              parts.push({ eventType: "UPDATE", ids: autoUpdateIds.length, result: updateData });
+              queuedTotal += Number(updateData?.queued || 0);
+              hidQueuedTotal += Number(updateData?.hidQueued || 0);
+            }
+
+            autoPushResult = {
+              success: true,
+              differential: true,
+              createCandidates: autoCreateIds.length,
+              updateCandidates: autoUpdateIds.length,
+              parts,
+            };
+            console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
+
+            if (queuedTotal > 0 || hidQueuedTotal > 0) {
               await supabase.functions.invoke("agora-proxy", {
                 body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
               });
             }
           } else {
-            autoPushResult = { skipped: true, reason: "auto_push_on_update disabled or non-agora provider" };
-            console.log(`[winerim-proxy] auto-push update skipped for ${connectionId}: auto_push_on_update disabled or non-agora provider`);
+            autoPushResult = { skipped: true, reason: "non-agora provider" };
+            console.log(`[winerim-proxy] differential auto-push skipped for ${connectionId}: non-agora provider`);
           }
         } catch (e) {
           console.error("[winerim-proxy] auto-push trigger failed:", e);
         }
+      } else {
+        autoPushResult = { skipped: true, reason: "no_catalog_changes_detected" };
       }
 
       // ── CHAIN NEXT BATCH via pg_net (fire-and-forget) ──
@@ -815,8 +944,8 @@ serve(async (req) => {
           winesUpdatedWithGlassPrice,
           detailsUpdated,
           detailsMissing: detailsResult.failed,
-          newWines: 0,
-          changedWines: 0,
+          newWines: autoCreateIds.length,
+          changedWines: autoUpdateIds.length,
           autoPushResult,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
