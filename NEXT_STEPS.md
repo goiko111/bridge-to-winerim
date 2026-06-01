@@ -28,6 +28,9 @@
 - [x] Activar `enabled=true` por instrucción operativa del usuario, con cursor inicial `last_business_day_synced=2026-05-27` para evitar reescaneos históricos.
 - [x] Resolver el `Last Sync Never` operativo: `auto-sync-sales` comprobado manualmente sin días pendientes y `last_sync_at` actualizado tras chequeo real.
 - [x] Drenar cola de actualización reaparecida: tareas Cienvinos `AGORA_XML_UPSERT_PRODUCT` terminan en 0 abiertas y 0 fallos.
+- [x] Reparar visual Cienvinos tras auditoría del 2026-06-01: 428 productos Winerim publicados quedan `UseAsDirectSale=false`, `SaleableAsMain=true`, preparación coherente y 0 tareas `AGORA_XML_UPSERT_PRODUCT` abiertas.
+- [ ] Confirmar redeploy efectivo del commit `a180c6c` en Lovable Cloud antes de activar cambios de precio automáticos: `winerim-proxy fetch-catalog` debe devolver `autoPushResult.reason=no_catalog_changes_detected` o `autoPushResult.differential=true`.
+- [ ] Tras ese redeploy, activar `auto_push_on_update=true` en Cienvinos para que cambios de precio/nombre/formato se reflejen automáticamente sin reimportar lotes completos.
 - [ ] Monitorizar el primer cierre nuevo con productos WINERIM; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key` y respuesta Winerim `previousStock/newStock`.
 - [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
 
@@ -36,12 +39,18 @@
 - [x] Reparar visual/preparación en Katsu, Kava, La Candela, Luruna y Sa Pedrera: 0 productos Winerim activos quedan como botón raíz, 0 activos quedan sin pareja de preparación, 0 tareas `AGORA_XML_UPSERT_PRODUCT` abiertas en esas cinco conexiones tras la limpieza.
 - [x] Refrescar master data de las cinco conexiones tras la reparación.
 - [x] Subir fix de código a GitHub: commit `81c7dbb` (`Fix Agora visual routing and preparation repair`).
-- [ ] Confirmar redeploy efectivo en Lovable Cloud: `agora-proxy preview-xml` debe generar `UseAsDirectSale="false"` para una muestra de La Candela/Katsu.
-- [ ] Cuando el preview sea correcto, reactivar `auto_push_verified_ready=true` en Katsu, Kava, La Candela, Luruna y Sa Pedrera, ejecutar una verificación XML y confirmar que no se generan botones raíz.
+- [x] Confirmar redeploy efectivo de `agora-proxy` en Lovable Cloud: `preview-xml` genera `UseAsDirectSale="false"` y preparación completa para muestra de La Candela.
+- [x] Cerrar tareas abiertas de catálogo supersedidas tras reparación: Cienvinos 85, Kava 27, Luruna 13 y Sa Pedrera 62 quedan en 0 abiertas.
+- [x] Reparar desalineaciones residuales verificadas: Katsu y Sa Pedrera quedan con productos Winerim publicados `direct=0`, `notMain=0`, `mismatchPrep=0`.
+- [x] Subir auto-push diferencial a GitHub: commit `a180c6c` (`Make Winerim catalog auto-push differential`).
+- [ ] Confirmar redeploy efectivo de `winerim-proxy` en Lovable Cloud: `fetch-catalog` debe devolver `autoPushResult.reason=no_catalog_changes_detected` o `autoPushResult.differential=true`. Actualmente sigue devolviendo `auto_push_not_verified_no_manual_import_success_yet`.
+- [ ] Solo después del redeploy diferencial, reactivar `auto_push_verified_ready=true` en Katsu, Kava, La Candela, Luruna y Sa Pedrera, ejecutar una verificación XML y confirmar que no se generan botones raíz ni reimportaciones masivas.
 - [ ] Validar en tablets de Sa Pedrera que los vinos Winerim quedan dentro de familias regionales y que una orden de vino llega a barra.
 - [ ] Ajustar reglas regionales de Sa Pedrera si el cliente identifica vinos concretos en una familia distinta a la esperada.
+- [ ] Validar con Winerim si su "Historial de ventas" se alimenta de los movimientos `PUT /stock/{stockId}` o si necesitan un endpoint adicional de ventas no documentado.
 - [ ] Sa Vida: pausar/deshabilitar operativamente o mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`.
-- [ ] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED` y confirmar por qué no hay ventas/cierres desde `2026-05-27`.
+- [x] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED`; quedan 0 abiertas tras verificar catálogo vivo.
+- [ ] Cienvinos: confirmar por qué no hay ventas/cierres desde `2026-05-27`.
 - [x] Kava: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
 - [x] Luruna: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
 - [x] Sa Pedrera: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.

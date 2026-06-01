@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-06-01 · Auto-push de catálogo Agora debe ser diferencial antes de reactivar `auto_push_verified_ready`
+- **Decisión**: Cambiar `winerim-proxy fetch-catalog` para que el auto-push solo evalúe vinos nuevos/no publicados o vinos con cambios reales en campos visibles (`name`, tipo, región, activo, copa y precios por formato), en vez de reencolar todo el lote procesado.
+- **Razón**: Katsu, Kava, La Candela, Luruna y Sa Pedrera tienen `auto_push_on_update=true`; reactivar `auto_push_verified_ready` con el runtime anterior habría podido reimportar lotes completos en cada cron, cargando Agora y reabriendo riesgo visual.
+- **Alternativa descartada**: reactivar ya las cinco conexiones porque `agora-proxy preview-xml` está corregido. Aún faltaba confirmar `winerim-proxy` desplegado, que es quien decide cuándo encolar updates automáticos.
+
+## 2026-06-01 · Mantener pausado el auto-push verificado hasta redeploy real de Lovable Cloud
+- **Decisión**: Dejar `auto_push_verified_ready=false` en Katsu, Kava, La Candela, Luruna y Sa Pedrera hasta que Lovable Cloud ejecute el commit `a180c6c` y `fetch-catalog` devuelva `autoPushResult.reason=no_catalog_changes_detected` o `autoPushResult.differential=true`.
+- **Razón**: La prueba live tras el push seguía devolviendo `auto_push_not_verified_no_manual_import_success_yet`, señal del runtime anterior. El estado seguro es que los productos ya publicados funcionen, pero que no se generen nuevos updates automáticos hasta redeploy.
+- **Alternativa descartada**: activar la automatización completa inmediatamente. Podía romper lo que acababa de quedar reparado.
+
+## 2026-06-01 · Reparar Cienvinos y desalineaciones residuales sin borrar histórico
+- **Decisión**: Reparar por XML los productos Winerim publicados de Cienvinos, Katsu y Sa Pedrera para que queden `UseAsDirectSale=false`, `SaleableAsMain=true` y preparación coherente, conservando IDs y ventas históricas.
+- **Razón**: Cienvinos seguía con 428 productos Winerim como botones raíz; Katsu y Sa Pedrera tenían un producto verificado residual fuera de contrato. Borrar/recrear habría roto referencias, mappings e histórico.
+- **Alternativa descartada**: dejarlo a que lo corrigiera el siguiente auto-update. El auto-update completo todavía depende del redeploy diferencial de `winerim-proxy`.
+
+## 2026-06-01 · No prometer "Historial de ventas" Winerim como venta creada por API
+- **Decisión**: Documentar que el flujo implementado descuenta stock Winerim por `PUT /api/v2/stock/{stockId}` y guarda historial canónico en Lovable Cloud; no existe en el código actual un POST de venta hacia Winerim.
+- **Razón**: La documentación local Winerim API v2 disponible solo documenta endpoints de stock para este caso. Decir que se crea una venta en el Historial de ventas de Winerim sería asumir comportamiento no verificado.
+- **Alternativa descartada**: afirmar que el Historial de ventas de Winerim queda garantizado solo porque el stock baja. Puede ser cierto si Winerim registra movimientos de stock como historial, pero hay que validarlo con Winerim o con su UI.
+
+---
+
 ## 2026-05-18 · Desactivar cron `agora-dispatch-restore-stock` y eliminar `restore-stock` del dispatcher
 - **Decisión**: `cron.unschedule('agora-dispatch-restore-stock')` (jobid 12) y eliminar el case `"restore-stock"` del `agora-cron-dispatcher` + del tipo `DispatchBody`. La acción `restore-glass-overdiscount` sigue existiendo en `agora-proxy` pero solo se puede invocar manualmente.
 - **Razón**: El cron corría cada 5min con `apply: true` y reescribía el stock de Winerim en Sa Vida como `max(0, baseline - allHistoricalSales)`, dejando a 0 los vinos más vendidos cada vez que el cliente los reponía manualmente. Era una herramienta one-shot programada por error como recurrente.

@@ -6,6 +6,43 @@ _Última actualización: 2026-06-01_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Auditoría automática Agora + reparación Cienvinos — 2026-06-01 09:45 CEST
+- Se verificó contra Lovable Cloud y XML vivo de Agora que el `agora-proxy` desplegado ya genera `UseAsDirectSale=false`, `SaleableAsMain=true` y pareja de preparación correcta en `preview-xml`.
+- Se detectó que `winerim-proxy` desplegado en Lovable Cloud todavía NO contiene el cambio diferencial de auto-push:
+  - Prueba real `fetch-catalog` en Katsu devolvió `autoPushResult.reason=auto_push_not_verified_no_manual_import_success_yet`, señal del runtime anterior.
+  - El commit `a180c6c` (`Make Winerim catalog auto-push differential`) ya está en GitHub `main`, pero falta redeploy efectivo en Lovable Cloud.
+- Por seguridad, siguen pausados `auto_push_verified_ready=false` en Katsu, Kava, La Candela, Luruna y Sa Pedrera. No se deben reactivar hasta confirmar que `winerim-proxy fetch-catalog` devuelve `autoPushResult.reason=no_catalog_changes_detected` o `autoPushResult.differential=true`.
+- Se reparó Cienvinos en Agora, sin borrar productos:
+  - Backup previo: `.codex-backups/agora-direct-visibility-repair-2026-06-01T07-37-55-705Z.json`.
+  - 428 productos Winerim publicados pasaron de botón raíz a producto vendible dentro de familia (`direct=0`, `notMain=0`, `mismatchPrep=0`).
+  - Se refrescó `agora_master_data` de Cienvinos (`products=605`, `families=8`).
+- Se repararon también desalineaciones residuales:
+  - Katsu: 1 producto verificado corregido; verificación final `activeTracked=58`, `direct=0`, `notMain=0`, `mismatchPrep=0`.
+  - Sa Pedrera: 1 producto verificado corregido; verificación final `activeTracked=392`, `direct=0`, `notMain=0`, `mismatchPrep=0`.
+- Se cerraron como `SUCCESS` tareas antiguas `AGORA_XML_UPSERT_PRODUCT` supersedidas por la reparación viva:
+  - Cienvinos: 85 cerradas; abiertas finales `0`.
+  - Kava: 27 cerradas; abiertas finales `0`.
+  - Luruna: 13 cerradas; abiertas finales `0`.
+  - Sa Pedrera: 62 cerradas; abiertas finales `0`.
+- Foto operativa de catálogo publicado:
+  - Baco Getafe: rollback legacy, `enabled=false`, `write_mode=NONE`, Winerim activo publicado `0`.
+  - Cienvinos: `activeTracked=428`, `direct=0`, `notMain=0`, `mismatchPrep=0`; `auto_push_verified_ready=true`, pero `auto_push_on_update=false` hasta redeploy diferencial.
+  - Katsu: `activeTracked=58`, `direct=0`, `notMain=0`, `mismatchPrep=0`; últimos verificados: `6º Elemento`, `Lienzo Chardonnay Fermentado en Barrica`, `Sarmentero Roble`, `Tarima Blanco`, `Majuelo El Espejo la Seca`.
+  - Kava: `activeTracked=223`, `direct=0`, `notMain=0`, `mismatchPrep=0`; últimos verificados: `Deutzerhof Spätburgunder Troken`, `Tement Kalk & Kreide Sauvignon Blanc`, `Francois Carillon Bourgogne Côte d'Or Pinot Noir`, `Zieregg Sauvignon Blanc`, `De La Riva Macharnudo Blanco`.
+  - La Candela: `activeTracked=61`, `direct=0`, `notMain=0`, `mismatchPrep=0`; últimos verificados: `Valdehermoso Joven`, `Viña Calera`, `Valduero 2 Maderas`, `Tarsus Crianza`, `S4MGO`.
+  - Luruna: `activeTracked=124`, `direct=0`, `notMain=0`, `mismatchPrep=0`; últimos verificados: `Culmen Reserva` magnum, `El Perro Verde` magnum, `Txakolí Uno`, `Txakoli Aitaren`, `Taittinger Brut Réserve`.
+  - Sa Pedrera: `activeTracked=392`, `direct=0`, `notMain=0`, `mismatchPrep=0`; últimos verificados: `B303-Binitord Blanc` copa, `Magnum 34 - Bordón Crianza 1998`, `MAGNUM 16 - Viña Sastre Crianza`, `E533-Charles Heidsieck Reserve Rosé`, `R607-Rock Angel Rosé`.
+  - Sa Vida: sigue no operativa para catálogo vivo (`Products` devuelve HTTP 501), `auto_push_verified_ready=false`, 1000 tareas antiguas abiertas; no procesar hasta resolver API/puerto/versión.
+- Ventas/stock últimos 7 días:
+  - Kava: `stock_sync_log SUCCESS=53`, `BLOCKED=26`, `FAILED=0`.
+  - Luruna: `SUCCESS=1`, `FAILED=0`.
+  - Sa Pedrera: `SUCCESS=32`, `BLOCKED=78`, `FAILED=0`.
+  - Baco: `SUCCESS=41` histórico antes del rollback; hoy Winerim está desactivado.
+  - Katsu y La Candela guardan ventas/cursor, pero no muestran stock `SUCCESS` en últimos 7 días; falta validar con venta real resuelta contra producto Winerim.
+- El middleware actual NO llama a un endpoint específico de "ventas" de Winerim; la API local documentada solo expone stock (`PUT /api/v2/stock/{stockId}` y `PUT /api/v2/stock/bulk`). Hecho confirmado en `/Users/GOIKO/Downloads/API_TOKEN_V2_DOCUMENTATION.html`.
+  - Hecho operativo garantizado: se guardan ventas en Lovable Cloud (`sales_events`/`sales_line_items`) y se descuenta stock Winerim por variante en `stock_sync_log`.
+  - Hipótesis a validar con Winerim: si su UI de "Historial de ventas" muestra esos movimientos de stock o si requiere un endpoint adicional no documentado.
+
 ### Reparación visual/preparación Agora — Katsu, Kava, La Candela, Luruna y Sa Pedrera — 2026-06-01 07:12 CEST
 - Se revisaron los vídeos/comentarios de Sa Pedrera: el problema visible era que productos Winerim aparecían como botones directos en el frontal y mezclaban la pantalla; el problema operativo probable de "no llega a barra" era que muchos productos Winerim tenían `PreparationTypeId`/`PreparationOrderId` vacíos.
 - Backup operativo previo creado antes de escribir en Agora: `.codex-backups/agora-five-visual-prep-before-2026-06-01T04-54-51-409Z.json`.
