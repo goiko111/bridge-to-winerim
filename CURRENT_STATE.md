@@ -6,6 +6,23 @@ _Última actualización: 2026-05-29_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Checklist operativo integraciones — 2026-06-01 06:26 CEST
+- Se generó el informe de auditoría read-only `INTEGRATIONS_CHECKLIST_2026-06-01.md` con estado por conexión/proveedor, sin documentar credenciales.
+- Lovable Cloud contiene 8 conexiones productivas registradas y todas son `agora`; no hay conexiones productivas registradas para BDP, Revo, Toast, Numier, Clover, Simphony, ICG, HIOPOS, TCPOS, Square, Cassa ni TouchBistro.
+- Estado global actual:
+  - 7 conexiones Agora activas.
+  - 1 conexión deshabilitada: `Baco Getafe` por rollback legacy.
+  - `export-master Families` responde HTTP 200 en Baco, Katsu, Kava, La Candela, Luruna, Cienvinos y Sa Pedrera.
+  - `Sa Vida` sigue devolviendo HTTP 501 en `export-master Families`; debe tratarse como no operativa.
+  - `stock_sync_log` no tiene fallos nuevos en 24h ni en 7 días; los `FAILED` restantes son históricos.
+  - Cola outbound abierta global: `QUEUED=1870`, `FAILED=3633`, `BLOCKED=2063`, `RUNNING=0`.
+- Hallazgos por conexión:
+  - `Baco Getafe`: rollback correcto, Winerim deshabilitado; no reactivar sin nuevo piloto.
+  - `Cienvinos`: activa y POS responde, pero sin ventas guardadas y con 85 tareas `QUEUED`.
+  - `Katsu` y `La Candela`: ventas entran, pero `provider_capabilities` aparece `NOT_CONNECTED/NONE`; falta validar escritura/stock real.
+  - `Kava`, `Luruna` y `Sa Pedrera`: ventas/stock tienen éxitos recientes, pero mantienen colas históricas abiertas y mappings pendientes/rechazados.
+  - `Sa Vida`: activa en tabla pero bloqueada operativamente por HTTP 501 y cola muy grande; no procesar hasta resolver API REST/puerto/versión.
+
 ### Rollback Baco Getafe a legacy Agora — 2026-05-29 11:37 CEST
 - A petición del usuario, se revirtió operativamente la integración Winerim de `Baco Getafe` y se dejó el TPV en modo legacy. Este estado sustituye al estado anterior donde Baco estaba activo con familias `... WINERIM`.
 - No se borraron productos ni familias en Agora; todo se hizo por visibilidad/vendibilidad para conservar histórico y permitir volver atrás.

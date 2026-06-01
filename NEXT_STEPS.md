@@ -32,6 +32,13 @@
 - [ ] Si el cliente no quiere mantener vinos en los 3 sale centers, ajustar `selected_sale_center_ids` antes de futuras actualizaciones masivas.
 
 ## P0 — Revisión flota Agora 2026-05-27
+- [x] Generar checklist operativa read-only de integraciones: `INTEGRATIONS_CHECKLIST_2026-06-01.md`.
+- [ ] Sa Vida: pausar/deshabilitar operativamente o mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`.
+- [ ] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED` y confirmar por qué no hay ventas/cierres desde `2026-05-27`.
+- [ ] Kava: revisar 220 tareas abiertas y 37 mappings `PENDING`.
+- [ ] Luruna: revisar 192 tareas abiertas y decidir destino de 18 tracking `QUEUED`.
+- [ ] Sa Pedrera: separar 831 tareas abiertas entre histórico no accionable y pendientes reales; resolver 20 mappings `PENDING`.
+- [ ] Katsu y La Candela: verificar escritura/capacidad actual y corregir `provider_capabilities` si el XML import real funciona.
 - [x] Actualizar credenciales Sa Vida en Lovable Cloud sin documentar secretos.
 - [x] Probar Sa Vida con `agora-proxy test` y `sync-master-data`: endpoints Agora devuelven HTTP `501`.
 - [x] Marcar Sa Vida como `UNKNOWN/NOT_CONNECTED/NONE` en `provider_capabilities` para no mostrarla lista.

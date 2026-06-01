@@ -350,3 +350,8 @@
 - **Decisión**: Corregir el rollback de Baco para dejar todos los productos legacy de vino con `UseAsDirectSale=false`, mantener `SaleableAsMain=true` solo para los productos legacy esperados y colgar `FINOS`, `ROSADOS`, `TINTOS`, `CHAMPAGNE` y `BLANCOS` bajo la familia raíz `VINO`.
 - **Razón**: El cliente confirmó que el estado anterior no tenía cinco pantallas de vinos en el frontal; los vinos estaban dentro de la categoría `VINO`. En Agora, `UseAsDirectSale=true` crea botones directos en la pantalla principal, que fue justo el problema visible tras el primer rollback.
 - **Alternativa descartada**: mantener todos los productos activos como direct-sale. Aunque eran vendibles, rompía la operativa de sala y reactivaba visualmente referencias que el cliente no quería ver en el frontal.
+
+## 2026-06-01 · Auditar integraciones en modo solo lectura antes de tocar colas
+- **Decisión**: Generar una checklist operativa por integración (`INTEGRATIONS_CHECKLIST_2026-06-01.md`) con datos reales de Lovable Cloud y no ejecutar limpiezas, reintentos ni cambios de configuración durante esta revisión.
+- **Razón**: La flota contiene estados mezclados: algunas conexiones tienen ventas/stock recientes, otras tienen capacidades degradadas o colas históricas. Antes de tocar datos conviene separar diagnóstico, prioridades y acciones seguras.
+- **Alternativa descartada**: drenar colas o corregir capacidades durante la auditoría. Habría mezclado observación con mutación y podría ocultar el estado real que se quería revisar.
