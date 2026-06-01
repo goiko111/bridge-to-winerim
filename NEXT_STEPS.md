@@ -33,12 +33,19 @@
 
 ## P0 — Revisión flota Agora 2026-05-27
 - [x] Generar checklist operativa read-only de integraciones: `INTEGRATIONS_CHECKLIST_2026-06-01.md`.
+- [x] Reparar visual/preparación en Katsu, Kava, La Candela, Luruna y Sa Pedrera: 0 productos Winerim activos quedan como botón raíz, 0 activos quedan sin pareja de preparación, 0 tareas `AGORA_XML_UPSERT_PRODUCT` abiertas en esas cinco conexiones tras la limpieza.
+- [x] Refrescar master data de las cinco conexiones tras la reparación.
+- [x] Subir fix de código a GitHub: commit `81c7dbb` (`Fix Agora visual routing and preparation repair`).
+- [ ] Confirmar redeploy efectivo en Lovable Cloud: `agora-proxy preview-xml` debe generar `UseAsDirectSale="false"` para una muestra de La Candela/Katsu.
+- [ ] Cuando el preview sea correcto, reactivar `auto_push_verified_ready=true` en Katsu, Kava, La Candela, Luruna y Sa Pedrera, ejecutar una verificación XML y confirmar que no se generan botones raíz.
+- [ ] Validar en tablets de Sa Pedrera que los vinos Winerim quedan dentro de familias regionales y que una orden de vino llega a barra.
+- [ ] Ajustar reglas regionales de Sa Pedrera si el cliente identifica vinos concretos en una familia distinta a la esperada.
 - [ ] Sa Vida: pausar/deshabilitar operativamente o mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`.
 - [ ] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED` y confirmar por qué no hay ventas/cierres desde `2026-05-27`.
-- [ ] Kava: revisar 220 tareas abiertas y 37 mappings `PENDING`.
-- [ ] Luruna: revisar 192 tareas abiertas y decidir destino de 18 tracking `QUEUED`.
-- [ ] Sa Pedrera: separar 831 tareas abiertas entre histórico no accionable y pendientes reales; resolver 20 mappings `PENDING`.
-- [ ] Katsu y La Candela: verificar escritura/capacidad actual y corregir `provider_capabilities` si el XML import real funciona.
+- [x] Kava: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
+- [x] Luruna: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
+- [x] Sa Pedrera: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
+- [x] Katsu y La Candela: escritura real verificada con import Agora HTTP 200 y `provider_capabilities` corregidas a `READY/XML_IMPORT/YES`.
 - [x] Actualizar credenciales Sa Vida en Lovable Cloud sin documentar secretos.
 - [x] Probar Sa Vida con `agora-proxy test` y `sync-master-data`: endpoints Agora devuelven HTTP `501`.
 - [x] Marcar Sa Vida como `UNKNOWN/NOT_CONNECTED/NONE` en `provider_capabilities` para no mostrarla lista.
@@ -54,12 +61,10 @@
 - [ ] Decidir si Sa Vida debe pausarse/deshabilitarse hasta resolver HTTP 501/API REST y mappings, porque hoy aparece `enabled=true` aunque las capacidades están `NOT_CONNECTED`.
 - [ ] Revisar tareas residuales por instalación tras redeploy:
   - Cienvinos: el runtime antiguo generó 82 updates `MANUAL`; ya se marcaron `SUCCESS` tras verificar que estaban publicados. Vigilar que no reaparezcan hasta redeploy.
-  - Kava: `203 QUEUED`, `7 FAILED`, `9 BLOCKED`.
-  - Luruna: `117 QUEUED`, `10 FAILED`, `58 BLOCKED`.
-  - Sa Pedrera: `201 RUNNING`, `294 FAILED`, `111 BLOCKED`.
+  - Kava/Luruna/Sa Pedrera: tras la reparación del 2026-06-01 quedan 0 `QUEUED/RUNNING` de catálogo, pero hay que revisar históricos `FAILED/BLOCKED` si siguen ensuciando monitor.
   - Sa Vida: backlog grande (`1044 QUEUED`, `3322 FAILED`, `1861 BLOCKED`), no procesar hasta resolver HTTP 501.
 - [ ] Decidir limpieza de la conexión `New Location` deshabilitada con URL inválida.
-- [ ] Revisar por qué Katsu y La Candela tienen tracking verificado pero `provider_capabilities` en `UNKNOWN/NOT_CONNECTED`; marcar `READY` solo tras verificación de escritura actual.
+- [x] Revisar por qué Katsu y La Candela tenían tracking verificado pero `provider_capabilities` en `UNKNOWN/NOT_CONNECTED`; quedaron `READY/XML_IMPORT/YES` tras import real HTTP 200.
 
 ## P0 — Integración Agora Baco Getafe
 - [x] Crear conexión en Lovable Cloud con credenciales reales y dejarla deshabilitada.

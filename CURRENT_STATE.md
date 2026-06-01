@@ -2,9 +2,41 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-05-29_
+_Última actualización: 2026-06-01_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Reparación visual/preparación Agora — Katsu, Kava, La Candela, Luruna y Sa Pedrera — 2026-06-01 07:12 CEST
+- Se revisaron los vídeos/comentarios de Sa Pedrera: el problema visible era que productos Winerim aparecían como botones directos en el frontal y mezclaban la pantalla; el problema operativo probable de "no llega a barra" era que muchos productos Winerim tenían `PreparationTypeId`/`PreparationOrderId` vacíos.
+- Backup operativo previo creado antes de escribir en Agora: `.codex-backups/agora-five-visual-prep-before-2026-06-01T04-54-51-409Z.json`.
+- Se aplicó reparación directa en Agora, sin borrar productos ni histórico:
+  - `UseAsDirectSale=false` para que no salgan como botones raíz.
+  - `SaleableAsMain=true` para productos activos vendibles dentro de familia.
+  - `PreparationTypeId`/`PreparationOrderId` configurados: Katsu `1/1`, Kava `1/1`, La Candela `1/5`, Luruna `1/1`, Sa Pedrera `1/1`.
+  - Sa Pedrera se reubicó en familias legacy visibles por región/tipo (`T Rioja Navarra`, `T Ribera C.Leon`, `B Galicia`, `Champagnes`, `MAGNUMS`, etc.) en vez de dejar los vinos bajo las familias `... WINERIM` ocultas.
+- Verificación final contra XML vivo de Agora tras cerrar la carrera de auto-update:
+  - Katsu Izakaya: 85 productos Winerim detectados, 57 activos; `activeDirect=0`, `activeNotMain=0`, `activeMissingPrep=0`, `familyBlank=0`, cola abierta `AGORA_XML_UPSERT_PRODUCT=0`.
+  - Kava: 232 detectados, 223 activos; `activeDirect=0`, `activeNotMain=0`, `activeMissingPrep=0`, `familyBlank=0`, cola abierta `0`.
+  - La Candela de Triana: 79 detectados, 78 activos; `activeDirect=0`, `activeNotMain=0`, `activeMissingPrep=0`, `familyBlank=0`, cola abierta `0`.
+  - Luruna: 125 detectados, 124 activos; `activeDirect=0`, `activeNotMain=0`, `activeMissingPrep=0`, `familyBlank=0`, cola abierta `0`.
+  - Sa Pedrera: 416 detectados, 392 activos; `activeDirect=0`, `activeNotMain=0`, `activeMissingPrep=0`, `familyBlank=0`, cola abierta `0`.
+- Se refrescó `agora_master_data` en Lovable Cloud para las cinco conexiones tras la reparación (`sync-master-data` OK en todas).
+- Se actualizó configuración local de conexión para futuro:
+  - `write_mode=XML_IMPORT`.
+  - `default_preparation_type_id/default_preparation_order_id` informados según cada instalación.
+  - `provider_capabilities` marcadas `READY/XML_IMPORT/YES` tras import real con HTTP 200.
+  - Katsu queda con `auto_push_glass=false` para no crear copas masivas de golpe mientras su `write_glass` sigue false.
+- Importante: `auto_push_verified_ready=false` quedó pausado temporalmente en Katsu, Kava, La Candela, Luruna y Sa Pedrera.
+  - Razón: después de activar el automático, Lovable Cloud generó tareas `AUTO_UPDATE` con la Edge Function todavía desplegada en versión antigua; el `preview-xml` de Lovable Cloud seguía generando `UseAsDirectSale="true"` a `2026-06-01T05:11Z`.
+  - Se cerraron como `SUCCESS` las tareas `AUTO_UPDATE` creadas en esa carrera tras aplicar la reparación por lote y verificar XML vivo.
+  - El código corregido está subido a GitHub `main` en commit `81c7dbb` (`Fix Agora visual routing and preparation repair`), pero falta confirmar redeploy efectivo de Lovable Cloud antes de reactivar `auto_push_verified_ready`.
+- Validación local del cambio de código:
+  - `npm run build` pasa; solo warnings conocidos de Browserslist desactualizado y bundle grande.
+
+### Hipótesis abiertas — 2026-06-01
+- Si Lovable Cloud no redeploya el commit `81c7dbb`, reactivar `auto_push_verified_ready` puede reintroducir botones raíz porque el runtime actual aún genera `UseAsDirectSale=true`.
+- Los productos Winerim reparados ya deberían llegar a barra al tener pareja de preparación; queda pendiente validación real en tablets/impresoras de barra tras refrescar/cerrar y abrir comandera.
+- En Sa Pedrera, la reorganización regional usa reglas deterministas por `wine_type`, `country` y `region` de Winerim. Puede requerir ajuste fino si el cliente espera una región legacy distinta para algún vino concreto.
 
 ### Checklist operativo integraciones — 2026-06-01 06:26 CEST
 - Se generó el informe de auditoría read-only `INTEGRATIONS_CHECKLIST_2026-06-01.md` con estado por conexión/proveedor, sin documentar credenciales.

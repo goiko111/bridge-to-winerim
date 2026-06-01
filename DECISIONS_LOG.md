@@ -355,3 +355,18 @@
 - **Decisión**: Generar una checklist operativa por integración (`INTEGRATIONS_CHECKLIST_2026-06-01.md`) con datos reales de Lovable Cloud y no ejecutar limpiezas, reintentos ni cambios de configuración durante esta revisión.
 - **Razón**: La flota contiene estados mezclados: algunas conexiones tienen ventas/stock recientes, otras tienen capacidades degradadas o colas históricas. Antes de tocar datos conviene separar diagnóstico, prioridades y acciones seguras.
 - **Alternativa descartada**: drenar colas o corregir capacidades durante la auditoría. Habría mezclado observación con mutación y podría ocultar el estado real que se quería revisar.
+
+## 2026-06-01 · Reparar visual Agora sin borrar histórico
+- **Decisión**: En Katsu, Kava, La Candela, Luruna y Sa Pedrera, dejar los productos Winerim activos con `UseAsDirectSale=false`, `SaleableAsMain=true` y pareja de preparación configurada.
+- **Razón**: `UseAsDirectSale=true` crea botones raíz y desordena la pantalla; `SaleableAsMain=true` mantiene la venta dentro de la familia. Los campos de preparación vacíos explican de forma plausible que algunos vinos no llegasen a barra.
+- **Alternativa descartada**: ocultar productos o familias Winerim. Habría quitado ruido visual, pero también podía dejar vinos inaccesibles para sala y romper operativa.
+
+## 2026-06-01 · Sa Pedrera conserva estructura legacy regional
+- **Decisión**: En Sa Pedrera, enrutar productos Winerim a familias legacy visibles por región/tipo (`T Rioja Navarra`, `T Ribera C.Leon`, `B Galicia`, `Champagnes`, `MAGNUMS`, etc.) mediante reglas en `provider_config.agora_family_routing_rules`.
+- **Razón**: El cliente explicó que antes trabajaban visualmente por regiones; poner todo en `TINTOS WINERIM`/`BLANCOS WINERIM` o dejar botones directos rompe esa memoria operativa.
+- **Alternativa descartada**: hacer visibles las familias `... WINERIM` o agrupar solo por tipo. Técnicamente sería más simple, pero no respeta la organización que el cliente usa en tablets.
+
+## 2026-06-01 · Pausar auto-push verificado hasta confirmar redeploy de Lovable Cloud
+- **Decisión**: Mantener `auto_push_verified_ready=false` temporalmente en Katsu, Kava, La Candela, Luruna y Sa Pedrera tras la reparación.
+- **Razón**: El código corregido está en GitHub (`81c7dbb`), pero el `preview-xml` real de Lovable Cloud seguía generando `UseAsDirectSale=true`. Al reactivar antes del redeploy se creó una carrera `AUTO_UPDATE` que reintrodujo parte del problema visual en La Candela/Katsu.
+- **Alternativa descartada**: dejar el automático encendido confiando en el push a GitHub. Sin preview de runtime confirmado, el sistema podía volver a escribir el catálogo con la política antigua.
