@@ -41,6 +41,26 @@ _Última actualización: 2026-06-01_
 - Riesgo operativo: cualquier legacy no `CONFIRMED` vendido en Agora puede no descontar stock en Winerim. Confirmar un mapping incorrecto es peor: descontaría stock del vino equivocado.
 - Recomendación operativa: aplicar primero solo los `40` candidatos fuertes con variante válida, después revisar `PENDING` y ambiguos con el cliente/listado, y dejar bloqueados los casos sin variante Winerim.
 
+### Aplicación fase 1 matching legacy Sa Pedrera — 2026-06-01 12:46 CEST
+- Se aplicó un lote conservador de `38` mappings legacy en Sa Pedrera con `status=CONFIRMED` y `match_method=LEGACY_SAFE_MATCH`.
+  - Formatos insertados: `31` botella, `3` copa, `4` magnum.
+  - Backup local previo: `.codex-backups/sa-pedrera-legacy-safe-match-2026-06-01T10-45-00-262Z.json`.
+- Se excluyeron explícitamente `3` candidatos del dry-run por riesgo de match incorrecto:
+  - `328` / `Roda`: ambiguo entre referencias Roda.
+  - `589` / `Tokaji Aszú 6 Puttonyos`: Winerim solo exponía `Tokaji Aszú 3 Puttonyos`.
+  - `707` / `Magnum Marques de Murrieta`: candidato automático apuntaba a `Capellanía`, riesgo de vino/formato incorrecto.
+- Se corrigieron manualmente antes de insertar:
+  - `338` / `MACAN` -> `T99-Macán` (no `Macán Clásico`).
+  - `529` / `Alba` -> `R601-Alba Rosé` por estar en familia `Vinos Rosados`.
+- Verificación posterior:
+  - Productos legacy vendibles analizados: `230`.
+  - Legacy confirmados por formato: `136` botella, `18` copa, `4` magnum (`158` confirmados total).
+  - Pendientes: `13` botella.
+  - Rechazados: `1` botella.
+  - Sin mapping restante: `58`.
+  - Dentro de los no mapeados quedan `3` candidatos fuertes con variante válida, pero son los excluidos por ambigüedad anterior; `34` tienen candidato pero falta variante/stockId; `21` siguen débiles/ambiguos.
+- Rollback de esta fase: eliminar las filas `product_mappings` con `connection_id=Sa Pedrera` y `match_method=LEGACY_SAFE_MATCH` creadas en esta fase, usando el backup local como listado de IDs/productos.
+
 ### Auditoría copas y legacy Agora — 2026-06-01 11:40 CEST
 - Se revisó Lovable Cloud para distinguir entre:
   - conexiones con copa técnicamente preparada (`glass_stock_id` cacheado y mapping confirmado);

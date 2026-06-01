@@ -50,7 +50,8 @@
 - [ ] Validar con Winerim si su "Historial de ventas" se alimenta de los movimientos `PUT /stock/{stockId}` o si necesitan un endpoint adicional de ventas no documentado.
 - [ ] Validar con venta/cierre real de copa en `Katsu`, `La Candela`, `Luruna` y `Cienvinos`; hoy están preparados por stockIds/mappings, pero sin prueba reciente de descuento `SUCCESS` de variante `copa`.
 - [ ] Sa Pedrera: revisar los `BLOCKED` históricos de copa y decidir si esos productos legacy/rechazados deben quedarse bloqueados, mapearse manualmente o ocultarse del TPV.
-- [ ] Sa Pedrera legacy matching: revisar/aplicar primero los `40` candidatos fuertes detectados por dry-run con variante Winerim válida; no tocar los `35` con variante faltante ni los `21` ambiguos sin revisión manual.
+- [x] Sa Pedrera legacy matching fase 1: aplicados `38` mappings `CONFIRMED` con `LEGACY_SAFE_MATCH`; excluidos `Roda`, `Tokaji Aszú 6 Puttonyos` y `Magnum Marques de Murrieta` por ambigüedad/riesgo.
+- [ ] Sa Pedrera legacy matching fase 2: revisar los `13` mappings `PENDING`, los `58` legacy sin mapping restante y, especialmente, los `34` con candidato pero sin variante/stockId Winerim.
 - [x] Kava: revisar producto directo no-Winerim `EL LANCE` dentro de `TINTOS WINERIM`; queda oculto sin borrar (`1000011`, `SaleableAsMain=false`, `UseAsDirectSale=false`) porque existe producto Winerim confirmado para `El Lance 7 Fuentes`.
 - [x] Luruna: revisar productos directos no-Winerim `COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO` y `COPA VIÑA SASTRE CRZ`; quedan ocultos sin borrar (`1164074`, `1164081`, `1164082`, `SaleableAsMain=false`, `UseAsDirectSale=false`).
 - [ ] Repetir auditoría XML de Cienvinos para confirmar que no queda legacy visible; las lecturas vivas de 2026-06-01 11:40 CEST y el reintento posterior devolvieron error/timeout, aunque la cache 08:55 no muestra esos residuos.

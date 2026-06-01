@@ -407,3 +407,8 @@
 - **Decisión**: Ocultar con `SaleableAsMain=false` y `UseAsDirectSale=false` cuatro productos directos no-Winerim: Kava `1000011` / `EL LANCE`; Luruna `1164074` / `COPA ONDALAN TINTO`, `1164081` / `VIUDA DE CLICQUOT ROSADO`, `1164082` / `COPA VIÑA SASTRE CRZ`.
 - **Razón**: No tenían tracking ni mapping Winerim, por lo que una venta desde esos botones podía no descontar stock en Winerim. En Kava además existe reemplazo Winerim confirmado para `El Lance 7 Fuentes`.
 - **Alternativa descartada**: borrar productos o familias. Ocultar conserva histórico y permite rollback inmediato poniendo esos IDs de nuevo visibles si el cliente confirma que eran excepciones operativas necesarias.
+
+## 2026-06-01 · Sa Pedrera: confirmar solo legacy inequívoco con variante Winerim válida
+- **Decisión**: Insertar `38` mappings `CONFIRMED` para productos legacy de Sa Pedrera mediante `LEGACY_SAFE_MATCH`, y dejar fuera los casos ambiguos o sin variante válida.
+- **Razón**: Un legacy vendido sin mapping no descuenta stock Winerim, pero un mapping erróneo descuenta el vino equivocado. La fase 1 prioriza matches con nombre fuerte, familia compatible y `stock_id` de la variante disponible.
+- **Alternativa descartada**: confirmar automáticamente todos los candidatos del dry-run. Se detectaron falsos positivos (`Roda`, `Tokaji 6 Puttonyos`, `Magnum Marques de Murrieta`) y se corrigieron manualmente dos casos (`MACAN`, `Alba`) antes de escribir.
