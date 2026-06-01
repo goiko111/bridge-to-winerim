@@ -27,7 +27,7 @@ _Última actualización: 2026-06-01_
   - `provider_capabilities` marcadas `READY/XML_IMPORT/YES` tras import real con HTTP 200.
   - Katsu queda con `auto_push_glass=false` para no crear copas masivas de golpe mientras su `write_glass` sigue false.
 - Importante: `auto_push_verified_ready=false` quedó pausado temporalmente en Katsu, Kava, La Candela, Luruna y Sa Pedrera.
-  - Razón: después de activar el automático, Lovable Cloud generó tareas `AUTO_UPDATE` con la Edge Function todavía desplegada en versión antigua; el `preview-xml` de Lovable Cloud seguía generando `UseAsDirectSale="true"` a `2026-06-01T05:11Z`.
+  - Razón: después de activar el automático, Lovable Cloud generó tareas `AUTO_UPDATE` con la Edge Function todavía desplegada en versión antigua; el `preview-xml` de Lovable Cloud seguía generando `UseAsDirectSale="true"` a `2026-06-01T05:13Z`.
   - Se cerraron como `SUCCESS` las tareas `AUTO_UPDATE` creadas en esa carrera tras aplicar la reparación por lote y verificar XML vivo.
   - El código corregido está subido a GitHub `main` en commit `81c7dbb` (`Fix Agora visual routing and preparation repair`), pero falta confirmar redeploy efectivo de Lovable Cloud antes de reactivar `auto_push_verified_ready`.
 - Validación local del cambio de código:
