@@ -402,3 +402,8 @@
 - **Decisión**: Mantener Baco como legacy por rollback y Sa Pedrera con estructura legacy regional mientras no haya instrucción explícita de ocultarlo; revisar solo los productos directos residuales de Kava/Luruna como posibles excepciones o legacy pendiente.
 - **Razón**: En Baco el rollback fue pedido por el usuario y en Sa Pedrera el cliente pidió conservar organización regional. Ocultar legacy sin validar operativa de sala podría romper botones conocidos y referencias que todavía usan.
 - **Alternativa descartada**: ocultar de golpe todo producto/familia no-Winerim. Es más limpio a nivel técnico, pero puede alterar la pantalla que los camareros usan y provocar incidencias de servicio.
+
+## 2026-06-01 · Ocultar residuos directos legacy en Kava y Luruna sin borrar productos
+- **Decisión**: Ocultar con `SaleableAsMain=false` y `UseAsDirectSale=false` cuatro productos directos no-Winerim: Kava `1000011` / `EL LANCE`; Luruna `1164074` / `COPA ONDALAN TINTO`, `1164081` / `VIUDA DE CLICQUOT ROSADO`, `1164082` / `COPA VIÑA SASTRE CRZ`.
+- **Razón**: No tenían tracking ni mapping Winerim, por lo que una venta desde esos botones podía no descontar stock en Winerim. En Kava además existe reemplazo Winerim confirmado para `El Lance 7 Fuentes`.
+- **Alternativa descartada**: borrar productos o familias. Ocultar conserva histórico y permite rollback inmediato poniendo esos IDs de nuevo visibles si el cliente confirma que eran excepciones operativas necesarias.

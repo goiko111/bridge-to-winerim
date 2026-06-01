@@ -20,10 +20,14 @@ _Última actualización: 2026-06-01_
 - Estado legacy visible en Agora:
   - `Baco Getafe`: legacy visible por decisión de rollback. Familias legacy visibles: `VINO`, `FINOS`, `CHAMPAGNE`, `ROSADOS`, `TINTOS`, `BLANCOS`; Winerim está deshabilitado operativamente.
   - `Sa Pedrera`: conserva legacy visible por decisión operativa/regional. Familias legacy visibles: `Vinos Por Copas`, `Generosos`, `Vinos Blancos`, `Vinos Rosados`, `Vinos Tintos`, `Vino Dulce`, `T Ribera C.Leon`, `T Rioja Navarra`, `B Rueda`, `B Rioja Navarra`, `B Galicia`, `Copas Tinto`, `Copas Blanco`, `Copas Rosado`. Hay coexistencia con productos Winerim en esas familias.
-  - `Kava`: sin familias legacy de vino visibles, pero se detectó un producto directo no-Winerim dentro de familia Winerim (`EL LANCE`). Revisar si debe conservarse como excepción manual u ocultarse.
-  - `Luruna`: sin familias legacy de vino visibles, pero hay tres productos directos no-Winerim con nombre de vino/copa (`COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO`, `COPA VIÑA SASTRE CRZ`). Revisar si son excepciones de negocio u objetos legacy a ocultar.
+  - `Kava`: sin familias legacy de vino visibles. Se detectó y ocultó sin borrar un producto directo no-Winerim dentro de familia Winerim (`1000011` / `EL LANCE`), porque existe producto Winerim confirmado para `El Lance 7 Fuentes` (`provider_product_id=755694`).
+  - `Luruna`: sin familias legacy de vino visibles. Se detectaron y ocultaron sin borrar tres productos directos no-Winerim con nombre de vino/copa: `1164074` / `COPA ONDALAN TINTO`, `1164081` / `VIUDA DE CLICQUOT ROSADO`, `1164082` / `COPA VIÑA SASTRE CRZ`.
   - `Katsu Izakaya` y `La Candela de Triana`: sin familias legacy de vino visibles ni productos directos legacy detectados en esta auditoría.
-  - `Cienvinos`: la lectura XML viva de esta auditoría devolvió error transitorio; la auditoría anterior del mismo día dejó el catálogo Winerim reparado con `direct=0`, pero conviene repetir la comprobación de legacy visible.
+  - `Cienvinos`: la lectura XML viva de esta auditoría devolvió error transitorio y el reintento `sync-master-data` terminó en `AbortError`. La cache de Lovable Cloud de 2026-06-01 08:55 CEST no muestra esos productos legacy residuales, pero conviene repetir comprobación viva cuando el POS responda estable.
+- Verificación posterior de los residuos ocultados:
+  - `Kava` producto `1000011`: `SaleableAsMain=false`, `UseAsDirectSale=false`.
+  - `Luruna` productos `1164074`, `1164081`, `1164082`: `SaleableAsMain=false`, `UseAsDirectSale=false`.
+- Rollback de esta mini-limpieza: volver a llamar `agora-proxy set-product-visibility` con `visible=true` para esos IDs concretos, sin tocar familias ni borrar productos.
 
 ### Auditoría automática Agora + reparación Cienvinos — 2026-06-01 09:45 CEST
 - Se verificó contra Lovable Cloud y XML vivo de Agora que el `agora-proxy` desplegado ya genera `UseAsDirectSale=false`, `SaleableAsMain=true` y pareja de preparación correcta en `preview-xml`.
