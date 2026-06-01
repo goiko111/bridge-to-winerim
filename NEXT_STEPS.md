@@ -48,6 +48,11 @@
 - [ ] Validar en tablets de Sa Pedrera que los vinos Winerim quedan dentro de familias regionales y que una orden de vino llega a barra.
 - [ ] Ajustar reglas regionales de Sa Pedrera si el cliente identifica vinos concretos en una familia distinta a la esperada.
 - [ ] Validar con Winerim si su "Historial de ventas" se alimenta de los movimientos `PUT /stock/{stockId}` o si necesitan un endpoint adicional de ventas no documentado.
+- [ ] Validar con venta/cierre real de copa en `Katsu`, `La Candela`, `Luruna` y `Cienvinos`; hoy están preparados por stockIds/mappings, pero sin prueba reciente de descuento `SUCCESS` de variante `copa`.
+- [ ] Sa Pedrera: revisar los `BLOCKED` históricos de copa y decidir si esos productos legacy/rechazados deben quedarse bloqueados, mapearse manualmente o ocultarse del TPV.
+- [ ] Kava: revisar producto directo no-Winerim `EL LANCE` dentro de `TINTOS WINERIM` y decidir si es excepción manual o debe ocultarse/migrarse.
+- [ ] Luruna: revisar productos directos no-Winerim `COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO` y `COPA VIÑA SASTRE CRZ`; decidir si son excepciones operativas o legacy pendiente.
+- [ ] Repetir auditoría XML de Cienvinos para confirmar que no queda legacy visible; la lectura de 2026-06-01 11:40 CEST devolvió error transitorio.
 - [ ] Sa Vida: pausar/deshabilitar operativamente o mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`.
 - [x] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED`; quedan 0 abiertas tras verificar catálogo vivo.
 - [ ] Cienvinos: confirmar por qué no hay ventas/cierres desde `2026-05-27`.

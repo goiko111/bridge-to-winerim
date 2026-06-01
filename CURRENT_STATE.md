@@ -6,6 +6,25 @@ _Última actualización: 2026-06-01_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Auditoría copas y legacy Agora — 2026-06-01 11:40 CEST
+- Se revisó Lovable Cloud para distinguir entre:
+  - conexiones con copa técnicamente preparada (`glass_stock_id` cacheado y mapping confirmado);
+  - conexiones con ventas reales de copa ya descontadas en `stock_sync_log`;
+  - conexiones con productos/familias legacy de vino todavía visibles en Agora.
+- Estado de copas:
+  - `Kava`: copas confirmadas y probadas con ventas reales recientes (`30` descuentos `SUCCESS` de variante `copa` desde 2026-05-26; sin problemas recientes de copa).
+  - `Sa Pedrera`: copas confirmadas funcionan para productos válidos (`15` descuentos `SUCCESS`), pero existen `78` bloqueos históricos de productos legacy/rechazados, por ejemplo copa de vino sin variante `copa` en Winerim. No declarar "todas las copas" como sanas hasta limpiar/aceptar esos legacy.
+  - `Baco Getafe`: hubo `37` descuentos `SUCCESS` de copa antes del rollback, pero hoy la conexión está desactivada (`enabled=false`, `write_mode=NONE`) y no forma parte del automático Winerim.
+  - `Katsu Izakaya`, `La Candela de Triana`, `Luruna` y `Restaurante Cienvinos Ecija`: las copas activas tienen `glass_stock_id` cacheado; falta venta/cierre real reciente de copa para demostrar descuento automático en producción.
+  - `Sa Vida`: no se considera sana. Aunque hay éxitos históricos de copa, también hay bloqueos y el POS sigue devolviendo HTTP 501 en catálogo/ventas.
+- Estado legacy visible en Agora:
+  - `Baco Getafe`: legacy visible por decisión de rollback. Familias legacy visibles: `VINO`, `FINOS`, `CHAMPAGNE`, `ROSADOS`, `TINTOS`, `BLANCOS`; Winerim está deshabilitado operativamente.
+  - `Sa Pedrera`: conserva legacy visible por decisión operativa/regional. Familias legacy visibles: `Vinos Por Copas`, `Generosos`, `Vinos Blancos`, `Vinos Rosados`, `Vinos Tintos`, `Vino Dulce`, `T Ribera C.Leon`, `T Rioja Navarra`, `B Rueda`, `B Rioja Navarra`, `B Galicia`, `Copas Tinto`, `Copas Blanco`, `Copas Rosado`. Hay coexistencia con productos Winerim en esas familias.
+  - `Kava`: sin familias legacy de vino visibles, pero se detectó un producto directo no-Winerim dentro de familia Winerim (`EL LANCE`). Revisar si debe conservarse como excepción manual u ocultarse.
+  - `Luruna`: sin familias legacy de vino visibles, pero hay tres productos directos no-Winerim con nombre de vino/copa (`COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO`, `COPA VIÑA SASTRE CRZ`). Revisar si son excepciones de negocio u objetos legacy a ocultar.
+  - `Katsu Izakaya` y `La Candela de Triana`: sin familias legacy de vino visibles ni productos directos legacy detectados en esta auditoría.
+  - `Cienvinos`: la lectura XML viva de esta auditoría devolvió error transitorio; la auditoría anterior del mismo día dejó el catálogo Winerim reparado con `direct=0`, pero conviene repetir la comprobación de legacy visible.
+
 ### Auditoría automática Agora + reparación Cienvinos — 2026-06-01 09:45 CEST
 - Se verificó contra Lovable Cloud y XML vivo de Agora que el `agora-proxy` desplegado ya genera `UseAsDirectSale=false`, `SaleableAsMain=true` y pareja de preparación correcta en `preview-xml`.
 - Se detectó que `winerim-proxy` desplegado en Lovable Cloud todavía NO contiene el cambio diferencial de auto-push:

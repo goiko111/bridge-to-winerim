@@ -392,3 +392,13 @@
 - **Decisión**: Mantener `auto_push_verified_ready=false` temporalmente en Katsu, Kava, La Candela, Luruna y Sa Pedrera tras la reparación.
 - **Razón**: El código corregido está en GitHub (`81c7dbb`), pero el `preview-xml` real de Lovable Cloud seguía generando `UseAsDirectSale=true`. Al reactivar antes del redeploy se creó una carrera `AUTO_UPDATE` que reintrodujo parte del problema visual en La Candela/Katsu.
 - **Alternativa descartada**: dejar el automático encendido confiando en el push a GitHub. Sin preview de runtime confirmado, el sistema podía volver a escribir el catálogo con la política antigua.
+
+## 2026-06-01 · No certificar copas sin venta real reciente por conexión
+- **Decisión**: Separar el estado "preparado técnicamente" del estado "probado con venta real" para descuentos de copa en Agora.
+- **Razón**: Varias conexiones tienen `glass_stock_id` completo y mappings confirmados, pero no tienen ventas recientes de copa en `stock_sync_log`. Kava y parte de Sa Pedrera sí demuestran descuentos de copa reales; Katsu, La Candela, Luruna y Cienvinos requieren venta/cierre de prueba antes de declararlas perfectas.
+- **Alternativa descartada**: considerar que tener stockIds y mappings basta para comunicar que "todas las copas descuentan bien". Eso ocultaría el riesgo de una variante/mapping no ejercitado por ventas reales.
+
+## 2026-06-01 · Tratar legacy visible como estado explícito, no como fallo genérico
+- **Decisión**: Mantener Baco como legacy por rollback y Sa Pedrera con estructura legacy regional mientras no haya instrucción explícita de ocultarlo; revisar solo los productos directos residuales de Kava/Luruna como posibles excepciones o legacy pendiente.
+- **Razón**: En Baco el rollback fue pedido por el usuario y en Sa Pedrera el cliente pidió conservar organización regional. Ocultar legacy sin validar operativa de sala podría romper botones conocidos y referencias que todavía usan.
+- **Alternativa descartada**: ocultar de golpe todo producto/familia no-Winerim. Es más limpio a nivel técnico, pero puede alterar la pantalla que los camareros usan y provocar incidencias de servicio.
