@@ -25,7 +25,10 @@ _Última actualización: 2026-06-02_
   - `GET /api/export/?filter=Products`, `GET /api/export/?filter=Families`, `GET /api/export-master/?filter=Products`, `GET /api/export-master/?filter=Families`, `GET /api/export/?business-day=2026-06-01&filter=Invoices` y `GET /api/export/tickets/` devuelven `501`.
   - El `statusText` exacto de Agora para esos `501` es: `La integración a través del API HTTP no está habilitada.`
   - El cuerpo de respuesta viene vacío (`bodyLength=0`), sin JSON/XML.
-  - Conclusión técnica afinada: no es un problema de IP/puerto abierto; es configuración/licencia/módulo de API HTTP en Agora.
+  - `GET /version/` devuelve `AGORA_VERSION = '8.7.4'` y `ENABLE_POS_CONNECTION_CHECK = true`.
+  - `GET /installation-type/` devuelve `INSTALLATION_TYPE = 2`.
+  - El mismo `501` aparece con token correcto, sin token y con token incorrecto; por tanto no es un problema de credenciales/API key, porque Agora rechaza antes de validar token.
+  - Conclusión técnica afinada: no es un problema de IP/puerto abierto ni de token; es configuración/licencia/activación de API HTTP en Agora.
 
 ### Clarificación estado Agora por conexión — 2026-06-01 11:55 CEST
 - No todas las integraciones Agora están "igual" ni se deben comunicar como "perfectas" en bloque:
