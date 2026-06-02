@@ -19,6 +19,13 @@ _Última actualización: 2026-06-02_
   - `enabled=true`, `write_mode=XML_IMPORT`, pero capacidades `provider_capabilities`: `readiness_status=NOT_CONNECTED`, `write_mode=NONE`, `can_write_products=UNKNOWN`.
   - `circuit_breaker_paused_until` está en fecha pasada, pero `consecutive_failures=10`; no se reseteó porque el POS sigue respondiendo 501.
 - Conclusión operativa: Sa Vida sigue NO operativa. Esta IP/puerto no expone la API REST Agora necesaria (`/api/` y `/api/export-master`), o el módulo REST sigue no habilitado. No procesar cola, catálogo ni stock hasta que Agora devuelva 200 en `Products/Families`.
+- Detalle exacto de fallo verificado contra Agora:
+  - `GET /` devuelve `200 OK` y carga la web `Administrar Ágora`; por tanto IP/puerto/ruta de red llegan al servidor correcto.
+  - `GET /api/` devuelve `404 NotFound` sin cuerpo.
+  - `GET /api/export/?filter=Products`, `GET /api/export/?filter=Families`, `GET /api/export-master/?filter=Products`, `GET /api/export-master/?filter=Families`, `GET /api/export/?business-day=2026-06-01&filter=Invoices` y `GET /api/export/tickets/` devuelven `501`.
+  - El `statusText` exacto de Agora para esos `501` es: `La integración a través del API HTTP no está habilitada.`
+  - El cuerpo de respuesta viene vacío (`bodyLength=0`), sin JSON/XML.
+  - Conclusión técnica afinada: no es un problema de IP/puerto abierto; es configuración/licencia/módulo de API HTTP en Agora.
 
 ### Clarificación estado Agora por conexión — 2026-06-01 11:55 CEST
 - No todas las integraciones Agora están "igual" ni se deben comunicar como "perfectas" en bloque:

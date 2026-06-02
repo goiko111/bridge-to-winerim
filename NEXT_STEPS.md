@@ -66,7 +66,7 @@
 - [x] Probar Sa Vida con `agora-proxy test` y `sync-master-data`: endpoints Agora devuelven HTTP `501`.
 - [x] Marcar Sa Vida como `UNKNOWN/NOT_CONNECTED/NONE` en `provider_capabilities` para no mostrarla lista.
 - [x] Resetear breakers obsoletos de Kava, Luruna y Sa Pedrera tras comprobar endpoints operativos.
-- [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`; la IP `80.32.137.41:8984` sigue respondiendo HTTP `501`.
+- [ ] Pedir a Sa Vida/Agora que habiliten la integración/API HTTP en Agora: la IP `80.32.137.41:8984` carga `Administrar Ágora`, pero `/api/export` y `/api/export-master` devuelven `501` con `La integración a través del API HTTP no está habilitada.`
 - [ ] Reprobar Sa Vida cuando el POS responda 200: `test`, `sync-master-data`, `find-last-business-day`, preview XML y backfill de stockIds antes de cualquier write masivo.
 - [x] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con script controlado: 1.881 pares conexión/vino revisados, 1.359 filas actualizadas, 0 errores transitorios.
 - [x] Reparar fallos actuales de `stock_sync_log` antes de declarar la flota Agora sana:
