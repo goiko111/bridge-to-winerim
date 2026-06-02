@@ -55,7 +55,7 @@
 - [x] Kava: revisar producto directo no-Winerim `EL LANCE` dentro de `TINTOS WINERIM`; queda oculto sin borrar (`1000011`, `SaleableAsMain=false`, `UseAsDirectSale=false`) porque existe producto Winerim confirmado para `El Lance 7 Fuentes`.
 - [x] Luruna: revisar productos directos no-Winerim `COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO` y `COPA VIÑA SASTRE CRZ`; quedan ocultos sin borrar (`1164074`, `1164081`, `1164082`, `SaleableAsMain=false`, `UseAsDirectSale=false`).
 - [ ] Repetir auditoría XML de Cienvinos para confirmar que no queda legacy visible; las lecturas vivas de 2026-06-01 11:40 CEST y el reintento posterior devolvieron error/timeout, aunque la cache 08:55 no muestra esos residuos.
-- [ ] Sa Vida: pausar/deshabilitar operativamente o mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`.
+- [ ] Sa Vida: mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`; revalidación 2026-06-02 con `http://80.32.137.41:8984/` sigue devolviendo `501` en `test`, `Products` y `Families`.
 - [x] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED`; quedan 0 abiertas tras verificar catálogo vivo.
 - [ ] Cienvinos: confirmar por qué no hay ventas/cierres desde `2026-05-27`.
 - [x] Kava: cerrar tareas abiertas de catálogo supersedidas por la reparación visual/preparación; quedan 0 `QUEUED/RUNNING` de `AGORA_XML_UPSERT_PRODUCT`.
@@ -66,7 +66,7 @@
 - [x] Probar Sa Vida con `agora-proxy test` y `sync-master-data`: endpoints Agora devuelven HTTP `501`.
 - [x] Marcar Sa Vida como `UNKNOWN/NOT_CONNECTED/NONE` en `provider_capabilities` para no mostrarla lista.
 - [x] Resetear breakers obsoletos de Kava, Luruna y Sa Pedrera tras comprobar endpoints operativos.
-- [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`.
+- [ ] Pedir a Sa Vida/Agora confirmación de módulo REST habilitado, URL base/puerto correctos y versión compatible con `/api/export-master` + `/api/export`; la IP `80.32.137.41:8984` sigue respondiendo HTTP `501`.
 - [ ] Reprobar Sa Vida cuando el POS responda 200: `test`, `sync-master-data`, `find-last-business-day`, preview XML y backfill de stockIds antes de cualquier write masivo.
 - [x] Hacer backfill/re-sync de stockIds por variante para Katsu, Kava, La Candela, Luruna, Sa Pedrera y Sa Vida con script controlado: 1.881 pares conexión/vino revisados, 1.359 filas actualizadas, 0 errores transitorios.
 - [x] Reparar fallos actuales de `stock_sync_log` antes de declarar la flota Agora sana:

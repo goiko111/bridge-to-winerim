@@ -2,9 +2,23 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-01_
+_Última actualización: 2026-06-02_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Vida nueva IP / revalidación Agora — 2026-06-02 10:39 CEST
+- El usuario indicó nueva IP para Sa Vida: `80.32.137.41:8984`, manteniendo contraseña/API token Agora y token Winerim.
+- En Lovable Cloud, `Sa Vida` ya tenía guardada esa base URL (`http://80.32.137.41:8984`); se normalizó a `http://80.32.137.41:8984/`.
+- No se tocaron credenciales ni token Winerim.
+- Pruebas contra Edge Function `agora-proxy`:
+  - `test`: HTTP 200 del proxy, pero Agora respondió `501` (`Agora responded 501`).
+  - `test-catalog-endpoint Products`: `success=false`, `status=501`.
+  - `test-catalog-endpoint Families`: `success=false`, `status=501`.
+  - `find-last-business-day` 10 días: `daysWithSales=[]`, `totalInvoicesFound=0`, `lastClosedDay=null`.
+- Estado Lovable Cloud tras la prueba:
+  - `enabled=true`, `write_mode=XML_IMPORT`, pero capacidades `provider_capabilities`: `readiness_status=NOT_CONNECTED`, `write_mode=NONE`, `can_write_products=UNKNOWN`.
+  - `circuit_breaker_paused_until` está en fecha pasada, pero `consecutive_failures=10`; no se reseteó porque el POS sigue respondiendo 501.
+- Conclusión operativa: Sa Vida sigue NO operativa. Esta IP/puerto no expone la API REST Agora necesaria (`/api/` y `/api/export-master`), o el módulo REST sigue no habilitado. No procesar cola, catálogo ni stock hasta que Agora devuelva 200 en `Products/Families`.
 
 ### Clarificación estado Agora por conexión — 2026-06-01 11:55 CEST
 - No todas las integraciones Agora están "igual" ni se deben comunicar como "perfectas" en bloque:

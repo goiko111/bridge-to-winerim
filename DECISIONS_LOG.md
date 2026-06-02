@@ -412,3 +412,8 @@
 - **Decisión**: Insertar `38` mappings `CONFIRMED` para productos legacy de Sa Pedrera mediante `LEGACY_SAFE_MATCH`, y dejar fuera los casos ambiguos o sin variante válida.
 - **Razón**: Un legacy vendido sin mapping no descuenta stock Winerim, pero un mapping erróneo descuenta el vino equivocado. La fase 1 prioriza matches con nombre fuerte, familia compatible y `stock_id` de la variante disponible.
 - **Alternativa descartada**: confirmar automáticamente todos los candidatos del dry-run. Se detectaron falsos positivos (`Roda`, `Tokaji 6 Puttonyos`, `Magnum Marques de Murrieta`) y se corrigieron manualmente dos casos (`MACAN`, `Alba`) antes de escribir.
+
+## 2026-06-02 · Sa Vida: no reactivar tras nueva IP si Agora sigue devolviendo 501
+- **Decisión**: Mantener Sa Vida como no operativa aunque la URL esté normalizada a `http://80.32.137.41:8984/`.
+- **Razón**: Las pruebas `test`, `Products` y `Families` siguen devolviendo HTTP 501 desde Agora; resetear breaker/capacidades o procesar colas generaría fallos repetidos y podría reactivar writes contra un POS no preparado.
+- **Alternativa descartada**: asumir que el cambio de IP resolvía la incidencia y reactivar la conexión. La prueba viva demuestra que el módulo REST/export-master sigue sin responder correctamente.
