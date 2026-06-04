@@ -4066,6 +4066,357 @@ serve(async (req) => {
       }
     }
 
+    // ── SA PEDRERA CONTROLLED TRIAL: publish only D701-D709 into DULCES WINERIM ──
+    // This is intentionally scoped to Sa Pedrera and does not alter the normal automatic routing.
+    if (action === "sa-pedrera-dulces-winerim-trial") {
+      const dryRun = payload.dryRun !== false;
+      const targetFamilyId = String(payload.familyId || "903925");
+      const targetFamilyName = String(payload.familyName || "DULCES WINERIM");
+      const targetCodes = ["D701", "D702", "D703", "D704", "D705", "D706", "D707", "D708", "D709"];
+      const nowIso = new Date().toISOString();
+      const locationName = String((connection as any).location_name || (connection as any).name || "");
+
+      if (!/sa\s*pedrera/i.test(locationName)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Accion bloqueada: la conexion no parece Sa Pedrera (${locationName || "sin nombre"})`,
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const escapeTrialXml = (s: string): string =>
+        String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+      const truncateTrial = (s: string, maxLen: number): string => String(s || "").length <= maxLen ? String(s || "") : String(s || "").substring(0, maxLen);
+      const commercialCode = (name: string): string | null => {
+        const match = String(name || "").toUpperCase().match(/\bD\s*[-_ ]?(\d{3})\b/);
+        return match ? `D${match[1]}` : null;
+      };
+      const findVatIdForTrial = (vatList: { Id: string; VatRate: string }[], rate?: number): string | null => {
+        if (!rate) return null;
+        const rateStr = (rate / 100).toFixed(2);
+        const found = vatList.find((v) => String(v.VatRate) === rateStr);
+        return found?.Id || null;
+      };
+      const extractXmlAttr = (xml: string, attr: string): string | null => {
+        const re = new RegExp(`\\b${attr}="([^"]*)"`);
+        return re.exec(xml)?.[1] || null;
+      };
+      const setXmlAttr = (el: string, attr: string, value: string): string => {
+        const re = new RegExp(`\\b${attr}="[^"]*"`);
+        if (re.test(el)) return el.replace(re, `${attr}="${escapeTrialXml(value)}"`);
+        return el.replace(/(\s*\/?>)$/, ` ${attr}="${escapeTrialXml(value)}"$1`);
+      };
+      const patchProductSortOrder = (el: string, sortOrder: number): string => setXmlAttr(el, "SortOrder", String(sortOrder));
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .single();
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "No master data cached. Run sync-master-data first." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const families = ((masterData as any).families_json || []) as { Id: string; Name: string; Order?: string; Color?: string; ButtonText?: string; ShowInPos?: string }[];
+      const vats = ((masterData as any).vats_json || []) as { Id: string; Name: string; VatRate: string }[];
+      const priceLists = (((masterData as any).price_lists_json || []) as Record<string, unknown>[])
+        .filter((pl) => !isDeletedEntity(pl)) as { Id: string; Name: string }[];
+      const warehouses = ((masterData as any).warehouses_json || []) as { Id: string; Name: string }[];
+      if (priceLists.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "Agora no tiene PriceLists disponibles; no se importan productos sin precios." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { data: winerimRows, error: winesError } = await supabase
+        .from("winerim_wines")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("is_active", true)
+        .eq("wine_type", "postre");
+      if (winesError) {
+        return new Response(JSON.stringify({ success: false, error: winesError.message }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const winesByCode = new Map<string, any>();
+      for (const wine of winerimRows || []) {
+        const code = commercialCode(wine.name);
+        if (code && targetCodes.includes(code) && !winesByCode.has(code)) {
+          winesByCode.set(code, wine);
+        }
+      }
+      const missingCodes = targetCodes.filter((code) => !winesByCode.has(code));
+      if (missingCodes.length > 0) {
+        return new Response(JSON.stringify({ success: false, error: `Faltan vinos activos Winerim: ${missingCodes.join(", ")}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const orderedWines = targetCodes.map((code) => winesByCode.get(code)).filter(Boolean);
+
+      const cached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+      if (!cached.ok) {
+        return new Response(JSON.stringify({ success: false, error: `No se pudo leer catalogo Agora antes del cambio: HTTP ${cached.status}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const productElById = new Map<string, string>();
+      const productRegex = /<Product\b[^>]*\/>|<Product\b[^>]*>[\s\S]*?<\/Product>/g;
+      let productMatch: RegExpExecArray | null;
+      while ((productMatch = productRegex.exec(cached.xml)) !== null) {
+        const full = productMatch[0];
+        const id = extractXmlAttr(full, "Id");
+        if (id) productElById.set(String(id), full);
+      }
+
+      const familyElById = new Map<string, string>();
+      const familyRegex = /<Family\b[^>]*\/>|<Family\b[^>]*>[\s\S]*?<\/Family>/g;
+      const familiesXmlRes = await fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+        method: "GET",
+        headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+      }, 30000);
+      const familiesXml = await familiesXmlRes.text().catch(() => "");
+      if (!familiesXmlRes.ok || !familiesXml) {
+        return new Response(JSON.stringify({ success: false, error: `No se pudo leer familias Agora antes del cambio: HTTP ${familiesXmlRes.status}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      let familyMatch: RegExpExecArray | null;
+      while ((familyMatch = familyRegex.exec(familiesXml)) !== null) {
+        const full = familyMatch[0];
+        const id = extractXmlAttr(full, "Id");
+        if (id) familyElById.set(String(id), full);
+      }
+
+      const existingTargetFamily = families.find((f) => String(f.Id) === targetFamilyId);
+      const targetFamilyOrder = String((existingTargetFamily as any)?.Order || "18");
+      const familyXml = `    <Family Id="${targetFamilyId}" Name="${escapeTrialXml(targetFamilyName)}" ShowInPos="true" ButtonText="${escapeTrialXml(truncateTrial(targetFamilyName, 20))}" Color="#8B0000" Order="${escapeTrialXml(targetFamilyOrder)}" />`;
+      const defaultVatId = (connection as any).default_vat_id || findVatIdForTrial(vats, (connection as any).default_vat_rate) || (vats.length > 0 ? vats[0].Id : "3");
+      let defaultPrepTypeId = String((connection as any).default_preparation_type_id || "");
+      let defaultPrepOrderId = String((connection as any).default_preparation_order_id || "");
+      if ((defaultPrepTypeId.length > 0) !== (defaultPrepOrderId.length > 0)) {
+        defaultPrepTypeId = "";
+        defaultPrepOrderId = "";
+      }
+
+      const productPlans: {
+        code: string;
+        wineName: string;
+        winerimWineId: string;
+        format: "BOTTLE" | "GLASS";
+        productId: string;
+        productName: string;
+        price: number;
+        cost: number;
+        sortOrder: number;
+        existedBefore: boolean;
+        previous?: { productId: string; name: string | null; familyId: string | null; sortOrder: string | null };
+        renderXml: () => string;
+      }[] = [];
+
+      let sortOrder = 1;
+      for (const wine of orderedWines) {
+        const code = commercialCode(wine.name) || "";
+        const formats: ("BOTTLE" | "GLASS")[] = [];
+        if ((extractBottleSalePrice(wine) || 0) > 0) formats.push("BOTTLE");
+        if (wine.serve_by_glass !== false && (extractGlassSalePrice(wine) || 0) > 0) formats.push("GLASS");
+
+        for (const fmt of formats) {
+          const isGlass = fmt === "GLASS";
+          const productId = String((isGlass ? 700000 : 500000) + Number(wine.winerim_id || 0));
+          const productName = formatProductName(fmt, wine.name);
+          const price = isGlass ? (extractGlassSalePrice(wine) || 0) : (extractBottleSalePrice(wine) || 0);
+          const cost = isGlass ? (extractGlassCostPrice(wine, connection) || 0) : (extractBottleCostPrice(wine) || 0);
+          const previousEl = productElById.get(productId);
+          const currentSortOrder = sortOrder++;
+          const pricesXml = priceLists.map((pl) =>
+            `        <Price PriceListId="${pl.Id}" MainPrice="${price.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+          ).join("\n");
+          const costPricesXml = warehouses.map((wh) =>
+            `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${cost.toFixed(2)}" />`
+          ).join("\n");
+
+          productPlans.push({
+            code,
+            wineName: wine.name,
+            winerimWineId: String(wine.winerim_id),
+            format: fmt,
+            productId,
+            productName,
+            price,
+            cost,
+            sortOrder: currentSortOrder,
+            existedBefore: Boolean(previousEl),
+            previous: previousEl ? {
+              productId,
+              name: extractXmlAttr(previousEl, "Name"),
+              familyId: extractXmlAttr(previousEl, "FamilyId"),
+              sortOrder: extractXmlAttr(previousEl, "SortOrder"),
+            } : undefined,
+            renderXml: () => {
+              const buttonText = truncateTrial(productName, 20);
+              return `    <Product SortOrder="${currentSortOrder}" Id="${productId}" Name="${escapeTrialXml(productName)}" ButtonText="${escapeTrialXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${targetFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${escapeTrialXml(defaultPrepTypeId)}" PreparationOrderId="${escapeTrialXml(defaultPrepOrderId)}" CostPrice="${cost.toFixed(2)}">
+      <Prices>
+${pricesXml}
+      </Prices>
+      <CostPrices>
+${costPricesXml}
+      </CostPrices>
+    </Product>`;
+            },
+          });
+        }
+      }
+
+      if (productPlans.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No hay formatos con precio para D701-D709." }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const productXml = productPlans.map((p) => p.renderXml()).join("\n");
+      const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n${familyXml}\n  </Families>\n  <Products>\n${productXml}\n  </Products>\n</Import>`;
+
+      const previousFamilyEl = familyElById.get(targetFamilyId) || null;
+      const rollbackExistingProductXml = productPlans
+        .filter((p) => p.existedBefore && productElById.has(p.productId))
+        .map((p) => patchProductSortOrder(productElById.get(p.productId) || "", Number(p.previous?.sortOrder || p.sortOrder)))
+        .filter(Boolean)
+        .join("\n");
+      const rollbackFamilyXml = previousFamilyEl ? `    ${previousFamilyEl}` : `    <Family Id="${targetFamilyId}" Name="DULCE WINERIM" ShowInPos="false" ButtonText="DULCE WINERIM" Color="#999999" Order="${escapeTrialXml(targetFamilyOrder)}" />`;
+      const rollbackXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n${rollbackFamilyXml}\n  </Families>${rollbackExistingProductXml ? `\n  <Products>\n${rollbackExistingProductXml}\n  </Products>` : ""}\n</Import>`;
+      const snapshot = {
+        generatedAt: nowIso,
+        familyBefore: previousFamilyEl ? {
+          id: targetFamilyId,
+          name: extractXmlAttr(previousFamilyEl, "Name"),
+          showInPos: extractXmlAttr(previousFamilyEl, "ShowInPos"),
+          order: extractXmlAttr(previousFamilyEl, "Order"),
+        } : null,
+        existingProductsBefore: productPlans.filter((p) => p.previous).map((p) => p.previous),
+        newProductIds: productPlans.filter((p) => !p.existedBefore).map((p) => p.productId),
+      };
+
+      if (dryRun) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun: true,
+          targetFamily: { id: targetFamilyId, name: targetFamilyName, order: targetFamilyOrder },
+          plannedProducts: productPlans.map(({ renderXml: _renderXml, ...p }) => p),
+          snapshot,
+          xml,
+          rollbackXml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeadersTrial = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+      const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeadersTrial, body: xml }, 60000);
+      const responseBody = await importRes.text().catch(() => "");
+      const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+      if (!parsed.success) {
+        return new Response(JSON.stringify({
+          success: false,
+          dryRun: false,
+          error: parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 500)}`,
+          targetFamily: { id: targetFamilyId, name: targetFamilyName, order: targetFamilyOrder },
+          plannedProducts: productPlans.map(({ renderXml: _renderXml, ...p }) => p),
+          snapshot,
+          rollbackXml,
+          xmlSent: xml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "AGORA",
+        can_read_sales: true,
+        can_read_catalog: true,
+        can_write_products: "YES",
+        write_endpoint: "/api/import/",
+        readiness_status: "READY",
+        write_mode: "XML_IMPORT",
+        last_checked_at: nowIso,
+      }, { onConflict: "connection_id" });
+
+      for (const p of productPlans) {
+        await supabase.from("product_mappings").upsert({
+          connection_id: connectionId,
+          provider_product_id: p.productId,
+          provider_product_name: p.productName,
+          winerim_wine_id: p.winerimWineId,
+          winerim_wine_name: p.wineName,
+          match_method: "XML_IMPORT",
+          match_score: 100,
+          match_reasons: [`Sa Pedrera D701-D709 controlled trial: ${targetFamilyName}`],
+          status: "CONFIRMED",
+          format_type: p.format,
+          agora_product_id: p.productId,
+          last_synced_at: nowIso,
+          last_sync_error: null,
+        }, { onConflict: "connection_id,provider_product_id" });
+
+        await upsertPushTracking(supabase, connectionId, p.winerimWineId, p.format, {
+          sync_status: "PUSHED",
+          agora_product_id: p.productId,
+          agora_family_id: targetFamilyId,
+          pushed_at: nowIso,
+          last_error: null,
+        });
+      }
+
+      const verifyCached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+      const verifiedProducts: { productId: string; ok: boolean; familyId: string | null; name: string | null; sortOrder: string | null }[] = [];
+      if (verifyCached.ok) {
+        const verifyById = new Map<string, string>();
+        let verifyMatch: RegExpExecArray | null;
+        while ((verifyMatch = productRegex.exec(verifyCached.xml)) !== null) {
+          const full = verifyMatch[0];
+          const id = extractXmlAttr(full, "Id");
+          if (id) verifyById.set(String(id), full);
+        }
+        for (const p of productPlans) {
+          const el = verifyById.get(p.productId) || "";
+          const familyId = el ? extractXmlAttr(el, "FamilyId") : null;
+          const name = el ? extractXmlAttr(el, "Name") : null;
+          const verified = familyId === targetFamilyId && name === p.productName;
+          verifiedProducts.push({
+            productId: p.productId,
+            ok: verified,
+            familyId,
+            name,
+            sortOrder: el ? extractXmlAttr(el, "SortOrder") : null,
+          });
+          if (verified) {
+            await upsertPushTracking(supabase, connectionId, p.winerimWineId, p.format, {
+              sync_status: "VERIFIED",
+              agora_product_id: p.productId,
+              agora_family_id: targetFamilyId,
+              pushed_at: nowIso,
+              verified_at: new Date().toISOString(),
+              last_error: null,
+            });
+          }
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        dryRun: false,
+        targetFamily: { id: targetFamilyId, name: targetFamilyName, order: targetFamilyOrder },
+        plannedProducts: productPlans.map(({ renderXml: _renderXml, ...p }) => p),
+        snapshot,
+        verification: {
+          catalogFetched: verifyCached.ok,
+          products: verifiedProducts,
+          allOk: verifiedProducts.length === productPlans.length && verifiedProducts.every((p) => p.ok),
+        },
+        rollbackXml,
+        importResponse: parsed,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── PREVIEW XML (dry-run, no send) ──
     if (action === "preview-xml") {
       const winerimWineIds = payload.winerimWineIds || [];
