@@ -450,3 +450,13 @@
 - **Decisión**: No aplicar ocultación masiva de los `92` duplicados probables legacy + Winerim en Sa Pedrera hasta separar mappings seguros (`LEGACY_SAFE_MATCH`) de mappings difusos antiguos (`FUZZY`) y revisar los casos sospechosos.
 - **Razón**: El total de `product_mappings.CONFIRMED` mezcla productos Winerim importados (`XML_IMPORT`) con legacy real, y algunos `FUZZY` antiguos apuntan a vinos no equivalentes. Usar ese número bruto para ocultar botones podría esconder el producto correcto o dejar un legacy descontando stock de un vino equivocado.
 - **Alternativa descartada**: ocultar automáticamente todo producto Winerim que tenga cualquier mapping `CONFIRMED` para el mismo `winerim_wine_id + format`. Sería rápido, pero demasiado arriesgado en un servicio activo y en una carta organizada visualmente por regiones.
+
+## 2026-06-04 · Priorizar matching por código comercial exacto sobre fuzzy
+- **Decisión**: Añadir una capa de matching por código comercial exacto (`CODE_EXACT`) antes del fuzzy: extraer códigos tipo `T31`, `B303`, `G801`, `MAGNUM21` desde nombres Winerim y etiquetas Agora generadas (`B T31-...`, `C B303-...`).
+- **Razón**: Sa Pedrera usa códigos correlativos en Winerim y los productos publicados en Agora conservan esos códigos. Cuando existe código, es una señal más fiable que similitud de nombre.
+- **Alternativa descartada**: seguir confiando primero en fuzzy. Ya se observaron falsos positivos de fuzzy antiguos; el código exacto reduce riesgo de descontar stock del vino equivocado.
+
+## 2026-06-04 · No interpretar números en nombres como códigos
+- **Decisión**: Exigir separador de código (`-`) para extraer códigos; ejemplos válidos `G801-Papirusa`, `B T31-Semele`, `MAGNUM 21 - Finca La Montesa`; ejemplos no válidos `Magnum 4 Kilos`, `As 2 Ladeiras`, `200 Monges Rioja`.
+- **Razón**: En la carta de vinos hay números que forman parte del nombre comercial. Interpretarlos como código produciría matches gravemente incorrectos, como mapear `Magnum 4 Kilos` a `MAGNUM 4 - Viña Mein Blanco`.
+- **Alternativa descartada**: extraer cualquier prefijo letra+número o palabra+número. Parecía aumentar cobertura, pero el primer dry-run demostró falsos positivos peligrosos.

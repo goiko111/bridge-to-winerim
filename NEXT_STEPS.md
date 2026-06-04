@@ -24,6 +24,10 @@
 - [ ] Sa Pedrera: preparar dry-run `legacy-first` para detectar Winerim publicados que duplican legacy `CONFIRMED` por mismo `winerim_wine_id + format`, con propuesta de ocultar solo el Winerim duplicado y conservar legacy mapeado.
 - [x] Sa Pedrera: generar informe de mapping/publicación `SA_PEDRERA_MAPPING_UPLOAD_REPORT_2026-06-04.md` con recuentos de Winerim publicado, legacy mapeado, legacy sin mapping y duplicados probables.
 - [ ] Sa Pedrera: antes de ocultar duplicados, filtrar los `92` duplicados probables por calidad de mapping; priorizar `LEGACY_SAFE_MATCH=38` y revisar manualmente los `FUZZY=55` porque algunos candidatos son sospechosos.
+- [x] Sa Pedrera: generar dry-run de matching por código `SA_PEDRERA_CODE_MATCH_DRY_RUN_2026-06-04.md`; confirma que `390/393` productos Winerim visibles tienen código, pero solo `1` legacy visible trae código extraíble.
+- [x] Codificar helper `productCodeMatching.ts` y priorizar `CODE_EXACT` en `winerim-proxy` antes de fuzzy.
+- [ ] Tras push/redeploy, ejecutar `match-products` en modo controlado o dry-run para confirmar que los nuevos matches por código quedan como `CODE_EXACT` y que `CODE_AMBIGUOUS` no auto-confirma.
+- [ ] Sa Pedrera: decidir política visual con cliente: ocultar legacy sin mapping y usar Winerim codificado, o mapear manualmente legacy más usado, o hacer limpieza `legacy-first` solo para duplicados seguros.
 - [ ] Sa Pedrera: revisar con cliente ejemplos concretos antes de aplicar: `Rock Angel`, `Binitord Blanc`, `Magnum Viña Sastre`, `Rioja Bordón crianza`, `Charles Heidsieck-Rosé`, `Nounat`.
 - [ ] Confirmar redeploy diferencial de `winerim-proxy` y reactivar `auto_push_verified_ready` conexión por conexión solo tras `no_catalog_changes_detected` o `differential=true`.
 - [ ] Validar con Winerim si los movimientos de stock por API aparecen en "Historial de ventas" o si hay endpoint adicional no documentado.

@@ -4,6 +4,10 @@ import {
   findEntryForVariant,
   normalizeWinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
+import {
+  extractCommercialCodeFromName,
+  normalizeCommercialCode,
+} from "../_shared/productCodeMatching.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,6 +76,40 @@ function findBestMatches(
   winerimWines: { winerim_id: string; name: string; sku: string | null; ean: string | null; winery: string | null; grape_variety: string | null; format: string | null }[],
   maxResults = 3,
 ): MatchCandidate[] {
+  const posCommercialCode = extractCommercialCodeFromName(posName);
+  if (posCommercialCode) {
+    const exactCodeMatches = winerimWines.filter((wine) => {
+      const codes = [
+        extractCommercialCodeFromName(wine.name),
+        wine.sku ? normalizeCommercialCode(wine.sku) : null,
+        wine.ean ? normalizeCommercialCode(wine.ean) : null,
+      ].filter(Boolean);
+
+      return codes.includes(posCommercialCode);
+    });
+
+    if (exactCodeMatches.length === 1) {
+      const wine = exactCodeMatches[0];
+      return [{
+        winerim_id: wine.winerim_id,
+        winerim_name: wine.name,
+        score: 100,
+        method: "CODE_EXACT",
+        reasons: [`commercial_code_exact:${posCommercialCode}`],
+      }];
+    }
+
+    if (exactCodeMatches.length > 1) {
+      return exactCodeMatches.slice(0, maxResults).map((wine) => ({
+        winerim_id: wine.winerim_id,
+        winerim_name: wine.name,
+        score: 79,
+        method: "CODE_AMBIGUOUS",
+        reasons: [`commercial_code_ambiguous:${posCommercialCode}`],
+      }));
+    }
+  }
+
   const candidates: MatchCandidate[] = [];
 
   for (const wine of winerimWines) {

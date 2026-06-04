@@ -2,9 +2,37 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04 11:57 CEST_
+_Última actualización: 2026-06-04 12:20 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Pedrera matching por código exacto — 2026-06-04 12:20 CEST
+- El usuario aporta nueva captura de Winerim y Agora; se confirma que Winerim usa códigos comerciales al inicio del nombre (`G801`, `G802`, `G803`, `T31`, `B303`, etc.).
+- Lectura visual de la captura Agora:
+  - Arriba siguen apareciendo productos legacy sin código (`Victorino`, `Pintia`, `El Nogal`, `Dominio del Aguila`, `Alión`, `garmon`, etc.).
+  - Abajo aparecen productos Winerim publicados con código/formato (`B T31-Semele`, `B T42-Tomás Postigo`, `B T41-Abadía Retuert`, `B T43-Mauro`, etc.).
+- Dry-run read-only contra Lovable Cloud usando cache `agora_master_data.fetched_at=2026-06-04T10:15:07.846Z`:
+  - Productos de vino visibles: `872`.
+  - Legacy visible: `479`.
+  - Winerim publicado visible: `393`.
+  - Winerim visible con código extraíble: `390`.
+  - Winerim visible sin código extraíble: `3` (`B Doña Palaueta`, `B Moscatel de la Marina`, `C Moscatel de la Marina`).
+  - Legacy visible con código extraíble: `1`.
+  - Match legacy exacto por código: `T1-Iamontanum Garnacha` -> `T1 - Iamontanum Garnacha - Isla de Menorca`.
+  - Conflictos de código detectados: `0`.
+- Diagnóstico actualizado:
+  - El código exacto es la mejor señal cuando existe, y debe tener prioridad sobre fuzzy.
+  - En Sa Pedrera, los códigos visibles en la captura pertenecen casi todos a los productos Winerim ya publicados, no al legacy antiguo.
+  - Por tanto, el problema principal no es que el matching por código falle; es que conviven legacy sin código y Winerim codificado.
+  - Informe completo: `SA_PEDRERA_CODE_MATCH_DRY_RUN_2026-06-04.md`.
+- Cambio de código preparado:
+  - Nuevo helper `supabase/functions/_shared/productCodeMatching.ts`.
+  - `winerim-proxy` prioriza `CODE_EXACT` cuando el nombre POS contiene código comercial (`B T31-...`, `G801-...`, etc.).
+  - Si un código existe varias veces en Winerim, devuelve `CODE_AMBIGUOUS` con score no auto-confirmable.
+  - Tests añadidos para evitar falsos positivos como `Magnum 4 Kilos` -> `MAGNUM4` o `As 2 Ladeiras` -> `AS2`.
+- Verificación local:
+  - `npm test`: 18 tests OK.
+  - `npm run build`: OK; solo warning existente de chunk grande/Browserslist.
 
 ### Sa Pedrera legacy vs Winerim / explicación de duplicados visuales — 2026-06-04 11:47 CEST
 - El usuario comparte audio/comentario del cliente sobre Sa Pedrera: preguntan cómo estaban los nombres legacy en Agora, cómo están colocados y por qué aparecen vinos Winerim si debería haber matching.
