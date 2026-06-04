@@ -2,9 +2,52 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04 10:50 CEST_
+_Última actualización: 2026-06-04 10:58 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Vida recheck profundo tras aviso de API habilitada — 2026-06-04 10:58 CEST
+- El usuario indica que desde Sa Vida/instalador afirman que el API HTTP está habilitada y que se acaban de conectar.
+- Revisión directa externa desde el middleware:
+  - `GET http://80.32.137.41:8984/`: HTTP 200, carga Administración Agora.
+  - `GET /version/`: HTTP 200, `AGORA_VERSION='8.7.4'`.
+  - `GET /installation-type/`: HTTP 200, `INSTALLATION_TYPE=2`.
+  - `GET /api/`: HTTP 404 `NotFound`.
+  - `GET /api/export-master/?filter=Families`: HTTP 501.
+  - `GET /api/export-master?filter=Families`: HTTP 501.
+  - `GET /api/export-master/?filter=Products`: HTTP 501.
+  - `GET /api/export/?business-day=2026-06-03&filter=Invoices`: HTTP 501.
+  - `GET /api/export?business-day=2026-06-03&filter=Invoices`: HTTP 501.
+  - `GET /api/export/tickets/`: HTTP 501.
+  - `GET /api/import/`: HTTP 501.
+  - Última prueba puntual: `2026-06-04T08:58:33Z`, HTTP 501.
+- Revisión de autenticación/rutas:
+  - La guía oficial local de Agora confirma que el servidor HTTP es el mismo que Administración (`http://SERVIDOR:8984/`) y que debe usarse cabecera `Api-Token`.
+  - Se probaron variantes con/sin barra final, `Accept: application/xml`, `Accept: */*`, `Authorization: Bearer`, `X-API-Key` y token por query param (`api-token`, `Api-Token`, `token`, `apikey`, `apiKey`, `api_key`).
+  - Resultado: siempre HTTP 501 con `statusText=La integración a través del API HTTP no está habilitada.`
+  - Como también devuelve 501 sin token, el fallo ocurre antes de validar credenciales; no es problema de token.
+- Comparación con instalaciones sanas usando el mismo método:
+  - `Kava`, `Restaurante Cienvinos Ecija` y `Baco Getafe` devuelven HTTP 200/XML en `export-master Families` y `export Invoices`.
+  - Por tanto la forma de llamada del middleware es válida.
+- Revisión de puertos públicos probables:
+  - Solo `80.32.137.41:8984` responde con Agora.
+  - Puertos probados sin API accesible: `80`, `443`, `8080`, `8081`, `8888`, `8980`-`8983`, `8985`-`8990`, `9984`.
+- Estado Lovable Cloud:
+  - Conexión `Sa Vida` mantiene `base_url=http://80.32.137.41:8984/`, `enabled=true`, `write_mode=XML_IMPORT`, `last_business_day_synced=2026-05-03`.
+  - `provider_capabilities`: `NOT_CONNECTED/NONE/UNKNOWN`.
+  - Backlog actual: `QUEUED=1055`, `RUNNING=0`, `FAILED=3322`, `BLOCKED=1861`.
+  - `agora-proxy test`, `test-catalog-endpoint Families`, `test-catalog-endpoint Products` siguen devolviendo 501.
+- Diagnóstico:
+  - No es fallo de Lovable Cloud, ni de cabecera, ni de token, ni de slash final, ni de orden de query params, ni de puerto alternativo típico.
+  - La explicación más probable es una de estas:
+    1. Se habilitó `Servicios de Integración`, pero no la opción específica `API HTTP` con token en el servicio expuesto.
+    2. Se habilitó en otra instancia/PC de Agora distinta a la que publica `80.32.137.41:8984`.
+    3. El servicio de Administración/API de Agora no se reinició o no recargó la configuración tras activar el módulo.
+    4. El port forwarding público apunta a una instancia distinta de la que revisó el instalador.
+- Prueba mínima que debe ejecutar el instalador en el propio PC de Sa Vida y desde fuera:
+  - Local: `curl -i -H 'Api-Token: <token>' -H 'Accept: application/xml' 'http://localhost:8984/api/export-master/?filter=Families'`.
+  - Externa: `curl -i -H 'Api-Token: <token>' -H 'Accept: application/xml' 'http://80.32.137.41:8984/api/export-master/?filter=Families'`.
+  - Ambas deben devolver HTTP 200 con XML. Si local devuelve 200 pero externa 501, el router/NAT apunta a otro servicio. Si local también devuelve 501, el API HTTP no está activo en esa instancia.
 
 ### Reparación controlada y auditoría final Agora — 2026-06-04 10:50 CEST
 - Se corrigió `Restaurante Cienvinos Ecija` con cambio mínimo y reversible:

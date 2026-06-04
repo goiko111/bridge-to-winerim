@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-04 · Mantener Sa Vida bloqueada aunque el instalador indique API habilitada
+- **Decisión**: No procesar catálogo, ventas, stock ni backlog de Sa Vida hasta que `http://80.32.137.41:8984/api/export-master/?filter=Families` y `Products` devuelvan HTTP 200/XML desde fuera.
+- **Razón**: La revalidación profunda posterior al aviso del instalador sigue devolviendo HTTP 501 con el mensaje literal de Agora `La integración a través del API HTTP no está habilitada.` El mismo método funciona en Kava, Cienvinos y Baco, y Sa Vida devuelve 501 antes de validar token, por lo que reactivar colas solo generaría más fallos.
+- **Alternativa descartada**: asumir que el módulo está correcto por confirmación verbal/local y limpiar o reintentar el backlog. Si el puerto público apunta a otra instancia o el servicio no recargó configuración, se reabrirían miles de tareas fallidas sin posibilidad de éxito.
+
+---
+
 ## 2026-06-04 · Reparación mínima de flota Agora sin tocar stock, precios ni legacy operativo
 - **Decisión**: Corregir solo lo que era claramente reversible y verificado: activar visibilidad de las 8 familias Winerim de Cienvinos, resetear breakers obsoletos en conexiones Agora que responden HTTP 200, marcar capacidades `READY/XML_IMPORT/YES` en esas conexiones sanas y bloquear un único `AGORA_HIDE_PRODUCT` de Sa Pedrera que reintentaba con error de duplicado.
 - **Razón**: Cienvinos tenía productos correctos pero familias ocultas; era un fallo visual aislado y reversible. Los breakers antiguos eran ruido de monitorización tras comprobar salud real. En Sa Pedrera, el modo híbrido/legacy exige frenar reintentos de ocultación si Agora devuelve duplicados, porque alterar ese layout sin revisión puede romper la operativa del cliente.

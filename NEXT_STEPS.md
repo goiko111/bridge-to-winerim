@@ -27,8 +27,14 @@
 - [x] Reprobar Sa Vida con base URL `http://80.32.137.41:8984/` y token Agora indicado por el usuario; el valor guardado en Lovable Cloud coincide.
 - [x] Confirmar que IP/puerto llegan al servidor correcto: raíz web HTTP 200, versión Agora `8.7.4`, installation type `2`.
 - [x] Confirmar que el bloqueo no es token: `export-master` devuelve el mismo HTTP 501 con token correcto y sin token.
-- [ ] Pedir a Agora/instalador revisión literal de `La integración a través del API HTTP no está habilitada.` en la instalación de Sa Vida; comprobar activación real, licencia/configuración y reinicio del servicio si aplica.
-- [ ] Cuando el instalador diga que está aplicado, reprobar exactamente: `GET /api/export-master/?filter=Families`, `GET /api/export-master/?filter=Products` y `GET /api/export/?business-day=<ayer>&filter=Invoices`; solo continuar si devuelven HTTP 200.
+- [x] Reprobar en profundidad tras aviso del instalador de que el API HTTP está habilitada: sigue HTTP 501 en `export-master`, `export`, `tickets` e `import`; probado también sin barra final, con `Accept` XML, cabeceras alternativas, query params de token y comparación con Kava/Cienvinos/Baco.
+- [x] Comprobar puertos públicos probables: solo responde `80.32.137.41:8984`; puertos `80`, `443`, `8080`, `8081`, `8888`, `8980`-`8983`, `8985`-`8990`, `9984` no exponen API Agora accesible.
+- [ ] Enviar al instalador la prueba exacta local/externa:
+  - Local en el PC Sa Vida: `curl -i -H 'Api-Token: <token>' -H 'Accept: application/xml' 'http://localhost:8984/api/export-master/?filter=Families'`.
+  - Externa: `curl -i -H 'Api-Token: <token>' -H 'Accept: application/xml' 'http://80.32.137.41:8984/api/export-master/?filter=Families'`.
+  - Si local=200 y externa=501, revisar NAT/port forwarding a otro equipo/servicio. Si local=501, activar realmente `API HTTP` y reiniciar/recargar servicio.
+- [ ] Pedir a Agora/instalador revisión literal de `La integración a través del API HTTP no está habilitada.` en la instalación de Sa Vida; comprobar opción específica API HTTP, token, licencia/configuración, instancia correcta y reinicio del servicio.
+- [ ] Cuando el instalador diga que está aplicado, reprobar exactamente: `GET /api/export-master/?filter=Families`, `GET /api/export-master/?filter=Products` y `GET /api/export/?business-day=<ayer>&filter=Invoices`; solo continuar si devuelven HTTP 200/XML.
 - [ ] Si Sa Vida devuelve HTTP 200, entonces ejecutar en orden: `agora-proxy test`, `sync-master-data`, `find-last-business-day`, revisar backlog y solo después decidir limpieza/activación de colas.
 
 ## P0 — Integración Agora Cienvinos Ecija
