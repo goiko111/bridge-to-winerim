@@ -4214,45 +4214,47 @@ serve(async (req) => {
       let sortOrder = 1;
       for (const wine of orderedWines) {
         const code = commercialCode(wine.name) || "";
-        const formats: ("BOTTLE" | "GLASS")[] = [];
-        if ((extractBottleSalePrice(wine) || 0) > 0) formats.push("BOTTLE");
-        if (wine.serve_by_glass !== false && (extractGlassSalePrice(wine) || 0) > 0) formats.push("GLASS");
+        const glassPrice = extractGlassSalePrice(wine) || 0;
+        const bottlePrice = extractBottleSalePrice(wine) || 0;
+        const fmt: "BOTTLE" | "GLASS" = wine.serve_by_glass === true && glassPrice > 0 ? "GLASS" : "BOTTLE";
+        const isGlass = fmt === "GLASS";
+        const price = isGlass ? glassPrice : bottlePrice;
+        if (!price || price <= 0) continue;
 
-        for (const fmt of formats) {
-          const isGlass = fmt === "GLASS";
-          const productId = String((isGlass ? 700000 : 500000) + Number(wine.winerim_id || 0));
-          const productName = formatProductName(fmt, wine.name);
-          const price = isGlass ? (extractGlassSalePrice(wine) || 0) : (extractBottleSalePrice(wine) || 0);
-          const cost = isGlass ? (extractGlassCostPrice(wine, connection) || 0) : (extractBottleCostPrice(wine) || 0);
-          const previousEl = productElById.get(productId);
-          const currentSortOrder = sortOrder++;
-          const pricesXml = priceLists.map((pl) =>
-            `        <Price PriceListId="${pl.Id}" MainPrice="${price.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
-          ).join("\n");
-          const costPricesXml = warehouses.map((wh) =>
-            `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${cost.toFixed(2)}" />`
-          ).join("\n");
+        // Agora tablets sort these buttons by Product.Id, not by SortOrder.
+        // Use explicit D-code IDs to keep the visual order D701..D709.
+        const productId = String(903000 + Number(code.replace("D", "")));
+        const productName = formatProductName(fmt, wine.name);
+        const cost = isGlass ? (extractGlassCostPrice(wine, connection) || 0) : (extractBottleCostPrice(wine) || 0);
+        const previousEl = productElById.get(productId);
+        const currentSortOrder = sortOrder++;
+        const pricesXml = priceLists.map((pl) =>
+          `        <Price PriceListId="${pl.Id}" MainPrice="${price.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+        ).join("\n");
+        const costPricesXml = warehouses.map((wh) =>
+          `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${cost.toFixed(2)}" />`
+        ).join("\n");
 
-          productPlans.push({
-            code,
-            wineName: wine.name,
-            winerimWineId: String(wine.winerim_id),
-            format: fmt,
+        productPlans.push({
+          code,
+          wineName: wine.name,
+          winerimWineId: String(wine.winerim_id),
+          format: fmt,
+          productId,
+          productName,
+          price,
+          cost,
+          sortOrder: currentSortOrder,
+          existedBefore: Boolean(previousEl),
+          previous: previousEl ? {
             productId,
-            productName,
-            price,
-            cost,
-            sortOrder: currentSortOrder,
-            existedBefore: Boolean(previousEl),
-            previous: previousEl ? {
-              productId,
-              name: extractXmlAttr(previousEl, "Name"),
-              familyId: extractXmlAttr(previousEl, "FamilyId"),
-              sortOrder: extractXmlAttr(previousEl, "SortOrder"),
-            } : undefined,
-            renderXml: () => {
-              const buttonText = truncateTrial(productName, 20);
-              return `    <Product SortOrder="${currentSortOrder}" Id="${productId}" Name="${escapeTrialXml(productName)}" ButtonText="${escapeTrialXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${targetFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${escapeTrialXml(defaultPrepTypeId)}" PreparationOrderId="${escapeTrialXml(defaultPrepOrderId)}" CostPrice="${cost.toFixed(2)}">
+            name: extractXmlAttr(previousEl, "Name"),
+            familyId: extractXmlAttr(previousEl, "FamilyId"),
+            sortOrder: extractXmlAttr(previousEl, "SortOrder"),
+          } : undefined,
+          renderXml: () => {
+            const buttonText = truncateTrial(productName, 20);
+            return `    <Product SortOrder="${currentSortOrder}" Id="${productId}" Name="${escapeTrialXml(productName)}" ButtonText="${escapeTrialXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${targetFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${escapeTrialXml(defaultPrepTypeId)}" PreparationOrderId="${escapeTrialXml(defaultPrepOrderId)}" CostPrice="${cost.toFixed(2)}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -4260,9 +4262,8 @@ ${pricesXml}
 ${costPricesXml}
       </CostPrices>
     </Product>`;
-            },
-          });
-        }
+          },
+        });
       }
 
       if (productPlans.length === 0) {
@@ -4347,9 +4348,9 @@ ${costPricesXml}
           provider_product_name: p.productName,
           winerim_wine_id: p.winerimWineId,
           winerim_wine_name: p.wineName,
-          match_method: "XML_IMPORT",
+          match_method: "XML_IMPORT_ORDERED_SINGLE",
           match_score: 100,
-          match_reasons: [`Sa Pedrera D701-D709 controlled trial: ${targetFamilyName}`],
+          match_reasons: [`Sa Pedrera D701-D709 ordered single-button trial: ${targetFamilyName}`],
           status: "CONFIRMED",
           format_type: p.format,
           agora_product_id: p.productId,

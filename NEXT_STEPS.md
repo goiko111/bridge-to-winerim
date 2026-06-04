@@ -187,8 +187,12 @@
 - [x] Verificar por API que los 14 productos quedaron con `FamilyId=903925` y nombre correcto.
 - [x] Actualizar `product_mappings` y `winerim_push_tracking` a `VERIFIED` para esos 14 productos.
 - [x] Documentar estado, decisiones, riesgos y rollback en `SA_PEDRERA_DULCES_WINERIM_TRIAL_2026-06-04.md`.
-- [ ] Pedir al cliente validación en tablet: familia única, contenido esperado, orden visual real.
-- [ ] Si el orden visual no coincide con Winerim, investigar campo/layout real de Agora antes de reimportar más familias.
+- [x] Revisar vídeo del cliente: duplicados B/C y orden incorrecto.
+- [x] Corregir piloto: 9 productos visibles, uno por código, IDs `903701-903709`, antiguos archivados.
+- [x] Verificar por API que `DULCES WINERIM` contiene solo los 9 nuevos visibles y que los 14 anteriores están ocultos/archivados.
+- [x] Documentar corrección en `SA_PEDRERA_DULCES_WINERIM_ORDER_FIX_2026-06-04.md`.
+- [ ] Pedir al cliente validación en tablet: debe ver 9 botones en orden `D701-D709`.
+- [ ] Si el orden visual aún no coincide, revisar cache/sincronización local de tablet Agora o layout interno.
 - [ ] Decidir si las copas dulces deben quedarse en `DULCES WINERIM` o moverse a una familia separada de copas.
 - [ ] Confirmar redeploy efectivo de `agora-proxy` con commit `deaac47`; la prueba de Edge Function seguía respondiendo `Unknown action`.
 

@@ -480,3 +480,13 @@
 - **Decisión**: Mostrar las familias legacy `GENEROSOS` (`2069`) y `DULCES` (`2070`) y hacer vendibles sus 15 productos dentro de familia, manteniendo `UseAsDirectSale=false`.
 - **Razón**: Kava pidió recuperar esas familias legacy para operativa de sala. Hacer solo visible la familia no bastaba porque los productos estaban `SaleableAsMain=false`; activar `UseAsDirectSale=true` habría creado duplicados en pantalla raíz.
 - **Alternativa descartada**: inventar mappings Winerim o confirmar mappings fuzzy de baja calidad. La mayoría no tienen mapping confirmado y dos candidatos `PENDING/FUZZY` tenían score muy bajo, por lo que mapearlos podría descontar stock del vino equivocado.
+
+## 2026-06-04 · Sa Pedrera: controlar orden visual con `Product.Id`, no `SortOrder`
+- **Decisión**: En el piloto `DULCES WINERIM`, sustituir los productos basados en `winerim_id` por IDs correlativos `903701-903709`.
+- **Razón**: El vídeo del cliente demuestra que la tablet ordena visualmente por `Product.Id`; `SortOrder` no controla la posición efectiva en esta instalación.
+- **Alternativa descartada**: reimportar los mismos productos cambiando solo `SortOrder`. Ya se había enviado así y el cliente seguía viendo `D707`, `D702`, `D706`, etc.
+
+## 2026-06-04 · Sa Pedrera: un solo botón visible por código en `DULCES WINERIM`
+- **Decisión**: Dejar un único producto visible por código `D701-D709`: copa si Winerim tiene `serve_by_glass=true`, botella si no hay copa activa.
+- **Razón**: El cliente reportó duplicados porque algunos códigos tenían botella y copa en la misma familia. Para validar el orden y la usabilidad, la familia debe mostrar una sola referencia por código.
+- **Alternativa descartada**: mantener B+C juntos en la misma familia. Conserva todos los formatos, pero recrea exactamente el problema visual reportado.

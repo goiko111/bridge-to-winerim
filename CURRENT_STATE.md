@@ -1008,6 +1008,40 @@ _Última actualización: 2026-06-04 12:20 CEST_
 - Si el orden visual no coincide, no reimportar masivamente: primero investigar el mecanismo real de orden/posición de botones Agora.
 - Decidir con el cliente si las copas dulces deben convivir dentro de `DULCES WINERIM` o ir a una familia separada de copas.
 
+### Sa Pedrera · corrección `DULCES WINERIM` por vídeo — 2026-06-04 16:31 CEST
+
+#### Hechos
+- Sa Pedrera envió vídeo indicando que dentro de `DULCES WINERIM` los vinos salían repetidos y no ordenados por numeración.
+- Transcripción relevante: "te salen ya repetidos... East India sale dos veces y no salen colocados por la numeración".
+- Diagnóstico:
+  - Agora ordenaba visualmente por `Product.Id`, no por `SortOrder`.
+  - El piloto anterior publicó botella+copa cuando existían ambas, por eso aparecían duplicados.
+- Corrección aplicada:
+  - un solo botón visible por código `D701-D709`;
+  - copa si Winerim tiene `serve_by_glass=true`, botella como fallback;
+  - IDs correlativos `903701-903709` para forzar orden visual.
+- Estado final verificado:
+  - `DULCES WINERIM` (`903925`) contiene 9 productos visibles;
+  - `D701-D706` quedan como copa;
+  - `D707-D709` quedan como botella;
+  - 9/9 `SaleableAsMain=true`, `UseAsDirectSale=false`;
+  - los 14 productos anteriores del piloto quedaron archivados/ocultos en `POSTRE WINERIM` (`907893`) con prefijo `ARCH`.
+- `product_mappings` y `winerim_push_tracking` apuntan a los nuevos IDs visibles; tracking `VERIFIED`.
+- Se refrescó `agora_master_data`: `1268` productos, `73` familias, sin warnings.
+- Informe específico: `SA_PEDRERA_DULCES_WINERIM_ORDER_FIX_2026-06-04.md`.
+
+#### Decisiones
+- Para familias donde el cliente exige orden visual, usar IDs Agora correlativos por código comercial, no IDs derivados de `winerim_id`.
+- Para evitar duplicados en la misma familia, publicar una sola variante visible por código; en dulces se prioriza copa activa.
+
+#### Hipótesis / riesgos
+- La API confirma composición final, pero el cliente debe validar visualmente en tablet.
+- Si el cliente pide también botella para `D701-D706`, no debe reintroducirse en la misma familia sin decidir otra estructura visual.
+
+#### Tareas pendientes inmediatas
+- Pedir a Sa Pedrera que vuelva a abrir `DULCES WINERIM` y confirme que ve 9 botones en orden `D701-D709`.
+- Si el orden aún no coincide, investigar más allá de `Product.Id`/familia: layout interno, cache de tablet o sincronización local Agora.
+
 ### Kava · restaurar legacy `GENEROSOS` y `DULCES` — 2026-06-04 16:20 CEST
 
 #### Hechos
