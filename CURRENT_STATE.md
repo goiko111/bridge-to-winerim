@@ -2,9 +2,54 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-02_
+_Última actualización: 2026-06-04_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Auditoría viva de integraciones Agora — 2026-06-04 09:42 CEST
+- Alcance auditado:
+  - Lovable Cloud contiene `8` conexiones POS registradas y todas son `provider=agora`. No hay conexiones productivas vivas de BDP/Revo/Toast/Numier/Clover/Simphony/Square/TCPOS/Cassa/HIOPOS/TouchBistro que se puedan declarar operativas; esos providers existen en código/wizards, pero no tienen filas productivas auditables en esta revisión.
+  - La auditoría fue read-only: se leyeron tablas de Lovable Cloud, cache/master data y endpoints Agora; no se escribieron productos, familias, stock, colas ni credenciales.
+  - La consulta amplia de `outbound_tasks` abiertas canceló por timeout SQL (`57014 canceling statement`). Conclusión de proceso: las colas necesitan métricas/indexación o vista agregada para auditoría fiable sin depender de consultas pesadas.
+- Conectividad Agora viva:
+  - `Katsu Izakaya`, `Kava`, `La Candela de Triana`, `Luruna`, `Restaurante Cienvinos Ecija` y `Sa Pedrera` responden HTTP 200 en catálogo (`Families`/`Products`) y en endpoint de facturas del cursor cuando hay datos o `{}` cuando no los hay.
+  - `Baco Getafe` responde HTTP 200 en catálogo/facturas, pero está desactivado por rollback legacy (`enabled=false`, `write_mode=NONE`).
+  - `Sa Vida` responde HTTP 200 en raíz web, pero `Families`, `Products` e `Invoices` devuelven HTTP 501. Sigue no operativa para middleware aunque el servidor esté encendido.
+- Automatización de catálogo Winerim -> Agora:
+  - No se puede afirmar que "cualquier cambio en Winerim se refleja automáticamente en Agora" para toda la flota.
+  - `auto_push_verified_ready=false` sigue pausado en `Katsu`, `Kava`, `La Candela`, `Luruna` y `Sa Pedrera`; esto protege de reimportaciones masivas hasta confirmar redeploy diferencial real de `winerim-proxy`.
+  - `Cienvinos` tiene `auto_push_verified_ready=true` y `auto_push_on_create=true`, pero `auto_push_on_update=false`; por tanto altas nuevas pueden estar habilitadas, pero cambios de precio/nombre no se deben prometer como automáticos hasta activar update diferencial.
+  - `Baco` está en rollback legacy y no forma parte del flujo automático Winerim.
+  - `Sa Vida` no puede publicar catálogo mientras Agora devuelva 501.
+- Estado visual/catálogo vivo por conexión:
+  - `Katsu Izakaya`: 8 familias Winerim visibles; 85 productos detectados en familias Winerim; 0 botones raíz Winerim; 27 productos Winerim no vendibles como main, probablemente inactivos/no exportables y requieren revisión antes de contarlos como fallo.
+  - `Kava`: 8/9 familias Winerim visibles (`POSTRE WINERIM` oculta); 233 productos Winerim; 0 botones raíz; 10 productos no vendibles. Queda una familia legacy `Vinos` visible, pero sin productos vendibles detectados.
+  - `La Candela de Triana`: 8 familias Winerim visibles; 79 productos Winerim; 0 botones raíz; 1 producto no vendible; legacy de vino no visible.
+  - `Luruna`: 8 familias Winerim visibles; 126 productos Winerim; 0 botones raíz; 2 productos no vendibles. Queda familia legacy `Vinos` visible, pero sin productos vendibles detectados.
+  - `Restaurante Cienvinos Ecija`: 8 familias Winerim existen pero las 8 están `ShowInPos=false`; 428 productos Winerim están `SaleableAsMain=true` y sin botones raíz, pero al estar las familias ocultas el cliente puede no localizarlos por navegación visual. Esto requiere reparación controlada de visibilidad de familias.
+  - `Sa Pedrera`: por diseño operativo mantiene legacy visual/regional. Las 8 familias `... WINERIM` están ocultas y la venta visible ocurre en familias legacy/regionales; se detectan 12 familias legacy de vino visibles y 68 productos legacy vendibles en ellas. Es híbrida, no una instalación "solo Winerim".
+  - `Baco Getafe`: rollback confirmado; 8 familias Winerim ocultas, 118 productos Winerim no vendibles y 191 productos legacy de vino vendibles en familias legacy visibles. No está en automático Winerim.
+  - `Sa Vida`: sin auditoría viva de catálogo por HTTP 501.
+- Ventas POS -> Lovable Cloud / stock Winerim:
+  - El cron está vivo: `last_sync_at` se actualizó el 2026-06-04 en las conexiones activas, incluso cuando no hay días nuevos o stock resuelto.
+  - `Katsu`: `last_business_day_synced=2026-06-03`, 56 ventas guardadas en últimos 7 días; sin stock Winerim reciente y la muestra de líneas tenía candidatos de vino no mapeados. No declarar stock automático probado.
+  - `Kava`: `last_business_day_synced=2026-06-03`, ventas guardadas y stock real reciente: últimos 7 días `SUCCESS=27` (`17` copa, `10` botella). Es la instalación más probada para copas/botellas, aunque conserva bloqueos terminales antiguos de vino inexistente.
+  - `La Candela`: `last_business_day_synced=2026-06-03`, 512 ventas guardadas en últimos 7 días; `stock_sync_log` no tiene descuentos en 30 días. Puede ser ausencia de venta Winerim resuelta, pero no está probado el descuento.
+  - `Luruna`: `last_business_day_synced=2026-06-03`, 405 ventas guardadas en últimos 7 días; stock reciente solo `1` botella `SUCCESS`, sin prueba reciente de copa.
+  - `Cienvinos`: `last_business_day_synced=2026-05-27`, sin ventas ni stock en 30 días; falta primer cierre real con producto Winerim.
+  - `Sa Pedrera`: `last_business_day_synced=2026-06-02`, 19 ventas guardadas en últimos 7 días; últimos 7 días `5` botellas `SUCCESS`, sin copa reciente. Existen 78 bloqueos terminales históricos de copa (`Variant 'copa' not found`) y mappings vivos `CONFIRMED=76`, `PENDING=20`, `REJECTED=58`; lo confirmado puede descontar, lo pendiente/rechazado no.
+  - `Baco`: tiene 41 descuentos `SUCCESS` en la ventana de 7 días de auditoría, pero son históricos del periodo anterior/al rollback; hoy `enabled=false` y no debe comunicarse como automático Winerim.
+  - `Sa Vida`: sin ventas nuevas ni stock reciente; no operativa por API 501.
+- Historial de ventas Winerim:
+  - Se mantiene la decisión previa: el middleware guarda histórico canónico en Lovable Cloud y descuenta stock Winerim por `PUT /api/v2/stock/{stockId}`.
+  - No hay código que haga POST de una venta a Winerim; por tanto no se debe prometer "Historial de ventas de Winerim" como hecho hasta validarlo en la UI/API de Winerim.
+
+## Hipótesis / riesgos abiertos
+- `Cienvinos`: la ocultación de las 8 familias Winerim parece una regresión visual o un estado posterior a reparación; los productos existen y son vendibles dentro de familia, pero la familia oculta impide operar visualmente con normalidad.
+- `Katsu`, `La Candela` y `Luruna`: que haya ventas guardadas sin stock Winerim no prueba fallo por sí solo; puede significar que no se vendieron productos mapeados Winerim. Requiere venta de prueba por conexión.
+- `Kava`, `Luruna`, `Cienvinos` y `Sa Pedrera` conservan campos de breaker/fallos con fechas pasadas (`consecutive_failures=10` en varios casos) aunque los endpoints respondan y `last_sync_at` avance. Puede confundir paneles de salud y debería resetearse solo tras una comprobación controlada.
+- `Sa Pedrera`: la convivencia legacy + Winerim es necesaria para mantener organización regional, pero cualquier legacy sin mapping `CONFIRMED` no descuenta en Winerim; un mapping erróneo descontaría el vino equivocado.
+- `Baco`: el rollback legacy está aplicado; si el cliente vuelve a pedir Winerim automático, hay que tratarlo como reactivación planificada con validación visual, no como "ya funcionando".
 
 ### Sa Vida nueva IP / revalidación Agora — 2026-06-02 10:39 CEST
 - El usuario indicó nueva IP para Sa Vida: `80.32.137.41:8984`, manteniendo contraseña/API token Agora y token Winerim.

@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-04 · Auditoría de flota no invasiva y sin declarar "todo sano" en bloque
+- **Decisión**: Tratar la revisión del 2026-06-04 como auditoría read-only: documentar hallazgos y próximos pasos, pero no reparar Cienvinos, Sa Pedrera, breakers ni mappings en la misma pasada sin validación específica.
+- **Razón**: La auditoría encontró estados delicados que pueden ser intencionados o sensibles para operación real: Baco en rollback legacy, Sa Pedrera híbrida legacy/regional, Cienvinos con familias Winerim ocultas y varios clientes con auto-push pausado por seguridad. Tocar esos estados en bloque podría romper pantallas que el cliente usa hoy.
+- **Alternativa descartada**: aplicar reparaciones automáticas inmediatas y comunicar la flota como completamente operativa. Habría riesgo de reabrir duplicados visuales, ocultar legacy necesario o prometer stock/Historial Winerim sin prueba real por conexión.
+
+---
+
 ## 2026-06-01 · Auto-push de catálogo Agora debe ser diferencial antes de reactivar `auto_push_verified_ready`
 - **Decisión**: Cambiar `winerim-proxy fetch-catalog` para que el auto-push solo evalúe vinos nuevos/no publicados o vinos con cambios reales en campos visibles (`name`, tipo, región, activo, copa y precios por formato), en vez de reencolar todo el lote procesado.
 - **Razón**: Katsu, Kava, La Candela, Luruna y Sa Pedrera tienen `auto_push_on_update=true`; reactivar `auto_push_verified_ready` con el runtime anterior habría podido reimportar lotes completos en cada cron, cargando Agora y reabriendo riesgo visual.

@@ -2,6 +2,23 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Auditoría flota Agora 2026-06-04
+- [x] Ejecutar auditoría read-only contra Lovable Cloud y endpoints Agora vivos.
+- [x] Confirmar que todas las conexiones productivas registradas son Agora; el resto de providers existen en código/wizards pero no tienen conexión viva auditable.
+- [x] Confirmar conectividad: `Katsu`, `Kava`, `La Candela`, `Luruna`, `Cienvinos` y `Sa Pedrera` responden catálogo/facturas; `Baco` responde pero está desactivado; `Sa Vida` sigue en HTTP 501.
+- [x] Detectar que `Cienvinos` tiene las 8 familias Winerim ocultas aunque sus 428 productos Winerim estén vendibles dentro de familia.
+- [x] Confirmar que `Baco` está efectivamente en rollback legacy: Winerim oculto/no vendible y legacy visible/vendible.
+- [x] Confirmar que `Sa Pedrera` sigue híbrida: familias legacy/regionales visibles y mappings parciales; no es instalación "solo Winerim".
+- [x] Confirmar stock reciente real solo donde hay logs `SUCCESS`: `Kava` copa+botella, `Luruna` botella, `Sa Pedrera` botella; el resto necesita venta/cierre de prueba.
+- [ ] Reparar `Cienvinos` con cambio mínimo: poner visibles las 8 familias `... WINERIM`, sin tocar precios, productos, IVA, preparación ni stock; verificar después `familias visibles=8`, `directSale=0`, `notSaleableAsMain=0`.
+- [ ] Preparar rollback de la reparación Cienvinos: volver a `ShowInPos=false` en esas 8 familias si el cliente reporta impacto visual.
+- [ ] Ejecutar venta/cierre de prueba por conexión para `Katsu`, `La Candela`, `Luruna` y `Cienvinos` con una botella y una copa Winerim cuando existan; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `SUCCESS`.
+- [ ] En `Sa Pedrera`, revisar los `20 PENDING` y `58 REJECTED` actuales antes de prometer descuento de todo el legacy; priorizar copas con bloqueo terminal.
+- [ ] Resetear breakers/fallos obsoletos en conexiones que ya responden 200 solo después de una sonda controlada por conexión; no resetear `Sa Vida`.
+- [ ] Crear métrica/vista ligera para colas abiertas por conexión; la consulta amplia de `outbound_tasks` canceló por timeout durante la auditoría.
+- [ ] Confirmar redeploy diferencial de `winerim-proxy` y reactivar `auto_push_verified_ready` conexión por conexión solo tras `no_catalog_changes_detected` o `differential=true`.
+- [ ] Validar con Winerim si los movimientos de stock por API aparecen en "Historial de ventas" o si hay endpoint adicional no documentado.
+
 ## P0 — Integración Agora Cienvinos Ecija
 - [x] Crear conexión en Lovable Cloud con credenciales reales y dejarla deshabilitada.
 - [x] Probar alcance/credenciales Agora con `agora-proxy test`.
