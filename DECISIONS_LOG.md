@@ -445,3 +445,8 @@
 - **Decisión**: Mantener Sa Vida como no operativa aunque la URL esté normalizada a `http://80.32.137.41:8984/`.
 - **Razón**: Las pruebas `test`, `Products` y `Families` siguen devolviendo HTTP 501 desde Agora; resetear breaker/capacidades o procesar colas generaría fallos repetidos y podría reactivar writes contra un POS no preparado.
 - **Alternativa descartada**: asumir que el cambio de IP resolvía la incidencia y reactivar la conexión. La prueba viva demuestra que el módulo REST/export-master sigue sin responder correctamente.
+
+## 2026-06-04 · Sa Pedrera: no ocultar Winerim duplicado sin filtrar calidad del mapping
+- **Decisión**: No aplicar ocultación masiva de los `92` duplicados probables legacy + Winerim en Sa Pedrera hasta separar mappings seguros (`LEGACY_SAFE_MATCH`) de mappings difusos antiguos (`FUZZY`) y revisar los casos sospechosos.
+- **Razón**: El total de `product_mappings.CONFIRMED` mezcla productos Winerim importados (`XML_IMPORT`) con legacy real, y algunos `FUZZY` antiguos apuntan a vinos no equivalentes. Usar ese número bruto para ocultar botones podría esconder el producto correcto o dejar un legacy descontando stock de un vino equivocado.
+- **Alternativa descartada**: ocultar automáticamente todo producto Winerim que tenga cualquier mapping `CONFIRMED` para el mismo `winerim_wine_id + format`. Sería rápido, pero demasiado arriesgado en un servicio activo y en una carta organizada visualmente por regiones.

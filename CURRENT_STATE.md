@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04 11:47 CEST_
+_Última actualización: 2026-06-04 11:57 CEST_
 
 ## Hechos (qué está desplegado y verificado)
 
@@ -24,6 +24,13 @@ _Última actualización: 2026-06-04 11:47 CEST_
   - `productsTotal=1252`, `saleableProducts=1175`, `wineLikeSaleable=870`.
   - Dentro de productos de vino vendibles detectados: `385` vienen de publicación Winerim (`winerim_push_tracking`), `92` son legacy con mapping `CONFIRMED`, `393` son legacy sin mapping confirmado o rechazados/pendientes.
   - Mappings totales en la conexión: `CONFIRMED=501`, `PENDING=20`, `REJECTED=291`.
+- Foto directa adicional en Lovable Cloud:
+  - `winerim_push_tracking` total Sa Pedrera: `417` filas; estados `VERIFIED=393`, `HIDDEN=17`, `FAILED=5`, `QUEUED=1`, `NOT_PUSHED=1`.
+  - Publicado/verificado Winerim por formato: `BOTTLE=352`, `MAGNUM=25`, `GLASS=16`.
+  - `product_mappings` total Sa Pedrera: `812` filas; estados `CONFIRMED=501`, `REJECTED=291`, `PENDING=20`.
+  - Métodos de mappings confirmados: `XML_IMPORT=408`, `FUZZY=55`, `LEGACY_SAFE_MATCH=38`.
+  - Matiz crítico: `XML_IMPORT` representa productos Winerim creados/importados en Agora; no equivale a legacy del cliente. Para decidir ocultaciones hay que mirar legacy real (`LEGACY_SAFE_MATCH` y `FUZZY` revisado), no el total `CONFIRMED`.
+  - Informe completo guardado en `SA_PEDRERA_MAPPING_UPLOAD_REPORT_2026-06-04.md`.
 - Ejemplos de naming/colocación legacy vs Winerim:
   - Legacy `Rock Angel` en `Vinos Rosados`, mapeado a Winerim `R607-Rock Angel Rosé`; también existe producto Winerim publicado `B R607-Rock Angel Rosé` en `Vinos Rosados`. Esto produce duplicado visual.
   - Legacy `Binitord Blanc` en `Vinos Blancos > B Baleares`; existen productos Winerim publicados `B B303-Binitord Blanc` en `B Baleares` y `C B303-Binitord Blanc` en `Vinos Por Copas > Copas Blanco`.
@@ -38,6 +45,7 @@ _Última actualización: 2026-06-04 11:47 CEST_
   - `winerim_push_tracking` representa productos creados/publicados desde Winerim en Agora.
   - En Sa Pedrera se aplicó una mezcla: conservar estructura legacy/regional y publicar productos Winerim dentro de esas familias. Por eso aparecen vinos con nombres Winerim aunque exista matching parcial.
   - Si el cliente esperaba “no crear botones Winerim si existe un legacy mapeado”, la configuración actual no cumple esa expectativa al 100%; hay que pasar a política `legacy-first`: ocultar Winerim publicado cuando ya hay legacy `CONFIRMED` para el mismo vino/formato, y conservar Winerim solo para vinos/formato sin legacy seguro.
+  - No debe aplicarse ocultación masiva sobre los `92` duplicados probables sin revisar calidad del mapping: hay matches `FUZZY` antiguos sospechosos (`Martini Blanco -> Izadi Blanco`, `PSI Dominio De pingus -> Dominio de Calogía`, etc.) que podrían provocar ventas descontando el vino equivocado o esconder el botón bueno.
 - Estado API vivo en el momento de la revisión:
   - `http://sapedreradespujol.ddns.net:8984/` y `/version/` responden HTTP 200 (`AGORA_VERSION='8.7.4'`).
   - `GET /api/export-master/?filter=Families` y `Products` devuelven HTTP 501: `El módulo de servicios de integración no está habilitado.`
