@@ -19,6 +19,14 @@
 - [ ] Confirmar redeploy diferencial de `winerim-proxy` y reactivar `auto_push_verified_ready` conexión por conexión solo tras `no_catalog_changes_detected` o `differential=true`.
 - [ ] Validar con Winerim si los movimientos de stock por API aparecen en "Historial de ventas" o si hay endpoint adicional no documentado.
 
+## P0 — Sa Vida API HTTP Agora
+- [x] Reprobar Sa Vida con base URL `http://80.32.137.41:8984/` y token Agora indicado por el usuario; el valor guardado en Lovable Cloud coincide.
+- [x] Confirmar que IP/puerto llegan al servidor correcto: raíz web HTTP 200, versión Agora `8.7.4`, installation type `2`.
+- [x] Confirmar que el bloqueo no es token: `export-master` devuelve el mismo HTTP 501 con token correcto y sin token.
+- [ ] Pedir a Agora/instalador revisión literal de `La integración a través del API HTTP no está habilitada.` en la instalación de Sa Vida; comprobar activación real, licencia/configuración y reinicio del servicio si aplica.
+- [ ] Cuando el instalador diga que está aplicado, reprobar exactamente: `GET /api/export-master/?filter=Families`, `GET /api/export-master/?filter=Products` y `GET /api/export/?business-day=<ayer>&filter=Invoices`; solo continuar si devuelven HTTP 200.
+- [ ] Si Sa Vida devuelve HTTP 200, entonces ejecutar en orden: `agora-proxy test`, `sync-master-data`, `find-last-business-day`, revisar backlog y solo después decidir limpieza/activación de colas.
+
 ## P0 — Integración Agora Cienvinos Ecija
 - [x] Crear conexión en Lovable Cloud con credenciales reales y dejarla deshabilitada.
 - [x] Probar alcance/credenciales Agora con `agora-proxy test`.

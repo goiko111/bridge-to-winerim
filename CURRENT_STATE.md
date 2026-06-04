@@ -6,6 +6,28 @@ _Última actualización: 2026-06-04_
 
 ## Hechos (qué está desplegado y verificado)
 
+### Sa Vida módulo API indicado como activado / revalidación — 2026-06-04 10:02 CEST
+- El usuario confirma que el módulo está activado y reindica:
+  - Base URL: `http://80.32.137.41:8984`.
+  - API token Agora: coincide con el valor ya guardado en Lovable Cloud. No se documenta el token.
+- Revalidación directa read-only contra Agora:
+  - `GET /`: HTTP 200, carga la web de Agora.
+  - `GET /version/`: HTTP 200, `AGORA_VERSION='8.7.4'`.
+  - `GET /installation-type/`: HTTP 200, `INSTALLATION_TYPE=2`.
+  - `GET /api/`: HTTP 404 `NotFound`.
+  - `GET /api/export-master/?filter=Families`: HTTP 501.
+  - `GET /api/export-master/?filter=Products`: HTTP 501.
+  - `GET /api/export/?filter=Invoices&business-day=2026-06-03`: HTTP 501.
+  - `GET /api/export/?business-day=2026-06-03&filter=Invoices`: HTTP 501.
+  - `GET /api/export/tickets/`: HTTP 501.
+  - El mismo `501` aparece también sin token, por lo que no es un rechazo por API key.
+- Mensaje exacto de Agora en `statusText`: `La integración a través del API HTTP no está habilitada.`
+- Estado Lovable Cloud leído en la misma revalidación:
+  - `Sa Vida` tiene `base_url=http://80.32.137.41:8984/`, `enabled=true`, `write_mode=XML_IMPORT`.
+  - `last_business_day_synced=2026-05-03`.
+  - Breaker/fallos históricos: `consecutive_failures=10`, `circuit_breaker_reason=Auto-paused: 10 consecutive task failures.`
+- Conclusión: sigue bloqueado fuera del middleware. La red/IP y token son correctos, pero el servidor Agora de Sa Vida aún responde como si la integración API HTTP no estuviera habilitada en esa instalación o no se hubiese aplicado/reiniciado correctamente. No se debe procesar cola, catálogo ni stock de Sa Vida hasta que `export-master` e `Invoices` devuelvan HTTP 200.
+
 ### Auditoría viva de integraciones Agora — 2026-06-04 09:42 CEST
 - Alcance auditado:
   - Lovable Cloud contiene `8` conexiones POS registradas y todas son `provider=agora`. No hay conexiones productivas vivas de BDP/Revo/Toast/Numier/Clover/Simphony/Square/TCPOS/Cassa/HIOPOS/TouchBistro que se puedan declarar operativas; esos providers existen en código/wizards, pero no tienen filas productivas auditables en esta revisión.
