@@ -475,3 +475,8 @@
 - **Decisión**: Considerar verificada por API la pertenencia/nombre de los 14 productos, pero dejar pendiente la validación visual de orden en tablet.
 - **Razón**: Agora `export-master` no devuelve `SortOrder` de producto. El XML se envió en orden `D701-D709`, pero la API no demuestra cómo lo presentará la tablet.
 - **Alternativa descartada**: asumir que `SortOrder` funciona por el hecho de enviarlo. Ya existe una hipótesis abierta de `Order` vs `SortOrder`; escalarlo sin prueba visual puede reproducir el problema de desorden.
+
+## 2026-06-04 · Kava: restaurar legacy `GENEROSOS` y `DULCES` sin convertirlo en Winerim
+- **Decisión**: Mostrar las familias legacy `GENEROSOS` (`2069`) y `DULCES` (`2070`) y hacer vendibles sus 15 productos dentro de familia, manteniendo `UseAsDirectSale=false`.
+- **Razón**: Kava pidió recuperar esas familias legacy para operativa de sala. Hacer solo visible la familia no bastaba porque los productos estaban `SaleableAsMain=false`; activar `UseAsDirectSale=true` habría creado duplicados en pantalla raíz.
+- **Alternativa descartada**: inventar mappings Winerim o confirmar mappings fuzzy de baja calidad. La mayoría no tienen mapping confirmado y dos candidatos `PENDING/FUZZY` tenían score muy bajo, por lo que mapearlos podría descontar stock del vino equivocado.

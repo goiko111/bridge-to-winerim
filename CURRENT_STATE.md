@@ -1008,6 +1008,40 @@ _Última actualización: 2026-06-04 12:20 CEST_
 - Si el orden visual no coincide, no reimportar masivamente: primero investigar el mecanismo real de orden/posición de botones Agora.
 - Decidir con el cliente si las copas dulces deben convivir dentro de `DULCES WINERIM` o ir a una familia separada de copas.
 
+### Kava · restaurar legacy `GENEROSOS` y `DULCES` — 2026-06-04 16:20 CEST
+
+#### Hechos
+- Kava pidió dejar visibles las familias legacy de postres/dulces y fortificados/generosos.
+- Se restauraron solo dos familias Agora legacy:
+  - `2069` · `GENEROSOS`
+  - `2070` · `DULCES`
+- Estado previo:
+  - ambas familias estaban `ShowInPos=false`;
+  - sus 15 productos estaban `SaleableAsMain=false` y `UseAsDirectSale=false`.
+- Estado aplicado:
+  - ambas familias quedan `ShowInPos=true`;
+  - los 15 productos quedan `SaleableAsMain=true`;
+  - los 15 productos mantienen `UseAsDirectSale=false`, por lo que no aparecen como botones raíz.
+- Verificación posterior:
+  - familias visibles: 2/2;
+  - productos vendibles dentro de familia: 15/15;
+  - productos directos en raíz: 0/15.
+- Se refrescó `agora_master_data`: `1681` productos, `93` familias, sin warnings de truncado.
+- Informe específico: `KAVA_LEGACY_DULCES_GENEROSOS_RESTORE_2026-06-04.md`.
+
+#### Decisiones
+- Se trató como restauración legacy operativa, no como integración Winerim.
+- No se inventaron mappings Winerim ni se tocaron familias/productos Winerim.
+- Se mantuvo `UseAsDirectSale=false` para preservar la política visual validada: vendible dentro de familia, sin duplicar en pantalla raíz.
+
+#### Hipótesis / riesgos
+- La mayoría de productos restaurados no tienen mapping Winerim confirmado. Dos tenían mapping `PENDING` fuzzy de baja calidad (`MOSCATEL LAUR4A` y `SICHEL SAUTERNES`).
+- Las ventas desde estos legacy pueden no descontar stock en Winerim ni aparecer en historial Winerim hasta hacer mapping seguro o publicar equivalentes Winerim.
+
+#### Tareas pendientes inmediatas
+- Confirmar con Kava que visualmente ven `GENEROSOS` y `DULCES` como esperan.
+- Si quieren que esas ventas descuenten stock Winerim, hacer mapping seguro producto a producto antes de declarar esos legacy integrados.
+
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).

@@ -192,6 +192,15 @@
 - [ ] Decidir si las copas dulces deben quedarse en `DULCES WINERIM` o moverse a una familia separada de copas.
 - [ ] Confirmar redeploy efectivo de `agora-proxy` con commit `deaac47`; la prueba de Edge Function seguía respondiendo `Unknown action`.
 
+## P0 — Kava legacy `GENEROSOS` / `DULCES`
+- [x] Restaurar visibilidad de familias legacy `2069` (`GENEROSOS`) y `2070` (`DULCES`).
+- [x] Restaurar vendibilidad dentro de familia para 15 productos legacy (`SaleableAsMain=true`, `UseAsDirectSale=false`).
+- [x] Verificar por API que las familias están visibles, los 15 productos vendibles y 0 productos directos en raíz.
+- [x] Refrescar master data Kava en Lovable Cloud (`1681` productos, `93` familias, sin truncation warnings).
+- [x] Documentar rollback y riesgo de stock en `KAVA_LEGACY_DULCES_GENEROSOS_RESTORE_2026-06-04.md`.
+- [ ] Confirmar visualmente con Kava que `GENEROSOS` y `DULCES` aparecen donde esperan.
+- [ ] Si Kava quiere que esas ventas legacy descuenten stock Winerim, hacer mapping seguro producto a producto; no confirmar los mappings fuzzy `PENDING` actuales sin revisión.
+
 ## P0 — Auditoría Codex 2026-05-26
 - [x] Unificar las dos ramas `auto-sync-sales` de `agora-proxy`: se eliminó la rama intradía inalcanzable y se conservó D-1/post-cierre.
 - [x] Hacer `stock_sync_log` variant-aware: añadidos `variant`, `stock_id`, `idempotency_key`, índice parcial y compatibilidad con logs legacy.
