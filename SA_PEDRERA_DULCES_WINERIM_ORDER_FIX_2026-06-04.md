@@ -66,6 +66,7 @@ Verificación:
 - La API confirma nombres/familia/visibilidad, pero la validación final del orden debe hacerla el cliente en tablet.
 - Esta corrección confirma la hipótesis: para controlar orden visual en Agora no basta `SortOrder`; en esta instalación el orden efectivo depende de `Product.Id`.
 - Si el cliente quiere también venta por botella para `D701-D706`, habrá que decidir otra familia o un criterio visual distinto, porque volver a poner B+C en la misma familia recrearía el duplicado reportado.
+- Nota posterior: aunque por formato las copas podrían moverse a `COPAS WINERIM`, el piloto queda temporalmente completo dentro de `DULCES WINERIM` para validar primero orden y usabilidad sin introducir otro cambio visual.
 
 ## Rollback
 

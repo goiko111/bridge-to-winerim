@@ -490,3 +490,8 @@
 - **Decisión**: Dejar un único producto visible por código `D701-D709`: copa si Winerim tiene `serve_by_glass=true`, botella si no hay copa activa.
 - **Razón**: El cliente reportó duplicados porque algunos códigos tenían botella y copa en la misma familia. Para validar el orden y la usabilidad, la familia debe mostrar una sola referencia por código.
 - **Alternativa descartada**: mantener B+C juntos en la misma familia. Conserva todos los formatos, pero recrea exactamente el problema visual reportado.
+
+## 2026-06-04 · Sa Pedrera: mantener temporalmente copas dulces dentro de `DULCES WINERIM`
+- **Decisión**: No mover ahora las copas `D701-D706` a `COPAS WINERIM`; mantener todo el piloto `D701-D709` dentro de `DULCES WINERIM` y centrarse en validar que queda ordenado.
+- **Razón**: El objetivo inmediato del cliente es comprobar si los dulces aparecen ordenados y sin duplicados. Cambiar de familia en este momento introduciría una segunda variable y dificultaría saber si la solución visual funciona.
+- **Alternativa descartada**: separar ya por formato (`COPAS WINERIM` para copas y `DULCES WINERIM` para botellas). Puede ser el diseño final correcto, pero se pospone hasta que el cliente valide el piloto ordenado.

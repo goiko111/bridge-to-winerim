@@ -191,9 +191,10 @@
 - [x] Corregir piloto: 9 productos visibles, uno por código, IDs `903701-903709`, antiguos archivados.
 - [x] Verificar por API que `DULCES WINERIM` contiene solo los 9 nuevos visibles y que los 14 anteriores están ocultos/archivados.
 - [x] Documentar corrección en `SA_PEDRERA_DULCES_WINERIM_ORDER_FIX_2026-06-04.md`.
+- [x] Decidir temporalmente no mover copas a `COPAS WINERIM`: el piloto se valida completo dentro de `DULCES WINERIM`.
 - [ ] Pedir al cliente validación en tablet: debe ver 9 botones en orden `D701-D709`.
 - [ ] Si el orden visual aún no coincide, revisar cache/sincronización local de tablet Agora o layout interno.
-- [ ] Decidir si las copas dulces deben quedarse en `DULCES WINERIM` o moverse a una familia separada de copas.
+- [ ] Tras validación visual, decidir si el diseño definitivo separa copas en `COPAS WINERIM` o mantiene dulces juntos.
 - [ ] Confirmar redeploy efectivo de `agora-proxy` con commit `deaac47`; la prueba de Edge Function seguía respondiendo `Unknown action`.
 
 ## P0 — Kava legacy `GENEROSOS` / `DULCES`

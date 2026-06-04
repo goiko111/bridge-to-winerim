@@ -1033,10 +1033,12 @@ _Última actualización: 2026-06-04 12:20 CEST_
 #### Decisiones
 - Para familias donde el cliente exige orden visual, usar IDs Agora correlativos por código comercial, no IDs derivados de `winerim_id`.
 - Para evitar duplicados en la misma familia, publicar una sola variante visible por código; en dulces se prioriza copa activa.
+- Aunque por formato las copas podrían pertenecer a `COPAS WINERIM`, por decisión operativa temporal se deja todo el piloto `D701-D709` dentro de `DULCES WINERIM` para validar primero orden visual y usabilidad con el cliente.
 
 #### Hipótesis / riesgos
 - La API confirma composición final, pero el cliente debe validar visualmente en tablet.
 - Si el cliente pide también botella para `D701-D706`, no debe reintroducirse en la misma familia sin decidir otra estructura visual.
+- Si más adelante se decide separar por formato, habrá que mover `D701-D706` a `COPAS WINERIM` de forma controlada y documentar el cambio de criterio.
 
 #### Tareas pendientes inmediatas
 - Pedir a Sa Pedrera que vuelva a abrir `DULCES WINERIM` y confirme que ve 9 botones en orden `D701-D709`.
