@@ -2,9 +2,48 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04_
+_Última actualización: 2026-06-04 10:50 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Reparación controlada y auditoría final Agora — 2026-06-04 10:50 CEST
+- Se corrigió `Restaurante Cienvinos Ecija` con cambio mínimo y reversible:
+  - Acción usada: `agora-proxy` / `set-family-visibility`.
+  - Familias Winerim activadas en Agora (`ShowInPos=true`): `900157` `TINTOS WINERIM`, `901954` `COPAS WINERIM`, `903516` `ROSADOS WINERIM`, `903925` `DULCE WINERIM`, `904241` `BLANCOS WINERIM`, `904289` `MAGNUM WINERIM`, `908182` `FORTIFICADOS WINERIM`, `908875` `ESPUMOSOS WINERIM`.
+  - Verificación posterior contra XML vivo: `8/8` familias Winerim visibles, `428` productos Winerim detectados, `direct=0`, `notMain=0`, `prepMismatch=0`.
+  - Se refrescó `agora_master_data` para Cienvinos: `families=8`, `products=605`, `vats=4`, `priceLists=3`, `prepTypes=2`, `prepOrders=6`, `warehouses=1`, `saleCenters=3`.
+  - No se tocaron precios, productos, IVA, preparación, stock, tokens ni credenciales.
+- Se limpiaron señales internas obsoletas tras comprobar endpoints Agora HTTP 200:
+  - Reset de breaker/campos de fallo en `Kava`, `Luruna`, `Restaurante Cienvinos Ecija` y `Sa Pedrera`: `consecutive_failures=0`, `circuit_breaker_paused_until=null`, `circuit_breaker_reason=null`.
+  - `provider_capabilities` marcadas `READY/XML_IMPORT/YES` para `Katsu`, `Kava`, `La Candela`, `Luruna`, `Cienvinos` y `Sa Pedrera`.
+  - `Sa Vida` no se reseteó porque sigue devolviendo HTTP 501 en API Agora.
+  - `Baco Getafe` se mantiene en rollback legacy (`enabled=false`, `write_mode=NONE`, capacidades no operativas).
+- Recuento final de cola abierta por conexión:
+  - `Baco Getafe`: `QUEUED=0`, `RUNNING=0`, `FAILED=0`, `BLOCKED=0`.
+  - `Katsu Izakaya`: `QUEUED=0`, `RUNNING=0`, `FAILED=0`, `BLOCKED=0`.
+  - `Kava`: `QUEUED=0`, `RUNNING=0`, `FAILED=7`, `BLOCKED=9` (deuda histórica antigua; sin tareas activas).
+  - `La Candela de Triana`: `QUEUED=0`, `RUNNING=0`, `FAILED=0`, `BLOCKED=0`.
+  - `Luruna`: `QUEUED=0`, `RUNNING=0`, `FAILED=10`, `BLOCKED=58` (deuda histórica antigua; sin tareas activas).
+  - `Restaurante Cienvinos Ecija`: `QUEUED=0`, `RUNNING=0`, `FAILED=0`, `BLOCKED=0`.
+  - `Sa Pedrera`: `QUEUED=0`, `RUNNING=0`, `FAILED=294`, `BLOCKED=142`.
+  - `Sa Vida`: `QUEUED=1055`, `RUNNING=0`, `FAILED=3322`, `BLOCKED=1861`; no procesar hasta que Agora deje de responder 501.
+- En `Sa Pedrera` se bloqueó una única tarea abierta `AGORA_HIDE_PRODUCT` (`D715-Pancaliente`) en vez de reintentar:
+  - Motivo: estaba en `QUEUED`, llevaba `attempts=2/3` y Agora devolvía error de clave duplicada al intentar importar `[INACTIVO] D715-Pancaliente`.
+  - Acción: `status=BLOCKED` con `blocked_reason=MANUAL_REVIEW_REQUIRED_2026_06_04`.
+  - Razón operativa: `Sa Pedrera` está en modo híbrido/legacy-preservation; reintentar una ocultación automática podía alterar el layout legacy sin revisión.
+- Foto final de salud funcional:
+  - `Katsu`: catálogo y ventas D-1 activos; sin cola abierta; falta venta real reciente de copa/botella Winerim para probar descuento.
+  - `Kava`: catálogo y ventas activos; stock reciente probado en `copa` y `botella`; sin cola activa, solo deuda histórica.
+  - `La Candela`: catálogo y ventas activos; sin cola abierta; falta venta real reciente de producto Winerim que genere stock.
+  - `Luruna`: catálogo y ventas activos; stock reciente probado solo en `botella`; sin cola activa, solo deuda histórica.
+  - `Cienvinos`: catálogo Winerim visible y limpio; sin cola abierta; falta primer cierre nuevo con producto Winerim para probar ventas/stock.
+  - `Sa Pedrera`: modo híbrido operativo; stock reciente probado en `botella`; legacy visible por diseño y mappings todavía parciales.
+  - `Baco`: legacy operativo por rollback; no automático Winerim.
+  - `Sa Vida`: no operativa para middleware por HTTP 501 externo.
+- Rollback documentado para esta sesión:
+  - Cienvinos: volver a llamar `set-family-visibility` con los 8 IDs anteriores y `showInPos=false`.
+  - Breakers: si fuese necesario revertir la señal visual, restaurar manualmente el estado previo solo en Lovable Cloud; no afecta a Agora ni a Winerim.
+  - Sa Pedrera: la tarea bloqueada puede devolverse a `QUEUED` si se decide ocultar ese producto tras revisión, pero no debe reintentarse sin resolver el duplicado Agora.
 
 ### Sa Vida módulo API indicado como activado / revalidación — 2026-06-04 10:02 CEST
 - El usuario confirma que el módulo está activado y reindica:
@@ -67,9 +106,12 @@ _Última actualización: 2026-06-04_
   - No hay código que haga POST de una venta a Winerim; por tanto no se debe prometer "Historial de ventas de Winerim" como hecho hasta validarlo en la UI/API de Winerim.
 
 ## Hipótesis / riesgos abiertos
-- `Cienvinos`: la ocultación de las 8 familias Winerim parece una regresión visual o un estado posterior a reparación; los productos existen y son vendibles dentro de familia, pero la familia oculta impide operar visualmente con normalidad.
+- `Katsu`, `La Candela`, `Luruna` y `Cienvinos`: siguen necesitando venta/cierre real de copa y botella Winerim para afirmar que el descuento de stock funciona en todas las variantes.
+- `Sa Pedrera`: la cola activa está saneada, pero los `FAILED/BLOCKED` históricos requieren revisión por lotes; cerrarlos en masa sin mirar podría ocultar mappings legacy todavía relevantes.
+- `Kava` y `Luruna`: la deuda histórica `FAILED/BLOCKED` no impide el funcionamiento actual, pero ensucia monitorización y conviene clasificarla cuando haya una ventana de mantenimiento.
+- `Cienvinos`: la ocultación de las 8 familias Winerim quedó reparada el 2026-06-04; queda validar con primer uso/cierre real del cliente que la navegación visual en tablets es correcta.
 - `Katsu`, `La Candela` y `Luruna`: que haya ventas guardadas sin stock Winerim no prueba fallo por sí solo; puede significar que no se vendieron productos mapeados Winerim. Requiere venta de prueba por conexión.
-- `Kava`, `Luruna`, `Cienvinos` y `Sa Pedrera` conservan campos de breaker/fallos con fechas pasadas (`consecutive_failures=10` en varios casos) aunque los endpoints respondan y `last_sync_at` avance. Puede confundir paneles de salud y debería resetearse solo tras una comprobación controlada.
+- `Kava`, `Luruna`, `Cienvinos` y `Sa Pedrera`: los breakers obsoletos se resetearon tras sonda controlada el 2026-06-04; queda vigilar que no se reabran por deuda histórica.
 - `Sa Pedrera`: la convivencia legacy + Winerim es necesaria para mantener organización regional, pero cualquier legacy sin mapping `CONFIRMED` no descuenta en Winerim; un mapping erróneo descontaría el vino equivocado.
 - `Baco`: el rollback legacy está aplicado; si el cliente vuelve a pedir Winerim automático, hay que tratarlo como reactivación planificada con validación visual, no como "ya funcionando".
 

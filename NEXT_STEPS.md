@@ -10,12 +10,16 @@
 - [x] Confirmar que `Baco` está efectivamente en rollback legacy: Winerim oculto/no vendible y legacy visible/vendible.
 - [x] Confirmar que `Sa Pedrera` sigue híbrida: familias legacy/regionales visibles y mappings parciales; no es instalación "solo Winerim".
 - [x] Confirmar stock reciente real solo donde hay logs `SUCCESS`: `Kava` copa+botella, `Luruna` botella, `Sa Pedrera` botella; el resto necesita venta/cierre de prueba.
-- [ ] Reparar `Cienvinos` con cambio mínimo: poner visibles las 8 familias `... WINERIM`, sin tocar precios, productos, IVA, preparación ni stock; verificar después `familias visibles=8`, `directSale=0`, `notSaleableAsMain=0`.
-- [ ] Preparar rollback de la reparación Cienvinos: volver a `ShowInPos=false` en esas 8 familias si el cliente reporta impacto visual.
+- [x] Reparar `Cienvinos` con cambio mínimo: poner visibles las 8 familias `... WINERIM`, sin tocar precios, productos, IVA, preparación ni stock; verificado después `familias visibles=8`, `directSale=0`, `notSaleableAsMain=0`, `prepMismatch=0`.
+- [x] Preparar rollback de la reparación Cienvinos: volver a `ShowInPos=false` en esas 8 familias si el cliente reporta impacto visual (`900157`, `901954`, `903516`, `903925`, `904241`, `904289`, `908182`, `908875`).
 - [ ] Ejecutar venta/cierre de prueba por conexión para `Katsu`, `La Candela`, `Luruna` y `Cienvinos` con una botella y una copa Winerim cuando existan; validar `stock_sync_log.variant`, `stock_id`, `idempotency_key`, `SUCCESS`.
 - [ ] En `Sa Pedrera`, revisar los `20 PENDING` y `58 REJECTED` actuales antes de prometer descuento de todo el legacy; priorizar copas con bloqueo terminal.
-- [ ] Resetear breakers/fallos obsoletos en conexiones que ya responden 200 solo después de una sonda controlada por conexión; no resetear `Sa Vida`.
+- [x] Resetear breakers/fallos obsoletos en conexiones que ya responden 200 después de una sonda controlada por conexión; no se reseteó `Sa Vida`.
 - [ ] Crear métrica/vista ligera para colas abiertas por conexión; la consulta amplia de `outbound_tasks` canceló por timeout durante la auditoría.
+- [x] Dejar sin tareas activas (`QUEUED/RUNNING=0`) a `Cienvinos`; el cron/cola ya no muestra pendientes.
+- [x] Bloquear el único reintento abierto de `Sa Pedrera` (`AGORA_HIDE_PRODUCT` / `D715-Pancaliente`) por error duplicado y modo híbrido legacy; no reintentar sin revisión.
+- [ ] Revisar deuda histórica `FAILED/BLOCKED` antes de limpiarla: `Kava` (`7/9`), `Luruna` (`10/58`), `Sa Pedrera` (`294/142`). No cerrar en masa sin clasificar causa y riesgo.
+- [ ] Mantener `Sa Vida` fuera de procesamiento: backlog `QUEUED=1055`, `FAILED=3322`, `BLOCKED=1861` hasta que Agora devuelva 200 en API.
 - [ ] Confirmar redeploy diferencial de `winerim-proxy` y reactivar `auto_push_verified_ready` conexión por conexión solo tras `no_catalog_changes_detected` o `differential=true`.
 - [ ] Validar con Winerim si los movimientos de stock por API aparecen en "Historial de ventas" o si hay endpoint adicional no documentado.
 
@@ -79,7 +83,7 @@
 - [ ] Sa Pedrera legacy matching fase 2: revisar los `13` mappings `PENDING`, los `58` legacy sin mapping restante y, especialmente, los `34` con candidato pero sin variante/stockId Winerim.
 - [x] Kava: revisar producto directo no-Winerim `EL LANCE` dentro de `TINTOS WINERIM`; queda oculto sin borrar (`1000011`, `SaleableAsMain=false`, `UseAsDirectSale=false`) porque existe producto Winerim confirmado para `El Lance 7 Fuentes`.
 - [x] Luruna: revisar productos directos no-Winerim `COPA ONDALAN TINTO`, `VIUDA DE CLICQUOT ROSADO` y `COPA VIÑA SASTRE CRZ`; quedan ocultos sin borrar (`1164074`, `1164081`, `1164082`, `SaleableAsMain=false`, `UseAsDirectSale=false`).
-- [ ] Repetir auditoría XML de Cienvinos para confirmar que no queda legacy visible; las lecturas vivas de 2026-06-01 11:40 CEST y el reintento posterior devolvieron error/timeout, aunque la cache 08:55 no muestra esos residuos.
+- [x] Repetir auditoría XML de Cienvinos: verificado el 2026-06-04 contra XML vivo con 8/8 familias Winerim visibles, 428 productos Winerim, 0 botones raíz, 0 no vendibles como main y 0 mismatch de preparación.
 - [ ] Sa Vida: mantener fuera de procesamiento hasta resolver HTTP 501 en `export-master`; revalidación 2026-06-02 con `http://80.32.137.41:8984/` sigue devolviendo `501` en `test`, `Products` y `Families`.
 - [x] Cienvinos: revisar/drenar 85 tareas `AGORA_XML_UPSERT_PRODUCT` en `QUEUED`; quedan 0 abiertas tras verificar catálogo vivo.
 - [ ] Cienvinos: confirmar por qué no hay ventas/cierres desde `2026-05-27`.
@@ -103,7 +107,7 @@
 - [ ] Revisar tareas residuales por instalación tras redeploy:
   - Cienvinos: el runtime antiguo generó 82 updates `MANUAL`; ya se marcaron `SUCCESS` tras verificar que estaban publicados. Vigilar que no reaparezcan hasta redeploy.
   - Kava/Luruna/Sa Pedrera: tras la reparación del 2026-06-01 quedan 0 `QUEUED/RUNNING` de catálogo, pero hay que revisar históricos `FAILED/BLOCKED` si siguen ensuciando monitor.
-  - Sa Vida: backlog grande (`1044 QUEUED`, `3322 FAILED`, `1861 BLOCKED`), no procesar hasta resolver HTTP 501.
+  - Sa Vida: backlog grande (`1055 QUEUED`, `3322 FAILED`, `1861 BLOCKED`), no procesar hasta resolver HTTP 501.
 - [ ] Decidir limpieza de la conexión `New Location` deshabilitada con URL inválida.
 - [x] Revisar por qué Katsu y La Candela tenían tracking verificado pero `provider_capabilities` en `UNKNOWN/NOT_CONNECTED`; quedaron `READY/XML_IMPORT/YES` tras import real HTTP 200.
 
@@ -251,7 +255,7 @@
 ## Bloqueos / esperando
 - Cienvinos: activo en automático desde cursor `2026-05-27`; falta validar primer cierre nuevo con producto WINERIM resuelto.
 - Cienvinos: falta confirmación operativa de si los vinos deben mantenerse publicados en Barra, Sala y Terraza o solo en un subconjunto.
-- Cienvinos: tras la reparación, el runtime antiguo dejó 82 updates abiertos; ya se marcaron `SUCCESS` al estar publicados/verificados. Esperar redeploy del hotfix `auto_push_on_update=false` y vigilar que no reaparezcan.
+- Cienvinos: visual reparado el 2026-06-04 y cola abierta final `QUEUED/RUNNING/FAILED/BLOCKED=0/0/0/0`. Esperar primer cierre con producto WINERIM y redeploy diferencial antes de prometer cambios de precio automáticos.
 - Baco Getafe: revertido a legacy el 2026-05-29; integración Winerim desactivada en Lovable Cloud y oculta en Agora. Cualquier reactivación Winerim requiere nuevo piloto controlado.
 - Sa Vida: credenciales cargadas, pero Agora responde HTTP `501` en catálogo y ventas. Esperando corrección externa de API REST/puerto/versión antes de procesar cola o escrituras.
 - Lovable Cloud: reparación de stock/mappings aplicada; bloqueo restante: publicar/redeployar hotfixes actuales, drenar colas residuales antiguas, validar el primer descuento de stock WINERIM real y desarrollar auto-update diferencial de catálogo antes de activar `auto_push_on_update`.

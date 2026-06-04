@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-04 · Reparación mínima de flota Agora sin tocar stock, precios ni legacy operativo
+- **Decisión**: Corregir solo lo que era claramente reversible y verificado: activar visibilidad de las 8 familias Winerim de Cienvinos, resetear breakers obsoletos en conexiones Agora que responden HTTP 200, marcar capacidades `READY/XML_IMPORT/YES` en esas conexiones sanas y bloquear un único `AGORA_HIDE_PRODUCT` de Sa Pedrera que reintentaba con error de duplicado.
+- **Razón**: Cienvinos tenía productos correctos pero familias ocultas; era un fallo visual aislado y reversible. Los breakers antiguos eran ruido de monitorización tras comprobar salud real. En Sa Pedrera, el modo híbrido/legacy exige frenar reintentos de ocultación si Agora devuelve duplicados, porque alterar ese layout sin revisión puede romper la operativa del cliente.
+- **Alternativa descartada**: reintentar o cerrar en masa todas las tareas `FAILED/BLOCKED` antiguas y tocar productos legacy. Ese camino habría reducido ruido de panel, pero con riesgo de ocultar productos que todavía se venden, reabrir duplicados o dar por resuelto stock no probado.
+
+---
+
 ## 2026-06-04 · Auditoría de flota no invasiva y sin declarar "todo sano" en bloque
 - **Decisión**: Tratar la revisión del 2026-06-04 como auditoría read-only: documentar hallazgos y próximos pasos, pero no reparar Cienvinos, Sa Pedrera, breakers ni mappings en la misma pasada sin validación específica.
 - **Razón**: La auditoría encontró estados delicados que pueden ser intencionados o sensibles para operación real: Baco en rollback legacy, Sa Pedrera híbrida legacy/regional, Cienvinos con familias Winerim ocultas y varios clientes con auto-push pausado por seguridad. Tocar esos estados en bloque podría romper pantallas que el cliente usa hoy.
