@@ -181,6 +181,17 @@
 - [ ] Añadir test/integración mock de `agora-proxy.save-sales` completo con cliente DB/fetch simulado.
 - [ ] Añadir test/integración mock de `syncStockForDay`: al re-guardar un día ya `SUCCESS`, debe saltar el grupo y no hacer nuevo PUT.
 
+## P0 — Sa Pedrera piloto `DULCES WINERIM`
+- [x] Crear/mostrar familia controlada `DULCES WINERIM` reutilizando Agora family id `903925`.
+- [x] Publicar `D701-D709` con formatos activos Winerim dentro de esa familia.
+- [x] Verificar por API que los 14 productos quedaron con `FamilyId=903925` y nombre correcto.
+- [x] Actualizar `product_mappings` y `winerim_push_tracking` a `VERIFIED` para esos 14 productos.
+- [x] Documentar estado, decisiones, riesgos y rollback en `SA_PEDRERA_DULCES_WINERIM_TRIAL_2026-06-04.md`.
+- [ ] Pedir al cliente validación en tablet: familia única, contenido esperado, orden visual real.
+- [ ] Si el orden visual no coincide con Winerim, investigar campo/layout real de Agora antes de reimportar más familias.
+- [ ] Decidir si las copas dulces deben quedarse en `DULCES WINERIM` o moverse a una familia separada de copas.
+- [ ] Confirmar redeploy efectivo de `agora-proxy` con commit `deaac47`; la prueba de Edge Function seguía respondiendo `Unknown action`.
+
 ## P0 — Auditoría Codex 2026-05-26
 - [x] Unificar las dos ramas `auto-sync-sales` de `agora-proxy`: se eliminó la rama intradía inalcanzable y se conservó D-1/post-cierre.
 - [x] Hacer `stock_sync_log` variant-aware: añadidos `variant`, `stock_id`, `idempotency_key`, índice parcial y compatibilidad con logs legacy.

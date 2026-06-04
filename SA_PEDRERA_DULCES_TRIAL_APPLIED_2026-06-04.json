@@ -1,0 +1,734 @@
+{
+  "success": true,
+  "connection": "Sa Pedrera",
+  "targetFamily": {
+    "familyId": "903925",
+    "familyName": "DULCES WINERIM",
+    "familyOrder": "18",
+    "previous": {
+      "name": "DULCE WINERIM",
+      "showInPos": "false"
+    }
+  },
+  "count": 8,
+  "plans": [
+    {
+      "code": "D701",
+      "format": "BOTTLE",
+      "productId": "775099",
+      "productName": "B D701- Moscatel de la Marina",
+      "price": 36,
+      "cost": 0,
+      "sortOrder": 1,
+      "winerimWineId": "275099",
+      "wineName": "D701- Moscatel de la Marina",
+      "existedBefore": true,
+      "previous": {
+        "name": "B Moscatel de la Marina",
+        "familyId": "40",
+        "sortOrder": null
+      }
+    },
+    {
+      "code": "D702",
+      "format": "BOTTLE",
+      "productId": "512176",
+      "productName": "B D702-East India Solera",
+      "price": 50,
+      "cost": 0,
+      "sortOrder": 2,
+      "winerimWineId": "12176",
+      "wineName": "D702-East India Solera",
+      "existedBefore": false,
+      "previous": null
+    },
+    {
+      "code": "D703",
+      "format": "BOTTLE",
+      "productId": "781705",
+      "productName": "B D703 -Spínola Delicado",
+      "price": 52,
+      "cost": 0,
+      "sortOrder": 3,
+      "winerimWineId": "281705",
+      "wineName": "D703 -Spínola Delicado",
+      "existedBefore": false,
+      "previous": null
+    },
+    {
+      "code": "D704",
+      "format": "BOTTLE",
+      "productId": "781707",
+      "productName": "B D704 -Jordi Miró Naturalment Pansificat",
+      "price": 45,
+      "cost": 0,
+      "sortOrder": 4,
+      "winerimWineId": "281707",
+      "wineName": "D704 -Jordi Miró Naturalment Pansificat",
+      "existedBefore": false,
+      "previous": null
+    },
+    {
+      "code": "D706",
+      "format": "BOTTLE",
+      "productId": "512178",
+      "productName": "B D706-Niepoort LBV",
+      "price": 49,
+      "cost": 0,
+      "sortOrder": 5,
+      "winerimWineId": "12178",
+      "wineName": "D706-Niepoort LBV",
+      "existedBefore": false,
+      "previous": null
+    },
+    {
+      "code": "D707",
+      "format": "BOTTLE",
+      "productId": "512174",
+      "productName": "B D707- Valverán Sidra de Hielo",
+      "price": 65,
+      "cost": 0,
+      "sortOrder": 6,
+      "winerimWineId": "12174",
+      "wineName": "D707- Valverán Sidra de Hielo",
+      "existedBefore": false,
+      "previous": null
+    },
+    {
+      "code": "D708",
+      "format": "BOTTLE",
+      "productId": "733624",
+      "productName": "B D708- Tokaji Aszú 3 Puttonyos",
+      "price": 60,
+      "cost": 0,
+      "sortOrder": 7,
+      "winerimWineId": "233624",
+      "wineName": "D708- Tokaji Aszú 3 Puttonyos",
+      "existedBefore": true,
+      "previous": {
+        "name": "B D708- Tokaji Aszú 3 Puttonyos",
+        "familyId": "40",
+        "sortOrder": null
+      }
+    },
+    {
+      "code": "D709",
+      "format": "BOTTLE",
+      "productId": "733627",
+      "productName": "B D709- Petracs",
+      "price": 94,
+      "cost": 0,
+      "sortOrder": 8,
+      "winerimWineId": "233627",
+      "wineName": "D709- Petracs",
+      "existedBefore": true,
+      "previous": {
+        "name": "B D709- Petracs",
+        "familyId": "40",
+        "sortOrder": null
+      }
+    }
+  ],
+  "verification": {
+    "allOk": true,
+    "items": [
+      {
+        "productId": "775099",
+        "expectedName": "B D701- Moscatel de la Marina",
+        "name": "B D701- Moscatel de la Marina",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "512176",
+        "expectedName": "B D702-East India Solera",
+        "name": "B D702-East India Solera",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "781705",
+        "expectedName": "B D703 -Spínola Delicado",
+        "name": "B D703 -Spínola Delicado",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "781707",
+        "expectedName": "B D704 -Jordi Miró Naturalment Pansificat",
+        "name": "B D704 -Jordi Miró Naturalment Pansificat",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "512178",
+        "expectedName": "B D706-Niepoort LBV",
+        "name": "B D706-Niepoort LBV",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "512174",
+        "expectedName": "B D707- Valverán Sidra de Hielo",
+        "name": "B D707- Valverán Sidra de Hielo",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "733624",
+        "expectedName": "B D708- Tokaji Aszú 3 Puttonyos",
+        "name": "B D708- Tokaji Aszú 3 Puttonyos",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      },
+      {
+        "productId": "733627",
+        "expectedName": "B D709- Petracs",
+        "name": "B D709- Petracs",
+        "familyId": "903925",
+        "sortOrder": null,
+        "ok": true
+      }
+    ]
+  },
+  "rollbackXml": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Families>\n    <Family Id=\"903925\" Name=\"DULCE WINERIM\" ShowInPos=\"false\" ButtonText=\"DULCE WINERIM\" Color=\"#B8E986\" Order=\"18\" DeletionDate=\"2026-05-18T14:52:46\" />\n  </Families>\n  <Products>\n<Product Id=\"775099\" Name=\"B Moscatel de la Marina\" BaseSaleFormatId=\"775099\" ButtonText=\"B Moscatel de la Mar\" Color=\"#8B0000\" PLU=\"\" FamilyId=\"40\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"true\" SaleableAsAddin=\"false\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"false\" PrintWhenPriceIsZero=\"false\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"36.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n<Product Id=\"733624\" Name=\"B D708- Tokaji Aszú 3 Puttonyos\" BaseSaleFormatId=\"733624\" ButtonText=\"B D708- Tokaji Aszú \" Color=\"#8B0000\" PLU=\"\" FamilyId=\"40\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"true\" SaleableAsAddin=\"false\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"false\" PrintWhenPriceIsZero=\"false\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"60.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n<Product Id=\"733627\" Name=\"B D709- Petracs\" BaseSaleFormatId=\"733627\" ButtonText=\"B D709- Petracs\" Color=\"#8B0000\" PLU=\"\" FamilyId=\"40\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"true\" SaleableAsAddin=\"false\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"false\" PrintWhenPriceIsZero=\"false\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"94.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n  </Products>\n</Import>",
+  "secondPass": {
+    "success": true,
+    "count": 14,
+    "allOk": true,
+    "targetFamily": {
+      "familyId": "903925",
+      "familyName": "DULCES WINERIM",
+      "familyOrder": "15"
+    },
+    "plans": [
+      {
+        "code": "D701",
+        "format": "BOTTLE",
+        "productId": "775099",
+        "productName": "B D701- Moscatel de la Marina",
+        "price": 36,
+        "cost": 0,
+        "sortOrder": 1,
+        "winerimWineId": "275099",
+        "wineName": "D701- Moscatel de la Marina"
+      },
+      {
+        "code": "D701",
+        "format": "GLASS",
+        "productId": "975099",
+        "productName": "C D701- Moscatel de la Marina",
+        "price": 6,
+        "cost": 0,
+        "sortOrder": 2,
+        "winerimWineId": "275099",
+        "wineName": "D701- Moscatel de la Marina"
+      },
+      {
+        "code": "D702",
+        "format": "BOTTLE",
+        "productId": "512176",
+        "productName": "B D702-East India Solera",
+        "price": 50,
+        "cost": 0,
+        "sortOrder": 3,
+        "winerimWineId": "12176",
+        "wineName": "D702-East India Solera"
+      },
+      {
+        "code": "D702",
+        "format": "GLASS",
+        "productId": "712176",
+        "productName": "C D702-East India Solera",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 4,
+        "winerimWineId": "12176",
+        "wineName": "D702-East India Solera"
+      },
+      {
+        "code": "D703",
+        "format": "BOTTLE",
+        "productId": "781705",
+        "productName": "B D703 -Spínola Delicado",
+        "price": 52,
+        "cost": 0,
+        "sortOrder": 5,
+        "winerimWineId": "281705",
+        "wineName": "D703 -Spínola Delicado"
+      },
+      {
+        "code": "D703",
+        "format": "GLASS",
+        "productId": "981705",
+        "productName": "C D703 -Spínola Delicado",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 6,
+        "winerimWineId": "281705",
+        "wineName": "D703 -Spínola Delicado"
+      },
+      {
+        "code": "D704",
+        "format": "BOTTLE",
+        "productId": "781707",
+        "productName": "B D704 -Jordi Miró Naturalment Pansificat",
+        "price": 45,
+        "cost": 0,
+        "sortOrder": 7,
+        "winerimWineId": "281707",
+        "wineName": "D704 -Jordi Miró Naturalment Pansificat"
+      },
+      {
+        "code": "D704",
+        "format": "GLASS",
+        "productId": "981707",
+        "productName": "C D704 -Jordi Miró Naturalment Pansificat",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 8,
+        "winerimWineId": "281707",
+        "wineName": "D704 -Jordi Miró Naturalment Pansificat"
+      },
+      {
+        "code": "D705",
+        "format": "GLASS",
+        "productId": "712177",
+        "productName": "C D705-El Sequé Dulce",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 9,
+        "winerimWineId": "12177",
+        "wineName": "D705-El Sequé Dulce"
+      },
+      {
+        "code": "D706",
+        "format": "BOTTLE",
+        "productId": "512178",
+        "productName": "B D706-Niepoort LBV",
+        "price": 49,
+        "cost": 0,
+        "sortOrder": 10,
+        "winerimWineId": "12178",
+        "wineName": "D706-Niepoort LBV"
+      },
+      {
+        "code": "D706",
+        "format": "GLASS",
+        "productId": "712178",
+        "productName": "C D706-Niepoort LBV",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 11,
+        "winerimWineId": "12178",
+        "wineName": "D706-Niepoort LBV"
+      },
+      {
+        "code": "D707",
+        "format": "BOTTLE",
+        "productId": "512174",
+        "productName": "B D707- Valverán Sidra de Hielo",
+        "price": 65,
+        "cost": 0,
+        "sortOrder": 12,
+        "winerimWineId": "12174",
+        "wineName": "D707- Valverán Sidra de Hielo"
+      },
+      {
+        "code": "D708",
+        "format": "BOTTLE",
+        "productId": "733624",
+        "productName": "B D708- Tokaji Aszú 3 Puttonyos",
+        "price": 60,
+        "cost": 0,
+        "sortOrder": 13,
+        "winerimWineId": "233624",
+        "wineName": "D708- Tokaji Aszú 3 Puttonyos"
+      },
+      {
+        "code": "D709",
+        "format": "BOTTLE",
+        "productId": "733627",
+        "productName": "B D709- Petracs",
+        "price": 94,
+        "cost": 0,
+        "sortOrder": 14,
+        "winerimWineId": "233627",
+        "wineName": "D709- Petracs"
+      }
+    ],
+    "verification": [
+      {
+        "productId": "775099",
+        "expectedName": "B D701- Moscatel de la Marina",
+        "name": "B D701- Moscatel de la Marina",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "975099",
+        "expectedName": "C D701- Moscatel de la Marina",
+        "name": "C D701- Moscatel de la Marina",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512176",
+        "expectedName": "B D702-East India Solera",
+        "name": "B D702-East India Solera",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712176",
+        "expectedName": "C D702-East India Solera",
+        "name": "C D702-East India Solera",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "781705",
+        "expectedName": "B D703 -Spínola Delicado",
+        "name": "B D703 -Spínola Delicado",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "981705",
+        "expectedName": "C D703 -Spínola Delicado",
+        "name": "C D703 -Spínola Delicado",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "781707",
+        "expectedName": "B D704 -Jordi Miró Naturalment Pansificat",
+        "name": "B D704 -Jordi Miró Naturalment Pansificat",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "981707",
+        "expectedName": "C D704 -Jordi Miró Naturalment Pansificat",
+        "name": "C D704 -Jordi Miró Naturalment Pansificat",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712177",
+        "expectedName": "C D705-El Sequé Dulce",
+        "name": "C D705-El Sequé Dulce",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512178",
+        "expectedName": "B D706-Niepoort LBV",
+        "name": "B D706-Niepoort LBV",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712178",
+        "expectedName": "C D706-Niepoort LBV",
+        "name": "C D706-Niepoort LBV",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512174",
+        "expectedName": "B D707- Valverán Sidra de Hielo",
+        "name": "B D707- Valverán Sidra de Hielo",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "733624",
+        "expectedName": "B D708- Tokaji Aszú 3 Puttonyos",
+        "name": "B D708- Tokaji Aszú 3 Puttonyos",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "733627",
+        "expectedName": "B D709- Petracs",
+        "name": "B D709- Petracs",
+        "familyId": "903925",
+        "ok": true
+      }
+    ]
+  },
+  "latest": {
+    "success": true,
+    "count": 14,
+    "allOk": true,
+    "targetFamily": {
+      "familyId": "903925",
+      "familyName": "DULCES WINERIM",
+      "familyOrder": "15"
+    },
+    "plans": [
+      {
+        "code": "D701",
+        "format": "BOTTLE",
+        "productId": "775099",
+        "productName": "B D701- Moscatel de la Marina",
+        "price": 36,
+        "cost": 0,
+        "sortOrder": 1,
+        "winerimWineId": "275099",
+        "wineName": "D701- Moscatel de la Marina"
+      },
+      {
+        "code": "D701",
+        "format": "GLASS",
+        "productId": "975099",
+        "productName": "C D701- Moscatel de la Marina",
+        "price": 6,
+        "cost": 0,
+        "sortOrder": 2,
+        "winerimWineId": "275099",
+        "wineName": "D701- Moscatel de la Marina"
+      },
+      {
+        "code": "D702",
+        "format": "BOTTLE",
+        "productId": "512176",
+        "productName": "B D702-East India Solera",
+        "price": 50,
+        "cost": 0,
+        "sortOrder": 3,
+        "winerimWineId": "12176",
+        "wineName": "D702-East India Solera"
+      },
+      {
+        "code": "D702",
+        "format": "GLASS",
+        "productId": "712176",
+        "productName": "C D702-East India Solera",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 4,
+        "winerimWineId": "12176",
+        "wineName": "D702-East India Solera"
+      },
+      {
+        "code": "D703",
+        "format": "BOTTLE",
+        "productId": "781705",
+        "productName": "B D703 -Spínola Delicado",
+        "price": 52,
+        "cost": 0,
+        "sortOrder": 5,
+        "winerimWineId": "281705",
+        "wineName": "D703 -Spínola Delicado"
+      },
+      {
+        "code": "D703",
+        "format": "GLASS",
+        "productId": "981705",
+        "productName": "C D703 -Spínola Delicado",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 6,
+        "winerimWineId": "281705",
+        "wineName": "D703 -Spínola Delicado"
+      },
+      {
+        "code": "D704",
+        "format": "BOTTLE",
+        "productId": "781707",
+        "productName": "B D704 -Jordi Miró Naturalment Pansificat",
+        "price": 45,
+        "cost": 0,
+        "sortOrder": 7,
+        "winerimWineId": "281707",
+        "wineName": "D704 -Jordi Miró Naturalment Pansificat"
+      },
+      {
+        "code": "D704",
+        "format": "GLASS",
+        "productId": "981707",
+        "productName": "C D704 -Jordi Miró Naturalment Pansificat",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 8,
+        "winerimWineId": "281707",
+        "wineName": "D704 -Jordi Miró Naturalment Pansificat"
+      },
+      {
+        "code": "D705",
+        "format": "GLASS",
+        "productId": "712177",
+        "productName": "C D705-El Sequé Dulce",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 9,
+        "winerimWineId": "12177",
+        "wineName": "D705-El Sequé Dulce"
+      },
+      {
+        "code": "D706",
+        "format": "BOTTLE",
+        "productId": "512178",
+        "productName": "B D706-Niepoort LBV",
+        "price": 49,
+        "cost": 0,
+        "sortOrder": 10,
+        "winerimWineId": "12178",
+        "wineName": "D706-Niepoort LBV"
+      },
+      {
+        "code": "D706",
+        "format": "GLASS",
+        "productId": "712178",
+        "productName": "C D706-Niepoort LBV",
+        "price": 8,
+        "cost": 0,
+        "sortOrder": 11,
+        "winerimWineId": "12178",
+        "wineName": "D706-Niepoort LBV"
+      },
+      {
+        "code": "D707",
+        "format": "BOTTLE",
+        "productId": "512174",
+        "productName": "B D707- Valverán Sidra de Hielo",
+        "price": 65,
+        "cost": 0,
+        "sortOrder": 12,
+        "winerimWineId": "12174",
+        "wineName": "D707- Valverán Sidra de Hielo"
+      },
+      {
+        "code": "D708",
+        "format": "BOTTLE",
+        "productId": "733624",
+        "productName": "B D708- Tokaji Aszú 3 Puttonyos",
+        "price": 60,
+        "cost": 0,
+        "sortOrder": 13,
+        "winerimWineId": "233624",
+        "wineName": "D708- Tokaji Aszú 3 Puttonyos"
+      },
+      {
+        "code": "D709",
+        "format": "BOTTLE",
+        "productId": "733627",
+        "productName": "B D709- Petracs",
+        "price": 94,
+        "cost": 0,
+        "sortOrder": 14,
+        "winerimWineId": "233627",
+        "wineName": "D709- Petracs"
+      }
+    ],
+    "verification": [
+      {
+        "productId": "775099",
+        "expectedName": "B D701- Moscatel de la Marina",
+        "name": "B D701- Moscatel de la Marina",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "975099",
+        "expectedName": "C D701- Moscatel de la Marina",
+        "name": "C D701- Moscatel de la Marina",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512176",
+        "expectedName": "B D702-East India Solera",
+        "name": "B D702-East India Solera",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712176",
+        "expectedName": "C D702-East India Solera",
+        "name": "C D702-East India Solera",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "781705",
+        "expectedName": "B D703 -Spínola Delicado",
+        "name": "B D703 -Spínola Delicado",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "981705",
+        "expectedName": "C D703 -Spínola Delicado",
+        "name": "C D703 -Spínola Delicado",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "781707",
+        "expectedName": "B D704 -Jordi Miró Naturalment Pansificat",
+        "name": "B D704 -Jordi Miró Naturalment Pansificat",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "981707",
+        "expectedName": "C D704 -Jordi Miró Naturalment Pansificat",
+        "name": "C D704 -Jordi Miró Naturalment Pansificat",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712177",
+        "expectedName": "C D705-El Sequé Dulce",
+        "name": "C D705-El Sequé Dulce",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512178",
+        "expectedName": "B D706-Niepoort LBV",
+        "name": "B D706-Niepoort LBV",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "712178",
+        "expectedName": "C D706-Niepoort LBV",
+        "name": "C D706-Niepoort LBV",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "512174",
+        "expectedName": "B D707- Valverán Sidra de Hielo",
+        "name": "B D707- Valverán Sidra de Hielo",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "733624",
+        "expectedName": "B D708- Tokaji Aszú 3 Puttonyos",
+        "name": "B D708- Tokaji Aszú 3 Puttonyos",
+        "familyId": "903925",
+        "ok": true
+      },
+      {
+        "productId": "733627",
+        "expectedName": "B D709- Petracs",
+        "name": "B D709- Petracs",
+        "familyId": "903925",
+        "ok": true
+      }
+    ]
+  }
+}

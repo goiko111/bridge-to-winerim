@@ -460,3 +460,18 @@
 - **Decisión**: Exigir separador de código (`-`) para extraer códigos; ejemplos válidos `G801-Papirusa`, `B T31-Semele`, `MAGNUM 21 - Finca La Montesa`; ejemplos no válidos `Magnum 4 Kilos`, `As 2 Ladeiras`, `200 Monges Rioja`.
 - **Razón**: En la carta de vinos hay números que forman parte del nombre comercial. Interpretarlos como código produciría matches gravemente incorrectos, como mapear `Magnum 4 Kilos` a `MAGNUM 4 - Viña Mein Blanco`.
 - **Alternativa descartada**: extraer cualquier prefijo letra+número o palabra+número. Parecía aumentar cobertura, pero el primer dry-run demostró falsos positivos peligrosos.
+
+## 2026-06-04 · Sa Pedrera: piloto de dulces acotado a `D701-D709`
+- **Decisión**: Publicar solo `D701-D709` en la familia Agora existente `903925`, renombrándola/mostrándola como `DULCES WINERIM`, sin tocar el resto de la estructura legacy regional.
+- **Razón**: El cliente quiere validar si el orden por código Winerim resuelve el problema visual antes de aplicar cambios amplios en Sa Pedrera. Reutilizar la familia existente evita duplicar familias y limita el rollback.
+- **Alternativa descartada**: reordenar/ocultar de golpe toda la carta legacy o todas las familias Winerim. El riesgo operativo es alto porque Sa Pedrera trabaja con memoria visual regional y todavía está validando qué quiere conservar.
+
+## 2026-06-04 · Sa Pedrera: no crear formatos no activos en Winerim
+- **Decisión**: Incluir copas dulces solo cuando `serve_by_glass=true`; no crear copa para `D707` aunque haya `glass_sale_price` cacheado, porque Winerim marca ese vino como no servido por copa.
+- **Razón**: El stock variant-aware depende de variantes reales. Crear una copa visual no activa puede permitir ventas que Winerim no espera descontar como variante copa.
+- **Alternativa descartada**: publicar todos los productos con cualquier precio de copa. Aumenta cobertura visual, pero puede crear botones no autorizados por la configuración real del vino.
+
+## 2026-06-04 · Sa Pedrera: verificar orden visual en tablet antes de escalar
+- **Decisión**: Considerar verificada por API la pertenencia/nombre de los 14 productos, pero dejar pendiente la validación visual de orden en tablet.
+- **Razón**: Agora `export-master` no devuelve `SortOrder` de producto. El XML se envió en orden `D701-D709`, pero la API no demuestra cómo lo presentará la tablet.
+- **Alternativa descartada**: asumir que `SortOrder` funciona por el hecho de enviarlo. Ya existe una hipótesis abierta de `Order` vs `SortOrder`; escalarlo sin prueba visual puede reproducir el problema de desorden.

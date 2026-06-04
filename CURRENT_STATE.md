@@ -978,6 +978,36 @@ _Última actualización: 2026-06-04 12:20 CEST_
 - Drenar o bloquear de forma controlada las colas outbound antiguas de Kava, Luruna, Sa Pedrera y Sa Vida según estado real de cada POS.
 - Ejecutar un ciclo manual `auto-sync-sales` en Baco y Cienvinos después del redeploy para confirmar que `last_sync_at` se actualiza sin días pendientes y que no se recrean updates masivos.
 
+### Sa Pedrera · piloto `DULCES WINERIM` D701-D709 — 2026-06-04 14:23 CEST
+
+#### Hechos
+- Se ejecutó una prueba controlada para publicar solo los dulces Winerim `D701-D709` en la familia Agora `903925`.
+- La familia existía como `DULCE WINERIM` y estaba oculta (`ShowInPos=false`); quedó como `DULCES WINERIM`, visible (`ShowInPos=true`).
+- Se publicaron 14 productos:
+  - Botella: `D701`, `D702`, `D703`, `D704`, `D706`, `D707`, `D708`, `D709`.
+  - Copa: `D701`, `D702`, `D703`, `D704`, `D705`, `D706`.
+- `D705` solo se publicó como copa porque no tiene precio de botella.
+- `D707` no se publicó como copa porque Winerim marca `serve_by_glass=false`, aunque exista `glass_sale_price` en cache.
+- Verificación live por `export-master`: los 14 productos devuelven `FamilyId=903925` y nombre correcto.
+- Se refrescó `agora_master_data` después de la importación: `1259` productos, `72` familias, `1` price list, sin warnings de truncado.
+- `product_mappings` y `winerim_push_tracking` quedaron actualizados para los 14 productos; tracking `VERIFIED`.
+- Informe específico: `SA_PEDRERA_DULCES_WINERIM_TRIAL_2026-06-04.md`.
+
+#### Decisiones
+- Se reutilizó la familia existente `903925` para evitar una familia duplicada.
+- Orden operativo enviado: código Winerim `D701-D709`, con botella antes que copa cuando ambos formatos están activos.
+- No se ocultó ni reubicó el residuo antiguo `712174` (`C D701-Valverán...`) porque no formaba parte de los formatos activos del piloto y tocarlo ampliaba el alcance.
+
+#### Hipótesis / riesgos
+- `export-master` no devuelve `SortOrder` de producto. La API confirma familia/nombre, pero no permite demostrar el orden visual final de la tablet.
+- Si la tablet no respeta el `SortOrder` enviado en XML, habrá que identificar el campo/layout real de Agora para ordenar botones sin cambiar IDs ni romper mappings.
+- El commit `deaac47` añade una acción Edge específica para este piloto, pero Lovable Cloud seguía respondiendo `Unknown action` al probarla; falta confirmar redeploy efectivo.
+
+#### Tareas pendientes inmediatas
+- Pedir al cliente que abra `DULCES WINERIM` en una tablet y confirme familia única, contenido D701-D709 y orden visual.
+- Si el orden visual no coincide, no reimportar masivamente: primero investigar el mecanismo real de orden/posición de botones Agora.
+- Decidir con el cliente si las copas dulces deben convivir dentro de `DULCES WINERIM` o ir a una familia separada de copas.
+
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).
