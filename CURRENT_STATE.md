@@ -2,9 +2,46 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04 10:58 CEST_
+_Última actualización: 2026-06-04 11:47 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Pedrera legacy vs Winerim / explicación de duplicados visuales — 2026-06-04 11:47 CEST
+- El usuario comparte audio/comentario del cliente sobre Sa Pedrera: preguntan cómo estaban los nombres legacy en Agora, cómo están colocados y por qué aparecen vinos Winerim si debería haber matching.
+- No hay transcripción local disponible del `.opus` en el entorno; se trabaja con datos de Lovable Cloud y cache Agora.
+- Estado de configuración:
+  - `Sa Pedrera` está en `family_structure_mode=LEGACY_REGION_ROUTING`.
+  - Tiene `26` reglas de routing por familia legacy/regional.
+  - Las familias `... WINERIM` dedicadas no son la estructura visual principal; la estructura visible es legacy/regional.
+  - Master data cacheada usada: `agora_master_data.fetched_at=2026-06-04T09:40:07.818Z`.
+- Familias de vino visibles en la cache:
+  - Raíz/primer nivel: `Vinos Por Copas`, `Generosos`, `Espumosos`, `Vinos Blancos`, `Vinos Rosados`, `Vinos Tintos`, `Vino Dulce`, `MAGNUMS`.
+  - Subfamilias tintos: `T Baleares`, `T Cataluña`, `T Ribera C.Leon`, `T Atlanticos`, `T Rioja Navarra`, `T Otras Zonas`, `T Internacionales`.
+  - Subfamilias blancos: `B Baleares`, `B Cataluña`, `B Rueda`, `B Rioja Navarra`, `B Galicia`, `B Internacionales`.
+  - Subfamilias espumosos/copas: `E Españoles`, `Champagnes`, `Copas Tinto`, `Copas Blanco`, `Copas Rosado`.
+- Lectura cacheada:
+  - `familiesTotal=72`, `visibleWineFamilies=26`.
+  - `productsTotal=1252`, `saleableProducts=1175`, `wineLikeSaleable=870`.
+  - Dentro de productos de vino vendibles detectados: `385` vienen de publicación Winerim (`winerim_push_tracking`), `92` son legacy con mapping `CONFIRMED`, `393` son legacy sin mapping confirmado o rechazados/pendientes.
+  - Mappings totales en la conexión: `CONFIRMED=501`, `PENDING=20`, `REJECTED=291`.
+- Ejemplos de naming/colocación legacy vs Winerim:
+  - Legacy `Rock Angel` en `Vinos Rosados`, mapeado a Winerim `R607-Rock Angel Rosé`; también existe producto Winerim publicado `B R607-Rock Angel Rosé` en `Vinos Rosados`. Esto produce duplicado visual.
+  - Legacy `Binitord Blanc` en `Vinos Blancos > B Baleares`; existen productos Winerim publicados `B B303-Binitord Blanc` en `B Baleares` y `C B303-Binitord Blanc` en `Vinos Por Copas > Copas Blanco`.
+  - Legacy `Magnum Viña Sastre` en `MAGNUMS`; existe Winerim publicado `M MAGNUM 16 - Viña Sastre Crianza` en `MAGNUMS`.
+  - Legacy `Rioja Bordón crianza` en `MAGNUMS`; existe Winerim publicado `M Magnum 34 - Bordón Crianza 1998` en `MAGNUMS`.
+  - Legacy `Charles Heidsieck-Rosé` en `Espumosos > Champagnes`; existe Winerim publicado `B E533-Charles Heidsieck Reserve Rosé` en `Champagnes`.
+  - Legacy `Nounat` en `Vinos Blancos > B Baleares`; existe Winerim publicado `B B304-Nounat` en `B Baleares`.
+  - Legacy `MACAN` y `macan clasico` en `Vinos Tintos > T Rioja Navarra` están mapeados a Winerim `T99-Macán` y `T87-Macán Clásico`.
+- Diagnóstico:
+  - El matching y la publicación Winerim son dos mecanismos distintos.
+  - `product_mappings` sirve para que una venta de un producto legacy descuente stock en Winerim.
+  - `winerim_push_tracking` representa productos creados/publicados desde Winerim en Agora.
+  - En Sa Pedrera se aplicó una mezcla: conservar estructura legacy/regional y publicar productos Winerim dentro de esas familias. Por eso aparecen vinos con nombres Winerim aunque exista matching parcial.
+  - Si el cliente esperaba “no crear botones Winerim si existe un legacy mapeado”, la configuración actual no cumple esa expectativa al 100%; hay que pasar a política `legacy-first`: ocultar Winerim publicado cuando ya hay legacy `CONFIRMED` para el mismo vino/formato, y conservar Winerim solo para vinos/formato sin legacy seguro.
+- Estado API vivo en el momento de la revisión:
+  - `http://sapedreradespujol.ddns.net:8984/` y `/version/` responden HTTP 200 (`AGORA_VERSION='8.7.4'`).
+  - `GET /api/export-master/?filter=Families` y `Products` devuelven HTTP 501: `El módulo de servicios de integración no está habilitado.`
+  - Esto impide confirmar XML vivo en ese instante; la explicación visual anterior se basa en cache Lovable Cloud de `2026-06-04T09:40:07.818Z`.
 
 ### Sa Vida recheck profundo tras aviso de API habilitada — 2026-06-04 10:58 CEST
 - El usuario indica que desde Sa Vida/instalador afirman que el API HTTP está habilitada y que se acaban de conectar.

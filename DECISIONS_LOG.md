@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-04 · Sa Pedrera debe tratar duplicados con política legacy-first, no borrado masivo
+- **Decisión**: Para Sa Pedrera, si el cliente quiere mantener su pantalla legacy/regional, la corrección de duplicados debe ser `legacy-first`: cuando exista un producto legacy con mapping `CONFIRMED` para el mismo vino/formato, ocultar el producto publicado desde Winerim; conservar productos Winerim publicados solo donde no haya legacy seguro o donde el cliente quiera explícitamente nombre/formato Winerim.
+- **Razón**: Sa Pedrera está configurada en `LEGACY_REGION_ROUTING`, por lo que conviven productos legacy y productos Winerim dentro de familias regionales. El matching no impide por sí solo que se publique un producto Winerim; solo permite que una venta legacy descuente stock. Borrar u ocultar todo Winerim dejaría fuera vinos nuevos o formatos sin legacy.
+- **Alternativa descartada**: ocultar todos los Winerim publicados o todos los legacy visibles. Ambas opciones romperían parte de la operativa: la primera perdería vinos nuevos de Winerim; la segunda cambiaría la pantalla que el cliente quiere conservar.
+
+---
+
 ## 2026-06-04 · Mantener Sa Vida bloqueada aunque el instalador indique API habilitada
 - **Decisión**: No procesar catálogo, ventas, stock ni backlog de Sa Vida hasta que `http://80.32.137.41:8984/api/export-master/?filter=Families` y `Products` devuelvan HTTP 200/XML desde fuera.
 - **Razón**: La revalidación profunda posterior al aviso del instalador sigue devolviendo HTTP 501 con el mensaje literal de Agora `La integración a través del API HTTP no está habilitada.` El mismo método funciona en Kava, Cienvinos y Baco, y Sa Vida devuelve 501 antes de validar token, por lo que reactivar colas solo generaría más fallos.

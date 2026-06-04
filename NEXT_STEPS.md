@@ -20,6 +20,9 @@
 - [x] Bloquear el único reintento abierto de `Sa Pedrera` (`AGORA_HIDE_PRODUCT` / `D715-Pancaliente`) por error duplicado y modo híbrido legacy; no reintentar sin revisión.
 - [ ] Revisar deuda histórica `FAILED/BLOCKED` antes de limpiarla: `Kava` (`7/9`), `Luruna` (`10/58`), `Sa Pedrera` (`294/142`). No cerrar en masa sin clasificar causa y riesgo.
 - [ ] Mantener `Sa Vida` fuera de procesamiento: backlog `QUEUED=1055`, `FAILED=3322`, `BLOCKED=1861` hasta que Agora devuelva 200 en API.
+- [ ] Sa Pedrera: reprobar API HTTP; a las 11:47 CEST `export-master Families/Products` devuelve HTTP 501 (`El módulo de servicios de integración no está habilitado.`) aunque la web y `/version/` responden 200.
+- [ ] Sa Pedrera: preparar dry-run `legacy-first` para detectar Winerim publicados que duplican legacy `CONFIRMED` por mismo `winerim_wine_id + format`, con propuesta de ocultar solo el Winerim duplicado y conservar legacy mapeado.
+- [ ] Sa Pedrera: revisar con cliente ejemplos concretos antes de aplicar: `Rock Angel`, `Binitord Blanc`, `Magnum Viña Sastre`, `Rioja Bordón crianza`, `Charles Heidsieck-Rosé`, `Nounat`.
 - [ ] Confirmar redeploy diferencial de `winerim-proxy` y reactivar `auto_push_verified_ready` conexión por conexión solo tras `no_catalog_changes_detected` o `differential=true`.
 - [ ] Validar con Winerim si los movimientos de stock por API aparecen en "Historial de ventas" o si hay endpoint adicional no documentado.
 
