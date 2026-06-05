@@ -505,3 +505,8 @@
 - **Decisión**: Mantener `auto_push_verified_ready=false` hasta probar en Lovable Cloud desplegado que `sa-pedrera-dulces-winerim-trial` y el generador automático devuelven la nueva lógica dinámica.
 - **Razón**: La corrección viva se aplicó por import controlado; activar el gate con runtime antiguo podría publicar futuros cambios con la lógica anterior.
 - **Alternativa descartada**: activar el gate inmediatamente después de la importación manual. Resolvería la apariencia de automatismo, pero aumenta el riesgo de romper la pantalla validada si el runtime no está actualizado.
+
+## 2026-06-05 · Sa Pedrera: activar auto-push tras dry-run correcto
+- **Decisión**: Activar `auto_push_verified_ready=true` en Sa Pedrera tras confirmar que Lovable Cloud ya ejecuta la acción `sa-pedrera-dulces-winerim-trial` y que el dry-run devuelve `D701-D710` + `D716` con IDs `903xxx`.
+- **Razón**: La función viva ya contiene la lógica dinámica y la conexión está limpia: `can_write_products=YES`, `readiness_status=READY`, sin breaker y 0 tareas abiertas.
+- **Alternativa descartada**: mantener el gate apagado indefinidamente. Resolvería el riesgo de reimportaciones, pero seguiría impidiendo que altas/cambios reales de Winerim se publiquen automáticamente en Agora.

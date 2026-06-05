@@ -1068,21 +1068,32 @@ _Última actualización: 2026-06-04 12:20 CEST_
   - `agora_master_data` refrescado: `1270` productos, `73` familias, sin warnings.
 - Informe específico: `SA_PEDRERA_DULCES_WINERIM_DYNAMIC_SYNC_2026-06-05.md`.
 - Código subido a GitHub en commit `1d62dc6`, pero prueba posterior contra Lovable Cloud sigue devolviendo `{"error":"Unknown action"}` para `sa-pedrera-dulces-winerim-trial`; el runtime desplegado aún no contiene la acción.
+- Redeploy resuelto desde Lovable Cloud el 2026-06-05 12:20 CEST:
+  - dry-run real de `sa-pedrera-dulces-winerim-trial` devuelve `plannedCount=11`;
+  - códigos: `D701-D710` y `D716`;
+  - IDs: `903701-903710` y `903716`.
+- Tras dry-run correcto, se activó `auto_push_verified_ready=true` solo en Sa Pedrera.
+- Estado post-activación:
+  - `auto_push_on_create=true`;
+  - `auto_push_on_update=true`;
+  - `write_mode=XML_IMPORT`;
+  - `provider_capabilities.can_write_products=YES`;
+  - `readiness_status=READY`;
+  - tareas abiertas `QUEUED/RUNNING/FAILED/BLOCKED=0`.
 
 #### Decisiones
 - La pantalla `DULCES WINERIM` debe sincronizar todos los `D###` activos de postre/dulce, no solo un rango fijo.
 - Para Sa Pedrera + postre/dulce + código `D###`, el generador debe usar familia `903925` e IDs `903xxx` para conservar el orden visual validado.
-- Mantener `auto_push_verified_ready=false` hasta confirmar redeploy real en Lovable Cloud con esta lógica; no activar el gate contra runtime antiguo.
+- Activar `auto_push_verified_ready=true` en Sa Pedrera solo después de confirmar redeploy real con dry-run correcto.
 
 #### Hipótesis / riesgos
-- La corrección viva resuelve `D710` y `D716`, pero el automático futuro depende de redeploy efectivo.
-- Si se activa el auto-push antes de confirmar runtime, podría volver a publicar en familias legacy o con IDs basados en `winerim_id`, rompiendo el orden.
+- El automático queda habilitado, pero debe monitorizarse el siguiente ciclo de catálogo para confirmar que no reencola updates masivos.
+- Si un futuro vino `D###` no tiene precio válido o está inactivo, no se publicará automáticamente.
 
 #### Tareas pendientes inmediatas
 - Confirmar con Sa Pedrera que ahora ve `D710` y `D716` dentro de `DULCES WINERIM`.
-- Resolver/reintentar redeploy de `agora-proxy` en Lovable Cloud; hoy el dry-run sigue en `Unknown action`.
-- Tras redeploy, probar dry-run de `sa-pedrera-dulces-winerim-trial` contra Lovable Cloud y verificar que devuelve `D710`/`D716`.
-- Solo después de esa prueba, valorar activar `auto_push_verified_ready=true` en Sa Pedrera.
+- Monitorizar el próximo cron de catálogo de Sa Pedrera: no debe crear backlog masivo y cualquier nuevo `D###` activo debe entrar en `DULCES WINERIM` con ID `903xxx`.
+- Si aparecen tareas nuevas, revisar que sean solo `AUTO_CREATE`/`AUTO_UPDATE` diferenciales y no reimportación masiva.
 
 ### Kava · restaurar legacy `GENEROSOS` y `DULCES` — 2026-06-04 16:20 CEST
 

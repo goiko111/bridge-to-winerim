@@ -58,7 +58,26 @@ Además, el generador automático identifica Sa Pedrera + vino postre/dulce + c�
 
 ## Riesgos / pendiente
 
-- No reactivar `auto_push_verified_ready` hasta confirmar que Lovable Cloud está ejecutando esta versión de `agora-proxy` y `winerim-proxy`.
-- Si se activa el gate con runtime antiguo, el auto-push podría volver a usar IDs derivados de `winerim_id` o familias legacy y romper el orden visual validado.
-- Prueba post-push: Lovable Cloud sigue devolviendo `{"error":"Unknown action"}` para `sa-pedrera-dulces-winerim-trial`, por lo que aún no hay redeploy efectivo.
-- Pendiente: repetir el dry-run tras redeploy y confirmar que devuelve `D710`/`D716` antes de dejar el automático general activo.
+- La primera prueba post-push devolvía `{"error":"Unknown action"}` para `sa-pedrera-dulces-winerim-trial`; por eso no se activó el automático hasta resolver el redeploy.
+- Si un runtime antiguo volviera a quedar desplegado, el riesgo sería publicar futuros cambios con IDs derivados de `winerim_id` o en familias legacy. El dry-run debe seguir siendo la prueba previa a cualquier reactivación futura.
+
+## Activación posterior
+
+Redeploy resuelto desde Lovable Cloud el 2026-06-05 12:20 CEST.
+
+Dry-run real posterior:
+
+- `plannedCount=11`
+- códigos: `D701-D710` y `D716`
+- IDs: `903701-903710` y `903716`
+
+Después de esa validación se activó `auto_push_verified_ready=true` en Sa Pedrera.
+
+Estado de seguridad al activar:
+
+- `can_write_products=YES`
+- `readiness_status=READY`
+- `write_mode=XML_IMPORT`
+- tareas abiertas `QUEUED/RUNNING/FAILED/BLOCKED=0`
+
+Pendiente: monitorizar el próximo cron de catálogo y comprobar que no genera backlog masivo.
