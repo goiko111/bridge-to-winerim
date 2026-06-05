@@ -60,4 +60,5 @@ Además, el generador automático identifica Sa Pedrera + vino postre/dulce + c�
 
 - No reactivar `auto_push_verified_ready` hasta confirmar que Lovable Cloud está ejecutando esta versión de `agora-proxy` y `winerim-proxy`.
 - Si se activa el gate con runtime antiguo, el auto-push podría volver a usar IDs derivados de `winerim_id` o familias legacy y romper el orden visual validado.
-- Pendiente: probar `sa-pedrera-dulces-winerim-trial` en dry-run contra Lovable Cloud desplegado y confirmar que devuelve `D710`/`D716` antes de dejar el automático general activo.
+- Prueba post-push: Lovable Cloud sigue devolviendo `{"error":"Unknown action"}` para `sa-pedrera-dulces-winerim-trial`, por lo que aún no hay redeploy efectivo.
+- Pendiente: repetir el dry-run tras redeploy y confirmar que devuelve `D710`/`D716` antes de dejar el automático general activo.

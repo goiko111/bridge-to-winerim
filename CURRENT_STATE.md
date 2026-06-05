@@ -1067,6 +1067,7 @@ _Última actualización: 2026-06-04 12:20 CEST_
   - `product_mappings` y `winerim_push_tracking` apuntan a los nuevos IDs `9037xx`;
   - `agora_master_data` refrescado: `1270` productos, `73` familias, sin warnings.
 - Informe específico: `SA_PEDRERA_DULCES_WINERIM_DYNAMIC_SYNC_2026-06-05.md`.
+- Código subido a GitHub en commit `1d62dc6`, pero prueba posterior contra Lovable Cloud sigue devolviendo `{"error":"Unknown action"}` para `sa-pedrera-dulces-winerim-trial`; el runtime desplegado aún no contiene la acción.
 
 #### Decisiones
 - La pantalla `DULCES WINERIM` debe sincronizar todos los `D###` activos de postre/dulce, no solo un rango fijo.
@@ -1079,7 +1080,8 @@ _Última actualización: 2026-06-04 12:20 CEST_
 
 #### Tareas pendientes inmediatas
 - Confirmar con Sa Pedrera que ahora ve `D710` y `D716` dentro de `DULCES WINERIM`.
-- Tras push, probar dry-run de `sa-pedrera-dulces-winerim-trial` contra Lovable Cloud y verificar que devuelve `D710`/`D716`.
+- Resolver/reintentar redeploy de `agora-proxy` en Lovable Cloud; hoy el dry-run sigue en `Unknown action`.
+- Tras redeploy, probar dry-run de `sa-pedrera-dulces-winerim-trial` contra Lovable Cloud y verificar que devuelve `D710`/`D716`.
 - Solo después de esa prueba, valorar activar `auto_push_verified_ready=true` en Sa Pedrera.
 
 ### Kava · restaurar legacy `GENEROSOS` y `DULCES` — 2026-06-04 16:20 CEST
