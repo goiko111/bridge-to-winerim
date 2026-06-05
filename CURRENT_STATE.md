@@ -1044,6 +1044,44 @@ _Última actualización: 2026-06-04 12:20 CEST_
 - Pedir a Sa Pedrera que vuelva a abrir `DULCES WINERIM` y confirme que ve 9 botones en orden `D701-D709`.
 - Si el orden aún no coincide, investigar más allá de `Product.Id`/familia: layout interno, cache de tablet o sincronización local Agora.
 
+### Sa Pedrera · `DULCES WINERIM` altas nuevas no aparecían — 2026-06-05 11:52 CEST
+
+#### Hechos
+- Sa Pedrera confirmó que el orden visual ya está bien, pero reportó que vinos activados o añadidos en Winerim no aparecían en Agora.
+- Capturas recibidas:
+  - Winerim muestra `D710- Don PX 1993 Tº Albalá` y `D716-Lions de Suduiraut` activos.
+  - Agora seguía mostrando solo `D701-D709` dentro de `DULCES WINERIM`.
+- Diagnóstico:
+  - El piloto anterior estaba acotado a `D701-D709`.
+  - Sa Pedrera tiene `auto_push_on_create=true` y `auto_push_on_update=true`, pero `auto_push_verified_ready=false`, por lo que el auto-push general no publica nuevas altas.
+  - Las reglas generales de routing de Sa Pedrera mandan postres a familias legacy (`Vino Dulce` / `Copa Vino Postre`), no a la pantalla validada `DULCES WINERIM`.
+- Corrección aplicada en vivo:
+  - Reimportada `DULCES WINERIM` (`903925`) con todos los `D###` activos de postre/dulce: `D701-D710` y `D716`.
+  - `D710` queda como `B D710- Don PX 1993 Tº Albalá` (`903710`).
+  - `D716` queda como `B D716-Lions de Suduiraut` (`903716`).
+  - Inactivos excluidos: `D715-Pancaliente` y `D705-(MR) Mountain Wine`.
+- Verificación:
+  - 11/11 productos esperados en `FamilyId=903925`;
+  - 11/11 `SaleableAsMain=true`;
+  - 11/11 `UseAsDirectSale=false`;
+  - `product_mappings` y `winerim_push_tracking` apuntan a los nuevos IDs `9037xx`;
+  - `agora_master_data` refrescado: `1270` productos, `73` familias, sin warnings.
+- Informe específico: `SA_PEDRERA_DULCES_WINERIM_DYNAMIC_SYNC_2026-06-05.md`.
+
+#### Decisiones
+- La pantalla `DULCES WINERIM` debe sincronizar todos los `D###` activos de postre/dulce, no solo un rango fijo.
+- Para Sa Pedrera + postre/dulce + código `D###`, el generador debe usar familia `903925` e IDs `903xxx` para conservar el orden visual validado.
+- Mantener `auto_push_verified_ready=false` hasta confirmar redeploy real en Lovable Cloud con esta lógica; no activar el gate contra runtime antiguo.
+
+#### Hipótesis / riesgos
+- La corrección viva resuelve `D710` y `D716`, pero el automático futuro depende de redeploy efectivo.
+- Si se activa el auto-push antes de confirmar runtime, podría volver a publicar en familias legacy o con IDs basados en `winerim_id`, rompiendo el orden.
+
+#### Tareas pendientes inmediatas
+- Confirmar con Sa Pedrera que ahora ve `D710` y `D716` dentro de `DULCES WINERIM`.
+- Tras push, probar dry-run de `sa-pedrera-dulces-winerim-trial` contra Lovable Cloud y verificar que devuelve `D710`/`D716`.
+- Solo después de esa prueba, valorar activar `auto_push_verified_ready=true` en Sa Pedrera.
+
 ### Kava · restaurar legacy `GENEROSOS` y `DULCES` — 2026-06-04 16:20 CEST
 
 #### Hechos

@@ -338,6 +338,26 @@ function formatProductName(fmt: string, wineName: string): string {
   return `B ${wineName}`;
 }
 
+function commercialDCode(wineName: string | null | undefined): string | null {
+  const match = String(wineName || "").toUpperCase().match(/\bD\s*[-_ ]?(\d{3})\b/);
+  return match ? `D${match[1]}` : null;
+}
+
+// Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
+// by Agora Product.Id. Keep D-code products on deterministic 903xxx IDs.
+function saPedreraDulceCode(connection: any, wine: any): string | null {
+  const locationName = String(connection?.location_name || connection?.name || "");
+  if (!/sa\s*pedrera/i.test(locationName)) return null;
+  const wineType = String(wine?.wine_type || wine?.raw_payload?.type || "").toLowerCase();
+  if (wineType !== "postre" && wineType !== "dulce") return null;
+  return commercialDCode(wine?.name);
+}
+
+function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
+  const glassPrice = extractGlassSalePrice(wine) || 0;
+  return wine?.serve_by_glass === true && glassPrice > 0 ? "GLASS" : "BOTTLE";
+}
+
 // deno-lint-ignore no-explicit-any
 function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mappingRows: any[] | null | undefined): Map<string, { winerim_wine_id: string; format: string }> {
   const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
@@ -1716,9 +1736,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
-      const productId = isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
+      const orderedDulceCode = saPedreraDulceCode(connection, wine);
+      const productId = orderedDulceCode
+        ? 903000 + Number(orderedDulceCode.replace("D", ""))
+        : isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
-      const familyResult = findFamilyId(wineType, fmt, wine);
+      const familyResult = orderedDulceCode
+        ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
+        : findFamilyId(wineType, fmt, wine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
@@ -4066,13 +4091,15 @@ serve(async (req) => {
       }
     }
 
-    // ── SA PEDRERA CONTROLLED TRIAL: publish only D701-D709 into DULCES WINERIM ──
+    // ── SA PEDRERA CONTROLLED TRIAL: publish active D### postres into DULCES WINERIM ──
     // This is intentionally scoped to Sa Pedrera and does not alter the normal automatic routing.
     if (action === "sa-pedrera-dulces-winerim-trial") {
       const dryRun = payload.dryRun !== false;
       const targetFamilyId = String(payload.familyId || "903925");
       const targetFamilyName = String(payload.familyName || "DULCES WINERIM");
-      const targetCodes = ["D701", "D702", "D703", "D704", "D705", "D706", "D707", "D708", "D709"];
+      const requestedCodes = Array.isArray(payload.codes)
+        ? payload.codes.map((code: unknown) => String(code || "").toUpperCase().replace(/\s+/g, "")).filter((code: string) => /^D\d{3}$/.test(code))
+        : null;
       const nowIso = new Date().toISOString();
       const locationName = String((connection as any).location_name || (connection as any).name || "");
 
@@ -4086,10 +4113,6 @@ serve(async (req) => {
       const escapeTrialXml = (s: string): string =>
         String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
       const truncateTrial = (s: string, maxLen: number): string => String(s || "").length <= maxLen ? String(s || "") : String(s || "").substring(0, maxLen);
-      const commercialCode = (name: string): string | null => {
-        const match = String(name || "").toUpperCase().match(/\bD\s*[-_ ]?(\d{3})\b/);
-        return match ? `D${match[1]}` : null;
-      };
       const findVatIdForTrial = (vatList: { Id: string; VatRate: string }[], rate?: number): string | null => {
         if (!rate) return null;
         const rateStr = (rate / 100).toFixed(2);
@@ -4140,14 +4163,20 @@ serve(async (req) => {
 
       const winesByCode = new Map<string, any>();
       for (const wine of winerimRows || []) {
-        const code = commercialCode(wine.name);
-        if (code && targetCodes.includes(code) && !winesByCode.has(code)) {
+        const code = commercialDCode(wine.name);
+        if (code && (!requestedCodes || requestedCodes.includes(code)) && !winesByCode.has(code)) {
           winesByCode.set(code, wine);
         }
       }
-      const missingCodes = targetCodes.filter((code) => !winesByCode.has(code));
+      const targetCodes = (requestedCodes || Array.from(winesByCode.keys()))
+        .sort((a, b) => Number(a.replace("D", "")) - Number(b.replace("D", "")));
+      const missingCodes = requestedCodes ? targetCodes.filter((code) => !winesByCode.has(code)) : [];
       if (missingCodes.length > 0) {
         return new Response(JSON.stringify({ success: false, error: `Faltan vinos activos Winerim: ${missingCodes.join(", ")}` }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (targetCodes.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "No hay vinos activos Winerim con codigo D### en postre/dulce." }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const orderedWines = targetCodes.map((code) => winesByCode.get(code)).filter(Boolean);
@@ -4213,16 +4242,16 @@ serve(async (req) => {
 
       let sortOrder = 1;
       for (const wine of orderedWines) {
-        const code = commercialCode(wine.name) || "";
+        const code = commercialDCode(wine.name) || "";
         const glassPrice = extractGlassSalePrice(wine) || 0;
         const bottlePrice = extractBottleSalePrice(wine) || 0;
-        const fmt: "BOTTLE" | "GLASS" = wine.serve_by_glass === true && glassPrice > 0 ? "GLASS" : "BOTTLE";
+        const fmt = preferredSingleFormatForDulce(wine);
         const isGlass = fmt === "GLASS";
         const price = isGlass ? glassPrice : bottlePrice;
         if (!price || price <= 0) continue;
 
         // Agora tablets sort these buttons by Product.Id, not by SortOrder.
-        // Use explicit D-code IDs to keep the visual order D701..D709.
+        // Use explicit D-code IDs to keep the visual order D701, D702, D710...
         const productId = String(903000 + Number(code.replace("D", "")));
         const productName = formatProductName(fmt, wine.name);
         const cost = isGlass ? (extractGlassCostPrice(wine, connection) || 0) : (extractBottleCostPrice(wine) || 0);
@@ -4267,7 +4296,7 @@ ${costPricesXml}
       }
 
       if (productPlans.length === 0) {
-        return new Response(JSON.stringify({ success: false, error: "No hay formatos con precio para D701-D709." }),
+        return new Response(JSON.stringify({ success: false, error: "No hay formatos con precio para los codigos D activos." }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
@@ -4350,7 +4379,7 @@ ${costPricesXml}
           winerim_wine_name: p.wineName,
           match_method: "XML_IMPORT_ORDERED_SINGLE",
           match_score: 100,
-          match_reasons: [`Sa Pedrera D701-D709 ordered single-button trial: ${targetFamilyName}`],
+          match_reasons: [`Sa Pedrera ordered D-code single-button sync: ${targetFamilyName}`],
           status: "CONFIRMED",
           format_type: p.format,
           agora_product_id: p.productId,
@@ -6435,37 +6464,57 @@ ${costPricesXml}
 
         // Build format list with per-format eligibility checks
         const formatTypes: string[] = [];
-        if (autoPushBottle) {
-          const bottleValidation = validateWineForAgora(wine, "BOTTLE", connection);
-          if (bottleValidation.valid) {
-            formatTypes.push("BOTTLE");
+        const orderedDulceCode = saPedreraDulceCode(connection, wine);
+        if (orderedDulceCode) {
+          const singleFormat = preferredSingleFormatForDulce(wine);
+          if (singleFormat === "GLASS" && !autoPushGlass) {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "sa_pedrera_dulce_glass_skipped:auto_push_glass_disabled" });
+          } else if (singleFormat === "BOTTLE" && !autoPushBottle) {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "sa_pedrera_dulce_bottle_skipped:auto_push_bottle_disabled" });
           } else {
-            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `bottle_validation_failed:${bottleValidation.missingFields.join(",")}` });
-          }
-        }
-        if (autoPushGlass) {
-          // GLASS gate: must have serve_by_glass=true AND glass_sale_price>0
-          if (!wine.serve_by_glass) {
-            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:serve_by_glass_not_enabled" });
-          } else if (!wine.glass_sale_price || Number(wine.glass_sale_price) <= 0) {
-            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:no_glass_sale_price" });
-          } else {
-            const glassValidation = validateWineForAgora(wine, "GLASS", connection);
-            if (glassValidation.valid) {
-              formatTypes.push("GLASS");
+            const validation = validateWineForAgora(wine, singleFormat, connection);
+            if (validation.valid) {
+              formatTypes.push(singleFormat);
             } else {
-              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `glass_validation_failed:${glassValidation.missingFields.join(",")}` });
+              skippedReasons.push({
+                winerim_id: wine.winerim_id,
+                reason: `sa_pedrera_dulce_${singleFormat.toLowerCase()}_validation_failed:${validation.missingFields.join(",")}`,
+              });
             }
           }
-        }
-        // MAGNUM gate: auto-enabled when wine has magnum_sale_price (no per-connection toggle yet).
-        // Mirrors the implicit policy: si Winerim tiene precio de magnum, Agora debe tenerlo.
-        if (wine.magnum_sale_price && Number(wine.magnum_sale_price) > 0) {
-          const magnumValidation = validateWineForAgora(wine, "MAGNUM", connection);
-          if (magnumValidation.valid) {
-            formatTypes.push("MAGNUM");
-          } else {
-            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `magnum_validation_failed:${magnumValidation.missingFields.join(",")}` });
+        } else {
+          if (autoPushBottle) {
+            const bottleValidation = validateWineForAgora(wine, "BOTTLE", connection);
+            if (bottleValidation.valid) {
+              formatTypes.push("BOTTLE");
+            } else {
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `bottle_validation_failed:${bottleValidation.missingFields.join(",")}` });
+            }
+          }
+          if (autoPushGlass) {
+            // GLASS gate: must have serve_by_glass=true AND glass_sale_price>0
+            if (!wine.serve_by_glass) {
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:serve_by_glass_not_enabled" });
+            } else if (!wine.glass_sale_price || Number(wine.glass_sale_price) <= 0) {
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:no_glass_sale_price" });
+            } else {
+              const glassValidation = validateWineForAgora(wine, "GLASS", connection);
+              if (glassValidation.valid) {
+                formatTypes.push("GLASS");
+              } else {
+                skippedReasons.push({ winerim_id: wine.winerim_id, reason: `glass_validation_failed:${glassValidation.missingFields.join(",")}` });
+              }
+            }
+          }
+          // MAGNUM gate: auto-enabled when wine has magnum_sale_price (no per-connection toggle yet).
+          // Mirrors the implicit policy: si Winerim tiene precio de magnum, Agora debe tenerlo.
+          if (wine.magnum_sale_price && Number(wine.magnum_sale_price) > 0) {
+            const magnumValidation = validateWineForAgora(wine, "MAGNUM", connection);
+            if (magnumValidation.valid) {
+              formatTypes.push("MAGNUM");
+            } else {
+              skippedReasons.push({ winerim_id: wine.winerim_id, reason: `magnum_validation_failed:${magnumValidation.missingFields.join(",")}` });
+            }
           }
         }
         if (formatTypes.length === 0) { skipped++; continue; }

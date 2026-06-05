@@ -495,3 +495,13 @@
 - **Decisión**: No mover ahora las copas `D701-D706` a `COPAS WINERIM`; mantener todo el piloto `D701-D709` dentro de `DULCES WINERIM` y centrarse en validar que queda ordenado.
 - **Razón**: El objetivo inmediato del cliente es comprobar si los dulces aparecen ordenados y sin duplicados. Cambiar de familia en este momento introduciría una segunda variable y dificultaría saber si la solución visual funciona.
 - **Alternativa descartada**: separar ya por formato (`COPAS WINERIM` para copas y `DULCES WINERIM` para botellas). Puede ser el diseño final correcto, pero se pospone hasta que el cliente valide el piloto ordenado.
+
+## 2026-06-05 · Sa Pedrera: `DULCES WINERIM` debe seguir todos los `D###` activos
+- **Decisión**: Ampliar la lógica de `DULCES WINERIM` para publicar todos los vinos activos `D###` de tipo postre/dulce, usando IDs `903xxx` y una única variante visible por código.
+- **Razón**: El cliente validó el orden, pero al activar/añadir `D710` y `D716` no aparecían porque el piloto estaba limitado a `D701-D709` y el auto-push general seguía pausado.
+- **Alternativa descartada**: reactivar directamente el auto-push general. Sus reglas actuales podrían enviar postres a familias legacy y usar IDs derivados de `winerim_id`, reabriendo el problema visual.
+
+## 2026-06-05 · Sa Pedrera: no reactivar `auto_push_verified_ready` sin verificar redeploy
+- **Decisión**: Mantener `auto_push_verified_ready=false` hasta probar en Lovable Cloud desplegado que `sa-pedrera-dulces-winerim-trial` y el generador automático devuelven la nueva lógica dinámica.
+- **Razón**: La corrección viva se aplicó por import controlado; activar el gate con runtime antiguo podría publicar futuros cambios con la lógica anterior.
+- **Alternativa descartada**: activar el gate inmediatamente después de la importación manual. Resolvería la apariencia de automatismo, pero aumenta el riesgo de romper la pantalla validada si el runtime no está actualizado.
