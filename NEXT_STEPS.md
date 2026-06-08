@@ -2,6 +2,24 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Casa Nene Agora
+- [x] Crear conexión Casa Nene en Lovable Cloud sin documentar tokens.
+- [x] Verificar Agora externo: web/version, `Families`, `Products` e `Invoices` responden HTTP 200.
+- [x] Verificar token Winerim API v2.
+- [x] Sincronizar master data Agora y configurar defaults seguros: IVA 10%, `Barra/Bebidas`, almacén `CASA NENE`, sale centers `Barra/COMEDOR/TERRAZA`.
+- [x] Sincronizar catálogo Winerim y stockIds por variante.
+- [x] Crear familias `... WINERIM` y guardar mappings de familia por tipo/formato.
+- [x] Preview XML completo sin escribir: 292 productos, 0 botones raíz, 0 duplicados, 0 mismatch de preparación.
+- [x] Importar botellas y magnums por separado para evitar mappings de variantes inexistentes.
+- [x] Verificar post-write: 292 productos Winerim visibles/vendibles, 0 botones raíz, mappings `CONFIRMED`, tracking `VERIFIED`.
+- [x] Ocultar legacy de vino sin borrar: familias `5/6/7/8/9/13` ocultas y 148 productos legacy no vendibles.
+- [x] Activar automático: `enabled`, `catalog_sync_enabled`, `auto_push_on_create`, `auto_push_on_update`, `auto_push_verified_ready`.
+- [x] Fijar cursor inicial `last_business_day_synced=2026-06-07` para no reabrir ventas históricas legacy.
+- [x] Comprobar cola abierta Casa Nene: 0 tareas abiertas.
+- [ ] Pedir al cliente validación visual en tablet: debe ver familias Winerim y no ver legacy `VINO`/`VINO FUERA DE CARTA`.
+- [ ] Validar primer cierre real con producto Winerim: comprobar `sales_events`, `sales_line_items`, `stock_sync_log.status=SUCCESS`, `variant`, `stock_id` y no doble deducción al reintentar.
+- [ ] Si Casa Nene necesita vender copas, activar/preciar variantes de copa en Winerim; el automático debe publicarlas en `COPAS WINERIM`.
+
 ## P0 — Auditoría flota Agora 2026-06-04
 - [x] Ejecutar auditoría read-only contra Lovable Cloud y endpoints Agora vivos.
 - [x] Confirmar que todas las conexiones productivas registradas son Agora; el resto de providers existen en código/wizards pero no tienen conexión viva auditable.

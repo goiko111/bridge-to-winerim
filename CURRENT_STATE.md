@@ -2,9 +2,50 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-04 12:20 CEST_
+_Última actualización: 2026-06-08 13:23 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Casa Nene integración Agora completa — 2026-06-08 13:23 CEST
+- Se creó la conexión `Casa Nene` en Lovable Cloud (`e3cb6dbb-3474-4926-b740-706fbd0ef7e0`) usando la URL externa `http://casanene.ddns.net:8984/`. La IP local `192.168.1.131` queda solo como referencia del cliente.
+- No se documentan tokens; quedaron configurados en Lovable Cloud.
+- Verificación Agora:
+  - Web/version OK: HTTP 200, Agora `7.9.0`.
+  - `export-master Families` OK: HTTP 200.
+  - `export-master Products` OK: HTTP 200.
+  - `Invoices` para `2026-06-07` OK: HTTP 200 con `<Export />`.
+- Verificación Winerim API v2: token OK; catálogo accesible.
+- Master data inicial Casa Nene:
+  - `22` familias, `304` productos, `4` IVAs, `1` price list, `3` preparation types, `4` preparation orders, `1` warehouse, `3` sale centers.
+  - Defaults configurados: IVA `3`/10%, preparación `1/1` (`Barra/Bebidas`), almacén `1`, sale centers `1,2,3`.
+- Catálogo Winerim cacheado:
+  - `292` vinos activos.
+  - `277` botellas exportables.
+  - `15` magnums exportables.
+  - `0` copas exportables; Winerim no expone copas activas/preciadas en esta carta.
+- Se crearon y verificaron las familias Winerim dedicadas:
+  - `TINTOS WINERIM`, `BLANCOS WINERIM`, `ESPUMOSOS WINERIM`, `FORTIFICADOS WINERIM`, `DULCE WINERIM`, `ROSADOS WINERIM`, `MAGNUM WINERIM`, `COPAS WINERIM`.
+- Importación Winerim -> Agora:
+  - `277/277` botellas verificadas.
+  - `15/15` magnums verificados.
+  - Total final: `292` productos Winerim visibles/vendibles dentro de familias Winerim.
+  - `UseAsDirectSale=true` en productos Winerim: `0`.
+  - Productos Winerim no vendibles: `0`.
+  - `product_mappings`: `277` `CONFIRMED:BOTTLE:XML_IMPORT` + `15` `CONFIRMED:MAGNUM:XML_IMPORT`.
+  - `winerim_push_tracking`: `277` `VERIFIED:BOTTLE` + `15` `VERIFIED:MAGNUM`.
+- Legacy de vino ocultado sin borrar:
+  - Familias ocultas: `5 VINO`, `6 ESPUMOSO`, `7 BLANCO`, `8 TINTO`, `9 DULCES`, `13 VINO FUERA DE CARTA`.
+  - `148` productos legacy de vino quedaron con `UseAsDirectSale=false` y `SaleableAsMain=false`.
+  - Verificación final: `0` familias legacy de vino visibles y `0` productos legacy de vino visibles/vendibles.
+- Automatización activada:
+  - `enabled=true`, `catalog_sync_enabled=true`, `write_mode=XML_IMPORT`.
+  - `auto_push_on_create=true`, `auto_push_on_update=true`, `auto_push_verified_ready=true`.
+  - Cursor inicial `last_business_day_synced=2026-06-07` para evitar reabrir ventas históricas legacy.
+  - `provider_capabilities`: `READY/XML_IMPORT/YES`.
+  - `auto-sync-sales` manual OK.
+  - `fetch-catalog` posterior devuelve `no_catalog_changes_detected`.
+  - Cola abierta Casa Nene: `0 QUEUED`, `0 RUNNING`, `0 FAILED`, `0 BLOCKED`.
+- Documento de detalle y rollback: `CASA_NENE_AGORA_INTEGRATION_2026-06-08.md`.
 
 ### Sa Pedrera matching por código exacto — 2026-06-04 12:20 CEST
 - El usuario aporta nueva captura de Winerim y Agora; se confirma que Winerim usa códigos comerciales al inicio del nombre (`G801`, `G802`, `G803`, `T31`, `B303`, etc.).
@@ -222,6 +263,8 @@ _Última actualización: 2026-06-04 12:20 CEST_
   - No hay código que haga POST de una venta a Winerim; por tanto no se debe prometer "Historial de ventas de Winerim" como hecho hasta validarlo en la UI/API de Winerim.
 
 ## Hipótesis / riesgos abiertos
+- Casa Nene: falta validar una venta real cerrada con botella o magnum Winerim para confirmar `sales_events`, `stock_sync_log` y descuento en Winerim en producción.
+- Casa Nene: si el cliente quiere copas, debe activar/preciar variantes de copa en Winerim; hoy no se han publicado copas porque Winerim no las expone.
 - `Katsu`, `La Candela`, `Luruna` y `Cienvinos`: siguen necesitando venta/cierre real de copa y botella Winerim para afirmar que el descuento de stock funciona en todas las variantes.
 - `Sa Pedrera`: la cola activa está saneada, pero los `FAILED/BLOCKED` históricos requieren revisión por lotes; cerrarlos en masa sin mirar podría ocultar mappings legacy todavía relevantes.
 - `Kava` y `Luruna`: la deuda histórica `FAILED/BLOCKED` no impide el funcionamiento actual, pero ensucia monitorización y conviene clasificarla cuando haya una ventana de mantenimiento.

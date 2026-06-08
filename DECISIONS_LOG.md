@@ -510,3 +510,18 @@
 - **Decisión**: Activar `auto_push_verified_ready=true` en Sa Pedrera tras confirmar que Lovable Cloud ya ejecuta la acción `sa-pedrera-dulces-winerim-trial` y que el dry-run devuelve `D701-D710` + `D716` con IDs `903xxx`.
 - **Razón**: La función viva ya contiene la lógica dinámica y la conexión está limpia: `can_write_products=YES`, `readiness_status=READY`, sin breaker y 0 tareas abiertas.
 - **Alternativa descartada**: mantener el gate apagado indefinidamente. Resolvería el riesgo de reimportaciones, pero seguiría impidiendo que altas/cambios reales de Winerim se publiquen automáticamente en Agora.
+
+## 2026-06-08 · Casa Nene: publicar Winerim en familias dedicadas antes de ocultar legacy
+- **Decisión**: Crear Casa Nene como instalación `WINERIM_SEPARATE_FAMILIES`, publicar primero todo el catálogo Winerim exportable dentro de familias `... WINERIM`, verificarlo por API y solo después ocultar el legacy de vino.
+- **Razón**: El usuario pidió subir Winerim en familias Winerim y ocultar legacy una vez estuviera todo OK. Verificar antes evita dejar al cliente sin carta si falla importación, precios, preparación o visibilidad.
+- **Alternativa descartada**: ocultar el legacy antes de importar Winerim. Habría reducido duplicados durante la ventana de trabajo, pero un fallo intermedio habría dejado la operativa de sala sin vinos.
+
+## 2026-06-08 · Casa Nene: importar por formato real, no por todos los formatos posibles
+- **Decisión**: Importar Casa Nene en dos operaciones: `277` botellas con `formatTypes=["BOTTLE"]` y `15` magnums con `formatTypes=["MAGNUM"]`; no importar copas.
+- **Razón**: Winerim no expone copas activas/preciadas para Casa Nene. Además, el endpoint `xml-import` registra mappings por cada `formatType` solicitado, aunque la validación omita productos inválidos; pedir formatos inexistentes habría creado mappings/tracking de variantes no publicadas.
+- **Alternativa descartada**: enviar `BOTTLE`, `GLASS` y `MAGNUM` para todos los vinos. Era más simple, pero podía dejar señales falsas de productos no creados y complicar futuras deducciones de stock.
+
+## 2026-06-08 · Casa Nene: arrancar ventas desde 2026-06-07
+- **Decisión**: Activar Casa Nene con `last_business_day_synced=2026-06-07`.
+- **Razón**: La integración se puso en marcha el 2026-06-08 y se ocultó legacy después de publicar Winerim. Reprocesar histórico anterior podía intentar descontar ventas legacy ya operadas fuera del flujo nuevo.
+- **Alternativa descartada**: dejar el cursor vacío para backfill automático. Podría recuperar ventas antiguas, pero no son una prueba limpia del nuevo catálogo y aumentan el riesgo de descuadres de stock.
