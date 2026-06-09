@@ -1172,6 +1172,60 @@ _Última actualización: 2026-06-08 13:23 CEST_
 - Confirmar con Kava que visualmente ven `GENEROSOS` y `DULCES` como esperan.
 - Si quieren que esas ventas descuenten stock Winerim, hacer mapping seguro producto a producto antes de declarar esos legacy integrados.
 
+### Auditoria flota Agora y Sa Pedrera `TINTOS WINERIM` — 2026-06-09 05:30 CEST
+
+#### Hechos
+- Alcance auditado: todas las conexiones Agora salvo Sa Vida.
+- Prueba viva `agora-proxy test`:
+  - OK: Baco, Casa Nene, Katsu, Kava, La Candela y Sa Pedrera.
+  - Fallo: Luruna (`No route to host`) y Cienvinos (timeout).
+- Casa Nene:
+  - `READY/XML_IMPORT/YES`, `292` productos Winerim, `0` direct-sale, `0` no vendibles.
+  - La cola nueva de `20` tareas se proceso manualmente con dispatcher limitado a la conexion: `20/20 SUCCESS`, quedan `0 QUEUED/RUNNING/FAILED`.
+  - Sigue pendiente primer cierre real con venta Winerim.
+- Kava:
+  - `20` lineas mapeadas y `20` descuentos stock `SUCCESS` en los ultimos 7 dias, `0` fallos recientes de stock.
+  - Mantiene deuda antigua de cola (`7 FAILED`, `9 BLOCKED`) y fallos historicos de mayo.
+- Sa Pedrera:
+  - POS/master OK, `21` descuentos stock `SUCCESS` en los ultimos 7 dias, `0` fallos recientes.
+  - Se volcaron `200` tintos activos Winerim a `TINTOS WINERIM` (`900157`), familia visible.
+  - `199` productos Winerim existentes se movieron de familias regionales Winerim a `TINTOS WINERIM`; `1` producto nuevo creado: `T83` (`902083`).
+  - Verificacion viva: `200/200` productos en `FamilyId=900157`, `UseAsDirectSale=false`, `SaleableAsMain=true`, `badCount=0`.
+  - Snapshot de rollback: `SA_PEDRERA_TINTOS_WINERIM_APPLIED_2026-06-09.json`.
+- Katsu:
+  - POS y ventas OK, cola 0.
+  - Ultimos 7 dias: `605` lineas candidatas de vino, `0` mapeadas, `0` descuentos stock.
+- La Candela:
+  - POS y ventas OK, cola 0.
+  - Ultimos 7 dias: `546` lineas candidatas de vino, `0` mapeadas, `0` descuentos stock.
+- Luruna:
+  - No operativa ahora por conectividad (`No route to host`), aunque tenia master cache del 2026-06-08.
+  - Ultimos 7 dias: `1` linea mapeada y `1` stock `SUCCESS`.
+- Cienvinos:
+  - No operativo ahora por timeout; conserva cache del 2026-06-08.
+  - Quedan `68 QUEUED` y `4 BLOCKED`; sin ventas ni stock recientes.
+- Baco:
+  - Responde al test, pero esta en rollback legacy intencional (`enabled=false`, `write_mode=NONE`, auto-push off).
+
+#### Decisiones
+- No declarar la flota Agora como "perfecta": Katsu/La Candela necesitan mapping, Luruna/Cienvinos conectividad, Casa Nene primera venta y Baco esta apagado por decision.
+- Para Sa Pedrera tintos no se crearon IDs nuevos `902###` de forma masiva porque `197/200` nombres ya existian en Agora y habrian duplicado/rechazado la importacion.
+- Se conservaron IDs existentes de productos Winerim para no romper mappings, tracking ni historico; solo se movieron a `TINTOS WINERIM`.
+- Se creo solo el producto no existente `T83` (`902083`).
+- No se reintenta ni limpia en bloque la cola antigua de Sa Pedrera/Cienvinos/Luruna/Kava hasta clasificar causa y riesgo.
+
+#### Hipotesis / riesgos
+- Agora podria ignorar `Order`/`SortOrder` en productos existentes; hay que verificar el orden real en tablet.
+- En Katsu y La Candela, `is_wine_candidate` puede incluir falsos positivos, pero tambien aparecen vinos reales no mapeados; hace falta revision de mapping.
+- Luruna y Cienvinos pueden estar bien configurados en Lovable Cloud pero no disponibles desde red publica en este momento.
+
+#### Tareas pendientes inmediatas
+- Pedir a Sa Pedrera validacion visual de `TINTOS WINERIM`: 200 tintos, orden `T1...T282`, sin duplicados no esperados.
+- Si el orden no coincide, no reimportar masivamente: investigar si Agora usa layout local/cache de tablet u otro campo distinto de `Order`/`SortOrder`.
+- Revisar mappings Katsu y La Candela antes de prometer descuento de stock automatico.
+- Recuperar conectividad Luruna y Cienvinos antes de drenar colas.
+- Validar primer cierre Casa Nene con stock Winerim.
+
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).

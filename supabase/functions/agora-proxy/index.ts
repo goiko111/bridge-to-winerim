@@ -343,6 +343,11 @@ function commercialDCode(wineName: string | null | undefined): string | null {
   return match ? `D${match[1]}` : null;
 }
 
+function commercialTCode(wineName: string | null | undefined): string | null {
+  const match = String(wineName || "").toUpperCase().match(/\bT\s*[-_ ]?(\d{1,3})\b/);
+  return match ? `T${Number(match[1])}` : null;
+}
+
 // Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
 // by Agora Product.Id. Keep D-code products on deterministic 903xxx IDs.
 function saPedreraDulceCode(connection: any, wine: any): string | null {
@@ -351,6 +356,17 @@ function saPedreraDulceCode(connection: any, wine: any): string | null {
   const wineType = String(wine?.wine_type || wine?.raw_payload?.type || "").toLowerCase();
   if (wineType !== "postre" && wineType !== "dulce") return null;
   return commercialDCode(wine?.name);
+}
+
+// Sa Pedrera wants bottle T### products inside TINTOS WINERIM. Keep the normal
+// Winerim-derived product ID because those products already exist in Agora;
+// glasses/magnums keep their existing format-specific routing.
+function saPedreraTintoCode(connection: any, wine: any): string | null {
+  const locationName = String(connection?.location_name || connection?.name || "");
+  if (!/sa\s*pedrera/i.test(locationName)) return null;
+  const wineType = String(wine?.wine_type || wine?.raw_payload?.type || "").toLowerCase();
+  if (wineType !== "tinto") return null;
+  return commercialTCode(wine?.name);
 }
 
 function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
@@ -1737,12 +1753,15 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
       const orderedDulceCode = saPedreraDulceCode(connection, wine);
+      const orderedTintoCode = !isMagnum && !isGlass ? saPedreraTintoCode(connection, wine) : null;
       const productId = orderedDulceCode
         ? 903000 + Number(orderedDulceCode.replace("D", ""))
         : isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
       const familyResult = orderedDulceCode
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
+        : orderedTintoCode
+          ? { id: "900157", needsCreate: false, familyName: "TINTOS WINERIM" }
         : findFamilyId(wineType, fmt, wine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });

@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-09 · Sa Pedrera tintos usa productos Winerim existentes, no duplicados nuevos
+- **Decisión**: Para publicar `TINTOS WINERIM` en Sa Pedrera, mover los productos Winerim de botella `T###` ya existentes a la familia `900157` y crear solo los que no existan; no crear una segunda copia con IDs `902###` para todos.
+- **Razón**: La revision previa detecto que `197/200` tintos ya existian en Agora con el mismo nombre. Agora rechaza nombres duplicados aunque cambie el ID, y crear copias habria duplicado la pantalla. Conservar los IDs existentes mantiene mappings, tracking e historico de ventas.
+- **Alternativa descartada**: recrear todos los tintos con IDs correlativos por codigo para forzar orden visual. Era mas ordenado en teoria, pero chocaba con la restriccion real de nombres unicos y elevaba el riesgo de duplicados o import fallido.
+
+---
+
+## 2026-06-09 · Auditoria flota Agora no permite declarar todos los clientes como sanos
+- **Decisión**: Comunicar el estado por conexion y no afirmar que toda la flota Agora salvo Sa Vida funciona correctamente en todos los aspectos.
+- **Razón**: Kava y Sa Pedrera tienen descuentos de stock recientes; Casa Nene esta lista pero sin primera venta; Katsu y La Candela bajan ventas pero no mapean lineas de vino en los ultimos 7 dias; Luruna no responde por red; Cienvinos queda en timeout; Baco esta apagado por rollback legacy.
+- **Alternativa descartada**: limpiar colas o reintentar todo en bloque para que el panel parezca verde. Mezcla deuda antigua, problemas de red y acciones visuales sensibles, y podria romper pantallas operativas.
+
+---
+
 ## 2026-06-04 · Sa Pedrera debe tratar duplicados con política legacy-first, no borrado masivo
 - **Decisión**: Para Sa Pedrera, si el cliente quiere mantener su pantalla legacy/regional, la corrección de duplicados debe ser `legacy-first`: cuando exista un producto legacy con mapping `CONFIRMED` para el mismo vino/formato, ocultar el producto publicado desde Winerim; conservar productos Winerim publicados solo donde no haya legacy seguro o donde el cliente quiera explícitamente nombre/formato Winerim.
 - **Razón**: Sa Pedrera está configurada en `LEGACY_REGION_ROUTING`, por lo que conviven productos legacy y productos Winerim dentro de familias regionales. El matching no impide por sí solo que se publique un producto Winerim; solo permite que una venta legacy descuente stock. Borrar u ocultar todo Winerim dejaría fuera vinos nuevos o formatos sin legacy.

@@ -2,6 +2,29 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Auditoria Agora 2026-06-09
+- [x] Auditar todas las conexiones Agora salvo Sa Vida contra Lovable Cloud.
+- [x] Ejecutar pruebas vivas: Baco/Casa Nene/Katsu/Kava/La Candela/Sa Pedrera OK; Luruna `No route to host`; Cienvinos timeout.
+- [x] Drenar cola nueva Casa Nene con dispatcher limitado a conexion: `20/20 SUCCESS`, quedan `0` abiertas.
+- [x] Documentar estado por conexion en `AGORA_FLEET_AUDIT_2026-06-09.md`.
+- [ ] Katsu: revisar por que `605` lineas candidatas de vino en 7 dias quedan `0` mapeadas; validar mappings reales antes de prometer stock.
+- [ ] La Candela: revisar por que `546` lineas candidatas de vino en 7 dias quedan `0` mapeadas; priorizar ejemplos `Carraovejas Pago` y `Edulis Copa`.
+- [ ] Luruna: recuperar conectividad publica Agora (`No route to host`) antes de reintentar cola o prometer automatico.
+- [ ] Cienvinos: recuperar conectividad publica Agora (timeout) y luego drenar `68 QUEUED` + revisar `4 BLOCKED`.
+- [ ] Kava: clasificar deuda antigua `7 FAILED` / `9 BLOCKED` sin tocar legacy restaurado.
+- [ ] Sa Pedrera: clasificar `102 QUEUED`, `296 FAILED`, `144 BLOCKED` antes de limpiar o reintentar en bloque.
+
+## P0 — Sa Pedrera `TINTOS WINERIM`
+- [x] Analizar tintos activos Winerim: `200` botellas T### con precio.
+- [x] Detectar nombres existentes en Agora antes de escribir: `197/200` ya existian, por lo que no se crean duplicados masivos.
+- [x] Aplicar volcado controlado: `199` productos Winerim existentes movidos a `TINTOS WINERIM` (`900157`) y `1` producto nuevo creado (`T83`, `902083`).
+- [x] Verificar post-write: `200/200` en `FamilyId=900157`, `UseAsDirectSale=false`, `SaleableAsMain=true`, familia visible, cache refrescada.
+- [x] Guardar rollback/snapshot: `SA_PEDRERA_TINTOS_WINERIM_APPLIED_2026-06-09.json`.
+- [x] Documentar operacion: `SA_PEDRERA_TINTOS_WINERIM_2026-06-09.md`.
+- [ ] Pedir al cliente que abra `TINTOS WINERIM` y confirme orden visual `T1...T282`.
+- [ ] Si la tablet no respeta el orden, investigar mecanismo real de layout/cache antes de reimportar.
+- [ ] Probar una venta desde `TINTOS WINERIM` y confirmar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+
 ## P0 — Casa Nene Agora
 - [x] Crear conexión Casa Nene en Lovable Cloud sin documentar tokens.
 - [x] Verificar Agora externo: web/version, `Families`, `Products` e `Invoices` responden HTTP 200.
