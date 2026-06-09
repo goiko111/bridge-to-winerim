@@ -1,0 +1,232 @@
+{
+  "generatedAt": "2026-06-09T14:55:46.398Z",
+  "connectionId": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
+  "location": "Sa Pedrera",
+  "provider_config": {
+    "visual_policy": {
+      "updated_at": "2026-06-01T04:54:51.409Z",
+      "saleable_as_main": true,
+      "use_as_direct_sale": false,
+      "preparation_type_id": "1",
+      "preparation_order_id": "1"
+    },
+    "family_structure_mode": "LEGACY_REGION_ROUTING",
+    "agora_family_routing_rules": [
+      {
+        "format": "MAGNUM",
+        "enabled": true,
+        "family_id": "99011",
+        "family_name": "MAGNUMS"
+      },
+      {
+        "format": "GLASS",
+        "enabled": true,
+        "family_id": "46",
+        "wine_type": "tinto",
+        "family_name": "Copas Tinto"
+      },
+      {
+        "format": "GLASS",
+        "enabled": true,
+        "family_id": "47",
+        "wine_type": "blanco",
+        "family_name": "Copas Blanco"
+      },
+      {
+        "format": "GLASS",
+        "enabled": true,
+        "family_id": "48",
+        "wine_type": "rosado",
+        "family_name": "Copas Rosado"
+      },
+      {
+        "format": "GLASS",
+        "enabled": true,
+        "family_id": "49",
+        "wine_type": "espumoso",
+        "family_name": "Copas Cava"
+      },
+      {
+        "format": "GLASS",
+        "enabled": true,
+        "family_id": "23",
+        "wine_types": [
+          "dulce",
+          "postre",
+          "fortificado"
+        ],
+        "family_name": "Copa Vino Postre"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "24",
+        "wine_type": "tinto",
+        "family_name": "T Baleares",
+        "region_contains": "baleares"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "25",
+        "wine_type": "tinto",
+        "family_name": "T Cataluña",
+        "region_contains": "cataluna"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "regions": [
+          "Castilla y León"
+        ],
+        "family_id": "26",
+        "wine_type": "tinto",
+        "family_name": "T Ribera C.Leon"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "26",
+        "wine_type": "tinto",
+        "family_name": "T Ribera C.Leon",
+        "region_contains": "ribera"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "26",
+        "wine_type": "tinto",
+        "family_name": "T Ribera C.Leon",
+        "region_contains": "leon"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "27",
+        "wine_type": "tinto",
+        "family_name": "T Atlanticos",
+        "region_contains": "atlant"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "28",
+        "wine_type": "tinto",
+        "family_name": "T Rioja Navarra",
+        "region_contains": [
+          "rioja",
+          "navarra"
+        ]
+      },
+      {
+        "format": "BOTTLE",
+        "country": "ES",
+        "enabled": true,
+        "family_id": "29",
+        "wine_type": "tinto",
+        "family_name": "T Otras Zonas"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "30",
+        "wine_type": "tinto",
+        "family_name": "T Internacionales"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "31",
+        "wine_type": "blanco",
+        "family_name": "B Baleares",
+        "region_contains": "baleares"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "32",
+        "wine_type": "blanco",
+        "family_name": "B Cataluña",
+        "region_contains": "cataluna"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "33",
+        "wine_type": "blanco",
+        "family_name": "B Rueda",
+        "region_contains": "rueda"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "34",
+        "wine_type": "blanco",
+        "family_name": "B Rioja Navarra",
+        "region_contains": [
+          "rioja",
+          "navarra"
+        ]
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "35",
+        "wine_type": "blanco",
+        "family_name": "B Galicia",
+        "region_contains": [
+          "galicia",
+          "rias baixas",
+          "valdeorras",
+          "ribeiro"
+        ]
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "36",
+        "wine_type": "blanco",
+        "family_name": "B Internacionales"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "39",
+        "wine_type": "espumoso",
+        "family_name": "Champagnes",
+        "region_contains": "champagne"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "38",
+        "wine_type": "espumoso",
+        "family_name": "E Españoles"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "37",
+        "wine_type": "rosado",
+        "family_name": "Vinos Rosados"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "41",
+        "wine_type": "fortificado",
+        "family_name": "Generosos"
+      },
+      {
+        "format": "BOTTLE",
+        "enabled": true,
+        "family_id": "40",
+        "wine_types": [
+          "dulce",
+          "postre"
+        ],
+        "family_name": "Vino Dulce"
+      }
+    ]
+  }
+}

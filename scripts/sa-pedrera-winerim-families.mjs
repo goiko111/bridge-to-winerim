@@ -19,6 +19,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
 }
 
 const APPLY = process.argv.includes("--apply");
+const SKIP_SYNC_MASTER = process.argv.includes("--skip-sync-master");
 const ONLY_ARG = process.argv.find((arg) => arg.startsWith("--only="));
 const ONLY = ONLY_ARG ? new Set(ONLY_ARG.replace("--only=", "").split(",").map((s) => s.trim()).filter(Boolean)) : null;
 
@@ -31,6 +32,15 @@ const REST_HEADERS = {
 const CONNECTION_ID = "e2f6ce27-0e94-444f-9d64-09ba425a2b83";
 
 const TARGETS = [
+  {
+    key: "tintos",
+    familyId: "900157",
+    familyName: "TINTOS WINERIM",
+    wineTypes: ["tinto"],
+    format: "BOTTLE",
+    color: "#8B0000",
+    requiredPrefixes: ["T"],
+  },
   {
     key: "blancos",
     familyId: "904241",
@@ -184,6 +194,7 @@ function isEligible(target, wine) {
   if (target.wineTypes && !target.wineTypes.includes(type)) return false;
   if (target.excludeWineTypes?.includes(type)) return false;
   const code = commercialCode(wine.name);
+  if (target.requiredPrefixes && !target.requiredPrefixes.includes(code?.prefix)) return false;
   if (target.key !== "magnums" && target.format === "BOTTLE" && code?.prefix === "MAGNUM") return false;
   if (target.key === "magnums") {
     return asNumber(wine.magnum_sale_price) > 0 || (code?.prefix === "MAGNUM" && asNumber(wine.bottle_sale_price ?? wine.price) > 0);
@@ -303,7 +314,7 @@ function buildTargetPlan(target, wines, productById, productsByName, connection)
     const byName = productsByName.get(productName) || [];
     let existing = null;
     let matchMethod = "NEW";
-    if (byId) {
+    if (byId?.name === productName) {
       existing = byId;
       matchMethod = "ID";
     } else if (byName.length === 1) {
@@ -312,6 +323,9 @@ function buildTargetPlan(target, wines, productById, productsByName, connection)
     } else if (byName.length > 1) {
       ambiguous.push({ productName, ids: byName.map((p) => p.id) });
       continue;
+    } else if (byId) {
+      existing = byId;
+      matchMethod = "ID_NAME_MISMATCH";
     }
     plans.push({
       targetKey: target.key,
@@ -547,9 +561,11 @@ async function main() {
   fs.writeFileSync(outName, `${JSON.stringify(snapshot, null, 2)}\n`);
   console.log(`snapshot=${outName} totalPlans=${totalPlans}`);
 
-  if (APPLY) {
+  if (APPLY && !SKIP_SYNC_MASTER) {
     const sync = await functionInvoke("agora-proxy", { action: "sync-master-data", connectionId: CONNECTION_ID, forceRefresh: true });
     console.log(`syncMaster=${sync?.success === true ? "ok" : "check"} products=${sync?.counts?.products ?? sync?.productCount ?? "?"} families=${sync?.counts?.families ?? sync?.familyCount ?? "?"}`);
+  } else if (APPLY) {
+    console.log("syncMaster=skipped");
   }
 }
 

@@ -6567,6 +6567,25 @@ ${costPricesXml}
         }
         if (formatTypes.length === 0) { skipped++; continue; }
 
+        if (evtType === "CREATE") {
+          const { data: verifiedPushes } = await supabase
+            .from("winerim_push_tracking")
+            .select("format, agora_product_id, sync_status")
+            .eq("connection_id", connectionId)
+            .eq("winerim_wine_id", wine.winerim_id)
+            .in("format", formatTypes)
+            .in("sync_status", ["VERIFIED", "PUSHED"]);
+          const verifiedFormats = new Set((verifiedPushes || [])
+            .filter((push: any) => Boolean(push.agora_product_id))
+            .map((push: any) => String(push.format || "").toUpperCase()));
+
+          if (formatTypes.every((fmt) => verifiedFormats.has(fmt))) {
+            skipped++;
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "create_skipped:formats_already_verified" });
+            continue;
+          }
+        }
+
         // Strict idempotency: if there is ANY pending (QUEUED/RUNNING) task for this wine, skip.
         // No time window — pending = pending, regardless of age.
         const { data: pendingTask } = await supabase
