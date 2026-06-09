@@ -343,9 +343,12 @@ function commercialDCode(wineName: string | null | undefined): string | null {
   return match ? `D${match[1]}` : null;
 }
 
-function commercialTCode(wineName: string | null | undefined): string | null {
-  const match = String(wineName || "").toUpperCase().match(/\bT\s*[-_ ]?(\d{1,3})\b/);
-  return match ? `T${Number(match[1])}` : null;
+function commercialGenericCode(wineName: string | null | undefined): { prefix: string; number: number } | null {
+  const text = String(wineName || "").toUpperCase();
+  const magnum = text.match(/\bMAGNUM\s*[-_ ]?(\d{1,3})\b/);
+  if (magnum) return { prefix: "MAGNUM", number: Number(magnum[1]) };
+  const match = text.match(/\b([BRTEDG])\s*[-_ ]?(\d{1,3})\b/);
+  return match ? { prefix: match[1], number: Number(match[2]) } : null;
 }
 
 // Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
@@ -358,15 +361,41 @@ function saPedreraDulceCode(connection: any, wine: any): string | null {
   return commercialDCode(wine?.name);
 }
 
-// Sa Pedrera wants bottle T### products inside TINTOS WINERIM. Keep the normal
-// Winerim-derived product ID because those products already exist in Agora;
-// glasses/magnums keep their existing format-specific routing.
-function saPedreraTintoCode(connection: any, wine: any): string | null {
+function saPedreraDedicatedFamily(
+  connection: any,
+  wine: any,
+  formatType: string,
+): { id: string; needsCreate: false; familyName: string } | null {
   const locationName = String(connection?.location_name || connection?.name || "");
   if (!/sa\s*pedrera/i.test(locationName)) return null;
+
+  const fmt = String(formatType || "BOTTLE").toUpperCase();
   const wineType = String(wine?.wine_type || wine?.raw_payload?.type || "").toLowerCase();
-  if (wineType !== "tinto") return null;
-  return commercialTCode(wine?.name);
+  const code = commercialGenericCode(wine?.name);
+
+  // The D### postre/dulce controlled screen intentionally keeps copa and bottle
+  // together in DULCES WINERIM until Sa Pedrera approves moving them elsewhere.
+  if ((wineType === "postre" || wineType === "dulce") && code?.prefix === "D") {
+    return { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" };
+  }
+
+  if (fmt === "GLASS") {
+    return { id: "901954", needsCreate: false, familyName: "COPAS WINERIM" };
+  }
+
+  if (fmt === "MAGNUM" || code?.prefix === "MAGNUM") {
+    return { id: "904289", needsCreate: false, familyName: "MAGNUM WINERIM" };
+  }
+
+  if (fmt !== "BOTTLE") return null;
+
+  if (wineType === "tinto") return { id: "900157", needsCreate: false, familyName: "TINTOS WINERIM" };
+  if (wineType === "blanco") return { id: "904241", needsCreate: false, familyName: "BLANCOS WINERIM" };
+  if (wineType === "rosado") return { id: "903516", needsCreate: false, familyName: "ROSADOS WINERIM" };
+  if (wineType === "espumoso") return { id: "908875", needsCreate: false, familyName: "ESPUMOSOS WINERIM" };
+  if (wineType === "fortificado") return { id: "908182", needsCreate: false, familyName: "FORTIFICADOS WINERIM" };
+
+  return null;
 }
 
 function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
@@ -1753,15 +1782,15 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
       const orderedDulceCode = saPedreraDulceCode(connection, wine);
-      const orderedTintoCode = !isMagnum && !isGlass ? saPedreraTintoCode(connection, wine) : null;
+      const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, wine, fmt);
       const productId = orderedDulceCode
         ? 903000 + Number(orderedDulceCode.replace("D", ""))
         : isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
 
       const familyResult = orderedDulceCode
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
-        : orderedTintoCode
-          ? { id: "900157", needsCreate: false, familyName: "TINTOS WINERIM" }
+        : dedicatedSaPedreraFamily
+          ? dedicatedSaPedreraFamily
         : findFamilyId(wineType, fmt, wine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
