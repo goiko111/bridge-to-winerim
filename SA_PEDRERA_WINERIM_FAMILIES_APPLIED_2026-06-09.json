@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-09T15:07:41.297Z",
+  "generatedAt": "2026-06-09T15:16:46.935Z",
   "connectionId": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
   "location": "Sa Pedrera",
   "apply": true,
@@ -852,10 +852,10 @@
           "previous": {
             "productId": "509792",
             "name": "B T31-Semele",
-            "familyId": "26",
+            "familyId": "900157",
             "familyName": null,
             "sortOrder": null,
-            "order": null,
+            "order": "31",
             "useAsDirectSale": "false",
             "saleableAsMain": "true"
           },
@@ -2742,10 +2742,10 @@
           "previous": {
             "productId": "509955",
             "name": "B T103-Trasnocho",
-            "familyId": "28",
+            "familyId": "900157",
             "familyName": null,
             "sortOrder": null,
-            "order": null,
+            "order": "101",
             "useAsDirectSale": "false",
             "saleableAsMain": "true"
           },

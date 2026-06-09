@@ -12,7 +12,21 @@
 - [ ] Luruna: recuperar conectividad publica Agora (`No route to host`) antes de reintentar cola o prometer automatico.
 - [ ] Cienvinos: recuperar conectividad publica Agora (timeout) y luego drenar `68 QUEUED` + revisar `4 BLOCKED`.
 - [ ] Kava: clasificar deuda antigua `7 FAILED` / `9 BLOCKED` sin tocar legacy restaurado.
-- [ ] Sa Pedrera: clasificar `102 QUEUED`, `296 FAILED`, `144 BLOCKED` antes de limpiar o reintentar en bloque.
+- [x] Sa Pedrera: dejar cola operativa actual en `0 QUEUED / 0 RUNNING` tras aplicar familias Winerim dedicadas.
+- [ ] Sa Pedrera: clasificar deuda historica `FAILED/BLOCKED` antes de limpiar o reintentar en bloque.
+
+## P0 — Sa Pedrera familias Winerim dedicadas
+- [x] Cambiar routing vivo a `WINERIM_DEDICATED_FAMILIES` con reglas hacia familias Winerim.
+- [x] Aplicar import controlado completo sin ocultar legacy regional.
+- [x] Verificar API Agora: `badCount=0` para `TINTOS`, `BLANCOS`, `ROSADOS`, `ESPUMOSOS`, `FORTIFICADOS`, `MAGNUM` y `COPAS WINERIM`.
+- [x] Ocultar duplicado no deseado `T83` (`784242`) y marcar mapping `REJECTED`; canonicos: `902083` botella y `984242` copa.
+- [x] Pausar temporalmente `auto_push_on_create/update` para cortar bucle de tandas `AUTO_CREATE`.
+- [x] Guardar snapshots/rollback: `SA_PEDRERA_WINERIM_FAMILIES_2026-06-09.md`, `SA_PEDRERA_WINERIM_FAMILIES_APPLIED_2026-06-09.json`, `SA_PEDRERA_PROVIDER_CONFIG_BEFORE_WINERIM_FAMILIES_2026-06-09.json`, `SA_PEDRERA_AUTO_PUSH_FLAGS_BEFORE_PAUSE_2026-06-09.json`.
+- [ ] Cliente: validar visualmente en tablet todas las familias Winerim y confirmar que `T83` no aparece duplicado.
+- [ ] Cliente: decidir si `D207-Domaine Les Bruyeres...` debe permanecer en `TINTOS WINERIM` o excluirse por no ser `T###`.
+- [ ] Confirmar deploy efectivo de `agora-proxy` con guarda `create_skipped:formats_already_verified`.
+- [ ] Probar `evaluate-auto-push` contra un vino ya verificado; si no genera tareas repetidas, reactivar `auto_push_on_create/update`.
+- [ ] Venta de prueba Sa Pedrera: una botella y una copa Winerim; validar `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
 
 ## P0 — Sa Pedrera `TINTOS WINERIM`
 - [x] Analizar tintos activos Winerim: `200` botellas T### con precio.

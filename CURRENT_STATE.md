@@ -1226,6 +1226,51 @@ _Última actualización: 2026-06-08 13:23 CEST_
 - Recuperar conectividad Luruna y Cienvinos antes de drenar colas.
 - Validar primer cierre Casa Nene con stock Winerim.
 
+### Sa Pedrera familias Winerim dedicadas — 2026-06-09 17:20 CEST
+
+#### Hechos
+- Se amplio el piloto visual de Sa Pedrera a familias Winerim dedicadas sin ocultar el legacy regional del cliente.
+- Familias Winerim visibles y verificadas por export real Agora:
+  - `900157` `TINTOS WINERIM`: `200` productos esperados verificados, `badCount=0`.
+  - `904241` `BLANCOS WINERIM`: `98` productos verificados, `badCount=0`.
+  - `903516` `ROSADOS WINERIM`: `8` productos verificados, `badCount=0`.
+  - `908875` `ESPUMOSOS WINERIM`: `43` productos verificados, `badCount=0`.
+  - `908182` `FORTIFICADOS WINERIM`: `1` producto verificado, `badCount=0`.
+  - `904289` `MAGNUM WINERIM`: `29` productos verificados, `badCount=0`.
+  - `901954` `COPAS WINERIM`: `15` productos verificados, `badCount=0`.
+  - `903925` `DULCES WINERIM` se mantiene del piloto anterior.
+- Total snapshot aplicado: `394` productos esperados, todos con `UseAsDirectSale=false` y `SaleableAsMain=true`.
+- Cola Sa Pedrera tras cierre: `0 QUEUED / 0 RUNNING`.
+- `provider_config.family_structure_mode` queda en `WINERIM_DEDICATED_FAMILIES`.
+- Se cambiaron las reglas de routing de Sa Pedrera desde familias regionales legacy a familias Winerim dedicadas.
+- Se detecto bucle de auto-push: el runtime vivo seguia generando tandas `AUTO_CREATE` para productos ya verificados.
+- Para proteger Agora, quedaron pausados temporalmente `auto_push_on_create=false` y `auto_push_on_update=false` solo en Sa Pedrera. Ventas y stock no dependen de estos flags.
+- Duplicado no deseado `T83` con `ProductId=784242` quedo no vendible y mapping `REJECTED`; los productos canonicos son `902083` botella y `984242` copa.
+- Extra legitimo en `TINTOS WINERIM`: `D207-Domaine Les Bruyeres 'Georges' Crozes-Hermitage` (`675360`), tinto activo real sin codigo `T###`.
+- Artefactos:
+  - `SA_PEDRERA_WINERIM_FAMILIES_2026-06-09.md`.
+  - `SA_PEDRERA_WINERIM_FAMILIES_DRY_RUN_2026-06-09.json`.
+  - `SA_PEDRERA_WINERIM_FAMILIES_APPLIED_2026-06-09.json`.
+  - `SA_PEDRERA_PROVIDER_CONFIG_BEFORE_WINERIM_FAMILIES_2026-06-09.json`.
+  - `SA_PEDRERA_AUTO_PUSH_FLAGS_BEFORE_PAUSE_2026-06-09.json`.
+
+#### Decisiones
+- Mantener legacy visible en Sa Pedrera por ahora; la accion solo consolida Winerim en familias dedicadas.
+- Pausar temporalmente el auto-push de catalogo Winerim -> Agora hasta confirmar que Lovable Cloud ejecuta la guarda idempotente para `CREATE` ya verificados.
+- No reactivar esos flags por intuicion: primero probar `evaluate-auto-push` con un vino ya verificado y comprobar que no crea tareas.
+
+#### Riesgos
+- Mientras los flags esten pausados, nuevas altas o cambios de precio/nombre en Winerim no subiran automaticamente a Agora en Sa Pedrera.
+- Rehabilitar auto-push sin confirmar deploy puede recrear tandas de `AUTO_CREATE` y volver a tocar Agora cada ciclo.
+- La validacion API no prueba orden visual de tablet; el cliente debe revisar pantalla real.
+
+#### Tareas pendientes inmediatas
+- Confirmar visualmente con Sa Pedrera que las familias Winerim se ven bien y que `T83` no aparece duplicado.
+- Confirmar si aceptan `D207` dentro de `TINTOS WINERIM` o si quieren pantalla estricta `T###`.
+- Confirmar deploy efectivo de `agora-proxy` con la guarda `create_skipped:formats_already_verified`.
+- Si el deploy esta activo, reactivar `auto_push_on_create/update` y verificar que no nacen tareas repetidas.
+- Hacer venta de prueba botella + copa Winerim y validar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+
 ## Hipótesis abiertas
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).

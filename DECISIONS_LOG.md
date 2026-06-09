@@ -539,3 +539,23 @@
 - **Decisión**: Activar Casa Nene con `last_business_day_synced=2026-06-07`.
 - **Razón**: La integración se puso en marcha el 2026-06-08 y se ocultó legacy después de publicar Winerim. Reprocesar histórico anterior podía intentar descontar ventas legacy ya operadas fuera del flujo nuevo.
 - **Alternativa descartada**: dejar el cursor vacío para backfill automático. Podría recuperar ventas antiguas, pero no son una prueba limpia del nuevo catálogo y aumentan el riesgo de descuadres de stock.
+
+## 2026-06-09 · Sa Pedrera pasa a familias Winerim dedicadas sin ocultar legacy
+- **Decisión**: Configurar Sa Pedrera con `WINERIM_DEDICATED_FAMILIES` y reglas de routing Winerim para tintos, blancos, rosados, espumosos, fortificados, magnums, copas y dulces, manteniendo visible el legacy regional.
+- **Razón**: El cliente valido el enfoque de `DULCES WINERIM` y `TINTOS WINERIM`, pero queria que el resto de familias Winerim quedara ordenado sin perder su estructura legacy. El routing regional anterior reubicaba productos Winerim fuera de las familias dedicadas y deshacia parte del trabajo.
+- **Alternativa descartada**: ocultar legacy regional y convertir Sa Pedrera en solo Winerim. Era mas limpio tecnicamente, pero el cliente aun trabaja con memoria visual regional y pidio no romper esa operativa.
+
+## 2026-06-09 · Pausar temporalmente auto-push de catalogo Sa Pedrera
+- **Decisión**: Dejar `auto_push_on_create=false` y `auto_push_on_update=false` solo en Sa Pedrera despues de aplicar las familias, manteniendo ventas/stock activos.
+- **Razón**: El runtime vivo genero tandas repetidas `AUTO_CREATE` para productos ya verificados, cada una reimportando contra Agora. Pausar el auto-push evita sobrecargar el TPV y protege el estado visual mientras se confirma el despliegue de la guarda idempotente.
+- **Alternativa descartada**: dejar el auto-push activo y confiar en que el deploy acabara entrando. Durante la sesion siguieron apareciendo tandas de `63` tareas, asi que era un riesgo operativo real.
+
+## 2026-06-09 · T83 canonico y duplicado estandar no vendible
+- **Decisión**: Mantener como productos canonicos de `T83` el `902083` para botella y `984242` para copa; dejar el duplicado `784242` no vendible y su mapping `REJECTED`.
+- **Razón**: Agora rechazo crear/renombrar por nombre duplicado y el flujo automatico llego a crear un producto estandar alterado (`B T83- ... 242`). Mantenerlo vendible habria duplicado el vino en pantalla y podria resolver ventas contra el producto incorrecto.
+- **Alternativa descartada**: borrar el producto duplicado en Agora. Borrar es mas destructivo y no siempre reversible desde la API; marcarlo no vendible es suficiente para sacarlo de operativa.
+
+## 2026-06-09 · D207 se acepta como tinto real fuera de secuencia T###
+- **Decisión**: No ocultar `D207-Domaine Les Bruyeres 'Georges' Crozes-Hermitage` (`675360`) dentro de `TINTOS WINERIM`.
+- **Razón**: Winerim lo clasifica como `tinto`, esta activo y tiene precio de botella. Aunque no encaja con el subconjunto ordenado `T###`, ocultarlo podria dejar fuera un vino activo real.
+- **Alternativa descartada**: forzar que `TINTOS WINERIM` contenga solo codigos `T###`. Resolveria pureza visual, pero contradice el dato activo de Winerim hasta que el cliente confirme que quiere excluirlo.
