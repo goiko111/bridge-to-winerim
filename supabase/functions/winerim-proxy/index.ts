@@ -848,6 +848,7 @@ serve(async (req) => {
       // Only queue wines that are new/unpublished or whose catalog-visible fields
       // actually changed. This keeps price/name updates automatic without reimporting
       // every processed batch on every cron pass.
+      // Deploy marker 2026-06-10: required before re-enabling Sa Pedrera automatic catalog pushes.
       let autoPushResult: Record<string, unknown> | null = null;
       const autoCreateIds = Array.from(autoCreateCandidateIds);
       const autoUpdateIds = Array.from(autoUpdateCandidateIds)

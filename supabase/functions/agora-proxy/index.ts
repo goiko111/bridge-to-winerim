@@ -6379,6 +6379,7 @@ ${costPricesXml}
     }
 
     // ── EVALUATE AUTO-PUSH ──
+    // Deploy marker 2026-06-10: Sa Pedrera CREATE guard must skip already verified formats before re-enabling automatic catalog pushes.
     if (action === "evaluate-auto-push") {
       const winerimWineIds = payload.winerimWineIds || [];
       const evtType = payload.eventType || "CREATE";
