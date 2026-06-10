@@ -2,9 +2,50 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-10 12:39 CEST_
+_Última actualización: 2026-06-10 14:15 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Pedrera auto-push reactivado tras redeploy validado — 2026-06-10 14:15 CEST
+- Lovable Cloud confirmo que `agora-proxy` y `winerim-proxy` ya corren la ultima version de `main`.
+- Lovable Cloud valido dry-run con `forceEvaluate:true` sobre el vino `249018`:
+  - `queued=0`.
+  - `wouldQueue=0`.
+  - `create_skipped:formats_already_verified`.
+  - Sin escrituras.
+- Se ejecuto `winerim-proxy` / `fetch-catalog` con los flags de Sa Pedrera todavia apagados:
+  - `success=true`, `totalWines=401`.
+  - Primer lote: `newWines=0`, `changedWines=24`.
+  - `autoPushResult.differential=true`, `createCandidates=0`, `updateCandidates=24`, `parts=[]`.
+  - No se crearon tareas porque `auto_push_on_create=false` y `auto_push_on_update=false`.
+- Se espero a que terminara/estabilizara la cadena de refresco:
+  - `417` filas Winerim tocadas desde el inicio.
+  - Ultimo `updated_at` estable observado: `2026-06-10T12:11:26.742133+00:00`.
+  - Cola durante y despues del refresco: `0 QUEUED / 0 RUNNING`.
+- Se activaron flags finales de Sa Pedrera:
+  - `auto_push_on_create=true`.
+  - `auto_push_on_update=true`.
+  - `auto_push_verified_ready=true`.
+- Sonda normal post-activacion, sin `forceEvaluate`, sobre `249018`:
+  - `queued=0`, `wouldQueue=0`, `skipped=1`.
+  - `skippedReasons` incluye `create_skipped:formats_already_verified`.
+  - No creo tareas.
+- Vigilancia posterior durante ~1 minuto:
+  - Flags encendidos.
+  - Tareas activas finales: `0 QUEUED / 0 RUNNING`.
+  - Sin nuevos movimientos de cache.
+- Informe detallado: `SA_PEDRERA_AUTO_PUSH_REACTIVATED_2026-06-10.md`.
+
+#### Decisiones
+- Reactivar el automatico de catalogo Winerim -> Agora para Sa Pedrera tras confirmar runtime actualizado, diferencial activo y guard anti-duplicados.
+
+#### Riesgos
+- El proximo cron puede crear tareas legitimas si Winerim tiene cambios reales; hay que vigilar que no aparezca una tanda masiva inesperada.
+- Esto no resuelve mappings legacy pendientes/rechazados: las ventas de legacy sin mapping confirmado siguen sin poder descontar stock Winerim.
+
+#### Tareas pendientes inmediatas
+- Monitorizar el siguiente ciclo de catalogo Sa Pedrera.
+- Probar una venta real de botella y copa Winerim y validar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
 
 ### Sa Pedrera auto-push sigue pausado por deploy pendiente — 2026-06-10 12:39 CEST
 - Se intento cerrar el siguiente paso seguro de Sa Pedrera: reactivar `auto_push_on_create/update` solo despues de confirmar que Lovable Cloud ejecuta la guarda `create_skipped:formats_already_verified`.

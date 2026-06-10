@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-10 · Reactivar auto-push Sa Pedrera tras runtime actualizado y sonda limpia
+- **Decisión**: Activar `auto_push_on_create=true` y `auto_push_on_update=true` en Sa Pedrera.
+- **Razón**: Lovable Cloud confirmo redeploy de `agora-proxy` y `winerim-proxy`; la sonda dry-run con `forceEvaluate:true` devolvio `queued=0`/`wouldQueue=0`/`create_skipped:formats_already_verified`; `fetch-catalog` corrio con flags apagados y no creo cola; tras activar, la sonda normal sobre `249018` tambien devolvio `queued=0` y la cola quedo en `0 QUEUED / 0 RUNNING`.
+- **Alternativa descartada**: mantener el automatico apagado hasta validacion manual del cliente. Era mas conservador visualmente, pero ya estaba validado el guard anti-duplicados y mantenerlo apagado impediria que altas/cambios reales de Winerim suban a Agora.
+
+---
+
 ## 2026-06-10 · No reactivar auto-push Sa Pedrera hasta redeploy verificado de Lovable Cloud
 - **Decisión**: Mantener `auto_push_on_create=false` y `auto_push_on_update=false` en Sa Pedrera aunque el codigo correcto este en GitHub, hasta que Lovable Cloud ejecute la version nueva de `agora-proxy` y `winerim-proxy`.
 - **Razón**: Tres sondas live con un vino ya verificado (`249018`) siguen generando `AUTO_CREATE` (`queued=1`) en vez de saltar con `create_skipped:formats_already_verified`. Se bloquearon inmediatamente las tareas de prueba y la cola final queda en `0 QUEUED / 0 RUNNING`.
