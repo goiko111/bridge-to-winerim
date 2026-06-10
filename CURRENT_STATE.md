@@ -2,9 +2,39 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-08 13:23 CEST_
+_Última actualización: 2026-06-10 12:39 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Pedrera auto-push sigue pausado por deploy pendiente — 2026-06-10 12:39 CEST
+- Se intento cerrar el siguiente paso seguro de Sa Pedrera: reactivar `auto_push_on_create/update` solo despues de confirmar que Lovable Cloud ejecuta la guarda `create_skipped:formats_already_verified`.
+- Se hizo push a GitHub del commit `ae9850c` (`Trigger Sa Pedrera auto-push guard redeploy`) con marcadores de deploy en `agora-proxy` y `winerim-proxy`; no cambia logica de negocio.
+- Prueba live repetida contra Lovable Cloud:
+  - Accion: `agora-proxy` / `evaluate-auto-push`.
+  - Vino ya verificado usado como sonda: `249018` (`T220- Elio Grasso Barbera d'Alba Vigna Martina`).
+  - Esperado: `queued=0` + `create_skipped:formats_already_verified`.
+  - Observado: el runtime vivo todavia devuelve `queued=1`, `_trigger_source=AUTO_CREATE`; por tanto Lovable Cloud sigue ejecutando version antigua de `agora-proxy`.
+- Seguridad aplicada:
+  - Los flags quedaron restaurados en Sa Pedrera: `auto_push_on_create=false`, `auto_push_on_update=false`, `auto_push_verified_ready=true`.
+  - Tareas activas finales: `0 QUEUED / 0 RUNNING`.
+  - Las tareas de sonda quedaron `BLOCKED` y no deben reintentarse:
+    - `b69fc6ed-c54e-4837-aff4-6d21e546db61`.
+    - `de8375c7-f155-41bd-b6cf-63cdc9c5df3a`.
+    - `36b92b57-e448-4f3e-8810-14ba0e625d81`.
+- La CLI local no puede desplegar Edge Functions porque no hay token de deploy (`SUPABASE_ACCESS_TOKEN`) disponible en el entorno.
+- Informe detallado: `SA_PEDRERA_AUTO_PUSH_REDEPLOY_BLOCK_2026-06-10.md`.
+
+#### Decisiones
+- No reactivar el auto-push de catalogo de Sa Pedrera hasta que Lovable Cloud redepliegue `agora-proxy` y `winerim-proxy` y la sonda live salte los formatos ya verificados.
+
+#### Riesgos
+- Mientras los flags esten apagados, nuevas altas o cambios de precio/nombre en Winerim no subiran automaticamente a Agora para Sa Pedrera.
+- Reactivarlos ahora recrearia tareas `AUTO_CREATE` sobre vinos ya publicados y podria tocar Agora innecesariamente.
+
+#### Tareas pendientes inmediatas
+- Redesplegar en Lovable Cloud `agora-proxy` y `winerim-proxy`.
+- Repetir la sonda `evaluate-auto-push` con el vino `249018`.
+- Solo si devuelve `create_skipped:formats_already_verified`, probar `winerim-proxy fetch-catalog` y reactivar `auto_push_on_create/update`.
 
 ### Casa Nene integración Agora completa — 2026-06-08 13:23 CEST
 - Se creó la conexión `Casa Nene` en Lovable Cloud (`e3cb6dbb-3474-4926-b740-706fbd0ef7e0`) usando la URL externa `http://casanene.ddns.net:8984/`. La IP local `192.168.1.131` queda solo como referencia del cliente.

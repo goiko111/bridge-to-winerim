@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-10 · No reactivar auto-push Sa Pedrera hasta redeploy verificado de Lovable Cloud
+- **Decisión**: Mantener `auto_push_on_create=false` y `auto_push_on_update=false` en Sa Pedrera aunque el codigo correcto este en GitHub, hasta que Lovable Cloud ejecute la version nueva de `agora-proxy` y `winerim-proxy`.
+- **Razón**: Tres sondas live con un vino ya verificado (`249018`) siguen generando `AUTO_CREATE` (`queued=1`) en vez de saltar con `create_skipped:formats_already_verified`. Se bloquearon inmediatamente las tareas de prueba y la cola final queda en `0 QUEUED / 0 RUNNING`.
+- **Alternativa descartada**: reactivar los flags confiando en el codigo local o en el push `ae9850c`. Esa opcion podria recrear tandas de productos ya publicados y volver a tocar Agora sin necesidad.
+
+---
+
 ## 2026-06-09 · Sa Pedrera tintos usa productos Winerim existentes, no duplicados nuevos
 - **Decisión**: Para publicar `TINTOS WINERIM` en Sa Pedrera, mover los productos Winerim de botella `T###` ya existentes a la familia `900157` y crear solo los que no existan; no crear una segunda copia con IDs `902###` para todos.
 - **Razón**: La revision previa detecto que `197/200` tintos ya existian en Agora con el mismo nombre. Agora rechaza nombres duplicados aunque cambie el ID, y crear copias habria duplicado la pantalla. Conservar los IDs existentes mantiene mappings, tracking e historico de ventas.

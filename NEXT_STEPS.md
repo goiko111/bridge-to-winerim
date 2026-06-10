@@ -22,10 +22,13 @@
 - [x] Ocultar duplicado no deseado `T83` (`784242`) y marcar mapping `REJECTED`; canonicos: `902083` botella y `984242` copa.
 - [x] Pausar temporalmente `auto_push_on_create/update` para cortar bucle de tandas `AUTO_CREATE`.
 - [x] Guardar snapshots/rollback: `SA_PEDRERA_WINERIM_FAMILIES_2026-06-09.md`, `SA_PEDRERA_WINERIM_FAMILIES_APPLIED_2026-06-09.json`, `SA_PEDRERA_PROVIDER_CONFIG_BEFORE_WINERIM_FAMILIES_2026-06-09.json`, `SA_PEDRERA_AUTO_PUSH_FLAGS_BEFORE_PAUSE_2026-06-09.json`.
+- [x] Probar sonda live de `evaluate-auto-push` tras push `ae9850c`: Lovable Cloud sigue con runtime antiguo y genera `AUTO_CREATE`; se bloquearon las 3 tareas de prueba y quedan `0 QUEUED / 0 RUNNING`.
+- [ ] Redesplegar en Lovable Cloud `agora-proxy` y `winerim-proxy`; el entorno local no tiene token de deploy CLI.
+- [ ] Repetir `evaluate-auto-push` con el vino `249018`; debe devolver `queued=0` y `create_skipped:formats_already_verified`.
 - [ ] Cliente: validar visualmente en tablet todas las familias Winerim y confirmar que `T83` no aparece duplicado.
 - [ ] Cliente: decidir si `D207-Domaine Les Bruyeres...` debe permanecer en `TINTOS WINERIM` o excluirse por no ser `T###`.
-- [ ] Confirmar deploy efectivo de `agora-proxy` con guarda `create_skipped:formats_already_verified`.
-- [ ] Probar `evaluate-auto-push` contra un vino ya verificado; si no genera tareas repetidas, reactivar `auto_push_on_create/update`.
+- [ ] Tras sonda OK, probar `winerim-proxy fetch-catalog`; debe devolver `autoPushResult.reason=no_catalog_changes_detected` o `autoPushResult.differential=true`.
+- [ ] Si ambas sondas pasan, reactivar `auto_push_on_create/update`.
 - [ ] Venta de prueba Sa Pedrera: una botella y una copa Winerim; validar `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
 
 ## P0 — Sa Pedrera `TINTOS WINERIM`
