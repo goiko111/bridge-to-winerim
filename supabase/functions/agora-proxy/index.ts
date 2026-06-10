@@ -6479,32 +6479,35 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
-              await supabase.from("outbound_tasks").insert({
-                connection_id: connectionId,
-                task_type: "AGORA_HIDE_PRODUCT",
-                payload_json: {
-                  _winerim_wine_id: wine.winerim_id,
-                  _product_ids: productIds,
-                  _wine_name: wine.name,
-                  _trigger_source: "AUTO_DEACTIVATION",
-                },
-                status: "QUEUED",
-              });
-              hidQueued++;
-              // Update tracking to reflect hidden status
-              for (const p of existingPush) {
-                await supabase.from("winerim_push_tracking")
-                  .update({ sync_status: "HIDDEN" })
-                  .eq("connection_id", connectionId)
-                  .eq("winerim_wine_id", wine.winerim_id)
-                  .eq("format", p.format);
+              if (!forceEvaluate) {
+                await supabase.from("outbound_tasks").insert({
+                  connection_id: connectionId,
+                  task_type: "AGORA_HIDE_PRODUCT",
+                  payload_json: {
+                    _winerim_wine_id: wine.winerim_id,
+                    _product_ids: productIds,
+                    _wine_name: wine.name,
+                    _trigger_source: "AUTO_DEACTIVATION",
+                  },
+                  status: "QUEUED",
+                });
+                // Update tracking to reflect hidden status
+                for (const p of existingPush) {
+                  await supabase.from("winerim_push_tracking")
+                    .update({ sync_status: "HIDDEN" })
+                    .eq("connection_id", connectionId)
+                    .eq("winerim_wine_id", wine.winerim_id)
+                    .eq("format", p.format);
+                }
               }
+              hidQueued++;
             }
           }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive_hide_queued" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: forceEvaluate ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
           continue;
         }
+
 
         if (requireReview) {
           const hasName = wine.name && wine.name.length > 2;
