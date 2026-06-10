@@ -6383,6 +6383,7 @@ ${costPricesXml}
     if (action === "evaluate-auto-push") {
       const winerimWineIds = payload.winerimWineIds || [];
       const evtType = payload.eventType || "CREATE";
+      const forceEvaluate = payload.forceEvaluate === true;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
@@ -6390,14 +6391,17 @@ ${costPricesXml}
       const autoPushGlass = connection.auto_push_glass ?? false;
       const requireReview = connection.require_manual_review_before_push ?? true;
 
-      if (evtType === "CREATE" && !autoPushOnCreate) {
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (!forceEvaluate) {
+        if (evtType === "CREATE" && !autoPushOnCreate) {
+          return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (evtType === "UPDATE" && !autoPushOnUpdate) {
+          return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
       }
-      if (evtType === "UPDATE" && !autoPushOnUpdate) {
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
+
 
       if (connection.write_mode !== "XML_IMPORT") {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "write_mode is not XML_IMPORT" }),
