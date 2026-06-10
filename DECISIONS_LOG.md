@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-10 · Mantener activo auto-push Sa Pedrera tras primera tanda real correcta
+- **Decisión**: Mantener `auto_push_on_create=true` y `auto_push_on_update=true` en Sa Pedrera despues de procesar la primera tanda real.
+- **Razón**: El primer ciclo automatico genero solo `3` tareas `AUTO_CREATE`, todas legitimas y procesadas con `succeeded=3`, `failed=0`, `remaining=0`, sin breaker. Los tres vinos quedaron `VERIFIED` en tracking y `CONFIRMED` en mappings.
+- **Alternativa descartada**: apagar de nuevo el automatico por prudencia despues de ver tareas nuevas. Habria impedido validar el flujo real; la tanda fue pequena, concreta y exitosa.
+
+---
+
 ## 2026-06-10 · Reactivar auto-push Sa Pedrera tras runtime actualizado y sonda limpia
 - **Decisión**: Activar `auto_push_on_create=true` y `auto_push_on_update=true` en Sa Pedrera.
 - **Razón**: Lovable Cloud confirmo redeploy de `agora-proxy` y `winerim-proxy`; la sonda dry-run con `forceEvaluate:true` devolvio `queued=0`/`wouldQueue=0`/`create_skipped:formats_already_verified`; `fetch-catalog` corrio con flags apagados y no creo cola; tras activar, la sonda normal sobre `249018` tambien devolvio `queued=0` y la cola quedo en `0 QUEUED / 0 RUNNING`.

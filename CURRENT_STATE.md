@@ -2,9 +2,37 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-10 14:15 CEST_
+_Última actualización: 2026-06-10 14:20 CEST_
 
 ## Hechos (qué está desplegado y verificado)
+
+### Sa Pedrera primer ciclo auto-create real verificado — 2026-06-10 14:20 CEST
+- Tras la reactivacion de `auto_push_on_create/update`, el siguiente ciclo de catalogo genero una tanda pequeña y no masiva: `3` tareas `AUTO_CREATE`.
+- Vinos detectados:
+  - `105908` — `Egly-Ouriet 'Les Prémices'`, botella, producto Agora `605908`, precio `118.00`.
+  - `175356` — `T213-Saint-Émilion Grand Cru`, botella, producto Agora `675356`, precio `75.00`.
+  - `205597` — `B437- Château Beauregard`, botella, producto Agora `705597`, precio `65.00`.
+- Se proceso la cola controlada con `agora-proxy/process-xml-outbound-queue`:
+  - `processed=3`.
+  - `succeeded=3`.
+  - `failed=0`.
+  - `remaining=0`.
+  - `breakerTripped=false`.
+- Verificacion posterior:
+  - Tareas activas Sa Pedrera: `0 QUEUED / 0 RUNNING`.
+  - `winerim_push_tracking` queda `VERIFIED` para los 3 vinos/formato botella.
+  - `product_mappings` queda `CONFIRMED` para los 3 vinos/formato botella.
+- Se limpio un error antiguo/stale en `product_mappings` de `205597` (`terminal_stock_mapping_rejected: Winerim stock/wine/205597 returned 404`) porque el vino ahora tiene `bottle_stock_id=236115`, se publico correctamente y el mapping quedo confirmado.
+
+#### Decisiones
+- Mantener el automatico activo: la primera tanda real fue pequeña, esperada y verificada sin fallos.
+
+#### Riesgos
+- Si aparecen nuevas tandas, distinguir cambios reales de Winerim frente a ruido por cache; no cerrar ni bloquear automaticamente sin revisar.
+
+#### Tareas pendientes inmediatas
+- Seguir vigilando el siguiente cron de catalogo, especialmente que no reaparezca una tanda masiva.
+- Probar venta real de alguno de estos productos o de botella/copa Winerim y validar stock.
 
 ### Sa Pedrera auto-push reactivado tras redeploy validado — 2026-06-10 14:15 CEST
 - Lovable Cloud confirmo que `agora-proxy` y `winerim-proxy` ya corren la ultima version de `main`.

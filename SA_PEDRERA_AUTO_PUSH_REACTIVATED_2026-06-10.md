@@ -49,3 +49,15 @@
 ## Siguiente paso
 - Vigilar el proximo ciclo de cron de catalogo en Sa Pedrera: debe permanecer sin cola masiva salvo cambios reales de Winerim.
 - Probar una venta real de botella y copa desde familias Winerim y validar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+
+## Seguimiento 2026-06-10 14:20 CEST
+- Primer ciclo real tras activar:
+  - `3` tareas `AUTO_CREATE`.
+  - `processed=3`, `succeeded=3`, `failed=0`, `remaining=0`.
+  - Cola final: `0 QUEUED / 0 RUNNING`.
+- Vinos publicados/verificados:
+  - `105908` — `Egly-Ouriet 'Les Prémices'` → Agora `605908`.
+  - `175356` — `T213-Saint-Émilion Grand Cru` → Agora `675356`.
+  - `205597` — `B437- Château Beauregard` → Agora `705597`.
+- Los 3 quedaron `VERIFIED` en `winerim_push_tracking` y `CONFIRMED` en `product_mappings`.
+- Se limpio `last_sync_error` antiguo de `205597` porque era stale tras publicacion correcta.
