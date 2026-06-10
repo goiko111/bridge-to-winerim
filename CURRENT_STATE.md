@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-10 14:20 CEST_
+_Última actualización: 2026-06-10 14:23 CEST_
 
 ## Hechos (qué está desplegado y verificado)
 
@@ -33,6 +33,26 @@ _Última actualización: 2026-06-10 14:20 CEST_
 #### Tareas pendientes inmediatas
 - Seguir vigilando el siguiente cron de catalogo, especialmente que no reaparezca una tanda masiva.
 - Probar venta real de alguno de estos productos o de botella/copa Winerim y validar stock.
+
+### Sa Pedrera tanda `AUTO_UPDATE` posterior drenada — 2026-06-10 14:23 CEST
+- Tras la primera tanda `AUTO_CREATE`, aparecio una tanda posterior de `AUTO_UPDATE` no masiva.
+- Durante la revision se observaron tareas para vinos como `R602-Izadi Larrosa`, `T 75-Tobía Selección de Autor`, `G803-Sa Cudia Oxidativo`, `E527-Delamotte Brut`, `T104-Viña Tondonia Reserva`, `T1 - Iamontanum Garnacha`, `E502-Rimarts Brut Nature Reserva 24`, `T89-Roda Reserva`, etc.
+- El procesador automatico avanzo la cola sin intervencion manual adicional:
+  - La cola paso de `QUEUED/RUNNING` a `0` activa.
+  - Comprobacion final: `0 QUEUED / 0 RUNNING`.
+- No hay fallos nuevos asociados a esta activacion:
+  - Ultimos `FAILED` de Sa Pedrera son historicos, anteriores a esta sesion (`2026-06-05` o antes).
+  - Los `BLOCKED` recientes son las sondas controladas de `249018` bloqueadas antes del redeploy validado.
+
+#### Decisiones
+- Mantener automatico activo y dejar que el dispatcher procese tandas pequeñas de `AUTO_UPDATE`, vigilando que no se conviertan en cola masiva.
+
+#### Riesgos
+- Quedan errores historicos de `AUTO_DEACTIVATION` y deuda antigua de cola; no mezclarlos con el nuevo automatico correcto.
+
+#### Tareas pendientes inmediatas
+- Revisar mañana si han aparecido nuevos `FAILED/BLOCKED` posteriores al `2026-06-10 14:23 CEST`.
+- Probar ventas reales para validar stock, que es independiente de la publicacion visual.
 
 ### Sa Pedrera auto-push reactivado tras redeploy validado — 2026-06-10 14:15 CEST
 - Lovable Cloud confirmo que `agora-proxy` y `winerim-proxy` ya corren la ultima version de `main`.

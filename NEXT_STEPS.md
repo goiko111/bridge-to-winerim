@@ -29,6 +29,7 @@
 - [x] Reactivar `auto_push_on_create=true` y `auto_push_on_update=true`.
 - [x] Validar sonda normal post-activacion con `249018`: `queued=0`, `wouldQueue=0`, `create_skipped:formats_already_verified`, cola `0 QUEUED / 0 RUNNING`.
 - [x] Procesar primera tanda real de auto-create Sa Pedrera: `3/3 SUCCESS`, `0` cola abierta, tracking `VERIFIED` y mappings `CONFIRMED`.
+- [x] Observar tanda posterior `AUTO_UPDATE`: drenada por el procesador automatico hasta `0 QUEUED / 0 RUNNING`; sin `FAILED` nuevos.
 - [ ] Cliente: validar visualmente en tablet todas las familias Winerim y confirmar que `T83` no aparece duplicado.
 - [ ] Cliente: decidir si `D207-Domaine Les Bruyeres...` debe permanecer en `TINTOS WINERIM` o excluirse por no ser `T###`.
 - [ ] Monitorizar el siguiente ciclo de catalogo Sa Pedrera: ya hubo primera tanda pequena correcta; no debe aparecer cola masiva salvo cambios reales de Winerim.

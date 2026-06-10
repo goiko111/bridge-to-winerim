@@ -61,3 +61,9 @@
   - `205597` — `B437- Château Beauregard` → Agora `705597`.
 - Los 3 quedaron `VERIFIED` en `winerim_push_tracking` y `CONFIRMED` en `product_mappings`.
 - Se limpio `last_sync_error` antiguo de `205597` porque era stale tras publicacion correcta.
+
+## Seguimiento 2026-06-10 14:23 CEST
+- Despues de la tanda `AUTO_CREATE`, aparecio una tanda `AUTO_UPDATE` pequeña.
+- El procesador automatico la dreno hasta `0 QUEUED / 0 RUNNING`.
+- No se detectaron `FAILED` nuevos de esta activacion; los ultimos `FAILED` visibles son historicos del `2026-06-05` o anteriores.
+- Los `BLOCKED` recientes siguen siendo las sondas controladas de `249018`, no tareas productivas nuevas.
