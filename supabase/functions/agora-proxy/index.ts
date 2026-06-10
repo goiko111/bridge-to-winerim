@@ -6383,6 +6383,7 @@ ${costPricesXml}
     if (action === "evaluate-auto-push") {
       const winerimWineIds = payload.winerimWineIds || [];
       const evtType = payload.eventType || "CREATE";
+      const forceEvaluate = payload.forceEvaluate === true;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
@@ -6390,14 +6391,17 @@ ${costPricesXml}
       const autoPushGlass = connection.auto_push_glass ?? false;
       const requireReview = connection.require_manual_review_before_push ?? true;
 
-      if (evtType === "CREATE" && !autoPushOnCreate) {
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (!forceEvaluate) {
+        if (evtType === "CREATE" && !autoPushOnCreate) {
+          return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (evtType === "UPDATE" && !autoPushOnUpdate) {
+          return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
       }
-      if (evtType === "UPDATE" && !autoPushOnUpdate) {
-        return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
+
 
       if (connection.write_mode !== "XML_IMPORT") {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "write_mode is not XML_IMPORT" }),
@@ -6451,8 +6455,10 @@ ${costPricesXml}
       }
 
       let queued = 0;
+      let wouldQueue = 0;
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
+
 
       let hidQueued = 0;
       for (const wine of wines) {
@@ -6475,32 +6481,35 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
-              await supabase.from("outbound_tasks").insert({
-                connection_id: connectionId,
-                task_type: "AGORA_HIDE_PRODUCT",
-                payload_json: {
-                  _winerim_wine_id: wine.winerim_id,
-                  _product_ids: productIds,
-                  _wine_name: wine.name,
-                  _trigger_source: "AUTO_DEACTIVATION",
-                },
-                status: "QUEUED",
-              });
-              hidQueued++;
-              // Update tracking to reflect hidden status
-              for (const p of existingPush) {
-                await supabase.from("winerim_push_tracking")
-                  .update({ sync_status: "HIDDEN" })
-                  .eq("connection_id", connectionId)
-                  .eq("winerim_wine_id", wine.winerim_id)
-                  .eq("format", p.format);
+              if (!forceEvaluate) {
+                await supabase.from("outbound_tasks").insert({
+                  connection_id: connectionId,
+                  task_type: "AGORA_HIDE_PRODUCT",
+                  payload_json: {
+                    _winerim_wine_id: wine.winerim_id,
+                    _product_ids: productIds,
+                    _wine_name: wine.name,
+                    _trigger_source: "AUTO_DEACTIVATION",
+                  },
+                  status: "QUEUED",
+                });
+                // Update tracking to reflect hidden status
+                for (const p of existingPush) {
+                  await supabase.from("winerim_push_tracking")
+                    .update({ sync_status: "HIDDEN" })
+                    .eq("connection_id", connectionId)
+                    .eq("winerim_wine_id", wine.winerim_id)
+                    .eq("format", p.format);
+                }
               }
+              hidQueued++;
             }
           }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "wine_inactive_hide_queued" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: forceEvaluate ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
           continue;
         }
+
 
         if (requireReview) {
           const hasName = wine.name && wine.name.length > 2;
@@ -6619,6 +6628,12 @@ ${costPricesXml}
           continue;
         }
 
+        if (forceEvaluate) {
+          wouldQueue++;
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
+          continue;
+        }
+
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "AGORA_XML_UPSERT_PRODUCT",
@@ -6635,13 +6650,14 @@ ${costPricesXml}
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped} hidQueued=${hidQueued}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
-        success: true, queued, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType,
+        success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
+        totalWines: wines.length, eventType: evtType, forceEvaluate,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
 
     // ── PROBE PRICELIST PERSISTENCE ──
     // Creates a disposable test product with all active PriceLists, imports it,
