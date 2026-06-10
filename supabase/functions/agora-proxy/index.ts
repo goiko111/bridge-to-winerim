@@ -6455,8 +6455,10 @@ ${costPricesXml}
       }
 
       let queued = 0;
+      let wouldQueue = 0;
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
+
 
       let hidQueued = 0;
       for (const wine of wines) {
