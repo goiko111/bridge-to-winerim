@@ -6628,6 +6628,12 @@ ${costPricesXml}
           continue;
         }
 
+        if (forceEvaluate) {
+          wouldQueue++;
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
+          continue;
+        }
+
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "AGORA_XML_UPSERT_PRODUCT",
@@ -6644,13 +6650,14 @@ ${costPricesXml}
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} queued=${queued} skipped=${skipped} hidQueued=${hidQueued}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
-        success: true, queued, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType,
+        success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
+        totalWines: wines.length, eventType: evtType, forceEvaluate,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
 
     // ── PROBE PRICELIST PERSISTENCE ──
     // Creates a disposable test product with all active PriceLists, imports it,
