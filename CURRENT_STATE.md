@@ -42,6 +42,9 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
 - Nuevo ejemplo de entorno sin secretos: `cloudflare/pages/env.example`.
 - Nuevo runbook DNS/Access: `cloudflare/dns-access/README.md`.
+- Nuevos archivos Pages:
+  - `public/_redirects` para fallback SPA (`/onboarding` directo);
+  - `public/_headers` con cabeceras defensivas basicas.
 - La pantalla está orientada a equipo comercial:
   - POS;
   - restaurante;
@@ -101,6 +104,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - Proyectos Pages existentes vistos en la cuenta Cloudflare: `winerim-help`, `spiritsrim`, `winerim-informes`; no existe aún proyecto Pages para el middleware.
 - No se ha tocado `main` ni producción de Lovable Cloud durante esta continuación.
 - Se investigó CLI/API disponible para DNS/Access: Wrangler no ofrece una operación directa segura para crear el DNS staging desde este entorno. Queda documentado el proceso de Dashboard/Custom Domain.
+- No se ha añadido CSP estricta todavía porque puede romper estilos/componentes hasta auditar el frontend completo.
 
 ### Decisiones
 - No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.

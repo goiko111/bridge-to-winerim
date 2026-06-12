@@ -49,6 +49,10 @@ Antes de exponer Pages al equipo:
    - token Winerim.
 5. Confirmar que el endpoint solo devuelve semaforos y no crea conexiones ni guarda tokens.
 
+## Archivos Pages incluidos
+- `public/_redirects`: fallback SPA para que rutas como `/onboarding` carguen `index.html` al abrirlas directamente.
+- `public/_headers`: cabeceras defensivas basicas. No se define CSP estricta todavia para evitar romper el frontend hasta auditar dependencias y estilos inline.
+
 ## Rollback
 - Si staging falla, eliminar la ruta Pages o desactivar Access.
 - Si produccion falla en el futuro, devolver DNS a Lovable Cloud o pausar la ruta Pages.

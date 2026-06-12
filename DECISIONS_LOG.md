@@ -615,3 +615,8 @@
 - **Decisión**: Aplicar Cloudflare Access primero sobre `staging.middleware.winerim.wine` y dejar `api-staging.middleware.winerim.wine` sin Access hasta implementar validación explícita de Access/JWT o service tokens en el Worker.
 - **Razón**: La UI llama a la API desde navegador. Si se protege la API con Access sin adaptar CORS y validación de tokens, el onboarding fallará aunque la UI esté autorizada. El endpoint actual de API staging no escribe ni guarda tokens, por lo que el riesgo temporal es acotado.
 - **Alternativa descartada**: proteger UI y API con Access simultáneamente. Es más cerrado en apariencia, pero rompería el flujo actual o exigiría autenticación técnica adicional que aún no está implementada.
+
+## 2026-06-12 · Añadir headers Pages defensivos sin CSP estricta
+- **Decisión**: Añadir `public/_redirects` y `public/_headers` para Cloudflare Pages, con fallback SPA y cabeceras defensivas basicas, pero sin `Content-Security-Policy` estricta.
+- **Razón**: El fallback es necesario para que `/onboarding` funcione al abrir URL directa. Las cabeceras basicas reducen riesgo sin afectar al frontend. Una CSP estricta puede romper estilos o librerias si no se audita primero.
+- **Alternativa descartada**: activar CSP completa desde el primer despliegue. Es mejor seguridad a largo plazo, pero hacerlo sin inventario de dependencias aumentaria riesgo de una UI rota en staging.

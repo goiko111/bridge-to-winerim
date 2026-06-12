@@ -16,6 +16,8 @@
 - [x] Documentar Cloudflare Pages en `cloudflare/pages/README.md`.
 - [x] Añadir `cloudflare/pages/env.example` sin secretos.
 - [x] Documentar DNS/Access staging en `cloudflare/dns-access/README.md`.
+- [x] Añadir fallback SPA de Cloudflare Pages (`public/_redirects`) para rutas directas como `/onboarding`.
+- [x] Añadir cabeceras defensivas basicas de Pages (`public/_headers`) sin CSP estricta.
 - [x] Reconciliar cambios sobre copia limpia del `main` oficial sin pisar documentos vivos de Agora/Sa Pedrera.
 - [x] Ejecutar validación limpia: `npm ci`, test dirigido, TypeScript, `npm run build`, bundle Worker.
 - [x] Validar visualmente `/onboarding` en Vite limpio; al seleccionar REVO aparecen los campos específicos.
@@ -34,6 +36,7 @@
   - `api-staging.middleware.winerim.wine` (DNS pendiente);
   - Cloudflare Access para equipo interno.
 - [ ] Configurar secrets/variables por entorno sin exponer tokens en logs ni frontend.
+- [ ] Auditar CSP completa antes de endurecer `public/_headers` con `Content-Security-Policy`.
 - [ ] Definir dónde se guardan solicitudes de onboarding: Postgres gestionado staging primero, no D1.
 - [ ] Conectar `/onboarding` con staging real y probar con una instalación Agora de pruebas.
 - [ ] Probar `/onboarding` REVO con tenant/access token/client-token reales antes de usarlo con clientes.
