@@ -39,6 +39,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - Nueva página `src/pages/CommercialOnboarding.tsx`.
 - Nueva utilidad pura `src/lib/middlewareOnboarding.ts`.
 - Nuevo test `src/test/middlewareOnboarding.test.ts`.
+- Nuevo test `src/test/middlewareWorker.test.ts` para health, validacion sin llamadas externas y REVO sin fuga de tokens.
 - Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
 - Nuevo ejemplo de entorno sin secretos: `cloudflare/pages/env.example`.
 - Nuevo runbook DNS/Access: `cloudflare/dns-access/README.md`.
@@ -65,7 +66,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
-  - `npm test -- --run src/test/middlewareOnboarding.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `21` tests.
+  - `npm test -- --run src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `24` tests.
   - `npx tsc --noEmit` OK.
   - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
   - Worker bundle OK con `esbuild`.
