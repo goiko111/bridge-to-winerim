@@ -2,6 +2,46 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Migración controlada a Cloudflare / `middleware.winerim.wine`
+- [x] Documentar estrategia inicial, rollback y riesgos en `CLOUDFLARE_MIDDLEWARE_MIGRATION_2026-06-12.md`.
+- [x] Crear utilidad pura de onboarding comercial en `src/lib/middlewareOnboarding.ts`.
+- [x] Crear Worker inicial no destructivo en `cloudflare/workers/middleware-api/src/index.ts`.
+- [x] Crear configuración Wrangler en `wrangler.middleware.toml`.
+- [x] Crear pantalla comercial `/onboarding` con POS, restaurante, URL POS, token POS, token Winerim y semáforos.
+- [x] Ajustar `/onboarding` para REVO: tenant, access token, client-token y webhook secret opcional.
+- [x] Añadir tests unitarios de normalización/validación/gates para onboarding.
+- [x] Validar bundle del Worker con `esbuild` en copia original.
+- [x] Validar transpile de página/utilidad/test de onboarding con `esbuild` en copia original.
+- [x] Validar Worker compilado con `fetch` simulado para REVO: endpoint `paymentMethods`, headers oficiales y respuesta sin secretos.
+- [x] Documentar Cloudflare Pages en `cloudflare/pages/README.md`.
+- [x] Añadir `cloudflare/pages/env.example` sin secretos.
+- [x] Reconciliar cambios sobre copia limpia del `main` oficial sin pisar documentos vivos de Agora/Sa Pedrera.
+- [x] Ejecutar validación limpia: `npm ci`, test dirigido, TypeScript, `npm run build`, bundle Worker.
+- [x] Validar visualmente `/onboarding` en Vite limpio; al seleccionar REVO aparecen los campos específicos.
+- [x] Resolver bloqueo Wrangler en rama limpia usando `npx --yes wrangler`.
+- [x] Ejecutar `wrangler deploy --env staging --dry-run`.
+- [x] Desplegar Worker staging `winerim-middleware-api-staging` sin tocar producción.
+- [x] Validar `GET /health` en `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
+- [x] Validar `POST /api/onboarding/test` con payload incompleto: responde errores de campos sin escrituras.
+- [ ] Crear DNS proxied/custom domain para que `https://api-staging.middleware.winerim.wine/health` resuelva.
+- [ ] Investigar por qué en la copia original `vite` escucha puerto pero no responde a HTTP; en la rama limpia ya funciona.
+- [ ] Crear entorno Cloudflare staging:
+  - `staging.middleware.winerim.wine`;
+  - `api-staging.middleware.winerim.wine` (DNS pendiente);
+  - Cloudflare Access para equipo interno.
+- [ ] Configurar secrets/variables por entorno sin exponer tokens en logs ni frontend.
+- [ ] Definir dónde se guardan solicitudes de onboarding: Postgres gestionado staging primero, no D1.
+- [ ] Conectar `/onboarding` con staging real y probar con una instalación Agora de pruebas.
+- [ ] Probar `/onboarding` REVO con tenant/access token/client-token reales antes de usarlo con clientes.
+- [ ] Añadir modo `dryRun`/revisión técnica antes de crear cualquier `pos_connection`.
+- [ ] Portar primer flujo Agora en Cloudflare solo lectura:
+  - health/readiness;
+  - master data;
+  - ventas post-cierre;
+  - sin XML import ni ocultación legacy.
+- [ ] Hacer canary con una conexión no crítica antes de mover cualquier cliente productivo.
+- [ ] Documentar rollback operativo: DNS vuelve a Lovable Cloud o se desactiva Cloudflare sin tocar datos.
+
 ## P0 — Auditoria Agora 2026-06-09
 - [x] Auditar todas las conexiones Agora salvo Sa Vida contra Lovable Cloud.
 - [x] Ejecutar pruebas vivas: Baco/Casa Nene/Katsu/Kava/La Candela/Sa Pedrera OK; Luruna `No route to host`; Cienvinos timeout.

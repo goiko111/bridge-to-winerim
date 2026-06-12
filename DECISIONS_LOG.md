@@ -580,3 +580,28 @@
 - **Decisión**: No ocultar `D207-Domaine Les Bruyeres 'Georges' Crozes-Hermitage` (`675360`) dentro de `TINTOS WINERIM`.
 - **Razón**: Winerim lo clasifica como `tinto`, esta activo y tiene precio de botella. Aunque no encaja con el subconjunto ordenado `T###`, ocultarlo podria dejar fuera un vino activo real.
 - **Alternativa descartada**: forzar que `TINTOS WINERIM` contenga solo codigos `T###`. Resolveria pureza visual, pero contradice el dato activo de Winerim hasta que el cliente confirme que quiere excluirlo.
+
+## 2026-06-12 · Iniciar migración controlada a Cloudflare sin tocar producción Lovable Cloud
+- **Decisión**: Empezar la migración hacia `middleware.winerim.wine` en Cloudflare con una primera pieza no destructiva: Worker `middleware-api`, configuración Wrangler, pantalla `/onboarding` y endpoint `POST /api/onboarding/test` para validar credenciales sin crear conexiones, sin persistir tokens, sin escribir productos y sin ocultar legacy.
+- **Razón**: El equipo necesita operar integraciones sin depender de acceso a Lovable y con una interfaz simple para comerciales. Empezar por onboarding/test reduce riesgo porque valida URL/token POS y token Winerim antes de tocar clientes reales, y permite construir staging/canary en paralelo mientras Lovable Cloud sigue siendo producción.
+- **Alternativa descartada**: migrar de golpe Edge Functions, crons, colas y clientes productivos a Cloudflare. Aunque acelera la independencia de Lovable, concentraría demasiados riesgos a la vez: DNS, secrets, rate limits, colas, idempotencia, observabilidad y rollback.
+
+## 2026-06-12 · Mantener Postgres gestionado como base principal y no usar D1 para el core transaccional
+- **Decisión**: Usar Cloudflare para UI, Workers, Access, colas/crons y dominio, pero mantener Postgres gestionado como base principal del middleware multi-tenant.
+- **Razón**: El proyecto depende de relaciones, auditoría, constraints, colas idempotentes, RLS/roles, trazabilidad de ventas y operaciones por `connection_id`. D1 puede ser útil para cachés o configuración periférica, pero no es el reemplazo prudente del core transaccional en esta fase.
+- **Alternativa descartada**: rediseñar inmediatamente la base sobre D1. Sería una reescritura innecesaria y aumentaría el riesgo de regresiones en stock, ventas e idempotencia.
+
+## 2026-06-12 · Ajustar onboarding REVO a los requisitos oficiales antes de staging Cloudflare
+- **Decisión**: Cambiar la pantalla y el Worker de onboarding para que REVO pida `tenant`, access token Bearer y `client-token`, usando por defecto `https://revoxef.works/api/external` y probando `GET /v2/paymentMethods` con los headers oficiales.
+- **Razón**: La API pública de REVO no se valida con una URL/token genéricos: requiere `tenant`, `Authorization: Bearer <token>` y `client-token`. Mantener el probe anterior habría dado falsos negativos y habría confundido al equipo comercial justo en el flujo que queremos simplificar.
+- **Alternativa descartada**: mantener un único campo “Token POS” para REVO y resolverlo manualmente después. Es más simple visualmente, pero desplaza el error al equipo técnico y rompe la idea de que comercial pueda dejar una integración lista para revisión sin conocer formatos internos.
+
+## 2026-06-12 · Desplegar solo Worker staging y dejar Pages pendiente de Access
+- **Decisión**: Desplegar únicamente `winerim-middleware-api-staging` en Cloudflare Workers, validarlo por `workers.dev` y no desplegar todavía Cloudflare Pages ni producción.
+- **Razón**: El Worker inicial no escribe, no guarda tokens y sirve para validar el runtime Cloudflare con bajo riesgo. La interfaz completa debe quedar protegida con Cloudflare Access antes de exponerla en `middleware.winerim.wine` o `staging.middleware.winerim.wine`.
+- **Alternativa descartada**: publicar inmediatamente el frontend en Pages. Acelera la revisión visual, pero expondría una interfaz operativa antes de tener cerrada la política de acceso y el dominio de staging.
+
+## 2026-06-12 · No resolver DNS staging sin permiso/registro Cloudflare explícito
+- **Decisión**: Mantener `api-staging.middleware.winerim.wine` como tarea pendiente y usar temporalmente `https://winerim-middleware-api-staging.gugocreative.workers.dev` para pruebas controladas.
+- **Razón**: Wrangler dejó creada la ruta Worker, pero el host `api-staging.middleware.winerim.wine` no resuelve DNS y la CLI disponible no expone una operación segura de creación de DNS. Crear registros DNS a ciegas podría interferir con la zona `winerim.wine`.
+- **Alternativa descartada**: crear manualmente un registro DNS desde scripts no versionados o con credenciales implícitas. Es mejor hacerlo desde Cloudflare Dashboard/API con confirmación del registro exacto y dejarlo documentado.

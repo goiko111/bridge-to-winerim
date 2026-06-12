@@ -2,7 +2,122 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-10 14:23 CEST_
+_Última actualización: 2026-06-12 08:17 CEST_
+
+## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
+
+### Scaffold Cloudflare creado
+- Se inicia la migración controlada del middleware hacia Cloudflare, sin tocar producción actual en Lovable Cloud.
+- Dominio objetivo documentado: `middleware.winerim.wine`.
+- API objetivo documentada: `api.middleware.winerim.wine`.
+- Archivo de arquitectura/rollback creado: `CLOUDFLARE_MIDDLEWARE_MIGRATION_2026-06-12.md`.
+- Worker inicial creado en `cloudflare/workers/middleware-api/src/index.ts`.
+- Configuración Wrangler creada en `wrangler.middleware.toml`.
+- Scripts añadidos:
+  - `cf:api:dev`;
+  - `cf:api:deploy:staging`;
+  - `cf:api:deploy:production`.
+
+### API inicial no destructiva
+- Endpoint `GET /health`.
+- Endpoint `POST /api/onboarding/test`.
+- `POST /api/onboarding/test`:
+  - lee el body una sola vez;
+  - valida campos mínimos;
+  - normaliza URL POS con `http://` si falta;
+  - prueba token Winerim;
+  - prueba alcance básico de Agora;
+  - prueba REVO con `tenant`, `Authorization: Bearer <access-token>` y `client-token`;
+  - no guarda tokens;
+  - no crea conexiones;
+  - no escribe productos;
+  - no oculta legacy;
+  - devuelve semáforos y `readyForTechnicalReview`.
+
+### Interfaz comercial inicial
+- Nueva ruta frontend `/onboarding`.
+- Nueva página `src/pages/CommercialOnboarding.tsx`.
+- Nueva utilidad pura `src/lib/middlewareOnboarding.ts`.
+- Nuevo test `src/test/middlewareOnboarding.test.ts`.
+- Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
+- Nuevo ejemplo de entorno sin secretos: `cloudflare/pages/env.example`.
+- La pantalla está orientada a equipo comercial:
+  - POS;
+  - restaurante;
+  - URL POS / base API;
+  - token POS;
+  - campos específicos REVO (`tenant`, access token, client-token);
+  - token Winerim;
+  - botón `Probar`;
+  - semáforos de estado;
+  - sin colas, XML, stockIds, logs crudos ni configuración avanzada.
+- La ruta se añadió al menú lateral como `Onboarding`.
+
+### Validación local
+- La migración se reconcilió en copia limpia del repo oficial `main` (`2bad270ccb4ce8cfa7ef530fbe37f61de1d0c6ca`) para no pisar estado vivo reciente.
+- Rama limpia temporal: `/tmp/bridge-to-winerim-cloudflare-check`, branch `codex/cloudflare-middleware-onboarding`.
+- Validación en rama limpia:
+  - `npm ci --ignore-scripts --no-audit --no-fund` OK.
+  - `npm test -- --run src/test/middlewareOnboarding.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `21` tests.
+  - `npx tsc --noEmit` OK.
+  - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
+  - Worker bundle OK con `esbuild`.
+  - Vite local en rama limpia responde HTTP 200 en `/onboarding`.
+  - Browser check: `/onboarding` renderiza; al seleccionar REVO aparecen Base API, Tenant, Access Token, Client Token y Webhook Secret.
+- `cloudflare/workers/middleware-api/src/index.ts` bundlea correctamente con `esbuild` en la copia de trabajo original.
+- `src/pages/CommercialOnboarding.tsx`, `src/lib/middlewareOnboarding.ts` y `src/test/middlewareOnboarding.test.ts` transpilan correctamente con `esbuild` sin bundlear dependencias.
+- Prueba directa sobre la utilidad compilada:
+  - `eljardiparets.ddns.net:8984/` normaliza a `http://eljardiparets.ddns.net:8984`;
+  - REVO sin URL explícita usa `https://revoxef.works/api/external`;
+  - REVO exige `revoTenant` y `revoClientToken`;
+  - validación mínima correcta;
+  - `isReadyForTechnicalReview` devuelve `true` si input/Winerim/POS están en `pass/warn`.
+- Prueba directa del Worker compilado con `fetch` simulado:
+  - Winerim se prueba con `GET /api/v2/wines?page=1&limit=1`;
+  - REVO se prueba con `GET /api/external/v2/paymentMethods`;
+  - la respuesta pública no devuelve access token, client-token ni token Winerim.
+- Validaciones no completadas en la copia original:
+  - `npm test -- --run src/test/middlewareOnboarding.test.ts`, `npm run build`, `npx tsc --noEmit --project tsconfig.app.json` y `npx eslint ...` se quedaron colgados y se mataron para no dejar procesos vivos.
+  - `vite` arranca en local y abre puerto, pero `curl` a `/onboarding` queda esperando sin recibir respuesta.
+  - `npx wrangler --version` y `npx wrangler whoami` se quedaron esperando sin salida; no hay despliegue Cloudflare desde esta copia local.
+
+### Cloudflare staging
+- `npx --yes wrangler --version` funciona en la rama limpia: `4.86.0`.
+- `npx --yes wrangler whoami` confirma sesión Cloudflare con permisos de Workers/Pages.
+- `wrangler deploy --config wrangler.middleware.toml --env staging --dry-run` OK.
+- Worker staging desplegado:
+  - Servicio: `winerim-middleware-api-staging`.
+  - Version ID: `21976e01-4065-4c09-ae5f-6f91d1e7b0c9`.
+  - URL funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
+  - Ruta declarada por Wrangler: `api-staging.middleware.winerim.wine/*`.
+- `GET /health` OK en `workers.dev`.
+- `POST /api/onboarding/test` con payload REVO incompleto devuelve validación correcta y no llama a servicios externos.
+- Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS (`Could not resolve host`), aunque la ruta Worker quedó declarada. Falta crear/apuntar el registro DNS proxied o Custom Domain para ese host desde Cloudflare Dashboard/API.
+- No se ha desplegado Cloudflare Pages todavía; se pospone hasta configurar Access o confirmar exposición controlada.
+- Proyectos Pages existentes vistos en la cuenta Cloudflare: `winerim-help`, `spiritsrim`, `winerim-informes`; no existe aún proyecto Pages para el middleware.
+
+### Decisiones
+- No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.
+- Mantener Lovable Cloud como producción actual hasta validar Cloudflare con staging y canary.
+- La primera API Cloudflare solo puede probar; cualquier escritura queda bloqueada hasta revisión técnica, dry-run y rollback.
+- Postgres gestionado seguirá siendo la base principal objetivo; Cloudflare D1 no se usa para el core transaccional del middleware.
+- Desplegar solo Worker staging, no producción, y mantener Pages pendiente hasta proteger la UI con Cloudflare Access.
+- Usar temporalmente `https://winerim-middleware-api-staging.gugocreative.workers.dev` para pruebas de API staging hasta resolver DNS de `api-staging.middleware.winerim.wine`.
+
+### Hipótesis / Riesgos
+- HIPÓTESIS SUJETA A VALIDACIÓN: Cloudflare Workers + Queues + Cron + Durable Objects cubren bien el runtime de 100 clientes si el diseño mantiene rate limit/circuit breaker por `connection_id`.
+- Riesgo mitigado: el probe REVO `/resources` se sustituyó por `paymentMethods` con headers oficiales; falta validarlo con un tenant real.
+- Riesgo: el Worker no debe loggear tokens ni devolverlos en respuestas; las salidas actuales están sanitizadas.
+
+### Tareas pendientes
+- Crear DNS proxied para `api-staging.middleware.winerim.wine` o configurar Custom Domain equivalente para el Worker.
+- Levantar Cloudflare Access para `middleware.winerim.wine`.
+- Crear Pages staging:
+  - `staging.middleware.winerim.wine`;
+  - Cloudflare Access obligatorio antes de exponerlo al equipo.
+- Configurar variables/secrets por entorno.
+- Añadir persistencia segura de solicitudes de integración tras resolver diseño de Postgres/staging.
+- Portar primero Agora completo en modo lectura y dry-run.
 
 ## Hechos (qué está desplegado y verificado)
 
