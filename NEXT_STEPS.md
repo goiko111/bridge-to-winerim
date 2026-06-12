@@ -23,7 +23,10 @@
 - [x] Desplegar Worker staging `winerim-middleware-api-staging` sin tocar producción.
 - [x] Validar `GET /health` en `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
 - [x] Validar `POST /api/onboarding/test` con payload incompleto: responde errores de campos sin escrituras.
+- [x] Subir rama `codex/cloudflare-middleware-onboarding` a GitHub sin tocar `main`.
+- [x] Abrir PR draft `#1` para revisión: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - [ ] Crear DNS proxied/custom domain para que `https://api-staging.middleware.winerim.wine/health` resuelva.
+- [ ] Configurar Cloudflare Access antes de desplegar `staging.middleware.winerim.wine`.
 - [ ] Investigar por qué en la copia original `vite` escucha puerto pero no responde a HTTP; en la rama limpia ya funciona.
 - [ ] Crear entorno Cloudflare staging:
   - `staging.middleware.winerim.wine`;

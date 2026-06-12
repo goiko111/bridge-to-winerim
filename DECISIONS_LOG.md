@@ -605,3 +605,8 @@
 - **Decisión**: Mantener `api-staging.middleware.winerim.wine` como tarea pendiente y usar temporalmente `https://winerim-middleware-api-staging.gugocreative.workers.dev` para pruebas controladas.
 - **Razón**: Wrangler dejó creada la ruta Worker, pero el host `api-staging.middleware.winerim.wine` no resuelve DNS y la CLI disponible no expone una operación segura de creación de DNS. Crear registros DNS a ciegas podría interferir con la zona `winerim.wine`.
 - **Alternativa descartada**: crear manualmente un registro DNS desde scripts no versionados o con credenciales implícitas. Es mejor hacerlo desde Cloudflare Dashboard/API con confirmación del registro exacto y dejarlo documentado.
+
+## 2026-06-12 · Subir migración Cloudflare en rama y PR draft, no en `main`
+- **Decisión**: Subir `codex/cloudflare-middleware-onboarding` a GitHub y abrir PR draft `#1`, manteniendo `main` sin cambios.
+- **Razón**: La rama en `/tmp` no es un lugar persistente suficiente para continuar trabajo crítico. Un PR draft preserva el estado, permite revisión y evita mezclar el scaffold Cloudflare con producción antes de cerrar DNS, Access y pruebas reales.
+- **Alternativa descartada**: empujar directamente a `main`. Aunque aceleraría el despliegue, no está justificado porque Pages aún no tiene Access y el dominio staging aún no resuelve.

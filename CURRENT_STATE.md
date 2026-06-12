@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-12 08:17 CEST_
+_Última actualización: 2026-06-12 18:03 CEST_
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -56,6 +56,9 @@ _Última actualización: 2026-06-12 08:17 CEST_
 ### Validación local
 - La migración se reconcilió en copia limpia del repo oficial `main` (`2bad270ccb4ce8cfa7ef530fbe37f61de1d0c6ca`) para no pisar estado vivo reciente.
 - Rama limpia temporal: `/tmp/bridge-to-winerim-cloudflare-check`, branch `codex/cloudflare-middleware-onboarding`.
+- Commit local y remoto: `f1709ce` (`Add Cloudflare onboarding staging scaffold`).
+- Rama subida a GitHub: `origin/codex/cloudflare-middleware-onboarding`.
+- PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
   - `npm test -- --run src/test/middlewareOnboarding.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `21` tests.
@@ -95,6 +98,7 @@ _Última actualización: 2026-06-12 08:17 CEST_
 - Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS (`Could not resolve host`), aunque la ruta Worker quedó declarada. Falta crear/apuntar el registro DNS proxied o Custom Domain para ese host desde Cloudflare Dashboard/API.
 - No se ha desplegado Cloudflare Pages todavía; se pospone hasta configurar Access o confirmar exposición controlada.
 - Proyectos Pages existentes vistos en la cuenta Cloudflare: `winerim-help`, `spiritsrim`, `winerim-informes`; no existe aún proyecto Pages para el middleware.
+- No se ha tocado `main` ni producción de Lovable Cloud durante esta continuación.
 
 ### Decisiones
 - No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.
@@ -103,6 +107,7 @@ _Última actualización: 2026-06-12 08:17 CEST_
 - Postgres gestionado seguirá siendo la base principal objetivo; Cloudflare D1 no se usa para el core transaccional del middleware.
 - Desplegar solo Worker staging, no producción, y mantener Pages pendiente hasta proteger la UI con Cloudflare Access.
 - Usar temporalmente `https://winerim-middleware-api-staging.gugocreative.workers.dev` para pruebas de API staging hasta resolver DNS de `api-staging.middleware.winerim.wine`.
+- Mantener el PR como draft hasta resolver DNS/Access y validar el flujo de onboarding con al menos una conexión de prueba.
 
 ### Hipótesis / Riesgos
 - HIPÓTESIS SUJETA A VALIDACIÓN: Cloudflare Workers + Queues + Cron + Durable Objects cubren bien el runtime de 100 clientes si el diseño mantiene rate limit/circuit breaker por `connection_id`.
