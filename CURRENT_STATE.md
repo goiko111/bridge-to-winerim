@@ -41,6 +41,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - Nuevo test `src/test/middlewareOnboarding.test.ts`.
 - Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
 - Nuevo ejemplo de entorno sin secretos: `cloudflare/pages/env.example`.
+- Nuevo runbook DNS/Access: `cloudflare/dns-access/README.md`.
 - La pantalla está orientada a equipo comercial:
   - POS;
   - restaurante;
@@ -99,6 +100,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - No se ha desplegado Cloudflare Pages todavía; se pospone hasta configurar Access o confirmar exposición controlada.
 - Proyectos Pages existentes vistos en la cuenta Cloudflare: `winerim-help`, `spiritsrim`, `winerim-informes`; no existe aún proyecto Pages para el middleware.
 - No se ha tocado `main` ni producción de Lovable Cloud durante esta continuación.
+- Se investigó CLI/API disponible para DNS/Access: Wrangler no ofrece una operación directa segura para crear el DNS staging desde este entorno. Queda documentado el proceso de Dashboard/Custom Domain.
 
 ### Decisiones
 - No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.

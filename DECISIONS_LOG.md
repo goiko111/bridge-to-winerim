@@ -610,3 +610,8 @@
 - **Decisión**: Subir `codex/cloudflare-middleware-onboarding` a GitHub y abrir PR draft `#1`, manteniendo `main` sin cambios.
 - **Razón**: La rama en `/tmp` no es un lugar persistente suficiente para continuar trabajo crítico. Un PR draft preserva el estado, permite revisión y evita mezclar el scaffold Cloudflare con producción antes de cerrar DNS, Access y pruebas reales.
 - **Alternativa descartada**: empujar directamente a `main`. Aunque aceleraría el despliegue, no está justificado porque Pages aún no tiene Access y el dominio staging aún no resuelve.
+
+## 2026-06-12 · Proteger Pages staging con Access, no la API staging todavía
+- **Decisión**: Aplicar Cloudflare Access primero sobre `staging.middleware.winerim.wine` y dejar `api-staging.middleware.winerim.wine` sin Access hasta implementar validación explícita de Access/JWT o service tokens en el Worker.
+- **Razón**: La UI llama a la API desde navegador. Si se protege la API con Access sin adaptar CORS y validación de tokens, el onboarding fallará aunque la UI esté autorizada. El endpoint actual de API staging no escribe ni guarda tokens, por lo que el riesgo temporal es acotado.
+- **Alternativa descartada**: proteger UI y API con Access simultáneamente. Es más cerrado en apariencia, pero rompería el flujo actual o exigiría autenticación técnica adicional que aún no está implementada.

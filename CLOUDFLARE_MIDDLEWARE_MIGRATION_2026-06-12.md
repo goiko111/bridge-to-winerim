@@ -10,6 +10,7 @@
   - Worker: `cloudflare/workers/middleware-api/src/index.ts`.
   - Config: `wrangler.middleware.toml`.
   - Front comercial: `/onboarding`.
+- Runbook DNS/Access creado: `cloudflare/dns-access/README.md`.
 - Worker staging desplegado y validado:
   - Servicio: `winerim-middleware-api-staging`.
   - URL temporal funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
@@ -114,6 +115,7 @@ Postgres gestionado
 - [x] Configurar scripts `cf:api:*`.
 - [x] Ajustar onboarding REVO a requisitos reales: tenant + access token + client-token.
 - [x] Documentar setup de Pages en `cloudflare/pages/README.md`.
+- [x] Documentar DNS/Access staging en `cloudflare/dns-access/README.md`.
 - [x] Crear Worker staging funcional en `workers.dev`.
 - [x] Validar `GET /health` y validacion negativa de `/api/onboarding/test`.
 - [ ] Configurar Cloudflare Access para `middleware.winerim.wine`.

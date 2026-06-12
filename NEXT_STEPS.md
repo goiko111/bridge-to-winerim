@@ -15,6 +15,7 @@
 - [x] Validar Worker compilado con `fetch` simulado para REVO: endpoint `paymentMethods`, headers oficiales y respuesta sin secretos.
 - [x] Documentar Cloudflare Pages en `cloudflare/pages/README.md`.
 - [x] Añadir `cloudflare/pages/env.example` sin secretos.
+- [x] Documentar DNS/Access staging en `cloudflare/dns-access/README.md`.
 - [x] Reconciliar cambios sobre copia limpia del `main` oficial sin pisar documentos vivos de Agora/Sa Pedrera.
 - [x] Ejecutar validación limpia: `npm ci`, test dirigido, TypeScript, `npm run build`, bundle Worker.
 - [x] Validar visualmente `/onboarding` en Vite limpio; al seleccionar REVO aparecen los campos específicos.
