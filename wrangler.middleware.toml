@@ -1,12 +1,12 @@
 name = "winerim-middleware-api"
 main = "cloudflare/workers/middleware-api/src/index.ts"
-compatibility_date = "2026-06-12"
+compatibility_date = "2026-05-03"
 workers_dev = true
 
 [vars]
 ENVIRONMENT = "local"
 RELEASE = "dev"
-ALLOWED_ORIGIN = "http://localhost:8080"
+ALLOWED_ORIGIN = "http://127.0.0.1:8084"
 
 [env.staging]
 name = "winerim-middleware-api-staging"

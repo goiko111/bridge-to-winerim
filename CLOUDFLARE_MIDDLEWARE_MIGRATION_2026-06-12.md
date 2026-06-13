@@ -14,7 +14,7 @@
 - Worker staging desplegado y validado:
   - Servicio: `winerim-middleware-api-staging`.
   - URL temporal funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
-  - Version ID: `21976e01-4065-4c09-ae5f-6f91d1e7b0c9`.
+  - Version ID actual: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
 - `api-staging.middleware.winerim.wine` esta declarado como ruta Worker, pero todavia no resuelve DNS.
 - El primer endpoint Cloudflare es deliberadamente no destructivo:
   - `GET /health`.

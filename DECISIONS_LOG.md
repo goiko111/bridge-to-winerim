@@ -620,3 +620,8 @@
 - **Decisión**: Añadir `public/_redirects` y `public/_headers` para Cloudflare Pages, con fallback SPA y cabeceras defensivas basicas, pero sin `Content-Security-Policy` estricta.
 - **Razón**: El fallback es necesario para que `/onboarding` funcione al abrir URL directa. Las cabeceras basicas reducen riesgo sin afectar al frontend. Una CSP estricta puede romper estilos o librerias si no se audita primero.
 - **Alternativa descartada**: activar CSP completa desde el primer despliegue. Es mejor seguridad a largo plazo, pero hacerlo sin inventario de dependencias aumentaria riesgo de una UI rota en staging.
+
+## 2026-06-13 · Usar `compatibility_date=2026-05-03` para que Wrangler local arranque
+- **Decisión**: Cambiar `wrangler.middleware.toml` de `compatibility_date=2026-06-12` a `2026-05-03` y ajustar el origen local permitido a `http://127.0.0.1:8084`.
+- **Razón**: `wrangler 4.86.0` despliega staging, pero su runtime local no arranca con una fecha posterior a `2026-05-03`. El Worker no usa APIs que dependan de una fecha posterior, y la UI local necesita CORS desde `127.0.0.1:8084`.
+- **Alternativa descartada**: mantener `2026-06-12` y dejar el Worker local apagado. La pantalla `/onboarding` cargaria, pero el boton `Probar` fallaria contra `localhost:8787`.

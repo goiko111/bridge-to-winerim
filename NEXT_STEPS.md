@@ -27,6 +27,10 @@
 - [x] Desplegar Worker staging `winerim-middleware-api-staging` sin tocar producción.
 - [x] Validar `GET /health` en `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
 - [x] Validar `POST /api/onboarding/test` con payload incompleto: responde errores de campos sin escrituras.
+- [x] Ajustar `compatibility_date` para que `wrangler dev` arranque localmente con la versión instalada.
+- [x] Levantar Vite local en `http://127.0.0.1:8084/onboarding` y Worker local en `http://127.0.0.1:8787`.
+- [x] Validar CORS local y preflight `OPTIONS` desde `127.0.0.1:8084`.
+- [x] Redeploy staging tras ajuste de compatibilidad: Version ID `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
 - [x] Subir rama `codex/cloudflare-middleware-onboarding` a GitHub sin tocar `main`.
 - [x] Abrir PR draft `#1` para revisión: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - [ ] Crear DNS proxied/custom domain para que `https://api-staging.middleware.winerim.wine/health` resuelva.

@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-12 18:03 CEST_
+_Última actualización: 2026-06-13 08:51 CEST_
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -72,6 +72,13 @@ _Última actualización: 2026-06-12 18:03 CEST_
   - Worker bundle OK con `esbuild`.
   - Vite local en rama limpia responde HTTP 200 en `/onboarding`.
   - Browser check: `/onboarding` renderiza; al seleccionar REVO aparecen Base API, Tenant, Access Token, Client Token y Webhook Secret.
+- Validación local 2026-06-13:
+  - Vite levantado en `http://127.0.0.1:8084/onboarding`.
+  - Worker local levantado en `http://127.0.0.1:8787`.
+  - `GET /health` local OK con CORS `Access-Control-Allow-Origin: http://127.0.0.1:8084`.
+  - `OPTIONS /api/onboarding/test` local OK.
+  - `POST /api/onboarding/test` con payload REVO incompleto devuelve solo validaciones, sin llamadas externas.
+  - `wrangler.middleware.toml` usa `compatibility_date = "2026-05-03"` porque `wrangler 4.86.0` no arranca localmente con `2026-06-12`.
 - `cloudflare/workers/middleware-api/src/index.ts` bundlea correctamente con `esbuild` en la copia de trabajo original.
 - `src/pages/CommercialOnboarding.tsx`, `src/lib/middlewareOnboarding.ts` y `src/test/middlewareOnboarding.test.ts` transpilan correctamente con `esbuild` sin bundlear dependencias.
 - Prueba directa sobre la utilidad compilada:
@@ -95,11 +102,13 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - `wrangler deploy --config wrangler.middleware.toml --env staging --dry-run` OK.
 - Worker staging desplegado:
   - Servicio: `winerim-middleware-api-staging`.
-  - Version ID: `21976e01-4065-4c09-ae5f-6f91d1e7b0c9`.
+  - Version ID actual: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
+  - Version ID anterior: `21976e01-4065-4c09-ae5f-6f91d1e7b0c9`.
   - URL funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
   - Ruta declarada por Wrangler: `api-staging.middleware.winerim.wine/*`.
 - `GET /health` OK en `workers.dev`.
 - `POST /api/onboarding/test` con payload REVO incompleto devuelve validación correcta y no llama a servicios externos.
+- Redeploy staging 2026-06-13 tras ajustar `compatibility_date`; `GET /health` sigue OK.
 - Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS (`Could not resolve host`), aunque la ruta Worker quedó declarada. Falta crear/apuntar el registro DNS proxied o Custom Domain para ese host desde Cloudflare Dashboard/API.
 - No se ha desplegado Cloudflare Pages todavía; se pospone hasta configurar Access o confirmar exposición controlada.
 - Proyectos Pages existentes vistos en la cuenta Cloudflare: `winerim-help`, `spiritsrim`, `winerim-informes`; no existe aún proyecto Pages para el middleware.
@@ -115,6 +124,7 @@ _Última actualización: 2026-06-12 18:03 CEST_
 - Desplegar solo Worker staging, no producción, y mantener Pages pendiente hasta proteger la UI con Cloudflare Access.
 - Usar temporalmente `https://winerim-middleware-api-staging.gugocreative.workers.dev` para pruebas de API staging hasta resolver DNS de `api-staging.middleware.winerim.wine`.
 - Mantener el PR como draft hasta resolver DNS/Access y validar el flujo de onboarding con al menos una conexión de prueba.
+- Mantener `compatibility_date=2026-05-03` hasta actualizar Wrangler o confirmar que Cloudflare soporta una fecha posterior también en local.
 
 ### Hipótesis / Riesgos
 - HIPÓTESIS SUJETA A VALIDACIÓN: Cloudflare Workers + Queues + Cron + Durable Objects cubren bien el runtime de 100 clientes si el diseño mantiene rate limit/circuit breaker por `connection_id`.
