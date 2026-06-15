@@ -630,3 +630,8 @@
 - **Decisión**: Añadir `src/lib/middlewareApiUrl.ts` y usarlo en `/onboarding`: primero respeta `VITE_MIDDLEWARE_API_URL`, despues resuelve por hostname (`staging.middleware.winerim.wine` / `middleware.winerim.wine`) y finalmente cae a `http://127.0.0.1:8787`.
 - **Razón**: En Cloudflare Pages, una variable `VITE_MIDDLEWARE_API_URL` olvidada haria que la UI llamara a localhost. Resolver por hostname hace el despliegue mas tolerante sin exponer secretos ni cambiar runtime.
 - **Alternativa descartada**: depender siempre de `VITE_MIDDLEWARE_API_URL`. Es explicito, pero fragil para un flujo que queremos que pueda operar el equipo sin ajustes tecnicos diarios.
+
+## 2026-06-15 · Preparar `onboarding_requests` sin activar escritura ni guardar tokens
+- **Decisión**: Versionar la migracion `20260615073500_onboarding_requests.sql` y la utilidad `onboardingRequest.ts`, pero no conectar todavia la UI/Worker a escritura.
+- **Razón**: Necesitamos una bandeja de solicitudes para que comercial no dependa de Lovable Cloud, pero guardar tokens en claro o crear conexiones automaticamente seria un salto de riesgo. La tabla guarda solo metadata sanitizada y referencias externas a secretos.
+- **Alternativa descartada**: insertar directamente en `pos_connections` desde `/onboarding`. Aceleraria el alta, pero saltaria revision tecnica, dry-run, rollback y protecciones de legacy/mappings.

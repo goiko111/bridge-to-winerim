@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-15 07:35 CEST_
+_Última actualización: 2026-06-15 08:03 CEST_
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -39,11 +39,15 @@ _Última actualización: 2026-06-15 07:35 CEST_
 - Nueva página `src/pages/CommercialOnboarding.tsx`.
 - Nueva utilidad pura `src/lib/middlewareOnboarding.ts`.
 - Nueva utilidad pura `src/lib/middlewareApiUrl.ts` para resolver la API del middleware desde env/hostname.
+- Nueva utilidad pura `src/lib/onboardingRequest.ts` para preparar payloads sanitizados de solicitudes.
 - Nuevo test `src/test/middlewareOnboarding.test.ts`.
 - Nuevo test `src/test/middlewareWorker.test.ts` para health, validacion sin llamadas externas y REVO sin fuga de tokens.
+- Nuevo test `src/test/onboardingRequest.test.ts` para comprobar que los payloads de solicitud no filtran secretos.
 - Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
 - Nuevo ejemplo de entorno sin secretos: `cloudflare/pages/env.example`.
 - Nuevo runbook DNS/Access: `cloudflare/dns-access/README.md`.
+- Nuevo documento de persistencia onboarding: `cloudflare/onboarding-storage/README.md`.
+- Nueva migracion preparada: `supabase/migrations/20260615073500_onboarding_requests.sql`.
 - Nuevos archivos Pages:
   - `public/_redirects` para fallback SPA (`/onboarding` directo);
   - `public/_headers` con cabeceras defensivas basicas.
@@ -67,7 +71,7 @@ _Última actualización: 2026-06-15 07:35 CEST_
 - PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
-  - `npm test -- --run src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `29` tests.
+  - `npm test -- --run src/test/onboardingRequest.test.ts src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `33` tests.
   - `npx tsc --noEmit` OK.
   - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
   - Worker bundle OK con `esbuild`.
@@ -89,6 +93,12 @@ _Última actualización: 2026-06-15 07:35 CEST_
   - Vite OK en `http://127.0.0.1:8084/onboarding`.
   - Worker local OK en `http://127.0.0.1:8787/health`.
   - `POST /api/onboarding/test` con Agora incompleto devuelve validaciones esperadas.
+- Persistencia onboarding preparada 2026-06-15:
+  - tabla `onboarding_requests` versionada, pero no aplicada a produccion;
+  - RLS habilitada sin politicas abiertas;
+  - checks para bloquear claves JSON con `token`, `secret`, `password`, `credential` o `api_key` en payloads sanitizados, gates, resumen y referencias de secretos;
+  - checks de forma JSON: metadata/resumen/referencias como objetos y gates como array;
+  - la UI/Worker aun no escriben en la tabla.
 - `cloudflare/workers/middleware-api/src/index.ts` bundlea correctamente con `esbuild` en la copia de trabajo original.
 - `src/pages/CommercialOnboarding.tsx`, `src/lib/middlewareOnboarding.ts` y `src/test/middlewareOnboarding.test.ts` transpilan correctamente con `esbuild` sin bundlear dependencias.
 - Prueba directa sobre la utilidad compilada:

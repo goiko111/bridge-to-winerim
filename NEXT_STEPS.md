@@ -6,6 +6,7 @@
 - [x] Documentar estrategia inicial, rollback y riesgos en `CLOUDFLARE_MIDDLEWARE_MIGRATION_2026-06-12.md`.
 - [x] Crear utilidad pura de onboarding comercial en `src/lib/middlewareOnboarding.ts`.
 - [x] Crear resolver de API frontend en `src/lib/middlewareApiUrl.ts` para env/hostname/fallback local.
+- [x] Crear utilidad de payload sanitizado para solicitudes en `src/lib/onboardingRequest.ts`.
 - [x] Crear Worker inicial no destructivo en `cloudflare/workers/middleware-api/src/index.ts`.
 - [x] Crear configuración Wrangler en `wrangler.middleware.toml`.
 - [x] Crear pantalla comercial `/onboarding` con POS, restaurante, URL POS, token POS, token Winerim y semáforos.
@@ -13,6 +14,7 @@
 - [x] Añadir tests unitarios de normalización/validación/gates para onboarding.
 - [x] Añadir tests del Worker: health, validación sin llamadas externas y REVO sin eco de secretos.
 - [x] Añadir tests del resolver de URL API frontend.
+- [x] Añadir tests de payload sanitizado de solicitud onboarding.
 - [x] Validar bundle del Worker con `esbuild` en copia original.
 - [x] Validar transpile de página/utilidad/test de onboarding con `esbuild` en copia original.
 - [x] Validar Worker compilado con `fetch` simulado para REVO: endpoint `paymentMethods`, headers oficiales y respuesta sin secretos.
@@ -43,8 +45,10 @@
   - `api-staging.middleware.winerim.wine` (DNS pendiente);
   - Cloudflare Access para equipo interno.
 - [ ] Configurar secrets/variables por entorno sin exponer tokens en logs ni frontend.
+- [x] Definir tabla inicial `onboarding_requests` para Postgres gestionado sin D1 ni tokens en claro.
 - [ ] Auditar CSP completa antes de endurecer `public/_headers` con `Content-Security-Policy`.
-- [ ] Definir dónde se guardan solicitudes de onboarding: Postgres gestionado staging primero, no D1.
+- [ ] Aplicar migracion `20260615073500_onboarding_requests.sql` solo en Postgres staging, no en produccion.
+- [ ] Elegir secret storage real para tokens antes de activar `POST /api/onboarding/requests`.
 - [ ] Conectar `/onboarding` con staging real y probar con una instalación Agora de pruebas.
 - [ ] Probar `/onboarding` REVO con tenant/access token/client-token reales antes de usarlo con clientes.
 - [ ] Añadir modo `dryRun`/revisión técnica antes de crear cualquier `pos_connection`.
