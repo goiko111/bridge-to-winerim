@@ -640,3 +640,8 @@
 - **Decisión**: No crear todavia proyecto Cloudflare Pages publico ni Secrets Store real desde Wrangler, aunque la CLI permite gestionar ambas piezas.
 - **Razón**: La UI de onboarding debe estar protegida por Cloudflare Access antes de exponerse al equipo, y los tokens POS/Winerim necesitan un modelo claro de referencias opacas antes de persistir solicitudes.
 - **Alternativa descartada**: desplegar Pages inmediatamente en dominio temporal o crear un Secrets Store sin contrato de nombres/permisos. Seria rapido para demo, pero aumentaria superficie publica y deuda de seguridad.
+
+## 2026-06-15 · Preparar CORS/credenciales para Cloudflare Access sin activar autenticación propia
+- **Decisión**: Hacer que `/onboarding` envie `credentials: "include"` y que el Worker responda CORS con origen permitido, credenciales, `Vary: Origin` y cabeceras `CF-Access-*`.
+- **Razón**: Cuando `staging.middleware.winerim.wine` y/o la API pasen por Cloudflare Access, el navegador necesitara enviar cookies/credenciales sin que el preflight bloquee el boton `Probar`. El cambio es reversible y no altera la logica de negocio.
+- **Alternativa descartada**: proteger la API con Access antes de adaptar CORS/frontend. Habria dado una sensacion de seguridad, pero podria romper el flujo de onboarding desde el navegador.

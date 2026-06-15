@@ -22,12 +22,35 @@ describe("Cloudflare middleware worker", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe(env.ALLOWED_ORIGIN);
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
     expect(body).toMatchObject({
       ok: true,
       service: "winerim-middleware-api",
       environment: "test",
       release: "test",
     });
+  });
+
+  it("supports Access-friendly preflight with the requesting allowed origin", async () => {
+    const response = await worker.fetch(
+      new Request("https://api.example.test/api/onboarding/test", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://preview.middleware.winerim.wine",
+          "Access-Control-Request-Method": "POST",
+        },
+      }),
+      {
+        ...env,
+        ALLOWED_ORIGINS: "https://staging.middleware.winerim.wine, https://preview.middleware.winerim.wine",
+      },
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://preview.middleware.winerim.wine");
+    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toContain("CF-Access-Client-Id");
+    expect(response.headers.get("Vary")).toBe("Origin");
   });
 
   it("rejects incomplete onboarding payloads without external calls", async () => {

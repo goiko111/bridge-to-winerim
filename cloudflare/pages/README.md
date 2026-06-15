@@ -48,6 +48,12 @@ Antes de exponer Pages al equipo:
 - Activar logs de acceso.
 - No desplegar Pages publicamente hasta que esta politica exista.
 
+La UI llama al Worker con `credentials: "include"` para ser compatible con cookies/credenciales de Access. El Worker debe estar desplegado con `ALLOWED_ORIGINS` correcto y responder:
+
+- `Access-Control-Allow-Origin` con el origen exacto de Pages;
+- `Access-Control-Allow-Credentials: true`;
+- `Vary: Origin`.
+
 ## Validacion inicial
 1. Desplegar solo staging.
 2. Abrir `/onboarding`.

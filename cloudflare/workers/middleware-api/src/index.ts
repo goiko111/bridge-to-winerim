@@ -11,25 +11,43 @@ export interface Env {
   ENVIRONMENT?: string;
   RELEASE?: string;
   ALLOWED_ORIGIN?: string;
+  ALLOWED_ORIGINS?: string;
 }
 
 const WINERIM_API_BASE_URL = "https://app.winerim.com/api/v2";
 const REQUEST_TIMEOUT_MS = 8000;
 
-function corsHeaders(env: Env): HeadersInit {
+function allowedOrigins(env: Env): string[] {
+  return String(env.ALLOWED_ORIGINS || env.ALLOWED_ORIGIN || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function corsOrigin(request: Request, env: Env): string {
+  const requestOrigin = request.headers.get("Origin");
+  const allowed = allowedOrigins(env);
+  if (!requestOrigin) return allowed[0] || "*";
+  if (allowed.includes(requestOrigin) || allowed.includes("*")) return requestOrigin;
+  return allowed[0] || requestOrigin;
+}
+
+function corsHeaders(request: Request, env: Env): HeadersInit {
   return {
-    "Access-Control-Allow-Origin": env.ALLOWED_ORIGIN || "*",
+    "Access-Control-Allow-Origin": corsOrigin(request, env),
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, CF-Access-Client-Id, CF-Access-Client-Secret",
     "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
   };
 }
 
-function jsonResponse(body: unknown, env: Env, init: ResponseInit = {}): Response {
+function jsonResponse(request: Request, body: unknown, env: Env, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
     ...init,
     headers: {
-      ...corsHeaders(env),
+      ...corsHeaders(request, env),
       "Content-Type": "application/json; charset=utf-8",
       ...(init.headers || {}),
     },
@@ -144,12 +162,12 @@ async function handleOnboardingTest(request: Request, env: Env): Promise<Respons
   try {
     body = await parseJsonOnce(request);
   } catch {
-    return jsonResponse({ success: false, error: "INVALID_JSON" }, env, { status: 400 });
+    return jsonResponse(request, { success: false, error: "INVALID_JSON" }, env, { status: 400 });
   }
 
   const validation = validateCommercialOnboardingInput(body as Partial<CommercialOnboardingInput>);
   if (!validation.valid) {
-    return jsonResponse({
+    return jsonResponse(request, {
       success: false,
       error: "VALIDATION_FAILED",
       errors: validation.errors,
@@ -170,7 +188,7 @@ async function handleOnboardingTest(request: Request, env: Env): Promise<Respons
     gate("write", "Escritura", "blocked", "Sin escritura automatica: requiere revision tecnica y dry-run antes de activar."),
   ];
 
-  return jsonResponse({
+  return jsonResponse(request, {
     success: true,
     environment: env.ENVIRONMENT || "local",
     normalized: {
@@ -189,11 +207,11 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(env) });
+      return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return jsonResponse({
+      return jsonResponse(request, {
         ok: true,
         service: "winerim-middleware-api",
         environment: env.ENVIRONMENT || "local",
@@ -205,6 +223,6 @@ export default {
       return handleOnboardingTest(request, env);
     }
 
-    return jsonResponse({ success: false, error: "NOT_FOUND" }, env, { status: 404 });
+    return jsonResponse(request, { success: false, error: "NOT_FOUND" }, env, { status: 404 });
   },
 };

@@ -10,7 +10,7 @@ Activar staging bajo dominios de `winerim.wine` sin tocar produccion Lovable Clo
 
 ## Estado actual
 - Worker staging desplegado: `winerim-middleware-api-staging`.
-- Version ID actual: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
+- Version ID actual: `da36b3d3-f429-45c0-b5fe-964ac098802e`.
 - URL temporal funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
 - Ruta Worker declarada en `wrangler.middleware.toml`: `api-staging.middleware.winerim.wine/*`.
 - Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS.
@@ -84,15 +84,32 @@ Aplicar Access sobre la UI staging:
 
 Importante: no proteger `api-staging.middleware.winerim.wine` con Access todavia si la UI llama a la API desde el navegador. Si se protege tambien la API, el Worker debe validar/aceptar el token de Access y la configuracion CORS debe permitir ese flujo. El endpoint actual no escribe ni guarda tokens, por lo que puede quedar publico temporalmente en staging mientras se implementa autenticacion real para endpoints destructivos.
 
+El codigo ya esta preparado para el lado CORS/credenciales del navegador:
+- `/onboarding` usa `credentials: "include"`;
+- el Worker permite credenciales y responde `Vary: Origin`;
+- `ALLOWED_ORIGINS` debe contener el dominio exacto de Pages;
+- el preflight permite `CF-Access-Client-Id` y `CF-Access-Client-Secret`.
+
+Esto no sustituye la politica de Access ni valida JWT dentro del Worker; solo evita que el navegador bloquee la llamada cuando Access este configurado.
+
 ## Validacion completa
 
 1. `curl -i https://api-staging.middleware.winerim.wine/health`.
-2. Abrir `https://staging.middleware.winerim.wine/onboarding`.
-3. Confirmar que Access solicita login.
-4. Entrar con usuario interno permitido.
-5. Probar payload incompleto y confirmar que solo devuelve validaciones.
-6. Probar Agora de baja criticidad o entorno de pruebas.
-7. Probar REVO solo con tenant/access token/client-token reales de prueba.
+2. Validar preflight:
+
+```sh
+curl -i -X OPTIONS \
+  -H 'Origin: https://staging.middleware.winerim.wine' \
+  -H 'Access-Control-Request-Method: POST' \
+  https://api-staging.middleware.winerim.wine/api/onboarding/test
+```
+
+3. Abrir `https://staging.middleware.winerim.wine/onboarding`.
+4. Confirmar que Access solicita login.
+5. Entrar con usuario interno permitido.
+6. Probar payload incompleto y confirmar que solo devuelve validaciones.
+7. Probar Agora de baja criticidad o entorno de pruebas.
+8. Probar REVO solo con tenant/access token/client-token reales de prueba.
 
 ## Rollback
 

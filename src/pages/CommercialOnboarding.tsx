@@ -90,6 +90,7 @@ export default function CommercialOnboarding() {
     try {
       const res = await fetch(`${middlewareApiUrl}/api/onboarding/test`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(validation.normalized),
       });

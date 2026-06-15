@@ -7,6 +7,7 @@ workers_dev = true
 ENVIRONMENT = "local"
 RELEASE = "dev"
 ALLOWED_ORIGIN = "http://127.0.0.1:8084"
+ALLOWED_ORIGINS = "http://127.0.0.1:8084,http://localhost:8084"
 
 [env.staging]
 name = "winerim-middleware-api-staging"
@@ -19,6 +20,7 @@ routes = [
 ENVIRONMENT = "staging"
 RELEASE = "staging"
 ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
+ALLOWED_ORIGINS = "https://staging.middleware.winerim.wine"
 
 [env.production]
 name = "winerim-middleware-api"
@@ -31,3 +33,4 @@ routes = [
 ENVIRONMENT = "production"
 RELEASE = "production"
 ALLOWED_ORIGIN = "https://middleware.winerim.wine"
+ALLOWED_ORIGINS = "https://middleware.winerim.wine"

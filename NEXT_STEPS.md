@@ -34,11 +34,15 @@
 - [x] Ajustar `compatibility_date` para que `wrangler dev` arranque localmente con la versión instalada.
 - [x] Levantar Vite local en `http://127.0.0.1:8084/onboarding` y Worker local en `http://127.0.0.1:8787`.
 - [x] Validar CORS local y preflight `OPTIONS` desde `127.0.0.1:8084`.
+- [x] Preparar CORS/credenciales para Cloudflare Access:
+  - frontend `credentials: "include"`;
+  - Worker `ALLOWED_ORIGINS`, `Access-Control-Allow-Credentials`, `Vary: Origin` y cabeceras `CF-Access-*`.
 - [x] Redeploy staging tras ajuste de compatibilidad: Version ID `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
 - [x] Subir rama `codex/cloudflare-middleware-onboarding` a GitHub sin tocar `main`.
 - [x] Abrir PR draft `#1` para revisión: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - [ ] Crear DNS proxied/custom domain para que `https://api-staging.middleware.winerim.wine/health` resuelva.
 - [ ] Configurar Cloudflare Access antes de desplegar `staging.middleware.winerim.wine`.
+- [x] Redeploy Worker staging con CORS/credenciales Access-ready y validar `OPTIONS` + `POST /api/onboarding/test`.
 - [ ] Investigar por qué en la copia original `vite` escucha puerto pero no responde a HTTP; en la rama limpia ya funciona.
 - [ ] Crear entorno Cloudflare staging:
   - `staging.middleware.winerim.wine`;

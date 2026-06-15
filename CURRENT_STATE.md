@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-15 08:03 CEST_
+_Última actualización: 2026-06-15 09:18 CEST_
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -23,6 +23,7 @@ _Última actualización: 2026-06-15 08:03 CEST_
 - Endpoint `POST /api/onboarding/test`.
 - `POST /api/onboarding/test`:
   - lee el body una sola vez;
+  - soporta CORS con credenciales para que la UI pueda funcionar detras de Cloudflare Access cuando se configure;
   - valida campos mínimos;
   - normaliza URL POS con `http://` si falta;
   - prueba token Winerim;
@@ -71,7 +72,7 @@ _Última actualización: 2026-06-15 08:03 CEST_
 - PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
-  - `npm test -- --run src/test/onboardingRequest.test.ts src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `33` tests.
+  - `npm test -- --run src/test/onboardingRequest.test.ts src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `34` tests.
   - `npx tsc --noEmit` OK.
   - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
   - Worker bundle OK con `esbuild`.
@@ -122,8 +123,8 @@ _Última actualización: 2026-06-15 08:03 CEST_
 - `wrangler deploy --config wrangler.middleware.toml --env staging --dry-run` OK.
 - Worker staging desplegado:
   - Servicio: `winerim-middleware-api-staging`.
-  - Version ID actual: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
-  - Version ID anterior: `21976e01-4065-4c09-ae5f-6f91d1e7b0c9`.
+  - Version ID actual: `da36b3d3-f429-45c0-b5fe-964ac098802e`.
+  - Version ID anterior: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
   - URL funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
   - Ruta declarada por Wrangler: `api-staging.middleware.winerim.wine/*`.
 - `GET /health` OK en `workers.dev`.
@@ -140,6 +141,14 @@ _Última actualización: 2026-06-15 08:03 CEST_
   - no se ha encontrado un comando Wrangler directo para configurar Cloudflare Access/DNS de forma segura desde este entorno;
   - no se ha creado proyecto Pages ni Secrets Store nuevo;
   - se mantiene el bloqueo: no desplegar Pages pública ni guardar secretos reales hasta cerrar Access y modelo de secret storage.
+- Access-ready CORS preparado en código 2026-06-15:
+  - Worker acepta `ALLOWED_ORIGINS` multi-origen y mantiene `ALLOWED_ORIGIN` como compatibilidad;
+  - respuestas/preflight incluyen `Access-Control-Allow-Credentials: true` y `Vary: Origin`;
+  - `Access-Control-Allow-Headers` permite `CF-Access-Client-Id` y `CF-Access-Client-Secret`;
+  - `/onboarding` llama a la API con `credentials: "include"`;
+  - Worker staging redeployado con Version ID `da36b3d3-f429-45c0-b5fe-964ac098802e`;
+  - validado en `workers.dev`: `GET /health`, `OPTIONS /api/onboarding/test` y `POST /api/onboarding/test` incompleto devuelven CORS con credenciales;
+  - no equivale a autenticación propia: falta configurar Cloudflare Access en Dashboard.
 
 ### Decisiones
 - No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.
