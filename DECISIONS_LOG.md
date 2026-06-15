@@ -625,3 +625,8 @@
 - **Decisión**: Cambiar `wrangler.middleware.toml` de `compatibility_date=2026-06-12` a `2026-05-03` y ajustar el origen local permitido a `http://127.0.0.1:8084`.
 - **Razón**: `wrangler 4.86.0` despliega staging, pero su runtime local no arranca con una fecha posterior a `2026-05-03`. El Worker no usa APIs que dependan de una fecha posterior, y la UI local necesita CORS desde `127.0.0.1:8084`.
 - **Alternativa descartada**: mantener `2026-06-12` y dejar el Worker local apagado. La pantalla `/onboarding` cargaria, pero el boton `Probar` fallaria contra `localhost:8787`.
+
+## 2026-06-15 · Resolver URL de API por entorno para evitar Pages roto por env faltante
+- **Decisión**: Añadir `src/lib/middlewareApiUrl.ts` y usarlo en `/onboarding`: primero respeta `VITE_MIDDLEWARE_API_URL`, despues resuelve por hostname (`staging.middleware.winerim.wine` / `middleware.winerim.wine`) y finalmente cae a `http://127.0.0.1:8787`.
+- **Razón**: En Cloudflare Pages, una variable `VITE_MIDDLEWARE_API_URL` olvidada haria que la UI llamara a localhost. Resolver por hostname hace el despliegue mas tolerante sin exponer secretos ni cambiar runtime.
+- **Alternativa descartada**: depender siempre de `VITE_MIDDLEWARE_API_URL`. Es explicito, pero fragil para un flujo que queremos que pueda operar el equipo sin ajustes tecnicos diarios.

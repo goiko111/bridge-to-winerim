@@ -15,6 +15,16 @@ Publicar la interfaz operativa del middleware en Cloudflare Pages sin mover toda
 
 Referencia local sin secretos: `cloudflare/pages/env.example`.
 
+La UI resuelve la API con este orden:
+
+1. `VITE_MIDDLEWARE_API_URL`, si existe.
+2. Hostname de Pages:
+   - `staging.middleware.winerim.wine` -> `https://api-staging.middleware.winerim.wine`
+   - `middleware.winerim.wine` -> `https://api.middleware.winerim.wine`
+3. Fallback local: `http://127.0.0.1:8787`
+
+Aunque exista fallback por hostname, mantener la variable por entorno hace el despliegue mas explicito.
+
 ### Staging
 ```txt
 VITE_MIDDLEWARE_API_URL=https://api-staging.middleware.winerim.wine

@@ -5,12 +5,14 @@
 ## P0 — Migración controlada a Cloudflare / `middleware.winerim.wine`
 - [x] Documentar estrategia inicial, rollback y riesgos en `CLOUDFLARE_MIDDLEWARE_MIGRATION_2026-06-12.md`.
 - [x] Crear utilidad pura de onboarding comercial en `src/lib/middlewareOnboarding.ts`.
+- [x] Crear resolver de API frontend en `src/lib/middlewareApiUrl.ts` para env/hostname/fallback local.
 - [x] Crear Worker inicial no destructivo en `cloudflare/workers/middleware-api/src/index.ts`.
 - [x] Crear configuración Wrangler en `wrangler.middleware.toml`.
 - [x] Crear pantalla comercial `/onboarding` con POS, restaurante, URL POS, token POS, token Winerim y semáforos.
 - [x] Ajustar `/onboarding` para REVO: tenant, access token, client-token y webhook secret opcional.
 - [x] Añadir tests unitarios de normalización/validación/gates para onboarding.
 - [x] Añadir tests del Worker: health, validación sin llamadas externas y REVO sin eco de secretos.
+- [x] Añadir tests del resolver de URL API frontend.
 - [x] Validar bundle del Worker con `esbuild` en copia original.
 - [x] Validar transpile de página/utilidad/test de onboarding con `esbuild` en copia original.
 - [x] Validar Worker compilado con `fetch` simulado para REVO: endpoint `paymentMethods`, headers oficiales y respuesta sin secretos.

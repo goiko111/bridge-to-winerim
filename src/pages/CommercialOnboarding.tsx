@@ -16,8 +16,9 @@ import {
   type OnboardingGate,
   validateCommercialOnboardingInput,
 } from "@/lib/middlewareOnboarding";
+import { resolveMiddlewareApiUrl } from "@/lib/middlewareApiUrl";
 
-const middlewareApiUrl = import.meta.env.VITE_MIDDLEWARE_API_URL || "http://localhost:8787";
+const middlewareApiUrl = resolveMiddlewareApiUrl(import.meta.env.VITE_MIDDLEWARE_API_URL, window.location.origin);
 
 const emptyForm: CommercialOnboardingInput = {
   provider: "agora",

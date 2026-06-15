@@ -38,6 +38,7 @@ _Última actualización: 2026-06-13 08:51 CEST_
 - Nueva ruta frontend `/onboarding`.
 - Nueva página `src/pages/CommercialOnboarding.tsx`.
 - Nueva utilidad pura `src/lib/middlewareOnboarding.ts`.
+- Nueva utilidad pura `src/lib/middlewareApiUrl.ts` para resolver la API del middleware desde env/hostname.
 - Nuevo test `src/test/middlewareOnboarding.test.ts`.
 - Nuevo test `src/test/middlewareWorker.test.ts` para health, validacion sin llamadas externas y REVO sin fuga de tokens.
 - Nuevo documento Cloudflare Pages: `cloudflare/pages/README.md`.
@@ -66,7 +67,7 @@ _Última actualización: 2026-06-13 08:51 CEST_
 - PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
-  - `npm test -- --run src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `24` tests.
+  - `npm test -- --run src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `29` tests.
   - `npx tsc --noEmit` OK.
   - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
   - Worker bundle OK con `esbuild`.
@@ -79,6 +80,11 @@ _Última actualización: 2026-06-13 08:51 CEST_
   - `OPTIONS /api/onboarding/test` local OK.
   - `POST /api/onboarding/test` con payload REVO incompleto devuelve solo validaciones, sin llamadas externas.
   - `wrangler.middleware.toml` usa `compatibility_date = "2026-05-03"` porque `wrangler 4.86.0` no arranca localmente con `2026-06-12`.
+- Resolver API frontend:
+  - si `VITE_MIDDLEWARE_API_URL` existe, se usa;
+  - si el host es `staging.middleware.winerim.wine`, usa `https://api-staging.middleware.winerim.wine`;
+  - si el host es `middleware.winerim.wine`, usa `https://api.middleware.winerim.wine`;
+  - fallback local: `http://127.0.0.1:8787`.
 - `cloudflare/workers/middleware-api/src/index.ts` bundlea correctamente con `esbuild` en la copia de trabajo original.
 - `src/pages/CommercialOnboarding.tsx`, `src/lib/middlewareOnboarding.ts` y `src/test/middlewareOnboarding.test.ts` transpilan correctamente con `esbuild` sin bundlear dependencias.
 - Prueba directa sobre la utilidad compilada:
