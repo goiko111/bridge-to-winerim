@@ -10,7 +10,7 @@ Activar staging bajo dominios de `winerim.wine` sin tocar produccion Lovable Clo
 
 ## Estado actual
 - Worker staging desplegado: `winerim-middleware-api-staging`.
-- Version ID actual: `da36b3d3-f429-45c0-b5fe-964ac098802e`.
+- Version ID actual: `be75ce4a-5948-4b3b-8a0d-d69a7ab192df`.
 - URL temporal funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
 - Ruta Worker declarada en `wrangler.middleware.toml`: `api-staging.middleware.winerim.wine/*`.
 - Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS.

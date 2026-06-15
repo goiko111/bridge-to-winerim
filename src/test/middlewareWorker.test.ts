@@ -53,6 +53,19 @@ describe("Cloudflare middleware worker", () => {
     expect(response.headers.get("Vary")).toBe("Origin");
   });
 
+  it("does not reflect unconfigured browser origins", async () => {
+    const response = await worker.fetch(
+      new Request("https://api.example.test/health", {
+        headers: { Origin: "https://untrusted.example.test" },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(env.ALLOWED_ORIGIN);
+    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("https://untrusted.example.test");
+  });
+
   it("rejects incomplete onboarding payloads without external calls", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const response = await worker.fetch(

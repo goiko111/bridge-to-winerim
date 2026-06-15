@@ -72,7 +72,7 @@ _Última actualización: 2026-06-15 09:18 CEST_
 - PR draft abierto para revisión sin mergear a `main`: `https://github.com/goiko111/bridge-to-winerim/pull/1`.
 - Validación en rama limpia:
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
-  - `npm test -- --run src/test/onboardingRequest.test.ts src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `34` tests.
+  - `npm test -- --run src/test/onboardingRequest.test.ts src/test/middlewareApiUrl.test.ts src/test/middlewareOnboarding.test.ts src/test/middlewareWorker.test.ts src/test/agoraProductNaming.test.ts src/test/stockSyncUtils.test.ts` OK: `35` tests.
   - `npx tsc --noEmit` OK.
   - `npm run build` OK con warnings conocidos de Browserslist y chunk >500 kB.
   - Worker bundle OK con `esbuild`.
@@ -123,8 +123,8 @@ _Última actualización: 2026-06-15 09:18 CEST_
 - `wrangler deploy --config wrangler.middleware.toml --env staging --dry-run` OK.
 - Worker staging desplegado:
   - Servicio: `winerim-middleware-api-staging`.
-  - Version ID actual: `da36b3d3-f429-45c0-b5fe-964ac098802e`.
-  - Version ID anterior: `9de8b8ce-97b7-49cf-967e-4edc2969138e`.
+  - Version ID actual: `be75ce4a-5948-4b3b-8a0d-d69a7ab192df`.
+  - Version ID anterior: `da36b3d3-f429-45c0-b5fe-964ac098802e`.
   - URL funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
   - Ruta declarada por Wrangler: `api-staging.middleware.winerim.wine/*`.
 - `GET /health` OK en `workers.dev`.
@@ -146,8 +146,8 @@ _Última actualización: 2026-06-15 09:18 CEST_
   - respuestas/preflight incluyen `Access-Control-Allow-Credentials: true` y `Vary: Origin`;
   - `Access-Control-Allow-Headers` permite `CF-Access-Client-Id` y `CF-Access-Client-Secret`;
   - `/onboarding` llama a la API con `credentials: "include"`;
-  - Worker staging redeployado con Version ID `da36b3d3-f429-45c0-b5fe-964ac098802e`;
-  - validado en `workers.dev`: `GET /health`, `OPTIONS /api/onboarding/test` y `POST /api/onboarding/test` incompleto devuelven CORS con credenciales;
+  - Worker staging redeployado con Version ID `be75ce4a-5948-4b3b-8a0d-d69a7ab192df`;
+  - validado en `workers.dev`: `GET /health`, `OPTIONS /api/onboarding/test`, `POST /api/onboarding/test` incompleto y origen no permitido no reflejado;
   - no equivale a autenticación propia: falta configurar Cloudflare Access en Dashboard.
 
 ### Decisiones

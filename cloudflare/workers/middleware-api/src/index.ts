@@ -29,7 +29,7 @@ function corsOrigin(request: Request, env: Env): string {
   const allowed = allowedOrigins(env);
   if (!requestOrigin) return allowed[0] || "*";
   if (allowed.includes(requestOrigin) || allowed.includes("*")) return requestOrigin;
-  return allowed[0] || requestOrigin;
+  return allowed[0] || "null";
 }
 
 function corsHeaders(request: Request, env: Env): HeadersInit {
