@@ -635,3 +635,8 @@
 - **Decisión**: Versionar la migracion `20260615073500_onboarding_requests.sql` y la utilidad `onboardingRequest.ts`, pero no conectar todavia la UI/Worker a escritura.
 - **Razón**: Necesitamos una bandeja de solicitudes para que comercial no dependa de Lovable Cloud, pero guardar tokens en claro o crear conexiones automaticamente seria un salto de riesgo. La tabla guarda solo metadata sanitizada y referencias externas a secretos.
 - **Alternativa descartada**: insertar directamente en `pos_connections` desde `/onboarding`. Aceleraria el alta, pero saltaria revision tecnica, dry-run, rollback y protecciones de legacy/mappings.
+
+## 2026-06-15 · No crear Pages ni Secrets Store antes de cerrar Access y modelo de secretos
+- **Decisión**: No crear todavia proyecto Cloudflare Pages publico ni Secrets Store real desde Wrangler, aunque la CLI permite gestionar ambas piezas.
+- **Razón**: La UI de onboarding debe estar protegida por Cloudflare Access antes de exponerse al equipo, y los tokens POS/Winerim necesitan un modelo claro de referencias opacas antes de persistir solicitudes.
+- **Alternativa descartada**: desplegar Pages inmediatamente en dominio temporal o crear un Secrets Store sin contrato de nombres/permisos. Seria rapido para demo, pero aumentaria superficie publica y deuda de seguridad.

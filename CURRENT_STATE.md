@@ -135,6 +135,11 @@ _Última actualización: 2026-06-15 08:03 CEST_
 - No se ha tocado `main` ni producción de Lovable Cloud durante esta continuación.
 - Se investigó CLI/API disponible para DNS/Access: Wrangler no ofrece una operación directa segura para crear el DNS staging desde este entorno. Queda documentado el proceso de Dashboard/Custom Domain.
 - No se ha añadido CSP estricta todavía porque puede romper estilos/componentes hasta auditar el frontend completo.
+- Revisión CLI Cloudflare 2026-06-15:
+  - Wrangler expone `pages` y `secrets-store` (`open beta`);
+  - no se ha encontrado un comando Wrangler directo para configurar Cloudflare Access/DNS de forma segura desde este entorno;
+  - no se ha creado proyecto Pages ni Secrets Store nuevo;
+  - se mantiene el bloqueo: no desplegar Pages pública ni guardar secretos reales hasta cerrar Access y modelo de secret storage.
 
 ### Decisiones
 - No migrar clientes ni crons todavía: Cloudflare empieza como control plane y staging/canary.

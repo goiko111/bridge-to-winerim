@@ -48,7 +48,9 @@
 - [x] Definir tabla inicial `onboarding_requests` para Postgres gestionado sin D1 ni tokens en claro.
 - [ ] Auditar CSP completa antes de endurecer `public/_headers` con `Content-Security-Policy`.
 - [ ] Aplicar migracion `20260615073500_onboarding_requests.sql` solo en Postgres staging, no en produccion.
-- [ ] Elegir secret storage real para tokens antes de activar `POST /api/onboarding/requests`.
+- [ ] Elegir secret storage real para tokens antes de activar `POST /api/onboarding/requests`:
+  - Cloudflare Secrets Store aparece disponible en Wrangler como `open beta`;
+  - alternativa: gestor externo o cifrado de aplicacion con clave fuera de la base.
 - [ ] Conectar `/onboarding` con staging real y probar con una instalación Agora de pruebas.
 - [ ] Probar `/onboarding` REVO con tenant/access token/client-token reales antes de usarlo con clientes.
 - [ ] Añadir modo `dryRun`/revisión técnica antes de crear cualquier `pos_connection`.
