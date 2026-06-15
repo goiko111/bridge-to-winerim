@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-13 08:51 CEST_
+_Última actualización: 2026-06-15 07:35 CEST_
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -85,6 +85,10 @@ _Última actualización: 2026-06-13 08:51 CEST_
   - si el host es `staging.middleware.winerim.wine`, usa `https://api-staging.middleware.winerim.wine`;
   - si el host es `middleware.winerim.wine`, usa `https://api.middleware.winerim.wine`;
   - fallback local: `http://127.0.0.1:8787`.
+- Smoke local 2026-06-15 tras resolver API:
+  - Vite OK en `http://127.0.0.1:8084/onboarding`.
+  - Worker local OK en `http://127.0.0.1:8787/health`.
+  - `POST /api/onboarding/test` con Agora incompleto devuelve validaciones esperadas.
 - `cloudflare/workers/middleware-api/src/index.ts` bundlea correctamente con `esbuild` en la copia de trabajo original.
 - `src/pages/CommercialOnboarding.tsx`, `src/lib/middlewareOnboarding.ts` y `src/test/middlewareOnboarding.test.ts` transpilan correctamente con `esbuild` sin bundlear dependencias.
 - Prueba directa sobre la utilidad compilada:
