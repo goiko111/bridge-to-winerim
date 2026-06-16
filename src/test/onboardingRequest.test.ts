@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOnboardingRequestPayload,
+  canTransitionOnboardingRequestStatus,
+  isOnboardingRequestStatus,
+  redactKnownSecretValues,
   sanitizeOnboardingGates,
   sanitizeOnboardingInput,
   summarizeOnboardingGates,
@@ -71,7 +74,10 @@ describe("onboarding request payloads", () => {
       posBaseUrl: "demo.example.test:8984",
       posApiToken: "secret-pos-token",
       winerimApiToken: "secret-winerim-token",
-    }, gates);
+    }, [
+      ...gates,
+      { id: "pos-secret", label: "POS", status: "warn", detail: "Saw secret-pos-token in upstream body" },
+    ]);
     const serialized = JSON.stringify(payload);
 
     expect(payload.provider).toBe("agora");
@@ -79,5 +85,22 @@ describe("onboarding request payloads", () => {
     expect(payload.testSummary.readyForTechnicalReview).toBe(true);
     expect(serialized).not.toContain("secret-pos-token");
     expect(serialized).not.toContain("secret-winerim-token");
+  });
+
+  it("redacts known secret values from request details", () => {
+    expect(redactKnownSecretValues("bad secret-client-token value", {
+      provider: "revo",
+      revoClientToken: "secret-client-token",
+    })).toBe("bad [redacted] value");
+  });
+
+  it("shares the onboarding request status machine across UI and worker", () => {
+    expect(isOnboardingRequestStatus("READY_FOR_TECHNICAL_REVIEW")).toBe(true);
+    expect(isOnboardingRequestStatus("AUTO_CREATE_CONNECTION")).toBe(false);
+
+    expect(canTransitionOnboardingRequestStatus("TESTED", "TECHNICAL_REVIEW")).toBe(true);
+    expect(canTransitionOnboardingRequestStatus("TESTED", "CONVERTED")).toBe(false);
+    expect(canTransitionOnboardingRequestStatus("APPROVED", "CONVERTED")).toBe(true);
+    expect(canTransitionOnboardingRequestStatus("CONVERTED", "TECHNICAL_REVIEW")).toBe(false);
   });
 });

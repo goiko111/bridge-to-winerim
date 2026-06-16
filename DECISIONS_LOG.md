@@ -645,3 +645,113 @@
 - **Decisión**: Hacer que `/onboarding` envie `credentials: "include"` y que el Worker responda CORS con origen permitido, credenciales, `Vary: Origin` y cabeceras `CF-Access-*`.
 - **Razón**: Cuando `staging.middleware.winerim.wine` y/o la API pasen por Cloudflare Access, el navegador necesitara enviar cookies/credenciales sin que el preflight bloquee el boton `Probar`. El cambio es reversible y no altera la logica de negocio.
 - **Alternativa descartada**: proteger la API con Access antes de adaptar CORS/frontend. Habria dado una sensacion de seguridad, pero podria romper el flujo de onboarding desde el navegador.
+
+## 2026-06-15 · Katsu Izakaya debe matchearse por fases y no en bloque
+- **Decisión**: No aplicar mappings legacy en Katsu durante el primer analisis; documentar un dry-run y preparar una fase segura antes de escribir nada.
+- **Razón**: El TPV actual permite recuperar mappings legacy, especialmente copas vendidas, pero mezcla productos legacy reales con productos generados por Winerim y existe al menos un mapping confirmado desalineado (`972845`, actualmente `C. SAN SALVADOR GODELLO`, apuntando a `Abad Dom Bueno Godello Esencia`). Un matching masivo podria descontar stock del vino equivocado.
+- **Alternativa descartada**: insertar automaticamente todos los matches con score alto. Habria recuperado parte del stock, pero con riesgo de duplicar vino/formato ya confirmado o de propagar mappings antiguos incorrectos.
+
+## 2026-06-15 · Katsu revela que la clasificacion de candidatos de vino infla el monitor
+- **Decisión**: Tratar el contador de Katsu como contaminado hasta corregir `isWineCandidate()` para respetar reglas explicitas de familias no-vino y separar `NEEDS_REVIEW` de candidato operativo.
+- **Razón**: Katsu tiene `wine_family_rules` marcando `CARTA` y `KATSU LIQUIDO` como no-vino, pero las ventas de comida/bebida siguen entrando como `is_wine_candidate=true` porque el helper usa `DEFAULT_CONFIG` e incluye `NEEDS_REVIEW`. El dato bruto de lineas no mapeadas no representa solo vino.
+- **Alternativa descartada**: asumir que las `5242` lineas candidatas no mapeadas son vinos pendientes. El corte real por familias `VINOS` / `VINOS POR COPAS` baja el problema a `299` lineas de vino, con `218` recuperables por `20` productos seguros.
+
+## 2026-06-15 · Jardí Parets queda validado en lectura pero no activado
+- **Decisión**: Mantener `Restaurante Jardi` deshabilitado y sin auto-push tras el retest, aunque Ágora y Winerim respondan correctamente.
+- **Razón**: La conexion lee ventas, master data y Winerim, pero aun no tiene configurados defaults de escritura, familias destino ni politica visual sobre los `283` productos legacy de vino ya visibles en Agora.
+- **Alternativa descartada**: activar automaticamente despues del test. Habria creado riesgo de publicar o sincronizar sin IVA/lista/almacen/sale centers/preparacion/familias confirmadas.
+
+## 2026-06-15 · No usar `detect-capabilities` como veredicto para Agora XML
+- **Decisión**: Tratar el resultado de `detect-capabilities` en Agora como diagnostico incompleto cuando la instalacion usa XML import/export.
+- **Razón**: En Jardí, `sync-master-data` leyo `export-master` correctamente, pero `detect-capabilities` marco `can_read_catalog=false` porque depende de `connection.catalog_endpoint` y probo endpoints REST que no son el flujo XML real del middleware.
+- **Alternativa descartada**: comunicar Jardí como `NOT_CONNECTED` por el estado de `provider_capabilities`. Eso contradice las pruebas reales de `test`, `find-last-business-day`, `sync-master-data` y `fetch-day`.
+
+## 2026-06-15 · Activar Jardí Parets con familias Winerim y legacy visible
+- **Decisión**: Publicar Winerim en Jardí usando familias dedicadas `... WINERIM`, activar la conexion y dejar el legacy visible sin borrar ni ocultar nada.
+- **Razón**: La lectura de Agora/Winerim, los defaults de escritura, el dry-run XML y el import real quedaron verificados. Se publicaron `168` productos Winerim (`166` botellas, `1` copa y `1` magnum) con mappings confirmados, tracking y `provider_capabilities=READY`. Mantener legacy visible da rollback operativo inmediato si el cliente no valida la pantalla.
+- **Alternativa descartada**: ocultar ya las familias legacy de vino. Habria completado el cambio visual, pero sin validacion del cliente aumentaria el riesgo de dejarles sin su operativa anterior.
+
+## 2026-06-15 · Dejar `auto_push_on_update=false` en Jardí hasta corregir vinos solo-copa
+- **Decisión**: Activar altas automaticas (`auto_push_on_create=true`) pero mantener actualizaciones automaticas apagadas (`auto_push_on_update=false`) en Jardí.
+- **Razón**: Con `auto_push_on_update=true`, las pasadas de catalogo detectan repetidamente `Dulce de Invierno` (`winerim_id=271458`) como `changedWines=1` y generan un update de copa aunque la ficha queda `VERIFIED`. Para proteger el cron y evitar ruido periodico, se prioriza que las altas nuevas suban solas y se deja precio/update automatico pendiente de correccion.
+- **Alternativa descartada**: dejar updates automaticos activos porque la cola acababa en `SUCCESS`. Aunque no quedaba cola atascada, repetir updates innecesarios cada cron es deuda operativa y puede molestar a Agora.
+
+## 2026-06-15 · Rollback Jardí = apagar automatismos y ocultar familias Winerim, no borrar productos
+- **Decisión**: Documentar rollback de Jardí mediante flags (`enabled=false`, `catalog_sync_enabled=false`, `auto_push_on_create=false`, `auto_push_on_update=false`) y `ShowInPos=false` en familias Winerim si el cliente reporta problema.
+- **Razón**: El legacy sigue visible/vendible y no se ha tocado. Ocultar las familias Winerim revierte la pantalla sin perder mappings, tracking ni trazabilidad de lo publicado.
+- **Alternativa descartada**: borrar productos/mappings Winerim. Borrar aumenta riesgo de inconsistencias y elimina la idempotencia necesaria para reactivar o reparar.
+
+## 2026-06-15 · Exportar ventas históricas de Jardí con `fetch-day`, no con `save-sales`
+- **Decisión**: Para ver ventas de Jardí de los ultimos dos meses sin descontar stock, usar `agora-proxy.fetch-day` y generar CSV locales, sin escribir en Lovable Cloud.
+- **Razón**: `save-sales` guarda ventas y tiene logica de cursor/stock con `skipStockSync`; aunque se puede usar con cuidado, no era necesario para el objetivo de analisis y podia dejar ventas historicas preparadas para catch-up de stock si hubiese lineas resueltas.
+- **Alternativa descartada**: ejecutar `save-sales` con `skipStockSync=true` y restaurar cursor despues. Es mas cercano al monitor, pero introduce riesgo operativo innecesario para una consulta historica.
+
+## 2026-06-16 · REVO: partner usa su `client-token`; cliente aporta `tenant` y access token
+- **Decisión**: Para Tigre / Grupo Costeño, primero confirmar si Winerim ya tiene `client-token`/Integrator Token vigente como partner. Si existe, el alta de cliente debe pedir `tenant` y access token de la cuenta REVO del cliente; el API Request form queda para obtener/renovar/habilitar el `client-token` o registrar la integración si REVO lo exige.
+- **Razón**: La documentación oficial de REVO XEF requiere tres headers: `tenant`, `Authorization: Bearer <token>` y `client-token`. El `client-token` corresponde al integrador/partner; el tenant y el access token salen de la cuenta del cliente.
+- **Alternativa descartada**: pedir al cliente/distribuidor que nos genere tambien el `client-token`. Mezcla responsabilidades y puede bloquear el alta aunque Winerim ya sea partner.
+
+## 2026-06-16 · Cloudflare onboarding: endpoint de solicitudes apagado por defecto
+- **Decisión**: Implementar `POST /api/onboarding/requests` y el boton `Enviar a revisión`, pero mantener el guardado real desactivado por `ONBOARDING_REQUESTS_ENABLED=false` en local, staging y produccion.
+- **Razón**: Permite avanzar el control plane fuera de Lovable Cloud con tests, UI y contrato de datos, sin crear conexiones, sin escribir en POS, sin guardar tokens y sin exponer una bandeja operativa antes de tener Cloudflare Access y secrets configurados.
+- **Alternativa descartada**: activar ya el guardado de solicitudes en staging. Aceleraria la demo, pero mezclaria dos riesgos pendientes: Access no validado y `LOVABLE_CLOUD_SERVICE_KEY` aun no configurado como secret del Worker.
+
+## 2026-06-16 · Cloudflare onboarding: no guardar secretos ni `secret_refs` hasta decidir storage
+- **Decisión**: Guardar solo metadata sanitizada y dejar `secret_refs={}` en la primera version de solicitudes.
+- **Razón**: La tabla y el Worker ya bloquean claves sensibles y redaccion de valores conocidos, pero el proyecto aun no ha elegido storage real de tokens multi-tenant. Es mejor perder comodidad temporal que introducir secretos en claro o referencias ambiguas.
+- **Alternativa descartada**: guardar tokens cifrados directamente en `onboarding_requests`. Seria util para conversion automatica, pero adelanta una decision de seguridad que debe cerrarse aparte.
+
+## 2026-06-16 · Cloudflare onboarding: revisar solicitudes no equivale a crear conexiones
+- **Decisión**: Añadir `GET /api/onboarding/requests`, `PATCH /api/onboarding/requests/:id` y pantalla `/onboarding/requests`, pero limitarlo a listar y cambiar estados de revision.
+- **Razón**: El equipo necesita operar un embudo fuera de Lovable Cloud, pero convertir una solicitud en `pos_connections` requiere dry-run tecnico, reglas de legacy, mappings, rollback y aprobacion explicita.
+- **Alternativa descartada**: que `APPROVED` cree automaticamente la conexion. Ahorraria clicks, pero saltaria los pasos que evitan romper instalaciones Agora/Revo ya operativas.
+
+## 2026-06-16 · Cloudflare staging desplegado con storage apagado
+- **Decisión**: Desplegar `winerim-middleware-api-staging` version `cc726f8e-1047-4888-a8f0-0760a9290f57` con `ONBOARDING_REQUESTS_ENABLED=false`.
+- **Razón**: Permite probar health, CORS, validacion y rutas nuevas en Cloudflare real sin activar almacenamiento ni necesitar secretos.
+- **Alternativa descartada**: esperar a tener DNS/Access antes de desplegar. Mantendria el arbol mas teorico; desplegar apagado reduce incertidumbre del runtime sin introducir riesgo operativo.
+
+## 2026-06-16 · Smoke test staging versionado
+- **Decisión**: Añadir `scripts/verify-cloudflare-staging.sh` y `npm run cf:api:verify:staging`.
+- **Razón**: La migracion necesita comprobaciones repetibles por cualquiera del equipo: health, validacion, CORS y storage disabled.
+- **Alternativa descartada**: depender de curls manuales escritos en la conversacion. Son faciles de perder y no dejan contrato versionado.
+
+## 2026-06-16 · Cloudflare Access: validar JWT cuando exista app Access real
+- **Decisión**: Preparar validacion de `CF-Access-Jwt-Assertion` en el Worker mediante `CF_ACCESS_AUD` y `CF_ACCESS_TEAM_DOMAIN`, pero dejar esas variables sin configurar hasta crear la app Access real.
+- **Razón**: El header de email es suficiente solo si confiamos plenamente en que la ruta esta detras de Access. Validar firma/audience dentro del Worker da una segunda defensa para rutas privadas como la bandeja de solicitudes.
+- **Alternativa descartada**: activar ya la exigencia JWT sin app Access/DNS. Romperia las pruebas actuales y no aportaria seguridad real hasta tener el Audience Tag correcto.
+
+## 2026-06-16 · Cloudflare staging redeploy con JWT preparado y storage apagado
+- **Decisión**: Redeployar `winerim-middleware-api-staging` version `f980c8ec-6cc7-4355-9f3c-38f3affa4aad` manteniendo `ONBOARDING_REQUESTS_ENABLED=false`.
+- **Razón**: Deja el runtime listo para Access JWT y mantiene el rollback activo: las rutas privadas existen pero no almacenan nada ni consultan Lovable Cloud.
+- **Alternativa descartada**: esperar a DNS/Access antes de redeployar JWT. Desplegar apagado reduce riesgo de integracion posterior.
+
+## 2026-06-16 · Cloudflare onboarding: transiciones de estado explicitas
+- **Decisión**: Hacer que `PATCH /api/onboarding/requests/:id` lea el estado actual y aplique una maquina de estados controlada antes de actualizar.
+- **Razón**: La bandeja sera usada por equipo comercial/tecnico. Sin transiciones, un error de UI o payload podria marcar una solicitud `CONVERTED` sin pasar por aprobacion real, creando confusion aunque no cree conexion automaticamente.
+- **Alternativa descartada**: permitir cualquier estado valido desde cualquier estado. Es mas simple, pero elimina trazabilidad operativa.
+
+## 2026-06-16 · `CONVERTED` como estado terminal manual hasta conversion auditada
+- **Decisión**: `CONVERTED` no permite salida y solo se puede alcanzar desde `APPROVED`.
+- **Razón**: Hasta que exista un flujo auditado de conversion a `pos_connections`, `CONVERTED` debe ser una marca final posterior a aprobacion, no una accion casual desde la cola.
+- **Alternativa descartada**: permitir `READY_FOR_TECHNICAL_REVIEW -> CONVERTED`. Saltaria revision y dry-run.
+
+## 2026-06-16 · Compartir maquina de estados entre UI y Worker
+- **Decisión**: Mover las transiciones de `onboarding_requests` a `src/lib/onboardingRequest.ts` y consumirlas desde el Worker y desde `/onboarding/requests`.
+- **Razón**: La UI no debe ofrecer acciones que el backend rechaza. Duplicar transiciones en dos sitios aumenta el riesgo de inconsistencias cuando se añadan estados como conversion auditada o vuelta a revision.
+- **Alternativa descartada**: mantener la UI con botones genericos y confiar en el HTTP 409 del Worker. Es seguro a nivel backend, pero confuso para el equipo operativo.
+
+## 2026-06-16 · CORS debe cubrir `PATCH` antes de activar la bandeja
+- **Decisión**: Incluir `PATCH` en `Access-Control-Allow-Methods` y validarlo en tests y smoke staging.
+- **Razón**: La bandeja de solicitudes cambia estados mediante `PATCH /api/onboarding/requests/:id`. Sin preflight `PATCH`, el navegador bloquearia la accion aunque el Worker funcionase.
+- **Alternativa descartada**: esperar a detectar el fallo en staging con Access. Corregirlo ahora es de bajo riesgo y evita una falsa averia de la UI.
+
+## 2026-06-16 · Readiness separado del smoke test
+- **Decisión**: Añadir `npm run cf:readiness:staging` para distinguir runtime OK de infraestructura pendiente.
+- **Razón**: `workers.dev` puede estar sano mientras faltan DNS, Pages o Access. El comando permite ver `0` fallos con pendientes explicitos sin confundirlo con una migracion completada.
+- **Alternativa descartada**: ampliar el smoke test principal hasta fallar por DNS/Pages pendientes. Eso bloquearia deploys seguros del Worker aunque la infraestructura externa aun no este creada.
+
+## 2026-06-16 · Documentar Secrets Store sin crear recursos todavia
+- **Decisión**: Documentar Cloudflare Secrets Store como opcion, junto a gestor externo y cifrado de aplicacion, pero no crear store ni guardar tokens reales.
+- **Razón**: Wrangler muestra Secrets Store como open beta. Antes de usarlo con clientes hace falta cerrar naming, permisos, rotacion y contrato de `secret_refs`.
+- **Alternativa descartada**: crear un store staging ya mismo. Seria rapido, pero adelanta una decision de seguridad que todavia no esta cerrada.

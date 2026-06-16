@@ -10,6 +10,8 @@
     "cf:api:dev": "npx wrangler dev --config wrangler.middleware.toml",
     "cf:api:deploy:staging": "npx wrangler deploy --config wrangler.middleware.toml --env staging",
     "cf:api:deploy:production": "npx wrangler deploy --config wrangler.middleware.toml --env production",
+    "cf:api:verify:staging": "bash scripts/verify-cloudflare-staging.sh",
+    "cf:readiness:staging": "bash scripts/check-cloudflare-readiness.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

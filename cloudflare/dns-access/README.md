@@ -10,11 +10,31 @@ Activar staging bajo dominios de `winerim.wine` sin tocar produccion Lovable Clo
 
 ## Estado actual
 - Worker staging desplegado: `winerim-middleware-api-staging`.
-- Version ID actual: `be75ce4a-5948-4b3b-8a0d-d69a7ab192df`.
+- Version ID actual: `6af1c6ed-fc3a-4d29-aa55-84cb81fbe915` (2026-06-16 08:00 CEST).
 - URL temporal funcional: `https://winerim-middleware-api-staging.gugocreative.workers.dev`.
 - Ruta Worker declarada en `wrangler.middleware.toml`: `api-staging.middleware.winerim.wine/*`.
 - Bloqueo actual: `api-staging.middleware.winerim.wine` no resuelve DNS.
 - Cloudflare Pages no esta desplegado todavia.
+- La bandeja `onboarding_requests` existe en codigo, pero esta apagada por `ONBOARDING_REQUESTS_ENABLED=false`.
+- Rutas staging desplegadas:
+  - `GET /health`
+  - `POST /api/onboarding/test`
+  - `GET /api/onboarding/requests` (disabled hasta Access + storage)
+  - `POST /api/onboarding/requests` (disabled hasta Access + storage)
+  - `PATCH /api/onboarding/requests/:id` (disabled hasta Access + storage)
+
+Smoke test disponible:
+
+```sh
+npm run cf:api:verify:staging
+npm run cf:readiness:staging
+```
+
+Checklists relacionados:
+
+- `cloudflare/access/README.md`
+- `cloudflare/secrets/README.md`
+- `cloudflare/onboarding-storage/README.md`
 
 ## Paso 1 - API staging
 
@@ -72,7 +92,7 @@ VITE_MIDDLEWARE_API_URL=https://winerim-middleware-api-staging.gugocreative.work
 
 ## Paso 3 - Cloudflare Access
 
-Aplicar Access sobre la UI staging:
+Aplicar Access sobre la UI staging antes de activar Pages para el equipo:
 
 1. Cloudflare Zero Trust -> Access -> Applications.
 2. Add an application -> Self-hosted.
@@ -82,15 +102,29 @@ Aplicar Access sobre la UI staging:
 6. Include: emails o dominio corporativo validado por el equipo.
 7. Activar logs de acceso.
 
-Importante: no proteger `api-staging.middleware.winerim.wine` con Access todavia si la UI llama a la API desde el navegador. Si se protege tambien la API, el Worker debe validar/aceptar el token de Access y la configuracion CORS debe permitir ese flujo. El endpoint actual no escribe ni guarda tokens, por lo que puede quedar publico temporalmente en staging mientras se implementa autenticacion real para endpoints destructivos.
+Importante: para activar `GET/POST/PATCH /api/onboarding/requests`, el Worker exige identidad Access por defecto. Por eso la API tambien debe recibir identidad Access antes de poner `ONBOARDING_REQUESTS_ENABLED=true`.
+
+Opciones seguras:
+
+1. Proteger tambien `api-staging.middleware.winerim.wine` con Cloudflare Access y configurar validacion JWT en el Worker.
+2. Mantener `/api/onboarding/test` publico temporalmente y no activar `ONBOARDING_REQUESTS_ENABLED` hasta separar rutas publicas/privadas.
+
+No activar `ONBOARDING_REQUESTS_ENABLED=true` si la API no recibe identidad Access.
+
+Validacion JWT opcional/recomendada para rutas privadas:
+
+- `CF_ACCESS_AUD`: Audience Tag de la aplicacion Access.
+- `CF_ACCESS_TEAM_DOMAIN`: dominio del equipo Access, por ejemplo `https://winerim.cloudflareaccess.com`.
+
+Con `CF_ACCESS_AUD` configurado, el Worker valida `CF-Access-Jwt-Assertion` contra `CF_ACCESS_TEAM_DOMAIN/cdn-cgi/access/certs`, comprueba `aud`, `exp` y firma RS256. Si no hay JWT valido, devuelve `ACCESS_IDENTITY_REQUIRED`.
 
 El codigo ya esta preparado para el lado CORS/credenciales del navegador:
 - `/onboarding` usa `credentials: "include"`;
 - el Worker permite credenciales y responde `Vary: Origin`;
 - `ALLOWED_ORIGINS` debe contener el dominio exacto de Pages;
-- el preflight permite `CF-Access-Client-Id` y `CF-Access-Client-Secret`.
+- el preflight permite `CF-Access-Client-Id`, `CF-Access-Client-Secret` y `CF-Access-Jwt-Assertion`.
 
-Esto no sustituye la politica de Access ni valida JWT dentro del Worker; solo evita que el navegador bloquee la llamada cuando Access este configurado.
+Esto no sustituye la politica de Access: Access debe seguir protegiendo la UI/API. La validacion JWT dentro del Worker es una segunda defensa para rutas privadas.
 
 ## Validacion completa
 
@@ -104,12 +138,47 @@ curl -i -X OPTIONS \
   https://api-staging.middleware.winerim.wine/api/onboarding/test
 ```
 
-3. Abrir `https://staging.middleware.winerim.wine/onboarding`.
-4. Confirmar que Access solicita login.
-5. Entrar con usuario interno permitido.
-6. Probar payload incompleto y confirmar que solo devuelve validaciones.
-7. Probar Agora de baja criticidad o entorno de pruebas.
-8. Probar REVO solo con tenant/access token/client-token reales de prueba.
+3. Validar preflight de cambios de estado:
+
+```sh
+curl -i -X OPTIONS \
+  -H 'Origin: https://staging.middleware.winerim.wine' \
+  -H 'Access-Control-Request-Method: PATCH' \
+  https://api-staging.middleware.winerim.wine/api/onboarding/requests/11111111-1111-1111-1111-111111111111
+```
+
+4. Abrir `https://staging.middleware.winerim.wine/onboarding`.
+5. Confirmar que Access solicita login.
+6. Entrar con usuario interno permitido.
+7. Probar payload incompleto y confirmar que solo devuelve validaciones.
+8. Abrir `https://staging.middleware.winerim.wine/onboarding/requests`.
+9. Confirmar que, con storage apagado, muestra que la bandeja no esta activada.
+10. Probar Agora de baja criticidad o entorno de pruebas.
+11. Probar REVO solo con tenant/access token/client-token reales de prueba.
+
+## Activar bandeja de solicitudes en staging
+
+Precondiciones:
+
+- Access activo en UI y API, o validacion equivalente de identidad en Worker.
+- Migracion `20260615073500_onboarding_requests.sql` aplicada solo en staging.
+- Secret del Worker configurado:
+
+```sh
+npx wrangler secret put LOVABLE_CLOUD_SERVICE_KEY --config wrangler.middleware.toml --env staging
+```
+
+- Variable `LOVABLE_CLOUD_REST_URL` configurada en staging con el endpoint REST de Lovable Cloud, sin incluir `/onboarding_requests`.
+- `ONBOARDING_REQUESTS_ENABLED=true` solo en staging.
+- `CF_ACCESS_AUD` y `CF_ACCESS_TEAM_DOMAIN` configurados si la API esta protegida por Access.
+
+Validacion:
+
+```sh
+EXPECT_REQUEST_STORAGE=enabled npm run cf:api:verify:staging
+```
+
+Si falla cualquier paso, volver a `ONBOARDING_REQUESTS_ENABLED=false`.
 
 ## Rollback
 

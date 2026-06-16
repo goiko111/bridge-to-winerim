@@ -2,7 +2,571 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-15 09:18 CEST_
+_Última actualización: 2026-06-16 08:03 CEST_
+
+## Hechos (Cloudflare onboarding · hardening UI/Worker y runbooks — 2026-06-16)
+
+- Se extrajo la maquina de estados de `onboarding_requests` a `src/lib/onboardingRequest.ts`.
+- Worker y UI usan ahora la misma fuente de verdad:
+  - `isOnboardingRequestStatus`;
+  - `canTransitionOnboardingRequestStatus`;
+  - `ALLOWED_ONBOARDING_STATUS_TRANSITIONS`.
+- La pantalla `/onboarding/requests` ya no ofrece acciones de estado que el Worker rechazaria, por ejemplo saltos hacia `CONVERTED` desde estados de prueba.
+- Se corrigio CORS del Worker para permitir `PATCH`:
+  - antes: `GET,POST,OPTIONS`;
+  - ahora: `GET,POST,PATCH,OPTIONS`.
+- Se amplio `scripts/verify-cloudflare-staging.sh` para validar preflight `POST` y `PATCH`.
+- Se anadio `scripts/check-cloudflare-readiness.sh` y el comando `npm run cf:readiness:staging`.
+- `cf:readiness:staging` es read-only y distingue:
+  - Worker `workers.dev` operativo;
+  - custom domain API pendiente;
+  - Pages staging pendiente;
+  - CORS `POST/PATCH` listo.
+- Se reemplazo el README generico por un README real del proyecto con reglas duras, comandos, validacion y gates de activacion.
+- Nuevos runbooks:
+  - `cloudflare/README.md`;
+  - `cloudflare/access/README.md`;
+  - `cloudflare/secrets/README.md`.
+- Se actualizo `cloudflare/dns-access/README.md` para incluir la validacion `PATCH` y los checklists nuevos.
+- Worker staging redeployado:
+  - URL temporal: `https://winerim-middleware-api-staging.gugocreative.workers.dev`;
+  - Version ID: `6af1c6ed-fc3a-4d29-aa55-84cb81fbe915`;
+  - `ONBOARDING_REQUESTS_ENABLED=false` se mantiene;
+  - `CF_ACCESS_AUD`/`CF_ACCESS_TEAM_DOMAIN` siguen sin configurar.
+
+### Validación
+- `npm run test -- src/test/onboardingRequest.test.ts src/test/middlewareWorker.test.ts`: OK, `20` tests.
+- `npm run test`: OK, `51` tests.
+- `npx tsc --noEmit`: OK.
+- `npx eslint src/lib/onboardingRequest.ts src/pages/OnboardingRequests.tsx cloudflare/workers/middleware-api/src/index.ts src/test/onboardingRequest.test.ts src/test/middlewareWorker.test.ts`: OK.
+- `npm run build`: OK; warning conocido de chunk grande.
+- `npx --yes wrangler deploy --config wrangler.middleware.toml --env staging --dry-run`: OK.
+- Deploy real staging OK.
+- `npm run cf:api:verify:staging`: OK contra staging desplegado; confirma health, validacion REVO incompleta, CORS `POST/PATCH` y storage apagado.
+- `npm run cf:readiness:staging`: OK con `0` fallos y `3` pendientes esperados:
+  - `api-staging.middleware.winerim.wine` no resuelve todavia;
+  - CORS por custom API domain pendiente por el mismo DNS;
+  - `staging.middleware.winerim.wine`/Pages no esta desplegado todavia.
+- Verificacion visual local con Vite `8084` y Worker `8787`:
+  - `/onboarding/requests` renderiza;
+  - muestra la navegacion `Requests`;
+  - informa "La bandeja de solicitudes todavia no esta activada en este entorno.";
+  - no quedan procesos locales vivos.
+- `git diff --check`: OK.
+
+### Decisiones
+- La maquina de estados debe mantenerse compartida entre UI y Worker para evitar divergencias operativas.
+- No crear Cloudflare Pages publico ni activar storage de solicitudes hasta que Access este configurado.
+- No crear Secrets Store real todavia; queda documentado como opcion, pero la decision de almacenamiento de tokens sigue pendiente.
+- Mantener `workers.dev` como endpoint de smoke mientras `api-staging.middleware.winerim.wine` no resuelva.
+
+### Riesgos / rollback
+- Riesgo si se activa storage antes de Access: solicitudes privadas podrian quedar expuestas. Mitigacion: `ONBOARDING_REQUESTS_ENABLED=false`.
+- Riesgo si Pages se publica sin Access: el onboarding comercial quedaria visible. Mitigacion: no desplegar Pages hasta crear politica Access.
+- Rollback inmediato del bloque Worker: volver a version anterior o dejar `ONBOARDING_REQUESTS_ENABLED=false`; no hay escrituras POS/Winerim ni cambios en `pos_connections`.
+
+## Hechos (Cloudflare onboarding · máquina de estados segura — 2026-06-16)
+
+- Se añadieron transiciones explícitas para `onboarding_requests`.
+- `PATCH /api/onboarding/requests/:id` ahora:
+  - lee primero el estado actual;
+  - bloquea saltos inseguros como `TESTED -> CONVERTED`;
+  - devuelve `INVALID_STATUS_TRANSITION` con HTTP 409 si el salto no esta permitido;
+  - conserva el principio de no crear `pos_connections` ni disparar automatismos.
+- Transiciones clave:
+  - `READY_FOR_TECHNICAL_REVIEW -> TECHNICAL_REVIEW/APPROVED/REJECTED/CANCELED`;
+  - `APPROVED -> CONVERTED/CANCELED/TECHNICAL_REVIEW`;
+  - `CONVERTED` no permite salida automatica.
+- Worker staging redeployado:
+  - Version ID: `bdcb9972-4631-4249-9887-57da3cb39dc0`;
+  - `ONBOARDING_REQUESTS_ENABLED=false` se mantiene.
+
+### Validación
+- `npm run test -- src/test/middlewareWorker.test.ts`: OK, `14` tests.
+- `npm run test`: OK, `50` tests.
+- `npx tsc --noEmit`: OK.
+- `npx eslint` en Worker/test tocados: OK.
+- `npx --yes wrangler deploy --config wrangler.middleware.toml --env staging --dry-run`: OK.
+- Deploy real staging OK.
+- `npm run cf:api:verify:staging`: OK.
+
+### Decisiones
+- `CONVERTED` queda como estado terminal manual hasta implementar conversion auditada a `pos_connections`.
+- No permitir saltos directos a `CONVERTED` desde estados de prueba/revision.
+- Mantener la revision como control humano, no como activacion automatica.
+
+## Hechos (Cloudflare Access JWT en Worker — 2026-06-16)
+
+- Se preparo validacion firmada de Cloudflare Access para rutas privadas del Worker.
+- Nuevas variables opcionales:
+  - `CF_ACCESS_AUD`: Audience Tag de la app Access;
+  - `CF_ACCESS_TEAM_DOMAIN`: dominio Access del equipo, por ejemplo `https://winerim.cloudflareaccess.com`.
+- Si `CF_ACCESS_AUD` esta configurado:
+  - el Worker exige `CF-Access-Jwt-Assertion`;
+  - descarga claves publicas desde `{CF_ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`;
+  - valida `aud`, `exp`, `kid`, algoritmo `RS256` y firma;
+  - extrae `email` del payload validado;
+  - si falla, devuelve `ACCESS_IDENTITY_REQUIRED` y no toca storage.
+- Si `CF_ACCESS_AUD` no esta configurado, se conserva el modo anterior: usar `CF-Access-Authenticated-User-Email` cuando storage este activo.
+- CORS actualizado para permitir `CF-Access-Jwt-Assertion`.
+- Worker staging redeployado:
+  - Version ID: `f980c8ec-6cc7-4355-9f3c-38f3affa4aad`;
+  - `ONBOARDING_REQUESTS_ENABLED=false` se mantiene;
+  - `CF_ACCESS_AUD`/`CF_ACCESS_TEAM_DOMAIN` aun no configurados.
+
+### Validación
+- `npm run test -- src/test/middlewareWorker.test.ts`: OK, `13` tests.
+- `npm run test -- src/test/middlewareWorker.test.ts src/test/onboardingRequest.test.ts src/test/middlewareOnboarding.test.ts`: OK, `26` tests.
+- `npm run test`: OK, `49` tests.
+- `npx tsc --noEmit`: OK.
+- `npm run build`: OK; warning conocido de chunk grande.
+- `npx --yes wrangler deploy --config wrangler.middleware.toml --env staging --dry-run`: OK.
+- `npx eslint` en archivos tocados/JWT: OK.
+- `npm run cf:api:verify:staging`: OK contra Worker desplegado.
+
+### Decisiones
+- Mantener `CF_ACCESS_AUD` desconfigurado hasta que exista la app Access real; asi no se bloquean rutas de test actuales.
+- Cuando se active storage de solicitudes, usar preferentemente validacion JWT, no solo header de email.
+- No activar `ONBOARDING_REQUESTS_ENABLED=true` hasta tener DNS/API Access + `CF_ACCESS_AUD` + storage staging listos.
+
+### Tareas pendientes inmediatas
+- Crear app Access para API staging y obtener Audience Tag.
+- Configurar `CF_ACCESS_AUD` y `CF_ACCESS_TEAM_DOMAIN` solo en staging.
+- Reejecutar smoke test y prueba real de `/onboarding/requests` con Access.
+
+## Hechos (Cloudflare onboarding · revisión técnica y deploy staging — 2026-06-16)
+
+- Se amplio el control plane Cloudflare con bandeja de revisión:
+  - nuevo endpoint `GET /api/onboarding/requests`;
+  - nuevo endpoint `PATCH /api/onboarding/requests/:id` para cambiar estado de la solicitud;
+  - nueva pantalla `/onboarding/requests`;
+  - navegación lateral a `Requests`.
+- La revisión permite ver solicitudes y mover estados (`TECHNICAL_REVIEW`, `APPROVED`, `REJECTED`, etc.), pero no convierte solicitudes en `pos_connections` ni ejecuta ninguna escritura externa.
+- El Worker staging fue desplegado en Cloudflare:
+  - URL temporal: `https://winerim-middleware-api-staging.gugocreative.workers.dev`;
+  - Version ID: `cc726f8e-1047-4888-a8f0-0760a9290f57`;
+  - `ONBOARDING_REQUESTS_ENABLED=false`;
+  - `ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL=true`.
+- Se anadio script repetible:
+  - `npm run cf:api:verify:staging`;
+  - valida `health`, payload incompleto, CORS y que storage sigue apagado.
+- Probes reales contra staging:
+  - `GET /health` OK;
+  - `POST /api/onboarding/test` con REVO incompleto devuelve `VALIDATION_FAILED`;
+  - `GET/POST /api/onboarding/requests` devuelven `REQUEST_STORAGE_DISABLED`;
+  - preflight CORS para `https://staging.middleware.winerim.wine` OK.
+- `api-staging.middleware.winerim.wine` sigue sin resolver DNS (`Could not resolve host`), aunque la ruta Worker esta declarada.
+
+### Validación adicional
+- `npm run test -- src/test/middlewareWorker.test.ts src/test/onboardingRequest.test.ts src/test/middlewareOnboarding.test.ts`: OK, `24` tests.
+- `npm run test`: OK, `47` tests.
+- `npx tsc --noEmit`: OK.
+- `npm run build`: OK; queda warning conocido de chunk grande.
+- `npx --yes wrangler deploy --config wrangler.middleware.toml --env staging --dry-run`: OK.
+- `npx eslint` en archivos tocados: OK.
+- Verificacion local HTTP:
+  - Vite `http://127.0.0.1:8084/onboarding` sirve HTML;
+  - Worker local `http://127.0.0.1:8787/health` OK;
+  - `GET /api/onboarding/requests` local devuelve `REQUEST_STORAGE_DISABLED`.
+- No se pudo hacer captura visual automatizada: no habia herramienta Browser expuesta y Playwright no esta instalado en el proyecto.
+
+### Decisiones
+- La pantalla `/onboarding/requests` forma parte del control plane, pero depende del mismo flag de storage; sin Access + secrets sigue sin datos.
+- Los cambios de estado de solicitud no crean conexiones ni disparan automatismos. La conversion a cliente real queda como paso tecnico separado.
+- Mantener `api-staging.middleware.winerim.wine` bloqueado hasta crear DNS/custom domain de Cloudflare; usar `workers.dev` para smoke tests.
+
+### Tareas pendientes inmediatas
+- Crear DNS/custom domain para `api-staging.middleware.winerim.wine`.
+- Desplegar Pages staging protegido por Access.
+- Aplicar migracion `onboarding_requests` solo en staging y configurar `LOVABLE_CLOUD_REST_URL` + `LOVABLE_CLOUD_SERVICE_KEY` como secret/var.
+- Probar `Enviar a revisión` y `/onboarding/requests` con storage real en staging.
+
+## Hechos (Cloudflare onboarding · bandeja de solicitudes segura — 2026-06-16)
+
+- Se continuo la migracion del control plane fuera de Lovable Cloud con una pieza no destructiva:
+  - nuevo endpoint Worker `POST /api/onboarding/requests`;
+  - boton UI `Enviar a revisión` en `/onboarding`;
+  - redaccion de valores secretos conocidos antes de construir payloads de solicitud;
+  - documentacion de storage en `cloudflare/onboarding-storage/README.md`.
+- El endpoint queda apagado por defecto en todos los entornos mediante `ONBOARDING_REQUESTS_ENABLED=false`.
+- Si se activa, exige identidad de Cloudflare Access por `CF-Access-Authenticated-User-Email`, salvo override explicito `ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL=false`.
+- La ruta de guardado no llama al POS ni a Winerim, no crea `pos_connections`, no activa escrituras y no oculta legacy.
+- La fila preparada para `onboarding_requests` contiene solo:
+  - metadata sanitizada;
+  - semaforos sin `technicalDetail`;
+  - resumen de prueba;
+  - `secret_refs={}` por ahora.
+- Variables necesarias para activar guardado real:
+  - `LOVABLE_CLOUD_REST_URL`;
+  - `LOVABLE_CLOUD_SERVICE_KEY` como secret del Worker;
+  - Access activo para el dominio/API.
+
+### Validación
+- `npx tsc --noEmit`: OK.
+- `npm run test -- src/test/middlewareWorker.test.ts src/test/onboardingRequest.test.ts src/test/middlewareOnboarding.test.ts`: OK, `21` tests.
+- `npm run test`: OK, `44` tests.
+- `npm run build`: OK; queda warning conocido de chunk grande.
+- `npx --yes wrangler deploy --config wrangler.middleware.toml --env staging --dry-run`: OK; confirma que staging mantiene `ONBOARDING_REQUESTS_ENABLED=false`.
+- `npx eslint` en archivos tocados: OK.
+- `npm run lint` global sigue fallando por deuda heredada (`839` errores / `85` warnings, sobre todo `no-explicit-any` en componentes/proxies antiguos); no atribuible a esta pieza.
+
+### Decisiones
+- Implementar la bandeja de solicitudes antes de tener storage de secretos, pero mantenerla desactivada por flag hasta configurar Access + secrets.
+- No guardar tokens ni referencias a tokens en la primera version; `secret_refs` queda vacio hasta decidir secret storage real.
+- No convertir solicitudes en conexiones automaticamente: la conversion sigue requiriendo revision tecnica, dry-run y rollback.
+
+### Riesgos / rollback
+- Riesgo principal si se activa sin Access: el endpoint podria aceptar solicitudes anonimas. Mitigacion: `ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL=true` por defecto y storage apagado.
+- Riesgo si se configura mal `LOVABLE_CLOUD_REST_URL`/service key: la UI mostrara fallo de envio, pero no toca POS ni Winerim.
+- Rollback inmediato: mantener o devolver `ONBOARDING_REQUESTS_ENABLED=false`; el boton UI queda sin efecto operativo y solo informa que la bandeja no esta activada.
+
+### Tareas pendientes inmediatas
+- Configurar Cloudflare Access en staging y comprobar que `CF-Access-Authenticated-User-Email` llega al Worker.
+- Aplicar `20260615073500_onboarding_requests.sql` solo en Postgres staging.
+- Configurar `LOVABLE_CLOUD_REST_URL` y `LOVABLE_CLOUD_SERVICE_KEY` como secret/var de staging.
+- Probar `Enviar a revisión` con una instalación Agora de pruebas antes de usarlo con comerciales.
+
+## Hechos (REVO · solicitud API Tigre / Grupo Costeño — 2026-06-16)
+
+- El SAT/distribuidor REVO (MRM Solutions) indica que no puede emitir ni tramitar directamente las llamadas/API por nosotros.
+- Documentación oficial REVO XEF: la API externa requiere headers `tenant`, `Authorization: Bearer <token>` y `client-token`/Integrator Token.
+- Si Winerim ya tiene `client-token` como partner, para un cliente concreto normalmente basta con que el cliente facilite/autorice:
+  - `tenant` / account username;
+  - access token Bearer generado en la cuenta REVO del cliente (`Account management` → `Tokens`);
+  - confirmación de si opera con REVO Master y qué cuentas/locales entran en alcance.
+- El formulario oficial de API Request se mantiene como vía para obtener/renovar/habilitar el `client-token` de integrador o para registrar/autorizarnos si REVO lo exige para ese cliente, no necesariamente como requisito repetido si ya somos partner con token vigente.
+- El SAT pide que les indiquemos el correo usado si hacemos solicitud/formulario, para poder hacer seguimiento desde su lado.
+
+### Decisión operativa
+- Primero confirmar internamente si Winerim ya tiene `client-token`/Integrator Token vigente de partner.
+- Si lo tenemos, pedir al cliente/SAT `tenant` + access token de la cuenta y usar nuestro `client-token`.
+- Si no lo tenemos o REVO exige registro para Tigre, completar el API Request form desde un correo controlado por Winerim y comunicar ese correo al SAT para seguimiento.
+
+### Riesgos
+- Si se intenta depender del distribuidor para generar credenciales, el alta queda bloqueada porque ellos declaran no tener capacidad para hacerlo.
+- Si se pide `client-token` al cliente, mezclamos responsabilidades: ese token es de integrador/partner, no del restaurante.
+- Si usamos un `client-token` caducado/no habilitado para catálogo/reportes, la prueba fallará aunque `tenant` y access token sean correctos.
+- Si REVO requiere aprobación del cliente final, puede haber demora aunque Winerim ya sea partner.
+
+### Tareas pendientes inmediatas
+- Confirmar si Winerim dispone ya de `client-token`/Integrator Token REVO partner.
+- Pedir al cliente/SAT `tenant` y access token generado en la cuenta REVO de Tigre, además de confirmar REVO Master/cuentas hijas si aplica.
+- Pedir a Toni el enlace exacto del formulario solo si necesitamos obtener/renovar/habilitar `client-token` o registrar la integración para seguimiento.
+- Cuando REVO entregue credenciales, probarlas primero en `/onboarding` REVO y después en `revo-proxy` antes de activar escritura.
+
+## Hechos (Jardí familias vino Agora — 2026-06-15)
+
+- Se refresco `sync-master-data` de Jardí en modo lectura:
+  - `61` familias totales en Agora;
+  - `695` productos totales.
+- Conteo de familias de vino:
+  - `5` familias legacy raiz de vino: `VI NEGRE`, `VI ROSAT`, `VI BLANC`, `CAVA`, `CHAMPAGNE`;
+  - `27` subfamilias legacy de vino, todas bajo `VI NEGRE`;
+  - `8` familias Winerim raiz: `TINTOS WINERIM`, `COPAS WINERIM`, `ROSADOS WINERIM`, `DULCE WINERIM`, `BLANCOS WINERIM`, `MAGNUM WINERIM`, `FORTIFICADOS WINERIM`, `ESPUMOSOS WINERIM`;
+  - `0` subfamilias Winerim.
+- Total nodos de vino si se cuentan familias + subfamilias + Winerim: `40`.
+- Nota: se excluye `BODEGA` del conteo de vino porque en Jardí agrupa licores/destilados, no solo vino.
+
+## Hechos (Katsu Izakaya estructura familias Agora — 2026-06-15)
+
+- Se refresco `sync-master-data` de Katsu en modo lectura:
+  - `42` familias;
+  - `1212` productos;
+  - `last_business_day_synced=2026-06-13`;
+  - `auto_push_verified_ready=false`;
+  - no se escribieron productos, mappings ni stock.
+- Agora no devuelve subfamilias reales en esta foto: las `42` familias aparecen como familias raiz (`ParentFamilyId` vacio).
+- Familias de vino legacy:
+  - `VINOS` id `33`, oculta, `109` productos directos, `106` vendibles, `101` legacy reales y `8` generados Winerim;
+  - `VINOS POR COPAS` id `37`, oculta, `93` productos directos, `82` vendibles, `89` legacy reales y `4` generados Winerim;
+  - `VINOS` id `11`, oculta, sin productos.
+- Familias Winerim visibles:
+  - `TINTOS WINERIM`: `24` productos, `14` vendibles;
+  - `BLANCOS WINERIM`: `26` productos, `20` vendibles;
+  - `ROSADOS WINERIM`: `1` producto, `0` vendibles;
+  - `ESPUMOSOS WINERIM`: `11` productos, `8` vendibles;
+  - `DULCE WINERIM`: `6` productos, `4` vendibles;
+  - `FORTIFICADOS WINERIM`: `4` productos, `4` vendibles;
+  - `COPAS WINERIM`: `3` productos, `2` vendibles;
+  - `MAGNUM WINERIM`: `2` productos, `2` vendibles.
+- Ficheros generados:
+  - `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-15.md`;
+  - `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-15_families.csv`;
+  - `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-15_products.csv`.
+
+## Hechos (Katsu + Jardí export read-only — 2026-06-15)
+
+### Katsu Izakaya — foto actual
+- Se refresco `sync-master-data` de Katsu en lectura:
+  - `42` familias;
+  - `1212` productos;
+  - `provider_capabilities=READY`;
+  - `can_read_sales=true`;
+  - `can_read_catalog=true`;
+  - `can_write_products=YES`;
+  - sin circuit breaker.
+- Familias legacy de vino en Agora:
+  - `VINOS` id `33`, oculta, `109` productos (`101` legacy reales + `8` generados Winerim);
+  - `VINOS POR COPAS` id `37`, oculta, `93` productos (`89` legacy reales + `4` generados Winerim);
+  - `VINOS` id `11`, oculta, `0` productos.
+- Total productos dentro de familias legacy de vino:
+  - `202`;
+  - `190` legacy reales;
+  - `12` generados Winerim dentro de familias legacy.
+- Catalogo Winerim cacheado en Katsu:
+  - `95` vinos;
+  - `66` activos;
+  - `64` botellas publicables;
+  - `65` copas publicables;
+  - `2` magnum publicables.
+- Productos Winerim en familias `... WINERIM`:
+  - `77` productos;
+  - `54` vendibles como main.
+- Mappings actuales:
+  - `85` total;
+  - `58 CONFIRMED`;
+  - `27 REJECTED`;
+  - por formato: `53` botellas confirmadas, `3` copas confirmadas, `2` magnum confirmados, `26` botellas rejected, `1` copa rejected.
+- Pendiente de matching legacy segun dry-run:
+  - `28` productos legacy auto-confirmables sin duplicado;
+  - `26` matches fuertes pero con riesgo de duplicar vino/formato ya confirmado;
+  - `63` requieren revision manual;
+  - `73` sin match fiable o sin stockId de variante.
+- Impacto sobre ventas Katsu ya guardadas:
+  - `299` lineas reales de vino sin resolver;
+  - `40` productos unicos;
+  - `20` productos seguros cubririan `218/299` lineas;
+  - `18` productos requieren revision y cubren `77` lineas;
+  - `2` productos sin match cubren `4` lineas.
+
+### Jardí Parets — export ventas 2 meses sin stock
+- Se exportaron ventas de `2026-04-15` a `2026-06-15` incluido usando solo `agora-proxy.fetch-day`.
+- Garantias de la exportacion:
+  - no se uso `save-sales`;
+  - no se escribio en `sales_events`;
+  - no se escribio en `sales_line_items`;
+  - no se llamo a Winerim stock;
+  - no se movio `last_business_day_synced`.
+- Totales exportados:
+  - `62` dias revisados;
+  - `52` dias con facturas;
+  - `449` facturas;
+  - `4459` lineas;
+  - `180` productos unicos;
+  - importe total `60206.55`;
+  - `0` errores.
+- Vino real por familias de vino, excluyendo `BODEGA` porque agrupa licores/destilados:
+  - `37` productos de vino vendidos;
+  - `97` lineas;
+  - importe `2581.95`.
+- Ficheros generados:
+  - `JARDI_SALES_EXPORT_2026-04-15_2026-06-15.md`;
+  - `JARDI_SALES_EXPORT_2026-04-15_2026-06-15_lines.csv`;
+  - `JARDI_SALES_EXPORT_2026-04-15_2026-06-15_products.csv`;
+  - `JARDI_SALES_EXPORT_2026-04-15_2026-06-15_daily.csv`;
+  - `JARDI_SALES_EXPORT_2026-04-15_2026-06-15_wine_products.csv`.
+- Verificacion posterior de Jardí:
+  - `last_business_day_synced` sigue en `2026-06-13`;
+  - `sales_events` sigue en `209` filas;
+  - `stock_sync_log` sigue en `0`;
+  - cola abierta `QUEUED/RUNNING/FAILED/BLOCKED=0`.
+- Confirmacion catalogo Jardí:
+  - todas las variantes Winerim publicables estan arriba en Agora:
+    - `166` botellas;
+    - `1` copa;
+    - `1` magnum.
+  - familias Winerim visibles:
+    - `TINTOS WINERIM` `129`;
+    - `BLANCOS WINERIM` `19`;
+    - `ROSADOS WINERIM` `7`;
+    - `ESPUMOSOS WINERIM` `11`;
+    - `COPAS WINERIM` `1`;
+    - `MAGNUM WINERIM` `1`;
+    - `DULCE WINERIM` `0`;
+    - `FORTIFICADOS WINERIM` `0`.
+
+### Decisiones
+- Para Jardí, usar export local read-only para analisis historico de dos meses, no `save-sales`, porque el objetivo era ver ventas sin riesgo de descuento ni movimiento de cursor.
+- Para Katsu, mantener pendiente el matching legacy por fases; no insertar mappings en bloque hasta corregir/revisar los casos de duplicado y el mapping sospechoso `972845`.
+
+### Pendientes
+- Katsu: preparar lote fase 1 con los `20` productos seguros que cubririan `218` lineas y validarlo antes de insertar mappings.
+- Katsu: revisar/bloquear mapping `972845` antes de cualquier fase.
+- Jardí: si se quiere que estas ventas historicas aparezcan dentro del monitor, crear un import read-only especifico que no toque stock ni cursor; no usar `save-sales` a pelo.
+
+## Hechos (Restaurante Jardi / El Jardí Parets Agora — activación controlada 2026-06-15)
+
+### Estado final de conexión
+- Conexion encontrada en Lovable Cloud:
+  - `location_name=Restaurante Jardi`;
+  - `base_url=http://eljardiparets.ddns.net:8984`;
+  - `enabled=true`;
+  - `catalog_sync_enabled=true`;
+  - `sync_mode=BIDIRECTIONAL`;
+  - `write_mode=XML_IMPORT`;
+  - `auto_push_on_create=true`;
+  - `auto_push_on_update=false`;
+  - `auto_push_verified_ready=true`;
+  - `require_manual_review_before_push=true`;
+  - `last_business_day_synced=2026-06-13`;
+  - `last_sync_at=2026-06-15T09:35:06Z`;
+  - sin circuit breaker abierto y sin cola abierta (`QUEUED/RUNNING/FAILED/BLOCKED=0`).
+
+### Pruebas realizadas
+- `agora-proxy` / `test`: OK.
+- `agora-proxy` / `find-last-business-day` con `daysBack=14`:
+  - `11` dias con ventas;
+  - `92` facturas encontradas;
+  - ultimo dia cerrado detectado: `2026-06-13`.
+- `agora-proxy` / `sync-master-data` antes de publicar: OK.
+  - `53` familias legacy;
+  - `527` productos legacy;
+  - `4` IVAs;
+  - `1` lista de precios;
+  - `1` almacen;
+  - `6` sale centers;
+  - `2` preparation types;
+  - `5` preparation orders;
+  - sin warnings de truncado.
+- `agora-proxy` / `fetch-day` para `2026-06-13`: OK.
+  - `8` eventos/facturas en la respuesta;
+  - familias detectadas incluyen `CAVA`, `VI BLANC`, `BEGUDES`, `PER COMENÇAR`, `POSTRES`, etc.
+- `winerim-proxy` / `fetch-catalog` modo `start`, primera tanda:
+  - Winerim token OK;
+  - `174` vinos leidos;
+  - `25/25` detalles enriquecidos;
+  - `25` candidatos nuevos detectados;
+  - no se crearon partes de auto-push porque los flags estan apagados.
+- Enriquecimiento completo posterior:
+  - `149/149` detalles restantes enriquecidos;
+  - `0` fallos Winerim;
+  - cache completa de `174` vinos activos.
+- Cache Winerim tras enriquecer:
+  - `174` vinos activos;
+  - `166` botellas publicables (`bottle_sale_price` + `bottle_stock_id`);
+  - `1` copa publicable (`Dulce de Invierno`, `glass_stock_id=312405`, PVP copa `6.5`);
+  - `1` magnum publicable (`PSI`, `magnum_stock_id=303734`, PVP magnum `68`);
+  - `8` vinos activos sin botella publicable por faltar precio/stock de botella.
+
+### Publicación Winerim en Agora
+- Defaults de escritura configurados:
+  - IVA `3` / `10%`;
+  - preparation type/order `1/1` (`Beguda/Beguda`);
+  - warehouse `1` (`Magatzem General`);
+  - sale centers `1..6` (`MENJADOR`, `CELLER`, `JARDI`, `BAR`, `TERRASSA BAR`, `EMPORTAR`);
+  - `auto_create_families=true`;
+  - `write_bottle=true`;
+  - `write_glass=true`.
+- Familias Winerim creadas/reutilizadas en Agora:
+  - `900157` `TINTOS WINERIM`;
+  - `901954` `COPAS WINERIM`;
+  - `903516` `ROSADOS WINERIM`;
+  - `903925` `DULCE WINERIM`;
+  - `904241` `BLANCOS WINERIM`;
+  - `904289` `MAGNUM WINERIM`;
+  - `908182` `FORTIFICADOS WINERIM`;
+  - `908875` `ESPUMOSOS WINERIM`.
+- Dry-run botellas:
+  - `166` productos;
+  - `129` tintos, `19` blancos, `7` rosados, `11` espumosos;
+  - `0` validaciones invalidas;
+  - `UseAsDirectSale=false`;
+  - `SaleableAsMain=true`;
+  - preparation completa;
+  - sin nombres duplicados.
+- Dry-run copa/magnum:
+  - `C Dulce de Invierno` -> `COPAS WINERIM`;
+  - `M PSI` -> `MAGNUM WINERIM`;
+  - `0` validaciones invalidas.
+- Import real:
+  - primer bloque `40/40` OK;
+  - segundo bloque `40/40` OK;
+  - tercer bloque inicial devolvio HTTP `500` desde Agora sin aplicar productos;
+  - tras refrescar master data, los `86` restantes entraron en un bloque y verificaron `86/86` OK;
+  - copa `1/1` OK;
+  - magnum `1/1` OK.
+- Estado final tras `sync-master-data`:
+  - `61` familias;
+  - `695` productos;
+  - `168` productos Winerim publicados y confirmados:
+    - `TINTOS WINERIM`: `129`;
+    - `BLANCOS WINERIM`: `19`;
+    - `ROSADOS WINERIM`: `7`;
+    - `ESPUMOSOS WINERIM`: `11`;
+    - `COPAS WINERIM`: `1`;
+    - `MAGNUM WINERIM`: `1`;
+    - `DULCE WINERIM`: `0`;
+    - `FORTIFICADOS WINERIM`: `0`.
+- `product_mappings`:
+  - `BOTTLE:CONFIRMED=166`;
+  - `GLASS:CONFIRMED=1`;
+  - `MAGNUM:CONFIRMED=1`.
+- `winerim_push_tracking`:
+  - `BOTTLE:PUSHED=166`;
+  - `MAGNUM:PUSHED=1`;
+  - tras auto-update inicial de `Dulce de Invierno`, la copa queda `GLASS:VERIFIED=1`.
+- `provider_capabilities` queda `READY`, `can_read_sales=true`, `can_read_catalog=true`, `can_write_products=YES`, `write_endpoint=/api/import/`.
+
+### Estado legacy / pantalla actual Agora
+- Legacy NO se ha ocultado ni borrado.
+- Siguen visibles las familias legacy principales:
+  - `42` `VI NEGRE`;
+  - `29` `VI ROSAT`;
+  - `30` `VI BLANC`;
+  - `31` `CAVA`;
+  - `32` `CHAMPAGNE`.
+- Antes de publicar habia `283` productos legacy de vino dentro de familias; se mantienen como rollback visual/operativo.
+
+### Ventas y stock
+- `auto-sync-sales` manual ejecutado despues de activar:
+  - `25` dias cerrados sincronizados;
+  - dias `2026-05-16` a `2026-06-13` con huecos naturales de dias sin facturas;
+  - `209` documentos/facturas guardados;
+  - `2155` lineas guardadas;
+  - `resolvedLines=0`;
+  - `unresolvedLines=477`;
+  - `stockSync=null`.
+- Interpretacion: las ventas historicas eran de productos legacy, no de los productos Winerim recien creados; por eso no se descuenta stock historico. A partir de ventas futuras sobre botones Winerim, el mapping existe y el flujo podra descontar stock por variante.
+
+### Anomalias / riesgos detectados
+- `detect-capabilities` devuelve `canWrite=NO` porque prueba endpoints REST antiguos (`/api/import/articles`, `/api/products`, etc.) y no valida el flujo XML real usado por el middleware.
+- Esa misma accion deja `provider_capabilities.can_read_catalog=false` si `connection.catalog_endpoint` esta vacio, aunque `sync-master-data` acaba de leer `export-master` correctamente.
+- En Jardí ya no debe usarse `detect-capabilities` como veredicto porque el flujo real XML esta probado y `provider_capabilities` quedo corregido por `xml-import`.
+- Tras activar `auto_push_on_update`, `winerim-proxy fetch-catalog` detecta repetidamente `Dulce de Invierno` como `changedWines=1` y encola/ejecuta un update `GLASS` aunque la ficha queda verificada. Para evitar ruido periodico, se deja `auto_push_on_update=false`.
+- El clasificador de ventas marca algunos platos por rango de precio como candidatos de vino (`NEEDS_REVIEW`), igual que en Katsu; no afecta a stock si no hay mapping, pero ensucia monitor.
+
+### Rollback documentado
+- Rollback de automatismos si el cliente reporta problema:
+  - poner `enabled=false`;
+  - poner `catalog_sync_enabled=false`;
+  - poner `auto_push_on_create=false`;
+  - mantener `auto_push_on_update=false`;
+  - opcionalmente poner `auto_push_verified_ready=false`.
+- Rollback visual sin borrar nada:
+  - usar `set-family-visibility` para `ShowInPos=false` en las familias Winerim `900157`, `901954`, `903516`, `903925`, `904241`, `904289`, `908182`, `908875`.
+  - No borrar productos; el legacy sigue visible y vendible.
+- Rollback de datos no recomendado:
+  - no borrar `product_mappings` ni `winerim_push_tracking` salvo que se vaya a rehacer la instalacion; si se borran, se pierde idempotencia y trazabilidad de lo publicado.
+
+### Decisiones
+- Activar Jardí en modo controlado con legacy visible.
+- Activar altas automaticas (`auto_push_on_create=true`) porque la publicacion inicial y `forceEvaluate` validaron `wouldQueue=0` para productos ya publicados.
+- Mantener actualizaciones automaticas apagadas (`auto_push_on_update=false`) hasta corregir el falso/repetido update de vino solo-copa `Dulce de Invierno`.
+- No ocultar legacy hasta validacion visual del cliente.
+
+### Tareas pendientes inmediatas
+- Corregir/evitar `detect-capabilities` para Agora XML: debe basarse en `sync-master-data` / `preview-xml` y no en endpoints REST inexistentes.
+- Corregir bucle/ruido de `auto_push_on_update` para vinos con copa publicable pero sin botella publicable (`Dulce de Invierno`, `winerim_id=271458`).
+- Validacion visual con cliente:
+  - familias Winerim visibles;
+  - legacy visible;
+  - productos Winerim dentro de familia, sin raiz directa.
+- Validar primera venta real Winerim:
+  - `sales_line_items.mapped=true`;
+  - `stock_sync_log.status=SUCCESS`;
+  - `variant` correcto (`BOTTLE`, `GLASS` o `MAGNUM`);
+  - `stock_id` correcto;
+  - idempotencia al reintentar.
 
 ## Hechos (migración Cloudflare middleware.winerim.wine — 2026-06-12)
 
@@ -174,6 +738,82 @@ _Última actualización: 2026-06-15 09:18 CEST_
 - Configurar variables/secrets por entorno.
 - Añadir persistencia segura de solicitudes de integración tras resolver diseño de Postgres/staging.
 - Portar primero Agora completo en modo lectura y dry-run.
+
+## Hechos (Katsu Izakaya matching legacy dry-run — 2026-06-15)
+
+### Auditoria read-only contra TPV actual
+- Se reviso Katsu Izakaya contra Lovable Cloud y la cache actual de Agora sin escrituras.
+- Conexion Katsu:
+  - `enabled=true`;
+  - `can_read_catalog=true`;
+  - `can_read_sales=true`;
+  - `can_write_products=YES`;
+  - `write_mode=XML_IMPORT`;
+  - `readiness_status=READY`;
+  - sin circuit breaker abierto.
+- Cache Agora actual:
+  - `1212` productos;
+  - `42` familias;
+  - master fetched/updated el `2026-06-15`.
+- Familias legacy de vino detectadas:
+  - `VINOS` id `33`, oculta;
+  - `VINOS POR COPAS` id `37`, oculta;
+  - `VINOS` id `11`, oculta.
+- Dentro de esas familias legacy hay `202` productos:
+  - `190` parecen legacy real por ID Agora bajo;
+  - `12` parecen productos generados por Winerim que quedaron en familias legacy.
+- Catalogo Winerim cacheado Katsu:
+  - `95` vinos;
+  - `64` con stockId botella;
+  - `65` con stockId copa;
+  - `2` con stockId magnum.
+- Mappings actuales:
+  - `85` total;
+  - `58 CONFIRMED`;
+  - `27 REJECTED`;
+  - todos con `match_method=XML_IMPORT`.
+
+### Resultado del dry-run de matching
+- Sobre `190` productos legacy reales de `VINOS` / `VINOS POR COPAS`:
+  - `28` auto-confirmables sin duplicar vino/formato ya confirmado;
+  - `26` con match fuerte pero riesgo de duplicar un producto Winerim ya confirmado para el mismo vino/formato;
+  - `63` requieren revision manual;
+  - `73` sin match fiable o sin stockId de variante.
+- En ventas reales de familias de vino:
+  - `299` lineas de venta de vino siguen sin resolver;
+  - `40` productos unicos;
+  - `20` productos con match fuerte y stockId valido cubririan `218/299` lineas;
+  - `18` productos cubririan `77` lineas, pero requieren revision;
+  - `2` productos cubren `4` lineas sin match fiable.
+- Ejemplos seguros relevantes:
+  - `C. LIRONDO` -> Winerim `Lirondo`, copa, stockId `318055`;
+  - `C. SARMENTERO ROBLE` -> Winerim `Sarmentero Roble`, copa, stockId `319446`;
+  - `C. SARMENTERO VENDIMIA SELECCIONADA` -> Winerim `Sarmentero Vendimia Seleccionada`, copa, stockId `318065`;
+  - `C. ABAD DOM BUENO GODELLO ESENCIA` -> Winerim `Abad Dom Bueno Godello Esencia`, copa, stockId `317350`.
+- Caso que requiere bloqueo/revision antes de aplicar nada:
+  - producto Agora `972845` se llama actualmente `C. SAN SALVADOR GODELLO`, pero tiene mapping `CONFIRMED` a Winerim `272845` (`Abad Dom Bueno Godello Esencia`).
+
+### Hallazgo adicional: monitor inflado por clasificacion
+- Katsu tiene `wine_family_rules` explicitas marcando `CARTA`, `KATSU LIQUIDO`, `SAKE BAR` y `CAFÉ . TÉS` como no-vino.
+- Aun asi, ventas de comida/bebida no-vino aparecen como `is_wine_candidate=true`.
+- Causa tecnica probable: `isWineCandidate()` ignora las reglas recibidas y usa `DEFAULT_CONFIG`; ademas trata `NEEDS_REVIEW` como candidato operativo.
+- Esto infla el contador de lineas no mapeadas y ensucia el monitor, aunque no implica por si solo descuento de stock incorrecto.
+- Informe detallado creado: `KATSU_LEGACY_MATCH_DRY_RUN_2026-06-15.md`.
+
+#### Decisiones
+- No aplicar mappings en Katsu en bloque ni escribir en Agora durante esta auditoria.
+- Tratar Katsu como candidato a matching legacy por fases: primero arreglar clasificacion/ruido, despues corregir el mapping desalineado y finalmente insertar solo matches seguros.
+
+#### Riesgos
+- Un mapping legacy equivocado descontaria stock del vino incorrecto.
+- Resolver ventas historicas y sincronizar stock retroactivo puede descontar de golpe ventas antiguas; debe decidirse si se corrige historico o solo ventas futuras.
+- Cambiar la clasificacion global de candidatos de vino puede afectar otras conexiones Agora; requiere pruebas dirigidas.
+
+#### Tareas pendientes inmediatas
+- Corregir clasificacion para respetar familias no-vino explicitas y no contar `NEEDS_REVIEW` como candidato operativo salvo regla explicita.
+- Revisar/bloquear el mapping `972845` antes de aplicar mappings nuevos.
+- Preparar fase 1 de `LEGACY_SAFE_MATCH` para los `20` productos vendidos con match fuerte y stockId valido.
+- Despues de aplicar fase 1, ejecutar `resolve-sales` y validar una venta real con `stock_sync_log.SUCCESS`.
 
 ## Hechos (qué está desplegado y verificado)
 

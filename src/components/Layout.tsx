@@ -11,12 +11,14 @@ import {
   ChevronLeft,
   Wine,
   ClipboardCheck,
+  ListChecks,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/onboarding", icon: ClipboardCheck, label: "Onboarding" },
+  { to: "/onboarding/requests", icon: ListChecks, label: "Requests" },
   { to: "/integrations", icon: Plug, label: "Integrations" },
   { to: "/sync-monitor", icon: Activity, label: "Sync Monitor" },
   { to: "/alerts", icon: Bell, label: "Alerts", badgeKey: "alerts" },

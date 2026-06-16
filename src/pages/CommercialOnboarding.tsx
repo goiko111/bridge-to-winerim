@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, CircleSlash, Loader2, Play, ShieldCheck, Wifi, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleSlash, Loader2, Play, Send, ShieldCheck, Wifi, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,9 +57,11 @@ const gateMeta: Record<GateStatus, { label: string; className: string; icon: typ
 export default function CommercialOnboarding() {
   const [form, setForm] = useState<CommercialOnboardingInput>(emptyForm);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [gates, setGates] = useState<OnboardingGate[]>(() => buildInitialOnboardingGates(emptyForm));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [lastMessage, setLastMessage] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
 
   const providerLabel = PROVIDER_LABELS[form.provider];
   const readyForReview = useMemo(() => isReadyForTechnicalReview(gates), [gates]);
@@ -75,6 +77,7 @@ export default function CommercialOnboarding() {
     setForm(next);
     setErrors({});
     setLastMessage(null);
+    setRequestMessage(null);
     setGates(buildInitialOnboardingGates(next));
   };
 
@@ -113,6 +116,41 @@ export default function CommercialOnboarding() {
       ]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const submitForReview = async () => {
+    const validation = validateCommercialOnboardingInput(form);
+    setErrors(validation.errors as Record<string, string>);
+    setRequestMessage(null);
+
+    if (!validation.valid || !readyForReview) return;
+
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${middlewareApiUrl}/api/onboarding/requests`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: validation.normalized, gates }),
+      });
+      const data = await res.json();
+
+      if (res.status === 503 && data.error === "REQUEST_STORAGE_DISABLED") {
+        setRequestMessage("La bandeja de solicitudes todavia no esta activada en este entorno.");
+        return;
+      }
+
+      if (!res.ok || data.success === false) {
+        setRequestMessage("No se pudo enviar la solicitud a revision.");
+        return;
+      }
+
+      setRequestMessage(data.id ? `Solicitud enviada: ${data.id}` : "Solicitud enviada a revision tecnica.");
+    } catch {
+      setRequestMessage(`No se pudo contactar con ${middlewareApiUrl}.`);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -289,6 +327,16 @@ export default function CommercialOnboarding() {
               <p className="text-xs text-muted-foreground">
                 El siguiente paso técnico revisa familias, legacy, mappings, dry-run y activación automática.
               </p>
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={!readyForReview || loading || submitting}
+                onClick={submitForReview}
+              >
+                {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                Enviar a revisión
+              </Button>
+              {requestMessage && <p className="text-xs text-muted-foreground">{requestMessage}</p>}
             </CardContent>
           </Card>
         </div>
