@@ -2,7 +2,81 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-17 09:58 CEST_
+_Última actualización: 2026-06-17 10:19 CEST_
+
+## Hechos (Agora · pre-onboarding El Bejeque y Taberna de Elia — 2026-06-17)
+
+- Se hizo auditoría solo lectura, sin crear conexiones, sin importar XML y sin tocar stock, para:
+  - `El Bejeque`;
+  - `Taberna de Elia`.
+- Informe específico: `AGORA_PRE_ONBOARDING_AUDIT_2026-06-17.md`.
+- Artefactos locales de apoyo, no necesarios para producción:
+  - `/tmp/agora_readonly_audit_2026-06-17.json`;
+  - `/tmp/el_bejeque_agora_structure_2026-06-17.json`;
+  - `/tmp/taberna_elia_agora_structure_2026-06-17.json`.
+
+### El Bejeque
+
+- Base URL validada: `https://elbejeque.infogral.es`.
+- `export-master` funciona para `Families`, `Products`, `Vats`, `PriceLists`, `PreparationTypes`, `PreparationOrders`, `Warehouses` y `SaleCenters`.
+- `SalePoints` devuelve HTTP `500`.
+- `/api/` devuelve HTTP `404`, pero no bloquea porque los endpoints reales de exportación sí funcionan.
+- `Invoices` funciona por días cerrados: el día `2026-06-10` devolvió `3` facturas y `34` líneas.
+- `Tickets`, `Orders`, `OpenInvoices` y `Receipts` devuelven HTTP `500`; no hay señal de tiempo real por API.
+- Catálogo: `28` familias, `277` productos, `191` productos vendibles, `0` productos direct-sale y `10` productos sin familia.
+- Familias de vino legacy detectadas:
+  - `14` `TINTOS`: `48` productos, `34` vendibles, familia oculta;
+  - `15` `BLANCOS`: `21` productos, `10` vendibles, familia oculta;
+  - `16` `ROSADO`: `4` productos, `3` vendibles, familia oculta;
+  - `17` `ESPUMOSO`: `6` productos, `3` vendibles, familia oculta;
+  - `18` `FORTIFICADO`: `1` producto, `0` vendibles, familia oculta;
+  - `19` `POSTRE`: `6` productos, `2` vendibles, familia oculta.
+- Solo aparece como visible la familia `28` `ARROCENADO EN CASA`; la visibilidad actual de familias es anómala y requiere confirmación con cliente/SAT antes de subir Winerim.
+- No hay familias `WINERIM`.
+
+### Taberna de Elia
+
+- Base URL validada: `https://elia.tpvrent.net`.
+- `export-master` funciona para `Families`, `Products`, `Vats`, `PriceLists`, `PreparationTypes`, `PreparationOrders`, `Warehouses` y `SaleCenters`.
+- `SalePoints` devuelve HTTP `500`.
+- `/api/` devuelve HTTP `404`, pero no bloquea porque los endpoints reales de exportación sí funcionan.
+- `Invoices` funciona por días cerrados: `2026-06-16` devolvió `8` facturas y `86` líneas; `2026-06-10` devolvió `32` facturas.
+- `Tickets`, `Orders`, `OpenInvoices` y `Receipts` devuelven HTTP `500`; no hay señal de tiempo real por API.
+- Catálogo: `117` familias, `67` visibles, `20` subfamilias, `2.940` productos, `2.118` productos vendibles, `8` direct-sale y `321` productos sin familia.
+- Estructura de vino principal:
+  - raíz visible `47` `Bodega`, con subfamilias visibles por denominación/región;
+  - subfamilias visibles: `Ribera del Duero`, `Rioja`, `Toro`, `Castilla y León`, `Madrid`, `Otras Denominaciones`, `Magnum y Medias Botellas`, `Blancos`, `Espumosos`, `Otros Vinos`, `Tintos franceses`, `frances blanco`, `Priorato`, `Jumilla`, `D.O. Ribera Sacra`;
+  - raíz visible `16` `Vinos` con `45` productos;
+  - raíz visible `64` `Vermuth y Vinos de jerez`.
+- Hay familias legacy ocultas de vino (`Blancos nacionales`, `Cavas`, `Champagne`, `Jerez`, `Ribera del Duero`, `Rioja`, `Tintos Franceses`, etc.).
+- Existe producto directo genérico `Botella de Vino`; no es mapeable a stock Winerim sin cambio operativo o regla específica.
+- No hay familias `WINERIM`.
+
+### Firesoft / BDP
+
+- Firesoft: no se localizó API pública; viabilidad pendiente de que Pascual/Firesoft confirme API REST, export programable, acceso a base de datos o ficheros de intercambio. La web pública confirma TPV hostelería, comanderos/monitor de cocina y control de stock, pero no documentación técnica de integración.
+- BDP NET: viable si se activa Weblink REST API y plantilla de exportación. Fuentes públicas de integradores describen activación de `Servicio Web`, pestaña `Weblink Rest API`, puerto, login, usuario/clave y código de exportación.
+
+### Decisiones
+
+- No crear aún `pos_connections` para El Bejeque ni Taberna de Elia.
+- No subir catálogo Winerim ni ocultar legacy hasta validar visualmente la estructura actual con cada cliente/SAT.
+- Para ambos Agoras, asumir inicialmente flujo de ventas D-1/post-cierre por `Invoices`, no tiempo real.
+
+### Hipótesis / riesgos
+
+- El Bejeque puede tener una configuración de pantalla distinta a lo que expone `ShowInPos`, o estar usando una capa/cache/terminal no obvia; no tocar visibilidad hasta confirmarlo.
+- Taberna de Elia parece tener una pantalla de vino muy trabajada por `Bodega` y regiones; reemplazarla de golpe por familias Winerim puede romper memoria visual de sala.
+- `SalePoints` HTTP `500` en ambos no bloquea lectura/escritura básica, pero puede limitar configuración fina por punto de venta.
+- Productos genéricos como `Botella de Vino` no pueden descontar stock de un vino concreto salvo que se elimine su uso o se añada selección/mapping operativo.
+
+### Tareas pendientes inmediatas
+
+- Enviar al usuario resumen operativo y borradores de correo para Firesoft y BDP.
+- El Bejeque: preguntar por qué las familias de vino están ocultas en Agora y si quieren crear familias Winerim dedicadas o reutilizar legacy.
+- Taberna de Elia: confirmar si desean conservar estructura `Bodega` por regiones mediante matching, o piloto con familias Winerim dedicadas.
+- Firesoft: pedir documentación técnica, método de autenticación, endpoints/export de ventas, catálogo, stock y escritura de artículos/precios.
+- BDP: pedir activación Weblink REST API, URL/puerto, usuario/clave, código de plantilla de exportación y confirmación de endpoints de alta/actualización de artículos.
 
 ## Hechos (Agora · orden comercial automático por código — 2026-06-17)
 

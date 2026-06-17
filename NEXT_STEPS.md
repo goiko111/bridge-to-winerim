@@ -2,6 +2,23 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Nuevas integraciones Agora · El Bejeque y Taberna de Elia
+- [x] Auditar El Bejeque en modo read-only antes de crear conexión o subir Winerim.
+- [x] Auditar Taberna de Elia en modo read-only antes de crear conexión o subir Winerim.
+- [x] Documentar informe: `AGORA_PRE_ONBOARDING_AUDIT_2026-06-17.md`.
+- [ ] El Bejeque: confirmar con cliente/SAT por qué solo `ARROCENADO EN CASA` aparece `ShowInPos=true` y las familias de vino legacy están ocultas.
+- [ ] El Bejeque: decidir si el piloto será con familias Winerim dedicadas o reutilizando legacy de vino (`TINTOS`, `BLANCOS`, `ROSADO`, `ESPUMOSO`, `FORTIFICADO`, `POSTRE`).
+- [ ] Taberna de Elia: confirmar si desean conservar la estructura visible `Bodega` por regiones/denominaciones y hacer matching legacy, o crear familias Winerim dedicadas en paralelo.
+- [ ] Taberna de Elia: revisar producto directo genérico `Botella de Vino` y decidir si debe bloquearse, mapearse manualmente o sustituirse por vinos concretos.
+- [ ] Para ambos: validar Winerim en lectura y cruzar catálogo Winerim vs Agora antes de cualquier escritura.
+- [ ] Para ambos: si se crea conexión, empezar con `write_mode=NONE`/read-only, ejecutar `sync-master-data`, revisar mappings y solo después planificar XML import.
+
+## P0 — Firesoft / BDP nuevos contactos
+- [ ] Enviar correo a Pascual/Firesoft pidiendo documentación técnica, API/export, autenticación, modelo de datos de artículos/ventas/stock y entorno de pruebas.
+- [ ] Confirmar viabilidad Firesoft: API REST, export programable, acceso base datos, ficheros programados o conector oficial.
+- [ ] Enviar correo a BDP explicando flujo Winerim y solicitando Weblink REST API, URL/puerto, usuario/clave, código de plantilla de exportación y alcance de escritura de artículos/precios.
+- [ ] Cuando BDP responda, comparar con checklist BDP existente: acceso Weblink, mapping, precios/formatos, cierre diario.
+
 ## P0 — Migración controlada a Cloudflare / `middleware.winerim.wine`
 - [x] Documentar estrategia inicial, rollback y riesgos en `CLOUDFLARE_MIDDLEWARE_MIGRATION_2026-06-12.md`.
 - [x] Crear utilidad pura de onboarding comercial en `src/lib/middlewareOnboarding.ts`.

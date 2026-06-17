@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-17 · Agora pre-onboarding: auditar antes de crear conexión o subir catálogo
+- **Decisión**: Tratar El Bejeque y Taberna de Elia como pre-onboarding read-only: inspeccionar API, familias, productos, ventas y estructura visual antes de crear `pos_connections`, importar Winerim u ocultar legacy.
+- **Razón**: Ambos TPV tienen estructura legacy previa y Taberna de Elia conserva una organización de bodega por regiones. Subir Winerim sin entender la pantalla actual podría duplicar vinos, romper memoria visual o ocultar botones útiles.
+- **Alternativa descartada**: crear la conexión y lanzar catálogo Winerim directamente porque los tokens ya estaban disponibles. Sería rápido, pero repetiría riesgos ya vistos en Baco/Sa Pedrera: duplicados, familias inesperadas y rollback operativo.
+
+---
+
 ## 2026-06-17 · Agora: usar `Product.Order`, no `SortOrder`, para orden visual
 - **Decisión**: Reordenar productos Agora mediante el atributo `Order` de `<Product>`, no `SortOrder`.
 - **Razón**: Sa Pedrera aceptó una importación con `SortOrder`, pero `export-master Products` no devolvió ni persistió ese atributo. En cambio, los productos vivos de Agora sí exponen `Order`, y tras importar XML con `Order` la verificación confirmó `438/438` productos con el valor esperado.
