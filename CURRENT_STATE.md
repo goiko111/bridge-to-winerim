@@ -36,6 +36,23 @@ _Última actualización: 2026-06-17 11:39 CEST_
 - Cobertura Winerim -> Agora:
   - `168/168` formatos Winerim publicables están arriba en Agora dentro de familias `... WINERIM`.
 
+### Validación con Excel Winerim del cliente
+
+- El usuario aportó `Jardi export_17-06-2026_11-44-46.xlsx`.
+- Se cruzó el Excel contra Agora vivo en modo solo lectura.
+- Informe específico: `JARDI_EXCEL_AGORA_CROSSCHECK_2026-06-17.md`.
+- Resultado del Excel:
+  - `221` filas;
+  - `174` activas;
+  - `47` inactivas;
+  - `168` formatos publicables soportados (`166` botellas, `1` copa, `1` magnum).
+- Cruce Excel -> Agora:
+  - `168/168` formatos esperados están publicados y vendibles;
+  - faltantes `0`;
+  - Winerim publicados en Agora sin justificar por Excel `0`.
+- Los `6` activos sin precio/formato soportado son fichas de `Vega Sicilia Único`; no deben aparecer como Winerim en Agora mientras sigan sin precio soportado.
+- Nota: `B PSI 705` se validó como producto correcto del Winerim `269705` (`PSI`), con sufijo de desambiguación por nombres duplicados en el Excel.
+
 ### Resultado legacy
 
 - Legacy de vino sigue visible y vendible:

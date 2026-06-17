@@ -256,6 +256,11 @@
   - `168/168` formatos Winerim publicables publicados en familias Winerim;
   - legacy visible con `281` productos vendibles;
   - legacy -> Winerim publicado: `103 MATCH`, `15 REVIEW`, `163 NO_MATCH`.
+- [x] Cruzar Excel Winerim del cliente `Jardi export_17-06-2026_11-44-46.xlsx` contra Agora vivo:
+  - informe `JARDI_EXCEL_AGORA_CROSSCHECK_2026-06-17.md`;
+  - `168/168` formatos esperados publicados y vendibles;
+  - `0` faltantes;
+  - `0` Winerim publicados sin justificar por Excel.
 - [ ] Revisar `JARDI_LEGACY_TO_WINERIM_PUBLISHED_MATCH_2026-06-17.csv` con cliente antes de ocultar legacy:
   - `MATCH`: candidatos a ocultar legacy si el cliente valida que usa Winerim;
   - `REVIEW`: revisión manual;
