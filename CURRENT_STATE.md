@@ -2,7 +2,127 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-17 11:39 CEST_
+_Última actualización: 2026-06-17 13:10 CEST_
+
+## Hechos (Katsu Izakaya · auditoría solo lectura Winerim vs Agora — 2026-06-17)
+
+- Se hizo auditoría solo lectura para Katsu Izakaya:
+  - Agora `export-master` (`Families`, `Products`);
+  - Agora `Invoices` de días cerrados recientes;
+  - Winerim API v2 (`/wines` y detalles individuales);
+  - tablas Lovable Cloud de mappings, tracking, cola, ventas y stock.
+- No se ejecutó import XML, no se encoló nada, no se guardaron ventas, no se descontó stock y no se cambió ningún flag.
+- Informe específico: `KATSU_READONLY_AGORA_WINERIM_AUDIT_2026-06-17.md`.
+- CSVs de revisión:
+  - `KATSU_WINERIM_EXPECTED_POLICY_TO_AGORA_2026-06-17.csv`;
+  - `KATSU_AGORA_WINERIM_PRODUCTS_2026-06-17.csv`;
+  - `KATSU_AGORA_WINERIM_NOT_EXPECTED_2026-06-17.csv`;
+  - `KATSU_LEGACY_TO_WINERIM_LIVE_MATCH_2026-06-17.csv`;
+  - `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-17.csv`.
+
+### Resultado de conexión y catálogo
+
+- Katsu responde correctamente:
+  - `Families`: OK;
+  - `Products`: OK;
+  - `Invoices`: OK para días cerrados con actividad.
+- Configuración viva:
+  - `enabled=true`;
+  - `catalog_sync_enabled=true`;
+  - `write_mode=XML_IMPORT`;
+  - `auto_push_on_create=true`;
+  - `auto_push_on_update=true`;
+  - `auto_push_verified_ready=false`;
+  - `auto_push_bottle=true`;
+  - `auto_push_glass=false`;
+  - `write_bottle=true`;
+  - `write_glass=false`;
+  - breaker limpio y cola abierta `0`.
+- Agora actual:
+  - `42` familias;
+  - `11` familias visibles;
+  - `1.212` productos;
+  - `771` productos vendibles;
+  - `0` productos como botón raíz;
+  - `8` familias Winerim visibles;
+  - `85` productos Winerim detectados por familia/mapping/tracking;
+  - `62` productos Winerim vendibles;
+  - `0` productos Winerim como botón raíz.
+- Winerim API v2 actual:
+  - `67` vinos vivos;
+  - `67` activos;
+  - `64` con precio de botella;
+  - `64` con precio de copa;
+  - `2` con precio de magnum;
+  - `0` fallos de detalle.
+
+### Cobertura según política actual de Katsu
+
+- Como `auto_push_glass=false` y `write_glass=false`, las copas con precio no se cuentan como faltantes.
+- Formatos Winerim esperados en Agora por la política actual:
+  - `64` botellas;
+  - `2` magnums;
+  - total `66`.
+- Cobertura:
+  - `52` formatos están presentes, visibles y vendibles;
+  - `3` existen y son vendibles, pero están en familia legacy oculta `VINOS`;
+  - `11` botellas activas con precio faltan en Agora.
+- Faltantes:
+  - `277094` `Abad Dom Bueno Rosado`;
+  - `277100` `Finca Martelo Reserva`;
+  - `277148` `Luis XIV Ánforas`;
+  - `275753` `Château Cristi Chardonnay`;
+  - `277143` `Biu Blanc`;
+  - `277144` `Private Collection Chardonnay`;
+  - `277146` `Lawson's Dry Hills Riesling`;
+  - `277149` `Chablis 1er Cru 'Fourchaume'`;
+  - `277151` `Chablis 1er Cru 'Vaulorent'`;
+  - `277153` `Malagousia`;
+  - `277154` `Lawson's Dry Hills Gewürztraminer`.
+- Presentes pero en familia oculta:
+  - `272870` `Dulas Rosé`;
+  - `272890` `Saiaz Rosado`;
+  - `272845` `Abad Dom Bueno Godello Esencia`.
+
+### Legacy, copas y stock
+
+- Familias legacy de vino detectadas por heurística: `5`.
+- Productos legacy reales:
+  - `239` productos;
+  - `225` vendibles;
+  - `0` visibles+vendibles porque las familias legacy están ocultas.
+- Pre-match legacy contra Winerim vivo:
+  - `26` match;
+  - `8` review;
+  - `205` no-match.
+- Hay `30` productos Winerim/no esperados por la política actual:
+  - `27` por mapping rechazado o vino antiguo ya no accesible en Winerim;
+  - `3` copas Winerim confirmadas aunque `auto_push_glass=false`.
+- Dos copas confirmadas siguen visibles en `COPAS WINERIM`:
+  - `972883` `C Majuelo del Chiviritero La Seca`;
+  - `975433` `C Forster Pechstein Riesling GG Dry`.
+- Ventas/stock desde `2026-06-01` en Lovable Cloud:
+  - `283` documentos guardados;
+  - `2.554` líneas;
+  - `0` líneas mapeadas;
+  - `0` entradas en `stock_sync_log`.
+- Conclusión operativa: Katsu lee ventas, pero no se puede declarar stock automático correcto hasta resolver mappings y validar una venta/cierre real con producto Winerim.
+
+### Decisión / criterio operativo
+
+- Katsu queda documentado como conectado para lectura y catálogo parcial, pero no como instalación “perfecta” para stock.
+- No activar `auto_push_verified_ready=true` ni hacer import masivo hasta validar que el runtime diferencial está desplegado y que `fetch-catalog` no genera cola masiva.
+- El siguiente paso debe ser dry-run controlado para:
+  - publicar los `11` faltantes;
+  - mover/republicar los `3` que están en `VINOS` oculta hacia familias Winerim;
+  - decidir explícitamente la política de copas.
+
+### Riesgos / hipótesis
+
+- Los `11` faltantes pueden deberse a `auto_push_verified_ready=false`; activar sin comprobar diferencial puede reimportar más de lo necesario.
+- Las `3` copas confirmadas contradicen la política actual de `auto_push_glass=false`; pueden ser residuo histórico o decisión operativa previa.
+- El contador de `is_wine_candidate` sigue contaminado por clasificación y no representa por sí solo vinos reales pendientes.
+- Un producto vendido desde legacy oculto o desde un botón no mapeado no descontará stock en Winerim.
 
 ## Hechos (Jardí Parets · Winerim vs Agora pre-check — 2026-06-17)
 

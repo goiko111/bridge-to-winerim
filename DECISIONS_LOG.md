@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-17 · Katsu: no activar automático completo tras auditoría solo lectura
+- **Decisión**: Tratar Katsu como conexión operativa de lectura con catálogo Winerim parcial, pero no como instalación cerrada para stock ni autopush completo.
+- **Razón**: La auditoría solo lectura confirma API Agora y Winerim OK, cola `0` y `8` familias Winerim visibles, pero solo `52/66` formatos esperados están visibles/vendibles; `3` están en familia legacy oculta y `11` faltan. Además, desde `2026-06-01` hay `283` documentos y `2.554` líneas guardadas, pero `0` líneas mapeadas y `0` `stock_sync_log`.
+- **Alternativa descartada**: activar `auto_push_verified_ready=true` o publicar/mover productos directamente. Podría reimportar cola no diferencial, mantener copas incoherentes con la política actual o dar por bueno un stock que aún no descuenta ventas reales.
+
+---
+
 ## 2026-06-17 · Taberna de Elia: no hacer volcado Winerim directo tras pre-match
 - **Decisión**: Tratar Taberna de Elia como integración con fase previa de matching legacy/revisión manual, no como alta directa de familias Winerim ni ocultación legacy.
 - **Razón**: El pre-match sobre `373` vinos operativos Winerim solo da `176` matches automáticos seguros (`47.2%`), con `96` candidatos en revisión, `101` sin match y `62` matches seguros con duplicidad/ambigüedad en Agora. Además, el TPV ya tiene una estructura visible de `Bodega` por denominaciones/regiones.

@@ -123,6 +123,24 @@
 - [ ] Katsu: despues de mappings, venta real de prueba de copa y botella; validar `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
 - [x] Katsu 2026-06-15: refresco actual confirmado (`190` legacy reales en familias vino, `95` vinos Winerim cacheados, `58 CONFIRMED`, `27 REJECTED`, `28` matches auto-confirmables y `20` productos seguros que cubririan `218/299` lineas reales de vino).
 - [x] Katsu 2026-06-15: exportar estructura Agora por familias: `42` familias raiz, sin subfamilias reales; reporte `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-15.md`.
+- [x] Katsu 2026-06-17: auditoría solo lectura Winerim vs Agora sin escrituras:
+  - informe `KATSU_READONLY_AGORA_WINERIM_AUDIT_2026-06-17.md`;
+  - `66` formatos Winerim esperados por política actual (`64` botellas + `2` magnums);
+  - `52` visibles/vendibles, `3` en familia legacy oculta, `11` faltantes;
+  - `8` familias Winerim visibles y `0` productos Winerim como botón raíz;
+  - legacy vino oculto visualmente (`0` legacy visible+vendible), no borrado;
+  - desde `2026-06-01`, `283` documentos / `2.554` líneas, pero `0` líneas mapeadas y `0` `stock_sync_log`.
+- [ ] Katsu: preparar dry-run controlado para publicar los `11` faltantes detectados:
+  - `277094`, `277100`, `277148`, `275753`, `277143`, `277144`, `277146`, `277149`, `277151`, `277153`, `277154`;
+  - antes, confirmar runtime diferencial y que `fetch-catalog` no genera cola masiva.
+- [ ] Katsu: preparar dry-run para mover/republicar los `3` Winerim que existen en `VINOS` oculta hacia familias Winerim:
+  - `272870` `Dulas Rosé`;
+  - `272890` `Saiaz Rosado`;
+  - `272845` `Abad Dom Bueno Godello Esencia`.
+- [ ] Katsu: decidir política de copas antes de tocar nada:
+  - mantener `auto_push_glass=false` y documentar/ocultar de forma reversible las `3` copas históricas;
+  - o activar copas con prueba controlada (`auto_push_glass/write_glass`) y venta real de copa.
+- [ ] Katsu: no activar `auto_push_verified_ready=true` hasta completar dry-run diferencial y revisar que no se encola/reimporta catálogo completo.
 - [ ] La Candela: revisar por que `546` lineas candidatas de vino en 7 dias quedan `0` mapeadas; priorizar ejemplos `Carraovejas Pago` y `Edulis Copa`.
 - [ ] Luruna: recuperar conectividad publica Agora (`No route to host`) antes de reintentar cola o prometer automatico.
 - [ ] Cienvinos: recuperar conectividad publica Agora (timeout) y luego drenar `68 QUEUED` + revisar `4 BLOCKED`.
