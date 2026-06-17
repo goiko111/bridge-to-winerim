@@ -347,8 +347,120 @@ function commercialGenericCode(wineName: string | null | undefined): { prefix: s
   const text = String(wineName || "").toUpperCase();
   const magnum = text.match(/\bMAGNUM\s*[-_ ]?(\d{1,3})\b/);
   if (magnum) return { prefix: "MAGNUM", number: Number(magnum[1]) };
-  const match = text.match(/\b([BRTEDG])\s*[-_ ]?(\d{1,3})\b/);
-  return match ? { prefix: match[1], number: Number(match[2]) } : null;
+  const match = text.match(/\b([BRTEDG])\s*[-_ ]?(\d{1,3})([A-Z])?\b/);
+  return match ? { prefix: match[1], number: Number(match[2]), suffix: match[3] || "" } : null;
+}
+
+type CommercialCode = { prefix: string; number: number; suffix?: string };
+
+const DEFAULT_COMMERCIAL_CODE_PREFIX_ORDER = ["T", "B", "R", "E", "D", "G", "MAGNUM"];
+
+function agoraProductSortMode(connection: any): string {
+  const config = (connection?.provider_config || {}) as Record<string, unknown>;
+  return String(config.agora_product_sort_mode || config.product_sort_mode || "").toUpperCase();
+}
+
+function shouldSortAgoraProductsByCommercialCode(connection: any): boolean {
+  return agoraProductSortMode(connection) === "COMMERCIAL_CODE_NUMERIC";
+}
+
+function commercialCodePrefixOrder(connection: any): string[] {
+  const config = (connection?.provider_config || {}) as Record<string, unknown>;
+  const raw = Array.isArray(config.agora_product_sort_prefix_order)
+    ? config.agora_product_sort_prefix_order
+    : DEFAULT_COMMERCIAL_CODE_PREFIX_ORDER;
+  const normalized = raw
+    .map((v) => String(v || "").trim().toUpperCase())
+    .filter(Boolean);
+  return normalized.length > 0 ? normalized : DEFAULT_COMMERCIAL_CODE_PREFIX_ORDER;
+}
+
+function commercialCodePrefixOrderForFamily(
+  connection: any,
+  familyId: string,
+  familyName: string,
+  fallbackOrder: string[],
+): string[] {
+  const config = (connection?.provider_config || {}) as Record<string, unknown>;
+  const byFamily = (config.agora_product_sort_prefix_order_by_family || {}) as Record<string, unknown>;
+  const explicit = byFamily[String(familyId)] || byFamily[String(familyName || "").toUpperCase()];
+  if (Array.isArray(explicit)) {
+    const normalized = explicit.map((v) => String(v || "").trim().toUpperCase()).filter(Boolean);
+    if (normalized.length > 0) return normalized;
+  }
+  if (/magnums?\s+winerim/i.test(String(familyName || ""))) {
+    return ["MAGNUM", ...fallbackOrder.filter((prefix) => prefix !== "MAGNUM")];
+  }
+  return fallbackOrder;
+}
+
+function commercialCodeRank(code: CommercialCode | null | undefined, prefixOrder: string[]): number {
+  if (!code) return Number.MAX_SAFE_INTEGER;
+  const idx = prefixOrder.indexOf(String(code.prefix || "").toUpperCase());
+  return idx >= 0 ? idx : prefixOrder.length + 1;
+}
+
+function compareCommercialCodes(
+  a: CommercialCode | null | undefined,
+  b: CommercialCode | null | undefined,
+  prefixOrder: string[],
+): number {
+  const rankDiff = commercialCodeRank(a, prefixOrder) - commercialCodeRank(b, prefixOrder);
+  if (rankDiff !== 0) return rankDiff;
+  if (a && b) {
+    const numberDiff = a.number - b.number;
+    if (numberDiff !== 0) return numberDiff;
+    const suffixDiff = String(a.suffix || "").localeCompare(String(b.suffix || ""), "es");
+    if (suffixDiff !== 0) return suffixDiff;
+  }
+  if (a && !b) return -1;
+  if (!a && b) return 1;
+  return 0;
+}
+
+function inferAgoraFormatOrderFromName(name: string | null | undefined): number {
+  const text = String(name || "").toUpperCase().trim();
+  if (text.startsWith("C ") || text.startsWith("COPA ") || text.startsWith("COPA.")) return 1;
+  if (text.startsWith("M ") || text.startsWith("MAG ") || text.startsWith("MAG.") || text.startsWith("MAGNUM")) return 2;
+  return 0;
+}
+
+function escapeXmlAttribute(value: string): string {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function extractXmlAttrValue(xml: string, attr: string): string | null {
+  const re = new RegExp(`\\b${attr}="([^"]*)"`);
+  return re.exec(xml)?.[1] || null;
+}
+
+function setXmlAttrValue(el: string, attr: string, value: string): string {
+  const escaped = escapeXmlAttribute(value);
+  const re = new RegExp(`\\b${attr}="[^"]*"`);
+  if (re.test(el)) return el.replace(re, `${attr}="${escaped}"`);
+  return el.replace(/(<[\w:-]+\b[^>]*)(\/?>)/, `$1 ${attr}="${escaped}"$2`);
+}
+
+function extractXmlElementsWithAttrs(xml: string, tagName: string): { xml: string; attrs: Record<string, string> }[] {
+  const results: { xml: string; attrs: Record<string, string> }[] = [];
+  const elementRegex = new RegExp(`<${tagName}\\b[^>]*\\/>|<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}>`, "g");
+  let match: RegExpExecArray | null;
+  while ((match = elementRegex.exec(xml)) !== null) {
+    const full = match[0];
+    const attrs: Record<string, string> = {};
+    const attrRegex = /\b([\w:-]+)="([^"]*)"/g;
+    let attrMatch: RegExpExecArray | null;
+    while ((attrMatch = attrRegex.exec(full)) !== null) {
+      attrs[attrMatch[1]] = attrMatch[2];
+    }
+    results.push({ xml: full, attrs });
+  }
+  return results;
 }
 
 // Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
@@ -1353,6 +1465,24 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any, p
   };
 }
 
+// deno-lint-ignore no-explicit-any
+function isFormatUnavailableForAgora(wine: any, formatType: string): boolean {
+  const fmt = String(formatType || "").toUpperCase();
+  if (fmt === "BOTTLE") {
+    const bottlePrice = extractBottleSalePrice(wine);
+    return !bottlePrice || bottlePrice <= 0;
+  }
+  if (fmt === "GLASS") {
+    const glassPrice = extractGlassSalePrice(wine);
+    return wine.serve_by_glass !== true || !glassPrice || glassPrice <= 0;
+  }
+  if (fmt === "MAGNUM") {
+    const magnumPrice = wine.magnum_sale_price ? Number(wine.magnum_sale_price) : null;
+    return !magnumPrice || magnumPrice <= 0;
+  }
+  return false;
+}
+
 // ── FIELD EXTRACTION (PRIORITY 3: use normalized DB fields first) ──
 // deno-lint-ignore no-explicit-any
 function extractWineType(wine: any): string | null {
@@ -1757,9 +1887,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   const newFamilies: { id: string; name: string }[] = [];
   const newFamilyHierarchy: { id: string; name: string; parentId: string }[] = [];
+  const useCommercialCodeSort = shouldSortAgoraProductsByCommercialCode(connection);
+  const codePrefixOrder = commercialCodePrefixOrder(connection);
   const productEntries: {
     wineName: string;
     formatOrder: number;
+    familyId: string;
+    commercialCode: CommercialCode | null;
     productId: string;
     productName: string;
     winerimId: string;
@@ -1825,6 +1959,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       productEntries.push({
         wineName: wineName.toLowerCase(),
         formatOrder,
+        familyId: String(familyResult.id),
+        commercialCode: commercialGenericCode(wineName),
         productId: String(productId),
         productName,
         winerimId: String(winerimId),
@@ -1859,8 +1995,17 @@ ${costPricesXml}
     xml += `  </Families>\n`;
   }
 
-  // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
-  productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
+  if (useCommercialCodeSort) {
+    productEntries.sort((a, b) =>
+      a.familyId.localeCompare(b.familyId, "es") ||
+      compareCommercialCodes(a.commercialCode, b.commercialCode, codePrefixOrder) ||
+      a.formatOrder - b.formatOrder ||
+      a.wineName.localeCompare(b.wineName, "es")
+    );
+  } else {
+    // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
+    productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
+  }
 
   const duplicateSafeProductNames = buildDuplicateSafeAgoraProductNames(
     productEntries.map((entry) => ({
@@ -1871,10 +2016,10 @@ ${costPricesXml}
     existingProducts,
   );
 
-  // Inject SortOrder attribute into each <Product> based on sorted position
+  // Inject Order attribute into each <Product> based on sorted position
   const productXmls = productEntries.map((entry, idx) => {
     const finalProductName = duplicateSafeProductNames[entry.productId] || entry.productName;
-    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product SortOrder="${idx + 1}" Id=`);
+    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product Order="${idx + 1}" Id=`);
   });
 
   if (productXmls.length > 0) {
@@ -4139,6 +4284,281 @@ serve(async (req) => {
       }
     }
 
+    // ── REORDER EXISTING FAMILY PRODUCTS BY COMMERCIAL CODE ──
+    // Safe operation: preserves the full Agora <Product> XML and only rewrites Order.
+    // It is enabled per connection via provider_config.agora_product_sort_mode but can be
+    // run explicitly for a dry-run/audit on any Agora connection.
+    if (action === "reorder-products-by-commercial-code") {
+      const dryRun = payload.dryRun !== false;
+      const providerConfig = ((connection as any).provider_config || {}) as Record<string, unknown>;
+      const configuredFamilyIds = Array.isArray(providerConfig.agora_product_sort_family_ids)
+        ? providerConfig.agora_product_sort_family_ids.map((id) => String(id)).filter(Boolean)
+        : [];
+      const requestedFamilyIds = Array.isArray(payload.familyIds)
+        ? payload.familyIds.map((id: unknown) => String(id)).filter(Boolean)
+        : [];
+      const requestedPrefixOrder = Array.isArray(payload.prefixOrder)
+        ? payload.prefixOrder.map((v: unknown) => String(v || "").trim().toUpperCase()).filter(Boolean)
+        : commercialCodePrefixOrder(connection);
+      const prefixOrder = requestedPrefixOrder.length > 0 ? requestedPrefixOrder : DEFAULT_COMMERCIAL_CODE_PREFIX_ORDER;
+
+      const familiesRes = await fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+        method: "GET",
+        headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+      }, 30000);
+      const familiesXml = await familiesRes.text().catch(() => "");
+      if (!familiesRes.ok || !familiesXml) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `No se pudo leer familias Agora: HTTP ${familiesRes.status}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const familyElements = extractXmlElementsWithAttrs(familiesXml, "Family");
+      const familyById = new Map<string, { id: string; name: string; showInPos: string | null }>();
+      for (const fam of familyElements) {
+        const id = String(fam.attrs.Id || "");
+        if (!id) continue;
+        familyById.set(id, {
+          id,
+          name: String(fam.attrs.Name || ""),
+          showInPos: fam.attrs.ShowInPos || null,
+        });
+      }
+
+      const inferredWinerimFamilyIds = Array.from(familyById.values())
+        .filter((fam) => /\bWINERIM\b/i.test(fam.name))
+        .map((fam) => fam.id);
+      const targetFamilyIds = new Set<string>(
+        requestedFamilyIds.length > 0
+          ? requestedFamilyIds
+          : configuredFamilyIds.length > 0
+            ? configuredFamilyIds
+            : inferredWinerimFamilyIds,
+      );
+
+      if (targetFamilyIds.size === 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "No hay familias objetivo. Indica familyIds o configura provider_config.agora_product_sort_family_ids.",
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const cachedProducts = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+      if (!cachedProducts.ok) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `No se pudo leer catálogo Agora: HTTP ${cachedProducts.status}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const productElements = extractXmlElementsWithAttrs(cachedProducts.xml, "Product");
+      type ProductSortPlan = {
+        productId: string;
+        name: string;
+        buttonText: string;
+        familyId: string;
+        familyName: string;
+        code: CommercialCode | null;
+        formatOrder: number;
+        previousOrder: number | null;
+        nextOrder: number;
+        changed: boolean;
+        xmlBefore: string;
+        xmlAfter: string;
+      };
+      const byFamily = new Map<string, ProductSortPlan[]>();
+
+      for (const product of productElements) {
+        const familyId = String(product.attrs.FamilyId || "");
+        if (!targetFamilyIds.has(familyId)) continue;
+        const productId = String(product.attrs.Id || "");
+        if (!productId) continue;
+        const name = String(product.attrs.Name || "");
+        const buttonText = String(product.attrs.ButtonText || "");
+        const code = commercialGenericCode(name) || commercialGenericCode(buttonText);
+        const previousOrderRaw = product.attrs.Order;
+        const previousOrder = previousOrderRaw && /^\d+$/.test(previousOrderRaw)
+          ? Number(previousOrderRaw)
+          : null;
+        const familyName = familyById.get(familyId)?.name || familyId;
+        const entry: ProductSortPlan = {
+          productId,
+          name,
+          buttonText,
+          familyId,
+          familyName,
+          code,
+          formatOrder: inferAgoraFormatOrderFromName(name),
+          previousOrder,
+          nextOrder: 0,
+          changed: false,
+          xmlBefore: product.xml,
+          xmlAfter: product.xml,
+        };
+        const list = byFamily.get(familyId) || [];
+        list.push(entry);
+        byFamily.set(familyId, list);
+      }
+
+      if (byFamily.size === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun,
+          targetFamilyIds: Array.from(targetFamilyIds),
+          families: [],
+          changed: 0,
+          message: "No hay productos en las familias objetivo.",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const changedPlans: ProductSortPlan[] = [];
+      const familyPlans: {
+        familyId: string;
+        familyName: string;
+        prefixOrder: string[];
+        total: number;
+        coded: number;
+        uncoded: number;
+        changed: number;
+        first: { productId: string; name: string; code: string | null; sortOrder: number }[];
+        last: { productId: string; name: string; code: string | null; sortOrder: number }[];
+      }[] = [];
+      const codeLabel = (code: CommercialCode | null): string | null => code ? `${code.prefix}${String(code.number).padStart(3, "0")}${code.suffix || ""}` : null;
+
+      for (const [familyId, products] of byFamily.entries()) {
+        const familyNameForSort = products[0]?.familyName || familyById.get(familyId)?.name || familyId;
+        const familyPrefixOrder = commercialCodePrefixOrderForFamily(connection, familyId, familyNameForSort, prefixOrder);
+        products.sort((a, b) =>
+          compareCommercialCodes(a.code, b.code, familyPrefixOrder) ||
+          a.formatOrder - b.formatOrder ||
+          a.name.localeCompare(b.name, "es") ||
+          Number(a.productId) - Number(b.productId)
+        );
+
+        products.forEach((p, idx) => {
+          p.nextOrder = idx + 1;
+          p.changed = p.previousOrder !== p.nextOrder;
+          p.xmlAfter = setXmlAttrValue(p.xmlBefore, "Order", String(p.nextOrder));
+          if (p.changed) changedPlans.push(p);
+        });
+
+        familyPlans.push({
+          familyId,
+          familyName: familyNameForSort,
+          prefixOrder: familyPrefixOrder,
+          total: products.length,
+          coded: products.filter((p) => Boolean(p.code)).length,
+          uncoded: products.filter((p) => !p.code).length,
+          changed: products.filter((p) => p.changed).length,
+          first: products.slice(0, 8).map((p) => ({
+            productId: p.productId,
+            name: p.name,
+            code: codeLabel(p.code),
+            sortOrder: p.nextOrder,
+          })),
+          last: products.slice(-8).map((p) => ({
+            productId: p.productId,
+            name: p.name,
+            code: codeLabel(p.code),
+            sortOrder: p.nextOrder,
+          })),
+        });
+      }
+
+      const productXml = Array.from(byFamily.values())
+        .flat()
+        .map((p) => `    ${p.xmlAfter}`)
+        .join("\n");
+      const xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productXml}\n  </Products>\n</Import>`;
+      const rollbackXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${Array.from(byFamily.values()).flat().map((p) => `    ${p.xmlBefore}`).join("\n")}\n  </Products>\n</Import>`;
+
+      if (dryRun) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun: true,
+          sortMode: "COMMERCIAL_CODE_NUMERIC",
+          prefixOrder,
+          targetFamilyIds: Array.from(targetFamilyIds),
+          families: familyPlans,
+          changed: changedPlans.length,
+          changedPreview: changedPlans.slice(0, 50).map((p) => ({
+            familyId: p.familyId,
+            familyName: p.familyName,
+            productId: p.productId,
+            name: p.name,
+            code: codeLabel(p.code),
+            previousOrder: p.previousOrder,
+            nextOrder: p.nextOrder,
+          })),
+          xml: payload.includeXml === true ? xml : undefined,
+          rollbackXml: payload.includeXml === true ? rollbackXml : undefined,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const importUrl = `${baseUrlClean}/api/import/`;
+      const xmlHeaders = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+      const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 60000);
+      const responseBody = await importRes.text().catch(() => "");
+      const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+      if (!parsed.success) {
+        return new Response(JSON.stringify({
+          success: false,
+          dryRun: false,
+          sortMode: "COMMERCIAL_CODE_NUMERIC",
+          prefixOrder,
+          targetFamilyIds: Array.from(targetFamilyIds),
+          families: familyPlans,
+          changed: changedPlans.length,
+          error: parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 500)}`,
+          xmlSent: xml,
+          rollbackXml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      const verifyCached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+      const verifyProducts = new Map<string, string>();
+      if (verifyCached.ok) {
+        for (const product of extractXmlElementsWithAttrs(verifyCached.xml, "Product")) {
+          const id = String(product.attrs.Id || "");
+          if (id) verifyProducts.set(id, product.xml);
+        }
+      }
+      const verification = changedPlans.map((p) => {
+        const live = verifyProducts.get(p.productId) || "";
+        const sortOrder = live ? extractXmlAttrValue(live, "Order") : null;
+        return {
+          productId: p.productId,
+          expectedOrder: String(p.nextOrder),
+          actualOrder: sortOrder,
+          ok: sortOrder === String(p.nextOrder),
+        };
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        dryRun: false,
+        sortMode: "COMMERCIAL_CODE_NUMERIC",
+        prefixOrder,
+        targetFamilyIds: Array.from(targetFamilyIds),
+        families: familyPlans,
+        changed: changedPlans.length,
+        verification: {
+          catalogFetched: verifyCached.ok,
+          checked: verification.length,
+          ok: verification.every((v) => v.ok),
+          failures: verification.filter((v) => !v.ok).slice(0, 50),
+        },
+        rollbackXml,
+        importResponse: parsed,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // ── SA PEDRERA CONTROLLED TRIAL: publish active D### postres into DULCES WINERIM ──
     // This is intentionally scoped to Sa Pedrera and does not alter the normal automatic routing.
     if (action === "sa-pedrera-dulces-winerim-trial") {
@@ -4176,7 +4596,7 @@ serve(async (req) => {
         if (re.test(el)) return el.replace(re, `${attr}="${escapeTrialXml(value)}"`);
         return el.replace(/(\s*\/?>)$/, ` ${attr}="${escapeTrialXml(value)}"$1`);
       };
-      const patchProductSortOrder = (el: string, sortOrder: number): string => setXmlAttr(el, "SortOrder", String(sortOrder));
+      const patchProductOrder = (el: string, sortOrder: number): string => setXmlAttr(el, "Order", String(sortOrder));
 
       const { data: masterData } = await supabase
         .from("agora_master_data")
@@ -4298,13 +4718,13 @@ serve(async (req) => {
         const price = isGlass ? glassPrice : bottlePrice;
         if (!price || price <= 0) continue;
 
-        // Agora tablets sort these buttons by Product.Id, not by SortOrder.
+        // Agora tablets sort these buttons by Product.Id, not by Order.
         // Use explicit D-code IDs to keep the visual order D701, D702, D710...
         const productId = String(903000 + Number(code.replace("D", "")));
         const productName = formatProductName(fmt, wine.name);
         const cost = isGlass ? (extractGlassCostPrice(wine, connection) || 0) : (extractBottleCostPrice(wine) || 0);
         const previousEl = productElById.get(productId);
-        const currentSortOrder = sortOrder++;
+        const currentOrder = sortOrder++;
         const pricesXml = priceLists.map((pl) =>
           `        <Price PriceListId="${pl.Id}" MainPrice="${price.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
         ).join("\n");
@@ -4321,17 +4741,17 @@ serve(async (req) => {
           productName,
           price,
           cost,
-          sortOrder: currentSortOrder,
+          sortOrder: currentOrder,
           existedBefore: Boolean(previousEl),
           previous: previousEl ? {
             productId,
             name: extractXmlAttr(previousEl, "Name"),
             familyId: extractXmlAttr(previousEl, "FamilyId"),
-            sortOrder: extractXmlAttr(previousEl, "SortOrder"),
+            sortOrder: extractXmlAttr(previousEl, "Order"),
           } : undefined,
           renderXml: () => {
             const buttonText = truncateTrial(productName, 20);
-            return `    <Product SortOrder="${currentSortOrder}" Id="${productId}" Name="${escapeTrialXml(productName)}" ButtonText="${escapeTrialXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${targetFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${escapeTrialXml(defaultPrepTypeId)}" PreparationOrderId="${escapeTrialXml(defaultPrepOrderId)}" CostPrice="${cost.toFixed(2)}">
+            return `    <Product Order="${currentOrder}" Id="${productId}" Name="${escapeTrialXml(productName)}" ButtonText="${escapeTrialXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${targetFamilyId}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${escapeTrialXml(defaultPrepTypeId)}" PreparationOrderId="${escapeTrialXml(defaultPrepOrderId)}" CostPrice="${cost.toFixed(2)}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -4354,7 +4774,7 @@ ${costPricesXml}
       const previousFamilyEl = familyElById.get(targetFamilyId) || null;
       const rollbackExistingProductXml = productPlans
         .filter((p) => p.existedBefore && productElById.has(p.productId))
-        .map((p) => patchProductSortOrder(productElById.get(p.productId) || "", Number(p.previous?.sortOrder || p.sortOrder)))
+        .map((p) => patchProductOrder(productElById.get(p.productId) || "", Number(p.previous?.sortOrder || p.sortOrder)))
         .filter(Boolean)
         .join("\n");
       const rollbackFamilyXml = previousFamilyEl ? `    ${previousFamilyEl}` : `    <Family Id="${targetFamilyId}" Name="DULCE WINERIM" ShowInPos="false" ButtonText="DULCE WINERIM" Color="#999999" Order="${escapeTrialXml(targetFamilyOrder)}" />`;
@@ -4464,7 +4884,7 @@ ${costPricesXml}
             ok: verified,
             familyId,
             name,
-            sortOrder: el ? extractXmlAttr(el, "SortOrder") : null,
+            sortOrder: el ? extractXmlAttr(el, "Order") : null,
           });
           if (verified) {
             await upsertPushTracking(supabase, connectionId, p.winerimWineId, p.format, {
@@ -5341,7 +5761,8 @@ ${costPricesXml}
 
         // Reset failure counter on success — connection is healthy again
         await resetFailureCounter(supabase, task.connection_id);
-        return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification }),
+        const affectedFamilyIds = Array.from(new Set(Object.values(expectedFamilies).filter(Boolean)));
+        return new Response(JSON.stringify({ success: true, status: "SUCCESS", parsedResponse, verification: taskVerification, affectedFamilyIds }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       } catch (e) {
@@ -5482,6 +5903,8 @@ ${costPricesXml}
       const MIN_TIME_FOR_CLAIM_MS = 3_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
+      const shouldReorderAfterSuccess = shouldSortAgoraProductsByCommercialCode(connection);
+      const familiesToReorderAfterSuccess = new Set<string>();
 
       // ── CIRCUIT BREAKER CHECK ──
       // If this connection is paused (recent repeated failures), exit early.
@@ -5495,12 +5918,22 @@ ${costPricesXml}
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      let initialConsecutiveFailures = (connection as any).consecutive_failures || 0;
+      if (breakerPausedUntil && breakerPausedUntil <= nowIso && initialConsecutiveFailures >= 10) {
+        initialConsecutiveFailures = 0;
+        await supabase.from("pos_connections").update({
+          consecutive_failures: 0,
+          circuit_breaker_paused_until: null,
+          circuit_breaker_reason: null,
+        }).eq("id", connectionId);
+      }
+
       // Helper: compute exponential backoff delay (in seconds)
       const backoffDelaySec = (attempts: number) =>
         Math.min(60 * 60, Math.pow(2, attempts) * 60); // 2,4,8,16,32 min, cap 60min
 
       // Helper: register a failure and possibly trip the circuit breaker
-      let runConsecutiveFailures = (connection as any).consecutive_failures || 0;
+      let runConsecutiveFailures = initialConsecutiveFailures;
       const registerFailure = async (taskId: string, errorMsg: string, attempts: number) => {
         const nextRetry = new Date(Date.now() + backoffDelaySec(attempts) * 1000).toISOString();
         await supabase.from("outbound_tasks").update({
@@ -5641,6 +6074,9 @@ ${costPricesXml}
                     .eq("winerim_wine_id", winerimId)
                     .eq("format", fmt);
                 }
+                if (shouldReorderAfterSuccess && targetFamilyId) {
+                  familiesToReorderAfterSuccess.add(String(targetFamilyId));
+                }
                 await registerSuccess();
                 succeeded++;
               } else {
@@ -5654,6 +6090,11 @@ ${costPricesXml}
               });
               processed++;
               if (result?.status === "SUCCESS") {
+                if (shouldReorderAfterSuccess && Array.isArray(result?.affectedFamilyIds)) {
+                  for (const familyId of result.affectedFamilyIds) {
+                    if (familyId) familiesToReorderAfterSuccess.add(String(familyId));
+                  }
+                }
                 await registerSuccess();
                 succeeded++;
               } else {
@@ -5721,6 +6162,21 @@ ${costPricesXml}
       const remainingCount = remaining || 0;
       const breakerTripped = runConsecutiveFailures >= 10;
       const isDone = remainingCount === 0 || breakerTripped;
+      let commercialCodeSortResult: unknown = null;
+
+      if (shouldReorderAfterSuccess && familiesToReorderAfterSuccess.size > 0 && !breakerTripped) {
+        const { data: reorderData, error: reorderError } = await supabase.functions.invoke("agora-proxy", {
+          body: {
+            action: "reorder-products-by-commercial-code",
+            connectionId,
+            familyIds: Array.from(familiesToReorderAfterSuccess),
+            dryRun: false,
+          },
+        });
+        commercialCodeSortResult = reorderError
+          ? { success: false, error: reorderError.message, familyIds: Array.from(familiesToReorderAfterSuccess) }
+          : reorderData;
+      }
 
       if (serverLoop && !isDone) {
         const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
@@ -5736,6 +6192,7 @@ ${costPricesXml}
       return new Response(JSON.stringify({
         success: true, processed, succeeded, failed,
         remaining: remainingCount, done: isDone, serverLoop, breakerTripped,
+        commercialCodeSort: commercialCodeSortResult,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -6508,6 +6965,58 @@ ${costPricesXml}
           skipped++;
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: forceEvaluate ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
           continue;
+        }
+
+        const { data: existingPublishedFormats } = await supabase
+          .from("winerim_push_tracking").select("format, agora_product_id")
+          .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+          .in("sync_status", ["VERIFIED", "PUSHED"]);
+        const formatsToHide = (existingPublishedFormats || [])
+          .filter((push: any) => Boolean(push.agora_product_id))
+          .filter((push: any) => isFormatUnavailableForAgora(wine, String(push.format || "")));
+
+        if (formatsToHide.length > 0) {
+          const { data: existingHide } = await supabase
+            .from("outbound_tasks").select("id")
+            .eq("connection_id", connectionId)
+            .eq("task_type", "AGORA_HIDE_PRODUCT")
+            .contains("payload_json", { _winerim_wine_id: wine.winerim_id })
+            .in("status", ["QUEUED", "RUNNING"]).limit(1);
+          const hideFormats = formatsToHide.map((push: any) => String(push.format || "").toUpperCase());
+
+          if (!existingHide || existingHide.length === 0) {
+            const productIds = formatsToHide.map((push: any) => push.agora_product_id).filter(Boolean);
+            if (!forceEvaluate) {
+              await supabase.from("outbound_tasks").insert({
+                connection_id: connectionId,
+                task_type: "AGORA_HIDE_PRODUCT",
+                payload_json: {
+                  _winerim_wine_id: wine.winerim_id,
+                  _product_ids: productIds,
+                  _wine_name: wine.name,
+                  _formats: hideFormats,
+                  _trigger_source: "AUTO_PRICE_REMOVED",
+                },
+                status: "QUEUED",
+              });
+              for (const p of formatsToHide) {
+                await supabase.from("winerim_push_tracking")
+                  .update({ sync_status: "HIDDEN" })
+                  .eq("connection_id", connectionId)
+                  .eq("winerim_wine_id", wine.winerim_id)
+                  .eq("format", p.format);
+              }
+            }
+            hidQueued++;
+            skippedReasons.push({
+              winerim_id: wine.winerim_id,
+              reason: forceEvaluate
+                ? `price_missing_would_hide:${hideFormats.join("+")}`
+                : `price_missing_hide_queued:${hideFormats.join("+")}`,
+            });
+          } else {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `price_missing_hide_already_pending:${hideFormats.join("+")}` });
+          }
         }
 
 

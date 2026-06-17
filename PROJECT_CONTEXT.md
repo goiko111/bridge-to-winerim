@@ -25,6 +25,7 @@ Flujo principal:
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
 - En Agora, los productos Winerim vendibles deben ir como `UseAsDirectSale=false` + `SaleableAsMain=true`: no salen como botones raíz, pero sí se venden dentro de su familia. `PreparationTypeId` y `PreparationOrderId` deben ir ambos vacíos o ambos informados.
 - Algunas conexiones Agora pueden conservar una estructura visual legacy con reglas en `pos_connections.provider_config.agora_family_routing_rules` para enrutar por formato/tipo/región a familias existentes del TPV.
+- En Agora, las conexiones que necesiten mantener orden comercial por código pueden activar `provider_config.agora_product_sort_mode="COMMERCIAL_CODE_NUMERIC"`. El orden usa códigos explícitos de nombre (`T501`, `B437`, `E516`, `D709`, `G801`, `MAGNUM21`) y solo debe cambiar `Order`, no IDs, precios, familias ni visibilidad.
 - Matching POS -> Winerim: cuando el nombre del POS o de Winerim trae código comercial exacto (`T31`, `B303`, `G801`, `MAGNUM21`), ese código tiene prioridad sobre fuzzy. No interpretar números sin separador como código (`Magnum 4 Kilos`, `As 2 Ladeiras`).
 
 ## 4. Reglas duras (no romper)
