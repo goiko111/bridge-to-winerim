@@ -1,0 +1,47 @@
+name = "winerim-middleware-api"
+main = "cloudflare/workers/middleware-api/src/index.ts"
+compatibility_date = "2026-05-03"
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "local"
+RELEASE = "dev"
+ALLOWED_ORIGIN = "http://127.0.0.1:8084"
+ALLOWED_ORIGINS = "http://127.0.0.1:8084,http://localhost:8084"
+ONBOARDING_REQUESTS_ENABLED = "false"
+ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL = "true"
+# Optional. Set both only after Cloudflare Access is configured.
+# CF_ACCESS_AUD validates signed Access JWTs for private request routes.
+# CF_ACCESS_TEAM_DOMAIN example: https://winerim.cloudflareaccess.com
+
+[env.staging]
+name = "winerim-middleware-api-staging"
+workers_dev = true
+routes = [
+  { pattern = "api-staging.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging"
+ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
+ALLOWED_ORIGINS = "https://staging.middleware.winerim.wine"
+ONBOARDING_REQUESTS_ENABLED = "false"
+ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL = "true"
+# CF_ACCESS_AUD and CF_ACCESS_TEAM_DOMAIN intentionally omitted until Access app is created.
+
+[env.production]
+name = "winerim-middleware-api"
+workers_dev = false
+routes = [
+  { pattern = "api.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+RELEASE = "production"
+ALLOWED_ORIGIN = "https://middleware.winerim.wine"
+ALLOWED_ORIGINS = "https://middleware.winerim.wine"
+ONBOARDING_REQUESTS_ENABLED = "false"
+ONBOARDING_REQUESTS_REQUIRE_ACCESS_EMAIL = "true"
+# CF_ACCESS_AUD and CF_ACCESS_TEAM_DOMAIN intentionally omitted until production Access is created.

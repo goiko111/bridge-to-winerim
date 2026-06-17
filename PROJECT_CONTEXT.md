@@ -16,6 +16,13 @@ Flujo principal:
 - **Cron**: `pg_cron` + `pg_net` invocando dispatchers HTTP.
 - **AI**: Lovable AI Gateway cuando aplique.
 
+### Línea de migración activa (2026-06-12)
+- Producción actual: Lovable Cloud.
+- Objetivo técnico: mover progresivamente el control plane a Cloudflare bajo `middleware.winerim.wine`, empezando por staging/canary y sin migrar clientes hasta validar.
+- Cloudflare se usará primero para UI operativa, Workers, Access, colas/crons y dominio.
+- La base transaccional principal seguirá siendo Postgres gestionado; no usar Cloudflare D1 para el core multi-tenant del middleware.
+- Primera pieza creada: onboarding comercial no destructivo (`/onboarding` + `POST /api/onboarding/test`) para probar URL/token POS y token Winerim sin crear conexiones ni escribir en POS.
+
 ## 3. Arquitectura clave
 - Cada POS tiene su `*-proxy` edge function + hook `use*Connection.ts`.
 - Tabla central: `pos_connections` (con `circuit_breaker_paused_until`, credenciales cifradas).
