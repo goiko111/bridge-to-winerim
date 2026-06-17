@@ -6,10 +6,16 @@
 - [x] Auditar El Bejeque en modo read-only antes de crear conexión o subir Winerim.
 - [x] Auditar Taberna de Elia en modo read-only antes de crear conexión o subir Winerim.
 - [x] Documentar informe: `AGORA_PRE_ONBOARDING_AUDIT_2026-06-17.md`.
+- [x] Parsear Excel Winerim de El Bejeque y cruzar contra Agora.
+- [x] Parsear Excel Winerim de Taberna de Elia y cruzar contra Agora.
+- [x] Documentar pre-match: `WINERIM_AGORA_MATCH_PRECHECK_2026-06-17.md`.
 - [ ] El Bejeque: confirmar con cliente/SAT por qué solo `ARROCENADO EN CASA` aparece `ShowInPos=true` y las familias de vino legacy están ocultas.
 - [ ] El Bejeque: decidir si el piloto será con familias Winerim dedicadas o reutilizando legacy de vino (`TINTOS`, `BLANCOS`, `ROSADO`, `ESPUMOSO`, `FORTIFICADO`, `POSTRE`).
+- [ ] El Bejeque: revisar `9` no-match y `9` review antes de aprobar mappings automáticos; match seguro actual `54/72` operativos (`75.0%`).
 - [ ] Taberna de Elia: confirmar si desean conservar la estructura visible `Bodega` por regiones/denominaciones y hacer matching legacy, o crear familias Winerim dedicadas en paralelo.
 - [ ] Taberna de Elia: revisar producto directo genérico `Botella de Vino` y decidir si debe bloquearse, mapearse manualmente o sustituirse por vinos concretos.
+- [ ] Taberna de Elia: revisar `62` matches duplicados/ambiguos, `96` review y `101` no-match; match seguro actual `176/373` operativos (`47.2%`).
+- [ ] Preparar Excel de revisión Winerim vs Agora con estado `MATCH`/`REVIEW`/`NO_MATCH` si el usuario quiere avanzar a validación manual.
 - [ ] Para ambos: validar Winerim en lectura y cruzar catálogo Winerim vs Agora antes de cualquier escritura.
 - [ ] Para ambos: si se crea conexión, empezar con `write_mode=NONE`/read-only, ejecutar `sync-master-data`, revisar mappings y solo después planificar XML import.
 

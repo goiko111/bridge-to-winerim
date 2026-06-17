@@ -2,7 +2,87 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-17 10:19 CEST_
+_Última actualización: 2026-06-17 11:11 CEST_
+
+## Hechos (Winerim Excel vs Agora · pre-match El Bejeque y Taberna de Elia — 2026-06-17)
+
+- Se parsearon los Excel Winerim facilitados por el usuario:
+  - `Bejeque export_17-06-2026_11-03-52.xlsx`;
+  - `Taberna de Eliaq export_17-06-2026_11-02-14.xlsx`.
+- Se cruzaron contra el catálogo Agora leído en modo solo lectura por `export-master`.
+- Informe específico: `WINERIM_AGORA_MATCH_PRECHECK_2026-06-17.md`.
+- Artefacto local de cálculo: `/tmp/winerim_agora_match_2026-06-17.json`.
+
+### El Bejeque
+
+- Winerim:
+  - `75` filas;
+  - `72` activas;
+  - `3` inactivas;
+  - `72` operativas (`Activo=true` + al menos un precio);
+  - `0` activas sin precio;
+  - `3` inactivas con precio.
+- Formatos operativos con precio:
+  - botella `70`;
+  - copa `21`;
+  - magnum `6`;
+  - botella pequeña `1`.
+- Agora en familias de vino legacy: `86` productos, `52` vendibles, todas las familias de vino detectadas están ocultas.
+- Match sobre `72` vinos operativos:
+  - `54` match automático seguro (`75.0%`);
+  - `9` review (`12.5%`);
+  - `9` sin match (`12.5%`);
+  - cobertura potencial si se aceptan reviews: `63/72` (`87.5%`).
+- Por tipo operativo:
+  - tinto: `32/40` match seguro;
+  - blanco: `11/16`;
+  - espumoso: `5/5`;
+  - fortificado: `2/2`;
+  - postre: `2/6`;
+  - rosado: `2/3`.
+
+### Taberna de Elia
+
+- Winerim:
+  - `484` filas;
+  - `374` activas;
+  - `110` inactivas;
+  - `373` operativas (`Activo=true` + al menos un precio);
+  - `1` activa sin precio (`Prima`, tinto);
+  - `105` inactivas con precio.
+- Formatos operativos con precio:
+  - botella `343`;
+  - copa `49`;
+  - magnum `10`;
+  - botella pequeña `10`;
+  - benjamin `1`;
+  - media botella `8`.
+- Agora en familias de vino seleccionadas: `1.061` productos, `603` vendibles.
+- Match sobre `373` vinos operativos:
+  - `176` match automático seguro (`47.2%`);
+  - `96` review (`25.7%`);
+  - `101` sin match (`27.1%`);
+  - cobertura potencial si se aceptan reviews: `272/373` (`72.9%`);
+  - `62` matches seguros tienen duplicidad/ambigüedad de producto en Agora y deben revisarse antes de confirmar mapping.
+- Por tipo operativo:
+  - tinto: `125/203` match seguro;
+  - blanco: `31/94`;
+  - espumoso: `4/32`;
+  - fortificado: `13/26`;
+  - postre: `3/16`;
+  - rosado: `0/2`.
+
+### Decisiones / criterio operativo
+
+- Para este pre-match, “operativo Winerim” significa `Activo=true` y al menos un formato con precio.
+- No se cuenta `Review` como match automático; requiere revisión humana para evitar mappings incorrectos.
+- Taberna de Elia no debe ir a volcado directo: requiere fase de matching legacy/revisión de duplicados antes de cualquier publicación u ocultación.
+
+### Tareas pendientes inmediatas
+
+- Preparar, si se necesita, Excel de revisión con columnas Winerim, mejor candidato Agora, score, familia Agora y estado (`MATCH`, `REVIEW`, `NO_MATCH`).
+- El Bejeque: revisar los `9` no-match y `9` review antes de decidir si se reutiliza legacy o se crean familias Winerim dedicadas.
+- Taberna de Elia: revisar prioritariamente los `62` matches con duplicidad, los `96` review y el producto directo genérico `Botella de Vino`.
 
 ## Hechos (Agora · pre-onboarding El Bejeque y Taberna de Elia — 2026-06-17)
 

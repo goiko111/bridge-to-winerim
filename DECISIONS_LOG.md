@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-17 · Taberna de Elia: no hacer volcado Winerim directo tras pre-match
+- **Decisión**: Tratar Taberna de Elia como integración con fase previa de matching legacy/revisión manual, no como alta directa de familias Winerim ni ocultación legacy.
+- **Razón**: El pre-match sobre `373` vinos operativos Winerim solo da `176` matches automáticos seguros (`47.2%`), con `96` candidatos en revisión, `101` sin match y `62` matches seguros con duplicidad/ambigüedad en Agora. Además, el TPV ya tiene una estructura visible de `Bodega` por denominaciones/regiones.
+- **Alternativa descartada**: subir todo Winerim en paralelo y ocultar legacy después. Podría duplicar vinos, romper la organización visual de sala y confirmar mappings incorrectos para ventas/stock.
+
+---
+
+## 2026-06-17 · El Bejeque: match alto pero revisar visibilidad antes de escribir
+- **Decisión**: Considerar El Bejeque viable para matching inicial, pero no escribir catálogo hasta aclarar por qué las familias de vino Agora están ocultas.
+- **Razón**: El pre-match sobre `72` vinos operativos da `54` matches automáticos seguros (`75.0%`) y cobertura potencial `87.5%` con revisión, pero las familias legacy de vino (`TINTOS`, `BLANCOS`, `ROSADO`, `ESPUMOSO`, `FORTIFICADO`, `POSTRE`) figuran `ShowInPos=false`.
+- **Alternativa descartada**: crear familias Winerim o reactivar legacy inmediatamente. Sin entender la visibilidad actual, se puede alterar una pantalla que quizá el cliente no usa así o que depende de otra capa/cache de Agora.
+
+---
+
 ## 2026-06-17 · Agora pre-onboarding: auditar antes de crear conexión o subir catálogo
 - **Decisión**: Tratar El Bejeque y Taberna de Elia como pre-onboarding read-only: inspeccionar API, familias, productos, ventas y estructura visual antes de crear `pos_connections`, importar Winerim u ocultar legacy.
 - **Razón**: Ambos TPV tienen estructura legacy previa y Taberna de Elia conserva una organización de bodega por regiones. Subir Winerim sin entender la pantalla actual podría duplicar vinos, romper memoria visual o ocultar botones útiles.
