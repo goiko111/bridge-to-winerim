@@ -2,7 +2,80 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-17 11:11 CEST_
+_Última actualización: 2026-06-17 11:39 CEST_
+
+## Hechos (Jardí Parets · Winerim vs Agora pre-check — 2026-06-17)
+
+- Se hizo auditoría solo lectura para Jardí Parets:
+  - Agora `export-master` (`Families`, `Products`);
+  - Winerim API v2 (`/wines` y detalles individuales);
+  - ventas cerradas recientes por `Invoices`.
+- No se ejecutó import XML, no se guardaron ventas, no se descontó stock, no se movió cursor y no se cambiaron flags.
+- Informe específico: `JARDI_WINERIM_AGORA_MATCH_PRECHECK_2026-06-17.md`.
+- CSVs de revisión:
+  - `JARDI_WINERIM_PUBLISHED_PRODUCTS_2026-06-17.csv`;
+  - `JARDI_LEGACY_TO_WINERIM_PUBLISHED_MATCH_2026-06-17.csv`;
+  - `JARDI_WINERIM_PUBLISHED_TO_LEGACY_MATCH_2026-06-17.csv`.
+
+### Resultado de catálogo
+
+- Agora actual:
+  - `61` familias;
+  - `57` familias visibles;
+  - `695` productos;
+  - `695` productos vendibles.
+- Familias Winerim:
+  - `8/8` visibles;
+  - `168` productos Winerim publicados;
+  - `168/168` vendibles;
+  - `0` productos Winerim como botón raíz.
+- Winerim actual:
+  - `174` vinos activos;
+  - `168` formatos publicables con precio soportado (`166` botellas, `1` copa, `1` magnum);
+  - `6` fichas activas sin precio/formato soportado (`Vega Sicilia Único`), no publicadas como Winerim.
+- Cobertura Winerim -> Agora:
+  - `168/168` formatos Winerim publicables están arriba en Agora dentro de familias `... WINERIM`.
+
+### Resultado legacy
+
+- Legacy de vino sigue visible y vendible:
+  - `VI NEGRE`: `208` productos vendibles contando subfamilias;
+  - `VI BLANC`: `43`;
+  - `VI ROSAT`: `9`;
+  - `CAVA`: `19`;
+  - `CHAMPAGNE`: `2`;
+  - total legacy vino vendible: `281`.
+- Match legacy -> Winerim publicado:
+  - `103` match seguro;
+  - `15` review;
+  - `163` sin match fiable.
+- Match Winerim publicado -> legacy:
+  - `117` match seguro;
+  - `8` review;
+  - `43` sin match fiable.
+
+### Ventas cerradas
+
+- Lectura `Invoices` reciente OK:
+  - `2026-06-16`: `8` facturas, `97` líneas;
+  - `2026-06-15`: `4` facturas, `42` líneas;
+  - `2026-06-13`: `8` facturas, `121` líneas;
+  - `2026-06-12`: `12` facturas, `103` líneas;
+  - `2026-06-11`: `15` facturas, `154` líneas;
+  - `2026-06-10`: `5` facturas, `32` líneas.
+
+### Decisión / criterio operativo
+
+- Jardí no debe ocultar legacy en bloque todavía: hay `163` productos legacy vendibles sin equivalente Winerim fiable.
+- Lo que hoy está en Winerim con precio soportado sí está publicado en Agora.
+- El CSV de legacy debe usarse para decidir ocultación por fases: `MATCH` primero si el cliente valida, `REVIEW` manual, `NO_MATCH` no tocar sin autorización.
+
+### Riesgos / hipótesis
+
+- Mantener legacy + Winerim visibles puede generar duplicados visuales en los `103` matches seguros.
+- Ocultar legacy sin revisión puede quitar vinos que el cliente todavía usa y que no están en Winerim.
+- Este cruce confirma catálogo/nombre, no confirma por sí solo `product_mappings` en Lovable Cloud para descuento de stock legacy.
+- `auto_push_on_update=false` sigue siendo una limitación viva en Jardí: altas nuevas pueden subir, pero cambios de precio/update no deben prometerse hasta resolver el falso update recurrente de `Dulce de Invierno`.
 
 ## Hechos (Winerim Excel vs Agora · pre-match El Bejeque y Taberna de Elia — 2026-06-17)
 

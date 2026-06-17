@@ -251,6 +251,15 @@
   - `60206.55` importe total;
   - ficheros `JARDI_SALES_EXPORT_2026-04-15_2026-06-15*`.
 - [x] Confirmar que export Jardí no toco stock ni cursor: `last_business_day_synced=2026-06-13`, `stock_sync_log=0`, cola abierta `0`.
+- [x] Auditar Winerim vs Agora actual en modo solo lectura:
+  - informe `JARDI_WINERIM_AGORA_MATCH_PRECHECK_2026-06-17.md`;
+  - `168/168` formatos Winerim publicables publicados en familias Winerim;
+  - legacy visible con `281` productos vendibles;
+  - legacy -> Winerim publicado: `103 MATCH`, `15 REVIEW`, `163 NO_MATCH`.
+- [ ] Revisar `JARDI_LEGACY_TO_WINERIM_PUBLISHED_MATCH_2026-06-17.csv` con cliente antes de ocultar legacy:
+  - `MATCH`: candidatos a ocultar legacy si el cliente valida que usa Winerim;
+  - `REVIEW`: revisión manual;
+  - `NO_MATCH`: no ocultar sin autorización.
 - [ ] Si se quiere ver el historico Jardí dentro de la UI/monitor, crear flujo/import read-only que persista ventas sin stock ni cursor; no usar `save-sales` directamente para ese objetivo.
 - [ ] Corregir `detect-capabilities` para Agora XML: hoy puede marcar `NOT_CONNECTED` aunque `sync-master-data` funcione.
 

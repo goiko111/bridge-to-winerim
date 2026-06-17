@@ -825,3 +825,8 @@
 - **Decisión**: Documentar Cloudflare Secrets Store como opcion, junto a gestor externo y cifrado de aplicacion, pero no crear store ni guardar tokens reales.
 - **Razón**: Wrangler muestra Secrets Store como open beta. Antes de usarlo con clientes hace falta cerrar naming, permisos, rotacion y contrato de `secret_refs`.
 - **Alternativa descartada**: crear un store staging ya mismo. Seria rapido, pero adelanta una decision de seguridad que todavia no esta cerrada.
+
+## 2026-06-17 · Jardí: no ocultar legacy en bloque tras pre-check
+- **Decisión**: Mantener Jardí con familias Winerim visibles y legacy visible, sin ocultar legacy en bloque.
+- **Razón**: La auditoría solo lectura confirma que los `168/168` formatos Winerim publicables están publicados en Agora, pero el legacy de vino todavía tiene `281` productos vendibles y solo `103` tienen match automático seguro contra Winerim publicado; `163` no tienen match fiable.
+- **Alternativa descartada**: ocultar todo el legacy de vino como en una migración completa. Habría eliminado duplicados, pero también podría ocultar productos que el cliente sigue usando y que no tienen equivalente Winerim claro.
