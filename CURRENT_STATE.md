@@ -2859,6 +2859,10 @@ _Última actualización: 2026-06-17 13:10 CEST_
 - Hacer venta de prueba botella + copa Winerim y validar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
 
 ## Hipótesis abiertas
+- Jardí (2026-06-18): el cliente reporta que se ha descontado una venta y no aparece en Winerim, pero la auditoría viva muestra `stock_sync_log=0`; por tanto no consta ningún descuento de stock enviado a Winerim para Jardí. Sí hay ventas importadas hasta business day `2026-06-17`, pero todas las líneas están `mapped=false` (`2386/2386`), porque las ventas leídas corresponden a botones legacy de Agora con IDs bajos y no a productos Winerim importados.
+- Jardí (2026-06-18): el catálogo Winerim vivo devuelve `175` vinos y la caché local tiene los mismos `175`. Hay `170` formatos activos/preciados esperados y los `170` existen en Agora; no se detectan formatos Winerim READY ausentes. El único vino creado después del 2026-06-17 detectado es `Anais Blanc Organic`, visible como `B Anais Blanc Organic` en `BLANCOS WINERIM` y `C Anais Blanc Organic` en `COPAS WINERIM`.
+- Jardí (2026-06-18): `fetch-catalog` devuelve `newWines=0`, `changedWines=2`, `detailRequestsFailed=0`. Como `auto_push_on_update=false`, los cambios sobre vinos existentes no se publican automáticamente, pero las altas nuevas sí deben entrar por `CREATE` si aparecen como inéditas y tienen precio/formato publicable.
+- Jardí (2026-06-18): `last_catalog_sync_at` seguía `null` aunque `fetch-catalog` funcionaba; se corrige para marcar la fecha al completar un recorrido entero de catálogo Winerim.
 - Resiliencia extendida cubre el caso de saturación si el cliente reabre el problema. Falta validar en producción real con BDP/Revo/Toast/Numier/ICG (todavía sin clientes activos saturando).
 - 7 días sin incidente Agora aún por confirmar (llevamos ~1 día).
 - La doble rama `auto-sync-sales` puede explicar discrepancias entre intención de near-real-time y comportamiento real D-1: la rama intradía está inalcanzable.

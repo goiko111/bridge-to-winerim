@@ -837,3 +837,13 @@
 - **Decisión**: Mantener Jardí con familias Winerim visibles y legacy visible, sin ocultar legacy en bloque.
 - **Razón**: La auditoría solo lectura confirma que los `168/168` formatos Winerim publicables están publicados en Agora, pero el legacy de vino todavía tiene `281` productos vendibles y solo `103` tienen match automático seguro contra Winerim publicado; `163` no tienen match fiable.
 - **Alternativa descartada**: ocultar todo el legacy de vino como en una migración completa. Habría eliminado duplicados, pero también podría ocultar productos que el cliente sigue usando y que no tienen equivalente Winerim claro.
+
+## 2026-06-18 · Jardí: no prometer descuento/historial Winerim mientras las ventas entren por legacy sin mapping
+- **Decisión**: Tratar Jardí como catálogo Winerim publicado pero ventas legacy no mapeadas hasta que se haga matching o el cliente venda desde los botones Winerim.
+- **Razón**: La auditoría viva muestra ventas importadas hasta business day `2026-06-17`, pero `2386/2386` líneas están `mapped=false` y `stock_sync_log=0`. No consta ningún descuento de stock enviado a Winerim ni una venta registrada como historial Winerim.
+- **Alternativa descartada**: decir al cliente que la venta ya descuenta stock o aparece en historial. Sería incorrecto con los datos actuales y ocultaría que el legacy sigue siendo el origen de venta.
+
+## 2026-06-18 · Winerim proxy: registrar `last_catalog_sync_at` al completar catálogo
+- **Decisión**: Actualizar `pos_connections.last_catalog_sync_at` cuando `winerim-proxy/fetch-catalog` completa el recorrido de catálogo Winerim.
+- **Razón**: Jardí tenía catálogo sincronizado y verificable, pero el monitor podía mostrar `Never/null` porque el proxy no dejaba marca de catálogo completo. La trazabilidad debe reflejar la sincronización real.
+- **Alternativa descartada**: dejarlo solo como dato inferido desde `winerim_wines.updated_at`. Dificulta soporte y hace que el equipo comercial/técnico vea falsos negativos en el monitor.

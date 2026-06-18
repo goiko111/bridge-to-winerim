@@ -553,6 +553,10 @@
 - [ ] Implementar auto-update diferencial de catálogo antes de poner `auto_push_on_update=true` en Cienvinos/Baco.
 
 ## P0 — Validación
+- [ ] Jardí: confirmar con el cliente el nombre/ID exacto del "vino nuevo" que dice no ver. Auditoría 2026-06-18 no detecta ningún formato Winerim activo/con precio ausente en Agora; `Anais Blanc Organic` ya aparece en `BLANCOS WINERIM` y `COPAS WINERIM`.
+- [ ] Jardí: explicar que las ventas importadas actuales vienen de botones legacy sin mapping (`mapped=false`) y por eso no descuentan stock ni generan historial Winerim. Para descontar: vender desde botones Winerim o hacer matching legacy -> Winerim producto a producto.
+- [ ] Jardí: preparar propuesta de matching legacy seguro antes de ocultar legacy o prometer stock automático. Hay que revisar especialmente los legacy vendidos recientemente (`VI BLANC`, `VI RECOMANAT`, etc.).
+- [ ] Jardí: tras desplegar el fix de `last_catalog_sync_at`, ejecutar `fetch-catalog` controlado y comprobar que el monitor deja de mostrar catálogo `Never/null`.
 - [ ] Monitorizar 7 días (Agora): invocaciones a `/api/export-master`, breaker activations, zombies rescatados.
 - [ ] Confirmar con Luruna que no ven más IPs AWS saturando su SQL Server.
 - [ ] Verificar que Sa Vida / Sa Pedrera reanudan al volver el POS.
