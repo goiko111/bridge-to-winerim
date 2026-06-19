@@ -1,0 +1,855 @@
+[
+  {
+    "id": "32f46d47-3984-413a-8c18-b5502418dadc",
+    "name": "Baco Getafe",
+    "enabled": false,
+    "catalog_sync_enabled": false,
+    "write_mode": "NONE",
+    "auto_create": false,
+    "auto_update": false,
+    "verified_ready": false,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-05-29T00:00:30.193+00:00",
+    "last_catalog_sync_at": null,
+    "last_business_day_synced": "2026-05-28",
+    "breaker_paused_until": null,
+    "breaker_reason": null,
+    "failures": 0,
+    "family_mode": "WINERIM_SEPARATE_FAMILIES",
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 0,
+      "BLOCKED": 0
+    },
+    "latest_event": {
+      "business_day": "2026-05-28",
+      "created_at": "2026-05-29T00:00:25.394973+00:00",
+      "line_count": 7,
+      "total_amount": 17.97
+    },
+    "event_days_sample": {
+      "2026-05-28": 30
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 26,
+      "wine_candidate": 64
+    },
+    "stock_counts_recent": {
+      "SUCCESS": 41
+    },
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 118
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": []
+  },
+  {
+    "id": "e3cb6dbb-3474-4926-b740-706fbd0ef7e0",
+    "name": "Casa Nene",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": true,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:25:19.067+00:00",
+    "last_catalog_sync_at": "2026-06-08T11:23:05.406+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "breaker_paused_until": "2026-06-17T12:27:59.097+00:00",
+    "breaker_reason": "Auto-pause: POS_DOWN (5 consecutive failures)",
+    "failures": 0,
+    "family_mode": "WINERIM_SEPARATE_FAMILIES",
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 1,
+      "BLOCKED": 0
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T04:55:24.122354+00:00",
+      "line_count": 12,
+      "total_amount": 141
+    },
+    "event_days_sample": {
+      "2026-06-18": 30
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 5,
+      "wine_candidate": 65
+    },
+    "stock_counts_recent": {
+      "SUCCESS": 66
+    },
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 307
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": [
+      {
+        "id": "4432c5e8-545a-4edb-826c-a25521dfa1bc",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] AbortError: The signal has been aborted",
+        "blocked_reason": null,
+        "updated_at": "2026-06-17T11:24:10.722421+00:00"
+      }
+    ]
+  },
+  {
+    "id": "982f1e63-5f15-48b8-b35f-037eafd4593e",
+    "name": "Katsu Izakaya",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": true,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:30:20.533+00:00",
+    "last_catalog_sync_at": "2026-06-19T05:25:07.250353+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "breaker_paused_until": null,
+    "breaker_reason": null,
+    "failures": 0,
+    "family_mode": "WINERIM_DEDICATED_FAMILIES",
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 0,
+      "BLOCKED": 0
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T00:00:32.038063+00:00",
+      "line_count": 1,
+      "total_amount": 1
+    },
+    "event_days_sample": {
+      "2026-06-18": 21,
+      "2026-06-17": 9
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 0,
+      "wine_candidate": 109
+    },
+    "stock_counts_recent": {
+      "FAILED": 1
+    },
+    "stock_last_error": "PUT stock/314146 failed (400): {\"error\":\"Invalid data\",\"message\":\"Stock quantity must be a non-negative integer\"}",
+    "mapping_counts": {
+      "REJECTED": 26,
+      "CONFIRMED": 131
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": [
+      {
+        "id": "6c9d6edf-9c7c-4081-9fa9-e1f81a5a1500",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:25:26.325694+00:00"
+      },
+      {
+        "id": "3d073cba-8d51-479f-b093-7bc3509d3326",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:25:26.908958+00:00"
+      },
+      {
+        "id": "03106c79-86bc-4957-abb0-b385642afc14",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:25:25.983703+00:00"
+      },
+      {
+        "id": "1378f992-98bf-4c50-b8f4-40eec3d893ad",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "RUNNING",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:25:31.816035+00:00"
+      },
+      {
+        "id": "3ddfa4e1-65ac-487c-ab1f-b52e94a76ba3",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "RUNNING",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:25:31.816035+00:00"
+      }
+    ],
+    "post_drain_verified_at": "2026-06-19T05:35:19.024Z",
+    "post_drain_artifact": "KATSU_PROCESS_QUEUE_DRAIN_FINAL_2026-06-19.json"
+  },
+  {
+    "id": "f1ce42a4-ffe2-44ea-bb3d-e22b306b1d8c",
+    "name": "Kava",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": false,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:25:14.724+00:00",
+    "last_catalog_sync_at": "2026-05-18T11:35:49.727+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "breaker_paused_until": null,
+    "breaker_reason": null,
+    "failures": 0,
+    "family_mode": null,
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 7,
+      "BLOCKED": 9
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T00:00:15.77005+00:00",
+      "line_count": 10,
+      "total_amount": 170
+    },
+    "event_days_sample": {
+      "2026-06-18": 1,
+      "2026-06-13": 4,
+      "2026-06-12": 1,
+      "2026-06-11": 5,
+      "2026-06-10": 1,
+      "2026-06-09": 3,
+      "2026-06-06": 8,
+      "2026-06-05": 3,
+      "2026-06-04": 1,
+      "2026-06-03": 2,
+      "2026-06-02": 1
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 44,
+      "wine_candidate": 120
+    },
+    "stock_counts_recent": {
+      "SUCCESS": 77,
+      "BLOCKED": 23
+    },
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 255,
+      "REJECTED": 12,
+      "PENDING": 37
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": [
+      {
+        "id": "0a2d120c-2a85-4636-ab47-3eac7fb06e86",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] AbortError: The signal has been aborted",
+        "blocked_reason": null,
+        "updated_at": "2026-05-27T15:16:05.964403+00:00"
+      },
+      {
+        "id": "bee0fdbd-9467-420c-963d-a1c6fbe0de22",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] AbortError: The signal has been aborted",
+        "blocked_reason": null,
+        "updated_at": "2026-05-27T15:11:57.116165+00:00"
+      },
+      {
+        "id": "e14d73b1-1391-443e-80f1-252f421e7a6f",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] AbortError: The signal has been aborted",
+        "blocked_reason": null,
+        "updated_at": "2026-05-19T13:31:42.719258+00:00"
+      },
+      {
+        "id": "44f39024-b55e-4c6a-bc5e-22bb3ac385b4",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "EXCEPTION: TypeError: unexpected end of file",
+        "blocked_reason": "Exhausted 3 attempts. Last error: TypeError: unexpected end of file",
+        "updated_at": "2026-05-27T15:02:07.087668+00:00"
+      },
+      {
+        "id": "2d8661cb-2802-40e6-8f8d-c9f2ec4f34c0",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "EXCEPTION: TypeError: unexpected end of file",
+        "blocked_reason": "Exhausted 3 attempts. Last error: TypeError: unexpected end of file",
+        "updated_at": "2026-05-19T11:40:50.519288+00:00"
+      }
+    ]
+  },
+  {
+    "id": "3584ca40-317e-48a5-a229-f138c6fc6725",
+    "name": "La Candela de Triana",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": false,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:25:37.368+00:00",
+    "last_catalog_sync_at": "2026-05-13T09:47:03.36+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "breaker_paused_until": null,
+    "breaker_reason": null,
+    "failures": 0,
+    "family_mode": null,
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 0,
+      "BLOCKED": 0
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T00:00:25.242379+00:00",
+      "line_count": 12,
+      "total_amount": 124.15
+    },
+    "event_days_sample": {
+      "2026-06-18": 30
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 0,
+      "wine_candidate": 23
+    },
+    "stock_counts_recent": {},
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 78,
+      "REJECTED": 1
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": []
+  },
+  {
+    "id": "c9b23830-a00b-4786-a50b-43fe526c4d3c",
+    "name": "Luruna",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": false,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:25:26.365+00:00",
+    "last_catalog_sync_at": "2026-05-19T04:36:12.656+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "breaker_paused_until": null,
+    "breaker_reason": null,
+    "failures": 0,
+    "family_mode": null,
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 10,
+      "BLOCKED": 58
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T00:00:18.679854+00:00",
+      "line_count": 3,
+      "total_amount": 7.2
+    },
+    "event_days_sample": {
+      "2026-06-18": 30
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 0,
+      "wine_candidate": 122
+    },
+    "stock_counts_recent": {
+      "SUCCESS": 9
+    },
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 124,
+      "REJECTED": 1
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": [
+      {
+        "id": "294cfb3d-3f64-4772-aa32-1ac1783a8602",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://luruna.dyndns.biz:8984/api/import/): client error (Connect): tcp connect error: Connection refused (os error 111): Connection refused (os error 111)",
+        "blocked_reason": null,
+        "updated_at": "2026-05-27T16:09:22.964035+00:00"
+      },
+      {
+        "id": "405647dc-7270-44ad-a45c-de1568d0632d",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://luruna.dyndns.biz:8984/api/import/): client error (Connect): tcp connect error: Connection refused (os error 111): Connection refused (os error 111)",
+        "blocked_reason": null,
+        "updated_at": "2026-05-27T16:09:22.534275+00:00"
+      },
+      {
+        "id": "e9b7ff9f-edb9-44cd-9cb0-9786c796e478",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://luruna.dyndns.biz:8984/api/import/): client error (Connect): tcp connect error: No route to host (os error 113): No route to host (os error 113)",
+        "blocked_reason": null,
+        "updated_at": "2026-05-27T16:09:18.373441+00:00"
+      },
+      {
+        "id": "6766fb01-16bc-4a8d-95b1-7f14711afe82",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "EXCEPTION: TypeError: unexpected end of file",
+        "blocked_reason": "Exhausted 3 attempts. Last error: TypeError: unexpected end of file",
+        "updated_at": "2026-05-27T14:47:19.903207+00:00"
+      },
+      {
+        "id": "24396e18-4636-4f4a-be6b-3904d21c9df7",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '764071' y Nombre 'B Joaquín Rebolledo Godello'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E37FAA8F9D'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, B Joaquín Rebolledo Godello).\r\nThe statement has been terminated.",
+        "blocked_reason": "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora y el UPDATE también falló. Verifica los datos manualmente.",
+        "updated_at": "2026-05-27T16:04:33.335142+00:00"
+      }
+    ]
+  },
+  {
+    "id": "21ee3345-1090-4e83-94f2-43126d6e7695",
+    "name": "Restaurante Cienvinos Ecija",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": false,
+    "verified_ready": true,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-08T09:00:16.518+00:00",
+    "last_catalog_sync_at": null,
+    "last_business_day_synced": "2026-05-27",
+    "breaker_paused_until": "2026-06-05T21:40:46.808+00:00",
+    "breaker_reason": "Auto-paused: 10 consecutive task failures.",
+    "failures": 10,
+    "family_mode": null,
+    "open_tasks": {
+      "QUEUED": 131,
+      "RUNNING": 0,
+      "FAILED": 0,
+      "BLOCKED": 4
+    },
+    "latest_event": null,
+    "event_days_sample": {},
+    "recent_lines": {
+      "sample": 0,
+      "mapped": 0,
+      "wine_candidate": 0
+    },
+    "stock_counts_recent": {},
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 459
+    },
+    "test": {
+      "ok": false,
+      "error": "timeout('The read operation timed out')"
+    },
+    "sample_tasks": [
+      {
+        "id": "5ddeeca3-667c-4a00-b4c8-d480b59eabf7",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": " | RESCUED: was stuck in RUNNING > 15min",
+        "blocked_reason": null,
+        "updated_at": "2026-06-05T21:50:00.090613+00:00"
+      },
+      {
+        "id": "57bebc41-9358-44cc-b6a7-bb082cc4e39b",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": " | RESCUED: was stuck in RUNNING > 15min",
+        "blocked_reason": null,
+        "updated_at": "2026-06-05T21:50:00.090613+00:00"
+      },
+      {
+        "id": "8c06c748-2a19-4e6f-9ad6-5d06c41f65ed",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": " | RESCUED: was stuck in RUNNING > 15min",
+        "blocked_reason": null,
+        "updated_at": "2026-06-05T21:50:00.090613+00:00"
+      },
+      {
+        "id": "5a3b3215-818f-4011-ac3f-9cc6619d7e97",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '781428' y Nombre 'B Viña Gravonia'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E3C197C87B'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, B Viña Gravonia).\r\nThe statement has been terminated.",
+        "blocked_reason": "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora y el UPDATE también falló. Verifica los datos manualmente.",
+        "updated_at": "2026-06-05T10:26:16.440461+00:00"
+      },
+      {
+        "id": "e9b9d418-35cf-4cca-b6a1-a70c9af95e9a",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '781427' y Nombre 'B Viña Gravonia'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E3C197C87B'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, B Viña Gravonia).\r\nThe statement has been terminated.",
+        "blocked_reason": "PRODUCT_ALREADY_EXISTS_IN_AGORA: El producto ya existe en Agora y el UPDATE también falló. Verifica los datos manualmente.",
+        "updated_at": "2026-06-05T10:26:15.924745+00:00"
+      }
+    ]
+  },
+  {
+    "id": "2ef2b6f1-de80-4e94-8774-3140b2ae16e4",
+    "name": "Restaurante Jardi",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": false,
+    "verified_ready": true,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-18T15:15:10.675+00:00",
+    "last_catalog_sync_at": null,
+    "last_business_day_synced": "2026-06-17",
+    "breaker_paused_until": "2026-06-19T05:27:24.247+00:00",
+    "breaker_reason": "Auto-paused: 10 consecutive task failures.",
+    "failures": 10,
+    "family_mode": null,
+    "open_tasks": {
+      "QUEUED": 1,
+      "RUNNING": 0,
+      "FAILED": 3,
+      "BLOCKED": 0
+    },
+    "latest_event": {
+      "business_day": "2026-06-17",
+      "created_at": "2026-06-18T06:55:14.38828+00:00",
+      "line_count": 7,
+      "total_amount": 51
+    },
+    "event_days_sample": {
+      "2026-06-17": 9,
+      "2026-06-16": 8,
+      "2026-06-15": 4,
+      "2026-06-13": 8,
+      "2026-06-12": 1
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 0,
+      "wine_candidate": 23
+    },
+    "stock_counts_recent": {},
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 171
+    },
+    "test": {
+      "success": false,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": "No route to the Agora server (port closed or firewall blocking)",
+      "status": 502
+    },
+    "sample_tasks": [
+      {
+        "id": "1b3016ba-459f-4497-9c1e-ce8f4fca2cad",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://eljardiparets.ddns.net:8984/api/import/): client error (Connect): tcp connect error: No route to host (os error 113): No route to host (os error 113)",
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T05:12:24.172849+00:00"
+      },
+      {
+        "id": "f750053f-67b0-4ce3-b165-6840f2d311cb",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://eljardiparets.ddns.net:8984/api/import/): client error (Connect): tcp connect error: No route to host (os error 113): No route to host (os error 113)",
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T04:07:06.715996+00:00"
+      },
+      {
+        "id": "421973a5-38d2-454e-8f7a-df980352fc0c",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://eljardiparets.ddns.net:8984/api/import/): client error (Connect): tcp connect error: No route to host (os error 113): No route to host (os error 113)",
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T03:02:36.78115+00:00"
+      },
+      {
+        "id": "c7724936-ccc7-453b-8232-e02a93e529df",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "[POS_DOWN] TypeError: error sending request for url (http://eljardiparets.ddns.net:8984/api/import/): client error (Connect): tcp connect error: No route to host (os error 113): No route to host (os error 113)",
+        "blocked_reason": null,
+        "updated_at": "2026-06-19T02:57:26.126762+00:00"
+      }
+    ]
+  },
+  {
+    "id": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
+    "name": "Sa Pedrera",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": true,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-18T23:55:11.862+00:00",
+    "last_catalog_sync_at": "2026-05-13T12:36:14.405+00:00",
+    "last_business_day_synced": "2026-06-17",
+    "breaker_paused_until": "2026-06-18T18:42:28.688+00:00",
+    "breaker_reason": "Auto-pause: POS_DOWN (6 consecutive failures)",
+    "failures": 0,
+    "family_mode": "WINERIM_DEDICATED_FAMILIES",
+    "open_tasks": {
+      "QUEUED": 0,
+      "RUNNING": 0,
+      "FAILED": 298,
+      "BLOCKED": 1000
+    },
+    "latest_event": {
+      "business_day": "2026-06-18",
+      "created_at": "2026-06-19T00:00:15.073426+00:00",
+      "line_count": 14,
+      "total_amount": 337
+    },
+    "event_days_sample": {
+      "2026-06-18": 7,
+      "2026-06-17": 11,
+      "2026-06-16": 6,
+      "2026-06-15": 6
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 33,
+      "wine_candidate": 97
+    },
+    "stock_counts_recent": {
+      "SUCCESS": 87,
+      "FAILED": 13
+    },
+    "stock_last_error": "GET /stock/wine/43309 → 404: {\"error\":\"Wine not found\",\"message\":\"Wine with ID 43309 not found or not accessible\"}",
+    "mapping_counts": {
+      "PENDING": 20,
+      "CONFIRMED": 576,
+      "REJECTED": 281
+    },
+    "test": {
+      "success": true,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": null
+    },
+    "sample_tasks": [
+      {
+        "id": "c2a19db4-dcd6-435a-bdef-e3bfeae457e4",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "FAILED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '744833' y Nombre '[INACTIVO] B306-Torralbenc Chardonnay'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E30AA9F591'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, [INACTIVO] B306-Torralbenc Chardonnay).\r\nThe statement has been terminated.",
+        "blocked_reason": null,
+        "updated_at": "2026-06-16T11:00:25.851776+00:00"
+      },
+      {
+        "id": "afb136a1-1024-4329-8196-58af4a9d7c60",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "FAILED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '709742' y Nombre '[INACTIVO] R602-Izadi Larrosa'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E30AA9F591'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, [INACTIVO] R602-Izadi Larrosa).\r\nThe statement has been terminated.",
+        "blocked_reason": null,
+        "updated_at": "2026-06-05T19:02:11.275595+00:00"
+      },
+      {
+        "id": "c3ef5118-3cab-4d00-b3a1-a9082425983e",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "FAILED",
+        "last_error": "HTTP 500: Error al importar el producto con Id '883006' y Nombre '[INACTIVO] B303-Binitord Blanc'.\r\nError: Violation of UNIQUE KEY constraint 'UQ__Product__09E411E30AA9F591'. Cannot insert duplicate key in object 'dbo.Product'. The duplicate key value is (<NULL>, [INACTIVO] B303-Binitord Blanc).\r\nThe statement has been terminated.",
+        "blocked_reason": null,
+        "updated_at": "2026-06-05T12:37:17.616194+00:00"
+      },
+      {
+        "id": "56f55ec5-b6d3-424a-9996-e2e1779ca6f8",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "EXCEPTION: TypeError: unexpected end of file",
+        "blocked_reason": "Exhausted 3 attempts. Last error: TypeError: unexpected end of file",
+        "updated_at": "2026-06-19T05:26:45.389352+00:00"
+      },
+      {
+        "id": "9fd4666f-fef5-401d-841b-2e2334c3e97e",
+        "task_type": "AGORA_HIDE_PRODUCT",
+        "status": "BLOCKED",
+        "last_error": "EXCEPTION: TypeError: unexpected end of file",
+        "blocked_reason": "Exhausted 3 attempts. Last error: TypeError: unexpected end of file",
+        "updated_at": "2026-06-19T05:26:30.805953+00:00"
+      }
+    ]
+  },
+  {
+    "id": "e5b988f1-8471-4336-a1f7-a5c1626deab1",
+    "name": "Sa Vida",
+    "enabled": true,
+    "catalog_sync_enabled": true,
+    "write_mode": "XML_IMPORT",
+    "auto_create": true,
+    "auto_update": true,
+    "verified_ready": false,
+    "glass_auto": true,
+    "glass_write": true,
+    "last_sync_at": "2026-06-19T05:11:09.27+00:00",
+    "last_catalog_sync_at": "2026-03-04T14:57:52.085+00:00",
+    "last_business_day_synced": "2026-05-03",
+    "breaker_paused_until": "2026-06-19T05:25:27.159+00:00",
+    "breaker_reason": "Auto-paused: 10 consecutive task failures.",
+    "failures": 10,
+    "family_mode": "WINERIM_SEPARATE_FAMILIES",
+    "open_tasks": {
+      "QUEUED": 552,
+      "RUNNING": 0,
+      "FAILED": 1000,
+      "BLOCKED": 1000
+    },
+    "latest_event": {
+      "business_day": "2026-05-03",
+      "created_at": "2026-05-04T00:27:15.03617+00:00",
+      "line_count": 6,
+      "total_amount": 74
+    },
+    "event_days_sample": {
+      "2026-05-03": 30
+    },
+    "recent_lines": {
+      "sample": 200,
+      "mapped": 21,
+      "wine_candidate": 94
+    },
+    "stock_counts_recent": {
+      "BLOCKED": 100
+    },
+    "stock_last_error": null,
+    "mapping_counts": {
+      "CONFIRMED": 667,
+      "REJECTED": 333
+    },
+    "test": {
+      "success": false,
+      "businessDay": null,
+      "documentsFound": null,
+      "endpoint": null,
+      "error": null,
+      "message": "Agora responded 501",
+      "status": 501
+    },
+    "sample_tasks": [
+      {
+        "id": "7e65ec1e-acc1-4eb4-80fa-c64f9f785849",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-05-22T10:19:52.239319+00:00"
+      },
+      {
+        "id": "8da9f4b5-9cb6-4fd1-94e4-67cb6788e254",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-05-22T10:19:52.322371+00:00"
+      },
+      {
+        "id": "04620421-35b2-46ea-8019-9b6f0f6ef23b",
+        "task_type": "AGORA_XML_UPSERT_PRODUCT",
+        "status": "QUEUED",
+        "last_error": null,
+        "blocked_reason": null,
+        "updated_at": "2026-05-22T10:19:52.420655+00:00"
+      },
+      {
+        "id": "1dd75159-b584-4b7d-8d72-4e5298182711",
+        "task_type": "AGORA_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "Legacy task_type AGORA_UPSERT_PRODUCT — superseded by AGORA_XML_UPSERT_PRODUCT. Auto-push will re-queue if still needed.",
+        "blocked_reason": null,
+        "updated_at": "2026-05-02T14:50:36.720644+00:00"
+      },
+      {
+        "id": "c8a9d9a8-226d-4e3e-84dc-b0cde53ec0ee",
+        "task_type": "AGORA_UPSERT_PRODUCT",
+        "status": "FAILED",
+        "last_error": "Legacy task_type AGORA_UPSERT_PRODUCT — superseded by AGORA_XML_UPSERT_PRODUCT. Auto-push will re-queue if still needed.",
+        "blocked_reason": null,
+        "updated_at": "2026-05-02T14:50:36.720644+00:00"
+      }
+    ]
+  }
+]

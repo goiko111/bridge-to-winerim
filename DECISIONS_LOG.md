@@ -4,7 +4,29 @@
 
 ---
 
+## 2026-06-19 · Katsu: pasar a modo definitivo con familias Winerim dedicadas
+- **Decisión**: Activar Katsu Izakaya como instalacion definitiva Winerim en Agora: `WINERIM_DEDICATED_FAMILIES`, XML import por formato, copas activas, `auto_push_on_create=true`, `auto_push_on_update=true` y `auto_push_verified_ready=true`.
+- **Razón**: La importacion controlada por formato verifico `131/131` formatos Winerim presentes y vendibles (`64` botellas, `65` copas, `2` magnums), `0` faltantes y `0` productos Winerim como boton raiz. La cola XML quedo finalmente en `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- **Alternativa descartada**: mantener Katsu en modo parcial/read-only o solo publicar los `11` faltantes detectados el 2026-06-17. Ya habia familias Winerim preparadas, stockIds por variante y validacion XML por formato; mantener el modo parcial perpetuaba ventas legacy sin stock Winerim.
+
+---
+
+## 2026-06-19 · Katsu: ocultar legacy reversible, no borrar ni sincronizar historico legacy
+- **Decisión**: Ocultar el legacy de vino de Katsu mediante visibilidad/vendibilidad y guardar snapshot para rollback; no borrar productos, mappings ni historico.
+- **Razón**: El objetivo operativo es que sala venda desde productos Winerim para que futuras ventas puedan mapear y descontar stock. Las ventas historicas venian de botones legacy y no sirven como prueba de stock Winerim; forzar stock historico podria descontar ventas antiguas con mappings ambiguos.
+- **Alternativa descartada**: borrar legacy o reintentar sincronizar stock de ventas historicas legacy. Borrar rompe rollback; sincronizar historico puede producir descuentos incorrectos y no valida la operativa futura.
+
+---
+
+## 2026-06-19 · Flota Agora: no drenar colas cuando el POS no responde sano
+- **Decisión**: No procesar colas de `Restaurante Jardi`, `Restaurante Cienvinos Ecija` ni `Sa Vida` hasta que sus tests Agora respondan correctamente.
+- **Razón**: Jardi devuelve `502 No route to the Agora server`, Cienvinos termina en timeout y Sa Vida devuelve `501`. Reintentar escrituras o ventas contra esos estados solo aumentaria `FAILED/BLOCKED` y podria abrir breaker sin resolver la causa.
+- **Alternativa descartada**: drenar o limpiar backlog para dejar el panel verde. Seria cosmetico y arriesgado: mezclaria problemas de red/API con tareas reales pendientes.
+
+---
+
 ## 2026-06-17 · Katsu: no activar automático completo tras auditoría solo lectura
+- **Estado posterior**: superada por la decisión del 2026-06-19 tras import XML por formato, ocultación reversible del legacy y cola final limpia.
 - **Decisión**: Tratar Katsu como conexión operativa de lectura con catálogo Winerim parcial, pero no como instalación cerrada para stock ni autopush completo.
 - **Razón**: La auditoría solo lectura confirma API Agora y Winerim OK, cola `0` y `8` familias Winerim visibles, pero solo `52/66` formatos esperados están visibles/vendibles; `3` están en familia legacy oculta y `11` faltan. Además, desde `2026-06-01` hay `283` documentos y `2.554` líneas guardadas, pero `0` líneas mapeadas y `0` `stock_sync_log`.
 - **Alternativa descartada**: activar `auto_push_verified_ready=true` o publicar/mover productos directamente. Podría reimportar cola no diferencial, mantener copas incoherentes con la política actual o dar por bueno un stock que aún no descuenta ventas reales.

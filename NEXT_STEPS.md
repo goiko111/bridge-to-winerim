@@ -2,6 +2,37 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Katsu Izakaya definitivo y monitorizacion Agora 2026-06-19
+- [x] Refrescar master data Agora y catalogo Winerim de Katsu antes de escribir.
+- [x] Importar Katsu por XML separado por formato: botellas, copas y magnums.
+- [x] Verificar Katsu: `131/131` formatos Winerim presentes, vendibles y sin botones raiz.
+- [x] Activar Katsu en modo automatico: `auto_push_on_create/update/verified_ready=true`, copas activas y `WINERIM_DEDICATED_FAMILIES`.
+- [x] Ocultar legacy Katsu de forma reversible y guardar snapshot:
+  - `KATSU_LEGACY_HIDE_SNAPSHOT_2026-06-19.json`;
+  - `KATSU_LEGACY_HIDE_APPLIED_2026-06-19.json`.
+- [x] Ejecutar `fetch-catalog` post-activacion Katsu y drenar cola XML hasta `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- [x] Documentar Katsu:
+  - `KATSU_DEFINITIVE_ACTIVATION_2026-06-19.md`;
+  - `KATSU_ACTIVATION_VERIFY_2026-06-19.json`;
+  - `KATSU_FETCH_CATALOG_POST_ACTIVATION_2026-06-19.json`;
+  - `KATSU_PROCESS_QUEUE_DRAIN_FINAL_2026-06-19.json`.
+- [ ] Katsu cliente: pedir que recarguen/cierren sesion en tablets y validen familias Winerim y orden visual.
+- [ ] Katsu prueba real: vender una botella y una copa Winerim, cerrar jornada y validar `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+- [ ] Katsu monitor: revisar el siguiente ciclo automatico de catalogo; no debe dejar cola abierta ni generar import masivo salvo cambios reales de Winerim.
+- [ ] Katsu deuda: clasificar el fallo historico de stock del 2026-05-20 solo si reaparece o bloquea metricas.
+
+## P0 — Flota Agora tras auditoria 2026-06-19
+- [x] Auditar estado vivo de todas las conexiones Agora y documentar `AGORA_FLEET_STATUS_2026-06-19.md`.
+- [ ] Casa Nene: inspeccionar `1 FAILED` sin reintentar en bloque; conexion y ventas estan sanas.
+- [ ] Kava: clasificar `7 FAILED / 9 BLOCKED` y `23 BLOCKED` de stock; no hay cola viva.
+- [ ] La Candela: validar primera venta Winerim con stock, porque la cola esta limpia pero no hay stock reciente en la muestra.
+- [ ] Luruna: clasificar `10 FAILED / 58 BLOCKED` y confirmar con cliente que no reaparece saturacion.
+- [ ] Sa Pedrera: clasificar deuda historica grande (`FAILED/BLOCKED`) y los `13 FAILED` de stock recientes antes de cualquier retry masivo.
+- [ ] Jardi: recuperar ruta/firewall/DDNS (`502 No route`) antes de procesar `1 QUEUED / 3 FAILED`.
+- [ ] Cienvinos: revisar conectividad/timeout antes de procesar `131 QUEUED / 4 BLOCKED`.
+- [ ] Sa Vida: no reintentar hasta que Agora deje de devolver `501` en endpoints esperados.
+- [ ] Baco Getafe: sigue apagado/revertido a legacy; no tratar como automatico Winerim sin nueva autorizacion.
+
 ## P0 — Nuevas integraciones Agora · El Bejeque y Taberna de Elia
 - [x] Auditar El Bejeque en modo read-only antes de crear conexión o subir Winerim.
 - [x] Auditar Taberna de Elia en modo read-only antes de crear conexión o subir Winerim.
@@ -117,10 +148,10 @@
 - [x] Documentar estado por conexion en `AGORA_FLEET_AUDIT_2026-06-09.md`.
 - [x] Katsu: revisar por que `605` lineas candidatas de vino en 7 dias quedan `0` mapeadas; validar mappings reales antes de prometer stock. Resultado 2026-06-15: el monitor esta inflado por clasificacion y el corte real de familias vino muestra `299` lineas sin resolver, `218` recuperables por `20` productos seguros.
 - [ ] Katsu: corregir `isWineCandidate()` para respetar reglas explicitas de familias no-vino y no contar `NEEDS_REVIEW` como candidato operativo de stock salvo regla explicita.
-- [ ] Katsu: revisar/bloquear mapping desalineado `972845` (`C. SAN SALVADOR GODELLO` apuntando a `Abad Dom Bueno Godello Esencia`) antes de aplicar nuevos mappings.
-- [ ] Katsu: preparar fase 1 `LEGACY_SAFE_MATCH` para los `20` productos vendidos con match fuerte y stockId valido; ejecutar primero dry-run, despues insertar mappings si se aprueba.
-- [ ] Katsu: tras fase 1, ejecutar `resolve-sales` y validar que las lineas recuperables pasan a `mapped=true`; decidir explicitamente si se sincroniza stock historico o solo ventas futuras.
-- [ ] Katsu: despues de mappings, venta real de prueba de copa y botella; validar `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
+- [x] Katsu: revisar/bloquear mapping desalineado `972845` queda superado por activacion definitiva Winerim y ocultacion reversible del legacy; no se aplican nuevos mappings legacy.
+- [x] Katsu: fase `LEGACY_SAFE_MATCH` descartada/superada; se decide no sincronizar stock historico legacy y validar solo ventas futuras desde botones Winerim.
+- [x] Katsu: `resolve-sales` sobre historico legacy descartado; el criterio vigente es ventas futuras Winerim.
+- [ ] Katsu: despues de activacion definitiva, venta real de prueba de copa y botella; validar `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
 - [x] Katsu 2026-06-15: refresco actual confirmado (`190` legacy reales en familias vino, `95` vinos Winerim cacheados, `58 CONFIRMED`, `27 REJECTED`, `28` matches auto-confirmables y `20` productos seguros que cubririan `218/299` lineas reales de vino).
 - [x] Katsu 2026-06-15: exportar estructura Agora por familias: `42` familias raiz, sin subfamilias reales; reporte `KATSU_AGORA_FAMILY_STRUCTURE_2026-06-15.md`.
 - [x] Katsu 2026-06-17: auditoría solo lectura Winerim vs Agora sin escrituras:
@@ -130,17 +161,15 @@
   - `8` familias Winerim visibles y `0` productos Winerim como botón raíz;
   - legacy vino oculto visualmente (`0` legacy visible+vendible), no borrado;
   - desde `2026-06-01`, `283` documentos / `2.554` líneas, pero `0` líneas mapeadas y `0` `stock_sync_log`.
-- [ ] Katsu: preparar dry-run controlado para publicar los `11` faltantes detectados:
+- [x] Katsu: publicar faltantes detectados el 2026-06-17 queda completado por import XML por formato del 2026-06-19:
   - `277094`, `277100`, `277148`, `275753`, `277143`, `277144`, `277146`, `277149`, `277151`, `277153`, `277154`;
-  - antes, confirmar runtime diferencial y que `fetch-catalog` no genera cola masiva.
-- [ ] Katsu: preparar dry-run para mover/republicar los `3` Winerim que existen en `VINOS` oculta hacia familias Winerim:
+  - verificado `131/131` formatos Winerim presentes/vendibles y cola final limpia.
+- [x] Katsu: mover/republicar los `3` Winerim que existian en `VINOS` oculta queda superado por import XML completo en familias Winerim:
   - `272870` `Dulas Rosé`;
   - `272890` `Saiaz Rosado`;
   - `272845` `Abad Dom Bueno Godello Esencia`.
-- [ ] Katsu: decidir política de copas antes de tocar nada:
-  - mantener `auto_push_glass=false` y documentar/ocultar de forma reversible las `3` copas históricas;
-  - o activar copas con prueba controlada (`auto_push_glass/write_glass`) y venta real de copa.
-- [ ] Katsu: no activar `auto_push_verified_ready=true` hasta completar dry-run diferencial y revisar que no se encola/reimporta catálogo completo.
+- [x] Katsu: politica de copas decidida el 2026-06-19: activar `auto_push_glass=true` y `write_glass=true`; quedan `65` copas Winerim verificadas.
+- [x] Katsu: `auto_push_verified_ready=true` activado tras import XML por formato, `fetch-catalog` diferencial y cola final limpia.
 - [ ] La Candela: revisar por que `546` lineas candidatas de vino en 7 dias quedan `0` mapeadas; priorizar ejemplos `Carraovejas Pago` y `Edulis Copa`.
 - [ ] Luruna: recuperar conectividad publica Agora (`No route to host`) antes de reintentar cola o prometer automatico.
 - [ ] Cienvinos: recuperar conectividad publica Agora (timeout) y luego drenar `68 QUEUED` + revisar `4 BLOCKED`.

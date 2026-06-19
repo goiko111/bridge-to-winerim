@@ -1,0 +1,848 @@
+{
+  "families": {
+    "success": true,
+    "applied": [
+      {
+        "id": "11",
+        "showInPos": false
+      },
+      {
+        "id": "33",
+        "showInPos": false
+      },
+      {
+        "id": "37",
+        "showInPos": false
+      }
+    ],
+    "skipped": [],
+    "error": null,
+    "xmlPreview": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Families>\n    <Family Id=\"11\" Name=\"VINOS\" ShowInPos=\"false\" ButtonText=\"VINOS\" Color=\"#BACDE2\" Order=\"10\" DeletionDate=\"2019-06-11T13:23:45\" />\n    <Family Id=\"33\" Name=\"VINOS\" ShowInPos=\"false\" ButtonText=\"VINOS\" Color=\"#BACDE2\" Order=\"23\" />\n    <Family Id=\"37\" Name=\"VINOS POR COPAS\" ShowInPos=\"false\" ButtonText=\"VINOS POR COPAS\" Color=\"#BACDE2\" Order=\"27\" />\n  </Families>\n</Import>"
+  },
+  "product_batches": [
+    {
+      "success": true,
+      "applied": [
+        {
+          "id": "559",
+          "visible": false
+        },
+        {
+          "id": "563",
+          "visible": false
+        },
+        {
+          "id": "564",
+          "visible": false
+        },
+        {
+          "id": "565",
+          "visible": false
+        },
+        {
+          "id": "566",
+          "visible": false
+        },
+        {
+          "id": "567",
+          "visible": false
+        },
+        {
+          "id": "568",
+          "visible": false
+        },
+        {
+          "id": "569",
+          "visible": false
+        },
+        {
+          "id": "570",
+          "visible": false
+        },
+        {
+          "id": "571",
+          "visible": false
+        },
+        {
+          "id": "572",
+          "visible": false
+        },
+        {
+          "id": "576",
+          "visible": false
+        },
+        {
+          "id": "593",
+          "visible": false
+        },
+        {
+          "id": "596",
+          "visible": false
+        },
+        {
+          "id": "597",
+          "visible": false
+        },
+        {
+          "id": "598",
+          "visible": false
+        },
+        {
+          "id": "599",
+          "visible": false
+        },
+        {
+          "id": "600",
+          "visible": false
+        },
+        {
+          "id": "601",
+          "visible": false
+        },
+        {
+          "id": "602",
+          "visible": false
+        },
+        {
+          "id": "603",
+          "visible": false
+        },
+        {
+          "id": "604",
+          "visible": false
+        },
+        {
+          "id": "612",
+          "visible": false
+        },
+        {
+          "id": "624",
+          "visible": false
+        },
+        {
+          "id": "628",
+          "visible": false
+        },
+        {
+          "id": "631",
+          "visible": false
+        },
+        {
+          "id": "632",
+          "visible": false
+        },
+        {
+          "id": "633",
+          "visible": false
+        },
+        {
+          "id": "634",
+          "visible": false
+        },
+        {
+          "id": "635",
+          "visible": false
+        },
+        {
+          "id": "636",
+          "visible": false
+        },
+        {
+          "id": "637",
+          "visible": false
+        },
+        {
+          "id": "643",
+          "visible": false
+        },
+        {
+          "id": "644",
+          "visible": false
+        },
+        {
+          "id": "645",
+          "visible": false
+        },
+        {
+          "id": "650",
+          "visible": false
+        },
+        {
+          "id": "657",
+          "visible": false
+        },
+        {
+          "id": "665",
+          "visible": false
+        },
+        {
+          "id": "666",
+          "visible": false
+        },
+        {
+          "id": "667",
+          "visible": false
+        },
+        {
+          "id": "668",
+          "visible": false
+        },
+        {
+          "id": "669",
+          "visible": false
+        },
+        {
+          "id": "671",
+          "visible": false
+        },
+        {
+          "id": "672",
+          "visible": false
+        },
+        {
+          "id": "673",
+          "visible": false
+        },
+        {
+          "id": "674",
+          "visible": false
+        },
+        {
+          "id": "675",
+          "visible": false
+        },
+        {
+          "id": "680",
+          "visible": false
+        },
+        {
+          "id": "681",
+          "visible": false
+        },
+        {
+          "id": "693",
+          "visible": false
+        }
+      ],
+      "skipped": [],
+      "error": null,
+      "xmlPreview": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Products>\n    <Product Id=\"559\" Name=\"B. 1/2 BOTELLA CHAMPAGNE SANGER VOYAGE 360\" BaseSaleFormatId=\"559\" ButtonText=\"B. 1/2 BOTELLA CHAMPAGNE SANGER VOYAGE 360\" Color=\"#BACDE2\" PLU=\"\" FamilyId=\"33\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"false\" SaleableAsAddin=\"true\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"true\" PrintWhenPriceIsZero=\"true\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"29.90\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n "
+    },
+    {
+      "success": true,
+      "applied": [
+        {
+          "id": "699",
+          "visible": false
+        },
+        {
+          "id": "700",
+          "visible": false
+        },
+        {
+          "id": "701",
+          "visible": false
+        },
+        {
+          "id": "702",
+          "visible": false
+        },
+        {
+          "id": "705",
+          "visible": false
+        },
+        {
+          "id": "706",
+          "visible": false
+        },
+        {
+          "id": "725",
+          "visible": false
+        },
+        {
+          "id": "726",
+          "visible": false
+        },
+        {
+          "id": "727",
+          "visible": false
+        },
+        {
+          "id": "728",
+          "visible": false
+        },
+        {
+          "id": "730",
+          "visible": false
+        },
+        {
+          "id": "731",
+          "visible": false
+        },
+        {
+          "id": "746",
+          "visible": false
+        },
+        {
+          "id": "747",
+          "visible": false
+        },
+        {
+          "id": "748",
+          "visible": false
+        },
+        {
+          "id": "749",
+          "visible": false
+        },
+        {
+          "id": "750",
+          "visible": false
+        },
+        {
+          "id": "751",
+          "visible": false
+        },
+        {
+          "id": "752",
+          "visible": false
+        },
+        {
+          "id": "758",
+          "visible": false
+        },
+        {
+          "id": "765",
+          "visible": false
+        },
+        {
+          "id": "772",
+          "visible": false
+        },
+        {
+          "id": "773",
+          "visible": false
+        },
+        {
+          "id": "775",
+          "visible": false
+        },
+        {
+          "id": "776",
+          "visible": false
+        },
+        {
+          "id": "780",
+          "visible": false
+        },
+        {
+          "id": "783",
+          "visible": false
+        },
+        {
+          "id": "784",
+          "visible": false
+        },
+        {
+          "id": "785",
+          "visible": false
+        },
+        {
+          "id": "792",
+          "visible": false
+        },
+        {
+          "id": "793",
+          "visible": false
+        },
+        {
+          "id": "794",
+          "visible": false
+        },
+        {
+          "id": "795",
+          "visible": false
+        },
+        {
+          "id": "796",
+          "visible": false
+        },
+        {
+          "id": "797",
+          "visible": false
+        },
+        {
+          "id": "803",
+          "visible": false
+        },
+        {
+          "id": "810",
+          "visible": false
+        },
+        {
+          "id": "813",
+          "visible": false
+        },
+        {
+          "id": "814",
+          "visible": false
+        },
+        {
+          "id": "815",
+          "visible": false
+        },
+        {
+          "id": "816",
+          "visible": false
+        },
+        {
+          "id": "817",
+          "visible": false
+        },
+        {
+          "id": "829",
+          "visible": false
+        },
+        {
+          "id": "832",
+          "visible": false
+        },
+        {
+          "id": "835",
+          "visible": false
+        },
+        {
+          "id": "836",
+          "visible": false
+        },
+        {
+          "id": "844",
+          "visible": false
+        },
+        {
+          "id": "845",
+          "visible": false
+        },
+        {
+          "id": "848",
+          "visible": false
+        },
+        {
+          "id": "849",
+          "visible": false
+        }
+      ],
+      "skipped": [],
+      "error": null,
+      "xmlPreview": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Products>\n    <Product Id=\"699\" Name=\"B. MAIN DIVIDE POKIRI RESERVE PINOT GRIS\" BaseSaleFormatId=\"699\" ButtonText=\"B. MAIN DIVIDE POKIRI RESERVE PINOT GRIS\" Color=\"#BACDE2\" PLU=\"\" FamilyId=\"33\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"false\" SaleableAsAddin=\"true\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"true\" PrintWhenPriceIsZero=\"true\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"46.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n    <"
+    },
+    {
+      "success": true,
+      "applied": [
+        {
+          "id": "867",
+          "visible": false
+        },
+        {
+          "id": "868",
+          "visible": false
+        },
+        {
+          "id": "877",
+          "visible": false
+        },
+        {
+          "id": "878",
+          "visible": false
+        },
+        {
+          "id": "890",
+          "visible": false
+        },
+        {
+          "id": "891",
+          "visible": false
+        },
+        {
+          "id": "892",
+          "visible": false
+        },
+        {
+          "id": "893",
+          "visible": false
+        },
+        {
+          "id": "897",
+          "visible": false
+        },
+        {
+          "id": "906",
+          "visible": false
+        },
+        {
+          "id": "907",
+          "visible": false
+        },
+        {
+          "id": "909",
+          "visible": false
+        },
+        {
+          "id": "912",
+          "visible": false
+        },
+        {
+          "id": "922",
+          "visible": false
+        },
+        {
+          "id": "923",
+          "visible": false
+        },
+        {
+          "id": "924",
+          "visible": false
+        },
+        {
+          "id": "925",
+          "visible": false
+        },
+        {
+          "id": "926",
+          "visible": false
+        },
+        {
+          "id": "934",
+          "visible": false
+        },
+        {
+          "id": "942",
+          "visible": false
+        },
+        {
+          "id": "943",
+          "visible": false
+        },
+        {
+          "id": "947",
+          "visible": false
+        },
+        {
+          "id": "952",
+          "visible": false
+        },
+        {
+          "id": "959",
+          "visible": false
+        },
+        {
+          "id": "960",
+          "visible": false
+        },
+        {
+          "id": "962",
+          "visible": false
+        },
+        {
+          "id": "963",
+          "visible": false
+        },
+        {
+          "id": "970",
+          "visible": false
+        },
+        {
+          "id": "974",
+          "visible": false
+        },
+        {
+          "id": "976",
+          "visible": false
+        },
+        {
+          "id": "979",
+          "visible": false
+        },
+        {
+          "id": "980",
+          "visible": false
+        },
+        {
+          "id": "984",
+          "visible": false
+        },
+        {
+          "id": "987",
+          "visible": false
+        },
+        {
+          "id": "988",
+          "visible": false
+        },
+        {
+          "id": "989",
+          "visible": false
+        },
+        {
+          "id": "994",
+          "visible": false
+        },
+        {
+          "id": "1001",
+          "visible": false
+        },
+        {
+          "id": "1002",
+          "visible": false
+        },
+        {
+          "id": "1003",
+          "visible": false
+        },
+        {
+          "id": "1004",
+          "visible": false
+        },
+        {
+          "id": "1011",
+          "visible": false
+        },
+        {
+          "id": "1012",
+          "visible": false
+        },
+        {
+          "id": "1013",
+          "visible": false
+        },
+        {
+          "id": "1014",
+          "visible": false
+        },
+        {
+          "id": "1018",
+          "visible": false
+        },
+        {
+          "id": "1020",
+          "visible": false
+        },
+        {
+          "id": "1021",
+          "visible": false
+        },
+        {
+          "id": "1022",
+          "visible": false
+        },
+        {
+          "id": "1031",
+          "visible": false
+        }
+      ],
+      "skipped": [],
+      "error": null,
+      "xmlPreview": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Products>\n    <Product Id=\"867\" Name=\"B. CORAZ\" BaseSaleFormatId=\"867\" ButtonText=\"B. CORAZ\" Color=\"#BACDE2\" PLU=\"\" FamilyId=\"33\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"false\" SaleableAsAddin=\"true\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"true\" PrintWhenPriceIsZero=\"true\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"32.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n    <Product Id=\"868\" Name=\"C. CORAZ\" BaseSaleFormatId=\"868\" ButtonTe"
+    },
+    {
+      "success": true,
+      "applied": [
+        {
+          "id": "1032",
+          "visible": false
+        },
+        {
+          "id": "1033",
+          "visible": false
+        },
+        {
+          "id": "1037",
+          "visible": false
+        },
+        {
+          "id": "1038",
+          "visible": false
+        },
+        {
+          "id": "1039",
+          "visible": false
+        },
+        {
+          "id": "1046",
+          "visible": false
+        },
+        {
+          "id": "1053",
+          "visible": false
+        },
+        {
+          "id": "1054",
+          "visible": false
+        },
+        {
+          "id": "1058",
+          "visible": false
+        },
+        {
+          "id": "1059",
+          "visible": false
+        },
+        {
+          "id": "1060",
+          "visible": false
+        },
+        {
+          "id": "1061",
+          "visible": false
+        },
+        {
+          "id": "1066",
+          "visible": false
+        },
+        {
+          "id": "1067",
+          "visible": false
+        },
+        {
+          "id": "1068",
+          "visible": false
+        },
+        {
+          "id": "1074",
+          "visible": false
+        },
+        {
+          "id": "1075",
+          "visible": false
+        },
+        {
+          "id": "1076",
+          "visible": false
+        },
+        {
+          "id": "1078",
+          "visible": false
+        },
+        {
+          "id": "1081",
+          "visible": false
+        },
+        {
+          "id": "1082",
+          "visible": false
+        },
+        {
+          "id": "1083",
+          "visible": false
+        },
+        {
+          "id": "1088",
+          "visible": false
+        },
+        {
+          "id": "1089",
+          "visible": false
+        },
+        {
+          "id": "1090",
+          "visible": false
+        },
+        {
+          "id": "1094",
+          "visible": false
+        },
+        {
+          "id": "1095",
+          "visible": false
+        },
+        {
+          "id": "1096",
+          "visible": false
+        },
+        {
+          "id": "1097",
+          "visible": false
+        },
+        {
+          "id": "1101",
+          "visible": false
+        },
+        {
+          "id": "1102",
+          "visible": false
+        },
+        {
+          "id": "1106",
+          "visible": false
+        },
+        {
+          "id": "1107",
+          "visible": false
+        },
+        {
+          "id": "1110",
+          "visible": false
+        },
+        {
+          "id": "1111",
+          "visible": false
+        },
+        {
+          "id": "1112",
+          "visible": false
+        },
+        {
+          "id": "1114",
+          "visible": false
+        },
+        {
+          "id": "1115",
+          "visible": false
+        },
+        {
+          "id": "1116",
+          "visible": false
+        },
+        {
+          "id": "1118",
+          "visible": false
+        },
+        {
+          "id": "772846",
+          "visible": false
+        },
+        {
+          "id": "772848",
+          "visible": false
+        },
+        {
+          "id": "772855",
+          "visible": false
+        },
+        {
+          "id": "772862",
+          "visible": false
+        },
+        {
+          "id": "975434",
+          "visible": false
+        },
+        {
+          "id": "1177139",
+          "visible": false
+        },
+        {
+          "id": "1177140",
+          "visible": false
+        },
+        {
+          "id": "1177141",
+          "visible": false
+        }
+      ],
+      "skipped": [],
+      "error": null,
+      "xmlPreview": "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>\n<Import>\n  <Products>\n    <Product Id=\"1032\" Name=\"C. LIRONDO\" BaseSaleFormatId=\"1032\" ButtonText=\"C. LIRONDO\" Color=\"#BACDE2\" PLU=\"\" FamilyId=\"37\" VatId=\"3\" UseAsDirectSale=\"false\" SaleableAsMain=\"false\" SaleableAsAddin=\"true\" IsSoldByWeight=\"false\" AskForPreparationNotes=\"false\" AskForAddins=\"true\" PrintWhenPriceIsZero=\"true\" PreparationTypeId=\"1\" PreparationOrderId=\"1\" CostPrice=\"0.00\" PreparationTimeInMinutes=\"\" PreparationTimeWarningMinutes=\"\">\r\n      <Barcodes />\r\n      <Prices>\r\n        <Price PriceListId=\"1\" MainPrice=\"4.00\" AddinPrice=\"0.00\" MenuItemPrice=\"0.00\" />\r\n      </Prices>\r\n      <StorageOptions>\r\n        <StorageOption WarehouseId=\"1\" Location=\"\" MinStock=\"0.00\" MaxStock=\"0.00\" />\r\n      </StorageOptions>\r\n      <AdditionalSaleFormats />\r\n      <CostPrices>\r\n        <CostPrice WarehouseId=\"1\" CostPrice=\"0.00\" />\r\n      </CostPrices>\r\n    </Product>\n    <Product Id=\"1033\" Name=\"C. Palliser Chardonnay\" BaseSaleFor"
+    }
+  ]
+}

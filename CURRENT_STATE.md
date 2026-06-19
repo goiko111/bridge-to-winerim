@@ -2,7 +2,100 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-17 13:10 CEST_
+_Última actualización: 2026-06-19 07:35 CEST_
+
+## Hechos (Katsu Izakaya · activación definitiva Winerim en Agora — 2026-06-19)
+
+- Katsu Izakaya queda activado en modo definitivo con familias Winerim dedicadas.
+- Conexion: `982f1e63-5f15-48b8-b35f-037eafd4593e`.
+- Se refresco master data Agora y catalogo Winerim antes de escribir.
+- Se importo por XML separado por formato para evitar mappings falsos:
+  - `64` botellas;
+  - `65` copas;
+  - `2` magnums.
+- Verificacion viva tras import:
+  - `131/131` formatos Winerim esperados existen en Agora;
+  - `131/131` estan vendibles;
+  - `0` faltantes;
+  - `0` productos Winerim como boton raiz;
+  - reparto por familia:
+    - `BLANCOS WINERIM`: `29`;
+    - `COPAS WINERIM`: `65`;
+    - `TINTOS WINERIM`: `16`;
+    - `FORTIFICADOS WINERIM`: `4`;
+    - `DULCE WINERIM`: `4`;
+    - `ESPUMOSOS WINERIM`: `8`;
+    - `ROSADOS WINERIM`: `3`;
+    - `MAGNUM WINERIM`: `2`.
+- Flags/configuracion viva:
+  - `enabled=true`;
+  - `catalog_sync_enabled=true`;
+  - `write_mode=XML_IMPORT`;
+  - `auto_push_on_create=true`;
+  - `auto_push_on_update=true`;
+  - `auto_push_verified_ready=true`;
+  - `auto_push_glass=true`;
+  - `write_glass=true`;
+  - `provider_config.family_structure_mode=WINERIM_DEDICATED_FAMILIES`.
+- Legacy de vino:
+  - familias legacy objetivo: `11`, `33`, `37`;
+  - productos legacy no Winerim detectados: `198`;
+  - productos legacy vendibles tras ocultacion: `0`;
+  - productos legacy como boton directo tras ocultacion: `0`;
+  - no se borro nada, la ocultacion es reversible.
+- Catalogo automatico post-activacion:
+  - `winerim-proxy fetch-catalog` completo leyo `67` vinos y `67/67` detalles;
+  - `newWines=0`, `changedWines=65`;
+  - el auto-push genero updates diferenciales y la cola XML se dreno correctamente;
+  - estado final de cola Katsu: `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- Ventas:
+  - Agora responde y el cursor esta en `last_business_day_synced=2026-06-18`;
+  - las ventas historicas anteriores a esta activacion siguen viniendo de botones legacy y no sirven como prueba de stock Winerim;
+  - queda pendiente validar una venta real posterior desde boton Winerim con `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
+- Artefactos:
+  - `KATSU_DEFINITIVE_ACTIVATION_2026-06-19.md`;
+  - `KATSU_LEGACY_HIDE_SNAPSHOT_2026-06-19.json`;
+  - `KATSU_LEGACY_HIDE_APPLIED_2026-06-19.json`;
+  - `KATSU_ACTIVATION_VERIFY_2026-06-19.json`;
+  - `KATSU_FETCH_CATALOG_POST_ACTIVATION_2026-06-19.json`;
+  - `KATSU_PROCESS_QUEUE_DRAIN_FINAL_2026-06-19.json`.
+
+### Decisiones / criterio operativo Katsu
+
+- Katsu queda como instalacion Winerim dedicada, no como instalacion legacy/match parcial.
+- El legacy queda oculto reversible, no borrado.
+- No sincronizar stock historico de ventas legacy: solo validar y operar con ventas futuras desde productos Winerim.
+- Si hay que volver atras, primero pausar auto-push y restaurar flags/productos desde `KATSU_LEGACY_HIDE_SNAPSHOT_2026-06-19.json`.
+
+### Riesgos / tareas Katsu
+
+- Validar en tablet que las familias Winerim se ven en orden correcto.
+- Hacer venta real de prueba de botella y copa Winerim, cerrar jornada y confirmar:
+  - linea mapeada;
+  - stock descontado por variante;
+  - `stock_sync_log.SUCCESS`.
+- Vigilar el siguiente ciclo de catalogo: no debe dejar cola abierta ni reimportar masivo salvo cambios reales de Winerim.
+
+## Hechos (flota Agora · monitorizacion tras Katsu — 2026-06-19)
+
+- Informe: `AGORA_FLEET_STATUS_2026-06-19.md`.
+- Auditoria viva en Lovable Cloud:
+  - `Baco Getafe`: apagado/revertido a legacy, cola limpia.
+  - `Casa Nene`: activo, Agora responde, cursor `2026-06-18`, stock reciente `66 SUCCESS`, queda `1 FAILED` por inspeccionar.
+  - `Katsu Izakaya`: activo definitivo Winerim, cursor `2026-06-18`, cola limpia.
+  - `Kava`: activo, Agora responde, cursor `2026-06-18`, stock reciente `77 SUCCESS / 23 BLOCKED`, deuda `7 FAILED / 9 BLOCKED`.
+  - `La Candela de Triana`: activo, Agora responde, cursor `2026-06-18`, cola limpia, sin stock reciente en la muestra.
+  - `Luruna`: activo, Agora responde, cursor `2026-06-18`, stock reciente `9 SUCCESS`, deuda `10 FAILED / 58 BLOCKED`.
+  - `Restaurante Cienvinos Ecija`: activo en configuracion, pero test actual termina en timeout; cola `131 QUEUED / 4 BLOCKED`.
+  - `Restaurante Jardi`: activo en configuracion, pero test actual falla `502 No route to the Agora server`; cola `1 QUEUED / 3 FAILED`.
+  - `Sa Pedrera`: activo, Agora responde, cursor `2026-06-17`, stock reciente `87 SUCCESS / 13 FAILED`, deuda historica grande `FAILED/BLOCKED`.
+  - `Sa Vida`: activo en configuracion, pero Agora devuelve `501`; no reintentar cola hasta que el modulo/API responda.
+
+### Decisiones / criterio operativo flota
+
+- No drenar colas de `Jardi`, `Cienvinos` ni `Sa Vida` mientras el test Agora falle.
+- No limpiar deuda `FAILED/BLOCKED` en bloque: clasificar por conexion y tipo de tarea.
+- En conexiones sanas con cola historica (`Kava`, `Luruna`, `Sa Pedrera`, `Casa Nene`), actuar sobre errores concretos, no sobre todo el backlog.
 
 ## Hechos (Katsu Izakaya · auditoría solo lectura Winerim vs Agora — 2026-06-17)
 

@@ -1,0 +1,219 @@
+{
+  "success": true,
+  "mode": "start",
+  "totalWines": 67,
+  "listWinesFetched": 67,
+  "listWinesUpserted": 67,
+  "detailOffset": 0,
+  "detailBatchSize": 200,
+  "processedDetails": 67,
+  "remainingDetails": 0,
+  "nextDetailOffset": null,
+  "complete": true,
+  "enrichmentCompletedAt": "2026-06-19T05:22:00.331Z",
+  "detailRequestsAttempted": 67,
+  "detailRequestsSucceeded": 67,
+  "detailRequestsFailed": 0,
+  "winesUpdatedWithBottlePrice": 64,
+  "winesUpdatedWithGlassPrice": 64,
+  "detailsUpdated": 67,
+  "detailsMissing": 0,
+  "newWines": 0,
+  "changedWines": 65,
+  "autoPushResult": {
+    "success": true,
+    "differential": true,
+    "createCandidates": 0,
+    "updateCandidates": 65,
+    "parts": [
+      {
+        "eventType": "UPDATE",
+        "ids": 65,
+        "result": {
+          "success": true,
+          "queued": 23,
+          "wouldQueue": 0,
+          "skipped": 42,
+          "hidQueued": 0,
+          "skippedReasons": [
+            {
+              "winerim_id": "272888",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272889",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272890",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272891",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272892",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272893",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272896",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272898",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272900",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272902",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272903",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272904",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272906",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "272907",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "275433",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "275753",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277094",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277100",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277102",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277110",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277111",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277112",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277114",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277125",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277129",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277131",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277133",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277138",
+              "reason": "bottle_validation_failed:missing_bottle_sale_price"
+            },
+            {
+              "winerim_id": "277138",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277139",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277141",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277143",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277144",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277146",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277148",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277149",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277151",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277153",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277154",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277161",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277203",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277234",
+              "reason": "already_pending_task"
+            },
+            {
+              "winerim_id": "277238",
+              "reason": "already_pending_task"
+            }
+          ],
+          "totalWines": 65,
+          "eventType": "UPDATE",
+          "forceEvaluate": false
+        }
+      }
+    ]
+  }
+}
