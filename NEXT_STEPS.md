@@ -2,6 +2,17 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Estudio Resto / La Refineria API
+- [x] Revisar documentacion recibida `Api Resto` v1 sin versionar credenciales.
+- [x] Documentar precheck: `ESTUDIO_RESTO_API_PRECHECK_2026-06-22.md`.
+- [ ] Responder al SAT: la API actual sirve para leer menu/stock, pero falta ventas cerradas y escritura de productos/precios para integracion completa.
+- [ ] Pedir endpoint de ventas cerradas por fecha de negocio con documentos y lineas idempotentes.
+- [ ] Pedir endpoint de crear/actualizar productos/precios/activo/categoria si el cliente quiere Winerim -> POS.
+- [ ] Confirmar respuesta real de `POST /api/token`: formato del token, expiracion, refresh y errores.
+- [ ] Resolver conectividad: API privada/local `192.168.x.x` no es accesible desde backend sin tunel/VPN/IP publica/conector local.
+- [ ] Confirmar si hay certificado TLS valido o si el HTTPS local usa certificado autofirmado.
+- [ ] Confirmar multi-restaurante: uso de `restaurantId`, filtro por token o parametro.
+
 ## P0 — Katsu Izakaya definitivo y monitorizacion Agora 2026-06-19
 - [x] Refrescar master data Agora y catalogo Winerim de Katsu antes de escribir.
 - [x] Importar Katsu por XML separado por formato: botellas, copas y magnums.

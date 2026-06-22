@@ -4,6 +4,32 @@
 
 _Última actualización: 2026-06-19 07:35 CEST_
 
+## Hechos (Estudio Resto / La Refineria · API precheck — 2026-06-22)
+
+- El SAT de Estudio Informatico envio documentacion `Api Resto` v1 para una API interna local.
+- Documento recibido: `/Users/GOIKO/Downloads/api-resto-doc.md`.
+- La documentacion trae credenciales en claro; no se repiten ni se versionan.
+- Endpoints documentados:
+  - `POST /api/token`: obtiene JWT Bearer;
+  - `GET /api/restaurantRequest/stock-items`: consulta items de stock;
+  - `GET /api/restaurantRequest/menu`: consulta menu/carta.
+- La URL de ejemplo es privada/local (`192.168.x.x`) con HTTPS y puerto `9998`, por lo que el backend no podria acceder directamente sin tunel/VPN/IP publica/conector local.
+- El alcance actual es solo lectura de menu y stock agregado. No hay endpoints documentados de ventas cerradas ni escritura de productos/precios.
+- Informe especifico: `ESTUDIO_RESTO_API_PRECHECK_2026-06-22.md`.
+
+### Decisiones / criterio operativo Estudio Resto
+
+- Tratar Estudio Resto como viable parcial, no como integracion completa lista.
+- No prometer Winerim -> POS hasta que exista endpoint de crear/actualizar productos/precios.
+- No prometer ventas/historial/stock idempotente hasta que exista endpoint de ventas cerradas con lineas e IDs estables.
+
+### Riesgos / tareas Estudio Resto
+
+- Resolver conectividad segura desde backend a una API local.
+- Pedir respuesta real de login, expiracion de JWT y codigos de error.
+- Pedir endpoint de ventas cerradas por fecha de negocio.
+- Pedir endpoint de escritura de menu/productos si el cliente quiere automatizar altas y precios desde Winerim.
+
 ## Hechos (Katsu Izakaya · activación definitiva Winerim en Agora — 2026-06-19)
 
 - Katsu Izakaya queda activado en modo definitivo con familias Winerim dedicadas.

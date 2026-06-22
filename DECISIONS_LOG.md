@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-06-22 · Estudio Resto: viabilidad parcial, no integración completa todavía
+- **Decisión**: Tratar la API `Api Resto` de Estudio Informatico como precheck parcial de lectura, no como integracion Winerim completa.
+- **Razón**: La documentacion solo cubre autenticacion JWT, lectura de menu y lectura de stock agregado. No documenta ventas cerradas con lineas, ids idempotentes, anulaciones, fecha de negocio ni escritura de productos/precios. Ademas, la URL de ejemplo es privada/local, por lo que hace falta resolver conectividad segura desde backend.
+- **Alternativa descartada**: crear ya una conexion productiva o prometer sincronizacion automatica. Con el contrato actual solo podriamos leer carta/stock, pero no cerrar el flujo catalogo Winerim -> POS ni ventas POS -> Winerim.
+
+---
+
 ## 2026-06-19 · Katsu: pasar a modo definitivo con familias Winerim dedicadas
 - **Decisión**: Activar Katsu Izakaya como instalacion definitiva Winerim en Agora: `WINERIM_DEDICATED_FAMILIES`, XML import por formato, copas activas, `auto_push_on_create=true`, `auto_push_on_update=true` y `auto_push_verified_ready=true`.
 - **Razón**: La importacion controlada por formato verifico `131/131` formatos Winerim presentes y vendibles (`64` botellas, `65` copas, `2` magnums), `0` faltantes y `0` productos Winerim como boton raiz. La cola XML quedo finalmente en `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
