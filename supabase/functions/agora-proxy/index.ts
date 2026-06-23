@@ -557,12 +557,89 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
+function isBusinessDay(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function formatBusinessDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addUtcDays(day: string, delta: number): string {
+  const date = new Date(`${day}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + delta);
+  return formatBusinessDay(date);
+}
+
+function buildBusinessDayRange(fromDay: string, toDay: string, maxDays: number): string[] {
+  if (!isBusinessDay(fromDay) || !isBusinessDay(toDay)) {
+    throw new Error("fromBusinessDay/toBusinessDay must use YYYY-MM-DD");
+  }
+  if (fromDay > toDay) {
+    throw new Error("fromBusinessDay cannot be after toBusinessDay");
+  }
+  const days: string[] = [];
+  let cursor = fromDay;
+  while (cursor <= toDay) {
+    days.push(cursor);
+    if (days.length > maxDays) {
+      throw new Error(`Date range too large (${days.length} days). Max allowed: ${maxDays}`);
+    }
+    cursor = addUtcDays(cursor, 1);
+  }
+  return days;
+}
+
+function configuredStockSyncStartDate(providerConfig: unknown): string | null {
+  const cfg = (providerConfig && typeof providerConfig === "object" ? providerConfig : {}) as Record<string, unknown>;
+  const candidates = [
+    cfg.stock_sync_start_date,
+    cfg.sales_stock_sync_start_date,
+    cfg.operational_stock_start_date,
+  ];
+  for (const candidate of candidates) {
+    if (isBusinessDay(candidate)) return candidate;
+  }
+  return null;
+}
+
+function rawJsonDisablesStockSync(rawJson: unknown): boolean {
+  const raw = (rawJson && typeof rawJson === "object" ? rawJson : {}) as Record<string, unknown>;
+  return raw._winerim_import_mode === "historical_analytics" || raw._stock_sync_eligible === false;
+}
+
+function withHistoricalAnalyticsMetadata(rawJson: unknown, importedAt: string): Record<string, unknown> {
+  const raw = (rawJson && typeof rawJson === "object" && !Array.isArray(rawJson) ? rawJson : { value: rawJson }) as Record<string, unknown>;
+  return {
+    ...raw,
+    _winerim_import_mode: "historical_analytics",
+    _stock_sync_eligible: false,
+    _winerim_imported_at: importedAt,
+  };
+}
+
 // ── Winerim Stock Sync Helper (variant-aware, line-idempotent) ──
 // Winerim API v2: each wine exposes prices[] with variants ("copa","botella","magnum") and
 // each variant has its own erpStock.id. We must update the correct stockId per variant with
 // INTEGER quantities (Winerim rejects decimals). No more fractional bottle conversion.
 // deno-lint-ignore no-explicit-any
 async function syncStockForDay(supabase: any, connectionId: string, day: string, winerimToken: string) {
+  const { data: connection } = await supabase
+    .from("pos_connections")
+    .select("provider_config")
+    .eq("id", connectionId)
+    .single();
+  const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  if (stockSyncStartDate && day < stockSyncStartDate) {
+    return {
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+      message: `Stock sync skipped before configured stock_sync_start_date (${stockSyncStartDate})`,
+      stockSyncStartDate,
+    };
+  }
+
   const WINERIM_BASE = "https://app.winerim.com/api/v2";
   const winerimHeaders = {
     "WINERIM-API-TOKEN": winerimToken,
@@ -571,14 +648,16 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   };
 
   const { data: events } = await supabase
-    .from("sales_events").select("id")
+    .from("sales_events").select("id, raw_json")
     .eq("connection_id", connectionId).eq("business_day", day);
 
-  if (!events || events.length === 0) {
+  const eligibleEvents = (events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+
+  if (eligibleEvents.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
   }
 
-  const eventIds = events.map((e: { id: string }) => e.id);
+  const eventIds = eligibleEvents.map((e: { id: string }) => e.id);
   const { data: lines } = await supabase
     .from("sales_line_items")
     .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
@@ -934,7 +1013,7 @@ type StockSyncTotals = {
 async function findSavedStockCandidateDays(supabase: any, connectionId: string, fromDay: string, toDay: string): Promise<string[]> {
   const { data: events } = await supabase
     .from("sales_events")
-    .select("id, business_day")
+    .select("id, business_day, raw_json")
     .eq("connection_id", connectionId)
     .gte("business_day", fromDay)
     .lte("business_day", toDay)
@@ -945,10 +1024,12 @@ async function findSavedStockCandidateDays(supabase: any, connectionId: string, 
 
   const dayByEventId = new Map<string, string>();
   const eventIds: string[] = [];
-  for (const ev of events as { id: string; business_day: string }[]) {
+  for (const ev of events as { id: string; business_day: string; raw_json?: unknown }[]) {
+    if (rawJsonDisablesStockSync(ev.raw_json)) continue;
     eventIds.push(ev.id);
     dayByEventId.set(ev.id, ev.business_day);
   }
+  if (eventIds.length === 0) return [];
 
   const days = new Set<string>();
   for (let i = 0; i < eventIds.length; i += 500) {
@@ -2395,6 +2476,225 @@ serve(async (req) => {
       );
     }
 
+    // ── HISTORICAL SALES BACKFILL (analytics-only, never stock) ──
+    // Use this for onboarding/audits where we want historical invoices stored for
+    // analysis/matching but stock must only start from go-live. It deliberately:
+    // - does not call Winerim stock endpoints;
+    // - does not advance last_business_day_synced;
+    // - marks raw_json so stock catch-up ignores these events later.
+    if (action === "backfill-sales-analytics") {
+      const dryRun = payload.dryRun === true;
+      const includeToday = payload.includeToday === true;
+      const today = formatBusinessDay(new Date());
+      const defaultToDay = includeToday ? today : addUtcDays(today, -1);
+      const lookbackDays = Math.min(Math.max(Number(daysBack || 90), 1), 120);
+      const toDay = isBusinessDay(payload.toBusinessDay) ? payload.toBusinessDay : defaultToDay;
+      const fromDay = isBusinessDay(payload.fromBusinessDay)
+        ? payload.fromBusinessDay
+        : addUtcDays(toDay, -(lookbackDays - 1));
+      let days: string[];
+      try {
+        days = buildBusinessDayRange(fromDay, toDay, 120);
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const { data: familyRules } = await supabase
+        .from("wine_family_rules")
+        .select("family_name, is_wine")
+        .eq("connection_id", connectionId);
+      const customWineFamilies = familyRules
+        ?.filter((r: { is_wine: boolean }) => r.is_wine)
+        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
+
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+
+      const ACTION_DEADLINE_MS = 120_000;
+      const actionStart = Date.now();
+      const importedAt = new Date().toISOString();
+      const errors: string[] = [];
+      const daySummaries: { day: string; invoices: number; events: number; lines: number; resolvedLines: number; unresolvedWineLines: number }[] = [];
+      let scannedDays = 0;
+      let daysWithSales = 0;
+      let savedEvents = 0;
+      let savedLines = 0;
+      let resolvedLines = 0;
+      let unresolvedLines = 0;
+      let aborted = false;
+      let nextFromBusinessDay: string | null = null;
+
+      for (const day of days) {
+        if (Date.now() - actionStart > ACTION_DEADLINE_MS) {
+          aborted = true;
+          nextFromBusinessDay = day;
+          break;
+        }
+
+        scannedDays++;
+        const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
+        let invoices: any[] = [];
+        try {
+          const res = await fetchWithRetry(url, { headers }, 10_000);
+          if (!res.ok) {
+            const body = await res.text().catch(() => "");
+            errors.push(`${day}: Agora responded ${res.status} ${body.substring(0, 120)}`);
+            continue;
+          }
+          const body = await res.text();
+          const trimmed = body.trim();
+          if (!trimmed || trimmed === "{}" || trimmed === "[]") {
+            daySummaries.push({ day, invoices: 0, events: 0, lines: 0, resolvedLines: 0, unresolvedWineLines: 0 });
+            continue;
+          }
+          invoices = parseInvoices(JSON.parse(trimmed));
+        } catch (e) {
+          errors.push(`${day}: ${String(e).substring(0, 180)}`);
+          continue;
+        }
+
+        if (invoices.length > 0) daysWithSales++;
+
+        let dayEvents = 0;
+        let dayLines = 0;
+        let dayResolvedLines = 0;
+        let dayUnresolvedLines = 0;
+
+        for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+          const inv = invoices[invIdx];
+          const rawDocId = String(inv.InvoiceId || inv.Id || "");
+          const docId = rawDocId || `${day}_inv_${invIdx}`;
+          const items = inv.InvoiceItems || [];
+          let docTotal = 0;
+          const lineData: Record<string, unknown>[] = [];
+
+          for (const item of items) {
+            for (const line of (item.Lines || [])) {
+              const rawTotal = Number(line.TotalAmount || 0);
+              const uP = Number(line.UnitPrice || 0);
+              const qty = Number(line.Quantity || 0);
+              const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+              docTotal += lineTotal;
+              const pName = String(line.ProductName || "");
+              const fName = String(line.SaleFormatName || "");
+              const normalizedFmt = normalizeLineFormat(pName, fName);
+              const fam = String(line.FamilyName || "");
+              const productId = String(line.ProductId || "");
+              const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
+              const resolution = resolutionMap.get(productId);
+              const winerimProductId = resolution?.winerim_wine_id || null;
+              const isResolved = !!winerimProductId;
+              if (isResolved) {
+                resolvedLines++;
+                dayResolvedLines++;
+              } else if (wr.candidate) {
+                unresolvedLines++;
+                dayUnresolvedLines++;
+              }
+
+              lineData.push({
+                provider_product_id: productId,
+                name: pName,
+                format: normalizedFmt,
+                family: fam,
+                quantity: qty,
+                unit_price: uP,
+                total_amount: lineTotal,
+                vat_rate: Number(line.VatRate || 0),
+                is_wine_candidate: wr.candidate,
+                winerim_product_id: winerimProductId,
+                mapped: isResolved,
+              });
+            }
+          }
+
+          dayEvents++;
+          dayLines += lineData.length;
+          if (dryRun) continue;
+
+          const { data: eventRow, error: eventErr } = await supabase
+            .from("sales_events")
+            .upsert({
+              connection_id: connectionId,
+              provider_doc_id: docId,
+              business_day: day,
+              doc_type: String(inv.Type || "BasicInvoice"),
+              total_amount: Number(inv.TotalAmount || docTotal),
+              total_tax: Number(inv.TotalTaxAmount || 0),
+              total_net: Number(inv.TotalNetAmount || 0),
+              line_count: lineData.length,
+              raw_json: withHistoricalAnalyticsMetadata(inv, importedAt),
+            }, { onConflict: "connection_id,provider_doc_id" })
+            .select("id").single();
+
+          if (eventErr || !eventRow) {
+            errors.push(`${day}/${docId}: ${eventErr?.message || "event upsert failed"}`);
+            continue;
+          }
+          savedEvents++;
+
+          await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+          const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
+          if (linesToInsert.length > 0) {
+            const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
+            if (lineErr) {
+              errors.push(`${day}/${docId}: ${lineErr.message}`);
+            } else {
+              savedLines += linesToInsert.length;
+            }
+          }
+        }
+
+        daySummaries.push({
+          day,
+          invoices: invoices.length,
+          events: dayEvents,
+          lines: dayLines,
+          resolvedLines: dayResolvedLines,
+          unresolvedWineLines: dayUnresolvedLines,
+        });
+      }
+
+      if (!dryRun) {
+        await supabase.from("pos_connections")
+          .update({ last_sync_at: new Date().toISOString() })
+          .eq("id", connectionId);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: errors.length === 0 && !aborted,
+          dryRun,
+          importMode: "historical_analytics",
+          stockSyncSkipped: true,
+          cursorAdvanced: false,
+          fromBusinessDay: fromDay,
+          toBusinessDay: toDay,
+          scannedDays,
+          daysRequested: days.length,
+          daysWithSales,
+          savedEvents,
+          savedLines,
+          resolvedLines,
+          unresolvedLines,
+          aborted,
+          nextFromBusinessDay,
+          errors: errors.slice(0, 50),
+          daySummaries: daySummaries.filter((d) => d.invoices > 0).slice(-30),
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── SAVE SALES TO DB (with Winerim resolution) ──
     if (action === "save-sales") {
       const day = businessDay;
@@ -3811,8 +4111,11 @@ serve(async (req) => {
         fetched_at: new Date().toISOString(),
       }, { onConflict: "connection_id" });
 
-      // FIX: Only set write_mode, NOT can_write_products
-      if (families.length > 0 || products.length > 0) {
+      // Only promote write_mode for normal onboarding. Read-only audits must not
+      // become XML_IMPORT just because master data was readable.
+      const preserveWriteMode = payload.preserveWriteMode === true ||
+        ((connection.provider_config || {}) as Record<string, unknown>).read_only_onboarding === true;
+      if (!preserveWriteMode && (families.length > 0 || products.length > 0)) {
         await supabase.from("pos_connections").update({
           write_mode: "XML_IMPORT",
         }).eq("id", connectionId).eq("write_mode", "NONE");
