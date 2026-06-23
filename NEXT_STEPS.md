@@ -2,6 +2,45 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Don Bernardo Ponzano/Santander Agora read-only 2026-06-23
+- [x] Crear conexiones Don Bernardo Ponzano y Don Bernardo Santander sin documentar tokens.
+- [x] Dejar ambas conexiones en read-only:
+  - `enabled=false`;
+  - `catalog_sync_enabled=false`;
+  - `write_mode=NONE`;
+  - auto-push apagado;
+  - `provider_config.read_only_onboarding=true`;
+  - `provider_config.stock_sync_start_date=2026-06-23`.
+- [x] Validar conectividad Agora e `Invoices`:
+  - Ponzano: OK, `342` facturas en 14 dias;
+  - Santander: OK, `1.158` facturas en 14 dias.
+- [x] Refrescar master data Agora sin escritura POS.
+- [x] Refrescar catalogo Winerim sin auto-push.
+- [x] Importar historico `2026-03-23` a `2026-06-23` como analitica no descontable:
+  - Ponzano: `3.400` facturas / `11.797` lineas / `0` errores;
+  - Santander: `6.883` facturas / `22.351` lineas / `0` errores.
+- [x] Verificar que el historico no descuenta stock:
+  - `stock_sync_log=0`;
+  - `mapped=true` muestra vacia;
+  - `raw_json._stock_sync_eligible=false`.
+- [x] Detectar y corregir live `write_mode` tras `sync-master-data`: ambas conexiones reseteadas a `NONE`.
+- [x] Subir commit `d9aae7f` con `backfill-sales-analytics`, guard `stock_sync_start_date` y proteccion read-only de `sync-master-data`.
+- [x] Documentar informe `DON_BERNARDO_READONLY_AUDIT_2026-06-23.md`.
+- [ ] Confirmar redeploy de Lovable Cloud con `d9aae7f`; ultima sonda seguia en runtime antiguo (`Unknown action` para `backfill-sales-analytics`).
+- [ ] Cuando el runtime nuevo este desplegado, validar:
+  - `backfill-sales-analytics` dry-run 1 dia;
+  - `sync-master-data` con `read_only_onboarding=true` no cambia `write_mode`.
+- [ ] Enviar/ajustar emails de Ponzano y Santander desde `DON_BERNARDO_READONLY_AUDIT_2026-06-23.md`.
+- [ ] Preparar CSV/Excel de no-match para revision:
+  - Ponzano: `37` sin match claro;
+  - Santander: `105` sin match claro.
+- [ ] Preguntar al cliente/SAT:
+  - si se conserva estructura Agora;
+  - donde entran vinos nuevos Winerim;
+  - uso real de `Vinos Barra`;
+  - si `BEBIDAS > BOTELLAS...` sigue operativo o es residual.
+- [ ] No activar stock, catalogo automatico ni ocultacion legacy hasta aprobar mappings/familias.
+
 ## P0 — Estudio Resto / La Refineria API
 - [x] Revisar documentacion recibida `Api Resto` v1 sin versionar credenciales.
 - [x] Documentar precheck: `ESTUDIO_RESTO_API_PRECHECK_2026-06-22.md`.

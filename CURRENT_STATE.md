@@ -2,7 +2,85 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-19 07:35 CEST_
+_Última actualización: 2026-06-23 07:25 CEST_
+
+## Hechos (Don Bernardo Ponzano/Santander · Agora read-only + historico analitico — 2026-06-23)
+
+- Se crearon dos conexiones Agora en Lovable Cloud en modo solo lectura:
+  - Don Bernardo Ponzano: `a700d425-9194-4758-95ff-7fee86419e14`;
+  - Don Bernardo Santander: `79280cb8-0fe7-4a57-93a4-04172205ac70`.
+- No se versionaron ni documentaron tokens.
+- Ambas conexiones quedaron con:
+  - `enabled=false`;
+  - `catalog_sync_enabled=false`;
+  - `write_mode=NONE`;
+  - `auto_push_on_create=false`;
+  - `auto_push_on_update=false`;
+  - `auto_push_verified_ready=false`;
+  - `provider_config.read_only_onboarding=true`;
+  - `provider_config.stock_sync_start_date=2026-06-23`.
+- `test` Agora OK en ambos.
+- `Invoices` OK en ambos:
+  - Ponzano: ventas cerradas hasta `2026-06-22`, `342` facturas en los ultimos 14 dias;
+  - Santander: ventas cerradas hasta `2026-06-22`, `1.158` facturas en los ultimos 14 dias.
+- `sync-master-data` OK en ambos, sin escrituras POS:
+  - Ponzano: `150` familias, `139` visibles, `1.832` productos, `1.813` vendibles, `3` listas de precio, `8` centros de venta;
+  - Santander: `126` familias, `122` visibles, `1.569` productos, `1.550` vendibles, `2` listas de precio, `8` centros de venta.
+- `winerim-proxy fetch-catalog` OK con flags de auto-push apagados:
+  - Ponzano: `95` vinos Winerim, `95` activos con precio, `93` con botella, `35` con copa, `0` magnum;
+  - Santander: `147` vinos Winerim, `147` activos con precio, `144` con botella, `48` con copa, `0` magnum.
+- Se hizo pre-match preliminar Winerim vs Agora:
+  - Ponzano: `58/95` matches exactos seguros (`61,1%`), `37` sin match claro;
+  - Santander: `42/147` matches exactos seguros (`28,6%`), `105` sin match claro.
+- Se importo historico de ventas como analitica, sin stock, desde `2026-03-23` hasta `2026-06-23`:
+  - Ponzano: `93` dias escaneados, `92` con ventas, `3.400` facturas, `11.797` lineas, `3.720` lineas candidatas vino, `0` errores;
+  - Santander: `93` dias escaneados, `92` con ventas, `6.883` facturas, `22.351` lineas, `6.909` lineas candidatas vino, `0` errores.
+- El historico se guardo con:
+  - `raw_json._winerim_import_mode="historical_analytics"`;
+  - `raw_json._stock_sync_eligible=false`;
+  - `sales_line_items.mapped=false`;
+  - `sales_line_items.winerim_product_id=null`.
+- Verificacion post-import:
+  - `stock_sync_log` nuevo para estas conexiones: `0`;
+  - muestras de eventos devuelven `historical_analytics` y `stockEligible=false`;
+  - `sales_line_items mapped=true limit 1`: `[]` en ambos.
+- Informe especifico: `DON_BERNARDO_READONLY_AUDIT_2026-06-23.md`.
+
+### Incidencia / correccion Don Bernardo
+
+- La accion historica `sync-master-data` del runtime actual promociono temporalmente `write_mode` de `NONE` a `XML_IMPORT` al detectar master data.
+- No escribio en Agora ni creo cola, pero no era correcto para onboarding read-only.
+- Se reseteo inmediatamente Ponzano y Santander a `write_mode=NONE`.
+- Se subio commit `d9aae7f` con:
+  - action `backfill-sales-analytics` para futuros historicos analiticos sin stock;
+  - guard de stock por `provider_config.stock_sync_start_date`;
+  - exclusiones de stock para eventos `historical_analytics`;
+  - proteccion para que `sync-master-data` no promocione `write_mode` si `read_only_onboarding=true`.
+- Ultima sonda tras push: Lovable Cloud seguia devolviendo `Unknown action` para `backfill-sales-analytics`; el backfill de Don Bernardo se hizo directamente por REST con lineas no mapeadas como medida conservadora.
+
+### Decisiones / criterio operativo Don Bernardo
+
+- Mantener Ponzano y Santander en read-only hasta revisar matching/familias con cliente/SAT.
+- No activar auto-push, no ocultar legacy y no sincronizar stock historico.
+- Tratar el historico importado como analitica/matching, no como historial Winerim ni como deduccion de stock.
+- Para cualquier go-live de stock, empezar desde `2026-06-23` o fecha posterior explicita y solo tras mappings aprobados.
+
+### Riesgos / tareas Don Bernardo
+
+- Confirmar redeploy de Lovable Cloud con commit `d9aae7f`; mientras no este desplegado, no usar `backfill-sales-analytics` desde la funcion.
+- Revisar no-match:
+  - Ponzano: `37`;
+  - Santander: `105`.
+- Confirmar con cliente donde deben caer nuevos vinos de Winerim:
+  - conservar estructura actual;
+  - usar familias Winerim dedicadas;
+  - o enrutar por reglas a familias existentes.
+- Aclarar si `Vinos Barra` representa copas u operativa especial.
+- Aclarar si las familias `BEBIDAS > BOTELLAS...` son operativas o residuales.
+- Si se cancela el onboarding, rollback sin impacto POS:
+  - mantener/desactivar conexiones;
+  - borrar `sales_events` de cada connection/rango (`sales_line_items` cae por cascade);
+  - no hay stock que revertir (`stock_sync_log=0`).
 
 ## Hechos (Estudio Resto / La Refineria · API precheck — 2026-06-22)
 

@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-06-23 · Don Bernardo: read-only real antes de cualquier escritura Agora
+- **Decisión**: Crear Don Bernardo Ponzano y Don Bernardo Santander como conexiones Agora read-only (`enabled=false`, `catalog_sync_enabled=false`, `write_mode=NONE`, auto-push apagado) y no subir catalogo ni ocultar legacy hasta revisar estructura y match.
+- **Razón**: Ambos TPV tienen estructura de vino ya trabajada. Ponzano tiene cobertura preliminar segura `58/95` (`61,1%`) y Santander `42/147` (`28,6%`), insuficiente para activar stock o escritura automatica sin revision.
+- **Alternativa descartada**: activar `XML_IMPORT`/auto-push o crear familias Winerim dedicadas inmediatamente. Habria riesgo de duplicar vinos, romper la organizacion visual y generar mappings incorrectos para stock.
+
+## 2026-06-23 · Historico de ventas: analitica sin stock ni cursor operativo
+- **Decisión**: Importar ventas historicas de Don Bernardo (`2026-03-23` a `2026-06-23`) como `historical_analytics`, con `stockEligible=false`, lineas `mapped=false` y sin `winerim_product_id`.
+- **Razón**: El usuario quiere disponer del historico de 3 meses, pero sin descontar stock anterior a la integracion. Separarlo de la ruta operativa evita que un flujo futuro de stock intente deducir ventas pasadas.
+- **Alternativa descartada**: usar `save-sales`/`auto-sync-sales` para el historico. Esas rutas estan pensadas para dias operativos y pueden descontar stock o avanzar cursor si hay mappings.
+
+## 2026-06-23 · `sync-master-data` no debe activar escritura en auditorias
+- **Decisión**: Cambiar `agora-proxy` para que `sync-master-data` no promocione `write_mode=NONE` a `XML_IMPORT` cuando `payload.preserveWriteMode=true` o `provider_config.read_only_onboarding=true`.
+- **Razón**: Durante el alta read-only de Don Bernardo, la lectura de master data promociono temporalmente `write_mode` aunque no se habia aprobado escritura. Fue revertido a `NONE`, pero el comportamiento debe quedar bloqueado para futuras auditorias.
+- **Alternativa descartada**: aceptar la promocion automatica porque auto-push seguia apagado. Aunque no escribe por si sola, reduce la claridad operativa y puede inducir a errores en onboarding comercial/tecnico.
+
 ## 2026-06-22 · Estudio Resto: viabilidad parcial, no integración completa todavía
 - **Decisión**: Tratar la API `Api Resto` de Estudio Informatico como precheck parcial de lectura, no como integracion Winerim completa.
 - **Razón**: La documentacion solo cubre autenticacion JWT, lectura de menu y lectura de stock agregado. No documenta ventas cerradas con lineas, ids idempotentes, anulaciones, fecha de negocio ni escritura de productos/precios. Ademas, la URL de ejemplo es privada/local, por lo que hace falta resolver conectividad segura desde backend.
