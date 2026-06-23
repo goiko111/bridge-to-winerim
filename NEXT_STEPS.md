@@ -7,8 +7,9 @@
 - [x] Localizar causa en `AGORA_HIDE_PRODUCT`: el hide automático renombraba el producto como `[INACTIVO] ${wineName}`.
 - [x] Cambiar `AGORA_HIDE_PRODUCT`: ocultar preservando el producto completo de Agora y solo apagar `UseAsDirectSale`/`SaleableAsMain`; limpiar prefijo si ya existe.
 - [x] Validar bundle/parse local de `agora-proxy`.
+- [x] Publicar commit `5871e02` en `main`.
+- [x] Ejecutar limpieza controlada en Sa Pedrera: `37` productos prefijados limpiados; verificación live y snapshot backend con `prefixedCount=0`.
 - [ ] Confirmar redeploy de Lovable Cloud con el commit del hotfix.
-- [ ] Ejecutar limpieza controlada en Sa Pedrera para productos Winerim ya prefijados `[INACTIVO]`, manteniendo ocultos los que sigan inactivos.
 - [ ] Hacer prueba de regresión en Sa Pedrera:
   - vender vino activo en una mesa;
   - inactivarlo en Winerim durante el servicio;

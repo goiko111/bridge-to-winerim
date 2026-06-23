@@ -20,7 +20,13 @@ _Última actualización: 2026-06-23 09:05 CEST_
   - `npm ci --ignore-scripts --no-audit --no-fund` OK.
   - `node node_modules/esbuild/bin/esbuild supabase/functions/agora-proxy/index.ts --bundle --platform=neutral --format=esm --outfile=/tmp/agora-proxy-check.js` OK.
   - `node --check /tmp/agora-proxy-check.js` OK.
-- Pendiente operativo: confirmar redeploy de Lovable Cloud, limpiar productos ya prefijados en Sa Pedrera y validar en ticket/factura de prueba.
+- Commit publicado en `main`: `5871e02` (`Hide inactive Agora products without renaming`).
+- Limpieza controlada aplicada directamente en Agora Sa Pedrera:
+  - dry-run live: `37` productos con prefijo `[INACTIVO]`, todos ya no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`);
+  - import XML aplicado con HTTP 200;
+  - verificación live post-import: `prefixedCount=0`;
+  - se refrescó `sync-master-data` en Lovable Cloud y el snapshot `products_summary_json` quedó con `1378` productos y `prefixedCount=0`.
+- Pendiente operativo: confirmar redeploy automático de Lovable Cloud con el commit `5871e02` y validar en ticket/factura de prueba.
 
 ## Hechos (Don Bernardo Ponzano/Santander · Agora read-only + historico analitico — 2026-06-23)
 
