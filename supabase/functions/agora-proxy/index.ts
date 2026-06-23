@@ -6308,16 +6308,51 @@ ${costPricesXml}
               const productIds = (p._product_ids as string[]) || [];
               const wineName = String(p._wine_name || "Unknown");
               const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+              const productElById = new Map<string, string>();
+              const setAttr = (el: string, attr: string, value: string): string => {
+                const re = new RegExp(`\\b${attr}="[^"]*"`);
+                if (re.test(el)) return el.replace(re, `${attr}="${value}"`);
+                return el.replace(/(\s*\/?>)$/, ` ${attr}="${value}"$1`);
+              };
+              const getAttr = (el: string, attr: string): string | null => {
+                const match = new RegExp(`\\b${attr}="([^"]*)"`).exec(el);
+                return match?.[1] ?? null;
+              };
 
               if (productIds.length === 0) {
                 await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: "No product IDs to hide" }).eq("id", t.id);
                 failed++; processed++; continue;
               }
 
+              const cached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+              if (cached.ok) {
+                const productRegex = /<Product\b[^>]*\/>|<Product\b[^>]*>[\s\S]*?<\/Product>/g;
+                const idAttr = /\bId="([^"]+)"/;
+                let mProd: RegExpExecArray | null;
+                while ((mProd = productRegex.exec(cached.xml)) !== null) {
+                  const full = mProd[0];
+                  const idm = idAttr.exec(full);
+                  if (idm) productElById.set(String(idm[1]), full);
+                }
+              } else {
+                console.warn(`[AGORA_HIDE_PRODUCT] Could not fetch product master for name-preserving hide: HTTP ${cached.status}`);
+              }
+
               const vatIdHide = String((connection as any).default_vat_id || "1");
               let productsXml = "";
               for (const pid of productIds) {
-                productsXml += `    <Product Id="${pid}" Name="${escXml(`[INACTIVO] ${wineName}`)}" VatId="${vatIdHide}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+                const original = productElById.get(String(pid));
+                if (original) {
+                  let patched = setAttr(original, "UseAsDirectSale", "false");
+                  patched = setAttr(patched, "SaleableAsMain", "false");
+                  const currentName = getAttr(patched, "Name");
+                  if (currentName?.match(/^\[INACTIVO\]\s*/i)) {
+                    patched = setAttr(patched, "Name", currentName.replace(/^\[INACTIVO\]\s*/i, ""));
+                  }
+                  productsXml += `    ${patched}\n`;
+                } else {
+                  productsXml += `    <Product Id="${pid}" Name="${escXml(wineName)}" VatId="${vatIdHide}" UseAsDirectSale="false" SaleableAsMain="false" />\n`;
+                }
               }
               const hideXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productsXml}  </Products>\n</Import>`;
 
@@ -6335,6 +6370,7 @@ ${costPricesXml}
 
               if (res.ok) {
                 await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                invalidateAgoraProductsCache(connectionId);
                 await registerSuccess();
                 succeeded++;
               } else {

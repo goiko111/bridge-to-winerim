@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-23 · Ocultar vinos inactivos en Agora sin renombrarlos como `[INACTIVO]`
+- **Decisión**: Cambiar la tarea `AGORA_HIDE_PRODUCT` para preservar el nombre original del producto Agora y ocultarlo solo con `UseAsDirectSale=false` y `SaleableAsMain=false`. Si el producto ya tiene prefijo `[INACTIVO]`, el nuevo flujo lo limpia al reimportar el producto oculto.
+- **Razón**: Sa Pedrera reportó que, si inactivan un vino durante el servicio tras vender la última botella, las facturas de mesas abiertas pueden imprimir el nombre maestro actualizado con `[INACTIVO]`, generando mala experiencia para el cliente final aunque el cobro sea correcto.
+- **Alternativa descartada**: mantener el prefijo `[INACTIVO]` como señal visual interna. Esa señal debe vivir en `winerim_push_tracking.sync_status=HIDDEN`, `outbound_tasks` y paneles, no en el nombre comercial del producto.
+- **Rollback**: restaurar el comportamiento anterior en `AGORA_HIDE_PRODUCT` volviendo a generar `Name="[INACTIVO] ${wineName}"`. No recomendado salvo que Agora no respete correctamente `UseAsDirectSale=false`/`SaleableAsMain=false`; en ese caso primero validar con producto de prueba.
+
+---
+
 ## 2026-06-23 · Don Bernardo: read-only real antes de cualquier escritura Agora
 - **Decisión**: Crear Don Bernardo Ponzano y Don Bernardo Santander como conexiones Agora read-only (`enabled=false`, `catalog_sync_enabled=false`, `write_mode=NONE`, auto-push apagado) y no subir catalogo ni ocultar legacy hasta revisar estructura y match.
 - **Razón**: Ambos TPV tienen estructura de vino ya trabajada. Ponzano tiene cobertura preliminar segura `58/95` (`61,1%`) y Santander `42/147` (`28,6%`), insuficiente para activar stock o escritura automatica sin revision.

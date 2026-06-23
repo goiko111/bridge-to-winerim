@@ -2,7 +2,25 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-23 07:25 CEST_
+_Última actualización: 2026-06-23 09:05 CEST_
+
+## Hechos (Sa Pedrera — productos inactivos impresos en factura — 2026-06-23)
+
+- El cliente Sa Pedrera reporta que, cuando durante el servicio vende la última botella de un vino y lo desactiva en Winerim para que no se pueda volver a pedir, el ticket/factura de una mesa abierta imprime el producto con prefijo `[INACTIVO]`.
+- Evidencia recibida: factura proforma del `2026-06-23 21:35` con línea de vino `"[INACTIVO] B 55-Lapo a"`.
+- Transcripción de audios:
+  - "cuando quito un vino en mitad del servicio [...] después en el ticket del cliente me aparece como inactivo";
+  - "este vino aparece como cobrado en la factura [...] lo que pasa que aparece con ese encabezamiento de inactivo".
+- Diagnóstico: la venta se cobra correctamente; el problema es de nombre visible impreso en documentos de Agora.
+- Causa localizada en `supabase/functions/agora-proxy/index.ts`: la tarea `AGORA_HIDE_PRODUCT` renombraba el producto a `[INACTIVO] ${wineName}` al ocultarlo.
+- Cambio aplicado en código: `AGORA_HIDE_PRODUCT` preserva ahora el `<Product>` completo leído desde `/api/export-master/?filter=Products` vía `fetchAgoraProductsXmlCached` y solo fuerza `UseAsDirectSale=false` + `SaleableAsMain=false`.
+- Si el producto ya venía con prefijo `[INACTIVO]`, el nuevo flujo lo limpia al reimportarlo oculto.
+- Fallback conservador si el producto no aparece en master data: se mantiene el nombre Winerim sin prefijo `[INACTIVO]`.
+- Validación local:
+  - `npm ci --ignore-scripts --no-audit --no-fund` OK.
+  - `node node_modules/esbuild/bin/esbuild supabase/functions/agora-proxy/index.ts --bundle --platform=neutral --format=esm --outfile=/tmp/agora-proxy-check.js` OK.
+  - `node --check /tmp/agora-proxy-check.js` OK.
+- Pendiente operativo: confirmar redeploy de Lovable Cloud, limpiar productos ya prefijados en Sa Pedrera y validar en ticket/factura de prueba.
 
 ## Hechos (Don Bernardo Ponzano/Santander · Agora read-only + historico analitico — 2026-06-23)
 

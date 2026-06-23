@@ -2,6 +2,20 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Sa Pedrera / `[INACTIVO]` en tickets de cliente 2026-06-23
+- [x] Transcribir audios del cliente y confirmar alcance: el vino se cobra, pero el nombre aparece con prefijo `[INACTIVO]` en factura/proforma.
+- [x] Localizar causa en `AGORA_HIDE_PRODUCT`: el hide automático renombraba el producto como `[INACTIVO] ${wineName}`.
+- [x] Cambiar `AGORA_HIDE_PRODUCT`: ocultar preservando el producto completo de Agora y solo apagar `UseAsDirectSale`/`SaleableAsMain`; limpiar prefijo si ya existe.
+- [x] Validar bundle/parse local de `agora-proxy`.
+- [ ] Confirmar redeploy de Lovable Cloud con el commit del hotfix.
+- [ ] Ejecutar limpieza controlada en Sa Pedrera para productos Winerim ya prefijados `[INACTIVO]`, manteniendo ocultos los que sigan inactivos.
+- [ ] Hacer prueba de regresión en Sa Pedrera:
+  - vender vino activo en una mesa;
+  - inactivarlo en Winerim durante el servicio;
+  - confirmar que ya no se puede pedir de nuevo;
+  - imprimir factura y verificar que no aparece `[INACTIVO]`.
+- [ ] Revisar si otras conexiones Agora tienen productos ya prefijados `[INACTIVO]` y aplicar la misma limpieza si procede.
+
 ## P0 — Don Bernardo Ponzano/Santander Agora read-only 2026-06-23
 - [x] Crear conexiones Don Bernardo Ponzano y Don Bernardo Santander sin documentar tokens.
 - [x] Dejar ambas conexiones en read-only:
