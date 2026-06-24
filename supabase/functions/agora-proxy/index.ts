@@ -557,6 +557,47 @@ function parseInvoices(raw: any): any[] {
   return [];
 }
 
+// Agora may omit InvoiceId/Id in some installations. A blank provider_doc_id
+// collapses all invoices for the day into one row, so every sales import path
+// must use the same deterministic fallback.
+function buildAgoraInvoiceDocId(invoice: Record<string, unknown>, day: string, invoiceIndex: number): string {
+  const candidates = [
+    invoice.InvoiceId,
+    invoice.Id,
+    invoice.DocumentId,
+    invoice.DocId,
+    invoice.TicketId,
+    invoice.OrderId,
+    invoice.Number,
+    invoice.InvoiceNumber,
+    invoice.DocumentNumber,
+    invoice.Code,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+  return `${day}_inv_${invoiceIndex}`;
+}
+
+function todayInTimeZone(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  return `${byType.get("year")}-${byType.get("month")}-${byType.get("day")}`;
+}
+
+function isIntradaySalesSyncEnabled(connection: { provider_config?: unknown }): boolean {
+  const config = (connection?.provider_config && typeof connection.provider_config === "object")
+    ? connection.provider_config as Record<string, unknown>
+    : {};
+  return config.intraday_sales_sync_enabled === true;
+}
+
 function isBusinessDay(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -1001,6 +1042,403 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   };
 }
 
+// Same stock semantics as syncStockForDay, but suitable for intraday polling.
+// It compares the current saved invoice state against successful stock_sync_log
+// quantities, then writes only the remaining delta. This lets us re-import an
+// open business day safely while Agora invoices keep changing during service.
+// deno-lint-ignore no-explicit-any
+async function syncStockForDayIncremental(supabase: any, connectionId: string, day: string, winerimToken: string) {
+  const { data: connection } = await supabase
+    .from("pos_connections")
+    .select("provider_config")
+    .eq("id", connectionId)
+    .single();
+  const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  if (stockSyncStartDate && day < stockSyncStartDate) {
+    return {
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+      message: `Stock sync skipped before configured stock_sync_start_date (${stockSyncStartDate})`,
+      stockSyncStartDate,
+    };
+  }
+
+  const WINERIM_BASE = "https://app.winerim.com/api/v2";
+  const winerimHeaders = {
+    "WINERIM-API-TOKEN": winerimToken,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+
+  const { data: events } = await supabase
+    .from("sales_events")
+    .select("id, raw_json")
+    .eq("connection_id", connectionId)
+    .eq("business_day", day);
+
+  const eligibleEvents = (events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+  if (eligibleEvents.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
+  }
+
+  const eventIds = eligibleEvents.map((event: { id: string }) => event.id);
+  const { data: lines } = await supabase
+    .from("sales_line_items")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .in("sales_event_id", eventIds);
+
+  if (!lines || lines.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
+  }
+
+  type DesiredGroup = {
+    groupKey: string;
+    salesEventId: string;
+    winerimWineId: string;
+    variant: WinerimVariant;
+    desiredQty: number;
+    lineIds: string[];
+    firstLineId: string;
+    name: string;
+    providerProductId: string;
+  };
+  type DeltaClaim = DesiredGroup & {
+    deltaQty: number;
+    alreadyQty: number;
+    idempotencyKey: string;
+    logId: string;
+  };
+  type Agg = {
+    winerimWineId: string;
+    variant: WinerimVariant;
+    qty: number;
+    logIds: string[];
+    groupKeys: string[];
+    name: string;
+  };
+
+  const desiredGroups = new Map<string, DesiredGroup>();
+  let mappedLineCount = 0;
+  for (const line of lines as any[]) {
+    if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
+    if (qty <= 0) continue;
+    mappedLineCount++;
+    const variant = variantForAgoraFormat(line.format);
+    const groupKey = buildStockSyncGroupKey(line.sales_event_id, line.winerim_product_id, variant);
+    const existing = desiredGroups.get(groupKey);
+    if (existing) {
+      existing.desiredQty += qty;
+      existing.lineIds.push(line.id);
+    } else {
+      desiredGroups.set(groupKey, {
+        groupKey,
+        salesEventId: line.sales_event_id,
+        winerimWineId: String(line.winerim_product_id),
+        variant,
+        desiredQty: qty,
+        lineIds: [line.id],
+        firstLineId: line.id,
+        name: String(line.name || ""),
+        providerProductId: String(line.provider_product_id || ""),
+      });
+    }
+  }
+
+  if (desiredGroups.size === 0) {
+    return {
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+      unmapped: (lines as any[]).length,
+      totalLines: (lines as any[]).length,
+      mappedLines: 0,
+      message: "No mapped wine lines found",
+    };
+  }
+
+  const candidateWineIds = Array.from(new Set(Array.from(desiredGroups.values()).map((group) => group.winerimWineId)));
+
+  const alreadyQtyByGroup = new Map<string, number>();
+  for (let i = 0; i < eventIds.length; i += 500) {
+    const eventChunk = eventIds.slice(i, i + 500);
+    const { data: syncedRows } = await supabase
+      .from("stock_sync_log")
+      .select("sales_event_id, winerim_product_id, variant, quantity")
+      .eq("connection_id", connectionId)
+      .eq("status", "SUCCESS")
+      .in("sales_event_id", eventChunk)
+      .in("winerim_product_id", candidateWineIds);
+    for (const row of (syncedRows || []) as { sales_event_id: string; winerim_product_id: string; variant?: string | null; quantity?: number | string | null }[]) {
+      const variant = normalizeWinerimVariant(row.variant);
+      if (!variant) continue;
+      const groupKey = buildStockSyncGroupKey(row.sales_event_id, row.winerim_product_id, variant);
+      const qty = Math.max(0, Number(row.quantity || 0));
+      alreadyQtyByGroup.set(groupKey, (alreadyQtyByGroup.get(groupKey) || 0) + qty);
+    }
+  }
+
+  const terminalGroups = new Set<string>();
+  const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const { data: failedRows } = await supabase
+    .from("stock_sync_log")
+    .select("sales_event_id, winerim_product_id, variant, error_message")
+    .eq("connection_id", connectionId)
+    .in("status", ["FAILED", "BLOCKED"])
+    .gte("created_at", recentTerminalCutoff)
+    .in("sales_event_id", eventIds)
+    .in("winerim_product_id", candidateWineIds);
+  for (const row of (failedRows || []) as { sales_event_id: string; winerim_product_id: string; variant?: string | null; error_message?: string | null }[]) {
+    if (!isTerminalStockSyncError(row.error_message)) continue;
+    const variant = normalizeWinerimVariant(row.variant);
+    if (!variant) continue;
+    terminalGroups.add(buildStockSyncGroupKey(row.sales_event_id, row.winerim_product_id, variant));
+  }
+
+  const stalePendingBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase
+    .from("stock_sync_log")
+    .update({ status: "FAILED", error_message: "Stale PENDING intraday claim rescued before retry" })
+    .eq("connection_id", connectionId)
+    .eq("status", "PENDING")
+    .lt("created_at", stalePendingBefore);
+
+  const deltaCandidates = Array.from(desiredGroups.values())
+    .map((group) => {
+      const alreadyQty = alreadyQtyByGroup.get(group.groupKey) || 0;
+      const deltaQty = Math.max(0, group.desiredQty - alreadyQty);
+      return {
+        ...group,
+        alreadyQty,
+        deltaQty,
+        idempotencyKey: `${connectionId}:${group.groupKey}:target:${group.desiredQty}`,
+      };
+    })
+    .filter((group) => group.deltaQty > 0);
+
+  const idempotencyKeys = deltaCandidates.map((group) => group.idempotencyKey);
+  const existingTargetKeys = new Set<string>();
+  for (let i = 0; i < idempotencyKeys.length; i += 200) {
+    const chunk = idempotencyKeys.slice(i, i + 200);
+    const { data: existingRows } = await supabase
+      .from("stock_sync_log")
+      .select("idempotency_key")
+      .eq("connection_id", connectionId)
+      .in("status", ["PENDING", "SUCCESS"])
+      .in("idempotency_key", chunk);
+    for (const row of (existingRows || []) as { idempotency_key: string }[]) {
+      existingTargetKeys.add(row.idempotency_key);
+    }
+  }
+
+  let skipped = desiredGroups.size - deltaCandidates.length;
+  let failed = 0;
+  const claimed: DeltaClaim[] = [];
+  for (const group of deltaCandidates) {
+    if (terminalGroups.has(group.groupKey)) {
+      skipped++;
+      failed++;
+      continue;
+    }
+    if (existingTargetKeys.has(group.idempotencyKey)) {
+      skipped++;
+      continue;
+    }
+
+    const { data: logEntry, error: claimError } = await supabase.from("stock_sync_log").insert({
+      connection_id: connectionId,
+      sales_event_id: group.salesEventId,
+      sales_line_item_id: group.firstLineId,
+      provider_product_id: group.providerProductId,
+      winerim_product_id: group.winerimWineId,
+      product_name: `${group.name} [${group.variant}]`,
+      quantity: group.deltaQty,
+      variant: group.variant,
+      idempotency_key: group.idempotencyKey,
+      status: "PENDING",
+    }).select("id").single();
+
+    if (claimError || !logEntry?.id) {
+      skipped++;
+      console.warn(`[sync-stock-intraday] skipped delta group ${group.groupKey}: ${claimError?.message || "no log id"}`);
+      continue;
+    }
+
+    claimed.push({ ...group, logId: logEntry.id });
+  }
+
+  const aggregated = new Map<string, Agg>();
+  for (const claim of claimed) {
+    const key = `${claim.winerimWineId}::${claim.variant}`;
+    const existing = aggregated.get(key);
+    if (existing) {
+      existing.qty += claim.deltaQty;
+      existing.logIds.push(claim.logId);
+      existing.groupKeys.push(claim.groupKey);
+    } else {
+      aggregated.set(key, {
+        winerimWineId: claim.winerimWineId,
+        variant: claim.variant,
+        qty: claim.deltaQty,
+        logIds: [claim.logId],
+        groupKeys: [claim.groupKey],
+        name: claim.name,
+      });
+    }
+  }
+
+  const toProcess = Array.from(aggregated.values());
+  if (toProcess.length === 0) {
+    return {
+      synced: 0,
+      skipped,
+      failed,
+      unmapped: (lines as any[]).length - mappedLineCount,
+      totalLines: (lines as any[]).length,
+      mappedLines: mappedLineCount,
+      desiredGroups: desiredGroups.size,
+      deltaGroups: deltaCandidates.length,
+      claimedGroups: claimed.length,
+      message: "All intraday groups already synced",
+    };
+  }
+
+  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
+  const wineStockCache = new Map<string, StockEntry[]>();
+  const wineFetchErrors = new Map<string, string>();
+  const uniqueWineIds = Array.from(new Set(toProcess.map((item) => item.winerimWineId)));
+
+  for (const wineId of uniqueWineIds) {
+    try {
+      const r = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
+      if (!r.ok) {
+        wineFetchErrors.set(wineId, `GET /stock/wine/${wineId} → ${r.status}: ${(await r.text()).substring(0, 200)}`);
+        continue;
+      }
+      const data = await r.json();
+      const normalized = parseWinerimStockRows(data)
+        .map((stock) => {
+          const canonical = findStockForVariant([stock], "copa")
+            ? "copa"
+            : findStockForVariant([stock], "botella")
+              ? "botella"
+              : findStockForVariant([stock], "magnum")
+                ? "magnum"
+                : null;
+          return {
+            id: Number(stock.id),
+            stock: Number(stock.stock ?? 0),
+            variant: canonical,
+          };
+        })
+        .filter((stock): stock is StockEntry => Number.isFinite(stock.id) && stock.id > 0 && !!stock.variant);
+      wineStockCache.set(wineId, normalized);
+
+      const upd: Record<string, number> = {};
+      const bId = normalized.find((stock) => stock.variant === "botella")?.id;
+      const gId = normalized.find((stock) => stock.variant === "copa")?.id;
+      const mId = normalized.find((stock) => stock.variant === "magnum")?.id;
+      if (bId) upd.bottle_stock_id = bId;
+      if (gId) upd.glass_stock_id = gId;
+      if (mId) upd.magnum_stock_id = mId;
+      if (Object.keys(upd).length > 0) {
+        await supabase.from("winerim_wines").update(upd)
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", wineId);
+      }
+    } catch (e) {
+      wineFetchErrors.set(wineId, String(e));
+    }
+  }
+
+  type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
+  const bulkItems: BulkItem[] = [];
+  for (const agg of toProcess) {
+    const fetchedStocks = wineStockCache.get(agg.winerimWineId);
+    const match = fetchedStocks?.find((stock) => stock.variant === agg.variant);
+    if (!match) {
+      const err = wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
+      await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).in("id", agg.logIds);
+      failed++;
+      continue;
+    }
+    bulkItems.push({
+      id: match.id,
+      previousStock: match.stock,
+      newStock: Math.max(0, Math.floor(match.stock - agg.qty)),
+      agg,
+    });
+  }
+
+  let synced = 0;
+  for (let i = 0; i < bulkItems.length; i++) {
+    const item = bulkItems[i];
+    let r: Response;
+    let txt = "";
+    let parsed: unknown;
+    try {
+      r = await fetch(`${WINERIM_BASE}/stock/${item.id}`, {
+        method: "PUT",
+        headers: winerimHeaders,
+        body: JSON.stringify({ stock: item.newStock }),
+      });
+      txt = await r.text();
+      try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt.substring(0, 300) }; }
+    } catch (e) {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        error_message: `PUT exception: ${String(e)}`,
+        stock_id: item.id,
+      }).in("id", item.agg.logIds);
+      failed++;
+      continue;
+    }
+
+    if (r.ok) {
+      await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        stock_id: item.id,
+        winerim_response: {
+          mode: "intraday_incremental_delta",
+          previousStock: item.previousStock,
+          newStock: item.newStock,
+          soldQty: item.agg.qty,
+          variant: item.agg.variant,
+          stockId: item.id,
+          groupKeys: item.agg.groupKeys,
+        },
+        synced_at: new Date().toISOString(),
+      }).in("id", item.agg.logIds);
+      synced++;
+      console.log(`[sync-stock-intraday] ${item.agg.name} [${item.agg.variant}]: ${item.previousStock} → ${item.newStock} (-${item.agg.qty})`);
+    } else {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        stock_id: item.id,
+        error_message: `PUT /stock/${item.id} failed (${r.status}): ${txt.substring(0, 300)}`,
+        winerim_response: parsed,
+      }).in("id", item.agg.logIds);
+      failed++;
+    }
+
+    if (i < bulkItems.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return {
+    synced,
+    skipped,
+    failed,
+    unmapped: (lines as any[]).length - mappedLineCount,
+    totalLines: (lines as any[]).length,
+    mappedLines: mappedLineCount,
+    desiredGroups: desiredGroups.size,
+    deltaGroups: deltaCandidates.length,
+    claimedGroups: claimed.length,
+    aggregatedProducts: aggregated.size,
+  };
+}
+
 type StockSyncTotals = {
   synced: number;
   skipped: number;
@@ -1052,15 +1490,26 @@ async function findSavedStockCandidateDays(supabase: any, connectionId: string, 
 }
 
 // deno-lint-ignore no-explicit-any
-async function syncStockForDays(supabase: any, connectionId: string, days: string[], winerimToken: string): Promise<StockSyncTotals> {
+async function syncStockForDays(
+  supabase: any,
+  connectionId: string,
+  days: string[],
+  winerimToken: string,
+  options: { incremental?: boolean } = {},
+): Promise<StockSyncTotals> {
   const totals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
   for (const day of days) {
     try {
-      const result = await syncStockForDay(supabase, connectionId, day, winerimToken);
+      const result = options.incremental
+        ? await syncStockForDayIncremental(supabase, connectionId, day, winerimToken)
+        : await syncStockForDay(supabase, connectionId, day, winerimToken);
       totals.synced += Number(result.synced || 0);
       totals.skipped += Number(result.skipped || 0);
       totals.failed += Number(result.failed || 0);
       totals.checkedDays++;
+      if (Array.isArray(result.errors)) {
+        totals.errors.push(...result.errors.map((err: unknown) => `${day}: ${String(err)}`));
+      }
     } catch (e) {
       totals.failed++;
       totals.errors.push(`${day}: ${String(e)}`);
@@ -2424,8 +2873,8 @@ serve(async (req) => {
 
       const allFamilies = new Set<string>();
 
-      const salesEvents = invoices.map((inv: any) => {
-        const docId = String(inv.InvoiceId || inv.Id || "");
+      const salesEvents = invoices.map((inv: any, invIdx: number) => {
+        const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
         const items = inv.InvoiceItems || [];
         const lines: any[] = [];
         let docTotal = 0;
@@ -2571,8 +3020,7 @@ serve(async (req) => {
 
         for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
           const inv = invoices[invIdx];
-          const rawDocId = String(inv.InvoiceId || inv.Id || "");
-          const docId = rawDocId || `${day}_inv_${invIdx}`;
+          const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
           const items = inv.InvoiceItems || [];
           let docTotal = 0;
           const lineData: Record<string, unknown>[] = [];
@@ -2739,8 +3187,9 @@ serve(async (req) => {
       let resolvedLines = 0;
       let unresolvedLines = 0;
 
-      for (const inv of invoices) {
-        const docId = String(inv.InvoiceId || inv.Id || "");
+      for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+        const inv = invoices[invIdx];
+        const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
         const items = inv.InvoiceItems || [];
         let docTotal = 0;
         const lineData: Record<string, unknown>[] = [];
@@ -2845,8 +3294,177 @@ serve(async (req) => {
       );
     }
 
+    // ── INTRADAY SALES SYNC (same business day, incremental stock deltas only) ──
+    if (action === "sync-intraday-sales") {
+      if (!isIntradaySalesSyncEnabled(connection) && payload.force !== true) {
+        return new Response(
+          JSON.stringify({ success: true, skipped: true, reason: "intraday_sales_sync_disabled" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const providerConfig = ((connection.provider_config || {}) as Record<string, unknown>);
+      const timeZone = String(providerConfig.sales_timezone || "Europe/Madrid");
+      const day = isBusinessDay(businessDay) ? businessDay : todayInTimeZone(timeZone);
+
+      const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
+      const res = await fetchWithRetry(url, { headers }, 10_000);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        return new Response(JSON.stringify({ success: false, error: `Agora responded ${res.status}`, details: body.substring(0, 200) }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const rawData = await res.json();
+      const invoices = parseInvoices(rawData);
+
+      const { data: familyRules } = await supabase
+        .from("wine_family_rules")
+        .select("family_name, is_wine")
+        .eq("connection_id", connectionId);
+      const customWineFamilies = familyRules
+        ?.filter((r: { is_wine: boolean }) => r.is_wine)
+        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
+
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+
+      let savedEvents = 0;
+      let savedLines = 0;
+      let resolvedLines = 0;
+      let unresolvedLines = 0;
+
+      for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+        const inv = invoices[invIdx];
+        const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
+        const items = inv.InvoiceItems || [];
+        let docTotal = 0;
+        const lineData: Record<string, unknown>[] = [];
+
+        for (const item of items) {
+          for (const line of (item.Lines || [])) {
+            const rawTotal = Number(line.TotalAmount || 0);
+            const uP = Number(line.UnitPrice || 0);
+            const qty = Number(line.Quantity || 0);
+            const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+            docTotal += lineTotal;
+            const pName = String(line.ProductName || "");
+            const fName = String(line.SaleFormatName || "");
+            const normalizedFmt = normalizeLineFormat(pName, fName);
+            const fam = String(line.FamilyName || "");
+            const productId = String(line.ProductId || "");
+            const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
+            const resolution = resolutionMap.get(productId);
+            const winerimProductId = resolution?.winerim_wine_id || null;
+            const isResolved = !!winerimProductId;
+            if (isResolved) {
+              resolvedLines++;
+            } else if (wr.candidate) {
+              unresolvedLines++;
+            }
+
+            lineData.push({
+              provider_product_id: productId,
+              name: pName,
+              format: normalizedFmt,
+              family: fam,
+              quantity: qty,
+              unit_price: uP,
+              total_amount: lineTotal,
+              vat_rate: Number(line.VatRate || 0),
+              is_wine_candidate: wr.candidate,
+              winerim_product_id: winerimProductId,
+              mapped: isResolved,
+            });
+          }
+        }
+
+        const { data: eventRow, error: eventErr } = await supabase
+          .from("sales_events")
+          .upsert({
+            connection_id: connectionId,
+            provider_doc_id: docId,
+            business_day: day,
+            doc_type: String(inv.Type || "BasicInvoice"),
+            total_amount: Number(inv.TotalAmount || docTotal),
+            total_tax: Number(inv.TotalTaxAmount || 0),
+            total_net: Number(inv.TotalNetAmount || 0),
+            line_count: lineData.length,
+            raw_json: inv,
+          }, { onConflict: "connection_id,provider_doc_id" })
+          .select("id").single();
+
+        if (eventErr || !eventRow) continue;
+        savedEvents++;
+
+        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+        const linesToInsert = lineData.map((line) => ({ ...line, sales_event_id: eventRow.id, connection_id: connectionId }));
+        if (linesToInsert.length > 0) {
+          const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
+          if (!lineErr) savedLines += linesToInsert.length;
+        }
+      }
+
+      let stockSyncResult: StockSyncTotals | null = null;
+      let warning: string | null = null;
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      if (resolvedLines > 0) {
+        if (!winerimToken) {
+          warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
+          stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: [`${day}: missing Winerim API token`] };
+        } else {
+          stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken, { incremental: true });
+        }
+      }
+
+      const now = new Date().toISOString();
+      const nextConfig = {
+        ...providerConfig,
+        last_intraday_sales_sync: {
+          at: now,
+          day,
+          success: (stockSyncResult?.failed || 0) === 0,
+          invoiceCount: invoices.length,
+          savedEvents,
+          savedLines,
+          resolvedLines,
+          unresolvedLines,
+          stockSync: stockSyncResult,
+        },
+      };
+
+      await supabase.from("pos_connections")
+        .update({ last_sync_at: now, provider_config: nextConfig })
+        .eq("id", connectionId);
+
+      return new Response(
+        JSON.stringify({
+          success: (stockSyncResult?.failed || 0) === 0,
+          businessDay: day,
+          invoiceCount: invoices.length,
+          savedEvents,
+          savedLines,
+          resolvedLines,
+          unresolvedLines,
+          stockSync: stockSyncResult,
+          cursorAdvanced: false,
+          warning,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── AUTO-SYNC SALES (find pending days and save them) ──
     if (action === "auto-sync-sales") {
+      const useIncrementalStockSync = isIntradaySalesSyncEnabled(connection);
       // Find last synced day
       const lastSynced = connection.last_business_day_synced;
       const startDate = lastSynced
@@ -2895,7 +3513,7 @@ serve(async (req) => {
           const toDay = yesterday.toISOString().split("T")[0];
           const stockCandidateDays = await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay);
           if (stockCandidateDays.length > 0) {
-            stockSyncResult = await syncStockForDays(supabase, connectionId, stockCandidateDays, winerimToken);
+            stockSyncResult = await syncStockForDays(supabase, connectionId, stockCandidateDays, winerimToken, { incremental: useIncrementalStockSync });
           }
         }
 
@@ -2970,8 +3588,7 @@ serve(async (req) => {
 
         for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
           const inv = invoices[invIdx];
-          const rawDocId = String(inv.InvoiceId || inv.Id || "");
-          const docId = rawDocId || `${day}_inv_${invIdx}`;
+          const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
           const items = inv.InvoiceItems || [];
           let docTotal = 0;
           const lineData: Record<string, unknown>[] = [];
@@ -3047,7 +3664,7 @@ serve(async (req) => {
             stockSyncTotals.failed++;
             stockSyncTotals.errors.push(`${day}: missing Winerim API token`);
           } else {
-            const dayStock = await syncStockForDays(supabase, connectionId, [day], winerimToken);
+            const dayStock = await syncStockForDays(supabase, connectionId, [day], winerimToken, { incremental: useIncrementalStockSync });
             stockDaysAttempted.add(day);
             addStockTotals(dayStock);
             stockOk = dayStock.failed === 0;
@@ -3072,7 +3689,7 @@ serve(async (req) => {
         const catchupDays = (await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay))
           .filter((day) => !stockDaysAttempted.has(day));
         if (catchupDays.length > 0) {
-          addStockTotals(await syncStockForDays(supabase, connectionId, catchupDays, winerimToken));
+          addStockTotals(await syncStockForDays(supabase, connectionId, catchupDays, winerimToken, { incremental: useIncrementalStockSync }));
         }
       }
 

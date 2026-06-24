@@ -2080,6 +2080,48 @@ _Última actualización: 2026-06-23 09:05 CEST_
 - `Katsu`, `La Candela` y `Luruna`: que haya ventas guardadas sin stock Winerim no prueba fallo por sí solo; puede significar que no se vendieron productos mapeados Winerim. Requiere venta de prueba por conexión.
 - `Kava`, `Luruna`, `Cienvinos` y `Sa Pedrera`: los breakers obsoletos se resetearon tras sonda controlada el 2026-06-04; queda vigilar que no se reabran por deuda histórica.
 - `Sa Pedrera`: la convivencia legacy + Winerim es necesaria para mantener organización regional, pero cualquier legacy sin mapping `CONFIRMED` no descuenta en Winerim; un mapping erróneo descontaría el vino equivocado.
+
+### Casa Nene intradía Agora — 2026-06-24
+
+#### Hechos
+- Cliente reporta 3 botellas de `Valbuxan` vendidas al mediodía y no visibles todavía en Winerim.
+- Diagnóstico vivo de Casa Nene (`e3cb6dbb-3474-4926-b740-706fbd0ef7e0`):
+  - Agora responde y `fetch-day` de `2026-06-24` devuelve 28 facturas.
+  - En esas facturas aparecen 3 botellas de `B Valbuxan Tinto Lexitimo` (`ProductId=742252`) en `TINTOS WINERIM`.
+  - Mapping confirmado contra Winerim `242252`, variante `BOTTLE`; stockId botella `277954`.
+  - También aparece 1 botella resuelta de `B Pazo de Señorans` (`ProductId=757281`) contra Winerim `257281`, stockId `295343`.
+- Causa principal: el automático actual procesa ventas por día cerrado (`D-1`); no estaba activo un polling intradía de facturas del día en curso.
+- Se ejecutó una intervención manual controlada:
+  - Guardadas 28 facturas / 185 líneas de `2026-06-24` en Lovable Cloud.
+  - Descontado Winerim: `Valbuxan Tinto Lexitimo` stock botella `7 -> 4` y `Pazo de Señorans` `202 -> 201`.
+  - Se corrigió inmediatamente una primera lectura parcial de Valbuxan que habría dejado stock `5`; la corrección dejó auditoría con `manual_intraday_correction` y cantidad `0`, sin afectar la idempotencia futura.
+  - Revisión posterior: deltas pendientes `0`; no hay más stock que descontar para esas ventas.
+  - Cursor protegido: `last_business_day_synced` sigue en `2026-06-23`; no se marcó el día actual como cerrado.
+- Código preparado:
+  - Nueva acción `sync-intraday-sales` en `agora-proxy`.
+  - Nuevo modo incremental de stock: compara cantidades deseadas por `(sales_event_id, winerim_product_id, variant)` contra `stock_sync_log.SUCCESS` y solo descuenta el delta.
+  - `agora-cron-dispatcher` invoca `sync-intraday-sales` en job `sales-stock` solo si `provider_config.intraday_sales_sync_enabled=true`.
+  - Casa Nene tiene `intraday_sales_sync_enabled=true` e intervalo documentado de 5 minutos.
+- Validación local del parche:
+  - `npx esbuild` de `agora-proxy` OK.
+  - `npx esbuild` de `agora-cron-dispatcher` OK.
+  - `npm run build` OK.
+- Validación runtime antes de este commit: el deploy manual anterior aún devolvía `Unknown action` para `sync-intraday-sales`, por lo que no incluía el parche nuevo.
+
+#### Decisiones
+- Activar intradía primero solo en Casa Nene mediante flag por conexión.
+- No adelantar cursor diario con ventas intradía; el cierre D-1 sigue siendo el mecanismo de consolidación.
+- No hacer descuentos "por línea recién importada" sin comparar contra `stock_sync_log`: el flujo intradía debe ser delta-idempotente para no duplicar stock.
+
+#### Riesgos
+- Si Agora modifica una factura ya importada, el modo incremental descuenta incrementos positivos; no intenta devolver stock si una línea se reduce o anula. Las anulaciones requieren política separada.
+- El polling intradía depende de `Invoices`; si una instalación Agora no expone facturas hasta cierre, no tendrá tiempo real aunque el flag exista.
+- Hasta redeploy efectivo de `agora-proxy` y `agora-cron-dispatcher`, Casa Nene queda corregida manualmente pero no automatizada cada 5 minutos.
+
+#### Tareas pendientes inmediatas
+- Redeployar `agora-proxy` y `agora-cron-dispatcher` desde este commit.
+- Tras redeploy, invocar `sync-intraday-sales` para Casa Nene y confirmar que devuelve `deltaGroups=0` / sin nuevo PUT a Winerim.
+- En el siguiente servicio, verificar que una nueva venta Winerim aparece en Lovable Cloud y descuenta stock Winerim sin esperar al cierre del día.
 - `Baco`: el rollback legacy está aplicado; si el cliente vuelve a pedir Winerim automático, hay que tratarlo como reactivación planificada con validación visual, no como "ya funcionando".
 
 ### Sa Vida nueva IP / revalidación Agora — 2026-06-02 10:39 CEST

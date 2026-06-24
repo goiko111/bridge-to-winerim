@@ -323,8 +323,15 @@
 - [x] Activar automático: `enabled`, `catalog_sync_enabled`, `auto_push_on_create`, `auto_push_on_update`, `auto_push_verified_ready`.
 - [x] Fijar cursor inicial `last_business_day_synced=2026-06-07` para no reabrir ventas históricas legacy.
 - [x] Comprobar cola abierta Casa Nene: 0 tareas abiertas.
+- [x] Diagnosticar ventas intradía 2026-06-24: 3 botellas `Valbuxan Tinto Lexitimo` y 1 botella `Pazo de Señorans` estaban en Agora con mapping Winerim correcto.
+- [x] Corregir manualmente stock Winerim del 2026-06-24 sin avanzar cursor diario: Valbuxan `7 -> 4`, Pazo `202 -> 201`, deltas pendientes `0`.
+- [x] Preparar código de polling intradía `sync-intraday-sales` con descuento incremental por delta e invocación desde dispatcher por flag.
+- [ ] Redeployar `agora-proxy` y `agora-cron-dispatcher` desde el commit que contiene `sync-intraday-sales`.
+- [ ] Tras redeploy, invocar `sync-intraday-sales` en Casa Nene y confirmar que no descuenta de nuevo las ventas ya corregidas (`deltaGroups=0` o equivalente).
+- [ ] Confirmar que el siguiente ciclo de `sales-stock` del dispatcher lanza `auto-sync-sales` + `sync-intraday-sales` para Casa Nene.
 - [ ] Pedir al cliente validación visual en tablet: debe ver familias Winerim y no ver legacy `VINO`/`VINO FUERA DE CARTA`.
-- [ ] Validar primer cierre real con producto Winerim: comprobar `sales_events`, `sales_line_items`, `stock_sync_log.status=SUCCESS`, `variant`, `stock_id` y no doble deducción al reintentar.
+- [x] Validar primera venta real con producto Winerim: ventas guardadas, `stock_sync_log.SUCCESS`, variante botella, stockId correcto y sin delta pendiente tras reintento lógico.
+- [ ] Validar una nueva venta real posterior al redeploy: comprobar `sales_events`, `sales_line_items`, `stock_sync_log.status=SUCCESS`, `variant`, `stock_id` y no doble deducción al reintentar.
 - [ ] Si Casa Nene necesita vender copas, activar/preciar variantes de copa en Winerim; el automático debe publicarlas en `COPAS WINERIM`.
 
 ## P0 — Restaurante Jardi / El Jardí Parets Agora

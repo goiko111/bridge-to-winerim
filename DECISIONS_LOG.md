@@ -899,3 +899,18 @@
 - **Decisión**: Actualizar `pos_connections.last_catalog_sync_at` cuando `winerim-proxy/fetch-catalog` completa el recorrido de catálogo Winerim.
 - **Razón**: Jardí tenía catálogo sincronizado y verificable, pero el monitor podía mostrar `Never/null` porque el proxy no dejaba marca de catálogo completo. La trazabilidad debe reflejar la sincronización real.
 - **Alternativa descartada**: dejarlo solo como dato inferido desde `winerim_wines.updated_at`. Dificulta soporte y hace que el equipo comercial/técnico vea falsos negativos en el monitor.
+
+## 2026-06-24 · Casa Nene: activar polling intradía por flag y no global
+- **Decisión**: Añadir `sync-intraday-sales` para Agora y hacer que el dispatcher lo invoque solo cuando `provider_config.intraday_sales_sync_enabled=true`.
+- **Razón**: Casa Nene necesita que ventas del día descuenten stock sin esperar al cierre. Activarlo por conexión limita el riesgo y mantiene el comportamiento D-1 en el resto de instalaciones Agora.
+- **Alternativa descartada**: cambiar globalmente `auto-sync-sales` para procesar siempre el día actual. Podría tocar instalaciones donde `Invoices` no está completo hasta cierre y reabrir problemas de idempotencia.
+
+## 2026-06-24 · Casa Nene: stock intradía por delta idempotente
+- **Decisión**: Para ventas intradía, calcular el objetivo por `(sales_event_id, winerim_product_id, variant)` y descontar solo `cantidad_actual - cantidad_SUCCESS_ya_sincronizada`.
+- **Razón**: Durante el servicio una factura puede crecer. Reimportar todo el día sin delta duplicaría descuentos; saltar grupos ya sincronizados impediría descontar ampliaciones de factura.
+- **Alternativa descartada**: reutilizar tal cual el flujo line-idempotent de día cerrado. Es seguro ante reintentos simples, pero no cubre incrementos de una factura abierta o actualizada.
+
+## 2026-06-24 · Casa Nene: intervención manual documentada antes del redeploy
+- **Decisión**: Guardar las ventas del día y corregir manualmente Winerim para las 3 botellas de Valbuxan y 1 Pazo de Señorans detectadas.
+- **Razón**: El cliente necesitaba ver el stock corregido ya, y el runtime desplegado todavía no tenía la acción intradía (`Unknown action`).
+- **Alternativa descartada**: esperar al siguiente cierre D-1. Habría mantenido el descuadre visible durante el servicio y no resolvía la necesidad operativa inmediata.

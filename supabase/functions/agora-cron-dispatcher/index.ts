@@ -37,7 +37,7 @@ Deno.serve(async (req: Request) => {
     const nowIso = new Date().toISOString();
     let query = supabase
       .from("pos_connections")
-      .select("id, location_name, base_url, api_token, circuit_breaker_paused_until")
+      .select("id, location_name, base_url, api_token, provider_config, circuit_breaker_paused_until")
       .eq("provider", "agora")
       .eq("enabled", true);
     if (body.connectionId) query = query.eq("id", body.connectionId);
@@ -103,7 +103,19 @@ Deno.serve(async (req: Request) => {
       if (job === "outbound-queue") {
         return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
       }
-      return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } }];
+      const providerConfig = ((connection as { provider_config?: unknown }).provider_config || {}) as Record<string, unknown>;
+      const requests: DispatchRequest[] = [
+        { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } },
+      ];
+      if (providerConfig.intraday_sales_sync_enabled === true) {
+        requests.push({
+          connection_id: connection.id,
+          name: connection.location_name,
+          functionName: "agora-proxy",
+          body: { action: "sync-intraday-sales", connectionId: connection.id },
+        });
+      }
+      return requests;
     };
 
     const dispatchRequests = connections.flatMap((c) => buildRequests(c));
