@@ -2107,20 +2107,31 @@ _Última actualización: 2026-06-23 09:05 CEST_
   - `npx esbuild` de `agora-cron-dispatcher` OK.
   - `npm run build` OK.
 - Validación runtime antes de este commit: el deploy manual anterior aún devolvía `Unknown action` para `sync-intraday-sales`, por lo que no incluía el parche nuevo.
+- Validación post-deploy del primer parche:
+  - `sync-intraday-sales` ya existía, pero el primer diseño incremental comparaba por `sales_event_id`.
+  - Como las ventas manuales previas habían quedado con IDs de evento antiguos y el runtime reimportó el día con IDs de documento distintos, el test generó logs duplicados.
+  - Mitigación aplicada inmediatamente:
+    - `provider_config.intraday_sales_sync_enabled=false` en Casa Nene para cortar el polling intradía.
+    - Restaurado `Pazo de Señorans` stockId `295343` de `192 -> 193` porque el test duplicó una deducción real `193 -> 192`.
+    - Los 3 logs duplicados del test (`Pazo` + 2 `Valbuxan`) quedaron en `BLOCKED` con razón explícita.
+    - `Valbuxan` no se restauró porque el PUT duplicado registró `previousStock=0` y `newStock=0`; no hubo decremento adicional atribuible a ese test.
+  - Nuevo parche preparado: intradía compara total diario por `(winerim_product_id, variant)` contra cantidad `SUCCESS` ya descontada en el mismo business day, y solo aplica el delta positivo.
 
 #### Decisiones
 - Activar intradía primero solo en Casa Nene mediante flag por conexión.
 - No adelantar cursor diario con ventas intradía; el cierre D-1 sigue siendo el mecanismo de consolidación.
 - No hacer descuentos "por línea recién importada" sin comparar contra `stock_sync_log`: el flujo intradía debe ser delta-idempotente para no duplicar stock.
+- La reactivación de Casa Nene queda bloqueada hasta desplegar y validar el parche por total diario.
 
 #### Riesgos
 - Si Agora modifica una factura ya importada, el modo incremental descuenta incrementos positivos; no intenta devolver stock si una línea se reduce o anula. Las anulaciones requieren política separada.
 - El polling intradía depende de `Invoices`; si una instalación Agora no expone facturas hasta cierre, no tendrá tiempo real aunque el flag exista.
-- Hasta redeploy efectivo de `agora-proxy` y `agora-cron-dispatcher`, Casa Nene queda corregida manualmente pero no automatizada cada 5 minutos.
+- Hasta redeploy efectivo del parche por total diario, Casa Nene queda corregida/pausada manualmente pero no automatizada cada 5 minutos.
 
 #### Tareas pendientes inmediatas
-- Redeployar `agora-proxy` y `agora-cron-dispatcher` desde este commit.
-- Tras redeploy, invocar `sync-intraday-sales` para Casa Nene y confirmar que devuelve `deltaGroups=0` / sin nuevo PUT a Winerim.
+- Redeployar `agora-proxy` desde el parche por total diario.
+- Tras redeploy, invocar `sync-intraday-sales` para Casa Nene con el flag todavía apagado y `force=true`; debe devolver `synced=0`, `failed=0` y no hacer PUT a Winerim.
+- Solo si esa prueba es limpia, reactivar `intraday_sales_sync_enabled=true` en Casa Nene.
 - En el siguiente servicio, verificar que una nueva venta Winerim aparece en Lovable Cloud y descuenta stock Winerim sin esperar al cierre del día.
 - `Baco`: el rollback legacy está aplicado; si el cliente vuelve a pedir Winerim automático, hay que tratarlo como reactivación planificada con validación visual, no como "ya funcionando".
 

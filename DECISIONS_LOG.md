@@ -914,3 +914,13 @@
 - **Decisión**: Guardar las ventas del día y corregir manualmente Winerim para las 3 botellas de Valbuxan y 1 Pazo de Señorans detectadas.
 - **Razón**: El cliente necesitaba ver el stock corregido ya, y el runtime desplegado todavía no tenía la acción intradía (`Unknown action`).
 - **Alternativa descartada**: esperar al siguiente cierre D-1. Habría mantenido el descuadre visible durante el servicio y no resolvía la necesidad operativa inmediata.
+
+## 2026-06-24 · Casa Nene: intradía debe deduplicar por total diario, no por evento
+- **Decisión**: Sustituir la comparación intradía basada en `sales_event_id` por una comparación de total diario por `(winerim_product_id, variant)` contra la cantidad `SUCCESS` ya descontada en ese business day.
+- **Razón**: En la validación post-deploy, las ventas importadas manualmente tenían IDs de evento antiguos y el runtime recreó eventos con IDs de documento distintos. Comparar por evento interpretó ventas ya descontadas como nuevas. El total diario evita dobles descuentos cuando cambian IDs de factura o cuando se reimporta el día en curso.
+- **Alternativa descartada**: mantener `sales_event_id` y limpiar manualmente los eventos antiguos. Eso arreglaría Casa Nene puntualmente, pero dejaría el mismo fallo latente si otra instalación cambia identificadores o si una reimportación genera eventos equivalentes.
+
+## 2026-06-24 · Casa Nene: pausar intradía hasta validar parche total-diario
+- **Decisión**: Desactivar temporalmente `intraday_sales_sync_enabled` en Casa Nene, bloquear los logs duplicados del primer test y restaurar solo el descuento duplicado atribuible (`Pazo de Señorans` `192 -> 193`).
+- **Razón**: El primer deploy ya ejecutaba la acción nueva, pero todavía podía duplicar deducciones por cambio de IDs. Pausar evita que el dispatcher repita el problema antes del segundo redeploy.
+- **Alternativa descartada**: dejar el flag activo y confiar en que el siguiente ciclo no encuentre deltas. Era arriesgado mientras el código vivo seguía usando la comparación por evento.

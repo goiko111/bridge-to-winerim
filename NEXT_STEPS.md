@@ -326,9 +326,13 @@
 - [x] Diagnosticar ventas intradía 2026-06-24: 3 botellas `Valbuxan Tinto Lexitimo` y 1 botella `Pazo de Señorans` estaban en Agora con mapping Winerim correcto.
 - [x] Corregir manualmente stock Winerim del 2026-06-24 sin avanzar cursor diario: Valbuxan `7 -> 4`, Pazo `202 -> 201`, deltas pendientes `0`.
 - [x] Preparar código de polling intradía `sync-intraday-sales` con descuento incremental por delta e invocación desde dispatcher por flag.
-- [ ] Redeployar `agora-proxy` y `agora-cron-dispatcher` desde el commit que contiene `sync-intraday-sales`.
-- [ ] Tras redeploy, invocar `sync-intraday-sales` en Casa Nene y confirmar que no descuenta de nuevo las ventas ya corregidas (`deltaGroups=0` o equivalente).
-- [ ] Confirmar que el siguiente ciclo de `sales-stock` del dispatcher lanza `auto-sync-sales` + `sync-intraday-sales` para Casa Nene.
+- [x] Validar primer deploy: `sync-intraday-sales` existe, pero el diseño por `sales_event_id` duplicó logs por cambio de IDs; se pausa intradía.
+- [x] Restaurar el único decremento duplicado atribuible al test: `Pazo de Señorans` `192 -> 193`; bloquear 3 logs duplicados del test.
+- [x] Preparar parche intradía por total diario `(winerim_product_id, variant)` para que cambios de ID de factura no dupliquen stock.
+- [ ] Redeployar `agora-proxy` desde el commit del parche por total diario.
+- [ ] Con Casa Nene todavía pausado, invocar `sync-intraday-sales` con `force=true` y confirmar `synced=0`, `failed=0` y stock Winerim sin cambios.
+- [ ] Solo después de esa prueba, reactivar `provider_config.intraday_sales_sync_enabled=true` en Casa Nene.
+- [ ] Confirmar que el siguiente ciclo de `sales-stock` del dispatcher lanza `auto-sync-sales` + `sync-intraday-sales` para Casa Nene y no toca stock si no hay ventas nuevas.
 - [ ] Pedir al cliente validación visual en tablet: debe ver familias Winerim y no ver legacy `VINO`/`VINO FUERA DE CARTA`.
 - [x] Validar primera venta real con producto Winerim: ventas guardadas, `stock_sync_log.SUCCESS`, variante botella, stockId correcto y sin delta pendiente tras reintento lógico.
 - [ ] Validar una nueva venta real posterior al redeploy: comprobar `sales_events`, `sales_line_items`, `stock_sync_log.status=SUCCESS`, `variant`, `stock_id` y no doble deducción al reintentar.

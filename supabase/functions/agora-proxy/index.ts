@@ -1439,6 +1439,353 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   };
 }
 
+// Intraday-safe stock sync. Unlike the legacy incremental implementation, this
+// compares totals for the whole business day per wine+variant. That makes it
+// resilient to stale duplicate sales_events left by earlier doc-id strategies:
+// current Agora state is the desired total, stock_sync_log.SUCCESS is what was
+// already discounted, and only the positive delta is sent to Winerim.
+// deno-lint-ignore no-explicit-any
+async function syncStockForDayIncrementalByDayTotal(
+  supabase: any,
+  connectionId: string,
+  day: string,
+  winerimToken: string,
+  desiredEventIdsOverride?: string[],
+) {
+  const { data: connection } = await supabase
+    .from("pos_connections")
+    .select("provider_config")
+    .eq("id", connectionId)
+    .single();
+  const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  if (stockSyncStartDate && day < stockSyncStartDate) {
+    return {
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+      message: `Stock sync skipped before configured stock_sync_start_date (${stockSyncStartDate})`,
+      stockSyncStartDate,
+    };
+  }
+
+  const { data: dayEvents } = await supabase
+    .from("sales_events")
+    .select("id, raw_json")
+    .eq("connection_id", connectionId)
+    .eq("business_day", day);
+
+  const eligibleEvents = (dayEvents || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+  const allDayEventIds = eligibleEvents.map((event: { id: string }) => event.id);
+  if (allDayEventIds.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
+  }
+
+  const desiredEventIds = (desiredEventIdsOverride && desiredEventIdsOverride.length > 0)
+    ? desiredEventIdsOverride.filter((id) => allDayEventIds.includes(id))
+    : allDayEventIds;
+  if (desiredEventIds.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No current sales events selected for this day" };
+  }
+
+  const { data: lines } = await supabase
+    .from("sales_line_items")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .in("sales_event_id", desiredEventIds);
+
+  if (!lines || lines.length === 0) {
+    return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
+  }
+
+  type DesiredTotal = {
+    key: string;
+    winerimWineId: string;
+    variant: WinerimVariant;
+    desiredQty: number;
+    firstEventId: string;
+    firstLineId: string;
+    providerProductId: string;
+    name: string;
+  };
+
+  const desiredTotals = new Map<string, DesiredTotal>();
+  let mappedLineCount = 0;
+  for (const line of lines as any[]) {
+    if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
+    if (qty <= 0) continue;
+    mappedLineCount++;
+    const variant = variantForAgoraFormat(line.format);
+    const wineId = String(line.winerim_product_id);
+    const key = `${wineId}::${variant}`;
+    const existing = desiredTotals.get(key);
+    if (existing) {
+      existing.desiredQty += qty;
+    } else {
+      desiredTotals.set(key, {
+        key,
+        winerimWineId: wineId,
+        variant,
+        desiredQty: qty,
+        firstEventId: line.sales_event_id,
+        firstLineId: line.id,
+        providerProductId: String(line.provider_product_id || ""),
+        name: String(line.name || ""),
+      });
+    }
+  }
+
+  if (desiredTotals.size === 0) {
+    return {
+      synced: 0,
+      skipped: 0,
+      failed: 0,
+      unmapped: (lines as any[]).length,
+      totalLines: (lines as any[]).length,
+      mappedLines: 0,
+      message: "No mapped wine lines found",
+    };
+  }
+
+  const candidateWineIds = Array.from(new Set(Array.from(desiredTotals.values()).map((total) => total.winerimWineId)));
+  const alreadyQtyByTotal = new Map<string, number>();
+  for (let i = 0; i < allDayEventIds.length; i += 500) {
+    const eventChunk = allDayEventIds.slice(i, i + 500);
+    const { data: syncedRows } = await supabase
+      .from("stock_sync_log")
+      .select("winerim_product_id, variant, quantity")
+      .eq("connection_id", connectionId)
+      .eq("status", "SUCCESS")
+      .in("sales_event_id", eventChunk)
+      .in("winerim_product_id", candidateWineIds);
+    for (const row of (syncedRows || []) as { winerim_product_id: string; variant?: string | null; quantity?: number | string | null }[]) {
+      const variant = normalizeWinerimVariant(row.variant);
+      if (!variant) continue;
+      const key = `${row.winerim_product_id}::${variant}`;
+      const qty = Math.max(0, Number(row.quantity || 0));
+      alreadyQtyByTotal.set(key, (alreadyQtyByTotal.get(key) || 0) + qty);
+    }
+  }
+
+  const terminalTotals = new Set<string>();
+  const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const { data: failedRows } = await supabase
+    .from("stock_sync_log")
+    .select("winerim_product_id, variant, error_message")
+    .eq("connection_id", connectionId)
+    .in("status", ["FAILED", "BLOCKED"])
+    .gte("created_at", recentTerminalCutoff)
+    .in("sales_event_id", allDayEventIds)
+    .in("winerim_product_id", candidateWineIds);
+  for (const row of (failedRows || []) as { winerim_product_id: string; variant?: string | null; error_message?: string | null }[]) {
+    if (!isTerminalStockSyncError(row.error_message)) continue;
+    const variant = normalizeWinerimVariant(row.variant);
+    if (!variant) continue;
+    terminalTotals.add(`${row.winerim_product_id}::${variant}`);
+  }
+
+  const stalePendingBefore = new Date(Date.now() - 15 * 60_000).toISOString();
+  await supabase
+    .from("stock_sync_log")
+    .update({ status: "FAILED", error_message: "Stale PENDING intraday total claim rescued before retry" })
+    .eq("connection_id", connectionId)
+    .eq("status", "PENDING")
+    .lt("created_at", stalePendingBefore);
+
+  type DeltaTotal = DesiredTotal & { alreadyQty: number; deltaQty: number; idempotencyKey: string; logId: string };
+  const deltaCandidates = Array.from(desiredTotals.values())
+    .map((total) => {
+      const alreadyQty = alreadyQtyByTotal.get(total.key) || 0;
+      const deltaQty = Math.max(0, total.desiredQty - alreadyQty);
+      return {
+        ...total,
+        alreadyQty,
+        deltaQty,
+        idempotencyKey: `${connectionId}:${day}:${total.winerimWineId}:${total.variant}:target:${total.desiredQty}`,
+      };
+    })
+    .filter((total) => total.deltaQty > 0);
+
+  const existingTargetKeys = new Set<string>();
+  const idempotencyKeys = deltaCandidates.map((total) => total.idempotencyKey);
+  for (let i = 0; i < idempotencyKeys.length; i += 200) {
+    const chunk = idempotencyKeys.slice(i, i + 200);
+    const { data: existingRows } = await supabase
+      .from("stock_sync_log")
+      .select("idempotency_key")
+      .eq("connection_id", connectionId)
+      .in("status", ["PENDING", "SUCCESS"])
+      .in("idempotency_key", chunk);
+    for (const row of (existingRows || []) as { idempotency_key: string }[]) {
+      existingTargetKeys.add(row.idempotency_key);
+    }
+  }
+
+  let skipped = desiredTotals.size - deltaCandidates.length;
+  let failed = 0;
+  const claimed: DeltaTotal[] = [];
+  for (const total of deltaCandidates) {
+    if (terminalTotals.has(total.key)) {
+      skipped++;
+      failed++;
+      continue;
+    }
+    if (existingTargetKeys.has(total.idempotencyKey)) {
+      skipped++;
+      continue;
+    }
+    const { data: logEntry, error: claimError } = await supabase.from("stock_sync_log").insert({
+      connection_id: connectionId,
+      sales_event_id: total.firstEventId,
+      sales_line_item_id: total.firstLineId,
+      provider_product_id: total.providerProductId,
+      winerim_product_id: total.winerimWineId,
+      product_name: `${total.name} [${total.variant}]`,
+      quantity: total.deltaQty,
+      variant: total.variant,
+      idempotency_key: total.idempotencyKey,
+      status: "PENDING",
+    }).select("id").single();
+    if (claimError || !logEntry?.id) {
+      skipped++;
+      console.warn(`[sync-stock-intraday-total] skipped ${total.key}: ${claimError?.message || "no log id"}`);
+      continue;
+    }
+    claimed.push({ ...total, logId: logEntry.id });
+  }
+
+  if (claimed.length === 0) {
+    return {
+      synced: 0,
+      skipped,
+      failed,
+      unmapped: (lines as any[]).length - mappedLineCount,
+      totalLines: (lines as any[]).length,
+      mappedLines: mappedLineCount,
+      desiredTotals: desiredTotals.size,
+      deltaTotals: deltaCandidates.length,
+      claimedTotals: 0,
+      message: "All intraday totals already synced",
+    };
+  }
+
+  const WINERIM_BASE = "https://app.winerim.com/api/v2";
+  const winerimHeaders = {
+    "WINERIM-API-TOKEN": winerimToken,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
+  const wineStockCache = new Map<string, StockEntry[]>();
+  const wineFetchErrors = new Map<string, string>();
+  for (const wineId of Array.from(new Set(claimed.map((claim) => claim.winerimWineId)))) {
+    try {
+      const r = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
+      if (!r.ok) {
+        wineFetchErrors.set(wineId, `GET /stock/wine/${wineId} → ${r.status}: ${(await r.text()).substring(0, 200)}`);
+        continue;
+      }
+      const data = await r.json();
+      const normalized = parseWinerimStockRows(data)
+        .map((stock) => {
+          const canonical = findStockForVariant([stock], "copa")
+            ? "copa"
+            : findStockForVariant([stock], "botella")
+              ? "botella"
+              : findStockForVariant([stock], "magnum")
+                ? "magnum"
+                : null;
+          return {
+            id: Number(stock.id),
+            stock: Number(stock.stock ?? 0),
+            variant: canonical,
+          };
+        })
+        .filter((stock): stock is StockEntry => Number.isFinite(stock.id) && stock.id > 0 && !!stock.variant);
+      wineStockCache.set(wineId, normalized);
+    } catch (e) {
+      wineFetchErrors.set(wineId, String(e));
+    }
+  }
+
+  let synced = 0;
+  for (let i = 0; i < claimed.length; i++) {
+    const claim = claimed[i];
+    const match = wineStockCache.get(claim.winerimWineId)?.find((stock) => stock.variant === claim.variant);
+    if (!match) {
+      const err = wineFetchErrors.get(claim.winerimWineId) || `Variant '${claim.variant}' not found for wine ${claim.winerimWineId}`;
+      await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).eq("id", claim.logId);
+      failed++;
+      continue;
+    }
+
+    const previousStock = match.stock;
+    const newStock = Math.max(0, Math.floor(previousStock - claim.deltaQty));
+    let r: Response;
+    let txt = "";
+    let parsed: unknown;
+    try {
+      r = await fetch(`${WINERIM_BASE}/stock/${match.id}`, {
+        method: "PUT",
+        headers: winerimHeaders,
+        body: JSON.stringify({ stock: newStock }),
+      });
+      txt = await r.text();
+      try { parsed = JSON.parse(txt); } catch (_) { parsed = { raw: txt.substring(0, 300) }; }
+    } catch (e) {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        stock_id: match.id,
+        error_message: `PUT exception: ${String(e)}`,
+      }).eq("id", claim.logId);
+      failed++;
+      continue;
+    }
+
+    if (r.ok) {
+      await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        stock_id: match.id,
+        winerim_response: {
+          mode: "intraday_day_total_delta",
+          previousStock,
+          newStock,
+          soldQty: claim.deltaQty,
+          desiredQty: claim.desiredQty,
+          alreadySyncedQty: claim.alreadyQty,
+          variant: claim.variant,
+          stockId: match.id,
+          businessDay: day,
+        },
+        synced_at: new Date().toISOString(),
+      }).eq("id", claim.logId);
+      synced++;
+      console.log(`[sync-stock-intraday-total] ${claim.name} [${claim.variant}]: ${previousStock} → ${newStock} (-${claim.deltaQty})`);
+    } else {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        stock_id: match.id,
+        error_message: `PUT /stock/${match.id} failed (${r.status}): ${txt.substring(0, 300)}`,
+        winerim_response: parsed,
+      }).eq("id", claim.logId);
+      failed++;
+    }
+
+    if (i < claimed.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return {
+    synced,
+    skipped,
+    failed,
+    unmapped: (lines as any[]).length - mappedLineCount,
+    totalLines: (lines as any[]).length,
+    mappedLines: mappedLineCount,
+    desiredTotals: desiredTotals.size,
+    deltaTotals: deltaCandidates.length,
+    claimedTotals: claimed.length,
+  };
+}
+
 type StockSyncTotals = {
   synced: number;
   skipped: number;
@@ -1495,13 +1842,13 @@ async function syncStockForDays(
   connectionId: string,
   days: string[],
   winerimToken: string,
-  options: { incremental?: boolean } = {},
+  options: { incremental?: boolean; desiredEventIdsByDay?: Record<string, string[]> } = {},
 ): Promise<StockSyncTotals> {
   const totals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
   for (const day of days) {
     try {
       const result = options.incremental
-        ? await syncStockForDayIncremental(supabase, connectionId, day, winerimToken)
+        ? await syncStockForDayIncrementalByDayTotal(supabase, connectionId, day, winerimToken, options.desiredEventIdsByDay?.[day])
         : await syncStockForDay(supabase, connectionId, day, winerimToken);
       totals.synced += Number(result.synced || 0);
       totals.skipped += Number(result.skipped || 0);
@@ -2979,6 +3326,7 @@ serve(async (req) => {
       let savedLines = 0;
       let resolvedLines = 0;
       let unresolvedLines = 0;
+      const savedEventIds: string[] = [];
       let aborted = false;
       let nextFromBusinessDay: string | null = null;
 
@@ -3239,6 +3587,7 @@ serve(async (req) => {
 
         if (eventErr || !eventRow) continue;
         savedEvents++;
+        savedEventIds.push(eventRow.id);
 
         await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
         const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
@@ -3421,7 +3770,10 @@ serve(async (req) => {
           warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
           stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: [`${day}: missing Winerim API token`] };
         } else {
-          stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken, { incremental: true });
+          stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken, {
+            incremental: true,
+            desiredEventIdsByDay: { [day]: savedEventIds },
+          });
         }
       }
 
