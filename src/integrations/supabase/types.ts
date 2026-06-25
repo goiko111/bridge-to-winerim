@@ -1349,6 +1349,15 @@ export type Database = {
         Args: { fn_url: string; notify_clients?: boolean; service_key: string }
         Returns: undefined
       }
+      invoke_connection_health_monitor_secure: {
+        Args: {
+          bearer_key: string
+          fn_url: string
+          monitor_secret: string
+          notify_clients?: boolean
+        }
+        Returns: undefined
+      }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
       schedule_next_catalog_batch: {
         Args: {
