@@ -28,13 +28,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
 
   useEffect(() => {
-    // Count active alerts: failed stock syncs + failed/blocked outbound tasks
+    // Count active persistent incidents first; keep legacy signals as a fallback
+    // while the monitoring migration is being rolled out.
     const fetchAlertCount = async () => {
-      const [stockRes, outboundRes] = await Promise.all([
+      const [persistentRes, stockRes, outboundRes] = await Promise.allSettled([
+        supabase.from("connection_alerts" as any).select("id", { count: "exact", head: true }).in("status", ["OPEN", "ACKED"]),
         supabase.from("stock_sync_log").select("id", { count: "exact", head: true }).eq("status", "FAILED"),
         supabase.from("outbound_tasks").select("id", { count: "exact", head: true }).in("status", ["FAILED", "BLOCKED"]),
       ]);
-      setAlertCount((stockRes.count || 0) + (outboundRes.count || 0));
+      const persistentCount =
+        persistentRes.status === "fulfilled" && !persistentRes.value.error
+          ? persistentRes.value.count || 0
+          : 0;
+      const legacyCount =
+        (stockRes.status === "fulfilled" ? stockRes.value.count || 0 : 0) +
+        (outboundRes.status === "fulfilled" ? outboundRes.value.count || 0 : 0);
+      setAlertCount(persistentCount || legacyCount);
     };
     fetchAlertCount();
   }, [location.pathname]);

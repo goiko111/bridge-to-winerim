@@ -2,7 +2,161 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-23 09:05 CEST_
+_Última actualización: 2026-06-25 10:58 CEST_
+
+## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)
+
+- Se implemento una primera version del sistema persistente de monitorizacion de conexiones:
+  - migracion `supabase/migrations/20260625044943_connection_health_monitor.sql`;
+  - nueva Edge Function `supabase/functions/connection-health-monitor/index.ts`;
+  - actualizacion de la interfaz `src/pages/Alerts.tsx`;
+  - contador lateral actualizado en `src/components/Layout.tsx`.
+- Nuevas tablas previstas:
+  - `connection_health_checks`: historico de checks por conexion;
+  - `connection_alerts`: incidencias persistentes `OPEN` / `ACKED` / `RESOLVED`;
+  - `connection_notification_contacts`: emails de cliente/SAT por conexion.
+- La funcion `connection-health-monitor` es observacional:
+  - no descuenta stock;
+  - no refresca ventas;
+  - no procesa cola;
+  - no modifica productos en Agora;
+  - no reintenta tareas;
+  - solo registra checks, abre/cierra alertas y envia emails si hay proveedor configurado.
+- Para Agora, la sonda usa `GET /api/export-master/?filter=Families` con `Api-Token` y timeout de `5s`; no toca `/api/export-master/?filter=Products`, respetando la regla de cache obligatoria para Products.
+- Alertas que detecta esta primera version:
+  - conectividad/DNS/puerto caido (`connectivity`);
+  - token/API rechazado (`auth`);
+  - error API Agora (`api_error`);
+  - circuit breaker abierto (`breaker_open`);
+  - ventas sin avanzar (`sales_stale`);
+  - cola outbound con tareas recientes fallidas/bloqueadas o demasiado antiguas (`outbound_attention`);
+  - fallos recientes de descuento de stock (`stock_failed`).
+- Emails:
+  - soporta Resend mediante secretos `RESEND_API_KEY` y `ALERT_EMAIL_FROM`;
+  - destinatarios internos desde `ALERT_INTERNAL_EMAILS` / `MONITOR_INTERNAL_EMAILS` / `INTERNAL_ALERT_EMAILS`;
+  - destinatarios cliente desde `connection_notification_contacts` o `provider_config.alert_client_emails`;
+  - umbrales configurables: `ALERT_INTERNAL_AFTER_OCCURRENCES`, `ALERT_CLIENT_AFTER_OCCURRENCES`, `ALERT_CLIENT_AFTER_MINUTES`.
+- La interfaz `/alerts` muestra:
+  - resumen de criticos/errores/warnings/ultimo check;
+  - incidencias persistentes abiertas;
+  - historico de health checks;
+  - senales legacy de stock/outbound como respaldo;
+  - boton manual `Run Monitor`.
+- Validacion local:
+  - bundle/parse Edge Function con esbuild + `node --check` OK;
+  - `npm run build` OK;
+  - `npm test` OK (`18` tests).
+- Bloqueo actual:
+  - no se pudo desplegar la Edge Function desde esta maquina: la CLI no tiene `SUPABASE_ACCESS_TOKEN`;
+  - no se pudo aplicar la migracion directamente: el `.env` local solo contiene variables publicas del frontend, no URL de base de datos ni service key;
+  - por tanto, el sistema esta implementado en codigo pero pendiente de aplicar migracion, desplegar funcion y configurar secretos email en Lovable Cloud.
+
+### Hipotesis / riesgos monitorizacion
+
+- Si `RESEND_API_KEY` o `ALERT_EMAIL_FROM` no estan configurados, las alertas se registraran pero el envio quedara con `EMAIL_NOT_CONFIGURED`.
+- Si se activan emails a cliente sin contactos por conexion, solo habra aviso interno; los clientes/SAT requieren filas en `connection_notification_contacts` o `provider_config.alert_client_emails`.
+- La sonda de familias cada 10 minutos es ligera, pero aun asi debe mantenerse fuera de `Products` para evitar repetir el incidente Luruna.
+- Rollback seguro:
+  - pausar/eliminar el cron que invoque `connection-health-monitor`;
+  - no tocar tablas operativas de ventas/stock/catalogo;
+  - opcionalmente ocultar la UI retirando las consultas a `connection_alerts`/`connection_health_checks`.
+
+## Hechos (Flota Agora · auditoria operativa — 2026-06-25)
+
+- Se auditaron las `12` conexiones Agora registradas en Lovable Cloud mediante:
+  - lectura de `pos_connections`, `sales_events`, `sales_line_items`, `stock_sync_log`, `product_mappings`, `winerim_push_tracking`, `provider_capabilities`;
+  - sonda viva `agora-proxy` action `test` por conexion.
+- Sonda viva OK:
+  - `Baco Getafe`;
+  - `Don Bernardo Ponzano`;
+  - `Don Bernardo Santander`;
+  - `Katsu Izakaya`;
+  - `Kava`;
+  - `La Candela de Triana`;
+  - `Luruna`;
+  - `Restaurante Cienvinos Ecija`;
+  - `Sa Pedrera`.
+- Sonda viva con incidencia:
+  - `Casa Nene`: `NETWORK_UNREACHABLE / No route to the Agora server`;
+  - `Restaurante Jardi`: `NETWORK_UNREACHABLE / No route to the Agora server`;
+  - `Sa Vida`: Agora responde `401`.
+- Estado por conexion:
+  - `Baco Getafe`: apagado (`enabled=false`, `write_mode=NONE`), revertido a legacy. Ultimo dia sincronizado `2026-05-28`. No es automatico actualmente.
+  - `Casa Nene`: activo en configuracion, catalogo automatico ON, pero Agora no es alcanzable ahora mismo. Ultimo dia de ventas guardado `2026-06-24`; `intraday_sales_sync_enabled=false` tras la incidencia de idempotencia intradia. Stock reciente: `39 SUCCESS` y `3 BLOCKED` documentados como duplicados bloqueados.
+  - `Don Bernardo Ponzano`: read-only onboarding (`enabled=false`, `write_mode=NONE`), historico analitico cargado hasta `2026-06-22`, sin stock ni mappings. Sonda Agora OK.
+  - `Don Bernardo Santander`: read-only onboarding (`enabled=false`, `write_mode=NONE`), historico analitico cargado hasta `2026-06-22`, sin stock ni mappings. Sonda Agora OK.
+  - `Katsu Izakaya`: activo definitivo con familias Winerim dedicadas, venta D-1 hasta `2026-06-24`, stock reciente `4 SUCCESS`, sin errores recientes de stock. Hay `4` tareas `BLOCKED` abiertas y `auto_push_on_update=false`, aunque `auto_push_on_create=true`.
+  - `Kava`: activo, sonda OK, ventas hasta `2026-06-24`, stock reciente `14 SUCCESS`, sin errores recientes. Mantiene deuda historica `7 FAILED / 9 BLOCKED` en outbound y stock historico `13 FAILED / 26 BLOCKED`.
+  - `La Candela de Triana`: activo, sonda OK, ventas hasta `2026-06-24`, pero `mappedCount=0` y `stock_sync_log=0`; no esta descontando stock Winerim aunque lee ventas.
+  - `Luruna`: activo, sonda OK, ventas hasta `2026-06-24`, pero no hay stock reciente desde `2026-06-08`; mantiene deuda outbound historica `10 FAILED / 58 BLOCKED` y `winerim_push_tracking.QUEUED=5`.
+  - `Restaurante Cienvinos Ecija`: activo, sonda OK, ventas hasta `2026-06-24`, stock reciente `34 SUCCESS`. Mantiene deuda outbound `3 FAILED / 7 BLOCKED`; `auto_push_on_update=false`.
+  - `Restaurante Jardi`: activo en configuracion, pero sonda viva falla `NETWORK_UNREACHABLE`; ultimo dia guardado `2026-06-23`, stock reciente `14 SUCCESS`, outbound `3 FAILED`. No refrescar ni reintentar hasta recuperar ruta/DDNS/puerto.
+  - `Sa Pedrera`: activo, sonda OK, familias Winerim dedicadas, orden comercial activo, pero `last_business_day_synced=2026-06-17` y hay deuda muy grande en outbound (`QUEUED/RUNNING/BLOCKED/FAILED`). Stock reciente mezcla `62 SUCCESS` y `22 FAILED`, con fallo repetido `Variant 'copa' not found for wine 284166` (`C B310- Albenc [copa]`).
+  - `Sa Vida`: activo en configuracion, pero sonda viva devuelve `401`; ventas no avanzan desde `2026-05-03`. No reintentar cola hasta corregir token/API. Mantiene deuda outbound historica grande y stock historico con `177 FAILED / 263 BLOCKED`.
+
+### Hipotesis / riesgos Flota Agora
+
+- `Casa Nene` y `Jardi` probablemente tienen problema de router/firewall/DDNS o puerto externo; el backend no puede alcanzar Agora aunque la configuracion exista.
+- `Sa Vida` ya no parece un problema de modulo 501, sino de autenticacion/API token (`401`) en la sonda viva actual.
+- `La Candela` y `Luruna` leen ventas, pero no hay prueba reciente de descuento Winerim; puede faltar venta desde botones/mappings Winerim o resolucion de lineas.
+- `Sa Pedrera` esta operativa a nivel de catalogo/sonda, pero no debe recibir retries masivos hasta clasificar la deuda y corregir la variante inexistente de `B310 Albenc`.
+
+## Hechos (Protocolo checklist Agora — 2026-06-25)
+
+- Se creo el documento operativo `AGORA_INTEGRATION_CHECKLIST.md`.
+- El checklist define estados formales por integracion:
+  - `READ_ONLY_AUDIT`;
+  - `CATALOG_PILOT`;
+  - `SALES_VALIDATION`;
+  - `LIVE_AUTOMATIC`;
+  - `PAUSED`;
+  - `LEGACY_ONLY`.
+- El checklist separa:
+  - obligatorios para alta;
+  - obligatorios antes de escribir;
+  - obligatorios para catalogo Winerim -> Agora;
+  - obligatorios para ventas Agora -> Winerim;
+  - obligatorios antes de `LIVE_AUTOMATIC`;
+  - opcionales segun cliente;
+  - bloqueantes.
+- Criterio principal: ninguna integracion debe marcarse como `LIVE_AUTOMATIC` si no tiene al menos una venta real mapeada con `stock_sync_log.SUCCESS` para los formatos que vaya a usar.
+
+## Hechos (Casa Nene · checklist individual — 2026-06-25)
+
+- Se creo `AGORA_CHECKLIST_CASA_NENE_2026-06-25.md`.
+- Estado asignado: `PAUSED`.
+- Motivo:
+  - sonda viva contra Agora falla `NETWORK_UNREACHABLE / No route to host`;
+  - `intraday_sales_sync_enabled=false` tras la validacion de idempotencia intradia del `2026-06-24`.
+- Fortalezas confirmadas:
+  - conexion configurada con `enabled=true`, `catalog_sync_enabled=true`, `write_mode=XML_IMPORT`;
+  - catalogo cacheado: `309` vinos, `307` activos;
+  - mappings `CONFIRMED=309`;
+  - tracking `VERIFIED=307`;
+  - `0 QUEUED / 0 RUNNING`;
+  - ventas reales de botella detectadas y `stock_sync_log.SUCCESS` historico para botella.
+- Bloqueantes para `LIVE_AUTOMATIC`:
+  - recuperar conectividad publica/DDNS/puerto Agora;
+  - validar parche intradia por total diario sin doble descuento;
+  - reactivar intradia solo tras prueba segura;
+  - confirmar una nueva venta real con `sales_line_items.mapped=true` y `stock_sync_log.SUCCESS`.
+
+## Hechos (Casa Nene · consulta ventas noche 2026-06-24 — 2026-06-25)
+
+- Se consultaron las ventas guardadas en Lovable Cloud para Casa Nene (`connection_id=e3cb6dbb-3474-4926-b740-706fbd0ef7e0`) del business day `2026-06-24`.
+- La lectura viva contra Agora por `fetch-day` fallo con `502 NETWORK_UNREACHABLE`: `No route to host` contra `http://casanene.ddns.net:8984/api/export/?business-day=2026-06-24&filter=Invoices`.
+- Por tanto, el resumen disponible se basa solo en datos ya guardados en Lovable Cloud; no confirma si existen ventas posteriores en el POS que no hayan entrado.
+- En Lovable Cloud hay `57` eventos brutos de ese dia, pero `29` facturas canonicas con `provider_doc_id` numerico tras filtrar duplicados/imports previos.
+- Rango guardado:
+  - primera factura: `18391` a las `13:59:48`, `8,60 EUR`;
+  - ultima factura: `18419` a las `18:25:15`, `20,50 EUR`.
+- Total canonico guardado del dia: `1.909,50 EUR`.
+- No hay facturas guardadas despues de las `19:00` ni despues de las `20:00`.
+- Franja guardada desde las `17:00`: `6` facturas, `399,30 EUR`, docs `18414` a `18419`.
+
+### Riesgo / tarea Casa Nene
+
+- Si el cliente tuvo servicio de noche despues de las `19:00`, esas ventas no estan actualmente en Lovable Cloud y primero hay que recuperar conectividad publica/DDNS/puerto Agora antes de refrescar o descontar nada.
 
 ## Hechos (Sa Pedrera — productos inactivos impresos en factura — 2026-06-23)
 

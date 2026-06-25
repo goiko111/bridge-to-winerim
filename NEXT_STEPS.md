@@ -2,6 +2,59 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Monitorizacion conexiones + emails 2026-06-25
+- [x] Crear migracion `20260625044943_connection_health_monitor.sql` con `connection_health_checks`, `connection_alerts` y `connection_notification_contacts`.
+- [x] Crear Edge Function `connection-health-monitor` en modo observacional.
+- [x] Integrar `/alerts` con incidencias persistentes, historico de checks, boton manual `Run Monitor` y fallback legacy.
+- [x] Actualizar badge lateral para contar alertas persistentes abiertas.
+- [x] Validar localmente:
+  - bundle/parse de Edge Function OK;
+  - `npm run build` OK;
+  - `npm test` OK (`18` tests).
+- [ ] Aplicar migracion en Lovable Cloud.
+- [ ] Desplegar Edge Function `connection-health-monitor` en Lovable Cloud.
+- [ ] Configurar secretos email:
+  - `RESEND_API_KEY`;
+  - `ALERT_EMAIL_FROM`;
+  - `ALERT_INTERNAL_EMAILS`.
+- [ ] Decidir y configurar umbrales definitivos:
+  - interno recomendado: `ALERT_INTERNAL_AFTER_OCCURRENCES=2`;
+  - cliente recomendado: `ALERT_CLIENT_AFTER_OCCURRENCES=3`;
+  - cliente recomendado: `ALERT_CLIENT_AFTER_MINUTES=30`.
+- [ ] Crear contactos cliente/SAT en `connection_notification_contacts` para Casa Nene, Jardi, Sa Vida y el resto de conexiones que deban recibir aviso directo.
+- [ ] Ejecutar prueba manual con `connection-health-monitor`:
+  - `dryRun=true` primero;
+  - luego real con `sendEmails=false`;
+  - finalmente real con email interno.
+- [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor(fn_url, service_key, true)`.
+- [ ] Confirmar en `/alerts` que aparecen:
+  - check historico;
+  - alerta abierta si Casa Nene/Jardi siguen sin ruta;
+  - error de email solo si falta configuracion;
+  - resolucion automatica al recuperar una conexion.
+
+## P0 — Flota Agora · checklist auditoria 2026-06-25
+- [ ] Crear un checklist individual por cada integracion Agora activa o nueva usando `AGORA_INTEGRATION_CHECKLIST.md`.
+- [x] Casa Nene: checklist individual creado en `AGORA_CHECKLIST_CASA_NENE_2026-06-25.md`; estado `PAUSED`.
+- [ ] Para cada cliente, no marcar `LIVE_AUTOMATIC` hasta tener venta real mapeada y `stock_sync_log.SUCCESS` por cada formato aplicable.
+- [ ] Casa Nene: recuperar conectividad externa Agora (`NETWORK_UNREACHABLE / No route to host`) antes de refrescar ventas o reactivar intradia.
+- [ ] Casa Nene: validar en runtime el parche de idempotencia intradia por total diario con `force=true` y confirmar que no descuenta de nuevo ventas ya aplicadas.
+- [ ] Casa Nene: si el test da `synced=0` y stock sin cambios, reactivar `intraday_sales_sync_enabled=true` solo para esta conexion.
+- [ ] Jardi: recuperar ruta/firewall/DDNS/puerto (`NETWORK_UNREACHABLE`) antes de procesar `3 FAILED` o prometer ventas/stock al cliente.
+- [ ] Sa Vida: corregir credencial/API token o cabecera Agora; sonda viva actual devuelve `401`.
+- [ ] Sa Vida: no reintentar deuda outbound/stock hasta que la sonda vuelva a `success=true`.
+- [ ] Sa Pedrera: investigar fallo repetido `Variant 'copa' not found for wine 284166` (`C B310- Albenc [copa]`) y decidir si se bloquea mapping/copa o se corrige stockId/variante en Winerim.
+- [ ] Sa Pedrera: clasificar deuda outbound masiva antes de cualquier retry; no procesar en bloque.
+- [ ] Sa Pedrera: validar por venta real que una botella y una copa Winerim descuentan stock y aparecen en historial Winerim.
+- [ ] Katsu Izakaya: revisar `4` tareas `BLOCKED` abiertas y confirmar por que `auto_push_on_update=false` pese a estar en modo definitivo.
+- [ ] Katsu Izakaya: validar con el cliente que la pantalla muestra `Vinos` y `Copas de Vino` como necesitan, y hacer prueba real de venta botella+copa.
+- [ ] La Candela de Triana: resolver por que hay ventas hasta `2026-06-24` pero `mappedCount=0` y `stock_sync_log=0`; prioridad a mappings/venta desde botones Winerim.
+- [ ] Luruna: resolver falta de stock reciente desde `2026-06-08`; revisar `winerim_push_tracking.QUEUED=5` y deuda outbound `10 FAILED / 58 BLOCKED`.
+- [ ] Kava: clasificar deuda historica `7 FAILED / 9 BLOCKED` outbound y `13 FAILED / 26 BLOCKED` stock; no hay errores recientes.
+- [ ] Cienvinos: revisar deuda outbound `3 FAILED / 7 BLOCKED`; ventas y stock recientes ya funcionan (`34 SUCCESS`).
+- [ ] Don Bernardo Ponzano/Santander: mantener read-only; preparar CSV de no-match y confirmar estructura destino antes de activar catalogo/stock.
+- [ ] Baco Getafe: mantener apagado/revertido a legacy salvo nueva autorizacion expresa.
+
 ## P0 — Sa Pedrera / `[INACTIVO]` en tickets de cliente 2026-06-23
 - [x] Transcribir audios del cliente y confirmar alcance: el vino se cobra, pero el nombre aparece con prefijo `[INACTIVO]` en factura/proforma.
 - [x] Localizar causa en `AGORA_HIDE_PRODUCT`: el hide automático renombraba el producto como `[INACTIVO] ${wineName}`.
@@ -88,7 +141,8 @@
 
 ## P0 — Flota Agora tras auditoria 2026-06-19
 - [x] Auditar estado vivo de todas las conexiones Agora y documentar `AGORA_FLEET_STATUS_2026-06-19.md`.
-- [ ] Casa Nene: inspeccionar `1 FAILED` sin reintentar en bloque; conexion y ventas estan sanas.
+- [ ] Casa Nene: recuperar conectividad Agora publica/DDNS/puerto antes de refrescar ventas posteriores; el `2026-06-25` `fetch-day` devolvio `NETWORK_UNREACHABLE / No route to host`.
+- [ ] Casa Nene: inspeccionar `1 FAILED` sin reintentar en bloque; no reactivar intradia ni hacer retries hasta validar conectividad y parche de idempotencia total-diario.
 - [ ] Kava: clasificar `7 FAILED / 9 BLOCKED` y `23 BLOCKED` de stock; no hay cola viva.
 - [ ] La Candela: validar primera venta Winerim con stock, porque la cola esta limpia pero no hay stock reciente en la muestra.
 - [ ] Luruna: clasificar `10 FAILED / 58 BLOCKED` y confirmar con cliente que no reaparece saturacion.

@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-25 · Monitorizacion persistente con email sin tocar flujos operativos
+- **Decisión**: Crear un sistema persistente de health checks e incidencias (`connection_health_checks`, `connection_alerts`, `connection_notification_contacts`) y una Edge Function `connection-health-monitor` que observe conexiones Agora, abra/cierre alertas y envie email si hay secretos configurados.
+- **Razón**: Los fallos como Casa Nene/Jardi (`NETWORK_UNREACHABLE`) o Sa Vida (`401`) no deben depender de que alguien entre manualmente en logs o en Sync Monitor. El equipo necesita visibilidad y aviso proactivo, pero sin que el monitor reintente colas ni toque stock/catalogo.
+- **Alternativa descartada**: hacer que el dispatcher de Agora envie emails directamente. Mezcla observabilidad con ejecucion operativa, aumenta el riesgo de duplicar ruido por cada job y haria mas dificil pausar notificaciones sin tocar ventas/catalogo.
+- **Rollback**: desactivar el cron que invoque `connection-health-monitor` y dejar las tablas como historico inerte. No requiere revertir ventas, stock, mappings, catalogo ni conexiones POS porque el monitor solo lee y escribe en tablas propias de alertas.
+
+---
+
 ## 2026-06-23 · Ocultar vinos inactivos en Agora sin renombrarlos como `[INACTIVO]`
 - **Decisión**: Cambiar la tarea `AGORA_HIDE_PRODUCT` para preservar el nombre original del producto Agora y ocultarlo solo con `UseAsDirectSale=false` y `SaleableAsMain=false`. Si el producto ya tiene prefijo `[INACTIVO]`, el nuevo flujo lo limpia al reimportar el producto oculto.
 - **Razón**: Sa Pedrera reportó que, si inactivan un vino durante el servicio tras vender la última botella, las facturas de mesas abiertas pueden imprimir el nombre maestro actualizado con `[INACTIVO]`, generando mala experiencia para el cliente final aunque el cobro sea correcto.
@@ -924,3 +932,13 @@
 - **Decisión**: Desactivar temporalmente `intraday_sales_sync_enabled` en Casa Nene, bloquear los logs duplicados del primer test y restaurar solo el descuento duplicado atribuible (`Pazo de Señorans` `192 -> 193`).
 - **Razón**: El primer deploy ya ejecutaba la acción nueva, pero todavía podía duplicar deducciones por cambio de IDs. Pausar evita que el dispatcher repita el problema antes del segundo redeploy.
 - **Alternativa descartada**: dejar el flag activo y confiar en que el siguiente ciclo no encuentre deltas. Era arriesgado mientras el código vivo seguía usando la comparación por evento.
+
+## 2026-06-25 · Flota Agora: separar conectividad, catalogo, ventas y stock en el status
+- **Decisión**: Clasificar cada integracion Agora por capas independientes: sonda viva/conectividad, catalogo Winerim->Agora, ventas Agora->Lovable Cloud, mapeo de lineas y descuento/historial Winerim.
+- **Razón**: Varias conexiones responden a la sonda pero no descuentan stock (`La Candela`, `Luruna`), otras tienen catalogo publicado pero no conectividad viva (`Jardi`, `Casa Nene`), y otras estan en read-only por decision (`Don Bernardo`). Decir simplemente "funciona" oculta riesgos operativos diferentes.
+- **Alternativa descartada**: usar solo `enabled=true` o `provider_capabilities=READY` como veredicto. Es insuficiente para soporte, porque no demuestra venta mapeada ni `stock_sync_log.SUCCESS` reciente.
+
+## 2026-06-25 · Agora: checklist obligatorio por integracion
+- **Decisión**: Usar `AGORA_INTEGRATION_CHECKLIST.md` como protocolo obligatorio para cada alta o cambio importante de una integracion Agora.
+- **Razón**: Las integraciones mezclan red, catalogo, legacy visual, mappings, ventas, stock e historico. Sin checklist comun se corre el riesgo de activar automatismos sin rollback, sin venta de prueba o sin confirmar que las copas descuentan en su variante.
+- **Alternativa descartada**: seguir resolviendo cada cliente como caso unico. Es flexible, pero no escala con muchos clientes y hace dificil que soporte/comercial sepan que falta para considerar una instalacion lista.
