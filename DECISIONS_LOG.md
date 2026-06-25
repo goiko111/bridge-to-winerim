@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-25 · Migración generada del helper seguro queda como no-op
+- **Decisión**: Mantener `20260625073417_a9f5092e-e4f6-49fa-a9ee-1f7fbe353f8d.sql` como no-op documentado.
+- **Razón**: Lovable Cloud generó esa migración al aplicar `invoke_connection_health_monitor_secure(...)`, pero el repositorio ya contiene la migración canónica `20260625072756_secure_connection_health_monitor_cron.sql`. Duplicar la misma función no aporta valor y complica la historia de migraciones.
+- **Alternativa descartada**: borrar la migración generada. Igual que en la anterior migración generada por Lovable, preferimos conservar el id remoto para explicar el despliegue sin ejecutar DDL duplicado.
+- **Rollback**: si se confirma que ese id no existe en ningún historial de Lovable Cloud, se puede eliminar en una limpieza futura.
+
+---
+
 ## 2026-06-25 · Emails del monitor solo con `MONITOR_CRON_SECRET`
 - **Decisión**: Proteger `connection-health-monitor` para que `sendEmails=true` y `notifyClients=true` solo funcionen si la peticion trae `X-Monitor-Secret` y coincide con `MONITOR_CRON_SECRET`.
 - **Razón**: La funcion usa permisos internos para registrar checks/alertas. Permitir que cualquier invocacion con anon key dispare emails podria generar spam o ruido operativo. El boton manual debe poder revisar estado, pero no enviar notificaciones.

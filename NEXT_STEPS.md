@@ -29,7 +29,7 @@
   - `MONITOR_CRON_SECRET`;
   - header `X-Monitor-Secret`;
   - helper SQL `invoke_connection_health_monitor_secure(...)`.
-- [ ] Desplegar el hardening del monitor en Lovable Cloud:
+- [x] Desplegar el hardening del monitor en Lovable Cloud:
   - migracion `20260625072756_secure_connection_health_monitor_cron.sql`;
   - Edge Function `connection-health-monitor`;
   - frontend `/alerts` con `Run Monitor` sin emails.
@@ -39,7 +39,8 @@
   - cliente recomendado: `ALERT_CLIENT_AFTER_OCCURRENCES=3`;
   - cliente recomendado: `ALERT_CLIENT_AFTER_MINUTES=30`.
 - [ ] Crear contactos cliente/SAT en `connection_notification_contacts` para Casa Nene, Jardi, Sa Vida y el resto de conexiones que deban recibir aviso directo.
-- [ ] Ejecutar prueba negativa: `sendEmails=true` sin `X-Monitor-Secret` debe devolver 403 `MONITOR_SECRET_REQUIRED`.
+- [x] Ejecutar prueba negativa: `sendEmails=true` sin `X-Monitor-Secret` devuelve 403 `MONITOR_SECRET_REQUIRED`.
+- [x] Ejecutar prueba externa dry-run sin emails: devuelve HTTP 200 y revisa `9` conexiones.
 - [ ] Ejecutar prueba real con email interno cuando existan secretos Resend, destinatarios internos y `MONITOR_CRON_SECRET`.
 - [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor_secure(fn_url, anon_key, monitor_secret, true)`.
 - [ ] Confirmar en `/alerts` que aparecen:

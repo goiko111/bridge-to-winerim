@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-25 11:35 CEST_
+_Última actualización: 2026-06-25 11:42 CEST_
 
 ## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)
 
@@ -67,16 +67,21 @@ _Última actualización: 2026-06-25 11:35 CEST_
   - `Sa Pedrera`: `sales_stale`, `outbound_queue`, `stock_sync`;
   - `Restaurante Cienvinos Ecija`: `outbound_queue`;
   - `Katsu Izakaya`: `outbound_queue`.
-- Pendiente actual:
-  - no hay secretos email configurados (`RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_INTERNAL_EMAILS`);
-  - se esta preparando `MONITOR_CRON_SECRET` para que solo el cron protegido pueda enviar emails;
-  - no hay contactos cliente/SAT en `connection_notification_contacts`;
-  - cron cada 10 minutos queda pendiente porque debe invocar la funcion con una credencial segura y no se debe activar mediante llamada publica sin secreto.
-- Cambio de seguridad preparado en codigo:
+- Seguridad cron/email desplegada:
+  - migracion `20260625072756_secure_connection_health_monitor_cron.sql` aplicada en Lovable Cloud;
+  - Edge Function `connection-health-monitor` redeployada;
   - `connection-health-monitor` solo acepta `sendEmails=true` / `notifyClients=true` si recibe header `X-Monitor-Secret` y coincide con `MONITOR_CRON_SECRET`;
   - el boton manual `/alerts > Run Monitor` queda como ejecucion sin emails (`sendEmails=false`, `notifyClients=false`);
-  - nueva migracion `20260625072756_secure_connection_health_monitor_cron.sql` crea `invoke_connection_health_monitor_secure(fn_url, bearer_key, monitor_secret, notify_clients)`;
-  - validacion local post-cambio OK: bundle/parse Edge Function, `npm run build`, `npm test` (`18` tests).
+  - nueva funcion SQL `invoke_connection_health_monitor_secure(fn_url, bearer_key, monitor_secret, notify_clients)`;
+  - prueba negativa externa OK: sin `X-Monitor-Secret`, `sendEmails=true` devuelve HTTP 403 `MONITOR_SECRET_REQUIRED`;
+  - prueba externa OK: `dryRun=true`, `sendEmails=false`, `notifyClients=false` devuelve HTTP 200 y revisa `9` conexiones.
+- Lovable Cloud genero ademas la migracion `20260625073417_a9f5092e-e4f6-49fa-a9ee-1f7fbe353f8d.sql` con el mismo DDL del helper seguro.
+- Esa migracion generada queda en el repo como no-op documentado; la migracion canonica es `20260625072756_secure_connection_health_monitor_cron.sql`.
+- Pendiente actual:
+  - no hay secretos email configurados (`RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_INTERNAL_EMAILS`);
+  - no hay `MONITOR_CRON_SECRET` configurado;
+  - no hay contactos cliente/SAT en `connection_notification_contacts`;
+  - cron cada 10 minutos queda pendiente hasta configurar secretos email + `MONITOR_CRON_SECRET`.
 
 ### Hipotesis / riesgos monitorizacion
 
