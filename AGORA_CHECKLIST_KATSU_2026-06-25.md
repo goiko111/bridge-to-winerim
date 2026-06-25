@@ -2,7 +2,8 @@
 
 ## Estado
 
-- Estado operativo: `LIVE_AUTOMATIC` condicionado a prueba intradia real de venta Winerim.
+- Estado operativo: `LIVE_AUTOMATIC` para altas + ventas intradia, condicionado a prueba intradia real de venta Winerim.
+- Excepcion temporal: updates automaticos de precio/nombre pausados por riesgo de bucle.
 - Conexion: `982f1e63-5f15-48b8-b35f-037eafd4593e`.
 - Proveedor: Agora.
 - Rollback: reversible. No se borro legacy; se mantiene oculto/no vendible.
@@ -13,7 +14,7 @@
 - `catalog_sync_enabled=true`.
 - `write_mode=XML_IMPORT`.
 - `auto_push_on_create=true`.
-- `auto_push_on_update=true`.
+- `auto_push_on_update=false`.
 - `auto_push_verified_ready=true`.
 - `auto_push_glass=true`.
 - `write_glass=true`.
@@ -46,12 +47,14 @@
 - Catalogo Winerim refrescado:
   - `70` vinos leidos;
   - `0` altas nuevas;
-  - `68` updates encolados por activacion de `auto_push_on_update`.
+- `68` updates encolados durante una prueba controlada de `auto_push_on_update`.
 - Cola XML Katsu drenada:
   - `0 QUEUED`;
   - `0 RUNNING`;
   - `0 FAILED`;
   - `0 BLOCKED`.
+- Tras la prueba, el cron de catalogo volvio a encolar una tanda `AUTO_UPDATE`.
+- Se dreno la segunda tanda y se pauso `auto_push_on_update=false` para evitar bucle.
 - Dispatcher `sales-stock` limitado a Katsu:
   - `auto-sync-sales` OK;
   - `sync-intraday-sales` OK;
@@ -82,9 +85,9 @@
   - `stock_sync_log.SUCCESS`;
   - variante correcta (`botella`, `copa` o `magnum`);
   - venta visible en historial Winerim si aplica al endpoint desplegado.
+- Corregir idempotencia de `auto_push_on_update` antes de reactivar updates automaticos de precio/nombre.
 
 ## Riesgos conocidos
 
 - `isWineCandidate()` sigue marcando algunas lineas de comida/bebida como candidatas por la clasificacion generica. No descuenta stock si no hay mapping Winerim, pero ensucia metricas de no-mapeados.
-- Si reaparecen updates masivos repetidos en cada cron de catalogo, pausar `auto_push_on_update=false` y revisar idempotencia de tracking antes de reactivar.
-
+- `auto_push_on_update=true` ya demostro reencolar tandas repetidas. Mantener pausado hasta corregir idempotencia de tracking/cambios.

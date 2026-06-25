@@ -12,7 +12,7 @@ _Última actualización: 2026-06-25 17:29 CEST_
   - `catalog_sync_enabled=true`;
   - `write_mode=XML_IMPORT`;
   - `auto_push_on_create=true`;
-  - `auto_push_on_update=true`;
+  - `auto_push_on_update=false`;
   - `auto_push_verified_ready=true`;
   - `auto_push_glass=true`;
   - `write_glass=true`;
@@ -34,10 +34,13 @@ _Última actualización: 2026-06-25 17:29 CEST_
   - hijo de `Copas de Vino`: `COPAS WINERIM`;
   - productos Winerim siguen con `UseAsDirectSale=false`; se venden entrando en su familia/subfamilia, no como botones raiz.
 - Puesta en marcha catalogo:
-  - se ejecuto `winerim-proxy/fetch-catalog` con `auto_push_on_update=true`;
+  - se probo `winerim-proxy/fetch-catalog` con `auto_push_on_update=true`;
   - Winerim devolvio `70` vinos, `0` altas nuevas y `68` updates;
   - se encolaron `68` updates y se drenaron solo para Katsu;
   - verificacion final: `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+  - el cron de catalogo volvio a encolar otra tanda `AUTO_UPDATE`, confirmando que el flag `auto_push_on_update=true` aun puede generar bucle de updates repetidos en Katsu;
+  - por seguridad, se dejo `auto_push_on_update=false` de nuevo tras aplicar y drenar las tandas actuales;
+  - las altas nuevas siguen automaticas (`auto_push_on_create=true`) y las ventas intradia quedan activas.
 - Puesta en marcha intradia:
   - `sync-intraday-sales` manual sin `force` ya funciona porque el flag esta activo;
   - dispatcher `sales-stock` limitado a Katsu invoco `auto-sync-sales` + `sync-intraday-sales`, ambas OK;
@@ -52,6 +55,7 @@ _Última actualización: 2026-06-25 17:29 CEST_
 
 - No tocar IDs, mappings ni stock para resolver futuros ajustes visuales; la estructura actual ya esta viva.
 - Antes de declarar Katsu como validado por completo con intradia, falta que el cliente venda un vino Winerim hoy desde `VINOS` o `Copas de Vino` y verificar que el siguiente ciclo corto genera `stock_sync_log.SUCCESS`.
+- No reactivar `auto_push_on_update=true` hasta corregir la idempotencia de updates repetidos; si un precio/nombre urgente cambia en Winerim, publicar ese update de forma controlada/manual.
 - El clasificador `isWineCandidate()` sigue inflando comida/bebida como candidato vino en Katsu; no afecta al descuento si no hay mapping Winerim, pero debe corregirse para que las metricas de no-mapeados no generen ruido.
 
 ## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)

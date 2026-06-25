@@ -980,10 +980,10 @@
 - **Razón**: La integracion ya tiene catalogo Winerim publicado, ventas recientes importadas, descuentos de copa `SUCCESS` y cola abierta a cero. Reimportar o recrear productos para resolver la pantalla aumentaria riesgo sin necesidad.
 - **Alternativa descartada**: rehacer la importacion completa o volver a matchear legacy en bloque. Ya se descarto el matching legacy masivo por riesgo de descontar stock equivocado, y la pantalla puede corregirse con familias/visibilidad.
 
-## 2026-06-25 · Katsu: activar automatico completo con intradia por flag
-- **Decisión**: Activar en Katsu `auto_push_on_update=true` e `intraday_sales_sync_enabled=true`, manteniendo el alcance limitado a esta conexion.
-- **Razón**: La estructura visual `VINOS` / `Copas de Vino` ya esta viva, las altas automaticas estaban activas y el cliente pide funcionamiento automatico. Se ejecuto un ciclo controlado: `fetch-catalog` detecto `68` updates, se drenaron sin errores y el dispatcher `sales-stock` invoco `auto-sync-sales` + `sync-intraday-sales` correctamente.
-- **Alternativa descartada**: dejar `auto_push_on_update=false` y seguir solo con altas. Evita escrituras, pero no cumple que cambios de precio/nombre en Winerim se reflejen automaticamente en Agora.
+## 2026-06-25 · Katsu: activar intradia y pausar updates repetidos por seguridad
+- **Decisión**: Activar en Katsu `intraday_sales_sync_enabled=true` y mantener `auto_push_on_create=true`, pero dejar `auto_push_on_update=false` despues de aplicar una tanda controlada de updates.
+- **Razón**: La estructura visual `VINOS` / `Copas de Vino` ya esta viva y el cliente necesita descuento de ventas en ciclo corto. Se probo `auto_push_on_update=true`, `fetch-catalog` detecto `68` updates y se drenaron sin errores, pero el cron de catalogo volvio a encolar otra tanda `AUTO_UPDATE`, confirmando riesgo de bucle. No se debe dejar activo algo que pueda tocar Agora cada ciclo sin cambios reales.
+- **Alternativa descartada**: dejar `auto_push_on_update=true` pese al bucle para cumplir "todo automatico". Aumentaria riesgo operativo y ruido de cola; el camino correcto es corregir la idempotencia y reactivarlo despues.
 
 ## 2026-06-25 · Katsu: cerrar deuda outbound verificada en vez de reintentar ocultaciones ya efectivas
 - **Decisión**: Marcar como resueltas `4` tareas `AGORA_HIDE_PRODUCT` bloqueadas tras verificar en master data que los `8` productos afectados ya estaban no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
