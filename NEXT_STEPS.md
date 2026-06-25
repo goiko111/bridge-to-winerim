@@ -62,8 +62,12 @@
 - [ ] Sa Pedrera: investigar fallo repetido `Variant 'copa' not found for wine 284166` (`C B310- Albenc [copa]`) y decidir si se bloquea mapping/copa o se corrige stockId/variante en Winerim.
 - [ ] Sa Pedrera: clasificar deuda outbound masiva antes de cualquier retry; no procesar en bloque.
 - [ ] Sa Pedrera: validar por venta real que una botella y una copa Winerim descuentan stock y aparecen en historial Winerim.
-- [ ] Katsu Izakaya: revisar `4` tareas `BLOCKED` abiertas y confirmar por que `auto_push_on_update=false` pese a estar en modo definitivo.
-- [ ] Katsu Izakaya: validar con el cliente que la pantalla muestra `Vinos` y `Copas de Vino` como necesitan, y hacer prueba real de venta botella+copa.
+- [x] Katsu Izakaya: revisar tareas abiertas; verificacion viva 2026-06-25 17:04 CEST confirma `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- [x] Katsu Izakaya: activar `auto_push_on_update=true`, ejecutar `fetch-catalog`, encolar `68` updates y drenar cola final a `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- [x] Katsu Izakaya: activar `provider_config.intraday_sales_sync_enabled=true` y validar dispatcher `sales-stock` con `auto-sync-sales` + `sync-intraday-sales` OK.
+- [x] Katsu Izakaya: confirmar estructura visual viva: raiz `VINOS` con familias Winerim por tipo y raiz `Copas de Vino` con `COPAS WINERIM`.
+- [ ] Katsu Izakaya: pedir prueba real de venta desde botones Winerim hoy; validar que el siguiente ciclo intradia deja `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+- [ ] Katsu Izakaya: corregir clasificador `isWineCandidate()` para respetar reglas `wine_family_rules` y no marcar comida/bebida de `CARTA`/`KATSU LIQUIDO` como candidato operativo.
 - [ ] La Candela de Triana: resolver por que hay ventas hasta `2026-06-24` pero `mappedCount=0` y `stock_sync_log=0`; prioridad a mappings/venta desde botones Winerim.
 - [ ] Luruna: resolver falta de stock reciente desde `2026-06-08`; revisar `winerim_push_tracking.QUEUED=5` y deuda outbound `10 FAILED / 58 BLOCKED`.
 - [ ] Kava: clasificar deuda historica `7 FAILED / 9 BLOCKED` outbound y `13 FAILED / 26 BLOCKED` stock; no hay errores recientes.

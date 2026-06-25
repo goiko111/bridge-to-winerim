@@ -2,7 +2,57 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-25 11:42 CEST_
+_Última actualización: 2026-06-25 17:29 CEST_
+
+## Hechos (Katsu Izakaya · puesta en marcha automática — 2026-06-25 17:29 CEST)
+
+- Se reviso Katsu contra Lovable Cloud en modo solo lectura.
+- Conexion `Katsu Izakaya` (`982f1e63-5f15-48b8-b35f-037eafd4593e`) sigue activa:
+  - `enabled=true`;
+  - `catalog_sync_enabled=true`;
+  - `write_mode=XML_IMPORT`;
+  - `auto_push_on_create=true`;
+  - `auto_push_on_update=true`;
+  - `auto_push_verified_ready=true`;
+  - `auto_push_glass=true`;
+  - `write_glass=true`;
+  - `provider_config.intraday_sales_sync_enabled=true`;
+  - `provider_config.sales_timezone=Europe/Madrid`;
+  - `provider_config.family_structure_mode=WINERIM_DEDICATED_FAMILIES`.
+- Estado operativo vivo:
+  - ventas importadas hasta `last_business_day_synced=2026-06-24`;
+  - ultimo `last_sync_at=2026-06-25T15:25:10.905Z`;
+  - `last_catalog_sync_at=2026-06-25T15:28:59.643Z`;
+  - `0` tareas abiertas (`QUEUED/RUNNING/FAILED/BLOCKED`);
+  - alerta previa de `outbound_queue` resuelta por monitor a `2026-06-25T15:29:06.158Z`;
+  - `product_mappings`: `145 CONFIRMED`, `19 REJECTED`;
+  - `winerim_push_tracking`: `137 VERIFIED`, `19 FAILED`, `8 HIDDEN`.
+- Estructura visual viva en Agora:
+  - raiz `33` `VINOS`, visible, sin productos directos vendibles;
+  - raiz `37` `Copas de Vino`, visible, sin productos directos vendibles;
+  - hijos de `VINOS`: `TINTOS WINERIM`, `BLANCOS WINERIM`, `ROSADOS WINERIM`, `ESPUMOSOS WINERIM`, `FORTIFICADOS WINERIM`, `DULCE WINERIM`, `MAGNUM WINERIM`;
+  - hijo de `Copas de Vino`: `COPAS WINERIM`;
+  - productos Winerim siguen con `UseAsDirectSale=false`; se venden entrando en su familia/subfamilia, no como botones raiz.
+- Puesta en marcha catalogo:
+  - se ejecuto `winerim-proxy/fetch-catalog` con `auto_push_on_update=true`;
+  - Winerim devolvio `70` vinos, `0` altas nuevas y `68` updates;
+  - se encolaron `68` updates y se drenaron solo para Katsu;
+  - verificacion final: `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
+- Puesta en marcha intradia:
+  - `sync-intraday-sales` manual sin `force` ya funciona porque el flag esta activo;
+  - dispatcher `sales-stock` limitado a Katsu invoco `auto-sync-sales` + `sync-intraday-sales`, ambas OK;
+  - en el dia `2026-06-25` Agora devolvio `8` facturas / `58` lineas, pero `resolvedLines=0`, por lo que no habia venta Winerim intradia que descontar en ese momento.
+- Stock reciente:
+  - `4` descuentos `SUCCESS` en la ultima muestra, todos de variante `copa`;
+  - ejemplos: `C Lawson's Dry Hills Gewürztraminer [copa]` y `C Sarmentero Vendimia Seleccionada [copa]`;
+  - el unico `FAILED` visible en la muestra es historico (`2026-05-20`) y corresponde a la antigua logica fraccional (`quantity=0.2`), no al flujo variant-aware actual.
+- Se documenta esta estructura en `provider_config.katsu_family_structure` para soporte/rollback.
+
+### Riesgos / tareas Katsu
+
+- No tocar IDs, mappings ni stock para resolver futuros ajustes visuales; la estructura actual ya esta viva.
+- Antes de declarar Katsu como validado por completo con intradia, falta que el cliente venda un vino Winerim hoy desde `VINOS` o `Copas de Vino` y verificar que el siguiente ciclo corto genera `stock_sync_log.SUCCESS`.
+- El clasificador `isWineCandidate()` sigue inflando comida/bebida como candidato vino en Katsu; no afecta al descuento si no hay mapping Winerim, pero debe corregirse para que las metricas de no-mapeados no generen ruido.
 
 ## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)
 

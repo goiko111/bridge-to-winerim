@@ -974,3 +974,18 @@
 - **Decisión**: Usar `AGORA_INTEGRATION_CHECKLIST.md` como protocolo obligatorio para cada alta o cambio importante de una integracion Agora.
 - **Razón**: Las integraciones mezclan red, catalogo, legacy visual, mappings, ventas, stock e historico. Sin checklist comun se corre el riesgo de activar automatismos sin rollback, sin venta de prueba o sin confirmar que las copas descuentan en su variante.
 - **Alternativa descartada**: seguir resolviendo cada cliente como caso unico. Es flexible, pero no escala con muchos clientes y hace dificil que soporte/comercial sepan que falta para considerar una instalacion lista.
+
+## 2026-06-25 · Katsu: tratar el siguiente paso como ajuste visual, no como reimportacion masiva
+- **Decisión**: Para Katsu Izakaya, el siguiente paso es reorganizar la pantalla en dos accesos raiz (`Vinos` y `Copas de Vino`) manteniendo los productos Winerim, mappings, stockIds y legacy oculto reversible ya existentes.
+- **Razón**: La integracion ya tiene catalogo Winerim publicado, ventas recientes importadas, descuentos de copa `SUCCESS` y cola abierta a cero. Reimportar o recrear productos para resolver la pantalla aumentaria riesgo sin necesidad.
+- **Alternativa descartada**: rehacer la importacion completa o volver a matchear legacy en bloque. Ya se descarto el matching legacy masivo por riesgo de descontar stock equivocado, y la pantalla puede corregirse con familias/visibilidad.
+
+## 2026-06-25 · Katsu: activar automatico completo con intradia por flag
+- **Decisión**: Activar en Katsu `auto_push_on_update=true` e `intraday_sales_sync_enabled=true`, manteniendo el alcance limitado a esta conexion.
+- **Razón**: La estructura visual `VINOS` / `Copas de Vino` ya esta viva, las altas automaticas estaban activas y el cliente pide funcionamiento automatico. Se ejecuto un ciclo controlado: `fetch-catalog` detecto `68` updates, se drenaron sin errores y el dispatcher `sales-stock` invoco `auto-sync-sales` + `sync-intraday-sales` correctamente.
+- **Alternativa descartada**: dejar `auto_push_on_update=false` y seguir solo con altas. Evita escrituras, pero no cumple que cambios de precio/nombre en Winerim se reflejen automaticamente en Agora.
+
+## 2026-06-25 · Katsu: cerrar deuda outbound verificada en vez de reintentar ocultaciones ya efectivas
+- **Decisión**: Marcar como resueltas `4` tareas `AGORA_HIDE_PRODUCT` bloqueadas tras verificar en master data que los `8` productos afectados ya estaban no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
+- **Razón**: Eran falsos positivos operativos por respuesta incompleta (`unexpected end of file`) despues de una ocultacion que ya se habia aplicado. Mantenerlas `BLOCKED` dejaba Katsu con alerta abierta aunque la pantalla estaba correcta.
+- **Alternativa descartada**: reintentar las ocultaciones en bloque. Podia recrear ruido sin aportar cambio funcional porque el estado destino ya estaba verificado.
