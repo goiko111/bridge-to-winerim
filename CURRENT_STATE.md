@@ -46,9 +46,12 @@ _Última actualización: 2026-06-25 10:58 CEST_
   - bundle/parse Edge Function con esbuild + `node --check` OK;
   - `npm run build` OK;
   - `npm test` OK (`18` tests).
+- GitHub:
+  - commit `f4f90f2` (`Add persistent connection health alerts`) subido a `main`.
 - Bloqueo actual:
   - no se pudo desplegar la Edge Function desde esta maquina: la CLI no tiene `SUPABASE_ACCESS_TOKEN`;
   - no se pudo aplicar la migracion directamente: el `.env` local solo contiene variables publicas del frontend, no URL de base de datos ni service key;
+  - sonda HTTP post-push contra `connection-health-monitor` devuelve `404 NOT_FOUND`, por lo que Lovable Cloud aun no esta ejecutando la funcion nueva;
   - por tanto, el sistema esta implementado en codigo pero pendiente de aplicar migracion, desplegar funcion y configurar secretos email en Lovable Cloud.
 
 ### Hipotesis / riesgos monitorizacion

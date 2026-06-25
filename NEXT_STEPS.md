@@ -11,6 +11,8 @@
   - bundle/parse de Edge Function OK;
   - `npm run build` OK;
   - `npm test` OK (`18` tests).
+- [x] Subir commit `f4f90f2` a GitHub `main`.
+- [x] Sondar funcion post-push: `connection-health-monitor` aun devuelve `404 NOT_FOUND`.
 - [ ] Aplicar migracion en Lovable Cloud.
 - [ ] Desplegar Edge Function `connection-health-monitor` en Lovable Cloud.
 - [ ] Configurar secretos email:
