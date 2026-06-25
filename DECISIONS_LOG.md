@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-06-25 · Migración generada por Lovable queda como no-op para evitar duplicados
+- **Decisión**: Mantener `20260625071127_29af3b55-ae05-4175-a786-5d0b54aa740e.sql` en el repositorio, pero convertirla en no-op documentado.
+- **Razón**: Lovable Cloud generó esa migración al aplicar el esquema del monitor, aunque el repositorio ya contenía la migración canónica `20260625044943_connection_health_monitor.sql`. Si ambas ejecutan el mismo DDL en un entorno nuevo, los `CREATE TRIGGER` duplicados pueden romper la instalación.
+- **Alternativa descartada**: borrar completamente la migración generada. Eso limpiaría el árbol, pero perdería la referencia al id de migración que Lovable creó durante el despliegue.
+- **Rollback**: si se confirma que Lovable no registró ese id de migración en ningún entorno, se puede eliminar el no-op en una limpieza posterior. Mientras tanto, conservarlo evita drift documental sin riesgo operativo.
+
+---
+
+## 2026-06-25 · Monitor desplegado, pero cron/email quedan bloqueados hasta configurar secretos
+- **Decisión**: Dejar `connection-health-monitor` desplegada y operativa para checks manuales/persistentes, pero no activar un cron recurrente ni emails a cliente hasta configurar credenciales seguras (`RESEND_API_KEY`, remitente validado, destinatarios internos/cliente y credencial de invocacion del monitor).
+- **Razón**: El primer run real ya abre alertas sin tocar ventas, stock, catalogo ni colas. Para convertirlo en automatismo recurrente con emails, la invocacion debe quedar protegida y trazable; no se debe depender de una llamada publica/anonima a una Edge Function que usa service role internamente.
+- **Alternativa descartada**: activar `pg_cron` invocando la funcion sin secreto o con una credencial publica solo porque tecnicamente responde. Seria rapido, pero abre riesgo de spam de emails, ruido operativo y escrituras de alertas disparadas por terceros.
+- **Rollback**: si el monitor genera ruido, pausar/eliminar el cron cuando exista y dejar de invocar la funcion. Las tablas `connection_alerts` y `connection_health_checks` pueden quedar como historico; no afectan a ventas, stock, mappings, catalogo ni conexiones POS.
+
+---
+
 ## 2026-06-25 · Monitorizacion persistente con email sin tocar flujos operativos
 - **Decisión**: Crear un sistema persistente de health checks e incidencias (`connection_health_checks`, `connection_alerts`, `connection_notification_contacts`) y una Edge Function `connection-health-monitor` que observe conexiones Agora, abra/cierre alertas y envie email si hay secretos configurados.
 - **Razón**: Los fallos como Casa Nene/Jardi (`NETWORK_UNREACHABLE`) o Sa Vida (`401`) no deben depender de que alguien entre manualmente en logs o en Sync Monitor. El equipo necesita visibilidad y aviso proactivo, pero sin que el monitor reintente colas ni toque stock/catalogo.

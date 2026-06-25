@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-25 10:58 CEST_
+_Última actualización: 2026-06-25 11:20 CEST_
 
 ## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)
 
@@ -46,19 +46,38 @@ _Última actualización: 2026-06-25 10:58 CEST_
   - bundle/parse Edge Function con esbuild + `node --check` OK;
   - `npm run build` OK;
   - `npm test` OK (`18` tests).
-- GitHub:
-  - commit `f4f90f2` (`Add persistent connection health alerts`) subido a `main`.
-- Bloqueo actual:
-  - no se pudo desplegar la Edge Function desde esta maquina: la CLI no tiene `SUPABASE_ACCESS_TOKEN`;
-  - no se pudo aplicar la migracion directamente: el `.env` local solo contiene variables publicas del frontend, no URL de base de datos ni service key;
-  - sonda HTTP post-push contra `connection-health-monitor` devuelve `404 NOT_FOUND`, por lo que Lovable Cloud aun no esta ejecutando la funcion nueva;
-  - por tanto, el sistema esta implementado en codigo pero pendiente de aplicar migracion, desplegar funcion y configurar secretos email en Lovable Cloud.
+- GitHub / Lovable Cloud:
+  - commit `f4f90f2` (`Add persistent connection health alerts`) subido a `main`;
+  - commit `1067ecc` (`Document health monitor deployment status`) subido a `main`;
+  - Lovable Cloud aplico la migracion `20260625044943_connection_health_monitor.sql`;
+  - Lovable Cloud desplego la Edge Function `connection-health-monitor`.
+- Lovable Cloud genero ademas la migracion `20260625071127_29af3b55-ae05-4175-a786-5d0b54aa740e.sql` con el mismo DDL ya presente en la migracion canonica.
+- Esa migracion generada queda en el repo como no-op documentado para representar el id remoto sin duplicar triggers ni recrear objetos en entornos nuevos.
+- Verificacion post-despliegue:
+  - `connection_alerts` responde HTTP 200 por Data API;
+  - `connection_health_checks` responde HTTP 200 por Data API;
+  - `connection_notification_contacts` responde HTTP 200 por Data API y esta vacia;
+  - `connection-health-monitor` responde HTTP 200 con `dryRun=true`, `sendEmails=false`, `notifyClients=false`.
+- Primer run real sin emails:
+  - `9` checks insertados;
+  - `6` alertas `OPEN`;
+  - `0` emails enviados.
+- Alertas abiertas iniciales:
+  - `Sa Vida`: `auth` critical (`Agora responde 401`);
+  - `Sa Pedrera`: `sales_stale`, `outbound_queue`, `stock_sync`;
+  - `Restaurante Cienvinos Ecija`: `outbound_queue`;
+  - `Katsu Izakaya`: `outbound_queue`.
+- Pendiente actual:
+  - no hay secretos email configurados (`RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_INTERNAL_EMAILS`);
+  - no hay contactos cliente/SAT en `connection_notification_contacts`;
+  - cron cada 10 minutos queda pendiente porque debe invocar la funcion con una credencial segura y no se debe activar mediante llamada publica sin secreto.
 
 ### Hipotesis / riesgos monitorizacion
 
 - Si `RESEND_API_KEY` o `ALERT_EMAIL_FROM` no estan configurados, las alertas se registraran pero el envio quedara con `EMAIL_NOT_CONFIGURED`.
 - Si se activan emails a cliente sin contactos por conexion, solo habra aviso interno; los clientes/SAT requieren filas en `connection_notification_contacts` o `provider_config.alert_client_emails`.
 - La sonda de familias cada 10 minutos es ligera, pero aun asi debe mantenerse fuera de `Products` para evitar repetir el incidente Luruna.
+- No activar un cron basado en invocacion publica/anonima de la Edge Function. Antes de automatizar, configurar un secreto de ejecucion o una llamada con service key gestionada de forma segura.
 - Rollback seguro:
   - pausar/eliminar el cron que invoque `connection-health-monitor`;
   - no tocar tablas operativas de ventas/stock/catalogo;

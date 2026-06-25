@@ -13,25 +13,29 @@
   - `npm test` OK (`18` tests).
 - [x] Subir commit `f4f90f2` a GitHub `main`.
 - [x] Sondar funcion post-push: `connection-health-monitor` aun devuelve `404 NOT_FOUND`.
-- [ ] Aplicar migracion en Lovable Cloud.
-- [ ] Desplegar Edge Function `connection-health-monitor` en Lovable Cloud.
+- [x] Aplicar migracion en Lovable Cloud.
+- [x] Desplegar Edge Function `connection-health-monitor` en Lovable Cloud.
+- [x] Verificar post-despliegue:
+  - `connection_alerts` HTTP 200;
+  - `connection_health_checks` HTTP 200;
+  - `connection_notification_contacts` HTTP 200;
+  - `connection-health-monitor` HTTP 200 en `dryRun=true`.
+- [x] Ejecutar prueba real segura con `sendEmails=false` y `notifyClients=false`: `9` checks insertados, `6` alertas abiertas, `0` emails enviados.
 - [ ] Configurar secretos email:
   - `RESEND_API_KEY`;
   - `ALERT_EMAIL_FROM`;
   - `ALERT_INTERNAL_EMAILS`.
+- [ ] Configurar credencial segura de invocacion recurrente para el monitor; no usar invocacion publica/anonima.
 - [ ] Decidir y configurar umbrales definitivos:
   - interno recomendado: `ALERT_INTERNAL_AFTER_OCCURRENCES=2`;
   - cliente recomendado: `ALERT_CLIENT_AFTER_OCCURRENCES=3`;
   - cliente recomendado: `ALERT_CLIENT_AFTER_MINUTES=30`.
 - [ ] Crear contactos cliente/SAT en `connection_notification_contacts` para Casa Nene, Jardi, Sa Vida y el resto de conexiones que deban recibir aviso directo.
-- [ ] Ejecutar prueba manual con `connection-health-monitor`:
-  - `dryRun=true` primero;
-  - luego real con `sendEmails=false`;
-  - finalmente real con email interno.
-- [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor(fn_url, service_key, true)`.
+- [ ] Ejecutar prueba real con email interno cuando existan secretos Resend y destinatarios internos.
+- [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor(fn_url, service_key, true)` o alternativa equivalente con secreto protegido.
 - [ ] Confirmar en `/alerts` que aparecen:
   - check historico;
-  - alerta abierta si Casa Nene/Jardi siguen sin ruta;
+  - alertas abiertas iniciales (`Sa Vida`, `Sa Pedrera`, `Cienvinos`, `Katsu`);
   - error de email solo si falta configuracion;
   - resolucion automatica al recuperar una conexion.
 
