@@ -132,6 +132,220 @@ export type Database = {
           },
         ]
       }
+      connection_alerts: {
+        Row: {
+          alert_key: string
+          alert_type: string
+          client_notified_at: string | null
+          connection_id: string
+          consecutive_failures: number
+          created_at: string
+          first_seen_at: string
+          id: string
+          internal_notified_at: string | null
+          last_check_id: string | null
+          last_error_class: string | null
+          last_error_message: string | null
+          last_notification_error: string | null
+          last_seen_at: string
+          message: string
+          metadata: Json
+          notify_client: boolean
+          notify_internal: boolean
+          occurrences: number
+          provider: string
+          recovery_notified_at: string | null
+          resolved_at: string | null
+          severity: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          alert_key: string
+          alert_type: string
+          client_notified_at?: string | null
+          connection_id: string
+          consecutive_failures?: number
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          internal_notified_at?: string | null
+          last_check_id?: string | null
+          last_error_class?: string | null
+          last_error_message?: string | null
+          last_notification_error?: string | null
+          last_seen_at?: string
+          message: string
+          metadata?: Json
+          notify_client?: boolean
+          notify_internal?: boolean
+          occurrences?: number
+          provider: string
+          recovery_notified_at?: string | null
+          resolved_at?: string | null
+          severity: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          alert_key?: string
+          alert_type?: string
+          client_notified_at?: string | null
+          connection_id?: string
+          consecutive_failures?: number
+          created_at?: string
+          first_seen_at?: string
+          id?: string
+          internal_notified_at?: string | null
+          last_check_id?: string | null
+          last_error_class?: string | null
+          last_error_message?: string | null
+          last_notification_error?: string | null
+          last_seen_at?: string
+          message?: string
+          metadata?: Json
+          notify_client?: boolean
+          notify_internal?: boolean
+          occurrences?: number
+          provider?: string
+          recovery_notified_at?: string | null
+          resolved_at?: string | null
+          severity?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connection_alerts_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connection_alerts_last_check_id_fkey"
+            columns: ["last_check_id"]
+            isOneToOne: false
+            referencedRelation: "connection_health_checks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connection_health_checks: {
+        Row: {
+          check_type: string
+          checked_at: string
+          connection_id: string
+          created_at: string
+          details: Json
+          error_class: string | null
+          error_message: string | null
+          http_status: number | null
+          id: string
+          latency_ms: number | null
+          location_name: string
+          provider: string
+          severity: string
+          status: string
+        }
+        Insert: {
+          check_type?: string
+          checked_at?: string
+          connection_id: string
+          created_at?: string
+          details?: Json
+          error_class?: string | null
+          error_message?: string | null
+          http_status?: number | null
+          id?: string
+          latency_ms?: number | null
+          location_name: string
+          provider: string
+          severity?: string
+          status: string
+        }
+        Update: {
+          check_type?: string
+          checked_at?: string
+          connection_id?: string
+          created_at?: string
+          details?: Json
+          error_class?: string | null
+          error_message?: string | null
+          http_status?: number | null
+          id?: string
+          latency_ms?: number | null
+          location_name?: string
+          provider?: string
+          severity?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connection_health_checks_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connection_notification_contacts: {
+        Row: {
+          alert_types: string[]
+          channel: string
+          connection_id: string
+          created_at: string
+          enabled: boolean
+          id: string
+          label: string
+          min_severity: string
+          notify_client: boolean
+          notify_recovery: boolean
+          target: string
+          updated_at: string
+        }
+        Insert: {
+          alert_types?: string[]
+          channel?: string
+          connection_id: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          label?: string
+          min_severity?: string
+          notify_client?: boolean
+          notify_recovery?: boolean
+          target: string
+          updated_at?: string
+        }
+        Update: {
+          alert_types?: string[]
+          channel?: string
+          connection_id?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          label?: string
+          min_severity?: string
+          notify_client?: boolean
+          notify_recovery?: boolean
+          target?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connection_notification_contacts_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       outbound_tasks: {
         Row: {
           attempts: number
@@ -1131,6 +1345,10 @@ export type Database = {
         }
       }
       has_role: { Args: { _role: string; _user_id: string }; Returns: boolean }
+      invoke_connection_health_monitor: {
+        Args: { fn_url: string; notify_clients?: boolean; service_key: string }
+        Returns: undefined
+      }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
       schedule_next_catalog_batch: {
         Args: {
