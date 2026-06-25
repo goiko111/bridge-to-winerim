@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-06-25 · Emails del monitor solo con `MONITOR_CRON_SECRET`
+- **Decisión**: Proteger `connection-health-monitor` para que `sendEmails=true` y `notifyClients=true` solo funcionen si la peticion trae `X-Monitor-Secret` y coincide con `MONITOR_CRON_SECRET`.
+- **Razón**: La funcion usa permisos internos para registrar checks/alertas. Permitir que cualquier invocacion con anon key dispare emails podria generar spam o ruido operativo. El boton manual debe poder revisar estado, pero no enviar notificaciones.
+- **Alternativa descartada**: usar service role key en el cron como unico control. Lovable Cloud no expone ese secreto y no conviene pegarlo en SQL; un secreto especifico de monitor reduce blast radius y es rotatable.
+- **Rollback**: quitar `MONITOR_CRON_SECRET` o ejecutar el monitor con `sendEmails=false`. Las alertas seguiran registrandose sin notificaciones.
+
+---
+
 ## 2026-06-25 · Migración generada por Lovable queda como no-op para evitar duplicados
 - **Decisión**: Mantener `20260625071127_29af3b55-ae05-4175-a786-5d0b54aa740e.sql` en el repositorio, pero convertirla en no-op documentado.
 - **Razón**: Lovable Cloud generó esa migración al aplicar el esquema del monitor, aunque el repositorio ya contenía la migración canónica `20260625044943_connection_health_monitor.sql`. Si ambas ejecutan el mismo DDL en un entorno nuevo, los `CREATE TRIGGER` duplicados pueden romper la instalación.

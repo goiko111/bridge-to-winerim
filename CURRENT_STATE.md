@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-25 11:20 CEST_
+_Última actualización: 2026-06-25 11:35 CEST_
 
 ## Hechos (Sistema de monitorizacion y alertas email — 2026-06-25)
 
@@ -69,15 +69,21 @@ _Última actualización: 2026-06-25 11:20 CEST_
   - `Katsu Izakaya`: `outbound_queue`.
 - Pendiente actual:
   - no hay secretos email configurados (`RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_INTERNAL_EMAILS`);
+  - se esta preparando `MONITOR_CRON_SECRET` para que solo el cron protegido pueda enviar emails;
   - no hay contactos cliente/SAT en `connection_notification_contacts`;
   - cron cada 10 minutos queda pendiente porque debe invocar la funcion con una credencial segura y no se debe activar mediante llamada publica sin secreto.
+- Cambio de seguridad preparado en codigo:
+  - `connection-health-monitor` solo acepta `sendEmails=true` / `notifyClients=true` si recibe header `X-Monitor-Secret` y coincide con `MONITOR_CRON_SECRET`;
+  - el boton manual `/alerts > Run Monitor` queda como ejecucion sin emails (`sendEmails=false`, `notifyClients=false`);
+  - nueva migracion `20260625072756_secure_connection_health_monitor_cron.sql` crea `invoke_connection_health_monitor_secure(fn_url, bearer_key, monitor_secret, notify_clients)`;
+  - validacion local post-cambio OK: bundle/parse Edge Function, `npm run build`, `npm test` (`18` tests).
 
 ### Hipotesis / riesgos monitorizacion
 
 - Si `RESEND_API_KEY` o `ALERT_EMAIL_FROM` no estan configurados, las alertas se registraran pero el envio quedara con `EMAIL_NOT_CONFIGURED`.
 - Si se activan emails a cliente sin contactos por conexion, solo habra aviso interno; los clientes/SAT requieren filas en `connection_notification_contacts` o `provider_config.alert_client_emails`.
 - La sonda de familias cada 10 minutos es ligera, pero aun asi debe mantenerse fuera de `Products` para evitar repetir el incidente Luruna.
-- No activar un cron basado en invocacion publica/anonima de la Edge Function. Antes de automatizar, configurar un secreto de ejecucion o una llamada con service key gestionada de forma segura.
+- No activar un cron basado en invocacion publica/anonima de la Edge Function. El cron debe usar `X-Monitor-Secret` con `MONITOR_CRON_SECRET`; para el bearer HTTP basta una publishable/anon key porque el envio queda protegido por el secreto propio del monitor.
 - Rollback seguro:
   - pausar/eliminar el cron que invoque `connection-health-monitor`;
   - no tocar tablas operativas de ventas/stock/catalogo;

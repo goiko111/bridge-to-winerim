@@ -183,7 +183,7 @@ export default function Alerts() {
     setRunningMonitor(true);
     try {
       const { data, error } = await supabase.functions.invoke("connection-health-monitor", {
-        body: { provider: "agora", sendEmails: true, notifyClients: true },
+        body: { provider: "agora", sendEmails: false, notifyClients: false },
       });
       if (error) throw error;
       toast({

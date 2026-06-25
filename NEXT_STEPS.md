@@ -25,14 +25,23 @@
   - `RESEND_API_KEY`;
   - `ALERT_EMAIL_FROM`;
   - `ALERT_INTERNAL_EMAILS`.
-- [ ] Configurar credencial segura de invocacion recurrente para el monitor; no usar invocacion publica/anonima.
+- [x] Preparar credencial segura de invocacion recurrente en codigo:
+  - `MONITOR_CRON_SECRET`;
+  - header `X-Monitor-Secret`;
+  - helper SQL `invoke_connection_health_monitor_secure(...)`.
+- [ ] Desplegar el hardening del monitor en Lovable Cloud:
+  - migracion `20260625072756_secure_connection_health_monitor_cron.sql`;
+  - Edge Function `connection-health-monitor`;
+  - frontend `/alerts` con `Run Monitor` sin emails.
+- [ ] Configurar secreto `MONITOR_CRON_SECRET` en Lovable Cloud.
 - [ ] Decidir y configurar umbrales definitivos:
   - interno recomendado: `ALERT_INTERNAL_AFTER_OCCURRENCES=2`;
   - cliente recomendado: `ALERT_CLIENT_AFTER_OCCURRENCES=3`;
   - cliente recomendado: `ALERT_CLIENT_AFTER_MINUTES=30`.
 - [ ] Crear contactos cliente/SAT en `connection_notification_contacts` para Casa Nene, Jardi, Sa Vida y el resto de conexiones que deban recibir aviso directo.
-- [ ] Ejecutar prueba real con email interno cuando existan secretos Resend y destinatarios internos.
-- [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor(fn_url, service_key, true)` o alternativa equivalente con secreto protegido.
+- [ ] Ejecutar prueba negativa: `sendEmails=true` sin `X-Monitor-Secret` debe devolver 403 `MONITOR_SECRET_REQUIRED`.
+- [ ] Ejecutar prueba real con email interno cuando existan secretos Resend, destinatarios internos y `MONITOR_CRON_SECRET`.
+- [ ] Activar cron cada `10` minutos usando `public.invoke_connection_health_monitor_secure(fn_url, anon_key, monitor_secret, true)`.
 - [ ] Confirmar en `/alerts` que aparecen:
   - check historico;
   - alertas abiertas iniciales (`Sa Vida`, `Sa Pedrera`, `Cienvinos`, `Katsu`);

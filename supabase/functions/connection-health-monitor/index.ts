@@ -69,6 +69,13 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function hasValidMonitorSecret(req: Request): boolean {
+  const expected = Deno.env.get("MONITOR_CRON_SECRET") || Deno.env.get("ALERT_MONITOR_SECRET");
+  if (!expected?.trim()) return false;
+  const provided = req.headers.get("x-monitor-secret") || req.headers.get("x-cron-secret");
+  return provided === expected;
+}
+
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.map((x) => x.trim()).filter(Boolean)));
 }
@@ -656,9 +663,21 @@ Deno.serve(async (req: Request) => {
 
     const provider = (body.provider || "agora").toLowerCase();
     const includeDisabled = body.includeDisabled === true;
-    const sendEmails = body.sendEmails !== false;
-    const notifyClients = body.notifyClients !== false;
+    const requestedSendEmails = body.sendEmails === true;
+    const requestedNotifyClients = body.notifyClients === true;
     const dryRun = body.dryRun === true;
+    const cronAuthorized = hasValidMonitorSecret(req);
+
+    if ((requestedSendEmails || requestedNotifyClients) && !cronAuthorized) {
+      return jsonResponse({
+        ok: false,
+        error: "MONITOR_SECRET_REQUIRED",
+        message: "Email notifications require X-Monitor-Secret and MONITOR_CRON_SECRET.",
+      }, 403);
+    }
+
+    const sendEmails = requestedSendEmails && cronAuthorized;
+    const notifyClients = requestedNotifyClients && cronAuthorized;
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
