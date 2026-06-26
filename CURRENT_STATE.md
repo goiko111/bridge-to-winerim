@@ -2,7 +2,46 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-26 12:18 CEST_
+_Última actualización: 2026-06-26 12:38 CEST_
+
+## Hechos (Flota Agora · auditoria y backfill historial 0->0 — 2026-06-26 12:38 CEST)
+
+- Se ejecuto una nueva auditoria viva de las `12` conexiones Agora y se documento `AGORA_FLEET_AUDIT_2026-06-26_1238.md`.
+- La auditoria de POS/Agora fue observacional:
+  - no se ejecuto `fetch-catalog` masivo;
+  - no se reintento `outbound_tasks`;
+  - no se escribio en Agora.
+- Se aplico el mismo criterio de Cienvinos a toda la flota para ventas ya marcadas `stock_sync_log.SUCCESS` con `previousStock === newStock`:
+  - se uso `POST /api/v2/sales/import`;
+  - no se modifico stock;
+  - se usaron `orderId` deterministas;
+  - se anotaron las filas corregidas con `winerim_response.salesImportBackfill`.
+- Backfill completado:
+  - `Casa Nene`: `10` filas anotadas, `7` importadas y `1` skipped idempotente;
+  - `Katsu Izakaya`: `1` fila historica importada; ahora `3/6` `SUCCESS` tienen historial importado cuando eran `0->0`;
+  - `Kava`: `29` filas anotadas, `14` grupos importados;
+  - `Restaurante Jardi`: `9` filas anotadas, `9` grupos importados;
+  - `Restaurante Cienvinos Ecija`: sin pendientes nuevos; ya estaba completo;
+  - `Sa Pedrera`: `69/90` `SUCCESS` ya tienen `salesImportBackfill`; quedan `19` filas `0->0` sin backfill porque Winerim ya no expone la misma variante o devuelve `404`.
+- Sa Pedrera:
+  - se recuperaron `2` grupos con stockId actual de la misma variante:
+    - `C E508- Cygnus Sador Brut Nature Reserva [copa]`: `330722 -> 340357`;
+    - `C B321- EL Perro Verde [copa]`: `327364 -> 340370`.
+  - no se forzaron conversiones de variante, por ejemplo copas donde Winerim solo expone botella.
+- Estado operativo resumido tras auditoria:
+  - `OPERATIVA`: `Katsu Izakaya`, `Restaurante Cienvinos Ecija`;
+  - `OPERATIVA PARCIAL`: `Casa Nene`, `Kava`, `Restaurante Jardi`;
+  - `NO DESCUENTA`: `La Candela de Triana`, `Luruna` (ventas llegan, pero `mapped=0` y `stock_sync_log=0`);
+  - `DEUDA ALTA`: `Sa Pedrera` (sonda OK, catalogo completo, pero cursor atrasado, stock failures y cola masiva);
+  - `BLOQUEADA`: `Sa Vida` (sonda `401`);
+  - `READ_ONLY/LEGACY`: `Baco Getafe`, `Don Bernardo Ponzano`, `Don Bernardo Santander`.
+
+### Hipotesis / riesgos flota Agora 2026-06-26 12:38
+
+- El fallback `sales/import` ya se observa en runtime en ventas nuevas de `Katsu`, por lo que la Edge Function desplegada parece contener el cambio; aun falta validar venta nueva en Cienvinos especificamente.
+- `La Candela` y `Luruna` probablemente siguen vendiendo desde legacy o familias sin mapping Winerim.
+- `Sa Pedrera` no debe recibir retries masivos: los `19` pendientes requieren decision de negocio/variante, no fuerza tecnica.
+- `Sa Vida` no debe procesar cola hasta corregir el `401` de Agora.
 
 ## Hechos (Cienvinos · ventas Winerim con stock 0 — 2026-06-26 11:58 CEST)
 

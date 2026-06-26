@@ -81,6 +81,13 @@
 - [ ] Crear un checklist individual por cada integracion Agora activa o nueva usando `AGORA_INTEGRATION_CHECKLIST.md`.
 - [x] Casa Nene: checklist individual creado en `AGORA_CHECKLIST_CASA_NENE_2026-06-25.md`; estado `PAUSED`.
 - [x] Ejecutar auditoria viva 2026-06-26 y documentar `AGORA_FLEET_AUDIT_2026-06-26.md`.
+- [x] Ejecutar reauditoria viva 2026-06-26 12:38 y documentar `AGORA_FLEET_AUDIT_2026-06-26_1238.md`.
+- [x] Aplicar backfill Winerim `sales/import` para ventas Agora ya `SUCCESS` con stock `0->0`:
+  - Casa Nene: `10` filas anotadas;
+  - Katsu: `1` fila historica anotada;
+  - Kava: `29` filas anotadas;
+  - Jardi: `9` filas anotadas;
+  - Sa Pedrera: `69/90` `SUCCESS` con `salesImportBackfill`, quedan `19` filas no forzadas por variante/404.
 - [ ] Desplegar `agora-proxy` con el guard de `buildSalesResolutionMap()` para no resolver ventas por mappings de productos con tracking `HIDDEN`.
 - [ ] Tras deploy, confirmar que ventas nuevas de productos/formats ocultos no generan nuevos `stock_sync_log.FAILED`.
 - [ ] Para cada cliente, no marcar `LIVE_AUTOMATIC` hasta tener venta real mapeada y `stock_sync_log.SUCCESS` por cada formato aplicable.
@@ -93,6 +100,10 @@
 - [ ] Sa Vida: no reintentar deuda outbound/stock hasta que la sonda vuelva a `success=true`.
 - [x] Sa Pedrera: identificar causa de `C B310- Albenc [copa]`: `serve_by_glass=false`, tracking `GLASS=HIDDEN`, mapping `CONFIRMED`.
 - [ ] Sa Pedrera: tras deploy del guard, confirmar que `C B310- Albenc [copa]` deja de generar nuevos fallos; decidir si se rechaza mapping historico o se corrige `serve_by_glass`/variante en Winerim.
+- [ ] Sa Pedrera: resolver los `19` `SUCCESS 0->0` que no se pudieron importar a historial:
+  - copas donde Winerim solo expone botella actual (`B345`, `T33`, `B310`, `T1`, `T45`);
+  - IDs Winerim con `GET /stock/wine/{id}=404` (`T75`, `T39`);
+  - botella cuyo stock actual expone copa (`E522`).
 - [ ] Sa Pedrera: clasificar deuda outbound masiva antes de cualquier retry; no procesar en bloque.
 - [ ] Sa Pedrera: validar por venta real que una botella y una copa Winerim descuentan stock y aparecen en historial Winerim.
 - [x] Katsu Izakaya: revisar tareas abiertas; verificacion viva 2026-06-25 17:04 CEST confirma `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.

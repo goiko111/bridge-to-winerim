@@ -1009,3 +1009,13 @@
 - **Decisión**: Importar en Winerim las `34` lineas de Cienvinos ya sincronizadas como `SUCCESS` pero sin movimiento de stock (`0 -> 0`) usando `POST /api/v2/sales/import`.
 - **Razón**: El cliente necesitaba que esas ventas ya procesadas aparezcan tambien en historial Winerim. El endpoint import registra venta sin modificar inventario; se verifico idempotencia con una segunda ejecucion (`imported=0`, `skipped=34`, `failed=0`).
 - **Alternativa descartada**: modificar stock a mano o reabrir/reintentar `stock_sync_log`. Habria alterado inventario real o podria duplicar descuentos; el problema era de historial, no de stock operativo.
+
+## 2026-06-26 · Extender backfill de historial 0->0 a la flota Agora
+- **Decisión**: Aplicar el mismo backfill idempotente de Cienvinos a todas las conexiones Agora con filas `stock_sync_log.SUCCESS` donde `previousStock === newStock` y no existia `salesImport` previo.
+- **Razón**: Esas ventas ya habian sido aceptadas por el flujo de stock, pero al no moverse el inventario no garantizaban historial visible en Winerim. `POST /api/v2/sales/import` resuelve el historico sin tocar stock y con `orderId` determinista.
+- **Alternativa descartada**: esperar a que cada cliente reporte individualmente la falta de historial. Mantendria descuadres visibles ya detectables y obligaria a repetir el mismo diagnostico caso por caso.
+
+## 2026-06-26 · No forzar backfill Sa Pedrera cuando Winerim no expone la misma variante
+- **Decisión**: En Sa Pedrera, importar solo los casos donde Winerim expone actualmente la misma variante con un stockId nuevo; no convertir ventas de copa a botella ni usar stockIds que Winerim devuelve como inaccesibles.
+- **Razón**: Varias ventas historicas apuntan a stockIds antiguos o a variantes que hoy ya no existen como tal en Winerim (`copa` vendida, pero Winerim solo expone `botella`, o `GET /stock/wine/{id}` devuelve 404). Forzarlas podria crear historial en una variante incorrecta.
+- **Alternativa descartada**: importar todas las ventas pendientes contra el stockId disponible aunque sea de otra variante. Eso maquillaria el historico, pero romperia la trazabilidad copa/botella y podria confundir stock/margenes.
