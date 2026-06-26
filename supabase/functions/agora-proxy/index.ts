@@ -519,6 +519,7 @@ function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
 function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mappingRows: any[] | null | undefined): Map<string, { winerim_wine_id: string; format: string }> {
   const resolutionMap = new Map<string, { winerim_wine_id: string; format: string }>();
   const rejectedProductIds = new Set<string>();
+  const trackedProductIds = new Set<string>();
 
   for (const m of (mappingRows || [])) {
     if (m.provider_product_id && m.status === "REJECTED") {
@@ -529,6 +530,7 @@ function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mapping
   for (const t of (trackingRows || [])) {
     const productId = String(t.agora_product_id || "");
     if (!productId || rejectedProductIds.has(productId)) continue;
+    trackedProductIds.add(productId);
     if (t.winerim_wine_id && (t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")) {
       resolutionMap.set(productId, { winerim_wine_id: t.winerim_wine_id, format: t.format });
     }
@@ -537,6 +539,7 @@ function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mapping
   for (const m of (mappingRows || [])) {
     const productId = String(m.provider_product_id || "");
     if (!productId || rejectedProductIds.has(productId)) continue;
+    if (trackedProductIds.has(productId) && !resolutionMap.has(productId)) continue;
     if (m.winerim_wine_id && m.status === "CONFIRMED" && !resolutionMap.has(productId)) {
       resolutionMap.set(productId, { winerim_wine_id: m.winerim_wine_id, format: m.format_type || "BOTTLE" });
     }

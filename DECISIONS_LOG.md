@@ -989,3 +989,13 @@
 - **Decisión**: Marcar como resueltas `4` tareas `AGORA_HIDE_PRODUCT` bloqueadas tras verificar en master data que los `8` productos afectados ya estaban no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
 - **Razón**: Eran falsos positivos operativos por respuesta incompleta (`unexpected end of file`) despues de una ocultacion que ya se habia aplicado. Mantenerlas `BLOCKED` dejaba Katsu con alerta abierta aunque la pantalla estaba correcta.
 - **Alternativa descartada**: reintentar las ocultaciones en bloque. Podia recrear ruido sin aportar cambio funcional porque el estado destino ya estaba verificado.
+
+## 2026-06-26 · Agora: tracking oculto bloquea fallback de mapping en ventas
+- **Decisión**: Cambiar `buildSalesResolutionMap()` para que un producto presente en `winerim_push_tracking` solo resuelva ventas si su tracking esta `VERIFIED` o `PUSHED`; si esta `HIDDEN` u otro estado no verificado, no se usa el fallback de `product_mappings.CONFIRMED`.
+- **Razón**: La auditoria detecto dos fallos reales: `Katsu C Saiaz Rosado` y `Sa Pedrera C B310- Albenc [copa]` tenian tracking oculto, pero seguian resolviendo ventas por mapping confirmado y por tanto intentaban descontar stock Winerim. El tracking es la fuente mas actual sobre si el formato esta disponible para venta.
+- **Alternativa descartada**: corregir solo esos dos mappings a mano. Habria parado el ruido puntual, pero dejaria el bug latente para cualquier formato oculto por inactivo, sin precio, sin `serve_by_glass` o rollback visual.
+
+## 2026-06-26 · Auditoria Agora: no ejecutar `fetch-catalog` en bloque para comprobar automaticos
+- **Decisión**: Comprobar catalogo mediante `winerim_wines` + `winerim_push_tracking` + colas, sin lanzar `fetch-catalog` masivo en todas las conexiones.
+- **Razón**: `fetch-catalog` puede disparar `evaluate-auto-push` y encolar escrituras reales cuando hay flags automaticos activos. La auditoria pedida era diagnostica; no debia crear o actualizar productos sin revisar cada conexion.
+- **Alternativa descartada**: refrescar catalogo Winerim de todos los clientes en una sola pasada. Daria datos recientes, pero podria tocar Agoras en produccion, reactivar deuda o repetir el bucle de `AUTO_UPDATE` visto en Katsu.

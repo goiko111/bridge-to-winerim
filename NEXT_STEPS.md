@@ -52,14 +52,19 @@
 ## P0 — Flota Agora · checklist auditoria 2026-06-25
 - [ ] Crear un checklist individual por cada integracion Agora activa o nueva usando `AGORA_INTEGRATION_CHECKLIST.md`.
 - [x] Casa Nene: checklist individual creado en `AGORA_CHECKLIST_CASA_NENE_2026-06-25.md`; estado `PAUSED`.
+- [x] Ejecutar auditoria viva 2026-06-26 y documentar `AGORA_FLEET_AUDIT_2026-06-26.md`.
+- [ ] Desplegar `agora-proxy` con el guard de `buildSalesResolutionMap()` para no resolver ventas por mappings de productos con tracking `HIDDEN`.
+- [ ] Tras deploy, confirmar que ventas nuevas de productos/formats ocultos no generan nuevos `stock_sync_log.FAILED`.
 - [ ] Para cada cliente, no marcar `LIVE_AUTOMATIC` hasta tener venta real mapeada y `stock_sync_log.SUCCESS` por cada formato aplicable.
-- [ ] Casa Nene: recuperar conectividad externa Agora (`NETWORK_UNREACHABLE / No route to host`) antes de refrescar ventas o reactivar intradia.
+- [x] Casa Nene: conectividad recuperada en auditoria 2026-06-26; sonda OK, ventas hasta `2026-06-25`, `84` stock `SUCCESS`.
 - [ ] Casa Nene: validar en runtime el parche de idempotencia intradia por total diario con `force=true` y confirmar que no descuenta de nuevo ventas ya aplicadas.
 - [ ] Casa Nene: si el test da `synced=0` y stock sin cambios, reactivar `intraday_sales_sync_enabled=true` solo para esta conexion.
-- [ ] Jardi: recuperar ruta/firewall/DDNS/puerto (`NETWORK_UNREACHABLE`) antes de procesar `3 FAILED` o prometer ventas/stock al cliente.
+- [x] Jardi: conectividad recuperada en auditoria 2026-06-26; sonda OK, ventas hasta `2026-06-25`, `22` stock `SUCCESS`.
+- [ ] Jardi: revisar `3 FAILED` y los `7` formatos de copa faltantes (`173/180` verificados).
 - [ ] Sa Vida: corregir credencial/API token o cabecera Agora; sonda viva actual devuelve `401`.
 - [ ] Sa Vida: no reintentar deuda outbound/stock hasta que la sonda vuelva a `success=true`.
-- [ ] Sa Pedrera: investigar fallo repetido `Variant 'copa' not found for wine 284166` (`C B310- Albenc [copa]`) y decidir si se bloquea mapping/copa o se corrige stockId/variante en Winerim.
+- [x] Sa Pedrera: identificar causa de `C B310- Albenc [copa]`: `serve_by_glass=false`, tracking `GLASS=HIDDEN`, mapping `CONFIRMED`.
+- [ ] Sa Pedrera: tras deploy del guard, confirmar que `C B310- Albenc [copa]` deja de generar nuevos fallos; decidir si se rechaza mapping historico o se corrige `serve_by_glass`/variante en Winerim.
 - [ ] Sa Pedrera: clasificar deuda outbound masiva antes de cualquier retry; no procesar en bloque.
 - [ ] Sa Pedrera: validar por venta real que una botella y una copa Winerim descuentan stock y aparecen en historial Winerim.
 - [x] Katsu Izakaya: revisar tareas abiertas; verificacion viva 2026-06-25 17:04 CEST confirma `0 QUEUED / 0 RUNNING / 0 FAILED / 0 BLOCKED`.
@@ -67,10 +72,11 @@
 - [x] Katsu Izakaya: pausar de nuevo `auto_push_on_update=false` al confirmar que el cron reencola tandas repetidas `AUTO_UPDATE`; mantener altas e intradia activas.
 - [x] Katsu Izakaya: activar `provider_config.intraday_sales_sync_enabled=true` y validar dispatcher `sales-stock` con `auto-sync-sales` + `sync-intraday-sales` OK.
 - [x] Katsu Izakaya: confirmar estructura visual viva: raiz `VINOS` con familias Winerim por tipo y raiz `Copas de Vino` con `COPAS WINERIM`.
-- [ ] Katsu Izakaya: pedir prueba real de venta desde botones Winerim hoy; validar que el siguiente ciclo intradia deja `sales_line_items.mapped=true` + `stock_sync_log.SUCCESS`.
+- [x] Katsu Izakaya: prueba real ya observada el 2026-06-26; hay copas Winerim con `stock_sync_log.SUCCESS`.
+- [ ] Katsu Izakaya: revisar `C Saiaz Rosado` (`272890`): Winerim lo devuelve 404 / cache `is_active=false`, tracking `HIDDEN`, mapping aun confirmado. Tras deploy del guard, confirmar que no vuelva a descontar.
 - [ ] Katsu Izakaya: corregir clasificador `isWineCandidate()` para respetar reglas `wine_family_rules` y no marcar comida/bebida de `CARTA`/`KATSU LIQUIDO` como candidato operativo.
 - [ ] Katsu Izakaya: corregir idempotencia de `auto_push_on_update` antes de reactivarlo; debe devolver `no_catalog_changes_detected` tras una tanda ya aplicada.
-- [ ] La Candela de Triana: resolver por que hay ventas hasta `2026-06-24` pero `mappedCount=0` y `stock_sync_log=0`; prioridad a mappings/venta desde botones Winerim.
+- [ ] La Candela de Triana: resolver por que hay ventas hasta `2026-06-25` pero `mappedCount=0` y `stock_sync_log=0`; prioridad a mappings/venta desde botones Winerim.
 - [ ] Luruna: resolver falta de stock reciente desde `2026-06-08`; revisar `winerim_push_tracking.QUEUED=5` y deuda outbound `10 FAILED / 58 BLOCKED`.
 - [ ] Kava: clasificar deuda historica `7 FAILED / 9 BLOCKED` outbound y `13 FAILED / 26 BLOCKED` stock; no hay errores recientes.
 - [ ] Cienvinos: revisar deuda outbound `3 FAILED / 7 BLOCKED`; ventas y stock recientes ya funcionan (`34 SUCCESS`).

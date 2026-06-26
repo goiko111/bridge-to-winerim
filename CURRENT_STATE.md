@@ -2,7 +2,54 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-25 17:29 CEST_
+_Última actualización: 2026-06-26 11:35 CEST_
+
+## Hechos (Flota Agora · auditoria viva — 2026-06-26 11:35 CEST)
+
+- Se ejecuto auditoria viva de las `12` conexiones Agora registradas en Lovable Cloud.
+- Se documento el informe operativo `AGORA_FLEET_AUDIT_2026-06-26.md`.
+- La auditoria reviso:
+  - sonda viva `agora-proxy` action `test`;
+  - `pos_connections`;
+  - ultimas ventas en `sales_events`;
+  - lineas mapeadas en `sales_line_items`;
+  - descuentos Winerim en `stock_sync_log`;
+  - publicaciones Winerim -> Agora en `winerim_push_tracking`;
+  - cola `outbound_tasks`;
+  - alertas persistentes `connection_alerts`.
+- Resultado por conexion:
+  - `Casa Nene`: sonda OK, ventas hasta `2026-06-25`, `84` descuentos `SUCCESS` en 14 dias, catalogo `307/307`; queda `1` tarea `FAILED`.
+  - `Katsu Izakaya`: sonda OK, ventas Winerim reales ya descontando el `2026-06-26`; `6 SUCCESS` y `1 FAILED` en 14 dias; catalogo `137/137`; sin cola abierta.
+  - `Kava`: sonda OK, ventas/stock recientes OK (`45 SUCCESS`), catalogo `204/221`; mantiene `7 FAILED / 9 BLOCKED` en cola.
+  - `La Candela de Triana`: sonda OK y ventas hasta `2026-06-25`, pero `mapped=0` y `stock_sync_log=0`; no esta descontando stock.
+  - `Luruna`: sonda OK y ventas hasta `2026-06-25`, pero `mapped=0` en 14 dias y sin stock reciente; mantiene `10 FAILED / 58 BLOCKED`.
+  - `Restaurante Cienvinos Ecija`: sonda OK, ventas hasta `2026-06-25`, `34 SUCCESS`, catalogo `499/499`; mantiene `3 FAILED / 7 BLOCKED`.
+  - `Restaurante Jardi`: sonda OK (conectividad recuperada), ventas hasta `2026-06-25`, `22 SUCCESS`, catalogo `173/180`; quedan `3 FAILED` y faltan `7` formatos de copa.
+  - `Sa Pedrera`: sonda OK, catalogo `470/470`, pero cursor `last_business_day_synced=2026-06-17`, cola masiva `310 FAILED / 12556 BLOCKED` y `36 FAILED` de stock en 14 dias.
+  - `Sa Vida`: sonda actual devuelve `401 Agora responded 401`; no hay ventas 7d ni stock reciente; no reintentar cola hasta corregir token/API.
+  - `Baco Getafe`: read-only/legacy, sonda OK, no automatico.
+  - `Don Bernardo Ponzano` y `Don Bernardo Santander`: read-only onboarding, sonda OK, historico analitico sin stock.
+- Hallazgo nuevo Katsu:
+  - `C Saiaz Rosado [copa]` fallo el `2026-06-26` porque Winerim responde `404` para wineId `272890`;
+  - en cache Winerim el vino esta `is_active=false`, tracking `BOTTLE/GLASS` esta `HIDDEN`, pero `product_mappings` seguia `CONFIRMED`.
+- Hallazgo nuevo Sa Pedrera:
+  - `C B310- Albenc [copa]` falla repetidamente;
+  - el vino `284166` esta activo, pero `serve_by_glass=false`;
+  - tracking `GLASS` esta `HIDDEN`, pero `product_mappings` seguia `CONFIRMED`.
+- Cambio aplicado en codigo:
+  - `buildSalesResolutionMap()` ahora no usa el fallback de `product_mappings.CONFIRMED` si el mismo producto existe en `winerim_push_tracking` pero no esta `VERIFIED`/`PUSHED`;
+  - objetivo: evitar que formatos ocultos (`HIDDEN`) sigan resolviendo ventas como descontables.
+- Validacion local:
+  - `npm test -- --run` OK (`18` tests);
+  - `npm run build` OK;
+  - bundle/parse de `supabase/functions/agora-proxy/index.ts` OK.
+
+### Hipotesis / riesgos 2026-06-26
+
+- `La Candela` y `Luruna` probablemente venden desde legacy o familias sin resolucion Winerim, aunque el catalogo Winerim este publicado.
+- `Katsu Saiaz Rosado` y `Sa Pedrera B310 Albenc copa` eran sintomas del mismo problema: tracking oculto, pero mapping confirmado aun resolvia ventas.
+- El guard aplicado evita nuevos mapeos por productos ocultos tras deploy, pero ventas ya guardadas/mapeadas antes del deploy pueden conservar su estado historico.
+- `auto_push_on_update` sigue siendo seguro solo donde no se observe bucle; en Katsu, Cienvinos y Jardi permanece apagado por seguridad hasta corregir idempotencia de updates existentes.
 
 ## Hechos (Katsu Izakaya · puesta en marcha automática — 2026-06-25 17:29 CEST)
 
