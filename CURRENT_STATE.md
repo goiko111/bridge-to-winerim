@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-26 12:09 CEST_
+_Última actualización: 2026-06-26 12:18 CEST_
 
 ## Hechos (Cienvinos · ventas Winerim con stock 0 — 2026-06-26 11:58 CEST)
 
@@ -41,11 +41,16 @@ _Última actualización: 2026-06-26 12:09 CEST_
   - respuesta Winerim: `imported=34`, `skipped=0`, `failed=0`;
   - se anoto cada fila original de `stock_sync_log` con `winerim_response.salesImportBackfill`;
   - verificacion idempotente posterior: misma tanda devuelve `imported=0`, `skipped=34`, `failed=0`.
+- Verificacion visual en Winerim admin/editor:
+  - se entro como admin y se impersono `cienvinosecija` (`menu/861`);
+  - en `ERP > Historial` (`/erp/861/sales`) aparecen las ventas TPV importadas;
+  - la vista muestra `40` unidades y `236,50 €`, coincidiendo con el backfill;
+  - ejemplos visibles: `Cordon Rouge Brut` `2 uds`, `Ermita del Monte` en botella, `Ramon Bilbao` en copa y `Convento San Francisco Primer Año` en copa.
 
 ### Hipotesis / riesgos Cienvinos
 
 - El editor de Winerim no mostraba esas ventas porque Winerim documenta que `PUT /stock/{stockId}` registra venta al bajar stock, pero aqui no habia bajada (`0 -> 0`).
-- El historico identificado de Cienvinos ya queda importado sin tocar stock, pero falta confirmacion visual del cliente en el editor Winerim.
+- El historico identificado de Cienvinos ya queda importado sin tocar stock y aparece visualmente en `ERP > Historial`; falta confirmacion del cliente/equipo si quieren validar desde su propia sesion.
 - Para ventas futuras con stock `0`, falta desplegar `agora-proxy` en Lovable Cloud; el backfill manual solo cubre las `34` lineas actuales.
 - Antes de confirmar cierre completo, falta desplegar `agora-proxy` y ejecutar una venta real o reproceso controlado de Cienvinos.
 

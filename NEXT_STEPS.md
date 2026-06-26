@@ -23,7 +23,12 @@
   - `stock_sync_log.SUCCESS` incluye `winerim_response.salesImport`;
   - Winerim muestra historial de venta;
   - el stock permanece en `0`.
-- [ ] Confirmar visualmente con el cliente/equipo Winerim que las ventas importadas aparecen en historial.
+- [x] Confirmar visualmente en Winerim admin/editor que las ventas importadas aparecen en `ERP > Historial`:
+  - `40` unidades;
+  - `236,50 €`;
+  - fecha visible `24 Junio 2026`;
+  - ejemplos: `Cordon Rouge Brut`, `Ermita del Monte`, `Ramon Bilbao`, `Convento San Francisco Primer Año`.
+- [ ] Confirmar con el cliente/equipo Winerim si tambien lo ven desde su propia sesion.
 
 ## P0 — Monitorizacion conexiones + emails 2026-06-25
 - [x] Crear migracion `20260625044943_connection_health_monitor.sql` con `connection_health_checks`, `connection_alerts` y `connection_notification_contacts`.
