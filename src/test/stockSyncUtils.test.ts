@@ -8,6 +8,7 @@ import {
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
+  salesImportQtyWhenStockDidNotMove,
   variantForAgoraFormat,
 } from "../../supabase/functions/_shared/stockSyncUtils";
 
@@ -105,5 +106,25 @@ describe("stock sync utils", () => {
     expect(isTerminalStockSyncError("GET /stock/wine/123 -> 404: Wine not found")).toBe(true);
     expect(isTerminalStockSyncError("Variant 'copa' not found for wine 123")).toBe(true);
     expect(isTerminalStockSyncError("timeout connecting to Winerim")).toBe(false);
+  });
+
+  it("imports sales history only when stock did not move", () => {
+    expect(salesImportQtyWhenStockDidNotMove({
+      soldQty: 3,
+      previousStock: 0,
+      newStock: 0,
+    })).toBe(3);
+
+    expect(salesImportQtyWhenStockDidNotMove({
+      soldQty: 3,
+      previousStock: 10,
+      newStock: 7,
+    })).toBe(0);
+
+    expect(salesImportQtyWhenStockDidNotMove({
+      soldQty: 0,
+      previousStock: 0,
+      newStock: 0,
+    })).toBe(0);
   });
 });

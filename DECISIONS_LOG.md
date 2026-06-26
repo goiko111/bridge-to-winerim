@@ -999,3 +999,8 @@
 - **Decisión**: Comprobar catalogo mediante `winerim_wines` + `winerim_push_tracking` + colas, sin lanzar `fetch-catalog` masivo en todas las conexiones.
 - **Razón**: `fetch-catalog` puede disparar `evaluate-auto-push` y encolar escrituras reales cuando hay flags automaticos activos. La auditoria pedida era diagnostica; no debia crear o actualizar productos sin revisar cada conexion.
 - **Alternativa descartada**: refrescar catalogo Winerim de todos los clientes en una sola pasada. Daria datos recientes, pero podria tocar Agoras en produccion, reactivar deuda o repetir el bucle de `AUTO_UPDATE` visto en Katsu.
+
+## 2026-06-26 · Agora: registrar historial Winerim cuando el stock no se mueve
+- **Decisión**: Anadir en `agora-proxy` un fallback a `POST /api/v2/sales/import` cuando una venta mapeada llega a Winerim pero el `PUT /stock/{stockId}` no cambia stock (`previousStock === newStock`).
+- **Razón**: En Cienvinos las ventas estaban llegando y el stock sync quedaba `SUCCESS`, pero Winerim tenia variantes a `stock=0`; el `PUT` aceptado era `0 -> 0`, por lo que no se generaba una bajada visible ni historial de venta. `sales/import` registra venta sin modificar inventario y es idempotente por `orderId`.
+- **Alternativa descartada**: usar siempre `sales/import` ademas del `PUT`. Podria duplicar historial cuando el stock si baja de verdad, porque Winerim documenta que bajar stock mediante `PUT /stock/{stockId}` ya registra una venta como efecto lateral.

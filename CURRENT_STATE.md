@@ -2,7 +2,44 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-26 11:35 CEST_
+_Última actualización: 2026-06-26 11:58 CEST_
+
+## Hechos (Cienvinos · ventas Winerim con stock 0 — 2026-06-26 11:58 CEST)
+
+- Se reviso `Restaurante Cienvinos Ecija` contra Lovable Cloud y API Winerim v2 sin imprimir tokens.
+- Conexion `21ee3345-1090-4e83-94f2-43126d6e7695`:
+  - `enabled=true`;
+  - `write_mode=XML_IMPORT`;
+  - `last_sync_at=2026-06-26T09:50:25.025+00:00`;
+  - `last_business_day_synced=2026-06-25`;
+  - tiene token Winerim configurado.
+- Desde `2026-06-20`, Cienvinos tiene `34` filas `stock_sync_log.SUCCESS` y `0` `FAILED/BLOCKED/PENDING` en stock.
+- Muestra reciente:
+  - `C Cordon Rouge Brut [copa]`, wineId `239982`, stockId `316850`, `previousStock=0`, `newStock=0`, `soldQty=2`;
+  - `B Ermita del Monte [botella]`, wineId `239324`, stockId `274678`, `previousStock=0`, `newStock=0`, `soldQty=3`;
+  - `C Ramon Bilbao [copa]`, wineId `242177`, stockId `277879`, `previousStock=0`, `newStock=0`, `soldQty=4`.
+- Verificacion API Winerim del ejemplo `C Cordon Rouge Brut [copa]`:
+  - `GET /api/v2/stock/wine/239982` responde HTTP 200;
+  - variante `copa` stockId `316850` tiene `stock=0` y `stockActive=false`.
+- Diagnostico:
+  - Agora -> Lovable Cloud funciona para estas ventas;
+  - mapping POS -> Winerim funciona para estas lineas;
+  - la llamada actual a Winerim aceptaba el `PUT /stock/{stockId}`, pero al ser `0 -> 0` no habia bajada real de stock que Winerim pudiera reflejar como descuento/historial.
+- Cambio aplicado en codigo:
+  - `agora-proxy` ahora llama a `POST /api/v2/sales/import` solo cuando el stock no se mueve (`previousStock === newStock`);
+  - la importacion usa `orderId` determinista para idempotencia y no modifica stock;
+  - se aplica en cierre diario, intradia incremental e intradia por total diario;
+  - si el stock baja de verdad, no se llama a `sales/import` para evitar duplicar historial.
+- Validacion local:
+  - `npm test -- --run` OK (`19` tests);
+  - `npm run build` OK;
+  - bundle/parse de `supabase/functions/agora-proxy/index.ts` OK.
+
+### Hipotesis / riesgos Cienvinos
+
+- El editor de Winerim no mostraba esas ventas porque Winerim documenta que `PUT /stock/{stockId}` registra venta al bajar stock, pero aqui no habia bajada (`0 -> 0`).
+- El cambio no repara historico ya marcado `SUCCESS`; hace falta un backfill/import controlado para las ventas ya procesadas con `previousStock=0` si el cliente quiere verlas en historial.
+- Antes de confirmar en cliente, falta desplegar `agora-proxy` en Lovable Cloud y ejecutar una venta real o reproceso controlado de Cienvinos.
 
 ## Hechos (Flota Agora · auditoria viva — 2026-06-26 11:35 CEST)
 

@@ -2,6 +2,23 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Cienvinos / historial Winerim con stock 0 2026-06-26
+- [x] Confirmar que Cienvinos tiene ventas mapeadas y `stock_sync_log.SUCCESS` recientes.
+- [x] Confirmar patron del fallo reportado: ventas con `previousStock=0` y `newStock=0`, aceptadas por Winerim pero sin bajada real.
+- [x] Implementar fallback `POST /api/v2/sales/import` solo cuando el stock no se mueve.
+- [x] Cubrir el calculo con test unitario.
+- [x] Validar localmente:
+  - `npm test -- --run` OK (`19` tests);
+  - `npm run build` OK;
+  - bundle/parse de `agora-proxy` OK.
+- [ ] Desplegar `agora-proxy` en Lovable Cloud.
+- [ ] Probar con Cienvinos una venta nueva de una variante con stock `0` y confirmar que:
+  - `stock_sync_log.SUCCESS` incluye `winerim_response.salesImport`;
+  - Winerim muestra historial de venta;
+  - el stock permanece en `0`.
+- [ ] Decidir si se hace backfill idempotente de las ventas ya procesadas en Cienvinos con `previousStock=0/newStock=0`.
+- [ ] Si se hace backfill, limitarlo por connection/day y registrar snapshot previo para rollback operativo.
+
 ## P0 — Monitorizacion conexiones + emails 2026-06-25
 - [x] Crear migracion `20260625044943_connection_health_monitor.sql` con `connection_health_checks`, `connection_alerts` y `connection_notification_contacts`.
 - [x] Crear Edge Function `connection-health-monitor` en modo observacional.

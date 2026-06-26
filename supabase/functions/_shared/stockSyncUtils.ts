@@ -90,6 +90,21 @@ export function isTerminalStockSyncError(error: unknown): boolean {
   );
 }
 
+export function salesImportQtyWhenStockDidNotMove(input: {
+  soldQty: unknown;
+  previousStock: unknown;
+  newStock: unknown;
+}): number {
+  const soldQty = Math.ceil(Math.abs(Number(input.soldQty || 0)));
+  if (!Number.isFinite(soldQty) || soldQty <= 0) return 0;
+
+  const previousStock = Number(input.previousStock || 0);
+  const newStock = Number(input.newStock || 0);
+  if (!Number.isFinite(previousStock) || !Number.isFinite(newStock)) return 0;
+
+  return previousStock === newStock ? soldQty : 0;
+}
+
 export type SalesCursorDecisionReason =
   | "stock_not_required"
   | "stock_sync_skipped"

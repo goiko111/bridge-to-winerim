@@ -9,6 +9,7 @@ import {
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
+  salesImportQtyWhenStockDidNotMove,
   variantForAgoraFormat,
   type WinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
@@ -662,6 +663,127 @@ function withHistoricalAnalyticsMetadata(rawJson: unknown, importedAt: string): 
   };
 }
 
+type WinerimSalesImportOutcome = {
+  attempted: boolean;
+  ok: boolean;
+  qty: number;
+  orderId?: string;
+  status?: number;
+  imported?: number;
+  skipped?: number;
+  failed?: number;
+  response?: unknown;
+  error?: string;
+};
+
+function stableShortHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function buildWinerimSalesImportOrderId(input: {
+  connectionId: string;
+  day: string;
+  wineId: string;
+  variant: WinerimVariant;
+  scope: string;
+}): string {
+  return [
+    "agora",
+    input.connectionId.slice(0, 8),
+    input.day,
+    input.wineId,
+    input.variant,
+    stableShortHash(input.scope),
+  ].join(":");
+}
+
+function numberFromImportResponse(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function importWinerimSaleIfStockDidNotMove(input: {
+  winerimBase: string;
+  winerimHeaders: Record<string, string>;
+  connectionId: string;
+  day: string;
+  wineId: string;
+  variant: WinerimVariant;
+  stockId: number;
+  soldQty: number;
+  previousStock: number;
+  newStock: number;
+  orderScope: string;
+}): Promise<WinerimSalesImportOutcome> {
+  const qty = salesImportQtyWhenStockDidNotMove({
+    soldQty: input.soldQty,
+    previousStock: input.previousStock,
+    newStock: input.newStock,
+  });
+  if (qty <= 0) return { attempted: false, ok: true, qty: 0 };
+
+  const orderId = buildWinerimSalesImportOrderId({
+    connectionId: input.connectionId,
+    day: input.day,
+    wineId: input.wineId,
+    variant: input.variant,
+    scope: input.orderScope,
+  });
+
+  try {
+    const response = await fetch(`${input.winerimBase}/sales/import`, {
+      method: "POST",
+      headers: input.winerimHeaders,
+      body: JSON.stringify({
+        sales: [{
+          stockId: input.stockId,
+          qty,
+          soldAt: input.day,
+          orderId,
+        }],
+      }),
+    });
+    const text = await response.text();
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch (_) {
+      parsed = { raw: text.substring(0, 300) };
+    }
+
+    const imported = numberFromImportResponse(parsed?.imported);
+    const skipped = numberFromImportResponse(parsed?.skipped);
+    const failed = numberFromImportResponse(parsed?.failed);
+    const accepted = imported + skipped;
+    const ok = response.ok && failed === 0 && (accepted > 0 || parsed?.success === true);
+    return {
+      attempted: true,
+      ok,
+      qty,
+      orderId,
+      status: response.status,
+      imported,
+      skipped,
+      failed,
+      response: parsed,
+      error: ok ? undefined : `POST /sales/import failed (${response.status}): ${text.substring(0, 300)}`,
+    };
+  } catch (e) {
+    return {
+      attempted: true,
+      ok: false,
+      qty,
+      orderId,
+      error: `POST /sales/import exception: ${String(e)}`,
+    };
+  }
+}
+
 // ── Winerim Stock Sync Helper (variant-aware, line-idempotent) ──
 // Winerim API v2: each wine exposes prices[] with variants ("copa","botella","magnum") and
 // each variant has its own erpStock.id. We must update the correct stockId per variant with
@@ -1007,6 +1129,42 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     }
 
     if (r.ok) {
+      const salesImport = await importWinerimSaleIfStockDidNotMove({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: item.agg.winerimWineId,
+        variant: item.agg.variant,
+        stockId: item.id,
+        soldQty: item.agg.qty,
+        previousStock: item.previousStock,
+        newStock: item.newStock,
+        orderScope: [
+          ...item.agg.eventIds.slice().sort(),
+          ...item.agg.lineIds.slice().sort(),
+          String(item.agg.qty),
+        ].join("|"),
+      });
+      if (salesImport.attempted && !salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: item.id,
+          error_message: salesImport.error || "POST /sales/import failed after no stock movement",
+          winerim_response: {
+            previousStock: item.previousStock,
+            newStock: item.newStock,
+            soldQty: item.agg.qty,
+            variant: item.agg.variant,
+            stockId: item.id,
+            stockUpdateResponse: parsed,
+            salesImport,
+          },
+        }).in("id", item.agg.logIds);
+        failed++;
+        continue;
+      }
+
       await supabase.from("stock_sync_log").update({
         status: "SUCCESS",
         stock_id: item.id,
@@ -1016,6 +1174,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
           soldQty: item.agg.qty,
           variant: item.agg.variant,
           stockId: item.id,
+          salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
       }).in("id", item.agg.logIds);
@@ -1399,6 +1558,43 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     }
 
     if (r.ok) {
+      const salesImport = await importWinerimSaleIfStockDidNotMove({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: item.agg.winerimWineId,
+        variant: item.agg.variant,
+        stockId: item.id,
+        soldQty: item.agg.qty,
+        previousStock: item.previousStock,
+        newStock: item.newStock,
+        orderScope: [
+          ...item.agg.groupKeys.slice().sort(),
+          String(item.agg.qty),
+        ].join("|"),
+      });
+      if (salesImport.attempted && !salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: item.id,
+          error_message: salesImport.error || "POST /sales/import failed after no stock movement",
+          winerim_response: {
+            mode: "intraday_incremental_delta",
+            previousStock: item.previousStock,
+            newStock: item.newStock,
+            soldQty: item.agg.qty,
+            variant: item.agg.variant,
+            stockId: item.id,
+            groupKeys: item.agg.groupKeys,
+            stockUpdateResponse: parsed,
+            salesImport,
+          },
+        }).in("id", item.agg.logIds);
+        failed++;
+        continue;
+      }
+
       await supabase.from("stock_sync_log").update({
         status: "SUCCESS",
         stock_id: item.id,
@@ -1410,6 +1606,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
           variant: item.agg.variant,
           stockId: item.id,
           groupKeys: item.agg.groupKeys,
+          salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
       }).in("id", item.agg.logIds);
@@ -1745,6 +1942,42 @@ async function syncStockForDayIncrementalByDayTotal(
     }
 
     if (r.ok) {
+      const salesImport = await importWinerimSaleIfStockDidNotMove({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: claim.winerimWineId,
+        variant: claim.variant,
+        stockId: match.id,
+        soldQty: claim.deltaQty,
+        previousStock,
+        newStock,
+        orderScope: claim.idempotencyKey,
+      });
+      if (salesImport.attempted && !salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: match.id,
+          error_message: salesImport.error || "POST /sales/import failed after no stock movement",
+          winerim_response: {
+            mode: "intraday_day_total_delta",
+            previousStock,
+            newStock,
+            soldQty: claim.deltaQty,
+            desiredQty: claim.desiredQty,
+            alreadySyncedQty: claim.alreadyQty,
+            variant: claim.variant,
+            stockId: match.id,
+            businessDay: day,
+            stockUpdateResponse: parsed,
+            salesImport,
+          },
+        }).eq("id", claim.logId);
+        failed++;
+        continue;
+      }
+
       await supabase.from("stock_sync_log").update({
         status: "SUCCESS",
         stock_id: match.id,
@@ -1758,6 +1991,7 @@ async function syncStockForDayIncrementalByDayTotal(
           variant: claim.variant,
           stockId: match.id,
           businessDay: day,
+          salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
       }).eq("id", claim.logId);

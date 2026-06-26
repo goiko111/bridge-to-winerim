@@ -22,6 +22,7 @@ Flujo principal:
 - Tareas asíncronas en cola `outbound_tasks` (idempotente, con reintentos).
 - Dispatcher común para Agora: `agora-cron-dispatcher` (chunks de 10, 1.5s entre chunks).
 - Agora opera en automático sobre días cerrados (`Invoices`): guardar ventas y descontar stock Winerim son un único flujo operativo. El cursor `last_business_day_synced` no debe avanzar si el stock del día no queda confirmado.
+- En Agora, la deducción normal de ventas contra Winerim usa `PUT /api/v2/stock/{stockId}` con stock absoluto por variante. Si el stock no se mueve porque ya estaba a `0`, se usa `POST /api/v2/sales/import` para registrar historial de venta sin modificar inventario y con `orderId` idempotente.
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
 - En Agora, los productos Winerim vendibles deben ir como `UseAsDirectSale=false` + `SaleableAsMain=true`: no salen como botones raíz, pero sí se venden dentro de su familia. `PreparationTypeId` y `PreparationOrderId` deben ir ambos vacíos o ambos informados.
 - Algunas conexiones Agora pueden conservar una estructura visual legacy con reglas en `pos_connections.provider_config.agora_family_routing_rules` para enrutar por formato/tipo/región a familias existentes del TPV.
