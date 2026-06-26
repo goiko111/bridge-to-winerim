@@ -11,13 +11,19 @@
   - `npm test -- --run` OK (`19` tests);
   - `npm run build` OK;
   - bundle/parse de `agora-proxy` OK.
+- [x] Ejecutar backfill Cienvinos de ventas ya marcadas `SUCCESS` con `previousStock=0/newStock=0`:
+  - `34` lineas;
+  - `40` unidades;
+  - business day `2026-06-24`;
+  - respuesta Winerim `imported=34`, `failed=0`.
+- [x] Verificar idempotencia del backfill: segunda ejecucion devuelve `imported=0`, `skipped=34`, `failed=0`.
+- [x] Anotar logs originales con `winerim_response.salesImportBackfill`.
 - [ ] Desplegar `agora-proxy` en Lovable Cloud.
 - [ ] Probar con Cienvinos una venta nueva de una variante con stock `0` y confirmar que:
   - `stock_sync_log.SUCCESS` incluye `winerim_response.salesImport`;
   - Winerim muestra historial de venta;
   - el stock permanece en `0`.
-- [ ] Decidir si se hace backfill idempotente de las ventas ya procesadas en Cienvinos con `previousStock=0/newStock=0`.
-- [ ] Si se hace backfill, limitarlo por connection/day y registrar snapshot previo para rollback operativo.
+- [ ] Confirmar visualmente con el cliente/equipo Winerim que las ventas importadas aparecen en historial.
 
 ## P0 — Monitorizacion conexiones + emails 2026-06-25
 - [x] Crear migracion `20260625044943_connection_health_monitor.sql` con `connection_health_checks`, `connection_alerts` y `connection_notification_contacts`.

@@ -1004,3 +1004,8 @@
 - **Decisión**: Anadir en `agora-proxy` un fallback a `POST /api/v2/sales/import` cuando una venta mapeada llega a Winerim pero el `PUT /stock/{stockId}` no cambia stock (`previousStock === newStock`).
 - **Razón**: En Cienvinos las ventas estaban llegando y el stock sync quedaba `SUCCESS`, pero Winerim tenia variantes a `stock=0`; el `PUT` aceptado era `0 -> 0`, por lo que no se generaba una bajada visible ni historial de venta. `sales/import` registra venta sin modificar inventario y es idempotente por `orderId`.
 - **Alternativa descartada**: usar siempre `sales/import` ademas del `PUT`. Podria duplicar historial cuando el stock si baja de verdad, porque Winerim documenta que bajar stock mediante `PUT /stock/{stockId}` ya registra una venta como efecto lateral.
+
+## 2026-06-26 · Cienvinos: backfill idempotente de historial sin tocar stock
+- **Decisión**: Importar en Winerim las `34` lineas de Cienvinos ya sincronizadas como `SUCCESS` pero sin movimiento de stock (`0 -> 0`) usando `POST /api/v2/sales/import`.
+- **Razón**: El cliente necesitaba que esas ventas ya procesadas aparezcan tambien en historial Winerim. El endpoint import registra venta sin modificar inventario; se verifico idempotencia con una segunda ejecucion (`imported=0`, `skipped=34`, `failed=0`).
+- **Alternativa descartada**: modificar stock a mano o reabrir/reintentar `stock_sync_log`. Habria alterado inventario real o podria duplicar descuentos; el problema era de historial, no de stock operativo.

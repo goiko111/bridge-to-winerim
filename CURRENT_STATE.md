@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-26 11:58 CEST_
+_Última actualización: 2026-06-26 12:09 CEST_
 
 ## Hechos (Cienvinos · ventas Winerim con stock 0 — 2026-06-26 11:58 CEST)
 
@@ -34,12 +34,20 @@ _Última actualización: 2026-06-26 11:58 CEST_
   - `npm test -- --run` OK (`19` tests);
   - `npm run build` OK;
   - bundle/parse de `supabase/functions/agora-proxy/index.ts` OK.
+- Backfill ejecutado el `2026-06-26 12:09 CEST` para Cienvinos:
+  - se importaron por `POST /api/v2/sales/import` las `34` lineas ya sincronizadas con `previousStock=0` y `newStock=0`;
+  - total importado: `40` unidades;
+  - dia de negocio: `2026-06-24`;
+  - respuesta Winerim: `imported=34`, `skipped=0`, `failed=0`;
+  - se anoto cada fila original de `stock_sync_log` con `winerim_response.salesImportBackfill`;
+  - verificacion idempotente posterior: misma tanda devuelve `imported=0`, `skipped=34`, `failed=0`.
 
 ### Hipotesis / riesgos Cienvinos
 
 - El editor de Winerim no mostraba esas ventas porque Winerim documenta que `PUT /stock/{stockId}` registra venta al bajar stock, pero aqui no habia bajada (`0 -> 0`).
-- El cambio no repara historico ya marcado `SUCCESS`; hace falta un backfill/import controlado para las ventas ya procesadas con `previousStock=0` si el cliente quiere verlas en historial.
-- Antes de confirmar en cliente, falta desplegar `agora-proxy` en Lovable Cloud y ejecutar una venta real o reproceso controlado de Cienvinos.
+- El historico identificado de Cienvinos ya queda importado sin tocar stock, pero falta confirmacion visual del cliente en el editor Winerim.
+- Para ventas futuras con stock `0`, falta desplegar `agora-proxy` en Lovable Cloud; el backfill manual solo cubre las `34` lineas actuales.
+- Antes de confirmar cierre completo, falta desplegar `agora-proxy` y ejecutar una venta real o reproceso controlado de Cienvinos.
 
 ## Hechos (Flota Agora · auditoria viva — 2026-06-26 11:35 CEST)
 
