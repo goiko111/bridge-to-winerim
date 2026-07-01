@@ -3771,6 +3771,7 @@ serve(async (req) => {
       let savedLines = 0;
       let resolvedLines = 0;
       let unresolvedLines = 0;
+      const savedEventIds: string[] = [];
 
       for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
         const inv = invoices[invIdx];
