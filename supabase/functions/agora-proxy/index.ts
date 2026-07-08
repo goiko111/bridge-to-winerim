@@ -685,6 +685,11 @@ function stableShortHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+function shortExternalId(value: unknown, maxLength = 10): string {
+  const cleaned = String(value ?? "").replace(/[^a-zA-Z0-9]/g, "");
+  return (cleaned || "x").slice(0, maxLength);
+}
+
 function buildWinerimSalesImportOrderId(input: {
   connectionId: string;
   day: string;
@@ -692,13 +697,14 @@ function buildWinerimSalesImportOrderId(input: {
   variant: WinerimVariant;
   scope: string;
 }): string {
+  const variantShort = input.variant === "botella" ? "bot" : input.variant === "copa" ? "cop" : "mag";
   return [
     "agora",
-    input.connectionId.slice(0, 8),
+    shortExternalId(input.connectionId, 8),
     input.day,
     input.wineId,
-    input.variant,
-    stableShortHash(input.scope),
+    variantShort,
+    shortExternalId(stableShortHash(input.scope), 10),
   ].join(":");
 }
 
