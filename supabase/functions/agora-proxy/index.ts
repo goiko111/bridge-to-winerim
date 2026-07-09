@@ -8390,7 +8390,7 @@ ${costPricesXml}
     // ── EVALUATE AUTO-PUSH ──
     // Deploy marker 2026-06-10: Sa Pedrera CREATE guard must skip already verified formats before re-enabling automatic catalog pushes.
     if (action === "evaluate-auto-push") {
-      const winerimWineIds = payload.winerimWineIds || [];
+      let winerimWineIds = normalizeStringArray(payload.winerimWineIds || []);
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
 
@@ -8399,6 +8399,7 @@ ${costPricesXml}
       const autoPushBottle = connection.auto_push_bottle ?? true;
       const autoPushGlass = connection.auto_push_glass ?? false;
       const requireReview = connection.require_manual_review_before_push ?? true;
+      const providerConfig = (connection.provider_config || {}) as Record<string, unknown>;
 
       if (!forceEvaluate) {
         if (evtType === "CREATE" && !autoPushOnCreate) {
@@ -8411,6 +8412,32 @@ ${costPricesXml}
         }
       }
 
+      // UPDATE canary guard: only allow listed Winerim IDs through when provider_config has an update allowlist.
+      if (evtType === "UPDATE") {
+        const allowlistRaw = Array.isArray(providerConfig.auto_push_update_winerim_ids)
+          ? providerConfig.auto_push_update_winerim_ids
+          : Array.isArray(providerConfig.auto_push_update_canary_winerim_ids)
+            ? providerConfig.auto_push_update_canary_winerim_ids
+            : [];
+        const allowlist = normalizeStringArray(allowlistRaw);
+        if (allowlist.length > 0) {
+          const originalIds = [...winerimWineIds];
+          winerimWineIds = winerimWineIds.filter((id) => allowlist.includes(id));
+          if (winerimWineIds.length === 0) {
+            return new Response(JSON.stringify({
+              success: true,
+              queued: 0,
+              wouldQueue: 0,
+              skipped: originalIds.length,
+              hidQueued: 0,
+              totalWines: 0,
+              eventType: "UPDATE",
+              updateAllowlist: allowlist,
+              skippedReasons: originalIds.map((id) => ({ winerim_id: id, reason: "auto_push_update_canary_waiting_for_allowed_wine" })),
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+        }
+      }
 
       if (connection.write_mode !== "XML_IMPORT") {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "write_mode is not XML_IMPORT" }),
