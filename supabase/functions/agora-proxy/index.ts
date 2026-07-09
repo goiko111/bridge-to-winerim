@@ -8393,6 +8393,7 @@ ${costPricesXml}
       let winerimWineIds = normalizeStringArray(payload.winerimWineIds || []);
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
+      const dryRun = payload.dryRun === true;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
@@ -8461,7 +8462,7 @@ ${costPricesXml}
 
       // Check master data exists
       const { data: masterData } = await supabase
-        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json, sale_centers_json")
+        .from("agora_master_data").select("id, families_json, vats_json, price_lists_json, warehouses_json, sale_centers_json, products_summary_json, preparation_types_json, preparation_orders_json")
         .eq("connection_id", connectionId).single();
       if (!masterData) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no master data cached" }),
@@ -8496,6 +8497,35 @@ ${costPricesXml}
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
+      // ── UPDATE differential guard precompute ──
+      // Read the current Agora Products XML ONCE and load custom family mappings ONCE.
+      // If the diff finds no exportable change per format, we skip queueing that format.
+      const updateDiffEnabled = evtType === "UPDATE" && (providerConfig as any).auto_push_update_diff_enabled !== false;
+      let updateDiffCurrentXml: string | null = null;
+      let updateDiffError: string | null = null;
+      let updateDiffCustomMappings: Record<string, { id: string; name: string }> | undefined = undefined;
+      const updateDiffScopedPriceListIds: string[] = Array.isArray((autoPushScopePayload as any)._effective_price_list_ids)
+        ? ((autoPushScopePayload as any)._effective_price_list_ids as string[])
+        : [];
+      const updateDiffGeoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const updateDiffIsGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && updateDiffGeoConfig;
+      if (updateDiffEnabled) {
+        try {
+          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          if (cachedForDiff && cachedForDiff.ok && cachedForDiff.xml && cachedForDiff.xml.includes("<Product")) {
+            updateDiffCurrentXml = cachedForDiff.xml;
+          } else {
+            updateDiffError = `cache_status_${cachedForDiff?.status ?? "unknown"}`;
+          }
+        } catch (e) {
+          updateDiffError = `fetch_error:${(e as Error).message?.slice(0, 80) || "unknown"}`;
+        }
+        try {
+          updateDiffCustomMappings = await loadCustomFamilyMappings(connectionId);
+        } catch (_e) {
+          // Non-fatal — expected XML generation will use master data defaults.
+        }
+      }
 
       let hidQueued = 0;
       for (const wine of wines) {
@@ -8518,7 +8548,7 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
-              if (!forceEvaluate) {
+              if (!forceEvaluate && !dryRun) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
                   task_type: "AGORA_HIDE_PRODUCT",
@@ -8543,7 +8573,7 @@ ${costPricesXml}
             }
           }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: forceEvaluate ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: (forceEvaluate || dryRun) ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
           continue;
         }
 
