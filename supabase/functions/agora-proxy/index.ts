@@ -8401,6 +8401,34 @@ ${costPricesXml}
       const requireReview = connection.require_manual_review_before_push ?? true;
       const providerConfig = (connection.provider_config || {}) as Record<string, unknown>;
 
+      // UPDATE canary guard: only allow listed Winerim IDs through when provider_config has an update allowlist.
+      if (evtType === "UPDATE") {
+        const updateAllowlist = normalizeStringArray(
+          providerConfig.auto_push_update_winerim_ids ||
+          providerConfig.auto_push_update_canary_winerim_ids
+        );
+        if (updateAllowlist.length > 0) {
+          const allowed = new Set(updateAllowlist);
+          const originalCount = winerimWineIds.length;
+          winerimWineIds = winerimWineIds.filter((id) => allowed.has(id));
+          if (winerimWineIds.length === 0) {
+            return new Response(JSON.stringify({
+              success: true,
+              queued: 0,
+              skipped: originalCount,
+              hidQueued: 0,
+              skippedReasons: updateAllowlist.map((id) => ({
+                winerim_id: id,
+                reason: "auto_push_update_canary_waiting_for_allowed_wine",
+              })),
+              totalWines: 0,
+              eventType: evtType,
+              updateAllowlist,
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+        }
+      }
+
       if (!forceEvaluate) {
         if (evtType === "CREATE" && !autoPushOnCreate) {
           return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_create disabled" }),
@@ -8409,33 +8437,6 @@ ${costPricesXml}
         if (evtType === "UPDATE" && !autoPushOnUpdate) {
           return new Response(JSON.stringify({ success: true, skipped: true, reason: "auto_push_on_update disabled" }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        }
-      }
-
-      // UPDATE canary guard: only allow listed Winerim IDs through when provider_config has an update allowlist.
-      if (evtType === "UPDATE") {
-        const allowlistRaw = Array.isArray(providerConfig.auto_push_update_winerim_ids)
-          ? providerConfig.auto_push_update_winerim_ids
-          : Array.isArray(providerConfig.auto_push_update_canary_winerim_ids)
-            ? providerConfig.auto_push_update_canary_winerim_ids
-            : [];
-        const allowlist = normalizeStringArray(allowlistRaw);
-        if (allowlist.length > 0) {
-          const originalIds = [...winerimWineIds];
-          winerimWineIds = winerimWineIds.filter((id) => allowlist.includes(id));
-          if (winerimWineIds.length === 0) {
-            return new Response(JSON.stringify({
-              success: true,
-              queued: 0,
-              wouldQueue: 0,
-              skipped: originalIds.length,
-              hidQueued: 0,
-              totalWines: 0,
-              eventType: "UPDATE",
-              updateAllowlist: allowlist,
-              skippedReasons: originalIds.map((id) => ({ winerim_id: id, reason: "auto_push_update_canary_waiting_for_allowed_wine" })),
-            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-          }
         }
       }
 
