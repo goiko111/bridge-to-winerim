@@ -8573,7 +8573,7 @@ ${costPricesXml}
             }
           }
           skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: forceEvaluate ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: (forceEvaluate || dryRun) ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
           continue;
         }
 
