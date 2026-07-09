@@ -8497,6 +8497,35 @@ ${costPricesXml}
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
 
+      // ── UPDATE differential guard precompute ──
+      // Read the current Agora Products XML ONCE and load custom family mappings ONCE.
+      // If the diff finds no exportable change per format, we skip queueing that format.
+      const updateDiffEnabled = evtType === "UPDATE" && (providerConfig as any).auto_push_update_diff_enabled !== false;
+      let updateDiffCurrentXml: string | null = null;
+      let updateDiffError: string | null = null;
+      let updateDiffCustomMappings: Record<string, { id: string; name: string }> | undefined = undefined;
+      const updateDiffScopedPriceListIds: string[] = Array.isArray((autoPushScopePayload as any)._effective_price_list_ids)
+        ? ((autoPushScopePayload as any)._effective_price_list_ids as string[])
+        : [];
+      const updateDiffGeoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const updateDiffIsGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && updateDiffGeoConfig;
+      if (updateDiffEnabled) {
+        try {
+          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          if (cachedForDiff && cachedForDiff.ok && cachedForDiff.xml && cachedForDiff.xml.includes("<Product")) {
+            updateDiffCurrentXml = cachedForDiff.xml;
+          } else {
+            updateDiffError = `cache_status_${cachedForDiff?.status ?? "unknown"}`;
+          }
+        } catch (e) {
+          updateDiffError = `fetch_error:${(e as Error).message?.slice(0, 80) || "unknown"}`;
+        }
+        try {
+          updateDiffCustomMappings = await loadCustomFamilyMappings(connectionId);
+        } catch (_e) {
+          // Non-fatal — expected XML generation will use master data defaults.
+        }
+      }
 
       let hidQueued = 0;
       for (const wine of wines) {
