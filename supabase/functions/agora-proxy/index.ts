@@ -8548,7 +8548,7 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
-              if (!forceEvaluate) {
+              if (!forceEvaluate && !dryRun) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
                   task_type: "AGORA_HIDE_PRODUCT",
