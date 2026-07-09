@@ -8393,6 +8393,7 @@ ${costPricesXml}
       let winerimWineIds = normalizeStringArray(payload.winerimWineIds || []);
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
+      const dryRun = payload.dryRun === true;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
