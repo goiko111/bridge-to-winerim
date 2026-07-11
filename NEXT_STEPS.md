@@ -18,7 +18,7 @@
   - bundle esbuild de `agora-cron-dispatcher`;
   - `git diff --check`.
 - [x] Crear commit local `a932bdb` (`Add Agora open tickets pilot`).
-- [ ] Subir commit a GitHub `main`.
+- [x] Subir commits a GitHub `main` hasta `97eadf5`.
 - [ ] Pedir redeploy en Lovable Cloud de:
   - `agora-proxy`;
   - `agora-cron-dispatcher`.
