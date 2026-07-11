@@ -2,7 +2,46 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-06-26 12:38 CEST_
+_Última actualización: 2026-07-11 08:15 CEST_
+
+## Hechos (Agora open tickets + copas por precio Winerim — 2026-07-11 08:15 CEST)
+
+- Se confirmo una contradiccion importante: los cambios de piloto `probe-open-tickets` / `sync-open-tickets` existian en una copia local no trackeada (`bridge-to-winerim-audit`), pero no en el repositorio GitHub que Lovable Cloud despliega (`goiko111/bridge-to-winerim`).
+- Se corrigio el repositorio oficial en `/Users/GOIKO/Documents/Playground/bridge-to-winerim-github`.
+- `agora-proxy` incorpora:
+  - accion `probe-open-tickets` solo lectura contra `/api/export/tickets/`;
+  - accion `sync-open-tickets` protegida por `provider_config.open_tickets_sync_enabled`;
+  - descuento de stock desde tickets abiertos solo si `provider_config.open_tickets_stock_sync_enabled=true`;
+  - retardo configurable `provider_config.open_tickets_min_line_age_minutes` para no descontar lineas recien tocadas en mesa abierta;
+  - persistencia de `last_open_tickets_sync` en `provider_config` para auditoria.
+- `agora-cron-dispatcher` incorpora llamada a `sync-open-tickets` dentro del job `sales-stock` solo si la conexion tiene `provider_config.open_tickets_sync_enabled=true`.
+- Se relajo la regla de publicacion de copas: para formato `GLASS` ya no es bloqueo duro `serve_by_glass=true`; basta con que Winerim tenga `glass_sale_price>0`. Si el boolean antiguo no viene activo se deja warning `serve_by_glass_not_enabled_but_glass_price_present`.
+- Se mantiene la regla de ocultacion/retiro: una copa sin precio de copa en Winerim se considera no publicable y puede ocultarse si antes estaba en Agora.
+- Se anadio test estatico `src/test/agoraOpenTicketsStatic.test.ts` para comprobar que el repo real contiene los handlers, flags y guards criticos.
+- Validacion local:
+  - `npm ci` OK;
+  - `npm test -- --pool=forks --maxWorkers=1 --minWorkers=1 --reporter=dot` OK (`5` archivos, `22` tests);
+  - `npx tsc --noEmit --pretty false` OK;
+  - bundle esbuild de `agora-proxy` OK;
+  - bundle esbuild de `agora-cron-dispatcher` OK;
+  - `git diff --check` OK.
+
+### Riesgos / rollback
+
+- El piloto de tickets abiertos queda apagado por defecto. Sin flags en `provider_config`, `sync-open-tickets` devuelve `open_tickets_sync_disabled` y no escribe stock.
+- Activar `open_tickets_stock_sync_enabled=true` en una conexion debe hacerse solo tras probar `probe-open-tickets` y revisar que las lineas abiertas traen IDs de producto mapeables.
+- Rollback tecnico: revertir el commit de esta sesion en GitHub y redesplegar `agora-proxy` + `agora-cron-dispatcher`. Como los flags quedan apagados por defecto, tambien se puede rollback operativo desactivando `provider_config.open_tickets_sync_enabled`.
+- Para Sa Pedrera, el cambio de copas corrige el caso de vinos con precio de copa en Winerim pero sin `serve_by_glass=true`; no elimina la necesidad de verificar visualmente que el producto aparece en `COPAS WINERIM` o la familia dedicada acordada.
+
+### Pendiente inmediato
+
+- Pedir redeploy en Lovable Cloud de `agora-proxy` y `agora-cron-dispatcher` desde `main`.
+- Tras redeploy, ejecutar:
+  - `probe-open-tickets` en Sa Pedrera;
+  - `sync-open-tickets` con flags apagados para confirmar `open_tickets_sync_disabled`;
+  - activar primero solo `open_tickets_sync_enabled=true` y validar captura sin stock;
+  - activar `open_tickets_stock_sync_enabled=true` solo cuando la captura sea correcta.
+- Repetir sonda de `evaluate-auto-push` para el vino de copa que no subia y confirmar que ya no aparece `glass_skipped:serve_by_glass_not_enabled`.
 
 ## Hechos (Flota Agora · auditoria y backfill historial 0->0 — 2026-06-26 12:38 CEST)
 

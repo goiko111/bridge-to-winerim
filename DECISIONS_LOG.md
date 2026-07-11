@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-07-11 · El repo desplegable es GitHub, no la copia local de auditoría
+- **Decisión**: A partir de esta correccion, cualquier cambio desplegable debe aplicarse y validarse en el clon oficial `goiko111/bridge-to-winerim`, no solo en copias locales de trabajo o auditoria.
+- **Razón**: Lovable Cloud redeployo correctamente, pero el repo que desplego no contenia `probe-open-tickets`, `sync-open-tickets`, el flag `open_tickets_sync_enabled` del dispatcher ni la nueva regla de copas. Los cambios estaban en una copia local no trackeada.
+- **Alternativa descartada**: pedir a Lovable otro redeploy sin cambiar GitHub. Repetiria el mismo resultado porque el runtime solo puede materializar lo que exista en la fuente desplegable.
+- **Rollback**: revertir el commit GitHub de esta sesion y redeployar `agora-proxy`/`agora-cron-dispatcher`; no requiere tocar datos si no se activaron flags de tickets abiertos.
+
+---
+
+## 2026-07-11 · Piloto de tiempo casi real Agora con tickets abiertos queda detrás de flags
+- **Decisión**: Implementar `probe-open-tickets` y `sync-open-tickets`, pero dejar el procesamiento recurrente apagado por defecto y activable por conexion mediante `provider_config.open_tickets_sync_enabled`. El descuento desde tickets abiertos requiere ademas `provider_config.open_tickets_stock_sync_enabled=true`.
+- **Razón**: `/api/export/tickets/` puede dar visibilidad antes del cierre, pero no todas las instalaciones Agora exponen el endpoint igual ni todas las mesas abiertas son estables para descontar stock en el instante exacto. Separar captura y descuento permite canary por restaurante.
+- **Alternativa descartada**: sustituir globalmente `auto-sync-sales` por tickets abiertos en toda la flota. Podria duplicar o adelantar descuentos en instalaciones que solo garantizan ventas tras cierre.
+- **Rollback**: poner `open_tickets_sync_enabled=false` por conexion o revertir el commit. El flujo estable por `Invoices` queda intacto.
+
+---
+
+## 2026-07-11 · Las copas se publican por precio de copa, no por boolean legacy
+- **Decisión**: Para Agora, el formato `GLASS` se considera publicable si Winerim tiene `glass_sale_price>0`; `serve_by_glass` deja de ser bloqueo duro y pasa a warning si viene apagado.
+- **Razón**: En Sa Pedrera se observaron vinos con precio de copa visible en Winerim que no subian a Agora porque el boolean antiguo no estaba marcado. La fuente operativa para vender copa debe ser la variante/precio real.
+- **Alternativa descartada**: exigir al cliente que active manualmente `serve_by_glass` ademas de poner precio de copa. Añade friccion, genera falsos negativos y contradice la regla funcional acordada: "si tiene precio de copa en Winerim, debe poder venderse como copa".
+- **Rollback**: restaurar el gate anterior (`serve_by_glass=true && glass_sale_price>0`), aunque no recomendado salvo que Winerim confirme que puede haber precio de copa no vendible por diseño.
+
+---
+
 ## 2026-06-25 · Migración generada del helper seguro queda como no-op
 - **Decisión**: Mantener `20260625073417_a9f5092e-e4f6-49fa-a9ee-1f7fbe353f8d.sql` como no-op documentado.
 - **Razón**: Lovable Cloud generó esa migración al aplicar `invoke_connection_health_monitor_secure(...)`, pero el repositorio ya contiene la migración canónica `20260625072756_secure_connection_health_monitor_cron.sql`. Duplicar la misma función no aporta valor y complica la historia de migraciones.

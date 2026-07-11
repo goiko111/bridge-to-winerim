@@ -93,7 +93,7 @@ Deno.serve(async (req: Request) => {
 
     // Map job → one or more target function calls.
     // Catalog sync must refresh BOTH sides: Winerim wines and Agora master data.
-    const buildRequests = (connection: { id: string; location_name: string }): DispatchRequest[] => {
+    const buildRequests = (connection: { id: string; location_name: string; provider_config?: Record<string, unknown> | null }): DispatchRequest[] => {
       if (job === "catalog") {
         return [
           { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
@@ -103,16 +103,23 @@ Deno.serve(async (req: Request) => {
       if (job === "outbound-queue") {
         return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
       }
-      const providerConfig = ((connection as { provider_config?: unknown }).provider_config || {}) as Record<string, unknown>;
       const requests: DispatchRequest[] = [
         { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } },
       ];
-      if (providerConfig.intraday_sales_sync_enabled === true) {
+      if (connection.provider_config?.intraday_sales_sync_enabled === true) {
         requests.push({
           connection_id: connection.id,
           name: connection.location_name,
           functionName: "agora-proxy",
           body: { action: "sync-intraday-sales", connectionId: connection.id },
+        });
+      }
+      if (connection.provider_config?.open_tickets_sync_enabled === true) {
+        requests.push({
+          connection_id: connection.id,
+          name: connection.location_name,
+          functionName: "agora-proxy",
+          body: { action: "sync-open-tickets", connectionId: connection.id },
         });
       }
       return requests;

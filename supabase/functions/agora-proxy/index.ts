@@ -513,7 +513,7 @@ function saPedreraDedicatedFamily(
 
 function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
   const glassPrice = extractGlassSalePrice(wine) || 0;
-  return wine?.serve_by_glass === true && glassPrice > 0 ? "GLASS" : "BOTTLE";
+  return glassPrice > 0 ? "GLASS" : "BOTTLE";
 }
 
 // deno-lint-ignore no-explicit-any
@@ -559,6 +559,55 @@ function parseInvoices(raw: any): any[] {
     if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
   }
   return [];
+}
+
+// deno-lint-ignore no-explicit-any
+function parseOpenTickets(raw: any): any[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (raw.Tickets && Array.isArray(raw.Tickets)) return raw.Tickets;
+  if (raw.Data?.Tickets && Array.isArray(raw.Data.Tickets)) return raw.Data.Tickets;
+  for (const key of Object.keys(raw)) {
+    if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
+  }
+  return [];
+}
+
+function agoraNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildAgoraOpenTicketDocId(ticket: Record<string, unknown>, day: string, ticketIndex: number): string {
+  const candidates = [
+    ticket.GlobalId,
+    ticket.TicketGlobalId,
+    ticket.TicketId,
+    ticket.Id,
+    ticket.DocumentId,
+    ticket.DocId,
+    ticket.Number,
+    ticket.Code,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return `open_ticket:${value}`;
+  }
+  return `open_ticket:${day}:${ticketIndex}`;
+}
+
+function isOpenTicketsSyncEnabled(connection: { provider_config?: unknown }): boolean {
+  const config = (connection?.provider_config && typeof connection.provider_config === "object")
+    ? connection.provider_config as Record<string, unknown>
+    : {};
+  return config.open_tickets_sync_enabled === true;
+}
+
+function isOpenTicketsStockSyncEnabled(connection: { provider_config?: unknown }): boolean {
+  const config = (connection?.provider_config && typeof connection.provider_config === "object")
+    ? connection.provider_config as Record<string, unknown>
+    : {};
+  return config.open_tickets_stock_sync_enabled === true;
 }
 
 // Agora may omit InvoiceId/Id in some installations. A blank provider_doc_id
@@ -2551,12 +2600,11 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any, p
   }
 
   if (formatType === "GLASS") {
-    if (!wine.serve_by_glass) {
-      missingFields.push("serve_by_glass_not_enabled");
-    }
     const glassPrice = extractGlassSalePrice(wine);
     if (!glassPrice || glassPrice <= 0) {
       missingFields.push("missing_glass_sale_price");
+    } else if (wine.serve_by_glass !== true) {
+      warnings.push("serve_by_glass_not_enabled_but_glass_price_present");
     }
     const glassCost = extractGlassCostPrice(wine, connection);
     if (!glassCost || glassCost <= 0) {
@@ -2594,7 +2642,7 @@ function isFormatUnavailableForAgora(wine: any, formatType: string): boolean {
   }
   if (fmt === "GLASS") {
     const glassPrice = extractGlassSalePrice(wine);
-    return wine.serve_by_glass !== true || !glassPrice || glassPrice <= 0;
+    return !glassPrice || glassPrice <= 0;
   }
   if (fmt === "MAGNUM") {
     const magnumPrice = wine.magnum_sale_price ? Number(wine.magnum_sale_price) : null;
@@ -3432,6 +3480,275 @@ serve(async (req) => {
         JSON.stringify({ businessDay: day, baseUrl: baseUrlClean, results }, null, 2),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // ── PROBE OPEN TICKETS ──
+    // Read-only probe for Agora's documented `/api/export/tickets/` endpoint.
+    // This is the safe first step for "real time" pilots: it tells us whether the
+    // installation exposes currently open tickets before any stock mutation is enabled.
+    if (action === "probe-open-tickets") {
+      const url = `${baseUrlClean}/api/export/tickets/`;
+      try {
+        const r = await fetchWithRetry(url, {
+          headers: { ...headers, Accept: "application/json" },
+        }, 10_000);
+        const contentType = r.headers.get("content-type") || "";
+        const text = await r.text();
+        let tickets: any[] = [];
+        let parseError: string | null = null;
+        let payloadKeys: string[] = [];
+
+        if (r.ok && text.trim()) {
+          try {
+            const parsed = JSON.parse(text);
+            tickets = parseOpenTickets(parsed);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              payloadKeys = Object.keys(parsed).slice(0, 12);
+            }
+          } catch (e) {
+            parseError = `json_parse_error:${String((e as Error).message || e).slice(0, 120)}`;
+          }
+        }
+
+        const sample = tickets[0] || null;
+        const sampleLines = Array.isArray(sample?.Lines) ? sample.Lines.length : 0;
+        const xmlTicketCount = !tickets.length && text.includes("<Ticket")
+          ? (text.match(/<Ticket\b/g) || []).length
+          : 0;
+
+        return new Response(JSON.stringify({
+          success: r.ok && !parseError,
+          status: r.status,
+          ok: r.ok,
+          contentType,
+          endpoint: "/api/export/tickets/",
+          count: tickets.length,
+          xmlTicketCount,
+          payloadKeys,
+          sampleKeys: sample ? Object.keys(sample).slice(0, 20) : [],
+          sampleLines,
+          businessDays: Array.from(new Set(tickets.map((t) => String(t.BusinessDay || "")).filter(Boolean))).slice(0, 5),
+          parseError,
+          bodyPreview: text.slice(0, 300),
+        }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e) {
+        return new Response(JSON.stringify({
+          success: false,
+          endpoint: "/api/export/tickets/",
+          error: String((e as Error).message || e),
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    // ── OPEN TICKETS SYNC PILOT ──
+    // Captures currently open tickets. Stock mutation is intentionally controlled by
+    // provider_config.open_tickets_stock_sync_enabled so we can canary installations
+    // without changing the stable invoice-based flow.
+    if (action === "sync-open-tickets") {
+      if (!isOpenTicketsSyncEnabled(connection) && payload.force !== true) {
+        return new Response(
+          JSON.stringify({ success: true, skipped: true, reason: "open_tickets_sync_disabled" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const providerConfig = ((connection.provider_config || {}) as Record<string, unknown>);
+      const timeZone = String(providerConfig.sales_timezone || "Europe/Madrid");
+      const defaultDay = isBusinessDay(businessDay) ? businessDay : todayInTimeZone(timeZone);
+      const stockSyncEnabled = isOpenTicketsStockSyncEnabled(connection);
+      const minLineAgeMinutes = Math.max(0, Number(providerConfig.open_tickets_min_line_age_minutes ?? 2));
+      const stockEligibleBeforeMs = Date.now() - minLineAgeMinutes * 60_000;
+
+      const url = `${baseUrlClean}/api/export/tickets/`;
+      const res = await fetchWithRetry(url, { headers: { ...headers, Accept: "application/json" } }, 10_000);
+      const text = await res.text();
+      if (!res.ok) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Agora open tickets responded ${res.status}`,
+          details: text.substring(0, 300),
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let rawData: any;
+      try {
+        rawData = text.trim() ? JSON.parse(text) : [];
+      } catch (e) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Agora open tickets did not return JSON",
+          details: String((e as Error).message || e),
+          bodyPreview: text.substring(0, 300),
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const tickets = parseOpenTickets(rawData);
+
+      const { data: familyRules } = await supabase
+        .from("wine_family_rules")
+        .select("family_name, is_wine")
+        .eq("connection_id", connectionId);
+      const customWineFamilies = familyRules
+        ?.filter((r: { is_wine: boolean }) => r.is_wine)
+        .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+      const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
+
+      const { data: trackingRows } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id, winerim_wine_id, format, sync_status")
+        .eq("connection_id", connectionId);
+      const { data: mappingRows } = await supabase
+        .from("product_mappings")
+        .select("provider_product_id, winerim_wine_id, format_type, status")
+        .eq("connection_id", connectionId);
+      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+
+      let savedEvents = 0;
+      let savedLines = 0;
+      let resolvedLines = 0;
+      let unresolvedLines = 0;
+      let stockDeferredLines = 0;
+      const savedEventIdsByDay: Record<string, string[]> = {};
+
+      for (let ticketIdx = 0; ticketIdx < tickets.length; ticketIdx++) {
+        const ticket = tickets[ticketIdx] || {};
+        const day = isBusinessDay(String(ticket.BusinessDay || "")) ? String(ticket.BusinessDay) : defaultDay;
+        const docId = buildAgoraOpenTicketDocId(ticket, day, ticketIdx);
+        const lines = Array.isArray(ticket.Lines) ? ticket.Lines : [];
+        let docTotal = 0;
+        const lineData: Record<string, unknown>[] = [];
+
+        for (const line of lines) {
+          const rawTotal = agoraNumber(line.TotalAmount);
+          const unitPrice = agoraNumber(line.UnitPrice || line.ProductPrice);
+          const qty = agoraNumber(line.Quantity);
+          const lineTotal = rawTotal > 0 ? rawTotal : unitPrice * qty;
+          docTotal += lineTotal;
+
+          const productName = String(line.ProductName || "");
+          const formatName = String(line.SaleFormatName || "");
+          const family = String(line.FamilyName || "");
+          const productId = String(line.ProductId || line.SaleFormatId || "");
+          const normalizedFmt = normalizeLineFormat(productName, formatName);
+          const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
+          const resolution = resolutionMap.get(productId);
+          const winerimProductId = resolution?.winerim_wine_id || null;
+          const isResolved = !!winerimProductId;
+          const creationDateMs = line.CreationDate ? Date.parse(String(line.CreationDate)) : NaN;
+          const oldEnoughForStock = !stockSyncEnabled || minLineAgeMinutes <= 0 || !Number.isFinite(creationDateMs) || creationDateMs <= stockEligibleBeforeMs;
+          const stockCandidate = wr.candidate && oldEnoughForStock;
+          if (isResolved) {
+            resolvedLines++;
+          } else if (wr.candidate) {
+            unresolvedLines++;
+          }
+          if (isResolved && wr.candidate && !oldEnoughForStock) {
+            stockDeferredLines++;
+          }
+
+          lineData.push({
+            provider_product_id: productId,
+            name: productName,
+            format: normalizedFmt,
+            family,
+            quantity: qty,
+            unit_price: unitPrice,
+            total_amount: lineTotal,
+            vat_rate: agoraNumber(line.VatRate),
+            is_wine_candidate: stockCandidate,
+            winerim_product_id: winerimProductId,
+            mapped: isResolved,
+          });
+        }
+
+        const rawJson = {
+          ...ticket,
+          _agora_source: "open_ticket",
+          _stock_sync_eligible: stockSyncEnabled,
+          _open_ticket_stock_sync_enabled: stockSyncEnabled,
+          _open_ticket_synced_at: new Date().toISOString(),
+        };
+
+        const { data: eventRow, error: eventErr } = await supabase
+          .from("sales_events")
+          .upsert({
+            connection_id: connectionId,
+            provider_doc_id: docId,
+            business_day: day,
+            doc_type: "OpenTicket",
+            total_amount: agoraNumber(ticket.TotalAmount || docTotal),
+            total_tax: agoraNumber(ticket.TotalTaxAmount || 0),
+            total_net: agoraNumber(ticket.TotalNetAmount || 0),
+            line_count: lineData.length,
+            raw_json: rawJson,
+          }, { onConflict: "connection_id,provider_doc_id" })
+          .select("id").single();
+
+        if (eventErr || !eventRow) continue;
+        savedEvents++;
+        savedEventIdsByDay[day] ||= [];
+        savedEventIdsByDay[day].push(eventRow.id);
+
+        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+        const linesToInsert = lineData.map((line) => ({ ...line, sales_event_id: eventRow.id, connection_id: connectionId }));
+        if (linesToInsert.length > 0) {
+          const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
+          if (!lineErr) savedLines += linesToInsert.length;
+        }
+      }
+
+      let stockSyncResult: StockSyncTotals | null = null;
+      let warning: string | null = null;
+      const winerimToken = (connection.winerim_api_token || "").trim();
+      const daysWithSavedTickets = Object.keys(savedEventIdsByDay);
+      if (resolvedLines > 0 && stockSyncEnabled) {
+        if (!winerimToken) {
+          warning = "Open tickets saved but Winerim stock was not synced: missing Winerim API token.";
+          stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: ["missing Winerim API token"] };
+        } else {
+          stockSyncResult = await syncStockForDays(supabase, connectionId, daysWithSavedTickets, winerimToken, {
+            incremental: true,
+            desiredEventIdsByDay: savedEventIdsByDay,
+          });
+        }
+      } else if (resolvedLines > 0 && !stockSyncEnabled) {
+        warning = "Open tickets captured only; provider_config.open_tickets_stock_sync_enabled is false.";
+      }
+
+      const now = new Date().toISOString();
+      const nextConfig = {
+        ...providerConfig,
+        last_open_tickets_sync: {
+          at: now,
+          success: (stockSyncResult?.failed || 0) === 0,
+          ticketCount: tickets.length,
+          savedEvents,
+          savedLines,
+          resolvedLines,
+          unresolvedLines,
+          stockDeferredLines,
+          minLineAgeMinutes,
+          stockSyncEnabled,
+          stockSync: stockSyncResult,
+          warning,
+        },
+      };
+      await supabase.from("pos_connections").update({ provider_config: nextConfig }).eq("id", connectionId);
+
+      return new Response(JSON.stringify({
+        success: (stockSyncResult?.failed || 0) === 0,
+        source: "open_tickets",
+        ticketCount: tickets.length,
+        savedEvents,
+        savedLines,
+        resolvedLines,
+        unresolvedLines,
+        stockDeferredLines,
+        minLineAgeMinutes,
+        stockSyncEnabled,
+        stockSync: stockSyncResult,
+        warning,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "fetch-day") {
@@ -7338,7 +7655,7 @@ ${costPricesXml}
         // ── Filter formats based on wine eligibility ──
         const elig = wineEligibility[wineId];
         const eligibleFormats = formatTypes.filter((fmt: string) => {
-          if (fmt === "GLASS") return elig?.serve_by_glass && (elig?.glass_sale_price ?? 0) > 0;
+          if (fmt === "GLASS") return (elig?.glass_sale_price ?? 0) > 0;
           if (fmt === "BOTTLE") return (elig?.bottle_sale_price ?? 0) > 0;
           if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
           return false;
@@ -7794,7 +8111,7 @@ ${costPricesXml}
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── CLEANUP AND PUSH GLASSES (only for serve_by_glass wines) ──
+    // ── CLEANUP AND PUSH GLASSES (wines with a Winerim glass price) ──
     if (action === "cleanup-and-push-glasses") {
       const targetFamilyId = payload.targetFamilyId; // e.g. "901954" for COPAS WINERIM
       const targetFamilyName = payload.targetFamilyName || "COPAS WINERIM";
@@ -7820,12 +8137,11 @@ ${costPricesXml}
         .select("id");
       console.log(`Deleted ${deletedTasks?.length || 0} QUEUED/FAILED tasks`);
 
-      // 3) Find wines that serve by glass and have glass_sale_price
+      // 3) Find wines that have glass_sale_price
       const { data: glassWines } = await supabase
         .from("winerim_wines")
         .select("winerim_id, name, wine_type, glass_sale_price")
         .eq("connection_id", connectionId)
-        .eq("serve_by_glass", true)
         .not("glass_sale_price", "is", null);
 
       if (!glassWines || glassWines.length === 0) {
@@ -8669,10 +8985,10 @@ ${costPricesXml}
             }
           }
           if (autoPushGlass) {
-            // GLASS gate: must have serve_by_glass=true AND glass_sale_price>0
-            if (!wine.serve_by_glass) {
-              skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:serve_by_glass_not_enabled" });
-            } else if (!wine.glass_sale_price || Number(wine.glass_sale_price) <= 0) {
+            // GLASS gate: must have glass_sale_price>0. The legacy serve_by_glass
+            // flag is only advisory because Winerim can expose a valid copa price
+            // without marking that older boolean.
+            if (!wine.glass_sale_price || Number(wine.glass_sale_price) <= 0) {
               skippedReasons.push({ winerim_id: wine.winerim_id, reason: "glass_skipped:no_glass_sale_price" });
             } else {
               const glassValidation = validateWineForAgora(wine, "GLASS", connection);

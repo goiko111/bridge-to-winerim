@@ -2,6 +2,34 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Agora open tickets / Sa Pedrera copas 2026-07-11
+- [x] Confirmar causa del `Unknown action`: los cambios estaban en una copia local no trackeada y no en el repo GitHub desplegable.
+- [x] Implementar en el repo oficial:
+  - `probe-open-tickets`;
+  - `sync-open-tickets`;
+  - dispatch por `provider_config.open_tickets_sync_enabled`;
+  - regla `GLASS` basada en `glass_sale_price>0`.
+- [x] Añadir test estatico `src/test/agoraOpenTicketsStatic.test.ts`.
+- [x] Validar localmente:
+  - `npm ci`;
+  - `npm test` (`5` archivos, `22` tests);
+  - `npx tsc --noEmit`;
+  - bundle esbuild de `agora-proxy`;
+  - bundle esbuild de `agora-cron-dispatcher`;
+  - `git diff --check`.
+- [ ] Subir commit a GitHub `main`.
+- [ ] Pedir redeploy en Lovable Cloud de:
+  - `agora-proxy`;
+  - `agora-cron-dispatcher`.
+- [ ] Post-redeploy: confirmar que `probe-open-tickets` ya no devuelve `Unknown action`.
+- [ ] Sa Pedrera: ejecutar `probe-open-tickets` y guardar resultado de endpoint:
+  - si devuelve tickets JSON con lineas y `ProductId`, activar piloto de captura;
+  - si devuelve 500/HTML/vacio, no activar stock y documentar que esa instalacion sigue dependiendo de cierre/Invoices.
+- [ ] Sa Pedrera: activar primero `provider_config.open_tickets_sync_enabled=true` con `open_tickets_stock_sync_enabled=false` y confirmar que se guardan `OpenTicket` sin descontar.
+- [ ] Sa Pedrera: activar `open_tickets_stock_sync_enabled=true` solo tras validar mapeo y retardo de lineas (`open_tickets_min_line_age_minutes`).
+- [ ] Sa Pedrera: probar un vino con precio de copa en Winerim y confirmar que `evaluate-auto-push` ya no devuelve `glass_skipped:serve_by_glass_not_enabled`.
+- [ ] Sa Pedrera: procesar cola y verificar visualmente que las copas aparecen donde espera el cliente.
+
 ## P0 — Cienvinos / historial Winerim con stock 0 2026-06-26
 - [x] Confirmar que Cienvinos tiene ventas mapeadas y `stock_sync_log.SUCCESS` recientes.
 - [x] Confirmar patron del fallo reportado: ventas con `previousStock=0` y `newStock=0`, aceptadas por Winerim pero sin bajada real.
