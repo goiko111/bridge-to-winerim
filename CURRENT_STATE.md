@@ -3609,3 +3609,41 @@ _Última actualización: 2026-07-11 08:15 CEST_
 - Mientras no se despliegue `89c5950`, las tareas `AGORA_HIDE_PRODUCT` pueden seguir quedando bloqueadas si Agora aplica el cambio pero devuelve cuerpo incompleto.
 - Muchas conexiones tienen `auto_push_on_update=false`; por tanto altas nuevas pueden subir, pero cambios de precio, inactivaciones o retirada de precio pueden no propagarse automáticamente en esas conexiones hasta activar una política diferencial segura.
 - `provider_products` puede no reflejar algunos productos que `winerim_push_tracking` marca como `VERIFIED`; hay que endurecer la validación de "formato ya verificado" para evitar falsos positivos visuales.
+
+## 2026-07-11 · Nuevas integraciones Agora creadas en modo seguro
+
+### Hechos
+- Se crearon filas `pos_connections` para nuevas integraciones Agora que faltaban en Lovable Cloud:
+  - `Saddle` (`f4387c78-7b5b-4f8b-845d-0db6636660a1`)
+  - `El Higuerón` (`c2e41778-fd14-4a83-9b24-d4fd305fe490`)
+  - `Tintorera` (`1efe95c0-5fb7-404f-9947-416eed598a46`)
+  - `O Bistro` (`c0b4b35b-bce8-4927-9134-e23045cf7dcd`)
+  - `Taberna de Elia` (`ae599bfb-d580-4250-9661-a97535d25e85`)
+- Todas se crearon con `auto_push_on_create=false`, `auto_push_on_update=false`, `auto_push_verified_ready=false`, `write_mode=NONE` y política de legacy visible. No se ocultó legacy ni se subieron familias Winerim.
+- `Taberna de Elia` quedó activa en lectura (`enabled=true`, `sync_mode=PULL_ONLY`, `write_mode=NONE`):
+  - test Agora OK;
+  - master data OK: `117` familias, `2.940` productos, `17` centros de venta;
+  - catálogo Winerim enriquecido completo: `365` vinos, `365/365` detalles correctos;
+  - ventas cerradas importadas en lectura: `24` días, `371` facturas/eventos, `4.303` líneas; `resolvedLines=0` porque aún no hay matching confirmado contra Winerim.
+- `Saddle` responde desde la máquina local a `tickets`, `export-master` e `Invoices`, pero desde backend las llamadas abortan (`AbortError`). No se activó.
+- `El Higuerón` devuelve `401` con la clave facilitada. No se activó.
+- `Tintorera` no responde dentro de timeout local (`connection timed out`). No se activó.
+- `O Bistro` usa IP privada `192.168.1.22`; Lovable Cloud/backend no puede acceder a esa red sin URL externa, DDNS o VPN. No se activó.
+- `Don Quijote Marbella` sigue sin conexión creada porque no hay URL/API token/token Winerim localizados en el contexto operativo.
+
+### Decisiones
+- Empezar todas estas altas en modo lectura/validación. No se publica Winerim ni se toca el legacy hasta validar estructura visual, matching y prueba de venta.
+- Mantener Taberna de Elia en lectura aunque ya importe ventas, porque existe decisión previa de no hacer volcado directo por matching incompleto y estructura `Bodega` muy trabajada.
+
+### Hipótesis
+- Saddle puede estar filtrando o degradando tráfico desde la red de Lovable Cloud/backend aunque responda desde la red local del operador.
+- El Higuerón probablemente tiene clave API incorrecta, caducada o el módulo HTTP activo con otra clave.
+- Tintorera puede tener TPV apagado, DDNS/puerto caído o firewall bloqueando.
+
+### Tareas pendientes inmediatas
+- Saddle: pedir a SAT un DDNS/URL alternativa o revisar firewall/ruta desde Lovable Cloud/backend; repetir `sync-master-data` cuando responda.
+- El Higuerón: pedir confirmación literal de clave API HTTP y que prueben `GET /api/export/tickets/` con esa clave.
+- Tintorera: pedir al cliente/SAT confirmar TPV encendido, DDNS `tintorera.dyndns.org`, router/firewall y puerto `8984`.
+- O Bistro: pedir URL externa o DDNS; la IP `192.168.1.22` solo sirve dentro del local.
+- Don Quijote Marbella: solicitar URL servidor Agora, clave API HTTP y token Winerim.
+- Taberna de Elia: preparar revisión de matching legacy vs Winerim antes de activar stock o publicar catálogo.

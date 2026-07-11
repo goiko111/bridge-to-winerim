@@ -1066,3 +1066,14 @@
 - **Decisión**: No activar el modo casi en tiempo real en Jardí mientras `eljardiparets.ddns.net:8984` devuelva `NETWORK_UNREACHABLE / No route to host`.
 - **Razón**: El fallo es de conectividad entre backend y TPV, no de lógica de Winerim. Activar el cron generaría alertas y breaker sin capturar ventas.
 - **Alternativa descartada**: activar igualmente para que se recupere cuando vuelva la red. El flujo de `Invoices` ya cubre recuperación de ventas cerradas; tickets abiertos no aportan valor si el servidor no enruta.
+
+## 2026-07-11 · Nuevas integraciones Agora: alta read-only antes de escritura
+- **Decisión**: Crear Saddle, El Higuerón, Tintorera, O Bistro y Taberna de Elia en modo seguro: `write_mode=NONE`, auto-push apagado y legacy visible.
+- **Razón**: Varias tienen estructura previa desconocida o bloqueos de red/token. Activar escritura o publicar familias Winerim sin validar puede duplicar vinos, romper pantallas de sala o generar ventas sin mapping correcto.
+- **Alternativa descartada**: usar la misma receta de “familias Winerim + ocultar legacy” en todas. Taberna de Elia ya tenía una decisión previa de matching obligatorio, Saddle tiene armonías/menús complejos, Higuerón menciona control de stock externo, O Bistro no es accesible y Tintorera no responde.
+- **Rollback**: si alguna fila creada genera confusión, dejar `enabled=false`, `write_mode=NONE` y conservar credenciales para retomar cuando el SAT resuelva red/token.
+
+## 2026-07-11 · Taberna de Elia: activar lectura pero no stock ni catálogo Winerim
+- **Decisión**: Dejar Taberna de Elia `enabled=true` en `PULL_ONLY` para importar ventas cerradas y mantener catálogo Winerim cacheado, pero sin stock ni publicación de productos.
+- **Razón**: La API responde bien y ya permite importar ventas históricas/cerradas, pero el matching actual no resuelve líneas (`resolvedLines=0`) y el legacy de bodega tiene estructura por regiones/denominaciones.
+- **Alternativa descartada**: activar `XML_IMPORT` y volcar familias Winerim ya. Reabriría el riesgo documentado el 2026-06-17: duplicados y pérdida de organización visual.

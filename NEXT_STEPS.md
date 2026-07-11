@@ -816,7 +816,13 @@
 - [ ] Luruna: corregir 404 de stock para `CAMPILLO 2021 CRIANZA [botella]` (Winerim `156687`) con el mismo criterio: mapping/stockId/acceso o sales-only si no hay stock activo.
 - [ ] Jardí: pedir a SAT/cliente revisar TPV encendido, DDNS, router/firewall y puerto `8984`; no activar `open_tickets_sync_enabled` hasta que `/api/export/tickets/` responda desde backend.
 - [ ] Decidir política global por conexión para `auto_push_on_update`: si queda desactivado, cambios de precio, inactivos y retirada de precios no se propagan automáticamente. Activarlo solo tras confirmar diff/idempotencia y sin bucles de `AUTO_UPDATE`.
-- [ ] Revisar conexiones no creadas en `pos_connections`: Saddle, Higuerón, O Bistro, Tintorera, Don Quijote Marbella y Taberna de Elia. Crear o documentar como pendientes según estado real.
+- [x] Crear/documentar conexiones faltantes en `pos_connections`: Saddle, Higuerón, O Bistro, Tintorera y Taberna de Elia.
+- [ ] Don Quijote Marbella: faltan URL servidor Agora, clave API HTTP y token Winerim; no hay conexión creada todavía.
+- [ ] Saddle: backend aborta contra la IP aunque desde la máquina local responde; pedir DDNS/URL alternativa o revisión firewall/ruta desde Lovable Cloud/backend.
+- [ ] El Higuerón: clave facilitada devuelve HTTP `401`; pedir confirmación literal de clave API HTTP y módulo API activo.
+- [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
+- [ ] O Bistro: IP privada `192.168.1.22` no es accesible desde backend; pedir URL externa/DDNS/VPN.
+- [ ] Taberna de Elia: ya activa en lectura; preparar revisión de matching legacy vs Winerim antes de publicar catálogo o activar stock.
 - [ ] Añadir auditoría periódica que compare Winerim activo/preciado vs Agora visible por formato y genere lista de productos a ocultar/republicar sin tocar nada automáticamente.
 - [ ] Jardí: confirmar con el cliente el nombre/ID exacto del "vino nuevo" que dice no ver. Auditoría 2026-06-18 no detecta ningún formato Winerim activo/con precio ausente en Agora; `Anais Blanc Organic` ya aparece en `BLANCOS WINERIM` y `COPAS WINERIM`.
 - [ ] Jardí: explicar que las ventas importadas actuales vienen de botones legacy sin mapping (`mapped=false`) y por eso no descuentan stock ni generan historial Winerim. Para descontar: vender desde botones Winerim o hacer matching legacy -> Winerim producto a producto.
