@@ -808,6 +808,16 @@
 - [ ] Implementar auto-update diferencial de catálogo antes de poner `auto_push_on_update=true` en Cienvinos/Baco.
 
 ## P0 — Validación
+- [ ] Redeploy urgente de `agora-proxy` desde `main` incluyendo commits `3917045` y `89c5950`.
+- [ ] Tras redeploy, reintentar/drenar la tarea `AGORA_HIDE_PRODUCT` de Sa Pedrera para `B310- Albenc` (Winerim `296314`) y confirmar en master data que queda no vendible.
+- [ ] Sa Pedrera: repetir `sync-open-tickets` y confirmar que las ventas de botella/copa Winerim entran en historial Winerim casi en tiempo real; verificar visualmente `Sanger Voyage 360` en botella y copa.
+- [ ] Sa Pedrera: revisar por qué `winerim_push_tracking` marca algunos formatos `VERIFIED` que no aparecen en `provider_products`; endurecer `formats_already_verified` para exigir presencia real o verificación viva en master data.
+- [ ] Kava: corregir los 404 de stock para `C CLOE Chardonnay [copa]` (Winerim `251918`) y `C Luis Alegre Crianza [copa]` (Winerim `147010`): revisar mapping, acceso Winerim, stockId por variante y si procede marcar venta sales-only cuando el stock no esté activo.
+- [ ] Luruna: corregir 404 de stock para `CAMPILLO 2021 CRIANZA [botella]` (Winerim `156687`) con el mismo criterio: mapping/stockId/acceso o sales-only si no hay stock activo.
+- [ ] Jardí: pedir a SAT/cliente revisar TPV encendido, DDNS, router/firewall y puerto `8984`; no activar `open_tickets_sync_enabled` hasta que `/api/export/tickets/` responda desde backend.
+- [ ] Decidir política global por conexión para `auto_push_on_update`: si queda desactivado, cambios de precio, inactivos y retirada de precios no se propagan automáticamente. Activarlo solo tras confirmar diff/idempotencia y sin bucles de `AUTO_UPDATE`.
+- [ ] Revisar conexiones no creadas en `pos_connections`: Saddle, Higuerón, O Bistro, Tintorera, Don Quijote Marbella y Taberna de Elia. Crear o documentar como pendientes según estado real.
+- [ ] Añadir auditoría periódica que compare Winerim activo/preciado vs Agora visible por formato y genere lista de productos a ocultar/republicar sin tocar nada automáticamente.
 - [ ] Jardí: confirmar con el cliente el nombre/ID exacto del "vino nuevo" que dice no ver. Auditoría 2026-06-18 no detecta ningún formato Winerim activo/con precio ausente en Agora; `Anais Blanc Organic` ya aparece en `BLANCOS WINERIM` y `COPAS WINERIM`.
 - [ ] Jardí: explicar que las ventas importadas actuales vienen de botones legacy sin mapping (`mapped=false`) y por eso no descuentan stock ni generan historial Winerim. Para descontar: vender desde botones Winerim o hacer matching legacy -> Winerim producto a producto.
 - [ ] Jardí: preparar propuesta de matching legacy seguro antes de ocultar legacy o prometer stock automático. Hay que revisar especialmente los legacy vendidos recientemente (`VI BLANC`, `VI RECOMANAT`, etc.).

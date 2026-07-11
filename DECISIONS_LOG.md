@@ -1043,3 +1043,26 @@
 - **Decisión**: En Sa Pedrera, importar solo los casos donde Winerim expone actualmente la misma variante con un stockId nuevo; no convertir ventas de copa a botella ni usar stockIds que Winerim devuelve como inaccesibles.
 - **Razón**: Varias ventas historicas apuntan a stockIds antiguos o a variantes que hoy ya no existen como tal en Winerim (`copa` vendida, pero Winerim solo expone `botella`, o `GET /stock/wine/{id}` devuelve 404). Forzarlas podria crear historial en una variante incorrecta.
 - **Alternativa descartada**: importar todas las ventas pendientes contra el stockId disponible aunque sea de otra variante. Eso maquillaria el historico, pero romperia la trazabilidad copa/botella y podria confundir stock/margenes.
+
+## 2026-07-11 · Agora: activar piloto de tickets abiertos para ventas casi en tiempo real
+- **Decisión**: Activar `intraday_sales_sync_enabled`, `open_tickets_sync_enabled` y `open_tickets_stock_sync_enabled` en conexiones Agora activas cuyo endpoint `/api/export/tickets/` responde correctamente.
+- **Razón**: Agora no expone un webhook universal de venta cerrada en estas instalaciones. La vía más cercana a tiempo real es leer tickets abiertos cada pocos minutos, registrar ventas elegibles y reconciliar después con `Invoices` cuando la factura cierre.
+- **Alternativa descartada**: esperar únicamente al cierre D-1. Es más estable, pero no cubre la necesidad operativa de clientes como Sa Pedrera, Casa Nene o Cienvinos de ver ventas y stock durante el servicio.
+- **Rollback**: desactivar en la conexión `provider_config.open_tickets_sync_enabled`, `provider_config.open_tickets_stock_sync_enabled` y, si hiciera falta, `provider_config.intraday_sales_sync_enabled`. El flujo cerrado por `Invoices` queda intacto.
+
+## 2026-07-11 · Agora: reconciliar stock incremental cuando conviven tickets abiertos e invoices
+- **Decisión**: Cambiar `auto-sync-sales` para usar reconciliación incremental de stock cuando una conexión tenga `open_tickets_sync_enabled=true`, aunque `intraday_sales_sync_enabled` no estuviera activo.
+- **Razón**: Si un ticket abierto ya descontó una unidad y más tarde esa misma venta aparece en `Invoices`, el flujo cerrado no debe volver a aplicar todo el día como si fuera la primera vez. La reconciliación incremental reduce riesgo de doble descuento.
+- **Alternativa descartada**: confiar solo en el flag intradía. Podía fallar si un cliente tenía tickets abiertos activos pero intradía desactivado por error de configuración.
+- **Rollback**: volver a la expresión anterior y desactivar `open_tickets_stock_sync_enabled` por conexión hasta corregir cualquier caso anómalo.
+
+## 2026-07-11 · Agora: tolerar respuestas de importación con cuerpo incompleto
+- **Decisión**: Añadir lectura best-effort del cuerpo HTTP en imports XML de Agora para que `res.text()` no tumbe una tarea ya aplicada con `TypeError: unexpected end of file`.
+- **Razón**: En Sa Pedrera, una ocultación de `B310- Albenc` quedó bloqueada porque Agora devolvió una respuesta sin cuerpo legible. Este error no siempre significa que la escritura no se haya aplicado.
+- **Alternativa descartada**: reintentar manualmente esas tareas sin cambiar código. Mantendría el falso bloqueo cada vez que Agora devuelva cuerpo truncado.
+- **Rollback**: revertir commit `89c5950` si se observa que respuestas ilegibles esconden errores reales; antes de revertir, verificar master data para confirmar el estado del producto en Agora.
+
+## 2026-07-11 · Agora: no activar tickets abiertos en instalaciones sin ruta de red
+- **Decisión**: No activar el modo casi en tiempo real en Jardí mientras `eljardiparets.ddns.net:8984` devuelva `NETWORK_UNREACHABLE / No route to host`.
+- **Razón**: El fallo es de conectividad entre backend y TPV, no de lógica de Winerim. Activar el cron generaría alertas y breaker sin capturar ventas.
+- **Alternativa descartada**: activar igualmente para que se recupere cuando vuelva la red. El flujo de `Invoices` ya cubre recuperación de ventas cerradas; tickets abiertos no aportan valor si el servidor no enruta.

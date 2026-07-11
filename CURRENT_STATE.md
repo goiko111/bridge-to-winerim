@@ -3579,3 +3579,33 @@ _Última actualización: 2026-07-11 08:15 CEST_
 - Cienvinos ya está activo; riesgo pendiente: primer cierre nuevo con producto WINERIM debe confirmar stock idempotente por variante.
 - Sa Vida no debe tratarse como lista ni reintentar importaciones masivas hasta que Agora devuelva 200 en `export-master`/`Invoices`. Forzar escrituras ahora solo aumentaría cola fallida y ruido de breaker.
 - Baco Getafe ya está activo; riesgo pendiente: primer cierre nuevo con producto WINERIM debe confirmar stock idempotente por variante.
+
+## 2026-07-11 · Agora: piloto de ventas casi en tiempo real y auditoría de flota
+
+### Hechos
+- Se activó `intraday_sales_sync_enabled=true`, `open_tickets_sync_enabled=true`, `open_tickets_stock_sync_enabled=true` y `open_tickets_min_line_age_minutes=2` en conexiones Agora activas cuyo endpoint de tickets respondió correctamente: Casa Nene, Chiquilla, El Bejeque, Katsu Izakaya, Kava, Luruna, Restaurante Cienvinos Ecija, Restaurante Qtomas, Restaurante Triana, Sa Pedrera y Sa Vida.
+- No se activó el piloto en Jardí porque `eljardiparets.ddns.net:8984` devuelve `NETWORK_UNREACHABLE / No route to host` desde backend. Tampoco se activó en conexiones deshabilitadas o en modo lectura/pausadas: Baco Getafe, Don Bernardo Ponzano, Don Bernardo Santander, La Candela de Triana y PurOsushi.
+- El dispatcher manual `sales-stock` procesó la flota con `dispatched=33` y `skippedByPreflight=1` (Jardí).
+- Sa Pedrera ya captura tickets abiertos: se detectaron 3 tickets abiertos con 43 líneas; 2 movimientos de stock Winerim se registraron correctamente y 1 falló por venta de un vino inactivo/inaccesible (`B310- Albenc`, Winerim `296314`).
+- Casa Nene capturó ticket abierto y registró stock correctamente (`B Pepe Luis [botella]`, Winerim `260865`).
+- Cienvinos captura tickets abiertos y ventas intradía; el stock no se movió en la muestra porque las líneas abiertas no resolvían vino Winerim o no requerían stock.
+- Kava y Luruna conectan, pero tienen fallos vivos de stock por vinos que Winerim devuelve como `404 Wine not found/not accessible`.
+- Se publicaron en GitHub dos commits:
+  - `3917045` fuerza reconciliación incremental de stock cuando `open_tickets_sync_enabled` está activo, evitando doble descuento al cerrarse después la factura.
+  - `89c5950` endurece lectura de respuestas de importación Agora para que una respuesta truncada/vacía no deje tareas de ocultación bloqueadas con `unexpected end of file`.
+- El despliegue CLI desde esta máquina no fue posible porque falta token de acceso de Lovable Cloud; el código está en `main`, pero necesita redeploy de `agora-proxy`.
+
+### Decisiones
+- Para todas las conexiones Agora con tickets disponibles, el piloto de "tiempo real" se basa en `/api/export/tickets/` + reconciliación incremental, no en mutar stock dos veces.
+- El histórico de facturas cerradas sigue siendo la fuente de reconciliación definitiva. Si el TPV cae, al volver debe recuperarse la venta cerrada por `Invoices`; los estados transitorios de tickets abiertos no se garantizan si el servidor estuvo inaccesible durante ese intervalo.
+- Un vino inactivo, sin precio o con variante ya no publicable debe quedar oculto también a nivel producto, no solo a nivel familia. Si vuelve a estar activo y con precio, debe volver a publicarse por el flujo normal de upsert.
+
+### Hipótesis
+- En Sa Pedrera, el caso reportado de copas no visibles no parece ser un problema de cola para `Sanger Voyage 360`: existen mappings `BOTTLE` y `GLASS` confirmados y se re-publicó el producto. Puede quedar una discrepancia de cache/visual de terminal o de verificación contra `export-master`.
+- Los 404 de Kava (`CLOE Chardonnay`, `Luis Alegre Crianza`) y Luruna (`CAMPILLO 2021 CRIANZA`) apuntan a stock/acceso Winerim o mapping antiguo, no a caída de Agora.
+- Jardí probablemente tiene un problema externo de red/DDNS/router/puerto, porque la conexión cerrada reciente funcionaba pero el endpoint de tickets no enruta desde backend.
+
+### Riesgos
+- Mientras no se despliegue `89c5950`, las tareas `AGORA_HIDE_PRODUCT` pueden seguir quedando bloqueadas si Agora aplica el cambio pero devuelve cuerpo incompleto.
+- Muchas conexiones tienen `auto_push_on_update=false`; por tanto altas nuevas pueden subir, pero cambios de precio, inactivaciones o retirada de precio pueden no propagarse automáticamente en esas conexiones hasta activar una política diferencial segura.
+- `provider_products` puede no reflejar algunos productos que `winerim_push_tracking` marca como `VERIFIED`; hay que endurecer la validación de "formato ya verificado" para evitar falsos positivos visuales.
