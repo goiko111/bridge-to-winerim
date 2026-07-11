@@ -1083,3 +1083,9 @@
 - **Razón**: El cliente ya puede operar desde familias Winerim y la convivencia con legacy genera duplicidad visual y riesgo de ventas que no resuelvan contra Winerim.
 - **Alternativa descartada**: borrar productos/familias legacy. Se conserva todo para rollback y trazabilidad.
 - **Rollback**: reactivar `ShowInPos=true` en las familias legacy necesarias y `UseAsDirectSale=true`/`SaleableAsMain=true` en los productos legacy que el cliente quiera recuperar.
+
+## 2026-07-11 · Abadía Yuste: esperar alta backend antes de escribir en Agora
+- **Decisión**: Tratar Abadía Yuste como pre-onboarding validado externamente, pero no escribir en Agora ni ocultar legacy hasta crear conexión en Lovable Cloud.
+- **Razón**: Agora y Winerim responden correctamente, pero Lovable Cloud/backend está devolviendo `522`, así que no hay trazabilidad en `pos_connections`, `agora_master_data`, colas ni rollback del middleware.
+- **Alternativa descartada**: escribir familias Winerim directamente por API de Agora. Aunque técnicamente posible, saltaría la idempotencia, el monitor, los mappings y la documentación operativa.
+- **Rollback**: no aplica aún porque no se ha escrito nada en Agora desde Winerim.

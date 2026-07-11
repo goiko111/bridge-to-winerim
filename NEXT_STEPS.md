@@ -824,6 +824,9 @@
 - [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
 - [ ] O Bistro: IP privada `192.168.1.22` no es accesible desde backend; pedir URL externa/DDNS/VPN.
 - [ ] Taberna de Elia: ya activa en lectura; preparar revisión de matching legacy vs Winerim antes de publicar catálogo o activar stock.
+- [ ] Abadía Yuste: crear conexión en Lovable Cloud cuando deje de devolver `522`; datos técnicos ya validados externamente contra Agora y Winerim.
+- [ ] Abadía Yuste: tras alta, ejecutar `test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `fetch-catalog` completo.
+- [ ] Abadía Yuste: preparar informe de familias legacy/DO vs Winerim antes de publicar familias Winerim u ocultar legacy.
 - [ ] Añadir auditoría periódica que compare Winerim activo/preciado vs Agora visible por formato y genere lista de productos a ocultar/republicar sin tocar nada automáticamente.
 - [ ] Jardí: confirmar con el cliente el nombre/ID exacto del "vino nuevo" que dice no ver. Auditoría 2026-06-18 no detecta ningún formato Winerim activo/con precio ausente en Agora; `Anais Blanc Organic` ya aparece en `BLANCOS WINERIM` y `COPAS WINERIM`.
 - [ ] Jardí: explicar que las ventas importadas actuales vienen de botones legacy sin mapping (`mapped=false`) y por eso no descuentan stock ni generan historial Winerim. Para descontar: vender desde botones Winerim o hacer matching legacy -> Winerim producto a producto.

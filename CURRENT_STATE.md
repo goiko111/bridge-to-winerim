@@ -3691,3 +3691,37 @@ _Última actualización: 2026-07-11 08:15 CEST_
 ### Tareas pendientes inmediatas
 - Cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para El Bejeque y confirmar que la caché interna refleja legacy oculto.
 - Pedir al cliente una prueba visual en TPV/tablet y una venta real desde botón Winerim para confirmar historial/stock.
+
+## 2026-07-11 · Abadía Yuste: credenciales recibidas y precheck externo OK
+
+### Hechos
+- Se recibieron credenciales para integrar `Abadía Yuste` con Agora y Winerim.
+- No se guardan tokens en documentación de sesión; quedan solo en el contexto operativo de la conversación.
+- Precheck directo contra Agora (`http://abadiayuste.cctvddns.net:8984`) con la clave facilitada:
+  - `/api/export/tickets/`: HTTP 200, `7` tickets abiertos detectados.
+  - `/api/export-master/?filter=Families`: HTTP 200.
+  - `/api/export-master/?filter=Products`: HTTP 200, catálogo grande (`2.423` productos).
+  - `/api/export/?business-day=2026-07-10&filter=Invoices`: HTTP 200, `4` facturas detectadas.
+- Precheck directo contra Winerim API v2 con el token facilitado:
+  - `/api/v2/wines?page=1&limit=100`: HTTP 200.
+  - Catálogo Winerim: `264` vinos (`3` páginas).
+- Estructura Agora observada:
+  - `108` familias.
+  - `2.423` productos.
+  - `2.180` productos vendibles.
+  - Familias de vino/DO detectadas, muchas ya ocultas: `Vinos`, `Botellas Vino`, `Tierra de extremadura`, `D.O. Rioja`, `D.O. Ribera del Duero Robles`, `D.O. Ribera del duero Grandes vinos`, `D.O. Otros`, `D.O. Blancos`, `Cavas y champagnes`, `APERITIVOS CAVAS Y CHAMPAGNES`, `BLANCOS DE AQUI Y DE ALLI`, `TINTOS DE AQUI Y DE ALLI`, `BLANCOS Y TINTOS DE OTRO NIVEL`, `VINOS DE POSTRE`, entre otras.
+- Bloqueo actual: Lovable Cloud/backend devuelve HTTP `522` persistente en REST y Edge Functions; no se pudo crear todavía la fila `pos_connections` ni lanzar `sync-master-data` desde backend.
+
+### Decisiones
+- No hacer escrituras directas en Agora para Abadía Yuste mientras no exista conexión registrada en Lovable Cloud y no se haya validado estructura/matching desde el middleware.
+- Preparar el alta en modo seguro cuando Lovable Cloud vuelva: `enabled=false` o lectura controlada, `write_mode=NONE`, auto-push apagado y legacy visible.
+
+### Hipótesis
+- La integración es técnicamente viable: Agora responde desde fuera, Winerim token es válido y hay endpoint de tickets abiertos para piloto casi en tiempo real.
+- La estructura de vinos de Agora está trabajada por DO/región; puede requerir matching o decisión explícita antes de ocultar legacy y publicar familias Winerim.
+
+### Tareas pendientes inmediatas
+- Reintentar alta en `pos_connections` cuando Lovable Cloud/backend deje de devolver `522`.
+- Tras crear conexión: ejecutar `agora-proxy/test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day`.
+- Ejecutar `winerim-proxy/fetch-catalog` start + enrich completo.
+- Preparar informe de familias legacy vs Winerim antes de publicar familias Winerim u ocultar legacy.
