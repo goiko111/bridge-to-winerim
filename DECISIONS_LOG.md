@@ -1089,3 +1089,15 @@
 - **Razón**: Agora y Winerim responden correctamente, pero Lovable Cloud/backend está devolviendo `522`, así que no hay trazabilidad en `pos_connections`, `agora_master_data`, colas ni rollback del middleware.
 - **Alternativa descartada**: escribir familias Winerim directamente por API de Agora. Aunque técnicamente posible, saltaría la idempotencia, el monitor, los mappings y la documentación operativa.
 - **Rollback**: no aplica aún porque no se ha escrito nada en Agora desde Winerim.
+
+## 2026-07-11 · El Bejeque: catálogo Winerim OK, no tocar restos no vendibles
+- **Decisión**: Considerar El Bejeque correcto a nivel catálogo Winerim -> Ágora tras auditoría directa: `98/98` formatos activos con precio están publicados en familias Winerim y vendibles con `SaleableAsMain=true`.
+- **Razón**: El cruce directo no detecta faltantes ni familias incorrectas, el legacy visible de vino es `0`, y los únicos `3` productos extra dentro de familias Winerim (`B Cloe`, `B Juan Escudero Marmajuelo`, `C Cloe`) ya están no vendibles.
+- **Alternativa descartada**: ocultar o borrar esos restos directamente por API ahora. No aportan riesgo visual ni operativo, y con Lovable Cloud/backend en timeout conviene esperar a `sync-master-data` para que el middleware conserve trazabilidad.
+- **Rollback**: no se ha hecho ninguna escritura en esta auditoría. Si se necesitara recuperar legacy, se mantiene el rollback documentado el 2026-07-11: reactivar familias/productos legacy sin borrar nada.
+
+## 2026-07-11 · El Higuerón: bloqueo por API HTTP de Ágora
+- **Decisión**: Mantener Higuerón bloqueado y sin escritura hasta que el SAT/cliente confirme una clave API HTTP válida.
+- **Razón**: El token Winerim responde HTTP `200`, pero Ágora devuelve HTTP `401` en catálogo, productos, facturas y tickets abiertos con la clave facilitada. El fallo está en credencial/módulo API HTTP de Ágora, no en Winerim.
+- **Alternativa descartada**: intentar publicar familias Winerim o activar ventas igualmente. Sin lectura básica de Ágora no hay forma segura de validar estructura, legacy, ventas ni rollback.
+- **Rollback**: no aplica porque no se ha hecho escritura.

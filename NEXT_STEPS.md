@@ -824,6 +824,12 @@
 - [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
 - [ ] O Bistro: IP privada `192.168.1.22` no es accesible desde backend; pedir URL externa/DDNS/VPN.
 - [ ] Taberna de Elia: ya activa en lectura; preparar revisión de matching legacy vs Winerim antes de publicar catálogo o activar stock.
+- [x] El Bejeque: auditoría directa 2026-07-11 confirma `98/98` formatos Winerim activos/con precio presentes en Ágora, en familias Winerim y vendibles dentro de familia.
+- [x] El Bejeque: legacy visible de vino confirmado a `0`; restos legacy detectados están no vendibles.
+- [ ] El Bejeque: cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para refrescar caché interna tras la ocultación legacy y dejar trazabilidad dentro del middleware.
+- [ ] El Bejeque: pedir venta real desde botón/familia Winerim para confirmar historial/stock Winerim antes de declarar `LIVE_AUTOMATIC` completo.
+- [ ] El Higuerón: pedir al SAT/cliente clave API HTTP válida; la clave actual devuelve HTTP `401` en `Families`, `Products`, `Invoices` y `tickets`.
+- [ ] El Higuerón: tras nueva clave, repetir `test`, `sync-master-data`, `probe-open-tickets` y precheck de estructura antes de publicar familias Winerim.
 - [ ] Abadía Yuste: crear conexión en Lovable Cloud cuando deje de devolver `522`; datos técnicos ya validados externamente contra Agora y Winerim.
 - [ ] Abadía Yuste: tras alta, ejecutar `test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `fetch-catalog` completo.
 - [ ] Abadía Yuste: preparar informe de familias legacy/DO vs Winerim antes de publicar familias Winerim u ocultar legacy.

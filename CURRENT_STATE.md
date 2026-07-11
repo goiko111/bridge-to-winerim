@@ -2,7 +2,60 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-11 08:15 CEST_
+_Última actualización: 2026-07-11 11:12 CEST_
+
+## Hechos (El Bejeque e Higuerón · auditoría directa — 2026-07-11 11:12 CEST)
+
+- Lovable Cloud/backend sigue con timeouts/HTTP `522` en lecturas REST/Edge Functions, por lo que esta auditoría se hizo en modo directo contra APIs externas de Ágora y Winerim, sin escrituras.
+- `El Bejeque`:
+  - Ágora responde correctamente con la clave API HTTP:
+    - `GET /api/export-master/?filter=Families`: HTTP `200`;
+    - `GET /api/export-master/?filter=Products`: HTTP `200`;
+    - `GET /api/export/?business-day=2026-07-10&filter=Invoices`: HTTP `200` (`12` facturas);
+    - `GET /api/export/tickets/`: HTTP `200` (`0` tickets abiertos en el momento de la sonda).
+  - Winerim responde correctamente:
+    - catálogo listado: `73` vinos;
+    - detalle enriquecido: `73/73` OK;
+    - formatos activos con precio esperados: `98`.
+  - Cruce Winerim activo/con precio -> Ágora:
+    - faltantes en Ágora: `0`;
+    - familia incorrecta: `0`;
+    - productos no vendibles por `SaleableAsMain=false`: `0` en los `98` formatos esperados.
+  - Las familias Winerim están visibles en Ágora:
+    - `TINTOS WINERIM`: `39` productos, `39` vendibles;
+    - `BLANCOS WINERIM`: `16` productos, `14` vendibles;
+    - `ROSADOS WINERIM`: `3` productos, `3` vendibles;
+    - `ESPUMOSOS WINERIM`: `8` productos, `8` vendibles;
+    - `DULCE WINERIM`: `6` productos, `6` vendibles;
+    - `FORTIFICADOS WINERIM`: `2` productos, `2` vendibles;
+    - `MAGNUM WINERIM`: `6` productos, `6` vendibles;
+    - `COPAS WINERIM`: `21` productos, `20` vendibles.
+  - Los productos Winerim están publicados como `UseAsDirectSale=false` y `SaleableAsMain=true`, que es el patrón correcto para vender dentro de familia sin generar botones raíz sueltos.
+  - Legacy visible de vino: `0` familias. Las familias legacy `VINOS`, `BLANCOS`, `TINTOS`, `ESPUMOSO`, `POSTRE`, `FORTIFICADO`, `ROSADO` siguen ocultas.
+  - Productos legacy de esas familias: `8` restos detectados, todos no vendibles (`UseAsDirectSale=false`, `SaleableAsMain=false`).
+  - Hay `3` productos extra dentro de familias Winerim que ya no forman parte del set Winerim activo/con precio actual, pero están no vendibles:
+    - `B Cloe` en `BLANCOS WINERIM`;
+    - `B Juan Escudero Marmajuelo` en `BLANCOS WINERIM`;
+    - `C Cloe` en `COPAS WINERIM`.
+- `El Higuerón`:
+  - Winerim API responde correctamente con el token facilitado (`GET /api/v2/wines?page=1&limit=5`: HTTP `200`).
+  - Ágora devuelve HTTP `401` con la clave facilitada en todos los endpoints probados:
+    - `GET /api/export-master/?filter=Families`;
+    - `GET /api/export-master/?filter=Products`;
+    - `GET /api/export/?business-day=2026-07-10&filter=Invoices`;
+    - `GET /api/export/tickets/`.
+
+### Decisiones / criterio operativo
+
+- Tratar `El Bejeque` como catálogo Winerim publicado correctamente: todo lo activo/con precio de Winerim está en Ágora, dentro de familias Winerim y vendible dentro de familia.
+- No tocar los `3` extras de Bejeque en esta sesión porque ya están no vendibles y no afectan a sala. Se revisarán por middleware cuando Lovable Cloud/backend vuelva a responder y pueda refrescar `sync-master-data`.
+- Tratar `El Higuerón` como bloqueado por Ágora/API HTTP, no por Winerim. El siguiente paso es pedir al SAT/cliente una clave API HTTP literal válida y confirmar que el módulo API HTTP está activo.
+
+### Pendiente inmediato
+
+- `El Bejeque`: cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para actualizar caché interna después de la ocultación legacy y confirmar que los `3` extras quedan también documentados como no vendibles.
+- `El Bejeque`: pedir al cliente una venta real desde una familia Winerim y comprobar que llega a historial/stock Winerim.
+- `El Higuerón`: no publicar familias Winerim ni activar ventas hasta resolver el `401` de Ágora.
 
 ## Hechos (Agora open tickets + copas por precio Winerim — 2026-07-11 08:15 CEST)
 
