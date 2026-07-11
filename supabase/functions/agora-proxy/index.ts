@@ -60,6 +60,14 @@ function invalidateAgoraProductsCache(connectionId: string) {
   agoraProductsXmlCache.delete(connectionId);
 }
 
+async function readResponseTextBestEffort(res: Response): Promise<string> {
+  try {
+    return await res.text();
+  } catch (err) {
+    return `[response body unreadable: ${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}]`;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // PER-CONNECTION RATE LIMITER (CRITICAL — protects local Agora servers)
 // ─────────────────────────────────────────────────────────────────────
@@ -5272,7 +5280,7 @@ serve(async (req) => {
           });
         }
 
-        const resBody = await res.text();
+        const resBody = await readResponseTextBestEffort(res);
         const resPreview = resBody.substring(0, 2048);
 
         if (res.status === 401 || res.status === 403) {
@@ -5396,7 +5404,7 @@ serve(async (req) => {
                 headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
-              const resBody = await res.text();
+              const resBody = await readResponseTextBestEffort(res);
 
               if (res.ok) {
                 await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
@@ -7898,7 +7906,7 @@ ${costPricesXml}
                 headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: hideXml,
               });
-              const resBody = await res.text();
+              const resBody = await readResponseTextBestEffort(res);
 
               if (res.ok) {
                 await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
@@ -7933,7 +7941,7 @@ ${costPricesXml}
                 headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
                 body: migrateXml,
               });
-              const resBody = await res.text();
+              const resBody = await readResponseTextBestEffort(res);
 
               if (res.ok) {
                 await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
