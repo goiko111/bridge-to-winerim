@@ -8,6 +8,7 @@ _Última actualización: 2026-07-11 08:15 CEST_
 
 - Se confirmo una contradiccion importante: los cambios de piloto `probe-open-tickets` / `sync-open-tickets` existian en una copia local no trackeada (`bridge-to-winerim-audit`), pero no en el repositorio GitHub que Lovable Cloud despliega (`goiko111/bridge-to-winerim`).
 - Se corrigio el repositorio oficial en `/Users/GOIKO/Documents/Playground/bridge-to-winerim-github`.
+- Commit preparado para despliegue: `a932bdb` (`Add Agora open tickets pilot`).
 - `agora-proxy` incorpora:
   - accion `probe-open-tickets` solo lectura contra `/api/export/tickets/`;
   - accion `sync-open-tickets` protegida por `provider_config.open_tickets_sync_enabled`;
