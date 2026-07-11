@@ -18,6 +18,10 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(dispatcherSource).toContain('action: "sync-open-tickets"');
   });
 
+  it("uses incremental closed-day stock reconciliation when open-ticket sync is enabled", () => {
+    expect(agoraProxySource).toContain("isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection)");
+  });
+
   it("does not require the legacy serve_by_glass flag when Winerim has a glass price", () => {
     expect(agoraProxySource).toContain("serve_by_glass_not_enabled_but_glass_price_present");
     expect(agoraProxySource).not.toContain('reason: "glass_skipped:serve_by_glass_not_enabled"');

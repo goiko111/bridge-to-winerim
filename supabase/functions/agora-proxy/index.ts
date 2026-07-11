@@ -4377,7 +4377,9 @@ serve(async (req) => {
 
     // ── AUTO-SYNC SALES (find pending days and save them) ──
     if (action === "auto-sync-sales") {
-      const useIncrementalStockSync = isIntradaySalesSyncEnabled(connection);
+      // Open-ticket sync may pre-discount the current business day. Closed invoices
+      // must reconcile by daily total so the same sale is not discounted twice.
+      const useIncrementalStockSync = isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection);
       // Find last synced day
       const lastSynced = connection.last_business_day_synced;
       const startDate = lastSynced
