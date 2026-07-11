@@ -3647,3 +3647,47 @@ _Última actualización: 2026-07-11 08:15 CEST_
 - O Bistro: pedir URL externa o DDNS; la IP `192.168.1.22` solo sirve dentro del local.
 - Don Quijote Marbella: solicitar URL servidor Agora, clave API HTTP y token Winerim.
 - Taberna de Elia: preparar revisión de matching legacy vs Winerim antes de activar stock o publicar catálogo.
+
+## 2026-07-11 · El Bejeque: legacy de vinos ocultado de forma reversible
+
+### Hechos
+- Se inspeccionó El Bejeque directamente contra Agora (`https://elbejeque.infogral.es`) porque Lovable Cloud/backend devolvía timeouts/522 en la consulta de control.
+- Antes del cambio, las familias Winerim estaban visibles:
+  - `TINTOS WINERIM`: 39 productos, 39 vendibles.
+  - `COPAS WINERIM`: 21 productos, 20 vendibles.
+  - `ROSADOS WINERIM`: 3 productos, 3 vendibles.
+  - `DULCE WINERIM`: 6 productos, 6 vendibles.
+  - `BLANCOS WINERIM`: 16 productos, 14 vendibles.
+  - `MAGNUM WINERIM`: 6 productos, 6 vendibles.
+  - `FORTIFICADOS WINERIM`: 2 productos, 2 vendibles.
+  - `ESPUMOSOS WINERIM`: 8 productos, 8 vendibles.
+- Se ocultó el legacy visible de vino a nivel familia (`ShowInPos=false`):
+  - `29 · VINOS`
+  - `30 · BLANCOS`
+  - `31 · TINTOS`
+  - `32 · ESPUMOSO`
+  - `33 · POSTRE`
+  - `34 · FORTIFICADO`
+  - `35 · ROSADO`
+- Se dejó no vendible el producto legacy dentro de esas familias (`UseAsDirectSale=false`, `SaleableAsMain=false`) para cumplir la regla de no ocultar solo la familia:
+  - `104 · ALEXANDER VS. THE HAM FACTORY`
+  - `105 · 62 MILLAS`
+  - `114 · BHILAR BIODINÁMICO`
+  - `152 · RAMÓN BILBAO EARLY HARVEST ROSADO`
+  - `158 · PIU ANCESTRAL PARRONA`
+  - `161 · DEMORADO`
+  - `1226 · DOSTERRAS BLANC`
+- Verificación posterior contra `export-master`:
+  - legacy visible: `0` familias;
+  - productos legacy vendibles: `0`;
+  - familias Winerim siguen visibles y con productos.
+
+### Decisiones
+- Ocultar legacy de El Bejeque sin borrar familias ni productos. El rollback es reactivar `ShowInPos` de las familias legacy y `UseAsDirectSale/SaleableAsMain` de los productos legacy necesarios.
+
+### Hipótesis
+- La caché `agora_master_data` de Lovable Cloud puede quedar temporalmente desactualizada porque la acción se aplicó por API directa de Agora al estar Lovable Cloud/backend con timeout/522.
+
+### Tareas pendientes inmediatas
+- Cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para El Bejeque y confirmar que la caché interna refleja legacy oculto.
+- Pedir al cliente una prueba visual en TPV/tablet y una venta real desde botón Winerim para confirmar historial/stock.

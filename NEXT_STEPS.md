@@ -255,8 +255,9 @@
 - [x] Parsear Excel Winerim de El Bejeque y cruzar contra Agora.
 - [x] Parsear Excel Winerim de Taberna de Elia y cruzar contra Agora.
 - [x] Documentar pre-match: `WINERIM_AGORA_MATCH_PRECHECK_2026-06-17.md`.
-- [ ] El Bejeque: confirmar con cliente/SAT por qué solo `ARROCENADO EN CASA` aparece `ShowInPos=true` y las familias de vino legacy están ocultas.
-- [ ] El Bejeque: decidir si el piloto será con familias Winerim dedicadas o reutilizando legacy de vino (`TINTOS`, `BLANCOS`, `ROSADO`, `ESPUMOSO`, `FORTIFICADO`, `POSTRE`).
+- [x] El Bejeque: ocultar legacy visible de vino y dejar productos legacy no vendibles, sin borrar nada.
+- [ ] El Bejeque: cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para refrescar `agora_master_data` después de la ocultación aplicada por API directa.
+- [ ] El Bejeque: pedir validación visual al cliente y venta real desde botón Winerim para confirmar historial/stock.
 - [ ] El Bejeque: revisar `9` no-match y `9` review antes de aprobar mappings automáticos; match seguro actual `54/72` operativos (`75.0%`).
 - [ ] Taberna de Elia: confirmar si desean conservar la estructura visible `Bodega` por regiones/denominaciones y hacer matching legacy, o crear familias Winerim dedicadas en paralelo.
 - [ ] Taberna de Elia: revisar producto directo genérico `Botella de Vino` y decidir si debe bloquearse, mapearse manualmente o sustituirse por vinos concretos.

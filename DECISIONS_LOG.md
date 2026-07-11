@@ -1077,3 +1077,9 @@
 - **Decisión**: Dejar Taberna de Elia `enabled=true` en `PULL_ONLY` para importar ventas cerradas y mantener catálogo Winerim cacheado, pero sin stock ni publicación de productos.
 - **Razón**: La API responde bien y ya permite importar ventas históricas/cerradas, pero el matching actual no resuelve líneas (`resolvedLines=0`) y el legacy de bodega tiene estructura por regiones/denominaciones.
 - **Alternativa descartada**: activar `XML_IMPORT` y volcar familias Winerim ya. Reabriría el riesgo documentado el 2026-06-17: duplicados y pérdida de organización visual.
+
+## 2026-07-11 · El Bejeque: ocultar legacy de vino manteniendo rollback
+- **Decisión**: Ocultar el legacy visible de vinos en El Bejeque (`VINOS`, `BLANCOS`, `TINTOS`, `ESPUMOSO`, `POSTRE`, `FORTIFICADO`, `ROSADO`) y dejar no vendibles sus productos, manteniendo intactas las familias Winerim.
+- **Razón**: El cliente ya puede operar desde familias Winerim y la convivencia con legacy genera duplicidad visual y riesgo de ventas que no resuelvan contra Winerim.
+- **Alternativa descartada**: borrar productos/familias legacy. Se conserva todo para rollback y trazabilidad.
+- **Rollback**: reactivar `ShowInPos=true` en las familias legacy necesarias y `UseAsDirectSale=true`/`SaleableAsMain=true` en los productos legacy que el cliente quiera recuperar.
