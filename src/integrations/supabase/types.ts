@@ -877,6 +877,8 @@ export type Database = {
           mapped: boolean
           name: string
           provider_product_id: string | null
+          provider_sold_at: string | null
+          provider_sold_at_source: string | null
           quantity: number
           sales_event_id: string
           total_amount: number
@@ -894,6 +896,8 @@ export type Database = {
           mapped?: boolean
           name: string
           provider_product_id?: string | null
+          provider_sold_at?: string | null
+          provider_sold_at_source?: string | null
           quantity?: number
           sales_event_id: string
           total_amount?: number
@@ -911,6 +915,8 @@ export type Database = {
           mapped?: boolean
           name?: string
           provider_product_id?: string | null
+          provider_sold_at?: string | null
+          provider_sold_at_source?: string | null
           quantity?: number
           sales_event_id?: string
           total_amount?: number
