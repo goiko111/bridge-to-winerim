@@ -3,6 +3,13 @@
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
 ## P0 — Agora open tickets / Sa Pedrera copas 2026-07-11
+- [ ] Reintentar status global vivo de conexiones cuando Lovable Cloud/backend deje de devolver HTTP `522`:
+  - `pos_connections`;
+  - `sales_events`;
+  - `stock_sync_log`;
+  - `outbound_tasks`;
+  - `winerim_push_tracking`;
+  - `connection_alerts`.
 - [x] Confirmar causa del `Unknown action`: los cambios estaban en una copia local no trackeada y no en el repo GitHub desplegable.
 - [x] Implementar en el repo oficial:
   - `probe-open-tickets`;

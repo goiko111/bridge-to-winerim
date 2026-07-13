@@ -2,7 +2,23 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-11 11:12 CEST_
+_Última actualización: 2026-07-13 04:18 CEST_
+
+## Hechos (status global conexiones · 2026-07-13 04:18 CEST)
+
+- Se solicitó un estado de **todas** las conexiones.
+- La lectura viva de `pos_connections` vía Lovable Cloud/backend no está disponible en este momento: la API REST devuelve HTTP `522` (`Connection timed out`).
+- No se hicieron escrituras ni cambios operativos en conexiones.
+- El status preparado para la sesión se basa en:
+  - la documentación operativa vigente de `CURRENT_STATE.md`;
+  - auditorías directas recientes contra APIs Agora/Winerim documentadas;
+  - decisiones previas registradas en `DECISIONS_LOG.md`.
+- La foto debe tratarse como **provisional hasta reintentar contra Lovable Cloud/backend** cuando deje de devolver `522`.
+
+### Pendiente inmediato
+
+- Reintentar una consulta viva de `pos_connections`, `sales_events`, `stock_sync_log`, `outbound_tasks`, `winerim_push_tracking` y `connection_alerts` cuando Lovable Cloud/backend responda.
+- Emitir entonces un status vivo con timestamps reales de última venta, último descuento, cola abierta y alertas por conexión.
 
 ## Hechos (El Bejeque e Higuerón · auditoría directa — 2026-07-11 11:12 CEST)
 
