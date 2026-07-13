@@ -77,13 +77,18 @@
   - compensación `stock_sync_log.quantity=-1` registrada como `open_ticket_cancellation_restore`;
   - evento antiguo marcado como cancelado/no elegible.
 - [x] Sa Pedrera: implementar localmente protección del piloto de tickets abiertos para no descontar stock desde `OpenTicket` con `BusinessDay` anterior al día operativo actual sin reconciliación/cancelación confirmada.
-- [ ] Desplegar `agora-proxy` en Lovable Cloud con:
+- [x] Desplegar `agora-proxy` en Lovable Cloud con:
   - `open_tickets_stock_current_day_only`;
   - `open_tickets_restore_stale_previous_days_enabled`;
   - restauración idempotente `open_ticket_cancellation_restore`.
-- [ ] Post-deploy Sa Pedrera: ejecutar `sync-open-tickets` y confirmar que no vuelve a tocar `E510` por idempotencia.
-- [ ] Post-deploy Sa Pedrera: validar una venta abierta del día actual y una cancelación controlada para confirmar que:
-  - el día actual descuenta correctamente;
+- [x] Post-deploy Sa Pedrera: ejecutar `sync-open-tickets` y confirmar que no vuelve a tocar `E510` por idempotencia.
+- [x] Post-deploy Sa Pedrera: confirmar restauración de tickets stale sin errores:
+  - `checkedEvents=3`;
+  - `disabledEvents=2`;
+  - `restored=2`;
+  - `failed=0`.
+- [ ] Sa Pedrera: validar durante servicio real una venta abierta del día actual y una cancelación controlada para confirmar que:
+  - el día actual descuenta correctamente tras edad mínima;
   - una cancelación/ticket stale restaura sin duplicar;
   - `Invoices` sigue reconciliando definitivamente.
 - [ ] Reintentar status global vivo de conexiones cuando Lovable Cloud/backend deje de devolver HTTP `522`:

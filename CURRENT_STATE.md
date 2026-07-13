@@ -2,7 +2,38 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-13 14:57 CEST_
+_Última actualización: 2026-07-13 15:12 CEST_
+
+## Hechos (Sa Pedrera · deploy cancelaciones de tickets abiertos — 2026-07-13 15:12 CEST)
+
+- `agora-proxy` se redeployó en Lovable Cloud desde GitHub `main` commit `82c9d89` (`Handle cancelled Agora open tickets`).
+- Lovable Cloud validó en runtime que están presentes:
+  - `open_tickets_stock_current_day_only`;
+  - `open_tickets_restore_stale_previous_days_enabled`;
+  - modo `open_ticket_cancellation_restore`.
+- Validación post-deploy en Sa Pedrera (`sync-open-tickets`) respondió HTTP `200`:
+  - `ticketCount=9`;
+  - `savedEvents=9`;
+  - `savedLines=94`;
+  - `resolvedLines=11`;
+  - `unresolvedLines=25`;
+  - `stockDeferredLines=11`;
+  - `staleDayStockSkippedLines=0`;
+  - `stockSync={ synced:0, skipped:0, failed:0 }`;
+  - `staleOpenTicketRestore={ checkedEvents:3, disabledEvents:2, restored:2, skipped:0, failed:0 }`.
+- Verificación directa posterior:
+  - `E510-Izar-Leku Brut Vintage` (`winerim_id=9902`, `stockId=10529`) sigue en `stock=1`;
+  - no hubo nuevas escrituras de stock para `E510` después de la compensación manual/idempotente de las `12:56:57 UTC`;
+  - la ejecución post-deploy restauró otros dos tickets antiguos/stale:
+    - `B R601-Alba Rosé [botella]`: `quantity=-2`, `newStock=4`;
+    - `B E504-Llopart Brut Nature Reserva [botella]`: `quantity=-1`, `newStock=5`.
+
+### Pendiente inmediato
+
+- Observar Sa Pedrera durante el siguiente servicio:
+  - ventas abiertas del día actual deben quedar capturadas y diferidas si no superan la edad mínima;
+  - si se cancela un ticket antiguo, debe restaurarse una sola vez;
+  - `Invoices` debe seguir reconciliando definitivamente.
 
 ## Hechos (Sa Pedrera · cancelación de ticket abierto `E510` implementada — 2026-07-13 14:57 CEST)
 
@@ -24,13 +55,9 @@ _Última actualización: 2026-07-13 14:57 CEST_
   - `git diff --check` OK.
 - Vitest se intentó con timeout externo de `30s` sobre `src/test/agoraOpenTicketsStatic.test.ts`, pero volvió a quedarse sin salida y se abortó con `SIGKILL` controlado para no dejar procesos bloqueados.
 
-### Pendiente inmediato
+### Estado
 
-- Desplegar `agora-proxy` en Lovable Cloud para que esta protección aplique automáticamente a futuros tickets abiertos cancelados.
-- Tras el deploy, ejecutar `sync-open-tickets` en Sa Pedrera y confirmar que:
-  - no vuelve a restaurar `E510` por idempotencia;
-  - los tickets abiertos del día actual siguen funcionando;
-  - los tickets abiertos antiguos quedan observados o restaurados solo si cumplen la regla de cancelación/stale.
+- Desplegado y validado en Lovable Cloud el `2026-07-13 15:12 CEST`.
 
 ## Hechos (Sa Pedrera · caso `E510-Izar-Leku` en ticket abierto cancelado — 2026-07-13 14:21 CEST)
 
