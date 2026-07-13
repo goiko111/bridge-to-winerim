@@ -2,7 +2,58 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-13 04:18 CEST_
+_Última actualización: 2026-07-13 05:05 CEST_
+
+## Hechos (Winerim ERP · historial visible por restaurante — 2026-07-13 05:05 CEST)
+
+- Se entró en Mantalak/Admin → `Cartas` y después en `/erp/{menuId}/sales` para revisar el historial visible en Winerim, restaurante por restaurante.
+- Criterio usado:
+  - si la venta muestra etiqueta `TPV`, se considera evidencia visible de POS → Winerim;
+  - si la venta aparece sin `TPV`, no se cuenta como evidencia visible de integración POS aunque haya historial de ventas;
+  - horas `00:00` o `02:00` apuntan a importación por cierre/reconciliación, no a tiempo real;
+  - horas reales de servicio (`08:xx`, `18:xx`, `19:xx`, etc.) pueden indicar intradía/open tickets, pero hay que confirmar contra logs cuando Lovable Cloud/backend responda.
+- Evidencia visible de TPV con horas de servicio:
+  - `Casa Nene` (`menuId=871`): última fecha visible `11 Julio 2026`, TPV a `08:52`, `08:51`, `06:35`.
+  - `Sa Pedrera` (`menuId=80`): última fecha visible `11 Julio 2026`, TPV a `08:55`, `08:52`, `08:51`, `08:50`, etc.
+  - `Restaurante Jardi` (`menuId=942`): última fecha visible `11 Julio 2026`, TPV a `08:55`.
+- Evidencia visible de TPV, pero no tiempo real claro:
+  - `El Bejeque` (`menuId=282`): ventas TPV solo hasta `11 Julio 2026 02:00`.
+  - `Katsu Izakaya` (`menuId=1019`): ventas TPV visibles hasta `09 Julio 2026 00:00`; había otra carta `1020` vacía.
+  - `Kava` (`menuId=563`): TPV visible hasta `09 Julio 2026`, principalmente `02:00/02:05`.
+  - `Chiquilla` (`menuId=140`): TPV visible hasta `11 Julio 2026 02:00`.
+  - `Cienvinos Ecija` (`menuId=861`): TPV visible hasta `10 Julio 2026`, con mezcla `02:00/00:00`.
+  - `Luruna` (`menuId=587`): TPV visible hasta `09 Julio 2026 00:00`.
+- Historial visible, pero sin etiqueta `TPV` en la pantalla revisada:
+  - `Sa Vida` (`menuId=568`): ventas hasta `12 Julio 2026 00:00`, sin etiqueta TPV.
+  - `PurOsushi` (`menuId=758`): ventas hasta `04 Julio 2026`, sin etiqueta TPV.
+  - `O Bistro` exacto (`menuId=931`): ventas hasta `12 Julio 2026 00:00`, sin etiqueta TPV.
+  - `Taberna de Elia` (`menuId=657`): ventas hasta `01 Julio 2026 00:00`, sin etiqueta TPV.
+  - `El Higuerón` (`menuId=1089`): ventas visibles `09 Julio 2026 18:13`, sin etiqueta TPV.
+  - `Qtomas` (`menuId=310`): ventas visibles hasta `10 Julio 2026 00:00`, sin etiqueta TPV.
+  - `Don Quijote Marbella` (`menuId=839`), `Faena Restaurante` (`menuId=442`) y otros con ventas visibles sin etiqueta TPV.
+- Sin ventas visibles o sin evidencia útil en el historial:
+  - `Don Bernardo Ponzano` (`menuId=809`): `0,00 €`.
+  - `Don Bernardo Santander / Beher` (`menuId=218`): `0,00 €`.
+  - `La Candela de Triana` (`menuId=956`): `0,00 €`.
+  - `Restaurante Triana` (`menuId=896`): `0,00 €`.
+  - `Saddle` (`menuId=1216`): `0,00 €`.
+  - `Tintorera` (`menuId=893`): `0,00 €`.
+  - `Baco Getafe` (`menuId=394`): tiene ventas visibles y alguna evidencia TPV histórica, pero la última fecha visible (`01 Julio 2026`) no muestra TPV en el primer bloque y la integración está desactivada/legacy.
+- Búsquedas no concluyentes:
+  - `Abadía Yuste`: no aparece como carta exacta `Abadía Yuste`/`Yuste`/`Vettonia`; no se atribuye a otras Abadías.
+  - `De la O`: la búsqueda devuelve múltiples cartas no concluyentes; no se atribuye a una sin confirmación.
+
+### Diagnóstico
+
+- `El Bejeque` no está demostrando tiempo real en Winerim: el ERP solo muestra TPV hasta `11 Julio 2026 02:00`.
+- `Katsu Izakaya` sí muestra ventas TPV, pero no recientes ni intradía: último visible `09 Julio 2026 00:00`.
+- `Casa Nene`, `Sa Pedrera` y `Jardi` son las únicas con evidencia visual de TPV en horario de servicio en esta revisión.
+- Varios restaurantes tienen ventas en Winerim, pero sin etiqueta `TPV`; no se puede afirmar que esas ventas vengan del middleware sin cruzarlas con logs cuando Lovable Cloud/backend responda.
+
+### Pendiente inmediato
+
+- Cruzar esta foto ERP con `sales_events`, `stock_sync_log`, `winerim_response.salesImport`, `connection_alerts` y `outbound_tasks` cuando Lovable Cloud/backend deje de devolver `522`.
+- Revisar por qué conexiones con piloto open tickets documentado (`El Bejeque`, `Katsu`, `Kava`, `Chiquilla`, `Cienvinos`, `Luruna`) no muestran ventas intradía recientes en ERP.
 
 ## Hechos (status global conexiones · 2026-07-13 04:18 CEST)
 

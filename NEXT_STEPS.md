@@ -10,6 +10,11 @@
   - `outbound_tasks`;
   - `winerim_push_tracking`;
   - `connection_alerts`.
+- [ ] Cruzar la auditoría ERP visible del `2026-07-13` con logs del middleware:
+  - confirmar si las ventas sin etiqueta `TPV` en Winerim son manuales o importadas sin fuente visible;
+  - revisar especialmente `El Bejeque`, `Katsu`, `Kava`, `Chiquilla`, `Cienvinos`, `Luruna`, `Sa Vida`, `O Bistro`, `Qtomas` y `El Higuerón`.
+- [ ] `El Bejeque`: investigar por qué el ERP solo muestra TPV hasta `11 Julio 2026 02:00` pese a tener catálogo Winerim correcto; validar si el cron/open tickets no está corriendo, si no hay ventas nuevas o si no se está importando historial.
+- [ ] `Katsu Izakaya`: usar `menuId=1019` como carta activa para historial; investigar por qué la última venta TPV visible es `09 Julio 2026 00:00` y no hay evidencia intradía reciente.
 - [x] Confirmar causa del `Unknown action`: los cambios estaban en una copia local no trackeada y no en el repo GitHub desplegable.
 - [x] Implementar en el repo oficial:
   - `probe-open-tickets`;
