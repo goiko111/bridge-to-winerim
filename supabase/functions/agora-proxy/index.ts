@@ -339,6 +339,72 @@ function normalizeLineFormat(productName: string, saleFormatName: string): strin
   return "";
 }
 
+type AgoraProviderSoldAt = { value: string | null; source: string | null };
+
+function normalizeProviderSoldAt(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  const isoLocal = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+  if (isoLocal) return `${isoLocal[1]}T${isoLocal[2]}`;
+
+  const isoDate = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
+  if (isoDate) return `${isoDate[1]}T00:00:00`;
+
+  const spanishDate = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?$/);
+  if (spanishDate) {
+    const time = spanishDate[4] ? (spanishDate[4].length === 5 ? `${spanishDate[4]}:00` : spanishDate[4]) : "00:00:00";
+    return `${spanishDate[3]}-${spanishDate[2]}-${spanishDate[1]}T${time}`;
+  }
+
+  const parsed = Date.parse(raw);
+  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 19);
+  return null;
+}
+
+function extractAgoraProviderSoldAt(
+  line: Record<string, unknown> | null | undefined,
+  item: Record<string, unknown> | null | undefined,
+  document: Record<string, unknown> | null | undefined,
+  fallbackDay?: string | null,
+): AgoraProviderSoldAt {
+  const candidates: Array<[unknown, string]> = [
+    [line?.CreationDate, "line.CreationDate"],
+    [line?.CreatedAt, "line.CreatedAt"],
+    [line?.CreatedDate, "line.CreatedDate"],
+    [line?.Date, "line.Date"],
+    [item?.CreationDate, "item.CreationDate"],
+    [item?.CreatedAt, "item.CreatedAt"],
+    [item?.Date, "item.Date"],
+    [document?.CreationDate, "document.CreationDate"],
+    [document?.CreatedAt, "document.CreatedAt"],
+    [document?.Date, "document.Date"],
+    [document?.BusinessDay, "document.BusinessDay"],
+    [fallbackDay, "fallback.businessDay"],
+  ];
+
+  for (const [candidate, source] of candidates) {
+    const normalized = normalizeProviderSoldAt(candidate);
+    if (normalized) return { value: normalized, source };
+  }
+
+  return { value: null, source: null };
+}
+
+function earlierProviderSoldAt(current: unknown, next: unknown): string | null {
+  const currentNormalized = normalizeProviderSoldAt(current);
+  const nextNormalized = normalizeProviderSoldAt(next);
+  if (!currentNormalized) return nextNormalized;
+  if (!nextNormalized) return currentNormalized;
+
+  const currentMs = Date.parse(currentNormalized);
+  const nextMs = Date.parse(nextNormalized);
+  if (Number.isFinite(currentMs) && Number.isFinite(nextMs)) {
+    return nextMs < currentMs ? nextNormalized : currentNormalized;
+  }
+  return nextNormalized < currentNormalized ? nextNormalized : currentNormalized;
+}
+
 // ── PRODUCT NAME BUILDER: prefix B (botella) / C (copa) / M (magnum) ──
 function formatProductName(fmt: string, wineName: string): string {
   const f = String(fmt || "").toUpperCase();
@@ -470,6 +536,66 @@ function extractXmlElementsWithAttrs(xml: string, tagName: string): { xml: strin
     results.push({ xml: full, attrs });
   }
   return results;
+}
+
+function findXmlElementByAttr(xml: string, tagName: string, attr: string, value: string): { xml: string; attrs: Record<string, string> } | null {
+  return extractXmlElementsWithAttrs(xml, tagName).find((el) => String(el.attrs[attr] || "") === String(value)) || null;
+}
+
+function normalizeAgoraMoney(value: unknown): string {
+  const raw = String(value ?? "").trim().replace(",", ".");
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : raw;
+}
+
+function productPriceMap(productXml: string): Record<string, string> {
+  const prices: Record<string, string> = {};
+  for (const priceEl of extractXmlElementsWithAttrs(productXml, "Price")) {
+    const id = String(priceEl.attrs.PriceListId || "");
+    if (id) prices[id] = normalizeAgoraMoney(priceEl.attrs.MainPrice);
+  }
+  return prices;
+}
+
+function agoraProductMatchesExpectedXml(
+  expected: { xml: string; attrs: Record<string, string> },
+  actual: { xml: string; attrs: Record<string, string> },
+  scopedPriceListIds: string[],
+): boolean {
+  const attrsToCompare = [
+    "Name",
+    "ButtonText",
+    "FamilyId",
+    "VatId",
+    "UseAsDirectSale",
+    "SaleableAsMain",
+    "SaleableAsAddin",
+    "IsSoldByWeight",
+    "AskForPreparationNotes",
+    "AskForAddins",
+    "PrintWhenPriceIsZero",
+    "PreparationTypeId",
+    "PreparationOrderId",
+  ];
+
+  for (const attr of attrsToCompare) {
+    if (String(expected.attrs[attr] || "") !== String(actual.attrs[attr] || "")) return false;
+  }
+
+  if (normalizeAgoraMoney(expected.attrs.CostPrice) !== normalizeAgoraMoney(actual.attrs.CostPrice)) return false;
+
+  const expectedPrices = productPriceMap(expected.xml);
+  const actualPrices = productPriceMap(actual.xml);
+  const priceListIds = scopedPriceListIds.length > 0
+    ? scopedPriceListIds.filter((id) => Object.prototype.hasOwnProperty.call(expectedPrices, id))
+    : Object.keys(expectedPrices);
+
+  for (const priceListId of priceListIds) {
+    if (!Object.prototype.hasOwnProperty.call(actualPrices, priceListId)) return false;
+    if (expectedPrices[priceListId] !== actualPrices[priceListId]) return false;
+  }
+
+  return priceListIds.length > 0;
 }
 
 // Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
@@ -770,24 +896,30 @@ function numberFromImportResponse(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function importWinerimSaleIfStockDidNotMove(input: {
+function readWinerimStockActive(stock: Record<string, unknown>): boolean {
+  const value = stock.stockActive ?? stock.stock_active ?? stock.active;
+  if (value === undefined || value === null || value === "") return true;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "y", "si", "sí"].includes(normalized)) return true;
+  if (["false", "0", "no", "n"].includes(normalized)) return false;
+  return true;
+}
+
+async function importWinerimSalesOnly(input: {
   winerimBase: string;
   winerimHeaders: Record<string, string>;
   connectionId: string;
   day: string;
+  soldAt?: string | null;
   wineId: string;
   variant: WinerimVariant;
   stockId: number;
   soldQty: number;
-  previousStock: number;
-  newStock: number;
   orderScope: string;
 }): Promise<WinerimSalesImportOutcome> {
-  const qty = salesImportQtyWhenStockDidNotMove({
-    soldQty: input.soldQty,
-    previousStock: input.previousStock,
-    newStock: input.newStock,
-  });
+  const qty = Math.ceil(Math.abs(Number(input.soldQty || 0)));
   if (qty <= 0) return { attempted: false, ok: true, qty: 0 };
 
   const orderId = buildWinerimSalesImportOrderId({
@@ -806,7 +938,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
         sales: [{
           stockId: input.stockId,
           qty,
-          soldAt: input.day,
+          soldAt: normalizeProviderSoldAt(input.soldAt) || input.day,
           orderId,
         }],
       }),
@@ -845,6 +977,29 @@ async function importWinerimSaleIfStockDidNotMove(input: {
       error: `POST /sales/import exception: ${String(e)}`,
     };
   }
+}
+
+async function importWinerimSaleIfStockDidNotMove(input: {
+  winerimBase: string;
+  winerimHeaders: Record<string, string>;
+  connectionId: string;
+  day: string;
+  soldAt?: string | null;
+  wineId: string;
+  variant: WinerimVariant;
+  stockId: number;
+  soldQty: number;
+  previousStock: number;
+  newStock: number;
+  orderScope: string;
+}): Promise<WinerimSalesImportOutcome> {
+  const qty = salesImportQtyWhenStockDidNotMove({
+    soldQty: input.soldQty,
+    previousStock: input.previousStock,
+    newStock: input.newStock,
+  });
+  if (qty <= 0) return { attempted: false, ok: true, qty: 0 };
+  return importWinerimSalesOnly({ ...input, soldQty: qty });
 }
 
 // ── Winerim Stock Sync Helper (variant-aware, line-idempotent) ──
@@ -889,7 +1044,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const eventIds = eligibleEvents.map((e: { id: string }) => e.id);
   const { data: lines } = await supabase
     .from("sales_line_items")
-    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", eventIds);
 
   if (!lines || lines.length === 0) {
@@ -908,6 +1063,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     qty: number;
     name: string;
     providerProductId: string;
+    providerSoldAt: string | null;
   };
 
   type Agg = {
@@ -919,6 +1075,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     eventIds: string[];
     name: string;
     providerProductId: string;
+    providerSoldAt: string | null;
   };
 
   // Rescue stale line claims before trying a retry. Fresh PENDING rows are left alone
@@ -1050,6 +1207,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       qty: entry.qty,
       name: line.name,
       providerProductId: line.provider_product_id || "",
+      providerSoldAt: normalizeProviderSoldAt(line.provider_sold_at),
     });
   }
 
@@ -1062,6 +1220,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       existing.logIds.push(claim.logId);
       existing.lineIds.push(claim.id);
       if (!existing.eventIds.includes(claim.salesEventId)) existing.eventIds.push(claim.salesEventId);
+      existing.providerSoldAt = earlierProviderSoldAt(existing.providerSoldAt, claim.providerSoldAt);
     } else {
       aggregated.set(key, {
         winerimWineId: claim.winerimWineId,
@@ -1072,6 +1231,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         eventIds: [claim.salesEventId],
         name: claim.name,
         providerProductId: claim.providerProductId,
+        providerSoldAt: claim.providerSoldAt,
       });
     }
   }
@@ -1097,7 +1257,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   // gives both stockId and current stock for every variant, and avoids relying on the
   // undocumented GET /stock/{stockId} baseline read.
   const uniqueWineIds = Array.from(new Set(toProcess.map(p => p.winerimWineId)));
-  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
+  type StockEntry = { id: number; stock: number; stockActive: boolean; variant: WinerimVariant };
   const wineStockCache = new Map<string, StockEntry[]>();
   const wineFetchErrors = new Map<string, string>();
 
@@ -1121,6 +1281,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
           return {
             id: Number(s.id),
             stock: Number(s.stock ?? 0),
+            stockActive: readWinerimStockActive(s),
             variant: canonical,
           };
         })
@@ -1144,8 +1305,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     }
   }
 
-  type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
+  type BulkItem = { id: number; newStock: number; previousStock: number; stockActive: boolean; agg: Agg };
   const bulkItems: BulkItem[] = [];
+  let synced = 0;
 
   for (const agg of toProcess) {
     const fetchedStocks = wineStockCache.get(agg.winerimWineId);
@@ -1158,8 +1320,65 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     }
 
     const previousStock = match.stock;
+    if (!match.stockActive) {
+      const salesImport = await importWinerimSalesOnly({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: agg.winerimWineId,
+        variant: agg.variant,
+        stockId: match.id,
+        soldQty: agg.qty,
+        soldAt: agg.providerSoldAt,
+        orderScope: [
+          "stock_inactive",
+          ...agg.eventIds.slice().sort(),
+          ...agg.lineIds.slice().sort(),
+          String(agg.qty),
+        ].join("|"),
+      });
+      if (!salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: match.id,
+          error_message: salesImport.error || "POST /sales/import failed for inactive stock",
+          winerim_response: {
+            mode: "sales_only_stock_inactive",
+            previousStock,
+            newStock: previousStock,
+            soldQty: agg.qty,
+            variant: agg.variant,
+            stockId: match.id,
+            stockActive: false,
+            providerSoldAt: agg.providerSoldAt,
+            salesImport,
+          },
+        }).in("id", agg.logIds);
+        failed++;
+        continue;
+      }
+      await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        stock_id: match.id,
+        winerim_response: {
+          mode: "sales_only_stock_inactive",
+          previousStock,
+          newStock: previousStock,
+          soldQty: agg.qty,
+          variant: agg.variant,
+          stockId: match.id,
+          stockActive: false,
+          providerSoldAt: agg.providerSoldAt,
+          salesImport,
+        },
+        synced_at: new Date().toISOString(),
+      }).in("id", agg.logIds);
+      synced++;
+      continue;
+    }
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
-    bulkItems.push({ id: match.id, newStock, previousStock, agg });
+    bulkItems.push({ id: match.id, newStock, previousStock, stockActive: match.stockActive, agg });
   }
 
 
@@ -1167,7 +1386,6 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   // deployed in production (returns HTML login page). When Winerim ships it, swap this loop
   // for a chunked PUT to /api/v2/stock/bulk with { items: [{id, stock}] }.
   // Throttle: ~250ms gap → 4 req/s, comfortably under Winerim's 5 req/s rate limit.
-  let synced = 0;
   for (let i = 0; i < bulkItems.length; i++) {
     const item = bulkItems[i];
     let r: Response;
@@ -1203,6 +1421,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         soldQty: item.agg.qty,
         previousStock: item.previousStock,
         newStock: item.newStock,
+        soldAt: item.agg.providerSoldAt,
         orderScope: [
           ...item.agg.eventIds.slice().sort(),
           ...item.agg.lineIds.slice().sort(),
@@ -1220,6 +1439,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
             soldQty: item.agg.qty,
             variant: item.agg.variant,
             stockId: item.id,
+            providerSoldAt: item.agg.providerSoldAt,
             stockUpdateResponse: parsed,
             salesImport,
           },
@@ -1237,6 +1457,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
           soldQty: item.agg.qty,
           variant: item.agg.variant,
           stockId: item.id,
+          providerSoldAt: item.agg.providerSoldAt,
           salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
@@ -1310,7 +1531,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   const eventIds = eligibleEvents.map((event: { id: string }) => event.id);
   const { data: lines } = await supabase
     .from("sales_line_items")
-    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", eventIds);
 
   if (!lines || lines.length === 0) {
@@ -1327,6 +1548,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     firstLineId: string;
     name: string;
     providerProductId: string;
+    providerSoldAt: string | null;
   };
   type DeltaClaim = DesiredGroup & {
     deltaQty: number;
@@ -1341,6 +1563,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     logIds: string[];
     groupKeys: string[];
     name: string;
+    providerSoldAt: string | null;
   };
 
   const desiredGroups = new Map<string, DesiredGroup>();
@@ -1356,6 +1579,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     if (existing) {
       existing.desiredQty += qty;
       existing.lineIds.push(line.id);
+      existing.providerSoldAt = earlierProviderSoldAt(existing.providerSoldAt, line.provider_sold_at);
     } else {
       desiredGroups.set(groupKey, {
         groupKey,
@@ -1367,6 +1591,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         firstLineId: line.id,
         name: String(line.name || ""),
         providerProductId: String(line.provider_product_id || ""),
+        providerSoldAt: normalizeProviderSoldAt(line.provider_sold_at),
       });
     }
   }
@@ -1501,6 +1726,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
       existing.qty += claim.deltaQty;
       existing.logIds.push(claim.logId);
       existing.groupKeys.push(claim.groupKey);
+      existing.providerSoldAt = earlierProviderSoldAt(existing.providerSoldAt, claim.providerSoldAt);
     } else {
       aggregated.set(key, {
         winerimWineId: claim.winerimWineId,
@@ -1509,6 +1735,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         logIds: [claim.logId],
         groupKeys: [claim.groupKey],
         name: claim.name,
+        providerSoldAt: claim.providerSoldAt,
       });
     }
   }
@@ -1529,7 +1756,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     };
   }
 
-  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
+  type StockEntry = { id: number; stock: number; stockActive: boolean; variant: WinerimVariant };
   const wineStockCache = new Map<string, StockEntry[]>();
   const wineFetchErrors = new Map<string, string>();
   const uniqueWineIds = Array.from(new Set(toProcess.map((item) => item.winerimWineId)));
@@ -1554,6 +1781,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
           return {
             id: Number(stock.id),
             stock: Number(stock.stock ?? 0),
+            stockActive: readWinerimStockActive(stock),
             variant: canonical,
           };
         })
@@ -1577,8 +1805,9 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     }
   }
 
-  type BulkItem = { id: number; newStock: number; previousStock: number; agg: Agg };
+  type BulkItem = { id: number; newStock: number; previousStock: number; stockActive: boolean; agg: Agg };
   const bulkItems: BulkItem[] = [];
+  let synced = 0;
   for (const agg of toProcess) {
     const fetchedStocks = wineStockCache.get(agg.winerimWineId);
     const match = fetchedStocks?.find((stock) => stock.variant === agg.variant);
@@ -1588,15 +1817,73 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
       failed++;
       continue;
     }
+    if (!match.stockActive) {
+      const salesImport = await importWinerimSalesOnly({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: agg.winerimWineId,
+        variant: agg.variant,
+        stockId: match.id,
+        soldQty: agg.qty,
+        soldAt: agg.providerSoldAt,
+        orderScope: [
+          "stock_inactive",
+          ...agg.groupKeys.slice().sort(),
+          String(agg.qty),
+        ].join("|"),
+      });
+      if (!salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: match.id,
+          error_message: salesImport.error || "POST /sales/import failed for inactive stock",
+          winerim_response: {
+            mode: "sales_only_stock_inactive",
+            previousStock: match.stock,
+            newStock: match.stock,
+            soldQty: agg.qty,
+            variant: agg.variant,
+            stockId: match.id,
+            stockActive: false,
+            groupKeys: agg.groupKeys,
+            providerSoldAt: agg.providerSoldAt,
+            salesImport,
+          },
+        }).in("id", agg.logIds);
+        failed++;
+        continue;
+      }
+      await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        stock_id: match.id,
+        winerim_response: {
+          mode: "sales_only_stock_inactive",
+          previousStock: match.stock,
+          newStock: match.stock,
+          soldQty: agg.qty,
+          variant: agg.variant,
+          stockId: match.id,
+          stockActive: false,
+          groupKeys: agg.groupKeys,
+          providerSoldAt: agg.providerSoldAt,
+          salesImport,
+        },
+        synced_at: new Date().toISOString(),
+      }).in("id", agg.logIds);
+      synced++;
+      continue;
+    }
     bulkItems.push({
       id: match.id,
       previousStock: match.stock,
       newStock: Math.max(0, Math.floor(match.stock - agg.qty)),
+      stockActive: match.stockActive,
       agg,
     });
   }
 
-  let synced = 0;
   for (let i = 0; i < bulkItems.length; i++) {
     const item = bulkItems[i];
     let r: Response;
@@ -1632,6 +1919,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         soldQty: item.agg.qty,
         previousStock: item.previousStock,
         newStock: item.newStock,
+        soldAt: item.agg.providerSoldAt,
         orderScope: [
           ...item.agg.groupKeys.slice().sort(),
           String(item.agg.qty),
@@ -1650,6 +1938,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
             variant: item.agg.variant,
             stockId: item.id,
             groupKeys: item.agg.groupKeys,
+            providerSoldAt: item.agg.providerSoldAt,
             stockUpdateResponse: parsed,
             salesImport,
           },
@@ -1669,6 +1958,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
           variant: item.agg.variant,
           stockId: item.id,
           groupKeys: item.agg.groupKeys,
+          providerSoldAt: item.agg.providerSoldAt,
           salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
@@ -1752,7 +2042,7 @@ async function syncStockForDayIncrementalByDayTotal(
 
   const { data: lines } = await supabase
     .from("sales_line_items")
-    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format")
+    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", desiredEventIds);
 
   if (!lines || lines.length === 0) {
@@ -1768,6 +2058,7 @@ async function syncStockForDayIncrementalByDayTotal(
     firstLineId: string;
     providerProductId: string;
     name: string;
+    providerSoldAt: string | null;
   };
 
   const desiredTotals = new Map<string, DesiredTotal>();
@@ -1783,6 +2074,7 @@ async function syncStockForDayIncrementalByDayTotal(
     const existing = desiredTotals.get(key);
     if (existing) {
       existing.desiredQty += qty;
+      existing.providerSoldAt = earlierProviderSoldAt(existing.providerSoldAt, line.provider_sold_at);
     } else {
       desiredTotals.set(key, {
         key,
@@ -1793,6 +2085,7 @@ async function syncStockForDayIncrementalByDayTotal(
         firstLineId: line.id,
         providerProductId: String(line.provider_product_id || ""),
         name: String(line.name || ""),
+        providerSoldAt: normalizeProviderSoldAt(line.provider_sold_at),
       });
     }
   }
@@ -1937,7 +2230,7 @@ async function syncStockForDayIncrementalByDayTotal(
     "Content-Type": "application/json",
     "Accept": "application/json",
   };
-  type StockEntry = { id: number; stock: number; variant: WinerimVariant };
+  type StockEntry = { id: number; stock: number; stockActive: boolean; variant: WinerimVariant };
   const wineStockCache = new Map<string, StockEntry[]>();
   const wineFetchErrors = new Map<string, string>();
   for (const wineId of Array.from(new Set(claimed.map((claim) => claim.winerimWineId)))) {
@@ -1960,6 +2253,7 @@ async function syncStockForDayIncrementalByDayTotal(
           return {
             id: Number(stock.id),
             stock: Number(stock.stock ?? 0),
+            stockActive: readWinerimStockActive(stock),
             variant: canonical,
           };
         })
@@ -1982,6 +2276,64 @@ async function syncStockForDayIncrementalByDayTotal(
     }
 
     const previousStock = match.stock;
+    if (!match.stockActive) {
+      const salesImport = await importWinerimSalesOnly({
+        winerimBase: WINERIM_BASE,
+        winerimHeaders,
+        connectionId,
+        day,
+        wineId: claim.winerimWineId,
+        variant: claim.variant,
+        stockId: match.id,
+        soldQty: claim.deltaQty,
+        soldAt: claim.providerSoldAt,
+        orderScope: `stock_inactive:${claim.idempotencyKey}`,
+      });
+      if (!salesImport.ok) {
+        await supabase.from("stock_sync_log").update({
+          status: "FAILED",
+          stock_id: match.id,
+          error_message: salesImport.error || "POST /sales/import failed for inactive stock",
+          winerim_response: {
+            mode: "sales_only_stock_inactive",
+            previousStock,
+            newStock: previousStock,
+            soldQty: claim.deltaQty,
+            desiredQty: claim.desiredQty,
+            alreadySyncedQty: claim.alreadyQty,
+            variant: claim.variant,
+            stockId: match.id,
+            stockActive: false,
+            businessDay: day,
+            providerSoldAt: claim.providerSoldAt,
+            salesImport,
+          },
+        }).eq("id", claim.logId);
+        failed++;
+        continue;
+      }
+      await supabase.from("stock_sync_log").update({
+        status: "SUCCESS",
+        stock_id: match.id,
+        winerim_response: {
+          mode: "sales_only_stock_inactive",
+          previousStock,
+          newStock: previousStock,
+          soldQty: claim.deltaQty,
+          desiredQty: claim.desiredQty,
+          alreadySyncedQty: claim.alreadyQty,
+          variant: claim.variant,
+          stockId: match.id,
+          stockActive: false,
+          businessDay: day,
+          providerSoldAt: claim.providerSoldAt,
+          salesImport,
+        },
+        synced_at: new Date().toISOString(),
+      }).eq("id", claim.logId);
+      synced++;
+      continue;
+    }
     const newStock = Math.max(0, Math.floor(previousStock - claim.deltaQty));
     let r: Response;
     let txt = "";
@@ -2016,6 +2368,7 @@ async function syncStockForDayIncrementalByDayTotal(
         soldQty: claim.deltaQty,
         previousStock,
         newStock,
+        soldAt: claim.providerSoldAt,
         orderScope: claim.idempotencyKey,
       });
       if (salesImport.attempted && !salesImport.ok) {
@@ -2033,6 +2386,7 @@ async function syncStockForDayIncrementalByDayTotal(
             variant: claim.variant,
             stockId: match.id,
             businessDay: day,
+            providerSoldAt: claim.providerSoldAt,
             stockUpdateResponse: parsed,
             salesImport,
           },
@@ -2054,6 +2408,7 @@ async function syncStockForDayIncrementalByDayTotal(
           variant: claim.variant,
           stockId: match.id,
           businessDay: day,
+          providerSoldAt: claim.providerSoldAt,
           salesImport: salesImport.attempted ? salesImport : undefined,
         },
         synced_at: new Date().toISOString(),
@@ -3638,6 +3993,7 @@ serve(async (req) => {
           const family = String(line.FamilyName || "");
           const productId = String(line.ProductId || line.SaleFormatId || "");
           const normalizedFmt = normalizeLineFormat(productName, formatName);
+          const providerSoldAt = extractAgoraProviderSoldAt(line, null, ticket, day);
           const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
           const resolution = resolutionMap.get(productId);
           const winerimProductId = resolution?.winerim_wine_id || null;
@@ -3663,6 +4019,8 @@ serve(async (req) => {
             unit_price: unitPrice,
             total_amount: lineTotal,
             vat_rate: agoraNumber(line.VatRate),
+            provider_sold_at: providerSoldAt.value,
+            provider_sold_at_source: providerSoldAt.source,
             is_wine_candidate: stockCandidate,
             winerim_product_id: winerimProductId,
             mapped: isResolved,
@@ -3953,6 +4311,7 @@ serve(async (req) => {
               const normalizedFmt = normalizeLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
               const productId = String(line.ProductId || "");
+              const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
               const resolution = resolutionMap.get(productId);
               const winerimProductId = resolution?.winerim_wine_id || null;
@@ -3974,6 +4333,8 @@ serve(async (req) => {
                 unit_price: uP,
                 total_amount: lineTotal,
                 vat_rate: Number(line.VatRate || 0),
+                provider_sold_at: providerSoldAt.value,
+                provider_sold_at_source: providerSoldAt.source,
                 is_wine_candidate: wr.candidate,
                 winerim_product_id: winerimProductId,
                 mapped: isResolved,
@@ -4123,6 +4484,7 @@ serve(async (req) => {
             const normalizedFmt = normalizeLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const productId = String(line.ProductId || "");
+            const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
             // Resolve to winerim wine
@@ -4135,6 +4497,8 @@ serve(async (req) => {
               provider_product_id: productId,
               name: pName, format: normalizedFmt, family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
+              provider_sold_at: providerSoldAt.value,
+              provider_sold_at_source: providerSoldAt.source,
               vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
               winerim_product_id: winerimProductId,
               mapped: isResolved,
@@ -4279,6 +4643,7 @@ serve(async (req) => {
             const normalizedFmt = normalizeLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const productId = String(line.ProductId || "");
+            const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             const resolution = resolutionMap.get(productId);
             const winerimProductId = resolution?.winerim_wine_id || null;
@@ -4298,6 +4663,8 @@ serve(async (req) => {
               unit_price: uP,
               total_amount: lineTotal,
               vat_rate: Number(line.VatRate || 0),
+              provider_sold_at: providerSoldAt.value,
+              provider_sold_at_source: providerSoldAt.source,
               is_wine_candidate: wr.candidate,
               winerim_product_id: winerimProductId,
               mapped: isResolved,
@@ -4528,6 +4895,7 @@ serve(async (req) => {
               const normalizedFmt = normalizeLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
               const productId = String(line.ProductId || "");
+              const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
               const resolution = resolutionMap.get(productId);
@@ -4544,6 +4912,8 @@ serve(async (req) => {
                 provider_product_id: productId,
                 name: pName, format: normalizedFmt, family: fam,
                 quantity: qty, unit_price: uP, total_amount: lineTotal,
+                provider_sold_at: providerSoldAt.value,
+                provider_sold_at_source: providerSoldAt.source,
                 vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
                 winerim_product_id: winerimProductId,
                 mapped: isResolved,
@@ -9039,6 +9409,39 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "create_skipped:formats_already_verified" });
             continue;
           }
+        }
+
+        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate && !dryRun) {
+          const { xml: expectedUpdateXml } = generateImportXml(
+            [wine],
+            masterData,
+            connection,
+            formatTypes,
+            updateDiffCustomMappings,
+            false,
+            updateDiffIsGeoMode ? updateDiffGeoConfig : undefined,
+            updateDiffIsGeoMode ? [wine] : undefined,
+          );
+          const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
+          const allExpectedProductsMatch = expectedProducts.length > 0 && expectedProducts.every((expectedProduct) => {
+            const productId = String(expectedProduct.attrs.Id || "");
+            const actualProduct = productId
+              ? findXmlElementByAttr(updateDiffCurrentXml!, "Product", "Id", productId)
+              : null;
+            return Boolean(actualProduct && agoraProductMatchesExpectedXml(
+              expectedProduct,
+              actualProduct,
+              updateDiffScopedPriceListIds,
+            ));
+          });
+
+          if (allExpectedProductsMatch) {
+            skipped++;
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
+            continue;
+          }
+        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate && !dryRun) {
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
         // Strict idempotency: if there is ANY pending (QUEUED/RUNNING) task for this wine, skip.
