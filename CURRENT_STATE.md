@@ -4177,3 +4177,27 @@ _Última actualización: 2026-07-13 15:12 CEST_
 - Pedir a Winerim API soporte para `soldAt` en el flujo que descuenta stock o endpoint combinado si el historial por `PUT /stock` sigue mostrando hora de proceso.
 - Cuando el backend deje de devolver 522, auditar restaurante por restaurante: Agora `CreationDate` vs `sales_line_items.provider_sold_at` vs ERP `/sales`.
   - `Restaurante Qtomas`: bloqueado temporalmente por conectividad `POS_DOWN` durante import XML; las `60` tareas quedan en `QUEUED` con `next_retry_at` igual al fin del breaker para recuperación automática.
+
+## 2026-07-13 · El Higuerón: revalidación de integración
+
+### Hechos
+- Conexión existente en `pos_connections`: `El Higuerón` (`c2e41778-fd14-4a83-9b24-d4fd305fe490`).
+- Estado de la conexión: `enabled=false`, `write_mode=NONE`, `sync_mode=PULL_ONLY`, auto-push desactivado y legacy visible por seguridad.
+- La clave API HTTP guardada coincide literalmente con la clave facilitada para Agora; no hay espacios ni diferencias de formato.
+- Revalidación contra Agora `http://vpn1.provisa.net:8984`:
+  - `/api/export/?business-day=2026-07-13&filter=Invoices`: HTTP `401`;
+  - `/api/export/tickets/`: HTTP `401`;
+  - `/api/export-master/?filter=Families`: HTTP `401`;
+  - `/api/export-master/?filter=Products`: HTTP `401`.
+- Revalidación contra Winerim API v2 con el token facilitado: HTTP `200`, catálogo accesible.
+
+### Decisiones
+- No activar la integración, no publicar familias Winerim y no activar ventas hasta recibir una clave API HTTP válida de Agora.
+- Mantener la conexión preparada en modo seguro para poder retomar rápido cuando el SAT/cliente corrija la clave o permisos.
+
+### Hipótesis
+- El fallo no parece red/puerto porque el host responde rápido; el bloqueo es de credencial/permisos del módulo API HTTP de Agora.
+
+### Tareas pendientes inmediatas
+- Pedir al SAT/cliente que confirme una nueva clave API HTTP literal y que el módulo/API HTTP de Agora esté activo para `Export`, `Products` y lectura de ventas.
+- Tras nueva clave: actualizar credencial, ejecutar `agora-proxy/test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `winerim-proxy/fetch-catalog` antes de cualquier escritura.
