@@ -2,7 +2,90 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — 8 Agora prioritarios · cerrar altas y cambios de precio 2026-07-13
+- [x] Confirmar que los cambios que faltaban no estaban en GitHub antes del deploy manual.
+- [x] Subir a GitHub `main` el commit `5b5fcdb` con:
+  - hora real de venta por línea (`provider_sold_at`);
+  - `sales/import` cuando `stockActive=false`;
+  - guard diferencial `update_skipped:no_agora_changes` para `AUTO_UPDATE`;
+  - migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`.
+- [x] Aplicar en Lovable Cloud la migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`.
+- [x] Redeploy de `agora-proxy` desde GitHub `main` commit `5b5fcdb`.
+- [x] Verificar schema vivo:
+  - `sales_line_items.provider_sold_at` existe;
+  - `sales_line_items.provider_sold_at_source` existe.
+- [x] Verificar runtime vivo con una sonda real controlada:
+  - conexión recomendada: `El Bejeque`;
+  - acción: `evaluate-auto-push` `eventType=UPDATE` sobre producto ya verificado;
+  - esperado: `queued=0` y `update_skipped:no_agora_changes`.
+- [x] Solo después de esa sonda, drenar/revisar la cola `AUTO_UPDATE` que reapareció en `Katsu Izakaya`.
+- [x] Revisar 8 conexiones prioritarias:
+  - El Bejeque;
+  - Katsu Izakaya;
+  - Restaurante Cienvinos Ecija;
+  - Casa Nene;
+  - Kava;
+  - Restaurante Jardi;
+  - Luruna;
+  - Sa Pedrera.
+- [x] Drenar colas vivas de `AUTO_UPDATE`/XML en conexiones alcanzables:
+  - El Bejeque: `0` activas;
+  - Katsu: `0` activas tras procesar tanda repetida;
+  - Cienvinos: `0` activas;
+  - Casa Nene: `0` activas;
+  - Kava: `0` activas;
+  - Luruna: `0` activas;
+  - Sa Pedrera: `0` activas.
+- [x] Corregir mappings que provocaban `404` contra Winerim en Casa Nene, Kava y Luruna.
+- [x] Implementar localmente guard diferencial de `AUTO_UPDATE` en `agora-proxy`:
+  - compara atributos de producto;
+  - compara precios por lista efectiva;
+  - si Agora ya coincide con Winerim devuelve `update_skipped:no_agora_changes`.
+- [x] Validar localmente:
+  - `npx tsc --noEmit --pretty false`;
+  - bundle esbuild de `agora-proxy`;
+  - `git diff --check`.
+- [x] Confirmar que Lovable Cloud ejecuta `agora-proxy` con el guard diferencial del commit `5b5fcdb`.
+- [x] Tras deploy, repetir sonda viva:
+  - `evaluate-auto-push` `UPDATE` sobre vino ya verificado;
+  - resultado esperado: `queued=0` y `update_skipped:no_agora_changes`.
+- [x] Repetir `fetch-catalog` controlado por conexión después del deploy:
+  - si hay vino nuevo Winerim con precio, debe crear `AGORA_XML_UPSERT_PRODUCT`;
+  - si hay cambio real de precio, debe crear `AUTO_UPDATE`;
+  - si no hay cambio real, no debe crear cola.
+- [x] Procesar colas reales posteriores al `fetch-catalog` controlado:
+  - `Katsu Izakaya`: `3/3` OK, cola `0`;
+  - `Restaurante Cienvinos Ecija`: `1/1` OK, cola `0`.
+- [ ] Jardí: pedir a SAT/cliente resolver `NETWORK_UNREACHABLE / No route to host` contra DDNS/puerto `8984` antes de validarlo al 100%.
+- [ ] Tras la validación, preparar estado final de los 8 con:
+  - catálogo Winerim esperado vs Agora verificado;
+  - cambios de precio verificados;
+  - cola `0`;
+  - ventas/historial sin fallos recientes.
+- [ ] `Sa Vida`: decidir activación controlada de `auto_push_verified_ready`; no activarla sin canary porque hay muchos `NOT_PUSHED`.
+- [ ] `Taberna de Elia`: decidir estructura destino antes de publicar Winerim (`familias Winerim` sin ocultar legacy vs matching sobre legacy).
+- [ ] `El Higuerón`: pedir clave API HTTP válida; Agora responde `401`.
+- [ ] `O Bistro`: pedir URL pública/DDNS/túnel; la IP privada no responde desde Lovable Cloud/backend.
+- [ ] `Tintorera` y `Saddle`: revisar conectividad externa porque la sonda corta acaba en timeout.
+- [ ] `Restaurante Qtomas`: no reintentar en bucle mientras el breaker `POS_DOWN` siga abierto; revisar conectividad/DDNS antes de procesar las `60` tareas diferidas.
+
 ## P0 — Agora open tickets / Sa Pedrera copas 2026-07-11
+- [x] Sa Pedrera: resolver caso `E510-Izar-Leku`:
+  - venta ficticia en `OpenTicket` antiguo `2026-07-11` descontada el `2026-07-13`;
+  - el cliente confirmó cancelación;
+  - stock Winerim de botella `9902 / stockId 10529` repuesto a `1`;
+  - compensación `stock_sync_log.quantity=-1` registrada como `open_ticket_cancellation_restore`;
+  - evento antiguo marcado como cancelado/no elegible.
+- [x] Sa Pedrera: implementar localmente protección del piloto de tickets abiertos para no descontar stock desde `OpenTicket` con `BusinessDay` anterior al día operativo actual sin reconciliación/cancelación confirmada.
+- [ ] Desplegar `agora-proxy` en Lovable Cloud con:
+  - `open_tickets_stock_current_day_only`;
+  - `open_tickets_restore_stale_previous_days_enabled`;
+  - restauración idempotente `open_ticket_cancellation_restore`.
+- [ ] Post-deploy Sa Pedrera: ejecutar `sync-open-tickets` y confirmar que no vuelve a tocar `E510` por idempotencia.
+- [ ] Post-deploy Sa Pedrera: validar una venta abierta del día actual y una cancelación controlada para confirmar que:
+  - el día actual descuenta correctamente;
+  - una cancelación/ticket stale restaura sin duplicar;
+  - `Invoices` sigue reconciliando definitivamente.
 - [ ] Reintentar status global vivo de conexiones cuando Lovable Cloud/backend deje de devolver HTTP `522`:
   - `pos_connections`;
   - `sales_events`;
@@ -821,6 +904,20 @@
 - [ ] Implementar auto-update diferencial de catálogo antes de poner `auto_push_on_update=true` en Cienvinos/Baco.
 
 ## P0 — Validación
+- [ ] Desplegar `SyncMonitor.tsx` para que muestre errores reales de Lovable Cloud/backend en vez de tablas vacías.
+- [ ] Reintentar `/sync-monitor` cuando las queries REST de `pos_connections`, `sales_events`, `stock_sync_log` y `outbound_tasks` dejen de devolver HTTP `522`.
+- [ ] Aplicar migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql` en Lovable Cloud antes de desplegar `agora-proxy`.
+- [ ] Desplegar `agora-proxy` con:
+  - persistencia de `provider_sold_at`;
+  - `soldAt` en `sales/import`;
+  - carril `stockActive=true` -> `PUT /stock/{stockId}`;
+  - carril `stockActive=false` -> `POST /sales/import` sin tocar stock.
+- [ ] Sa Pedrera: ejecutar prueba controlada de venta botella y copa desde botones Winerim, comparar Agora `CreationDate`, `sales_line_items.provider_sold_at` y hora visible en ERP Winerim.
+- [ ] Sa Pedrera: probar explícitamente una variante con stock activo y una variante con stock desactivado:
+  - stock activo: debe descontar por `PUT /stock`;
+  - stock desactivado: debe aparecer en historial con `sales_only_stock_inactive` y no mover unidades.
+- [ ] Sa Pedrera: si las ventas con stock activo siguen mostrando hora de proceso, pedir a Winerim API soporte para `soldAt` en `PUT /stock/{stockId}` o endpoint combinado stock+venta.
+- [ ] Definir checklist de auditoría por restaurante: catálogo Winerim activo/preciado vs Agora visible, auto-push nuevos/precios, ventas Agora vs ERP Winerim, `provider_sold_at`, stock activo/inactivo, legacy oculto a familia+producto.
 - [ ] Redeploy urgente de `agora-proxy` desde `main` incluyendo commits `3917045` y `89c5950`.
 - [ ] Tras redeploy, reintentar/drenar la tarea `AGORA_HIDE_PRODUCT` de Sa Pedrera para `B310- Albenc` (Winerim `296314`) y confirmar en master data que queda no vendible.
 - [ ] Sa Pedrera: repetir `sync-open-tickets` y confirmar que las ventas de botella/copa Winerim entran en historial Winerim casi en tiempo real; verificar visualmente `Sanger Voyage 360` en botella y copa.

@@ -2,7 +2,203 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-13 05:05 CEST_
+_Última actualización: 2026-07-13 14:57 CEST_
+
+## Hechos (Sa Pedrera · cancelación de ticket abierto `E510` implementada — 2026-07-13 14:57 CEST)
+
+- El usuario confirmó que la venta de `E510-Izar-Leku Brut Vintage` fue cancelada.
+- Se corrigió el caso puntual:
+  - Winerim stockId `10529` vuelve a `stock=1`;
+  - `winerim_wines.stock_quantity` queda en `1`;
+  - se insertó una fila compensatoria en `stock_sync_log` con `quantity=-1`, `status=SUCCESS` y modo `open_ticket_cancellation_restore`;
+  - el evento `OpenTicket` antiguo quedó marcado con `_stock_sync_eligible=false`, `_open_ticket_cancelled_or_stale=true` y `_open_ticket_reversal_restored_qty=1`.
+- Se implementó localmente en `supabase/functions/agora-proxy/index.ts` la protección general:
+  - por defecto, los tickets abiertos con `BusinessDay` anterior al día operativo actual no mutan stock (`open_tickets_stock_current_day_only`);
+  - cuando un `OpenTicket` antiguo ya no aparece en la sonda actual y no está cubierto por una factura cerrada definitiva, el proxy puede restaurar la diferencia con una fila negativa idempotente (`open_ticket_cancellation_restore`);
+  - las facturas cerradas (`Invoices`) siguen siendo la reconciliación definitiva;
+  - los logs negativos se tienen en cuenta para no bloquear futuras reconciliaciones por “cantidad ya sincronizada” inflada.
+- Validación local:
+  - `npx tsc --noEmit --pretty false` OK;
+  - bundle esbuild de `agora-proxy` OK;
+  - comprobación estática dirigida OK;
+  - `git diff --check` OK.
+- Vitest se intentó con timeout externo de `30s` sobre `src/test/agoraOpenTicketsStatic.test.ts`, pero volvió a quedarse sin salida y se abortó con `SIGKILL` controlado para no dejar procesos bloqueados.
+
+### Pendiente inmediato
+
+- Desplegar `agora-proxy` en Lovable Cloud para que esta protección aplique automáticamente a futuros tickets abiertos cancelados.
+- Tras el deploy, ejecutar `sync-open-tickets` en Sa Pedrera y confirmar que:
+  - no vuelve a restaurar `E510` por idempotencia;
+  - los tickets abiertos del día actual siguen funcionando;
+  - los tickets abiertos antiguos quedan observados o restaurados solo si cumplen la regla de cancelación/stale.
+
+## Hechos (Sa Pedrera · caso `E510-Izar-Leku` en ticket abierto cancelado — 2026-07-13 14:21 CEST)
+
+- Audio del cliente transcrito localmente:
+  - el sábado hizo una venta ficticia de `Izar Leku`, código `E510`;
+  - solo tenía `1` botella;
+  - dejó la mesa abierta sin cerrar/Z;
+  - hoy canceló/cerró la mesa;
+  - ahora ve el vino con stock `0` y no visible en la carta/tablet Winerim.
+- Se localizó el caso exacto:
+  - conexión `Sa Pedrera`: `e2f6ce27-0e94-444f-9d64-09ba425a2b83`;
+  - vino Winerim `9902`, `E510-Izar-Leku Brut Vintage`;
+  - producto Agora botella `509902`, familia `ESPUMOSOS WINERIM`;
+  - mapping confirmado y tracking `BOTTLE=VERIFIED`;
+  - Winerim cache actual: activo, precio botella `74`, `stockActive=true`, `stock_quantity=0`, `bottle_stock_id=10529`.
+- La venta entró como `OpenTicket`, no como cierre diario:
+  - `provider_doc_id=open_ticket:9a5f0b9b-6fea-4df2-bddc-2cc2d073fbad`;
+  - `business_day=2026-07-11`;
+  - línea original de Agora con `CreationDate=2026-07-11T14:11:38`;
+  - usuario Agora `Alai`, sala `Terraza`;
+  - línea `B E510-Izar-Leku Brut Vintage`, cantidad `1`, total `74`.
+- El stock sync se ejecutó el `2026-07-13 12:20 CEST`:
+  - `stock_sync_log.status=SUCCESS`;
+  - modo `intraday_day_total_delta`;
+  - `desiredQty=1`, `newStock=0`;
+  - fallback `sales/import` respondió `skipped=1`, por lo que Winerim ya consideraba esa venta/historial idempotente.
+- La sonda actual `probe-open-tickets` devuelve `6` tickets del business day `2026-07-13`; el ticket antiguo de `2026-07-11` ya no aparece como abierto.
+- Revisión de alcance:
+  - hoy hay `8` eventos `OpenTicket` en Sa Pedrera;
+  - solo `1` tiene business day antiguo (`2026-07-11`), y es el caso de `E510`.
+- El producto Winerim en Agora sigue publicado/vendible:
+  - master data cache `2026-07-13T12:15:07Z`;
+  - `509902` está en `ESPUMOSOS WINERIM`, `SaleableAsMain=true`, `UseAsDirectSale=false`;
+  - el legacy `Izar-Leku` está no vendible (`SaleableAsMain=false`, `UseAsDirectSale=false`).
+
+### Diagnóstico
+
+- No parece un fallo de catálogo Winerim -> Agora: el botón Winerim de Agora sigue existiendo y está vendible dentro de su familia.
+- El problema viene del piloto de tickets abiertos: se descontó una venta tentativa de una mesa abierta antigua, y al cancelarse/cerrarse después, el middleware no revirtió automáticamente el stock.
+- Al quedar Winerim con stock `0`, la carta/editor Winerim deja de mostrar el vino como disponible.
+
+### Pendiente inmediato
+
+- Decidir corrección puntual con el cliente/equipo:
+  - si la venta fue ficticia y cancelada, reponer `E510` a `1` unidad en Winerim;
+  - si quieren que vuelva a estar visible en carta, confirmar que Winerim vuelve a exponerlo tras reponer stock.
+- Ajustar el piloto Sa Pedrera antes de seguir descontando tickets abiertos antiguos:
+  - opción segura: no mutar stock desde `OpenTicket` cuyo `BusinessDay` sea anterior al día operativo actual;
+  - mantener `Invoices` como reconciliación definitiva;
+  - valorar captura de tickets abiertos solo como observación hasta tener reversión de cancelaciones.
+
+## Hechos (post-migración `provider_sold_at` + catálogo diferencial — 2026-07-13 13:51 CEST)
+
+- El usuario confirmó que la migración está aplicada y `agora-proxy` redeployado.
+- Validación viva de esquema:
+  - `sales_line_items.provider_sold_at` existe;
+  - `sales_line_items.provider_sold_at_source` existe.
+- Ya hay líneas nuevas con hora real de Agora:
+  - `provider_sold_at_source="line.CreationDate"`;
+  - ejemplos vivos del `2026-07-13` en `Restaurante Cienvinos Ecija` y `Restaurante Triana`.
+- El Bejeque quedó validado por el usuario con `queued=0` y `update_skipped:no_agora_changes` en las 4 catas.
+- Se drenaron colas activas reales con IDs vivos:
+  - `Katsu Izakaya`: `3/3` tareas procesadas OK, cola final `0`;
+  - `Restaurante Cienvinos Ecija`: `1/1` tarea procesada OK, cola final `0`.
+- Se limpió el breaker residual caducado de `Katsu Izakaya` tras confirmar `test=true` y cola `0`.
+- Se actualizó manualmente `last_catalog_sync_at` en conexiones cuyo catálogo completo se validó pero `winerim-proxy` no persistió el timestamp:
+  - `Katsu Izakaya`;
+  - `Luruna`;
+  - `Chiquilla`;
+  - además ya se había corregido `Restaurante Triana`, `Cienvinos`, `Casa Nene`, `Kava` y `Sa Pedrera` durante la tanda.
+- Se ejecutó `winerim-proxy/fetch-catalog` controlado en conexiones con escritura activa y `auto_push_verified_ready=true`:
+  - `Katsu Izakaya`: `85/85` vinos procesados, catálogo completo, `80` candidatos de update revisados, cola final `0`, fallos nuevos `0`.
+  - `Restaurante Cienvinos Ecija`: `457` vinos listados, primer lote `200`, `54` candidatos de update; `53` saltaron por `update_skipped:no_agora_changes` y `1` update real se procesó OK; cola final `0`.
+  - `Casa Nene`: `313` vinos listados, primer lote `200`, `no_catalog_changes_detected`, cola final `0`.
+  - `Kava`: `208` vinos listados, primer lote `200`, `7` candidatos de update; todos `update_skipped:no_agora_changes`, cola final `0`.
+  - `Luruna`: `138/138` vinos procesados, `4` candidatos de update, cola final `0`.
+  - `Sa Pedrera`: `468` vinos listados, primer lote `200`, `22` candidatos de update; todos `update_skipped:no_agora_changes`, cola final `0`. Mantiene deuda histórica (`1255` outbound fallidos/bloqueados y `115` stock pendiente/fallido), pero no se crearon fallos nuevos.
+  - `Restaurante Qtomas`: `1393` vinos listados, primer lote `200` correcto; al continuar enriquecimiento, Agora dejó de responder a `/api/import/` con `No route to host`, abrió breaker `POS_DOWN` hasta `2026-07-13T13:05:09Z` y quedaron `60` tareas `QUEUED` diferidas hasta el fin del breaker.
+  - `Chiquilla`: `69/69` vinos procesados, `26` candidatos de update, cola final `0`; mantiene `3` fallos outbound históricos.
+  - `Restaurante Triana`: `107/107` vinos procesados, `30` candidatos de update; todos `update_skipped:no_agora_changes`, cola final `0`.
+- Evidencia de ventas/stock recientes desde middleware:
+  - `El Bejeque`: stock `SUCCESS` hoy con botella y copa.
+  - `Katsu Izakaya`: stock `SUCCESS` hoy con botella y copas; varias copas usan `sales/import` cuando corresponde.
+  - `Kava`: stock `SUCCESS` hoy con botella y copas; copas con `sales/import`.
+  - `Casa Nene`: stock `SUCCESS` hoy; al menos una línea usa `sales/import`.
+  - `Cienvinos Ecija`: ventas de `2026-07-13` y stock `SUCCESS` hoy; copas y botellas con `sales/import` cuando corresponde.
+  - `Sa Pedrera`: ventas de `2026-07-13` y stock `SUCCESS` hoy.
+  - `Qtomas`: ventas de `2026-07-13` y stock `SUCCESS` hoy.
+  - `Restaurante Triana`: ventas de `2026-07-13` con `provider_sold_at`, pero sin `stock_sync_log` todavía porque no se observaron líneas de vino mapeadas en la muestra.
+- Bloqueos vivos:
+  - `Restaurante Jardi`: sigue bloqueado por red (`No route to host` contra DDNS/puerto `8984`).
+  - `El Higuerón`: Agora responde `401`; Winerim OK, pero falta clave API HTTP válida o permiso API correcto.
+  - `O Bistro`: timeout desde Lovable Cloud/backend; la IP recibida es privada y no sirve desde backend.
+  - `Tintorera`: timeout desde Lovable Cloud/backend.
+  - `Saddle`: timeout desde Lovable Cloud/backend en sonda corta; está read-only.
+  - `Taberna de Elia`: Agora responde OK y ventas llegan, pero no hay catálogo Winerim publicado (`verified=0`, `auto_push_*` apagado, `ready=false`) por la decisión previa de no volcar directo sin validar estructura legacy.
+  - `Sa Vida`: Agora responde OK y ventas llegan; `auto_push_verified_ready=false`, aunque hay mucho tracking verificado. Mantiene deuda histórica de stock de mayo por intentos de stock negativo. No se activó `ready` para evitar publicar muchos `NOT_PUSHED` sin prueba controlada.
+
+### Decisiones / criterio operativo
+
+- El flujo correcto para probar catálogo/precios es `winerim-proxy/fetch-catalog`; `agora-proxy` no tiene acción `fetch-catalog`.
+- Las conexiones `READY` pueden mantener `auto_push_on_update=true`: el guard diferencial evita reimportar cuando Agora ya coincide con Winerim.
+- No activar `auto_push_verified_ready` en `Sa Vida` sin una sonda controlada más amplia o autorización expresa, porque existen `NOT_PUSHED` y podría publicar muchos formatos de golpe.
+- No activar Taberna de Elia en modo Winerim automático hasta resolver la decisión comercial/operativa sobre mantener estructura legacy por regiones o publicar familias Winerim dedicadas.
+
+### Pendiente inmediato
+
+- Repetir `fetch-catalog` o esperar los lotes encadenados para catálogos grandes (`Cienvinos`, `Casa Nene`, `Kava`, `Sa Pedrera`, `Qtomas`) y confirmar que el último lote actualiza `last_catalog_sync_at`.
+- Resolver por conexión:
+  - `Jardi`: SAT/cliente debe arreglar DDNS/router/firewall/servidor.
+  - `Higuerón`: pedir clave API HTTP válida; el error es `401`.
+  - `O Bistro`: pedir URL pública/DDNS o túnel, no IP privada `192.168.x.x`.
+  - `Tintorera` y `Saddle`: confirmar conectividad externa.
+  - `Taberna de Elia`: decidir si se publican familias Winerim dedicadas sin ocultar legacy o si se hace matching legacy.
+  - `Sa Vida`: decidir activación controlada de `auto_push_verified_ready`.
+
+## Hechos (post-deploy Agora + cola viva — 2026-07-13 13:05 CEST)
+
+- Se comprobó el estado después del despliegue manual indicado por el usuario.
+- La base viva aún no tiene las columnas `sales_line_items.provider_sold_at` y `sales_line_items.provider_sold_at_source`: la API devuelve `42703 column sales_line_items.provider_sold_at does not exist`.
+- El `agora-proxy` que estaba en GitHub antes de esta sesión no contenía los cambios locales de:
+  - hora real de venta por línea (`provider_sold_at`);
+  - `sales/import` cuando la variante tiene `stockActive=false`;
+  - guard diferencial `update_skipped:no_agora_changes` para no reencolar `AUTO_UPDATE` si Agora ya coincide con Winerim.
+- Se creó y subió a GitHub `main` el commit `5b5fcdb` (`Fix Agora sales timing and update idempotency`) con:
+  - `supabase/functions/agora-proxy/index.ts`;
+  - migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`.
+- Validación local disponible:
+  - `npx tsc --noEmit --pretty false` OK;
+  - bundle esbuild de `agora-proxy` OK;
+  - `git diff --check` OK.
+- La suite Vitest se quedó colgada incluso ejecutando archivos individuales; se abortó para no bloquear la operación. No se observaron errores de compilación TypeScript ni de bundle.
+- Foto viva de los 8 prioritarios tras el despliegue manual anterior:
+  - `El Bejeque`: test OK, `0` tareas activas, `2` outbound fallidos históricos, `0` stock pendiente/fallido.
+  - `Katsu Izakaya`: test OK, `73` tareas activas `AUTO_UPDATE`, `0` stock pendiente/fallido.
+  - `Restaurante Cienvinos Ecija`: test OK, `4` tareas activas, `0` stock pendiente/fallido.
+  - `Casa Nene`: test OK, `0` tareas activas, `0` stock pendiente/fallido.
+  - `Kava`: test OK, `16` tareas activas, `26` stock pendiente/fallido histórico.
+  - `Restaurante Jardi`: test falla por red (`No route to host` contra DDNS/puerto `8984`), `0` tareas activas.
+  - `Luruna`: test OK, `0` tareas activas, `2` stock pendiente/fallido histórico.
+  - `Sa Pedrera`: test OK, `0` tareas activas, `1255` outbound fallidos/bloqueados históricos y `115` stock pendiente/fallido histórico.
+- Foto viva de las conexiones que el usuario pidió llevar al 100%:
+  - `Taberna de Elia`: test OK, ventas guardadas, sin colas/fallos, pero auto-push create/update apagados y `ready=false`.
+  - `O Bistro`: conexión desactivada/read-only (`write_mode=NONE`), sin ventas; test desde backend no concluyente.
+  - `Tintorera`: conexión desactivada/read-only (`write_mode=NONE`), sin ventas; test desde backend no concluyente.
+  - `El Higuerón`: conexión desactivada/read-only; Winerim OK en auditoría previa, Agora devuelve `401`.
+  - `Restaurante Qtomas`: test OK, create automático activo, open tickets activo, sin colas/fallos; `auto_push_on_update=false`.
+  - `Chiquilla`: test OK, create automático activo, open tickets activo, `3` outbound fallidos históricos; `auto_push_on_update=false`.
+  - `Restaurante Triana`: test OK, create automático activo, open tickets activo, sin colas/fallos; `auto_push_on_update=false`.
+  - `Restaurante Jardi`: bloqueado por conectividad externa.
+  - `Sa Vida`: test OK y ventas guardadas, pero `ready=false` y `177` stock pendiente/fallido histórico.
+
+### Decisiones / criterio operativo
+
+- No declarar cambios de precio automáticos al 100% hasta que Lovable Cloud tenga aplicado el commit `5b5fcdb` y la migración de `provider_sold_at`.
+- No lanzar `fetch-catalog` masivo con `auto_push_on_update=true` hasta que una sonda `evaluate-auto-push UPDATE` sobre producto verificado devuelva `update_skipped:no_agora_changes`.
+- Para conexiones con stock Winerim desactivado, el criterio operativo sigue siendo registrar venta con `POST /api/v2/sales/import` sin descontar stock.
+
+### Pendiente inmediato
+
+- Aplicar en Lovable Cloud la migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`.
+- Redeploy de `agora-proxy` desde GitHub `main` commit `5b5fcdb`.
+- Repetir sonda controlada en `El Bejeque`:
+  - esperado: `queued=0`, `update_skipped:no_agora_changes`;
+  - si pasa, drenar y revisar Katsu/Cienvinos/Kava.
+- Repetir auditoría por conexión para `Taberna de Elia`, `O Bistro`, `Tintorera`, `El Higuerón`, `Qtomas`, `Chiquilla`, `Triana`, `Jardi` y `Sa Vida`.
+
+## Hechos (Winerim ERP · historial visible por restaurante — 2026-07-13 05:05 CEST)
 
 ## Hechos (Winerim ERP · historial visible por restaurante — 2026-07-13 05:05 CEST)
 
@@ -55,6 +251,45 @@ _Última actualización: 2026-07-13 05:05 CEST_
 - Cruzar esta foto ERP con `sales_events`, `stock_sync_log`, `winerim_response.salesImport`, `connection_alerts` y `outbound_tasks` cuando Lovable Cloud/backend deje de devolver `522`.
 - Revisar por qué conexiones con piloto open tickets documentado (`El Bejeque`, `Katsu`, `Kava`, `Chiquilla`, `Cienvinos`, `Luruna`) no muestran ventas intradía recientes en ERP.
 
+## Hechos (8 Agora prioritarios · catálogo y cambios de precio — 2026-07-13 11:45 CEST)
+
+- Se revisaron los 8 Agora pedidos: `El Bejeque`, `Katsu Izakaya`, `Restaurante Cienvinos Ecija`, `Casa Nene`, `Kava`, `Restaurante Jardi`, `Luruna` y `Sa Pedrera`.
+- Se limpió la cola operativa tras la revisión:
+  - `El Bejeque`: `0` tareas activas / `0` fallos nuevos del día.
+  - `Katsu Izakaya`: se drenó una tanda de `AUTO_UPDATE`; quedó en `0` tareas activas / `0` fallos nuevos del día.
+  - `Restaurante Cienvinos Ecija`: `0` tareas activas / `0` fallos nuevos del día.
+  - `Casa Nene`: `0` tareas activas / `0` fallos nuevos del día.
+  - `Kava`: `0` tareas activas / `0` fallos nuevos del día.
+  - `Luruna`: `0` tareas activas / `0` fallos nuevos del día.
+  - `Sa Pedrera`: se drenó la cola pendiente; quedó en `0` tareas activas / `0` fallos nuevos del día.
+  - `Restaurante Jardi`: `0` tareas activas, pero la sonda viva sigue bloqueada por red (`NETWORK_UNREACHABLE / No route to host` contra el DDNS/puerto `8984`).
+- Se corrigieron mappings que causaban `404 Wine not found/not accessible` en Winerim:
+  - `Casa Nene`: mappings confirmados contra vinos inactivos/no accesibles pasados a `REJECTED`.
+  - `Kava`: vinos inactivos ocultados en Agora y mappings antiguos pasados a `REJECTED`.
+  - `Luruna`: vino inactivo ocultado en Agora y mappings antiguos pasados a `REJECTED`.
+- Se activó `auto_push_on_update=true` en las 7 conexiones alcanzables para preparar cambios de precio, pero la sonda real mostró que el runtime desplegado todavía no contiene el guard diferencial `update_skipped:no_agora_changes`.
+- Consecuencia operativa observada: con el runtime actual, `AUTO_UPDATE` puede reencolar productos ya verificados aunque no haya cambio real de precio/catálogo. Se implementó localmente el guard diferencial en `supabase/functions/agora-proxy/index.ts`, pero queda pendiente su despliegue en Lovable Cloud.
+- Validación local del código:
+  - `npx tsc --noEmit --pretty false` OK.
+  - bundle esbuild de `agora-proxy` OK.
+  - `git diff --check` OK.
+
+### Decisiones / criterio operativo
+
+- No volver a lanzar pruebas masivas de `fetch-catalog`/`AUTO_UPDATE` hasta desplegar el guard diferencial de `agora-proxy`; hacerlo ahora puede reabrir colas sin cambios reales.
+- Tratar `Restaurante Jardi` como bloqueo externo de conectividad: no se puede dejar al 100% desde middleware mientras Lovable Cloud/backend no alcance el servidor Agora.
+- Las altas nuevas (`auto_push_on_create`) quedan preparadas en las conexiones alcanzables; los cambios de precio requieren el redeploy del guard para quedar automáticos sin ruido.
+
+### Pendiente inmediato
+
+- Desplegar `agora-proxy` desde el repo local actual en Lovable Cloud.
+- Tras el redeploy, repetir una sonda controlada `evaluate-auto-push` `UPDATE` sobre un vino ya verificado: debe devolver `update_skipped:no_agora_changes` y no crear `outbound_tasks`.
+- Repetir auditoría de los 8 tras el redeploy y declarar conexión por conexión:
+  - alta nueva Winerim -> Agora OK;
+  - cambio de precio Winerim -> Agora OK;
+  - cola `0`;
+  - ventas/historial sin fallos recientes.
+
 ## Hechos (status global conexiones · 2026-07-13 04:18 CEST)
 
 - Se solicitó un estado de **todas** las conexiones.
@@ -70,6 +305,34 @@ _Última actualización: 2026-07-13 05:05 CEST_
 
 - Reintentar una consulta viva de `pos_connections`, `sales_events`, `stock_sync_log`, `outbound_tasks`, `winerim_push_tracking` y `connection_alerts` cuando Lovable Cloud/backend responda.
 - Emitir entonces un status vivo con timestamps reales de última venta, último descuento, cola abierta y alertas por conexión.
+
+## Hechos (Sync Monitor vacío · 2026-07-13 10:18 CEST)
+
+- Se revisó por qué `/sync-monitor` aparece vacío.
+- El `Sync Monitor` no tiene una fuente especial de Agora: lee directamente `pos_connections`, `sales_events`, `stock_sync_log` y `outbound_tasks`.
+- Sondas REST con la misma clave pública del frontend:
+  - `pos_connections`: timeout de 20s / HTTP `000` sin bytes;
+  - `sales_events`: HTTP `522`;
+  - `stock_sync_log`: HTTP `522`;
+  - `outbound_tasks`: HTTP `522`.
+- El error `522` indica timeout de conexión entre Cloudflare y el origen del backend. No significa que Agora no tenga datos ni que las integraciones hayan desaparecido.
+- Se detectó un bug de UI: `SyncMonitor.tsx` ignoraba `connRes.error`, `eventsRes.error`, `logsRes.error` y `outboundRes.error`, usaba `data || []` y mostraba estados vacíos como si no hubiera conexiones.
+- Se corrigió localmente `src/pages/SyncMonitor.tsx` para:
+  - conservar datos previos si una query falla;
+  - mostrar una alerta visible con el error real;
+  - no mostrar mensajes falsos tipo “No connections found” cuando hay fallo de carga;
+  - mantener timestamp de la última carga correcta.
+- Validación local: `npx tsc --noEmit` OK.
+
+### Decisiones
+
+- Tratar pantallas vacías del monitor como fallo de carga hasta confirmar que las queries responden `200`.
+- No diagnosticar Agora desde `/sync-monitor` mientras Lovable Cloud/backend devuelva `522`; para casos urgentes usar auditoría directa contra APIs Agora/Winerim.
+
+### Tareas pendientes
+
+- Desplegar el fix de UI de `SyncMonitor.tsx`.
+- Revisar Lovable Cloud/backend: si el `522` persiste, escalar como incidencia de infraestructura/capacidad antes de seguir usando el monitor como fuente de verdad.
 
 ## Hechos (El Bejeque e Higuerón · auditoría directa — 2026-07-11 11:12 CEST)
 
@@ -3845,3 +4108,45 @@ _Última actualización: 2026-07-13 05:05 CEST_
 - Tras crear conexión: ejecutar `agora-proxy/test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day`.
 - Ejecutar `winerim-proxy/fetch-catalog` start + enrich completo.
 - Preparar informe de familias legacy vs Winerim antes de publicar familias Winerim u ocultar legacy.
+
+## 2026-07-13 · Agora: preservar hora real de venta en líneas y sales/import
+
+### Hechos
+- Se confirmó que Winerim API v2 tiene `POST /api/v2/sales/import` y que ese endpoint registra ventas sin modificar stock.
+- Se añadió migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`:
+  - `sales_line_items.provider_sold_at timestamp without time zone`
+  - `sales_line_items.provider_sold_at_source text`
+  - índice por `(connection_id, provider_sold_at)`.
+- `agora-proxy` ahora extrae la hora original de Agora desde `line.CreationDate` como prioridad, con fallback a campos de item/documento y finalmente al business day.
+- Los flujos que guardan ventas (`sync-open-tickets`, backfill analítico, `save-sales`, `sync-intraday-sales`, `auto-sync-sales`) persisten `provider_sold_at` y su fuente.
+- Cuando `PUT /stock/{stockId}` no mueve inventario y se llama al fallback `sales/import`, el `soldAt` enviado a Winerim usa `provider_sold_at` si existe.
+- Se implementó la separación explícita de endpoints por `stockActive` de la variante Winerim:
+  - `stockActive=true`: se mantiene `PUT /api/v2/stock/{stockId}` para descontar stock absoluto;
+  - `stockActive=false`: se usa directamente `POST /api/v2/sales/import` para registrar venta/historial sin modificar unidades;
+  - `stockActive` acepta booleanos, números (`1/0`) y strings (`true/false`, `yes/no`, `si/no`) y por defecto conserva el comportamiento anterior (`true`) si Winerim no envía el campo.
+- El panel `AgoraWizard` queda alineado con la regla backend de copas: para publicar COPA basta `glass_sale_price > 0`; `serve_by_glass=false` queda como aviso informativo, no bloqueo duro.
+- Validación local:
+  - `npx tsc --noEmit` OK.
+  - Bundle `agora-proxy` con esbuild OK.
+  - Checks estáticos Node OK: un solo `req.json()`, sin llamadas directas a `export-master Products` fuera de caché, presencia de `provider_sold_at` y tres ramas `stockActive=false` por los tres flujos de stock.
+  - `vitest` queda colgado antes de ejecutar assertions incluso en tests individuales; se abortó con wrapper local y queda como verificación pendiente del runner, no como fallo de compilación.
+  - `npm run build` queda colgado en `vite build` sin salida adicional; se abortó localmente. `tsc` sí valida el front TypeScript.
+
+### Decisiones
+- Guardar la hora de Agora como `timestamp without time zone` para preservar la hora local del restaurante y evitar desplazamientos UTC en historiales.
+- No llamar siempre a `sales/import` además de `PUT /stock`, porque Winerim documenta que bajar stock mediante `PUT /stock/{stockId}` ya puede crear historial de venta y se podría duplicar.
+- Tratar `stock desactivado` distinto de `stock activo a 0`: el primero no debe mutar inventario nunca; el segundo intenta `PUT /stock` y usa `sales/import` solo si no hay movimiento real.
+
+### Hipótesis
+- Las horas visibles raras (`00:00`, `02:00`, `06:35`, `08:55`) vienen de mezclar rutas: importación sales-only, efecto lateral de stock, sync nocturno o interpretación de hora por Winerim. Con `provider_sold_at` se podrá auditar cada caso contra la hora real de Agora.
+- Para ventas con stock activo, si Winerim genera historial únicamente desde `PUT /stock/{stockId}`, hará falta que Winerim acepte `soldAt` en ese endpoint o que provea un endpoint combinado stock+venta para mostrar la hora real sin duplicar.
+
+### Tareas pendientes inmediatas
+- Aplicar primero la migración en Lovable Cloud y después desplegar `agora-proxy`.
+- Repetir prueba controlada en Sa Pedrera:
+  - venta de botella/copa con `stockActive=true`, comprobar descuento e historial;
+  - venta de botella/copa con `stockActive=false`, comprobar `sales_only_stock_inactive`, historial y stock sin cambios;
+  - comparar `provider_sold_at`, `stock_sync_log.winerim_response` y hora visible en ERP Winerim.
+- Pedir a Winerim API soporte para `soldAt` en el flujo que descuenta stock o endpoint combinado si el historial por `PUT /stock` sigue mostrando hora de proceso.
+- Cuando el backend deje de devolver 522, auditar restaurante por restaurante: Agora `CreationDate` vs `sales_line_items.provider_sold_at` vs ERP `/sales`.
+  - `Restaurante Qtomas`: bloqueado temporalmente por conectividad `POS_DOWN` durante import XML; las `60` tareas quedan en `QUEUED` con `next_retry_at` igual al fin del breaker para recuperación automática.

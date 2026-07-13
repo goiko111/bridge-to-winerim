@@ -744,6 +744,25 @@ function isOpenTicketsStockSyncEnabled(connection: { provider_config?: unknown }
   return config.open_tickets_stock_sync_enabled === true;
 }
 
+function openTicketsStockCurrentDayOnly(providerConfig: Record<string, unknown>): boolean {
+  return providerConfig.open_tickets_stock_current_day_only !== false;
+}
+
+function isOpenTicketStockDayAllowed(day: string, defaultDay: string, providerConfig: Record<string, unknown>): boolean {
+  if (!openTicketsStockCurrentDayOnly(providerConfig)) return true;
+  return day >= defaultDay;
+}
+
+function isStaleOpenTicketRestoreEnabled(providerConfig: Record<string, unknown>): boolean {
+  return providerConfig.open_tickets_restore_stale_previous_days_enabled !== false;
+}
+
+function staleOpenTicketRestoreLookbackHours(providerConfig: Record<string, unknown>): number {
+  const parsed = Number(providerConfig.open_tickets_restore_lookback_hours ?? 96);
+  if (!Number.isFinite(parsed)) return 96;
+  return Math.min(168, Math.max(1, parsed));
+}
+
 // Agora may omit InvoiceId/Id in some installations. A blank provider_doc_id
 // collapses all invoices for the day into one row, so every sales import path
 // must use the same deterministic fallback.
@@ -2023,7 +2042,7 @@ async function syncStockForDayIncrementalByDayTotal(
 
   const { data: dayEvents } = await supabase
     .from("sales_events")
-    .select("id, raw_json")
+    .select("id, raw_json, doc_type")
     .eq("connection_id", connectionId)
     .eq("business_day", day);
 
@@ -2033,9 +2052,15 @@ async function syncStockForDayIncrementalByDayTotal(
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
   }
 
+  // When closed invoices exist, they are the definitive desired state for the day.
+  // OpenTicket rows can still count as "already synced" below so an open-ticket
+  // pre-discount is not applied a second time when the invoice closes.
+  const definitiveEventIds = eligibleEvents
+    .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() !== "openticket")
+    .map((event: { id: string }) => event.id);
   const desiredEventIds = (desiredEventIdsOverride && desiredEventIdsOverride.length > 0)
     ? desiredEventIdsOverride.filter((id) => allDayEventIds.includes(id))
-    : allDayEventIds;
+    : (definitiveEventIds.length > 0 ? definitiveEventIds : allDayEventIds);
   if (desiredEventIds.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No current sales events selected for this day" };
   }
@@ -2117,8 +2142,9 @@ async function syncStockForDayIncrementalByDayTotal(
       const variant = normalizeWinerimVariant(row.variant);
       if (!variant) continue;
       const key = `${row.winerim_product_id}::${variant}`;
-      const qty = Math.max(0, Number(row.quantity || 0));
-      alreadyQtyByTotal.set(key, (alreadyQtyByTotal.get(key) || 0) + qty);
+      const qty = Number(row.quantity || 0);
+      if (!Number.isFinite(qty)) continue;
+      alreadyQtyByTotal.set(key, Math.max(0, (alreadyQtyByTotal.get(key) || 0) + qty));
     }
   }
 
@@ -2439,6 +2465,348 @@ async function syncStockForDayIncrementalByDayTotal(
     deltaTotals: deltaCandidates.length,
     claimedTotals: claimed.length,
   };
+}
+
+type StaleOpenTicketRestoreResult = {
+  restored: number;
+  skipped: number;
+  failed: number;
+  checkedEvents: number;
+  disabledEvents: number;
+  errors: string[];
+};
+
+// Open tickets are provisional. If a previous-day open ticket was captured,
+// then later disappeared without a matching closed invoice, treat it as
+// cancelled and compensate the provisional stock movement with a negative
+// stock_sync_log row. Closed invoices still remain the definitive source.
+// deno-lint-ignore no-explicit-any
+async function restoreStaleOpenTicketStock(
+  supabase: any,
+  connectionId: string,
+  defaultDay: string,
+  winerimToken: string,
+  providerConfig: Record<string, unknown>,
+  currentOpenDocIds: Set<string>,
+): Promise<StaleOpenTicketRestoreResult> {
+  const result: StaleOpenTicketRestoreResult = {
+    restored: 0,
+    skipped: 0,
+    failed: 0,
+    checkedEvents: 0,
+    disabledEvents: 0,
+    errors: [],
+  };
+  if (!isStaleOpenTicketRestoreEnabled(providerConfig)) return result;
+  if (!winerimToken) {
+    result.skipped++;
+    result.errors.push("missing Winerim API token");
+    return result;
+  }
+
+  const lookbackHours = staleOpenTicketRestoreLookbackHours(providerConfig);
+  const since = new Date(Date.now() - lookbackHours * 60 * 60_000).toISOString();
+  const { data: openEvents } = await supabase
+    .from("sales_events")
+    .select("id, provider_doc_id, business_day, raw_json, created_at")
+    .eq("connection_id", connectionId)
+    .eq("doc_type", "OpenTicket")
+    .lt("business_day", defaultDay)
+    .gte("created_at", since)
+    .limit(1000);
+
+  const staleEvents = (openEvents || [])
+    .filter((event: { provider_doc_id?: string | null; raw_json?: unknown }) =>
+      !currentOpenDocIds.has(String(event.provider_doc_id || "")) && !rawJsonDisablesStockSync(event.raw_json)
+    );
+  result.checkedEvents = staleEvents.length;
+  if (staleEvents.length === 0) return result;
+
+  const eventById = new Map<string, { id: string; business_day: string; raw_json?: unknown }>();
+  for (const event of staleEvents as { id: string; business_day: string; raw_json?: unknown }[]) {
+    eventById.set(event.id, event);
+  }
+  const staleEventIds = Array.from(eventById.keys());
+
+  const { data: stockRows } = await supabase
+    .from("stock_sync_log")
+    .select("id, sales_event_id, sales_line_item_id, provider_product_id, winerim_product_id, product_name, quantity, variant, stock_id")
+    .eq("connection_id", connectionId)
+    .eq("status", "SUCCESS")
+    .in("sales_event_id", staleEventIds);
+
+  const positiveRows: any[] = [];
+  const provisionalNetByKey = new Map<string, number>();
+  const eventKeys = new Map<string, Set<string>>();
+  const eventPositiveQty = new Map<string, number>();
+
+  for (const row of (stockRows || []) as any[]) {
+    const wineId = String(row.winerim_product_id || "");
+    const event = eventById.get(String(row.sales_event_id || ""));
+    const variant = normalizeWinerimVariant(row.variant);
+    const qty = Number(row.quantity || 0);
+    if (!event || !wineId || !variant || !Number.isFinite(qty)) continue;
+    const key = `${event.business_day}::${wineId}::${variant}`;
+    provisionalNetByKey.set(key, Math.max(0, (provisionalNetByKey.get(key) || 0) + qty));
+    if (!eventKeys.has(event.id)) eventKeys.set(event.id, new Set<string>());
+    eventKeys.get(event.id)!.add(key);
+    if (qty > 0) {
+      positiveRows.push(row);
+      eventPositiveQty.set(event.id, (eventPositiveQty.get(event.id) || 0) + qty);
+    }
+  }
+
+  if (positiveRows.length === 0) return result;
+
+  const days = Array.from(new Set(staleEvents.map((event: { business_day: string }) => event.business_day)));
+  const { data: dayEvents } = await supabase
+    .from("sales_events")
+    .select("id, business_day, doc_type, raw_json")
+    .eq("connection_id", connectionId)
+    .in("business_day", days);
+
+  const dayByDefinitiveEventId = new Map<string, string>();
+  const definitiveEventIds = (dayEvents || [])
+    .filter((event: { id: string; business_day: string; doc_type?: string | null; raw_json?: unknown }) =>
+      String(event.doc_type || "").toLowerCase() !== "openticket" && !rawJsonDisablesStockSync(event.raw_json)
+    )
+    .map((event: { id: string; business_day: string }) => {
+      dayByDefinitiveEventId.set(event.id, event.business_day);
+      return event.id;
+    });
+
+  const definitiveQtyByKey = new Map<string, number>();
+  for (let i = 0; i < definitiveEventIds.length; i += 500) {
+    const chunk = definitiveEventIds.slice(i, i + 500);
+    const { data: definitiveLines } = await supabase
+      .from("sales_line_items")
+      .select("sales_event_id, quantity, winerim_product_id, format, is_wine_candidate")
+      .eq("connection_id", connectionId)
+      .eq("is_wine_candidate", true)
+      .not("winerim_product_id", "is", null)
+      .in("sales_event_id", chunk);
+
+    for (const line of (definitiveLines || []) as any[]) {
+      const day = dayByDefinitiveEventId.get(line.sales_event_id);
+      const wineId = String(line.winerim_product_id || "");
+      const variant = variantForAgoraFormat(line.format);
+      const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
+      if (!day || !wineId || qty <= 0) continue;
+      const key = `${day}::${wineId}::${variant}`;
+      definitiveQtyByKey.set(key, (definitiveQtyByKey.get(key) || 0) + qty);
+    }
+  }
+
+  const restoreRemainingByKey = new Map<string, number>();
+  for (const [key, provisionalQty] of provisionalNetByKey.entries()) {
+    const definitiveQty = definitiveQtyByKey.get(key) || 0;
+    const restoreQty = Math.max(0, provisionalQty - definitiveQty);
+    if (restoreQty > 0) restoreRemainingByKey.set(key, restoreQty);
+  }
+  if (restoreRemainingByKey.size === 0) return result;
+
+  const WINERIM_BASE = "https://app.winerim.com/api/v2";
+  const winerimHeaders = {
+    "WINERIM-API-TOKEN": winerimToken,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+  };
+  type StockEntry = { id: number; stock: number; stockActive: boolean; variant: WinerimVariant };
+  const stockCache = new Map<string, StockEntry[]>();
+  const fetchStockRows = async (wineId: string): Promise<StockEntry[]> => {
+    if (stockCache.has(wineId)) return stockCache.get(wineId)!;
+    const response = await fetch(`${WINERIM_BASE}/stock/wine/${wineId}`, { method: "GET", headers: winerimHeaders });
+    if (!response.ok) {
+      throw new Error(`GET /stock/wine/${wineId} → ${response.status}: ${(await response.text()).substring(0, 200)}`);
+    }
+    const data = await response.json();
+    const normalized = parseWinerimStockRows(data)
+      .map((stock) => {
+        const canonical = findStockForVariant([stock], "copa")
+          ? "copa"
+          : findStockForVariant([stock], "botella")
+            ? "botella"
+            : findStockForVariant([stock], "magnum")
+              ? "magnum"
+              : null;
+        return {
+          id: Number(stock.id),
+          stock: Number(stock.stock ?? 0),
+          stockActive: readWinerimStockActive(stock),
+          variant: canonical,
+        };
+      })
+      .filter((stock): stock is StockEntry => Number.isFinite(stock.id) && stock.id > 0 && !!stock.variant);
+    stockCache.set(wineId, normalized);
+    return normalized;
+  };
+
+  const restoredByEvent = new Map<string, number>();
+  const restoredByKey = new Map<string, number>();
+  for (const row of positiveRows) {
+    const event = eventById.get(String(row.sales_event_id || ""));
+    const wineId = String(row.winerim_product_id || "");
+    const variant = normalizeWinerimVariant(row.variant);
+    const rowQty = Math.max(0, Number(row.quantity || 0));
+    if (!event || !wineId || !variant || rowQty <= 0) continue;
+    const key = `${event.business_day}::${wineId}::${variant}`;
+    const remaining = restoreRemainingByKey.get(key) || 0;
+    if (remaining <= 0) continue;
+    const restoreQty = Math.min(rowQty, remaining);
+    const idempotencyKey = `${connectionId}:${key}:open_ticket_reversal:${stableShortHash(String(row.id))}:qty:${restoreQty}`;
+
+    let match: StockEntry | undefined;
+    try {
+      match = (await fetchStockRows(wineId)).find((stock) => stock.variant === variant);
+    } catch (e) {
+      result.failed++;
+      result.errors.push(String(e));
+      continue;
+    }
+
+    if (!match) {
+      result.failed++;
+      result.errors.push(`Variant '${variant}' not found for wine ${wineId}`);
+      continue;
+    }
+
+    if (!match.stockActive) {
+      const { error: inactiveLogError } = await supabase.from("stock_sync_log").insert({
+        connection_id: connectionId,
+        sales_event_id: row.sales_event_id,
+        sales_line_item_id: row.sales_line_item_id,
+        provider_product_id: row.provider_product_id,
+        winerim_product_id: wineId,
+        product_name: `${row.product_name || "Open ticket reversal"} [${variant}]`,
+        quantity: 0,
+        variant,
+        stock_id: match.id,
+        idempotency_key: idempotencyKey,
+        status: "SUCCESS",
+        winerim_response: {
+          mode: "open_ticket_reversal_skipped_stock_inactive",
+          businessDay: event.business_day,
+          restoreQty,
+          stockId: match.id,
+          variant,
+          previousStock: match.stock,
+          newStock: match.stock,
+          reason: "stock inactive; sales/import history cannot be deleted from middleware",
+        },
+        synced_at: new Date().toISOString(),
+      });
+      if (inactiveLogError) {
+        result.skipped++;
+        continue;
+      }
+      restoreRemainingByKey.set(key, remaining - restoreQty);
+      restoredByEvent.set(event.id, (restoredByEvent.get(event.id) || 0) + restoreQty);
+      restoredByKey.set(key, (restoredByKey.get(key) || 0) + restoreQty);
+      result.skipped++;
+      continue;
+    }
+
+    const { data: claim, error: claimError } = await supabase.from("stock_sync_log").insert({
+      connection_id: connectionId,
+      sales_event_id: row.sales_event_id,
+      sales_line_item_id: row.sales_line_item_id,
+      provider_product_id: row.provider_product_id,
+      winerim_product_id: wineId,
+      product_name: `${row.product_name || "Open ticket reversal"} [${variant}]`,
+      quantity: -restoreQty,
+      variant,
+      stock_id: match.id,
+      idempotency_key: idempotencyKey,
+      status: "PENDING",
+    }).select("id").single();
+    if (claimError || !claim?.id) {
+      result.skipped++;
+      continue;
+    }
+
+    const previousStock = match.stock;
+    const newStock = Math.max(0, Math.floor(previousStock + restoreQty));
+    let response: Response;
+    let text = "";
+    let parsed: unknown;
+    try {
+      response = await fetch(`${WINERIM_BASE}/stock/${match.id}`, {
+        method: "PUT",
+        headers: winerimHeaders,
+        body: JSON.stringify({ stock: newStock }),
+      });
+      text = await response.text();
+      try { parsed = JSON.parse(text); } catch (_) { parsed = { raw: text.substring(0, 300) }; }
+    } catch (e) {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        error_message: `PUT exception: ${String(e)}`,
+      }).eq("id", claim.id);
+      result.failed++;
+      continue;
+    }
+
+    if (!response.ok) {
+      await supabase.from("stock_sync_log").update({
+        status: "FAILED",
+        error_message: `PUT /stock/${match.id} failed (${response.status}): ${text.substring(0, 300)}`,
+        winerim_response: parsed,
+      }).eq("id", claim.id);
+      result.failed++;
+      continue;
+    }
+
+    await supabase.from("stock_sync_log").update({
+      status: "SUCCESS",
+      winerim_response: {
+        mode: "open_ticket_cancellation_restore",
+        businessDay: event.business_day,
+        restoredQty: restoreQty,
+        provisionalQty: provisionalNetByKey.get(key) || 0,
+        definitiveQty: definitiveQtyByKey.get(key) || 0,
+        previousStock,
+        newStock,
+        stockId: match.id,
+        variant,
+        originalOpenTicketEventId: event.id,
+        originalStockSyncLogId: row.id,
+        stockUpdateResponse: parsed,
+      },
+      synced_at: new Date().toISOString(),
+    }).eq("id", claim.id);
+
+    restoreRemainingByKey.set(key, remaining - restoreQty);
+    restoredByEvent.set(event.id, (restoredByEvent.get(event.id) || 0) + restoreQty);
+    restoredByKey.set(key, (restoredByKey.get(key) || 0) + restoreQty);
+    result.restored++;
+    match.stock = newStock;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  for (const event of staleEvents as { id: string; raw_json?: unknown }[]) {
+    const keys = eventKeys.get(event.id);
+    if (!keys || keys.size === 0) continue;
+    const hasDefinitiveCoverage = Array.from(keys).some((key) => (definitiveQtyByKey.get(key) || 0) > 0);
+    if (hasDefinitiveCoverage) continue;
+    const positiveQty = eventPositiveQty.get(event.id) || 0;
+    const restoredQty = restoredByEvent.get(event.id) || 0;
+    if (positiveQty <= 0 || restoredQty < positiveQty) continue;
+    const raw = (event.raw_json && typeof event.raw_json === "object" && !Array.isArray(event.raw_json))
+      ? event.raw_json as Record<string, unknown>
+      : {};
+    await supabase.from("sales_events").update({
+      raw_json: {
+        ...raw,
+        _stock_sync_eligible: false,
+        _open_ticket_cancelled_or_stale: true,
+        _open_ticket_reversal_applied_at: new Date().toISOString(),
+        _open_ticket_reversal_restored_qty: restoredQty,
+      },
+    }).eq("id", event.id);
+    result.disabledEvents++;
+  }
+
+  return result;
 }
 
 type StockSyncTotals = {
@@ -3971,15 +4339,19 @@ serve(async (req) => {
       let resolvedLines = 0;
       let unresolvedLines = 0;
       let stockDeferredLines = 0;
+      let staleDayStockSkippedLines = 0;
       const savedEventIdsByDay: Record<string, string[]> = {};
+      const currentOpenDocIds = new Set<string>();
 
       for (let ticketIdx = 0; ticketIdx < tickets.length; ticketIdx++) {
         const ticket = tickets[ticketIdx] || {};
         const day = isBusinessDay(String(ticket.BusinessDay || "")) ? String(ticket.BusinessDay) : defaultDay;
         const docId = buildAgoraOpenTicketDocId(ticket, day, ticketIdx);
+        currentOpenDocIds.add(docId);
         const lines = Array.isArray(ticket.Lines) ? ticket.Lines : [];
         let docTotal = 0;
         const lineData: Record<string, unknown>[] = [];
+        const stockDayAllowed = isOpenTicketStockDayAllowed(day, defaultDay, providerConfig);
 
         for (const line of lines) {
           const rawTotal = agoraNumber(line.TotalAmount);
@@ -4000,7 +4372,7 @@ serve(async (req) => {
           const isResolved = !!winerimProductId;
           const creationDateMs = line.CreationDate ? Date.parse(String(line.CreationDate)) : NaN;
           const oldEnoughForStock = !stockSyncEnabled || minLineAgeMinutes <= 0 || !Number.isFinite(creationDateMs) || creationDateMs <= stockEligibleBeforeMs;
-          const stockCandidate = wr.candidate && oldEnoughForStock;
+          const stockCandidate = wr.candidate && oldEnoughForStock && stockDayAllowed;
           if (isResolved) {
             resolvedLines++;
           } else if (wr.candidate) {
@@ -4008,6 +4380,9 @@ serve(async (req) => {
           }
           if (isResolved && wr.candidate && !oldEnoughForStock) {
             stockDeferredLines++;
+          }
+          if (isResolved && wr.candidate && oldEnoughForStock && !stockDayAllowed) {
+            staleDayStockSkippedLines++;
           }
 
           lineData.push({
@@ -4032,6 +4407,7 @@ serve(async (req) => {
           _agora_source: "open_ticket",
           _stock_sync_eligible: stockSyncEnabled,
           _open_ticket_stock_sync_enabled: stockSyncEnabled,
+          _open_ticket_stock_day_allowed: stockDayAllowed,
           _open_ticket_synced_at: new Date().toISOString(),
         };
 
@@ -4064,9 +4440,20 @@ serve(async (req) => {
       }
 
       let stockSyncResult: StockSyncTotals | null = null;
+      let staleOpenTicketRestore: StaleOpenTicketRestoreResult | null = null;
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
       const daysWithSavedTickets = Object.keys(savedEventIdsByDay);
+      if (stockSyncEnabled && winerimToken) {
+        staleOpenTicketRestore = await restoreStaleOpenTicketStock(
+          supabase,
+          connectionId,
+          defaultDay,
+          winerimToken,
+          providerConfig,
+          currentOpenDocIds,
+        );
+      }
       if (resolvedLines > 0 && stockSyncEnabled) {
         if (!winerimToken) {
           warning = "Open tickets saved but Winerim stock was not synced: missing Winerim API token.";
@@ -4093,16 +4480,18 @@ serve(async (req) => {
           resolvedLines,
           unresolvedLines,
           stockDeferredLines,
+          staleDayStockSkippedLines,
           minLineAgeMinutes,
           stockSyncEnabled,
           stockSync: stockSyncResult,
+          staleOpenTicketRestore,
           warning,
         },
       };
       await supabase.from("pos_connections").update({ provider_config: nextConfig }).eq("id", connectionId);
 
       return new Response(JSON.stringify({
-        success: (stockSyncResult?.failed || 0) === 0,
+        success: (stockSyncResult?.failed || 0) === 0 && (staleOpenTicketRestore?.failed || 0) === 0,
         source: "open_tickets",
         ticketCount: tickets.length,
         savedEvents,
@@ -4110,9 +4499,11 @@ serve(async (req) => {
         resolvedLines,
         unresolvedLines,
         stockDeferredLines,
+        staleDayStockSkippedLines,
         minLineAgeMinutes,
         stockSyncEnabled,
         stockSync: stockSyncResult,
+        staleOpenTicketRestore,
         warning,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-07-13 · Validar catálogo/precios con `winerim-proxy/fetch-catalog`, no con `agora-proxy`
+- **Decisión**: Usar `winerim-proxy/fetch-catalog` como entrada canónica para comprobar altas y cambios de precio Winerim → Agora.
+- **Razón**: `agora-proxy` no expone `fetch-catalog`; su responsabilidad es evaluar/encolar/procesar la escritura a Agora. El refresco de catálogo Winerim, detección diferencial de candidatos y disparo de `evaluate-auto-push` viven en `winerim-proxy`.
+- **Alternativa descartada**: seguir invocando `agora-proxy` con `action=fetch-catalog`. Devuelve `Unknown action` o, si se usasen IDs equivocados, `Connection not found`, y no prueba el flujo real.
+- **Rollback / mitigación**: no aplica a datos; es una corrección de procedimiento. Para pruebas futuras: `winerim-proxy/fetch-catalog` → `agora-proxy/process-xml-outbound-queue`.
+
+---
+
+## 2026-07-13 · Mantener `auto_push_on_update=true` en conexiones READY tras validar guard diferencial
+- **Decisión**: En conexiones Agora con `write_mode=XML_IMPORT` y `auto_push_verified_ready=true`, mantener `auto_push_on_update=true` cuando el guard devuelve `update_skipped:no_agora_changes` para productos ya alineados.
+- **Razón**: La validación viva mostró el comportamiento esperado: Kava, Sa Pedrera, Triana y otros revisaron candidatos sin reencolar si no había cambio real; Cienvinos sí procesó un update real y dejó cola `0`.
+- **Alternativa descartada**: apagar `auto_push_on_update` globalmente por miedo a colas repetidas. Con el guard desplegado, apagarlo impediría que cambios reales de precio/nombre entren automáticamente en Agora.
+- **Rollback / mitigación**: si una conexión vuelve a generar cola repetitiva, desactivar temporalmente `auto_push_on_update` solo en esa conexión y revisar el diff contra XML de Agora antes de reintentar.
+
+---
+
+## 2026-07-13 · No activar Sa Vida como `auto_push_verified_ready` sin prueba controlada
+- **Decisión**: No cambiar todavía `Sa Vida.auto_push_verified_ready` de `false` a `true`.
+- **Razón**: Aunque Agora responde OK y hay mucho tracking verificado, también existen muchos formatos `NOT_PUSHED` y deuda histórica de stock de mayo. Activar `ready` puede publicar muchos productos/formats de golpe sin una sonda previa segura.
+- **Alternativa descartada**: poner `ready=true` para dejarla aparentemente al 100%. Puede resolver el bloqueo visual del panel, pero aumenta riesgo de publicación masiva inesperada.
+- **Rollback / mitigación**: activar primero una prueba acotada con allowlist/canary o validación manual de un subconjunto; si se activa y genera cola inesperada, pausar `auto_push_on_update` y drenar/revertir solo esa cola.
+
+---
+
+## 2026-07-13 · Taberna de Elia sigue bloqueada por decisión de estructura, no por conectividad
+- **Decisión**: Mantener Taberna de Elia sin publicación automática Winerim hasta decidir estructura destino.
+- **Razón**: La conexión Agora responde y las ventas llegan, pero no hay `winerim_push_tracking` verificado. Existe una decisión previa de no volcar Winerim directo porque la estructura legacy de bodega por regiones/denominaciones era compleja y el match inicial no era suficiente.
+- **Alternativa descartada**: activar `auto_push_on_create/update` y subir familias Winerim sin confirmar. Puede duplicar productos y romper la organización visual de sala.
+- **Rollback / mitigación**: si el usuario autoriza publicación, hacerlo sin ocultar legacy primero, verificar familia por familia y solo después decidir ocultación reversible.
+
+---
+
+## 2026-07-13 · Bloquear cierre al 100% hasta aplicar migración de hora real y redeploy del proxy
+- **Decisión**: No declarar ninguna conexión Agora como “100% con altas, cambios de precio y ventas en tiempo real” hasta que Lovable Cloud tenga aplicado el commit `5b5fcdb` y la migración `20260713073627_add_agora_provider_sold_at_to_sales_lines.sql`.
+- **Razón**: La base viva aún no expone `sales_line_items.provider_sold_at`; además, el runtime desplegado antes de este commit seguía generando `AUTO_UPDATE` repetidos para productos ya verificados. Sin estas dos piezas, se pueden guardar ventas sin hora real correcta y reabrir cola de cambios de precio sin cambios efectivos.
+- **Alternativa descartada**: seguir activando `auto_push_on_update=true` o lanzar `fetch-catalog` masivos por conexión para forzar “verde”. Eso puede escribir productos ya correctos en Agora y crear ruido operativo sin resolver la causa.
+- **Rollback / mitigación**: si el deploy no se puede hacer inmediatamente, pausar pruebas masivas de cambios de precio y tratar cualquier cola `AUTO_UPDATE` repetida como deuda del runtime antiguo, no como fallo del cliente.
+
+---
+
+## 2026-07-13 · No declarar los 8 Agora al 100% sin guard diferencial de cambios de precio desplegado
+- **Decisión**: Aunque las colas quedaron limpias en 7 conexiones alcanzables, no declarar como cierre definitivo la actualización automática de precios hasta desplegar el guard diferencial de `agora-proxy` que compara Winerim contra el XML real de Agora y devuelve `update_skipped:no_agora_changes` cuando no hay cambios.
+- **Razón**: La sonda viva sobre un vino ya verificado de `El Bejeque` encoló `AUTO_UPDATE` aunque no se había cambiado precio. Eso prueba que el runtime desplegado todavía no contiene el guard local y puede generar tandas repetidas de actualizaciones.
+- **Alternativa descartada**: seguir ejecutando `fetch-catalog` masivo en todos los clientes con `auto_push_on_update=true`. Deja el panel aparentemente activo, pero reabre colas innecesarias y aumenta el riesgo de ruido operativo en Agora.
+- **Rollback / mitigación**: si el redeploy no puede hacerse hoy, no lanzar pruebas masivas de `AUTO_UPDATE`. Si aparece cola repetitiva, drenarla por conexión y desactivar temporalmente `auto_push_on_update` solo en la conexión afectada hasta desplegar el guard.
+
+---
+
+## 2026-07-13 · Mappings contra vinos Winerim inactivos/no accesibles deben rechazarse explícitamente
+- **Decisión**: Cuando una venta o mapping apunta a un Winerim ID que devuelve `404 Wine not found/not accessible` o que está inactivo en la caché, el mapping operativo se marca como `REJECTED` antes de seguir intentando stock.
+- **Razón**: Casa Nene, Kava y Luruna tenían fallos vivos por mappings confirmados hacia vinos no accesibles. Si no se rechazan, el sistema seguirá intentando descontar stock contra referencias que Winerim no permite operar.
+- **Alternativa descartada**: dejar el mapping confirmado confiando en que Winerim vuelva a exponer el vino. Eso mantiene fallos repetidos y ensucia `stock_sync_log`.
+- **Rollback**: si el cliente/reactivación de Winerim recupera el vino, se puede volver a crear el mapping confirmado tras una nueva verificación de catálogo.
+
+---
+
+## 2026-07-13 · Jardí queda bloqueado por conectividad externa, no por cola del middleware
+- **Decisión**: Tratar `Restaurante Jardi` como no cerrable al 100% hasta que SAT/cliente resuelva DDNS/router/firewall/servidor Agora.
+- **Razón**: La cola está limpia, pero la sonda contra Agora devuelve `NETWORK_UNREACHABLE / No route to host`. Sin conectividad desde Lovable Cloud/backend no se pueden validar altas, precios ni ventas.
+- **Alternativa descartada**: reintentar cola o tocar configuración de productos. No resolvería un bloqueo de red y puede crear deuda falsa.
+- **Rollback**: no aplica a datos; cuando el servidor vuelva a responder, repetir `test`, `sync-master-data`, `verify-products` y una venta real.
+
+---
+
 ## 2026-07-11 · El repo desplegable es GitHub, no la copia local de auditoría
 - **Decisión**: A partir de esta correccion, cualquier cambio desplegable debe aplicarse y validarse en el clon oficial `goiko111/bridge-to-winerim`, no solo en copias locales de trabajo o auditoria.
 - **Razón**: Lovable Cloud redeployo correctamente, pero el repo que desplego no contenia `probe-open-tickets`, `sync-open-tickets`, el flag `open_tickets_sync_enabled` del dispatcher ni la nueva regla de copas. Los cambios estaban en una copia local no trackeada.
@@ -1101,3 +1165,27 @@
 - **Razón**: El token Winerim responde HTTP `200`, pero Ágora devuelve HTTP `401` en catálogo, productos, facturas y tickets abiertos con la clave facilitada. El fallo está en credencial/módulo API HTTP de Ágora, no en Winerim.
 - **Alternativa descartada**: intentar publicar familias Winerim o activar ventas igualmente. Sin lectura básica de Ágora no hay forma segura de validar estructura, legacy, ventas ni rollback.
 - **Rollback**: no aplica porque no se ha hecho escritura.
+
+## 2026-07-13 · Agora: preservar hora local de venta sin duplicar historial
+- **Decisión**: Persistir la hora original de Agora por línea (`provider_sold_at`) y usarla como `soldAt` en `POST /api/v2/sales/import` únicamente cuando el fallback sales-only sea necesario porque el stock no se ha movido.
+- **Razón**: Winerim ya tiene `/api/v2/sales/import`, pero ese endpoint no modifica stock. Usarlo siempre junto al `PUT /stock/{stockId}` podría duplicar historial si Winerim ya registra venta como efecto lateral del stock. Guardar la hora real permite auditar y corregir los casos sales-only sin romper los casos con stock activo.
+- **Alternativa descartada**: sustituir todo el flujo de stock por `sales/import`. Resolvería la hora visible, pero dejaría de descontar inventario cuando el stock está activo.
+- **Rollback**: revertir la migración nueva (`provider_sold_at`, `provider_sold_at_source` e índice) y el cambio de `agora-proxy` que extrae `CreationDate`/pasa `soldAt` al fallback. El flujo anterior de stock por `PUT /stock` queda intacto.
+
+## 2026-07-13 · Agora: dos carriles Winerim según stock activo
+- **Decisión**: Enviar ventas a `PUT /api/v2/stock/{stockId}` solo cuando la variante Winerim tenga `stockActive=true`; si `stockActive=false`, registrar la venta por `POST /api/v2/sales/import` sin tocar stock.
+- **Razón**: El usuario confirmó que Winerim expone dos comportamientos distintos: un endpoint descuenta stock cuando el stock está activado y otro marca venta aunque el stock no esté activado. Mezclar ambos casos como “stock a cero” podía dejar sin historial ventas de restaurantes que tienen stock desactivado por operativa.
+- **Alternativa descartada**: forzar siempre `PUT /stock` aunque `stockActive=false`. Eso podría no registrar historial, podría fallar o podría activar efectos de inventario que el cliente no quiere.
+- **Rollback**: revertir las ramas `sales_only_stock_inactive` y volver al flujo anterior donde toda variante con `stockId` intenta `PUT /stock`. Mantener esta opción solo como emergencia, porque perdería ventas sales-only de clientes sin stock activo.
+
+## 2026-07-13 · Sync Monitor: error visible antes que falso vacío
+- **Decisión**: El `Sync Monitor` debe mostrar errores de carga de Lovable Cloud/backend y conservar datos previos; no debe convertir errores de query en listas vacías.
+- **Razón**: Con HTTP `522` en `pos_connections`, `sales_events`, `stock_sync_log` u `outbound_tasks`, la UI anterior mostraba “No connections found”/tablas vacías. Eso inducía a pensar que Agora no tenía datos o que se habían perdido integraciones.
+- **Alternativa descartada**: dejar el comportamiento actual y diagnosticar verbalmente cada vez. Es peligroso operativamente porque oculta una caída de infraestructura.
+- **Rollback**: revertir el cambio local en `src/pages/SyncMonitor.tsx`; no afecta datos ni integraciones.
+
+## 2026-07-13 · Agora open tickets: tickets cancelados son provisionales y reversibles
+- **Decisión**: Tratar los `OpenTicket` de Agora como ventas provisionales. Por defecto, un `OpenTicket` con `BusinessDay` anterior al día operativo actual no debe mutar stock, y si un ticket abierto antiguo desaparece sin estar cubierto por una factura cerrada (`Invoices`), el middleware puede restaurar la diferencia con una fila negativa idempotente en `stock_sync_log` (`open_ticket_cancellation_restore`).
+- **Razón**: En Sa Pedrera, una venta ficticia/cancelada de `E510-Izar-Leku Brut Vintage` quedó abierta desde `2026-07-11`, se sincronizó el `2026-07-13`, descontó la única botella y dejó el vino fuera de carta por stock `0`. El modo casi en tiempo real tiene que cubrir cancelaciones/cierres tardíos sin romper la reconciliación diaria definitiva.
+- **Alternativa descartada**: desactivar por completo el piloto de tickets abiertos. Reduciría riesgo, pero volvería a obligar al cliente a esperar al cierre. También se descarta revertir cualquier ticket desaparecido sin comparar contra `Invoices`, porque podría reponer stock de una venta ya cerrada correctamente.
+- **Rollback**: desactivar por conexión `provider_config.open_tickets_stock_current_day_only=false` si se quiere permitir stock sobre tickets antiguos, o `provider_config.open_tickets_restore_stale_previous_days_enabled=false` si se quiere apagar solo la restauración automática. Como rollback total, desactivar `provider_config.open_tickets_stock_sync_enabled` y dejar `Invoices` como único flujo de stock.
