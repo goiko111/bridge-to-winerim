@@ -2,7 +2,25 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 12:36 CEST_
+_Última actualización: 2026-07-14 12:39 CEST_
+
+## Hechos (flujo tSpoonLab/Holded y legacy PurOsushi — 2026-07-14 12:39 CEST)
+
+- Se concreto el flujo solicitado:
+  - ventas cerradas Agora -> Holded;
+  - pedidos de compra, albaranes, almacenes e inventario/stock desde tSpoonLab;
+  - Holded no sera fuente de stock.
+- Se verifico en documentacion oficial que tSpoonLab expone pedidos/albaranes de compra pendientes o por rango, almacenes e inventarios, y que Holded API v2 permite crear recibos de venta con permisos configurables por token.
+- Se creo `docs/integrations/TSPOONLAB_HOLDED_CLIENT_REQUIREMENTS.md` con los accesos y decisiones que deben pedirse al cliente.
+- La base implementada sigue siendo read-only: faltan endpoints de pedidos/stock en el proxy tSpoonLab y `dry-run`/escritura idempotente de recibos en Holded.
+- Se detecto que PurOsushi tenia el legacy ocultado de forma reversible el `2026-07-14`; existe snapshot completo de familias y flags de producto para restaurarlo exactamente.
+- Se amplio de forma compatible `set-product-visibility` para admitir restauracion exacta de `UseAsDirectSale` y `SaleableAsMain`, manteniendo el parametro anterior `visible`.
+
+### Decision
+
+- Mantener el legacy de PurOsushi visible durante el piloto; restaurar los flags exactos del snapshot y conservarlo para un rollback posterior.
+- El piloto Holded usara preferentemente un recibo de venta diario en borrador, desglosado por IVA y forma de pago, sin mover inventario.
+- El piloto tSpoonLab sera solo lectura y no marcara pedidos/albaranes como procesados.
 
 ## Hechos (Tintorera · auditoria previa a activacion — 2026-07-14 12:36 CEST)
 

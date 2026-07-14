@@ -8,7 +8,7 @@
 Flujo principal:
 - **Catálogo (one-way)**: Winerim → POS (precios, productos).
 - **Ventas (one-way)**: POS → Winerim (deducción absoluta de stock).
-- **Operaciones auxiliares**: tSpoonLab aporta escandallos, menús, armonías y documentos operativos; Holded actúa como destino contable. Ninguno sustituye al POS como fuente de la venta.
+- **Operaciones auxiliares**: tSpoonLab aporta escandallos, menús, armonías, pedidos de compra, almacenes e inventario; Holded actúa como destino contable de las ventas cerradas procedentes del POS. Ninguno sustituye al POS como fuente de la venta.
 - Aislamiento estricto por `connection_id`.
 
 ## 2. Stack

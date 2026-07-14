@@ -1252,3 +1252,23 @@
 **Razón:** Winerim expone 5, 4 y 3 precios respectivamente para esos formatos. Colapsarlos sin validar podria vender una capacidad o canal con precio incorrecto y descontar la variante equivocada.
 
 **Alternativa descartada:** tratar cualquier variante que no sea copa o magnum como botella. Solo se aplicara si cliente/SAT confirma expresamente esa equivalencia.
+
+## 2026-07-14 — Ventas Agora a Holded; pedidos y stock desde tSpoonLab
+
+**Decisión:** usar las ventas cerradas de Agora como fuente de los documentos enviados a Holded y leer desde tSpoonLab pedidos de compra, albaranes, almacenes e inventario/stock. Holded no controlara el inventario operativo.
+
+**Razón:** Agora conoce la venta y el cierre real; tSpoonLab conoce compras y existencias operativas. Usar tSpoonLab tambien como fuente de venta o Holded como segundo stock crearia reconciliaciones ambiguas.
+
+**Alternativa descartada:** copiar ventas desde tSpoonLab a Holded y permitir que el documento Holded descuente stock. Se descarta para evitar duplicidad con Agora/Winerim y divergencias entre tres inventarios.
+
+**Rollback:** apagar la escritura Holded por conexion. Los cierres permanecen pendientes y no se modifica tSpoonLab.
+
+## 2026-07-14 — PurOsushi mantiene legacy visible durante el piloto
+
+**Decisión:** restaurar el legacy de PurOsushi usando la instantanea previa, incluyendo los valores exactos de `ShowInPos`, `UseAsDirectSale` y `SaleableAsMain`; no borrar ningun elemento.
+
+**Razón:** el usuario pide convivencia temporal mientras se validan ventas, catalogo y automatismos Winerim. Reactivar ambos flags de producto de forma indiscriminada podria cambiar la disposicion original de los botones.
+
+**Alternativa descartada:** usar `visible=true` para todos los productos legacy. No preservaria los flags distintos que tenia cada producto antes de la ocultacion.
+
+**Rollback:** volver a aplicar la instantanea de ocultacion de `2026-07-14` y mantener guardado el snapshot original.

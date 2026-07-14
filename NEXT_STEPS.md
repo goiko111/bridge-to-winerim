@@ -2,6 +2,27 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — PurOsushi · restaurar legacy visible
+
+- [x] Detectar que el legacy estaba oculto de forma reversible y localizar el snapshot de rollback.
+- [x] Ampliar `set-product-visibility` para restaurar los dos flags Agora exactos sin romper llamadas existentes.
+- [ ] Validar TypeScript/bundle y desplegar `agora-proxy`.
+- [ ] Restaurar `ShowInPos` de las 13 familias y los flags exactos de los productos del snapshot.
+- [ ] Ejecutar `sync-master-data` y comprobar visualmente familias/productos legacy y Winerim coexistiendo.
+- [ ] Actualizar `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT` conservando ambos snapshots.
+
+## P0 — tSpoonLab stock/pedidos + ventas Holded
+
+- [x] Fijar responsabilidades: Agora -> Holded para ventas cerradas; tSpoonLab -> middleware para stock/pedidos.
+- [x] Preparar requisitos de cliente en `docs/integrations/TSPOONLAB_HOLDED_CLIENT_REQUIREMENTS.md`.
+- [ ] Obtener usuario tecnico, password, centro de coste y almacenes tSpoonLab.
+- [ ] Acordar stock teorico, ultimo inventario o ambos; confirmar estados de pedidos y fecha inicial.
+- [ ] Obtener API Token Holded v2 con ventas read/write y permisos de lectura auxiliares, sin Inventory write.
+- [ ] Acordar recibo diario o documento por factura, IVA, pagos, cliente generico, canal y estado borrador/aprobado.
+- [ ] Ampliar proxy tSpoonLab con lectura paginada de pedidos de compra, albaranes, almacenes e inventarios.
+- [ ] Implementar `dry-run` Holded y persistencia idempotente antes de `POST /sales-receipts`.
+- [ ] Canary de un dia cerrado en borrador; comprobar reintento y anulacion compensatoria.
+
 ## P0 — Tintorera · recuperar acceso y activar sin ocultar legacy
 
 - [x] Confirmar que la conexion existe en Lovable Cloud en modo seguro y sin escrituras.

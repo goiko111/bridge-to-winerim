@@ -11,8 +11,8 @@ Integrar cuatro sistemas sin mezclar responsabilidades ni duplicar movimientos:
 | --- | --- |
 | Winerim | Catalogo de vinos, formatos, PVP, stock de vino, historial de venta y analitica |
 | Agora | TPV operativo, comandas, lineas vendidas, cobro y cierre |
-| tSpoonLab | Escandallos, recetas, menus, armonias, compras y stock teorico de cocina |
-| Holded | Facturacion, contabilidad y documentos administrativos |
+| tSpoonLab | Escandallos, recetas, menus, armonias, pedidos de compra, almacenes y stock teorico |
+| Holded | Destino contable de ventas cerradas y documentos administrativos |
 
 ## 2. Flujos autorizados
 
@@ -45,14 +45,24 @@ Integrar cuatro sistemas sin mezclar responsabilidades ni duplicar movimientos:
 
 No se debe usar la composicion actual de tSpoonLab para recalcular una venta historica sin conservar su version. Un cambio posterior del menu alteraria indebidamente consumos ya contabilizados.
 
-### Contabilidad
+### Pedidos y stock operativo
 
-`tSpoonLab purchases/sales documents -> middleware -> Holded`
+`tSpoonLab -> middleware`
 
-- El piloto empieza en lectura para comparar proveedores, impuestos, series, productos y documentos.
-- La escritura en Holded se activa solo tras validar serie, contacto, impuestos, moneda y politica de redondeo.
-- Un documento se marca como contabilizado en tSpoonLab solo despues de recibir confirmacion persistida de Holded.
-- Si falla Holded, tSpoonLab conserva el documento como pendiente.
+- Se leen pedidos de compra, albaranes, almacenes, inventarios y stock teorico.
+- El piloto no marca pedidos o albaranes como procesados y no escribe movimientos en tSpoonLab.
+- Cada lectura conserva el centro de coste, almacen, producto, unidad, cantidad, coste y fecha de referencia.
+- tSpoonLab permanece como fuente maestra del pedido y del stock operativo consultado.
+
+### Ventas a Holded
+
+`Agora closed sales -> middleware -> Holded`
+
+- `Invoices` de Agora es la fuente definitiva de la venta; los tickets abiertos no generan contabilidad.
+- El piloto recomendado genera un recibo de venta diario por centro y dia operativo, desglosado por IVA y forma de pago.
+- La escritura se activa solo tras validar documento destino, serie, contacto, impuestos, moneda, canal, pagos y politica de redondeo.
+- Las lineas se configuran para no mover inventario de Holded: el stock se consulta en tSpoonLab y el stock de vino se gestiona en Winerim.
+- Si falla Holded, el cierre conserva estado pendiente y se reintenta con la misma clave idempotente.
 
 ## 3. Idempotencia
 
@@ -60,7 +70,7 @@ Claves recomendadas:
 
 - Venta Agora: `connection_id + provider_doc_id + provider_line_id`.
 - Consumo de menu: `agora_connection_id + provider_doc_id + provider_line_id + tspoon_component_id + composition_revision`.
-- Documento Holded: `source_provider + source_connection_id + source_document_id + document_type`.
+- Documento Holded: `agora_connection_id + business_day + sale_center_id + document_type` para resumen diario, o `connection_id + provider_doc_id + document_type` si se elige un documento por factura.
 - Reversion: la misma clave original con `operation=REVERSAL`; nunca se borra el movimiento original.
 
 Las claves deben persistirse con una restriccion unica antes de habilitar escrituras.
@@ -77,6 +87,11 @@ Las claves deben persistirse con una restriccion unica antes de habilitar escrit
 - Menus: `GET /recipes/api/listMenusPagedEx` y `GET /recipes/api/menu/ext/{id}`.
 - Recetas/platos: `GET /recipes/api/listRecipesPaged`, `listDishesPaged`, `recipe/{id}`, `dish/{id}`.
 - Albaranes de venta: `GET /integration/sales/deliveries/pending` o `/all` por rango de fecha.
+- Pedidos de compra: `GET /integration/purchases/orders/pending` o `/all` por rango de fecha.
+- Albaranes de compra: `GET /integration/purchases/deliveries/pending` o `/all` por rango de fecha.
+- Almacenes: `GET /listStoresPaged`.
+- Stock teorico: `GET /store/{idStore}/inventory/{idInventory}/components/paged`.
+- Inventarios: `GET /listInventoriesPaged` y `GET /inventory/{idInventory}/components/paged`.
 
 ### Holded API v2
 
@@ -85,6 +100,7 @@ Las claves deben persistirse con una restriccion unica antes de habilitar escrit
 - Formato: REST/JSON.
 - Paginacion: cursor.
 - La API key debe limitarse a los modulos y acciones necesarios.
+- Ventas recomendadas para el piloto: `POST /sales-receipts`, sin escritura de inventario.
 
 ## 5. Base implementada
 
@@ -95,7 +111,7 @@ Las claves deben persistirse con una restriccion unica antes de habilitar escrit
 - Timeout, reintento, contador de fallos y circuit breaker por conexion.
 - HTTPS obligatorio y respuestas sin credenciales.
 
-No se ha desplegado ni activado ninguna conexion. No existen escrituras a Holded, tSpoonLab, Agora o Winerim dentro de estos dos proxies nuevos.
+No se ha desplegado ni activado ninguna conexion. El proxy tSpoonLab aun debe ampliar su allowlist para pedidos de compra y stock; el proxy Holded aun debe implementar `dry-run` y escritura idempotente de recibos de venta. No existen escrituras a Holded o tSpoonLab dentro de estos dos proxies nuevos.
 
 ## 6. Datos necesarios para el piloto
 

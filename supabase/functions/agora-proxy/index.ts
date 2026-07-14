@@ -6657,12 +6657,17 @@ serve(async (req) => {
       }
     }
 
-    // ── SET PRODUCT VISIBILITY (toggle UseAsDirectSale + SaleableAsMain per product, batched) ──
+    // ── SET PRODUCT VISIBILITY (toggle or restore exact Agora sale flags, batched) ──
     // Pulls the FULL <Product .../> element from Agora's export-master XML (cached) and only
     // overrides the two visibility attributes. Minimal product XML is rejected by Agora (HTTP 500)
     // because required attributes (Price, Vat, ButtonText, Color, etc.) are missing.
     if (action === "set-product-visibility") {
-      const updates: { productId: string; visible: boolean }[] = payload.updates || [];
+      const updates: {
+        productId: string;
+        visible?: boolean;
+        useAsDirectSale?: boolean;
+        saleableAsMain?: boolean;
+      }[] = payload.updates || [];
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -6695,17 +6700,22 @@ serve(async (req) => {
 
       // 3) Build patched import XML — reuse full element, override two attrs only
       let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n`;
-      const applied: { id: string; visible: boolean }[] = [];
+      const applied: { id: string; useAsDirectSale: boolean; saleableAsMain: boolean }[] = [];
       const skipped: string[] = [];
       for (const u of updates) {
         const pid = String(u.productId);
         const original = productElByIdLocal.get(pid);
         if (!original) { skipped.push(pid); continue; }
-        const flag = u.visible ? "true" : "false";
-        let patched = setAttr(original, "UseAsDirectSale", flag);
-        patched = setAttr(patched, "SaleableAsMain", flag);
+        const hasExactFlags = typeof u.useAsDirectSale === "boolean" && typeof u.saleableAsMain === "boolean";
+        const hasVisibilityFlag = typeof u.visible === "boolean";
+        if (!hasExactFlags && !hasVisibilityFlag) { skipped.push(pid); continue; }
+
+        const useAsDirectSale = hasExactFlags ? u.useAsDirectSale! : u.visible!;
+        const saleableAsMain = hasExactFlags ? u.saleableAsMain! : u.visible!;
+        let patched = setAttr(original, "UseAsDirectSale", useAsDirectSale ? "true" : "false");
+        patched = setAttr(patched, "SaleableAsMain", saleableAsMain ? "true" : "false");
         xml += `    ${patched}\n`;
-        applied.push({ id: pid, visible: u.visible });
+        applied.push({ id: pid, useAsDirectSale, saleableAsMain });
       }
       xml += `  </Products>\n</Import>`;
 
