@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "appliedAt": "2026-07-14T09:46:27.750Z",
+  "connectionId": "f1ce42a4-ffe2-44ea-bb3d-e22b306b1d8c",
+  "locationName": "Kava",
+  "purpose": "Final reversible cleanup of residual legacy wine family buttons",
+  "before": {
+    "families": [
+      { "id": "99010", "name": "TEST Espumosos", "showInPos": true },
+      { "id": "16", "name": "Vinos", "showInPos": true }
+    ]
+  },
+  "after": {
+    "families": [
+      { "id": "99010", "name": "TEST Espumosos", "showInPos": false },
+      { "id": "16", "name": "Vinos", "showInPos": false }
+    ],
+    "legacyWineProductsSaleable": 0,
+    "openOutboundQueue": 0
+  },
+  "rollback": {
+    "action": "set-family-visibility",
+    "updates": [
+      { "familyId": "99010", "showInPos": true },
+      { "familyId": "16", "showInPos": true }
+    ]
+  }
+}

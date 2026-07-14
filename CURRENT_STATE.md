@@ -4201,3 +4201,19 @@ _Última actualización: 2026-07-13 15:12 CEST_
 ### Tareas pendientes inmediatas
 - Pedir al SAT/cliente que confirme una nueva clave API HTTP literal y que el módulo/API HTTP de Agora esté activo para `Export`, `Products` y lectura de ventas.
 - Tras nueva clave: actualizar credencial, ejecutar `agora-proxy/test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `winerim-proxy/fetch-catalog` antes de cualquier escritura.
+## 2026-07-14 - Ocultacion legacy solicitada en seis instalaciones Agora
+
+### Hechos
+- Se aplico ocultacion reversible, sin borrar datos, y se refresco `sync-master-data` contra las seis instalaciones.
+- `Chiquilla`: ya estaba completada; legacy visible `0` familias / `0` productos vendibles, `77/77` formatos Winerim activos con precio presentes y cola abierta `0`.
+- `Kava`: se ocultaron los dos botones residuales `99010 TEST Espumosos` y `16 Vinos`; los productos legacy de vino ya estaban no vendibles. Se preservo `2080 Cocteles` por no ser una familia de vino.
+- `Restaurante Jardi`: las familias legacy de vino ya estaban ocultas; se dejaron no vendibles los cuatro botones genericos de vino `388-391` dentro de la familia mixta `BEGUDES`. Se preservaron las bebidas y los tres elementos no vinicolas revisados.
+- `Sa Pedrera`: no quedaban familias legacy de vino visibles. El producto Winerim `597995 B MAGNUM 32 - Morgon`, que aun apuntaba a la familia antigua oculta `30`, se reasigno a `904289 MAGNUM WINERIM`; cola final `0`.
+- `Sa Vida`: se oculto la familia antigua real `95 VINOS` y se dejaron no vendibles sus 16 productos `978-993`. Las familias geograficas con IDs Winerim se preservaron porque contienen productos generados desde Winerim y no son legacy.
+- `Taberna de Elia`: ya estaba completada; legacy visible `0` familias / `0` productos vendibles, `412/412` formatos Winerim activos con precio presentes y cola abierta `0`.
+- En las seis conexiones se guardo `provider_config.legacy_visibility_policy=HIDDEN_REVERSIBLE` con alcance y fecha de verificacion.
+
+### Verificacion
+- Las seis instalaciones respondieron HTTP 200 a `sync-master-data` despues del cambio.
+- No quedo ninguna tarea `QUEUED` o `RUNNING` en estas seis conexiones.
+- Snapshots de rollback: `outputs/CHIQUILLA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/KAVA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/KAVA_LEGACY_FINAL_CLEANUP_2026-07-14.json`, `outputs/JARDI_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/SA_PEDRERA_LEGACY_CLEANUP_SNAPSHOT_2026-07-14.json`, `outputs/SA_VIDA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json` y `outputs/TABERNA_DE_ELIA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`.

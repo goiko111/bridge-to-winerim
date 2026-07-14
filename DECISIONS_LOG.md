@@ -1195,3 +1195,16 @@
 - **Razón**: La clave guardada coincide con la facilitada y Winerim responde HTTP `200`, pero Agora sigue devolviendo HTTP `401` en `Invoices`, `tickets`, `Families` y `Products`. Sin lectura de catálogo/ventas no se puede validar estructura, publicar familias ni garantizar rollback.
 - **Alternativa descartada**: activar la integración en modo parcial o intentar escribir familias Winerim. Sería inseguro porque no podemos leer master data, productos existentes, ventas ni estado real del legacy.
 - **Rollback**: no aplica porque no se ha hecho ninguna escritura; la conexión queda preparada para retomar cuando SAT/cliente facilite una clave válida.
+## 2026-07-14 - Retirar legacy solo por ocultacion reversible y por propiedad real
+
+### Decision
+- En Chiquilla, Kava, Jardi, Sa Pedrera, Sa Vida y Taberna de Elia, `quitar legacy` significa `ShowInPos=false` para familias y `UseAsDirectSale=false` + `SaleableAsMain=false` para productos, nunca borrado.
+- No se clasifica una familia como legacy solo porque no contenga la palabra `WINERIM`: en Sa Vida las familias geograficas generadas por Winerim se conservan; en Jardi la familia mixta `BEGUDES` y la raiz `BODEGA` se conservan porque contienen operativa no vinicola.
+- Si un producto Winerim queda dentro de una familia legacy oculta, se mueve a su familia Winerim antes de cerrar el cleanup, como `B MAGNUM 32 - Morgon` en Sa Pedrera.
+
+### Razon
+- Ocultar por nombre o por jerarquia completa podia retirar cocteles, destilados, bebidas y productos Winerim validos. La propiedad del producto y su sustituto Winerim deben comprobarse antes de escribir.
+- La ocultacion reversible conserva historico, trazabilidad y una salida de rollback sin duplicar botones visibles.
+
+### Alternativa descartada
+- Borrar familias/productos o esconder toda raiz `BODEGA/BEBIDAS` de forma masiva. Se descarta por riesgo de eliminar operativa no relacionada con vino.

@@ -993,3 +993,14 @@
 - Cron `rescue-zombie-outbound-tasks` corre cada 10 min.
 - El módulo compartido vive en `supabase/functions/_shared/resilience.ts`. Importar con ruta relativa `../_shared/resilience.ts`.
 - Toast tiene su propio breaker en `provider_config.circuit_breaker` — el global lo respeta porque actualiza `pos_connections.circuit_breaker_paused_until`. Convivencia OK pero no ideal.
+## Tras ocultacion legacy de seis Agora - 2026-07-14
+
+- [x] Chiquilla: confirmar legacy de vino oculto a nivel familia y producto; `77/77` formatos Winerim cubiertos.
+- [x] Kava: ocultar residuos `TEST Espumosos` y `Vinos`; mantener `Cocteles` y otras familias no vinicolas.
+- [x] Jardi: ocultar productos legacy `388-391` sin ocultar la familia mixta `BEGUDES`.
+- [x] Sa Pedrera: mover `B MAGNUM 32 - Morgon` desde familia antigua oculta a `MAGNUM WINERIM`.
+- [x] Sa Vida: ocultar familia legacy `95 VINOS` y productos `978-993`; preservar clasificacion geografica Winerim.
+- [x] Taberna de Elia: confirmar legacy oculto a nivel familia y producto; `412/412` formatos Winerim cubiertos.
+- [ ] Pedir confirmacion visual en los terminales de los seis restaurantes tras refrescar/reiniciar la pantalla de Agora.
+- [ ] Ejecutar una venta controlada botella y copa desde botones Winerim donde aun no exista validacion operativa reciente; comparar Agora, middleware e historial ERP Winerim.
+- [ ] Sa Vida: corregir aparte los formatos activos con precio que todavia no estan publicados o siguen en clasificacion geografica antigua antes de plantear una migracion total a familias planas Winerim. No confundir esta tarea de catalogo con legacy real.
