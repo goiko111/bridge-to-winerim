@@ -2,7 +2,34 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 12:12 CEST_
+_Última actualización: 2026-07-14 12:36 CEST_
+
+## Hechos (Tintorera · auditoria previa a activacion — 2026-07-14 12:36 CEST)
+
+- Se revalido la conexion Tintorera (`1efe95c0-5fb7-404f-9947-416eed598a46`) en Lovable Cloud:
+  - `enabled=false`;
+  - `sync_mode=PULL_ONLY`;
+  - `write_mode=NONE`;
+  - frecuencia prevista de 5 minutos;
+  - auto-push de altas/cambios y escritura de catalogo apagados;
+  - legacy visible;
+  - sin sincronizaciones previas ni cola ejecutada.
+- El token Winerim responde HTTP `200` y expone 302 vinos, todos activos y con algun precio:
+  - 190 tintos, 67 blancos, 27 espumosos, 10 postre/dulces, 6 rosados y 2 fortificados;
+  - 278 precios de botella, 13 de copa, 15 de magnum, 5 de botella pequena, 4 de media botella y 3 de botella tienda.
+- `tintorera.dyndns.org` resuelve a `88.17.22.193`, pero TCP `8984` termina en timeout desde la red local de diagnostico y desde Lovable Cloud/backend.
+- Las sondas `/api/`, Families y Products no obtuvieron respuesta. No se ha escrito en Agora ni se ha alterado el legacy.
+- Se creo `docs/integrations/TINTORERA_AGORA_READINESS_2026-07-14.md` con diagnostico, checklist SAT, activacion controlada y rollback.
+
+### Decision
+
+- Mantener Tintorera bloqueado en modo seguro hasta recuperar lectura de Agora y completar una auditoria read-only.
+- Tras recuperar conectividad: snapshot de legacy, familias Winerim con legacy visible, pruebas de botella/copa, alta, cambio de precio y ventas antes de activar automatismos.
+- No mapear automaticamente botella pequena, media botella o botella tienda a botella estandar sin acordar la semantica de cada formato.
+
+### Bloqueo
+
+- SAT/cliente debe revisar servidor encendido, Modulo de Servicios de Integracion, API HTTP, escucha en `8984`, IP local fija/reserva DHCP, NAT, firewall y DDNS.
 
 ## Hechos (tSpoonLab + Holded + brief partner Agora — 2026-07-14 12:12 CEST)
 

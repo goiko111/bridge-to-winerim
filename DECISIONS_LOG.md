@@ -1232,3 +1232,23 @@
 **Decisión:** entregar al partner de Agora un documento específico que mantiene Agora como TPV de referencia y presenta tSpoonLab/Holded como extensiones, no como sustitutos.
 
 **Razón:** el partner necesita confirmar identificadores, componentes/modificadores, cancelaciones, endpoints, límites y proceso de piloto sin recibir una propuesta que invada funciones de TPV o facturación.
+
+## 2026-07-14 — Tintorera se activa solo despues de recuperar lectura externa
+
+**Decisión:** mantener Tintorera desactivado, `PULL_ONLY`, `write_mode=NONE`, sin auto-push y con legacy visible hasta que Agora responda por el puerto externo `8984` y se complete la auditoria read-only.
+
+**Razón:** Winerim esta disponible y su catalogo de 302 vinos esta listo, pero `tintorera.dyndns.org:8984` termina en timeout tanto desde la red de diagnostico como desde Lovable Cloud/backend. Publicar sin poder leer Families, Products, ventas ni la estructura legacy impediria verificar el resultado y revertir con precision.
+
+**Riesgos controlados:** no se ha modificado catalogo, ventas, stock ni visibilidad en Agora. Cuando vuelva la conectividad, la primera fase sera snapshot y comparacion; el legacy seguira visible durante el piloto.
+
+**Alternativa descartada:** habilitar la conexion o encolar los 302 vinos confiando en que el TPV procese las tareas al volver. Se descarta porque podria crear duplicados o aplicar formatos incorrectos sin observabilidad.
+
+**Rollback:** no aplica al estado actual porque no hubo escrituras. En la activacion futura, el rollback sera apagar flags por conexion y ocultar de forma reversible solo los productos/familias Winerim creados.
+
+## 2026-07-14 — Tintorera requiere politica explicita para formatos no estandar
+
+**Decisión:** botella pequena, media botella y botella tienda no se convertiran automaticamente a botella estandar de Agora.
+
+**Razón:** Winerim expone 5, 4 y 3 precios respectivamente para esos formatos. Colapsarlos sin validar podria vender una capacidad o canal con precio incorrecto y descontar la variante equivocada.
+
+**Alternativa descartada:** tratar cualquier variante que no sea copa o magnum como botella. Solo se aplicara si cliente/SAT confirma expresamente esa equivalencia.

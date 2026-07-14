@@ -2,6 +2,23 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Tintorera · recuperar acceso y activar sin ocultar legacy
+
+- [x] Confirmar que la conexion existe en Lovable Cloud en modo seguro y sin escrituras.
+- [x] Validar token/catalogo Winerim: 302 vinos activos con precio.
+- [x] Repetir sonda local y desde Lovable Cloud/backend: `tintorera.dyndns.org:8984` termina en timeout.
+- [x] Documentar diagnostico, checklist SAT, activacion y rollback en `docs/integrations/TINTORERA_AGORA_READINESS_2026-07-14.md`.
+- [ ] SAT: confirmar servidor Agora encendido, modulo/API HTTP activos y servicio escuchando en `8984`.
+- [ ] SAT: revisar IP local fija/reserva DHCP, NAT TCP `8984`, firewall y DDNS.
+- [ ] Cuando responda: leer `/api/`, Families, Products, IVA, listas, preparacion, almacenes, centros e Invoices.
+- [ ] Guardar snapshot y clasificar familias/productos legacy antes de cualquier escritura.
+- [ ] Comparar los 302 vinos Winerim con Agora y revisar coincidencias/duplicados.
+- [ ] Crear familias/productos Winerim manteniendo visible el legacy.
+- [ ] Acordar mapeo de botella pequena, media botella y botella tienda.
+- [ ] Probar botella y copa, con stock activo y stock inactivo.
+- [ ] Probar alta, cambio de precio, sin precio e inactivacion con ventana maxima de 5 minutos.
+- [ ] Activar ventas y auto-push solo tras validacion; confirmar historial Winerim y cola `0`.
+
 ## P0 — Piloto tSpoonLab + Holded
 
 - [x] Revisar documentación oficial actual de tSpoonLab y Holded API v2.
