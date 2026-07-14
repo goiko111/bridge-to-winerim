@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-14 · Certificar Cienvinos con canaries reales, reversibles y aislados
+- **Decisión**: Validar altas/reactivaciones y cambios de precio desde el editor real de Winerim, usar una variación reversible de `0,01` euros sobre una referencia sin ventas recientes y simular la caída pausando únicamente el breaker de Cienvinos.
+- **Razón**: El objetivo era demostrar el flujo completo Winerim -> cola -> Agora y su recuperación sin crear ventas ficticias, sin tocar stock y sin arriesgar al resto de la flota. Las tareas terminaron una sola vez, la evaluación posterior detectó ausencia de cambios y todos los valores de control se restauraron.
+- **Alternativa descartada**: modificar directamente `winerim_wines`, insertar tareas o ventas sintéticas, o apagar el TPV. Esas acciones probarían el almacenamiento interno, no la operativa real, y podrían afectar al restaurante.
+- **Rollback / mitigación**: restaurar el precio original y la actividad original desde Winerim, retirar el breaker canary, procesar una sola vez la tarea pendiente y exigir cola/alertas/breaker a cero antes de cerrar.
+
+## 2026-07-14 · Separar conciliación cerrada de cancelación real en la evidencia por conexión
+- **Decisión**: Marcar como validada en Cienvinos la conciliación idempotente `OpenTicket -> BasicInvoice`, pero no afirmar que una cancelación de vino de Cienvinos fue probada mientras no exista una cancelación real controlada.
+- **Razón**: La venta real de dos copas de `C NY Hood Moscato Blanco` pasó de ticket abierto a factura cerrada con una sola deducción. La sonda no encontró una cancelación de vino; forzarla en base de datos o crear una comanda ajena al TPV falsearía la prueba. El mismo código de restauración sí cuenta con evidencia real en Sa Pedrera.
+- **Alternativa descartada**: presentar una desaparición de ticket sin vino o una simulación de base de datos como cancelación validada. No demostraría el comportamiento que verá el cliente.
+- **Rollback / mitigación**: la restauración de tickets abiertos puede desactivarse por conexión con `open_tickets_restore_stale_previous_days_enabled=false`; para cerrar Cienvinos se coordinará una cancelación real y se verificará que repetir el sync no genera una segunda compensación.
+
 ## 2026-07-13 · Validar catálogo/precios con `winerim-proxy/fetch-catalog`, no con `agora-proxy`
 - **Decisión**: Usar `winerim-proxy/fetch-catalog` como entrada canónica para comprobar altas y cambios de precio Winerim → Agora.
 - **Razón**: `agora-proxy` no expone `fetch-catalog`; su responsabilidad es evaluar/encolar/procesar la escritura a Agora. El refresco de catálogo Winerim, detección diferencial de candidatos y disparo de `evaluate-auto-push` viven en `winerim-proxy`.

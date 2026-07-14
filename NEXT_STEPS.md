@@ -2,6 +2,16 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Cienvinos · observación posterior a canaries 2026-07-14
+
+- [x] Probar cambio de precio real `14,00 -> 14,01 -> 14,00` desde Winerim y confirmar una tarea automática por cambio, sin duplicados.
+- [x] Probar reactivación reversible de un vino inactivo y restaurarlo a `is_active=false` / tracking `HIDDEN`.
+- [x] Simular indisponibilidad con breaker solo en Cienvinos; confirmar tarea en espera con `attempts=0`, recuperación `SUCCESS` en un intento y evaluaciones posteriores sin cola.
+- [x] Validar conciliación real `OpenTicket -> BasicInvoice` con una sola deducción para dos copas.
+- [x] Registrar confirmación del usuario de que el terminal está `OK`.
+- [ ] A las 24 horas, comprobar cola, breaker, alertas, `last_open_tickets_sync`, duplicados de catálogo y duplicados de venta; cerrar el punto 5 solo con lectura fresh.
+- [ ] Cuando restaurante/equipo pueda coordinarla, cancelar una venta real de vino de prueba y confirmar una única compensación idempotente específica de Cienvinos.
+
 ## P0 — Yurest V2 · Blasco
 
 - [x] Validar login V2 con Bearer + `X-Provider-Token`.

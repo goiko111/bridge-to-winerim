@@ -2,7 +2,51 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 17:49 CEST_
+_Última actualización: 2026-07-14 18:52 CEST_
+
+## Cienvinos · certificación controlada puntos 1-4 — 2026-07-14 18:52 CEST
+
+### Hechos
+
+- Punto 1, catálogo Winerim -> Agora:
+  - se cambió desde el editor real de Winerim el precio de `274059 · La Margarita Espumoso Brut Nature` de `14,00` a `14,01` euros;
+  - la tarea automática `f1bc1017-c825-43d1-afb0-b02d4039b896` terminó `SUCCESS`, `attempts=1`, y la lectura posterior de Agora confirmó el cambio;
+  - se restauró el precio a `14,00`; la tarea `c4ff5bea-959b-4bc1-b4f2-ad8b179b2cea` terminó `SUCCESS`, `attempts=1`, y la evaluación posterior devolvió `update_skipped:no_agora_changes`;
+  - se reactivó de forma reversible `250797 · Heritage Reserva Convento Las Claras`; Agora recuperó el producto `750797` mediante la tarea `c989fe47-5891-492e-9729-cab6964a92b2`, sin crear un duplicado;
+  - se desactivó de nuevo el vino y quedó restaurado su estado inicial: `is_active=false` y tracking `BOTTLE=HIDDEN`.
+- Punto 2, caída y recuperación:
+  - se pausó únicamente Cienvinos con breaker `CANARY_RECOVERY_TEST`, sin cambiar credenciales ni detener otras conexiones;
+  - durante la pausa, un cambio real de precio dejó exactamente una tarea `QUEUED`, con `attempts=0`; el procesador respetó el breaker y no escribió en Agora;
+  - al retirar la pausa, la tarea `856e0c82-553f-443d-8b82-cb46507cc430` terminó `SUCCESS`, `attempts=1`;
+  - dos evaluaciones posteriores devolvieron `queued=0` y `update_skipped:no_agora_changes`, sin doble escritura ni movimientos de venta/stock;
+  - el precio se restauró finalmente a `14,00`.
+- Punto 3, conciliación e idempotencia:
+  - una venta real de `2` copas de `C NY Hood Moscato Blanco` (`winerim_id=239925`) apareció primero como `OpenTicket` y después como `BasicInvoice 7652`, conservando la hora Agora `2026-07-14T15:18:19`;
+  - ambos documentos quedaron cubiertos por una única fila `stock_sync_log.SUCCESS`, con clave `...:2026-07-14:239925:copa:target:2`; no se generó una segunda deducción al cerrar ni al repetir la sincronización;
+  - la sonda final de tickets abiertos respondió `success=true`, sin fallos de stock ni restauraciones espurias;
+  - durante la ventana no ocurrió una cancelación real de vino en Cienvinos, por lo que no se inventó una comanda ni se alteró stock para forzar esa rama. La restauración idempotente por cancelación está desplegada y ya tiene evidencia real en Sa Pedrera, pero la evidencia específica de Cienvinos queda pendiente de una cancelación real controlada.
+- Punto 4: el usuario confirma que la comprobación en terminal es `OK`.
+- Estado final de Cienvinos después de todas las reversiones:
+  - breaker `null`, `consecutive_failures=0`;
+  - `QUEUED=0`, `RUNNING=0`, `FAILED=0`, `BLOCKED=0`;
+  - alertas `OPEN=0`;
+  - vino de precio restaurado a `14,00` y vino de reactivación restaurado a inactivo/oculto.
+
+### Decisiones
+
+- Los canaries de catálogo se ejecutan desde el editor real de Winerim, con referencias sin ventas recientes y rollback verificado; no se simulan cambios directamente en base de datos.
+- Las pruebas de caída solo pueden pausar la conexión objetivo y deben terminar restaurando breaker, cola, precio y alertas.
+- No se declara una cancelación específica como probada si no existe una cancelación real en el TPV; se separa la conciliación `OpenTicket -> Invoice`, que sí pasó, de la restauración por cancelación, que queda en observación.
+
+### Hipótesis y riesgos
+
+- La ausencia de restauraciones en la última sonda de Cienvinos es el resultado esperado si todos los tickets de vino desaparecidos están cubiertos por factura cerrada; no demuestra por sí sola una cancelación.
+- `sales/import` no ofrece un endpoint documentado para borrar una venta ya importada con stock inactivo. Antes de ampliar cancelaciones intradía hay que acordar con Winerim una corrección explícita de historial, no solo de stock.
+
+### Pendiente inmediato
+
+- Observar Cienvinos durante 24 horas y comprobar que continúan a cero la cola, las alertas, el breaker y los duplicados.
+- Si se quiere cerrar la evidencia de cancelación por conexión, coordinar una venta real de prueba en un botón Winerim y cancelarla desde Agora; verificar una única compensación y repetir la sincronización.
 
 ## Hechos (flujo tSpoonLab/Holded y legacy PurOsushi — 2026-07-14 12:39 CEST)
 
