@@ -1272,3 +1272,13 @@
 **Alternativa descartada:** usar `visible=true` para todos los productos legacy. No preservaria los flags distintos que tenia cada producto antes de la ocultacion.
 
 **Rollback:** volver a aplicar la instantanea de ocultacion de `2026-07-14` y mantener guardado el snapshot original.
+
+## 2026-07-14 · Yurest V2: Blasco aislado y credenciales solo en secretos
+
+**Decisión:** implementar Yurest mediante Customer Session V2, fijando `store_id=2054` para Blasco y manteniendo la primera fase en solo lectura.
+
+**Razón:** el usuario master devuelve datos de 18 locales. Sin scoping estricto se mezclarían costes, inventarios y compras de otros centros. La API ya ofrece catálogo, costes, almacenes e inventarios útiles, pero stock actual y movimientos devuelven HTTP 500 y faltan permisos de albaranes/locales.
+
+**Alternativa descartada:** guardar usuario, contraseña y token en `provider_config` o en el repositorio. Se usarán secretos de Lovable Cloud referenciados por nombre para no exponer credenciales en tablas de configuración.
+
+**Rollback:** no hay escrituras ni conexión activa. Retirar `yurest-proxy`, el cliente compartido y la configuración tipada devuelve el repositorio al estado anterior sin afectar Agora ni otros proveedores.

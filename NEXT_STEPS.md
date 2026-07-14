@@ -2,6 +2,23 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Yurest V2 · Blasco
+
+- [x] Validar login V2 con Bearer + `X-Provider-Token`.
+- [x] Identificar local y almacenes: `store_id=2054`, almacén activo `8394`.
+- [x] Auditar catálogo, costes, proveedores, stock, movimientos, inventarios, albaranes y facturas.
+- [x] Implementar cliente y proxy Yurest read-only con aislamiento multi-centro y secretos externos.
+- [x] Añadir pruebas de auth, re-login, paginación/filtro por local y rechazo cross-store.
+- [x] Documentar readiness en `docs/integrations/YUREST_BLASCO_READINESS_2026-07-14.md`.
+- [ ] Yurest: habilitar permisos/scopes de `stores`, `storage`, `delivery-notes` y `bills`.
+- [ ] Yurest: resolver HTTP 500 de stock actual, movimientos y facturas.
+- [ ] Yurest: confirmar endpoint paginado para listar pedidos de compra existentes.
+- [ ] Confirmar que únicamente se integra `store_id=2054`.
+- [ ] Acordar matching Yurest ↔ Winerim por ID externo, SKU/EAN o pairing Agora.
+- [ ] Configurar secretos en Lovable Cloud y crear conexión Yurest en modo `read_only`.
+- [ ] Desplegar `yurest-proxy` y ejecutar dry-run de costes, inventario y compras sin escrituras.
+- [ ] Activar sincronización solo tras canary idempotente y reconciliación manual.
+
 ## P0 — PurOsushi · restaurar legacy visible
 
 - [x] Detectar que el legacy estaba oculto de forma reversible y localizar el snapshot de rollback.

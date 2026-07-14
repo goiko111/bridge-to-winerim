@@ -4314,3 +4314,42 @@ _Última actualización: 2026-07-14 12:53 CEST_
 - Las seis instalaciones respondieron HTTP 200 a `sync-master-data` despues del cambio.
 - No quedo ninguna tarea `QUEUED` o `RUNNING` en estas seis conexiones.
 - Snapshots de rollback: `outputs/CHIQUILLA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/KAVA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/KAVA_LEGACY_FINAL_CLEANUP_2026-07-14.json`, `outputs/JARDI_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`, `outputs/SA_PEDRERA_LEGACY_CLEANUP_SNAPSHOT_2026-07-14.json`, `outputs/SA_VIDA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json` y `outputs/TABERNA_DE_ELIA_LEGACY_HIDE_SNAPSHOT_2026-07-14.json`.
+
+## 2026-07-14 · Yurest V2 · acceso real y base read-only para Blasco
+
+### Hechos
+- Se validaron las credenciales de usuario y el token V2 contra `POST /v2/auth/login`: HTTP `200`.
+- El local objetivo se identificó como `Jenkin’s - Blasco Ibañez`, `store_id=2054`.
+- Almacenes: `8394 COCINA` activo; `8398 Cocina principal` y `8399 Barra principal` inactivos.
+- Lecturas reales:
+  - `2.906` productos activos globales;
+  - `3.032` registros globales de coste;
+  - `536` productos con coste en Blasco;
+  - `216` con precio de compra, `263` con coste de ficha y `1` con coste de receta;
+  - `161` proveedores y `3.674` productos de proveedor;
+  - último inventario de Blasco `2026-06-30 22:28:50`, con `347` líneas.
+- El usuario master ve costes de `18` locales, así que no se puede consumir ninguna respuesta sin filtrar `store_id=2054`.
+- Bloqueos reales:
+  - `GET /v2/stores`: HTTP `403`;
+  - `GET /v2/delivery-notes`: HTTP `403`;
+  - `GET /v2/stock`: HTTP `500`, también al acotar por almacén válido;
+  - `GET /v2/stock/movements`: HTTP `500`;
+  - `GET /v2/bills`: HTTP `500`.
+- Se implementaron cliente y proxy Yurest de solo lectura, con renovación Bearer, secretos fuera de base de datos y aislamiento de local.
+- Las lecturas globales de catálogo/proveedores quedan bloqueadas por defecto en el proxy y requieren habilitación explícita.
+- Verificación local: `36/36` tests, `npx tsc --noEmit`, build Vite y lint de los archivos Yurest nuevos OK. No hay `deno` instalado localmente para ejecutar `deno check`.
+
+### Decisiones
+- Mantener Agora como fuente de ventas/PVP, Yurest como fuente futura de compras/stock/coste y Winerim como fuente de catálogo hacia Agora.
+- No desplegar ni activar sincronización Yurest hasta que los endpoints de stock/movimientos respondan y se confirme el alcance exacto del local.
+- No guardar credenciales Yurest en `pos_connections.api_token` ni `provider_config`; usar secretos de Lovable Cloud referenciados por nombre.
+
+### Hipótesis
+- Los HTTP `500` parecen un fallo o incompatibilidad del backend V2 de Yurest, no de autenticación, porque catálogo, costes, proveedores e inventarios responden con la misma sesión.
+- Los HTTP `403` corresponden a scopes/permisos ausentes del token o del usuario.
+
+### Tareas pendientes inmediatas
+- Enviar a Yurest la matriz de endpoints y pedir permisos de locales, stock, movimientos, albaranes y facturas.
+- Pedir endpoint V2 para listar pedidos de compra existentes; la OpenAPI actual solo documenta crear y consultar uno por ID.
+- Confirmar que solo se integra `store_id=2054` y acordar identificador estable Yurest ↔ Winerim para vinos.
+- Cuando Yurest responda: configurar secretos, crear conexión en modo `read_only`, desplegar `yurest-proxy` y ejecutar dry-run sin escrituras.

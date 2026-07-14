@@ -219,3 +219,25 @@ export function getHoldedConfig(raw: RawConfig): HoldedConfig {
   c.read_only = c.read_only ?? true;
   return c;
 }
+
+export interface YurestConfig {
+  store_id?: number;
+  warehouse_location_id?: number;
+  timeout_ms?: number;
+  read_only?: boolean;
+  allow_customer_scope_reads?: boolean;
+  email_secret_name: string;
+  password_secret_name: string;
+  provider_token_secret_name: string;
+}
+
+export function getYurestConfig(raw: RawConfig): YurestConfig {
+  const c = parseJson(raw) as unknown as YurestConfig;
+  c.timeout_ms = c.timeout_ms ?? 20_000;
+  c.read_only = c.read_only ?? true;
+  c.allow_customer_scope_reads = c.allow_customer_scope_reads ?? false;
+  c.email_secret_name = c.email_secret_name || "YUREST_EMAIL";
+  c.password_secret_name = c.password_secret_name || "YUREST_PASSWORD";
+  c.provider_token_secret_name = c.provider_token_secret_name || "YUREST_PROVIDER_TOKEN";
+  return c;
+}
