@@ -954,13 +954,19 @@ serve(async (req) => {
           console.error("[winerim-proxy] self-healing dispatch failed:", e);
         }
 
-        try {
-          await supabase
-            .from("pos_connections")
-            .update({ last_catalog_sync_at: enrichmentCompletedAt })
-            .eq("id", connectionId);
-        } catch (e) {
-          console.error("[winerim-proxy] failed to update last_catalog_sync_at:", e);
+        const { error: catalogSyncTimestampError } = await supabase
+          .from("pos_connections")
+          .update({ last_catalog_sync_at: enrichmentCompletedAt })
+          .eq("id", connectionId);
+
+        if (catalogSyncTimestampError) {
+          console.error(
+            "[winerim-proxy] failed to update last_catalog_sync_at:",
+            catalogSyncTimestampError,
+          );
+          throw new Error(
+            `Catalog enrichment completed but last_catalog_sync_at could not be saved: ${catalogSyncTimestampError.message}`,
+          );
         }
       }
 

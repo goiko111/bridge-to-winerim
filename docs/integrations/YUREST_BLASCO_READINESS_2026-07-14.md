@@ -84,6 +84,25 @@ La especificación V2 actual permite crear pedidos, consultar estados y obtener 
   - catálogo global, proveedores y productos de proveedor quedan bloqueados por defecto y exigen `allow_customer_scope_reads=true`;
   - renovación automática de Bearer una sola vez ante HTTP 401.
 
+## Estado desplegado
+
+- Los secretos `YUREST_EMAIL`, `YUREST_PASSWORD` y `YUREST_PROVIDER_TOKEN` están configurados en Lovable Cloud; sus valores no se guardan en código ni en la base de datos.
+- `yurest-proxy` está desplegado y responde únicamente a las acciones de lectura enumeradas arriba.
+- Existe una conexión operativa de preparación para `Jenkin’s - Blasco Ibañez`:
+  - `connection_id=f519a61e-83a0-4814-bd8f-3b99a2a6cec6`;
+  - `enabled=false`;
+  - `sync_mode=PULL_ONLY`;
+  - `write_mode=NONE`;
+  - `store_id=2054`;
+  - almacén `8394`.
+- Validaciones de runtime:
+  - autenticación y test de conexión: HTTP `200`;
+  - costes de tienda paginados: `96` filas filtradas en las dos páginas comprobadas;
+  - listado de inventarios: HTTP `200`;
+  - detalle del inventario `101431`: HTTP `200`, correspondiente al inventario de `2026-06-30` del almacén `8394`.
+
+La conexión permanece desactivada porque estas lecturas permiten ya analizar costes e inventarios, pero todavía no permiten sincronizar stock actual, movimientos, albaranes ni pedidos de compra de forma completa.
+
 ## Petición necesaria a Yurest
 
 1. Habilitar para el usuario y token V2 los permisos/scopes de locales, stock, movimientos, albaranes y facturas de compra.

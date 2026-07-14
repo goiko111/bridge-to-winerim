@@ -15,8 +15,9 @@
 - [ ] Yurest: confirmar endpoint paginado para listar pedidos de compra existentes.
 - [ ] Confirmar que únicamente se integra `store_id=2054`.
 - [ ] Acordar matching Yurest ↔ Winerim por ID externo, SKU/EAN o pairing Agora.
-- [ ] Configurar secretos en Lovable Cloud y crear conexión Yurest en modo `read_only`.
-- [ ] Desplegar `yurest-proxy` y ejecutar dry-run de costes, inventario y compras sin escrituras.
+- [x] Configurar secretos en Lovable Cloud y crear conexión Yurest desactivada en `PULL_ONLY` / `write_mode=NONE`.
+- [x] Desplegar `yurest-proxy` y validar en runtime costes e inventarios sin escrituras.
+- [ ] Completar dry-run de compras cuando Yurest habilite albaranes/facturas y confirme el listado de pedidos.
 - [ ] Activar sincronización solo tras canary idempotente y reconciliación manual.
 
 ## P0 — PurOsushi · restaurar legacy visible
@@ -27,6 +28,8 @@
 - [x] Restaurar `ShowInPos` de las 13 familias y los flags exactos de los 402 productos del snapshot.
 - [x] Ejecutar `sync-master-data`: `0` diferencias de familia y `0` diferencias de producto; legacy y Winerim coexisten.
 - [x] Actualizar `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT` conservando ambos snapshots.
+- [x] Confirmar en Agora las ocho familias Winerim visibles con `337/337` productos vendibles, manteniendo a la vez las `11` familias legacy visibles del snapshot.
+- [x] Completar una vuelta de catálogo Winerim (`330` vinos), sin cambios reales y con cola final `0`.
 - [ ] Pedir confirmacion visual al cliente tras refrescar los terminales Agora.
 
 ## P0 — tSpoonLab stock/pedidos + ventas Holded

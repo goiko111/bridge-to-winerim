@@ -4376,3 +4376,51 @@ _Última actualización: 2026-07-14 12:53 CEST_
 ### Tareas pendientes inmediatas
 - Desplegar el `agora-proxy` corregido y confirmar en un ciclo automático posterior que una venta con hora local naive no vuelve a quedar en `stockDeferredLines`.
 - Observar el siguiente ticket real tras el despliegue para confirmar que el ciclo automático conserva hora local y etiqueta TPV sin recuperación manual.
+
+## 2026-07-14 · Normalización horaria, PurOsushi, Taberna de Elia y Yurest runtime
+
+### Hechos
+- El arreglo de timestamps locales de Agora está desplegado en `agora-proxy` desde el commit `ab842da`.
+- Las `22/22` conexiones Agora tienen ahora `provider_config.sales_timezone=Europe/Madrid`; se preservó el resto de la configuración de cada conexión.
+- PurOsushi mantiene convivencia reversible durante el piloto:
+  - `11` familias legacy visibles y `402` productos legacy restaurados según snapshot;
+  - `8` familias Winerim visibles;
+  - `337/337` productos de las familias Winerim vendibles;
+  - ciclo completo de catálogo sobre `330` vinos Winerim, sin diferencias reales y cola final `0`;
+  - `last_catalog_sync_at=2026-07-14 12:13:10.91+00`.
+- Se corrigió `winerim-proxy` para comprobar el error devuelto por Lovable Cloud al guardar `last_catalog_sync_at`; una finalización de catálogo ya no puede ocultar un fallo de persistencia.
+- Comparación de conexiones activas frente a Cienvinos:
+  - el dispatcher ejecuta las conexiones habilitadas cada `5` minutos, independientemente del valor visual antiguo `sync_frequency_minutes`;
+  - Casa Nene, Chiquilla, El Bejeque, Higuerón, Katsu, Kava, Luruna, PurOsushi, Cienvinos, Qtomas y Sa Pedrera tienen el núcleo automático equivalente;
+  - Sa Vida sigue bloqueada para publicación automática porque `auto_push_verified_ready=false` y requiere canary/import manual exitoso;
+  - Jardi expone tickets abiertos, pero mantiene stock de tickets desactivado mientras solo haya `7` productos verificados frente a `176` vinos activos;
+  - Restaurante Triana conserva `auto_push_glass=false` por configuración específica.
+- Taberna de Elia respondió HTTP `200` en `/api/export/tickets/`. Se activaron tickets abiertos, stock por tickets, margen de `2` minutos, día actual y zona `Europe/Madrid`.
+- Primera ejecución controlada de Taberna de Elia:
+  - `5` tickets, `30` líneas guardadas;
+  - `0` líneas resueltas a Winerim;
+  - `stockSync=null`, por lo que no se descontó stock;
+  - las aparentes coincidencias `Tinto de Verano` son refrescos y no se mapearon como vino.
+- Yurest queda disponible para lectura segura:
+  - secretos configurados en Lovable Cloud;
+  - `yurest-proxy` desplegado;
+  - conexión inactiva `f519a61e-83a0-4814-bd8f-3b99a2a6cec6`, `PULL_ONLY`, `write_mode=NONE`, local `2054`, almacén `8394`;
+  - test, costes paginados e inventarios responden HTTP `200`.
+
+### Decisiones
+- Cualquier timestamp Agora sin offset se interpreta con la zona explícita de la conexión; no se desactiva globalmente el margen de seguridad.
+- PurOsushi conserva legacy y Winerim visibles hasta que el cliente confirme visualmente y realice las pruebas de botella/copa.
+- Taberna de Elia avanza al flujo casi en tiempo real porque el endpoint funciona y el stock solo se toca para líneas resueltas; Jardi no activa stock de tickets hasta completar cobertura de mapping.
+- Yurest permanece desactivado y en solo lectura hasta disponer de stock, movimientos, albaranes y pedidos de compra utilizables.
+
+### Hipótesis
+- Los campos `sync_frequency_minutes=15` que aún aparecen en algunas conexiones son metadatos antiguos; el dispatcher actual no los usa para el cron de cinco minutos.
+- La falta de vinos en los tickets abiertos sondeados de Jardi y Taberna no demuestra ausencia de ventas futuras; solo confirma que la muestra actual no permite validar una deducción real.
+
+### Tareas pendientes inmediatas
+- Desplegar `winerim-proxy` con la validación de persistencia de `last_catalog_sync_at` y repetir un ciclo completo controlado.
+- Pedir prueba visual y una venta de botella/copa Winerim en PurOsushi.
+- Taberna de Elia: validar una venta real desde botón Winerim y comprobar historial/stock.
+- Jardi: completar mapping/verificación de catálogo antes de activar `open_tickets_stock_sync_enabled`.
+- Sa Vida: ejecutar canary manual exitoso antes de marcar `auto_push_verified_ready=true`.
+- Yurest: solicitar permisos/scopes y corrección de los endpoints bloqueados; acordar matching para el local `2054`.

@@ -1294,3 +1294,43 @@
 **Alternativa descartada:** fijar `open_tickets_min_line_age_minutes=0` para toda la flota. Evitaría el síntoma, pero eliminaría la protección contra líneas recién creadas o todavía editables.
 
 **Rollback:** revertir `agoraLocalTime.ts` y volver a la comparación con `Date.parse`; no requiere migración ni modifica datos.
+
+## 2026-07-14 · Agora: zona horaria explícita en toda la flota
+
+**Decisión:** fijar `provider_config.sales_timezone=Europe/Madrid` en las `22` conexiones Agora existentes, preservando el resto de su JSON de configuración.
+
+**Razón:** la corrección de fechas naive solo es determinista si cada conexión declara su zona. También evita que altas antiguas dependan implícitamente de la zona del runtime.
+
+**Alternativa descartada:** dejar el fallback de código como única fuente. Funcionaría hoy, pero una conexión sin zona seguiría siendo ambigua y difícil de auditar.
+
+**Rollback:** retirar únicamente la clave `sales_timezone` de una conexión si cambia de país o requiere otra zona; no revertir el parser local.
+
+## 2026-07-14 · Taberna de Elia: activar tickets abiertos tras sonda sin vino resuelto
+
+**Decisión:** activar en Taberna de Elia captura y stock por tickets abiertos con margen de dos minutos, día actual y zona Europe/Madrid.
+
+**Razón:** `/api/export/tickets/` responde HTTP 200 y la primera ejecución controlada no contenía vinos Winerim resueltos, por lo que no hubo mutación de stock. El flujo queda preparado para validar una venta real sin esperar al cierre.
+
+**Alternativa descartada:** mantenerla solo en facturas cerradas pese a tener el endpoint disponible. Retrasaría el historial y no acercaría la instalación al patrón de Cienvinos.
+
+**Rollback:** desactivar `open_tickets_stock_sync_enabled` para conservar solo captura, o también `open_tickets_sync_enabled` para volver al flujo de facturas.
+
+## 2026-07-14 · Yurest: desplegar lectura segura, mantener conexión inactiva
+
+**Decisión:** desplegar `yurest-proxy`, configurar secretos y registrar Blasco como conexión desactivada `PULL_ONLY`/`write_mode=NONE`.
+
+**Razón:** ya se pueden analizar costes e inventarios reales aislados al local `2054`, pero stock, movimientos, albaranes, facturas y listado de pedidos siguen incompletos o bloqueados.
+
+**Alternativa descartada:** esperar a que Yurest resuelva todos los endpoints antes de desplegar nada. La lectura actual ya permite avanzar en matching y diagnóstico sin riesgo operativo.
+
+**Rollback:** desactivar o retirar la función y la conexión inactiva; no existen escrituras en Yurest ni automatismos asociados.
+
+## 2026-07-14 · Catálogo: no ocultar errores al guardar la fecha final
+
+**Decisión:** tratar como error la imposibilidad de persistir `last_catalog_sync_at` al finalizar el enriquecimiento completo.
+
+**Razón:** el cliente recibía `complete=true` aunque la pantalla pudiera seguir mostrando `Never`, porque la respuesta de PostgREST no se comprobaba. El estado operativo debe ser coherente con la respuesta del endpoint.
+
+**Alternativa descartada:** limitarse a un `console.error` y continuar con éxito. Mantendría falsos positivos y dificultaría detectar permisos/RLS o fallos transitorios.
+
+**Rollback:** volver a registrar el error sin lanzar excepción; no afecta catálogo ni colas, pero reintroduce estados silenciosamente inconsistentes.
