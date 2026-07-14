@@ -1,0 +1,1 @@
+UPDATE public.outbound_tasks SET status='QUEUED', attempts=0, last_error=NULL, blocked_reason=NULL, next_retry_at=NULL, updated_at=now() WHERE id IN ('9c570482-c623-4bb8-a75b-16a975d9f5a5','2c968cd1-1b70-43c6-82c6-4b4ee0ca8e31','3f8afd09-2cc1-41ed-a93a-344c31c61866');
