@@ -4353,3 +4353,26 @@ _Última actualización: 2026-07-14 12:53 CEST_
 - Pedir endpoint V2 para listar pedidos de compra existentes; la OpenAPI actual solo documenta crear y consultar uno por ID.
 - Confirmar que solo se integra `store_id=2054` y acordar identificador estable Yurest ↔ Winerim para vinos.
 - Cuando Yurest responda: configurar secretos, crear conexión en modo `read_only`, desplegar `yurest-proxy` y ejecutar dry-run sin escrituras.
+
+## 2026-07-14 · El Higuerón: Viña Real Reserva recuperada y causa corregida
+
+### Hechos
+- La credencial operativa de Agora es la variante literal terminada en `ROn`; con ella `Tickets`, `Families`, `Products` e `Invoices` responden HTTP `200`. El diagnóstico anterior de HTTP `401` queda obsoleto.
+- La conexión `El Higuerón` (`c2e41778-fd14-4a83-9b24-d4fd305fe490`) está habilitada, en `BIDIRECTIONAL`, `XML_IMPORT`, sin breaker y con tickets abiertos/stock activados.
+- La venta abierta de `B Viña Real Reserva` llegó desde Agora con producto `781979`, hora local `2026-07-14T12:31:09`, cantidad `1` y precio `28`.
+- La línea quedó correctamente mapeada a Winerim `281979`, variante `botella`, pero no se procesó en el primer ciclo: el runtime UTC interpretó la fecha local sin offset como si fuera UTC y la consideró futura. El contador vivo mostró `stockDeferredLines=1`.
+- Se reprocesó solo la conexión de Higuerón con el umbral temporal desactivado durante una única ejecución y restaurado inmediatamente a `2` minutos. Resultado: `synced=1`, `failed=0`, `stockDeferredLines=0`.
+- `stock_sync_log` contiene un único `SUCCESS` idempotente para la venta; Winerim confirmó stock de Viña Real Reserva `2 -> 1` sobre `stockId=324872`.
+- Tras refrescar ERP Winerim `/erp/1089/sales`, el historial muestra `Viña Real Reserva · Botella · 13:32 · TPV · 1 ud · 28 €`.
+- Se añadió `isAgoraTimestampOldEnough`: las fechas naive de Agora se comparan en la zona del restaurante y las fechas con zona explícita mantienen comparación absoluta. Validación: `10/10` tests, `tsc`, bundle de `agora-proxy` y `git diff --check` OK.
+
+### Decisiones
+- Mantener el margen de seguridad de `2` minutos; se corrige su interpretación temporal en vez de desactivarlo globalmente.
+- No reimportar el día completo ni tocar otras líneas no resueltas para recuperar esta venta.
+
+### Hipótesis
+- La ausencia inicial en el historial TPV de Winerim fue consecuencia directa del aplazamiento temporal, no de credenciales, matching ni acceso al vino.
+
+### Tareas pendientes inmediatas
+- Desplegar el `agora-proxy` corregido y confirmar en un ciclo automático posterior que una venta con hora local naive no vuelve a quedar en `stockDeferredLines`.
+- Observar el siguiente ticket real tras el despliegue para confirmar que el ciclo automático conserva hora local y etiqueta TPV sin recuperación manual.

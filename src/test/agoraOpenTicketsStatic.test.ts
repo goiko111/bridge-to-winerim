@@ -14,6 +14,7 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("open_tickets_sync_enabled");
     expect(agoraProxySource).toContain("open_tickets_stock_sync_enabled");
     expect(agoraProxySource).toContain("open_tickets_min_line_age_minutes");
+    expect(agoraProxySource).toContain("isAgoraTimestampOldEnough");
     expect(dispatcherSource).toContain("open_tickets_sync_enabled");
     expect(dispatcherSource).toContain('action: "sync-open-tickets"');
   });

@@ -136,7 +136,7 @@
   - ventas/historial sin fallos recientes.
 - [ ] `Sa Vida`: decidir activación controlada de `auto_push_verified_ready`; no activarla sin canary porque hay muchos `NOT_PUSHED`.
 - [ ] `Taberna de Elia`: decidir estructura destino antes de publicar Winerim (`familias Winerim` sin ocultar legacy vs matching sobre legacy).
-- [ ] `El Higuerón`: pedir clave API HTTP válida; Agora responde `401`.
+- [x] `El Higuerón`: credencial literal terminada en `ROn` validada; Agora responde HTTP `200` y la conexión está activa.
 - [ ] `O Bistro`: pedir URL pública/DDNS/túnel; la IP privada no responde desde Lovable Cloud/backend.
 - [ ] `Tintorera` y `Saddle`: revisar conectividad externa porque la sonda corta acaba en timeout.
 - [ ] `Restaurante Qtomas`: no reintentar en bucle mientras el breaker `POS_DOWN` siga abierto; revisar conectividad/DDNS antes de procesar las `60` tareas diferidas.
@@ -1006,7 +1006,7 @@
 - [x] Crear/documentar conexiones faltantes en `pos_connections`: Saddle, Higuerón, O Bistro, Tintorera y Taberna de Elia.
 - [ ] Don Quijote Marbella: faltan URL servidor Agora, clave API HTTP y token Winerim; no hay conexión creada todavía.
 - [ ] Saddle: backend aborta contra la IP aunque desde la máquina local responde; pedir DDNS/URL alternativa o revisión firewall/ruta desde Lovable Cloud/backend.
-- [ ] El Higuerón: revalidado 2026-07-13; la clave facilitada sigue devolviendo HTTP `401` en `Invoices`, `tickets`, `Families` y `Products`. Pedir confirmación literal de clave API HTTP y módulo API activo.
+- [x] El Higuerón: `Invoices`, `tickets`, `Families` y `Products` revalidados con HTTP `200` usando la credencial literal correcta.
 - [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
 - [ ] O Bistro: IP privada `192.168.1.22` no es accesible desde backend; pedir URL externa/DDNS/VPN.
 - [ ] Taberna de Elia: ya activa en lectura; preparar revisión de matching legacy vs Winerim antes de publicar catálogo o activar stock.
@@ -1014,8 +1014,9 @@
 - [x] El Bejeque: legacy visible de vino confirmado a `0`; restos legacy detectados están no vendibles.
 - [ ] El Bejeque: cuando Lovable Cloud/backend responda, ejecutar `sync-master-data` para refrescar caché interna tras la ocultación legacy y dejar trazabilidad dentro del middleware.
 - [ ] El Bejeque: pedir venta real desde botón/familia Winerim para confirmar historial/stock Winerim antes de declarar `LIVE_AUTOMATIC` completo.
-- [ ] El Higuerón: pedir al SAT/cliente clave API HTTP válida; la clave actual devuelve HTTP `401` en `Families`, `Products`, `Invoices` y `tickets`.
-- [ ] El Higuerón: tras nueva clave, actualizar credencial y repetir `test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day`, `winerim-proxy/fetch-catalog` y precheck de estructura antes de publicar familias Winerim.
+- [x] El Higuerón: recuperar de forma idempotente la venta de `B Viña Real Reserva`; stock Winerim confirmado `2 -> 1`, `SUCCESS`, sin duplicados.
+- [ ] El Higuerón/flota Agora: desplegar `agora-proxy` con comparación de fechas naive en `sales_timezone` y observar el siguiente ciclo automático (`stockDeferredLines=0` para líneas ya maduras).
+- [x] El Higuerón: confirmado visualmente en ERP Winerim `Viña Real Reserva · Botella · 13:32 · TPV · 1 ud · 28 €`.
 - [ ] Abadía Yuste: crear conexión en Lovable Cloud cuando deje de devolver `522`; datos técnicos ya validados externamente contra Agora y Winerim.
 - [ ] Abadía Yuste: tras alta, ejecutar `test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `fetch-catalog` completo.
 - [ ] Abadía Yuste: preparar informe de familias legacy/DO vs Winerim antes de publicar familias Winerim u ocultar legacy.

@@ -1282,3 +1282,15 @@
 **Alternativa descartada:** guardar usuario, contraseña y token en `provider_config` o en el repositorio. Se usarán secretos de Lovable Cloud referenciados por nombre para no exponer credenciales en tablas de configuración.
 
 **Rollback:** no hay escrituras ni conexión activa. Retirar `yurest-proxy`, el cliente compartido y la configuración tipada devuelve el repositorio al estado anterior sin afectar Agora ni otros proveedores.
+
+## 2026-07-14 · Agora: interpretar timestamps locales con la zona del restaurante
+
+**Decisión:** los timestamps de Agora sin `Z` ni offset se comparan como hora local de `provider_config.sales_timezone`; los timestamps con zona explícita se comparan como instantes absolutos.
+
+**Razón:** Agora devolvió `CreationDate=2026-07-14T12:31:09` en Higuerón mientras el runtime operaba en UTC. `Date.parse` la trató como UTC y el filtro de antigüedad aplazó una venta real durante el desfase horario completo.
+
+**Riesgos controlados:** se conserva el margen de seguridad por conexión, los valores ausentes o no interpretables mantienen el comportamiento permisivo anterior y hay pruebas para fecha naive, fecha con zona y fallbacks.
+
+**Alternativa descartada:** fijar `open_tickets_min_line_age_minutes=0` para toda la flota. Evitaría el síntoma, pero eliminaría la protección contra líneas recién creadas o todavía editables.
+
+**Rollback:** revertir `agoraLocalTime.ts` y volver a la comparación con `Date.parse`; no requiere migración ni modifica datos.

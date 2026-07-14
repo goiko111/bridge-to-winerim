@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
 import {
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
@@ -4288,7 +4289,6 @@ serve(async (req) => {
       const defaultDay = isBusinessDay(businessDay) ? businessDay : todayInTimeZone(timeZone);
       const stockSyncEnabled = isOpenTicketsStockSyncEnabled(connection);
       const minLineAgeMinutes = Math.max(0, Number(providerConfig.open_tickets_min_line_age_minutes ?? 2));
-      const stockEligibleBeforeMs = Date.now() - minLineAgeMinutes * 60_000;
 
       const url = `${baseUrlClean}/api/export/tickets/`;
       const res = await fetchWithRetry(url, { headers: { ...headers, Accept: "application/json" } }, 10_000);
@@ -4370,8 +4370,11 @@ serve(async (req) => {
           const resolution = resolutionMap.get(productId);
           const winerimProductId = resolution?.winerim_wine_id || null;
           const isResolved = !!winerimProductId;
-          const creationDateMs = line.CreationDate ? Date.parse(String(line.CreationDate)) : NaN;
-          const oldEnoughForStock = !stockSyncEnabled || minLineAgeMinutes <= 0 || !Number.isFinite(creationDateMs) || creationDateMs <= stockEligibleBeforeMs;
+          const oldEnoughForStock = !stockSyncEnabled || isAgoraTimestampOldEnough(
+            line.CreationDate,
+            minLineAgeMinutes,
+            timeZone,
+          );
           const stockCandidate = wr.candidate && oldEnoughForStock && stockDayAllowed;
           if (isResolved) {
             resolvedLines++;
