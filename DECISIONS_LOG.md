@@ -1388,3 +1388,15 @@
 **Riesgo mitigado:** evitar prometer al cliente que todo funciona por observar familias/productos, cuando podrían faltar ventas resueltas, copas, cambios de precio, recuperación o confirmación visual.
 
 **Alternativa descartada:** usar un único porcentaje agregado o marcar `PASS` cuando no existe evidencia. Oculta fallos distintos y produce falsos positivos.
+
+## 2026-07-14 - Los tickets abiertos de Agora no son historial definitivo
+
+**Decisión:** las facturas cerradas de Agora son la fuente contable definitiva. Un `OpenTicket` puede capturarse y mostrarse como provisional, pero no debe crear una venta definitiva en Winerim mientras no exista una operación reversible por identificador externo y una conciliación al cierre.
+
+**Razón:** la comparación real de Cienvinos mostró acumulados `1,2,3...`, `31` filas repetidas de una botella sin ventas históricas equivalentes y faltantes al cerrar los días 12 y 13. El historial ERP no puede corregirse de forma segura únicamente restaurando stock.
+
+**Riesgos controlados:** no se anulan ventas ni se modifica stock durante la auditoría. La corrección futura deberá relacionar cada fila ERP con documento, producto, variante y cantidad de Agora antes de escribir.
+
+**Alternativa descartada:** seguir enviando cada estado del ticket abierto a `sales/import` o `PUT stock` y compensarlo después. Winerim no ofrece en este flujo una eliminación/actualización inequívoca de la venta provisional y la compensación de stock no limpia el historial.
+
+**Rollback:** cualquier activación futura de mutación desde tickets abiertos seguirá siendo un flag por conexión; desactivarlo conserva captura y facturas cerradas sin tocar catálogo.

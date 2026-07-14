@@ -4529,3 +4529,28 @@ _Última actualización: 2026-07-14 18:52 CEST_
 - Convertir la matriz A-I en auditor persistente y guardar evidencia por conexión: conectividad, catálogo, canary, ventas, stock, idempotencia, terminal y alertas.
 - Cerrar primero Cienvinos, Taberna de Elia, Sa Pedrera y Casa Nene; después Higuerón, Katsu, Luruna, Chiquilla y PurOsushi.
 - Recuperar Jardi y Qtomas con SAT antes de tocar sus colas.
+
+## 2026-07-14 - Conciliación Agora frente a historial ERP de Cienvinos
+
+### Hechos
+- Se comparó el endpoint vivo de facturas Agora con el historial visible de Winerim del menú `861`, no solo con los logs del middleware.
+- El 12/07 Agora registra `37` unidades de vino por `199,50 EUR`; Winerim muestra `33` unidades por `171,50 EUR`. Faltan cuatro unidades: José Pariente botella, NY Hood copa, Convento copa y Ramón Bilbao copa.
+- El 13/07 Agora registra `61` unidades por `320 EUR`; el historial único de Winerim muestra `53` unidades por `335 EUR`. Hay acumulados duplicados en Satinela, una venta de Fino Tradición que no aparece en las facturas del día y faltan Pazo San Mauro, ocho copas de Convento y una copa de Ramón Bilbao. Terras Gauda coincide en cantidad pero Winerim muestra su PVP actual (`42 EUR`) frente al importe Agora (`18 EUR`).
+- El 14/07, a las 19:05 Europe/Madrid, Agora tiene `23` unidades cerradas por `97,50 EUR` y dos copas de Ramón Bilbao todavía abiertas. Winerim muestra `72` unidades por `656,50 EUR`; aun incluyendo las dos copas abiertas, sobran `47` unidades.
+- El exceso del 14/07 está localizado: Convento botella `32` en Winerim frente a `1` en Agora (`+31`), Convento copa `21` frente a `11` (`+10`) y Viña Caeira copa `11` frente a `5` (`+6`). Las filas repiten el mismo producto cada cinco minutos o guardan totales acumulados `1,2,3...`.
+- Se comprobó en Agora del 29/06 al 13/07 que no hubo ventas de Convento botella; las `31` filas anteriores del 14/07 no son un backfill legítimo.
+- Tras el último despliegue no apareció una fila nueva en el ciclo de las 19:05; la última fue la venta real cerrada a las 18:55. Esto limita el daño observado, pero no repara el historial ya escrito ni certifica todavía la reconciliación.
+
+### Decisiones
+- Cienvinos deja de considerarse la conexión más próxima a `100%_SIGNED_OFF` hasta reconciliar historial, stock e idempotencia con evidencia limpia posterior.
+- No anular automáticamente las filas repetidas desde el ERP: una anulación sin relación inequívoca con el documento Agora podría restaurar stock o borrar una venta real.
+- Las facturas cerradas son la fuente contable definitiva. Los tickets abiertos no pueden escribir historial definitivo hasta que exista una estrategia reversible por identificador externo o una conciliación que sustituya el estado provisional.
+
+### Hipótesis
+- Los acumulados y repeticiones proceden de ejecuciones del piloto de tickets abiertos anteriores al último runtime idempotente, que enviaron estados provisionales como ventas definitivas.
+- Los faltantes de los días 12 y 13 apuntan a una conciliación incompleta entre cantidades provisionales ya consideradas sincronizadas y las facturas cerradas posteriores.
+
+### Tareas pendientes inmediatas
+- Construir una conciliación por `business_day + documento Agora + producto + variante`, separando estado provisional de venta definitiva y respetando cantidades negativas/cancelaciones.
+- Generar un listado de ventas ERP a corregir con `sale_id`, motivo y efecto de stock; aplicar cualquier anulación solo tras validación explícita.
+- Repetir la comparación durante un día limpio completo después del último despliegue antes de reactivar o certificar escrituras desde tickets abiertos.

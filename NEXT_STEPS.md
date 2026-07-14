@@ -1126,3 +1126,12 @@
 - [ ] Qtomas: recuperar ruta externa, releer master fresh y reconciliar `60 QUEUED + 5 FAILED` antes de cualquier escritura.
 - [ ] Implementar evidencia persistente para canaries de alta/precio, prueba de cancelación, recuperación e idempotencia; hoy esos bloques aparecen como `NO EVIDENCE`.
 - [ ] Corregir el monitor para que una actividad reciente cierre o invalide de forma coherente una alerta `sales_stale` obsoleta.
+
+## P0 - Reconciliar historial de Cienvinos (2026-07-14)
+
+- [ ] Mantener Cienvinos fuera de `100%_SIGNED_OFF`: el ERP no coincide con Agora el 12, 13 ni 14 de julio.
+- [ ] Implementar conciliación por documento/producto/variante y distinguir `OpenTicket` provisional de `BasicInvoice` definitivo.
+- [ ] Corregir el cálculo para netear cantidades negativas/cancelaciones; no usar el valor absoluto para formar el total definitivo del día.
+- [ ] No considerar `sales/import skipped` como evidencia suficiente de una venta visible sin comprobar la referencia externa o el historial resultante.
+- [ ] Extraer los `sale_id` repetidos del 14/07 y preparar un plan de corrección reversible, sin ejecutar anulaciones automáticas.
+- [ ] Ejecutar una observación limpia de 24 horas y comparar Agora contra ERP Winerim por vino, variante, cantidad y hora.
