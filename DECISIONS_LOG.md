@@ -1208,3 +1208,27 @@
 
 ### Alternativa descartada
 - Borrar familias/productos o esconder toda raiz `BODEGA/BEBIDAS` de forma masiva. Se descarta por riesgo de eliminar operativa no relacionada con vino.
+
+## 2026-07-14 — tSpoonLab y Holded arrancan en lectura, con responsabilidades separadas
+
+**Decisión:** implementar primero clientes/proxies de solo lectura para tSpoonLab y Holded. tSpoonLab será fuente de menús, armonías, recetas y documentos operativos; Holded será destino contable; Agora seguirá siendo fuente operativa de la venta y Winerim del catálogo/stock de vino.
+
+**Razón:** una conexión directa con escritura sin separar responsabilidades puede duplicar stock, consumos o facturas. El descubrimiento read-only permite validar centros, códigos TPV, composiciones, series, impuestos y almacenes sin impacto productivo.
+
+**Riesgos controlados:** no existen acciones de escritura en los proxies nuevos; HTTPS es obligatorio; se aplican timeout, reintento y circuit breaker; las credenciales no se devuelven en respuestas.
+
+**Alternativa descartada:** activar de inmediato el envío de ventas/documentos entre los cuatro sistemas usando el estado actual de las recetas. Se descarta porque no conserva la composición histórica ni garantiza idempotencia/reversión.
+
+## 2026-07-14 — Menús y armonías requieren instantánea versionada por venta
+
+**Decisión:** cada venta de menú/armonía deberá asociarse a una instantánea de componentes aplicable en ese momento antes de descontar vinos en Winerim.
+
+**Razón:** si tSpoonLab cambia el menú después, recalcular una venta anterior con la receta actual produciría consumos incorrectos.
+
+**Alternativa descartada:** consultar siempre la receta vigente y asumir que nunca cambia.
+
+## 2026-07-14 — Brief partner Agora V6
+
+**Decisión:** entregar al partner de Agora un documento específico que mantiene Agora como TPV de referencia y presenta tSpoonLab/Holded como extensiones, no como sustitutos.
+
+**Razón:** el partner necesita confirmar identificadores, componentes/modificadores, cancelaciones, endpoints, límites y proceso de piloto sin recibir una propuesta que invada funciones de TPV o facturación.

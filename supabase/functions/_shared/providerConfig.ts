@@ -186,3 +186,36 @@ export function getNumierConfig(raw: RawConfig): NumierConfig {
   c.business_day_close_hour = c.business_day_close_hour ?? 6;
   return c;
 }
+
+export interface TspoonlabConfig {
+  order_center_id?: string;
+  recipe_center_id?: string;
+  username?: string;
+  timeout_ms?: number;
+  source_agora_connection_id?: string;
+  read_only?: boolean;
+}
+
+export function getTspoonlabConfig(raw: RawConfig): TspoonlabConfig {
+  const c = parseJson(raw) as TspoonlabConfig;
+  c.timeout_ms = c.timeout_ms ?? 20_000;
+  c.read_only = c.read_only ?? true;
+  return c;
+}
+
+export interface HoldedConfig {
+  timeout_ms?: number;
+  source_connection_id?: string;
+  source_provider?: string;
+  read_only?: boolean;
+  invoice_series_id?: string;
+  sales_channel_id?: string;
+  warehouse_id?: string;
+}
+
+export function getHoldedConfig(raw: RawConfig): HoldedConfig {
+  const c = parseJson(raw) as HoldedConfig;
+  c.timeout_ms = c.timeout_ms ?? 20_000;
+  c.read_only = c.read_only ?? true;
+  return c;
+}

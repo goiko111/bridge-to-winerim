@@ -2,7 +2,52 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-13 15:12 CEST_
+_Última actualización: 2026-07-14 12:12 CEST_
+
+## Hechos (tSpoonLab + Holded + brief partner Agora — 2026-07-14 12:12 CEST)
+
+- Se revisó documentación oficial actual de:
+  - tSpoonLab REST API Developers, integración TPV, menús/agrupaciones, recetas/platos e integración contable;
+  - Holded API v2 y generación/uso de API Token.
+- Se implementó una base nueva, aislada y solo lectura:
+  - `_shared/tspoonlab/client.ts`;
+  - `tspoonlab-proxy/index.ts`;
+  - `_shared/holded/client.ts`;
+  - `holded-proxy/index.ts`.
+- tSpoonLab soporta en esta fase login documentado por `username/password`, header `rememberme`, contexto `order`/`recipe` y lectura de centros, menús, recetas, platos y albaranes de venta.
+- Holded soporta API v2 con Bearer token y lectura de productos, facturas, contactos y almacenes con cursor.
+- Ambos proxies leen `req.json()` una sola vez, exigen HTTPS, usan timeout/reintento/circuit breaker por conexión, no exponen credenciales y no contienen acciones de escritura.
+- Se añadió `docs/integrations/TSPOONLAB_HOLDED_ARCHITECTURE.md` con fuentes de verdad, flujos, idempotencia, reversión y plan de piloto.
+- Se generó y revisó visualmente `output/pdf/Winerim_Agora_brief_partner_v6_2026-07-14.pdf`:
+  - 7 páginas A4;
+  - catálogo, ventas, stock, tickets abiertos, menús/armonías, tSpoonLab, Holded, seguridad y piloto.
+- Validación local:
+  - `31/31` tests OK;
+  - TypeScript OK;
+  - bundles de ambos proxies OK;
+  - build frontend OK;
+  - `git diff --check` OK;
+  - PDF renderizado e inspeccionado sin solapes ni páginas vacías.
+
+### Decisiones
+
+- No desplegar ni activar escrituras tSpoonLab/Holded sin credenciales de piloto y decisiones de propiedad del dato.
+- tSpoonLab será fuente de composición/escandallo, no fuente maestra del PVP de vino.
+- Holded será destino contable, no fuente de la venta ni del stock operativo de vino.
+- Una venta de menú/armonía debe guardar la composición versionada aplicable a esa venta antes de generar consumos Winerim.
+
+### Hipótesis por validar
+
+- Agora puede aportar un identificador estable por documento/línea y el código padre/modificador necesario para resolver selecciones de menú.
+- El cliente puede proporcionar un usuario técnico tSpoonLab limitado al centro de coste y libro correctos.
+- Holded API v2 expone en la cuenta piloto las series, impuestos, almacenes y documentos que finalmente se decidan.
+
+### Pendiente inmediato
+
+- Obtener credenciales de piloto tSpoonLab y Holded y ejecutar solo `test`/lecturas.
+- Confirmar con Agora cómo exporta menús, armonías, modificadores y cancelaciones.
+- Diseñar/persistir claves únicas para consumos compuestos y documentos Holded antes de añadir escrituras.
+- Hacer `dry-run` y canary; no marcar documentos tSpoonLab como contabilizados hasta persistir el ID confirmado de Holded.
 
 ## Hechos (Sa Pedrera · deploy cancelaciones de tickets abiertos — 2026-07-13 15:12 CEST)
 

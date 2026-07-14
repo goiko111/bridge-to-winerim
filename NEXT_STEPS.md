@@ -2,6 +2,22 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — Piloto tSpoonLab + Holded
+
+- [x] Revisar documentación oficial actual de tSpoonLab y Holded API v2.
+- [x] Implementar clientes y proxies de solo lectura.
+- [x] Añadir tests de autenticación, contexto y paginación.
+- [x] Documentar arquitectura, responsabilidades, idempotencia y reversión.
+- [x] Generar PDF `Winerim_Agora_brief_partner_v6_2026-07-14.pdf` y verificar render.
+- [ ] Obtener usuario técnico/password tSpoonLab.
+- [ ] Seleccionar `order_center_id` y `recipe_center_id` del restaurante piloto.
+- [ ] Obtener API Token Holded v2 con permisos mínimos de lectura.
+- [ ] Ejecutar `test`, inventario de centros/menús/recetas y catálogo contable en modo lectura.
+- [ ] Confirmar con Agora identificadores estables, código padre/modificador y modelo de cancelaciones.
+- [ ] Diseñar migración con claves idempotentes únicas para consumo de componentes, documentos Holded y reversiones.
+- [ ] Implementar `dry-run` sin escrituras y comparar un caso real de Saddle.
+- [ ] Activar un canary solo después de decidir stock de vino, serie fiscal, impuestos y rollback.
+
 ## P0 — 8 Agora prioritarios · cerrar altas y cambios de precio 2026-07-13
 - [x] Confirmar que los cambios que faltaban no estaban en GitHub antes del deploy manual.
 - [x] Subir a GitHub `main` el commit `5b5fcdb` con:

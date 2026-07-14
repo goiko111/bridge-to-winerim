@@ -3,11 +3,12 @@
 > Fuente de verdad sobre **qué es** este proyecto. Cambia poco. Solo hechos estructurales.
 
 ## 1. Qué es
-**Winerim TPV Integrations Middleware**: proxy multi-tenant que conecta Winerim (gestión de vinos) con múltiples sistemas POS (Agora, BDP NET, Revo XEF, Toast, Numier, Clover, Simphony, ICG, HIOPOS, TCPOS Kumo, Square, Cassa in Cloud).
+**Winerim TPV Integrations Middleware**: proxy multi-tenant que conecta Winerim (gestión de vinos) con múltiples sistemas POS (Agora, BDP NET, Revo XEF, Toast, Numier, Clover, Simphony, ICG, HIOPOS, TCPOS Kumo, Square, Cassa in Cloud) y puede enlazar sistemas auxiliares de operaciones/contabilidad como tSpoonLab y Holded.
 
 Flujo principal:
 - **Catálogo (one-way)**: Winerim → POS (precios, productos).
 - **Ventas (one-way)**: POS → Winerim (deducción absoluta de stock).
+- **Operaciones auxiliares**: tSpoonLab aporta escandallos, menús, armonías y documentos operativos; Holded actúa como destino contable. Ninguno sustituye al POS como fuente de la venta.
 - Aislamiento estricto por `connection_id`.
 
 ## 2. Stack
@@ -27,6 +28,8 @@ Flujo principal:
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
 - En Agora, los productos Winerim vendibles deben ir como `UseAsDirectSale=false` + `SaleableAsMain=true`: no salen como botones raíz, pero sí se venden dentro de su familia. `PreparationTypeId` y `PreparationOrderId` deben ir ambos vacíos o ambos informados.
 - Algunas conexiones Agora pueden conservar una estructura visual legacy con reglas en `pos_connections.provider_config.agora_family_routing_rules` para enrutar por formato/tipo/región a familias existentes del TPV.
+- La base tSpoonLab/Holded comienza en modo `read_only`: no se habilitan escrituras hasta persistir claves idempotentes, completar un `dry-run` y validar un canary con reversión.
+- En menús/armonías, el consumo de vino debe usar una instantánea versionada de la composición aplicable al momento de la venta. Nunca recalcular una venta histórica usando solo la receta actual.
 - En Agora, las conexiones que necesiten mantener orden comercial por código pueden activar `provider_config.agora_product_sort_mode="COMMERCIAL_CODE_NUMERIC"`. El orden usa códigos explícitos de nombre (`T501`, `B437`, `E516`, `D709`, `G801`, `MAGNUM21`) y solo debe cambiar `Order`, no IDs, precios, familias ni visibilidad.
 - Matching POS -> Winerim: cuando el nombre del POS o de Winerim trae código comercial exacto (`T31`, `B303`, `G801`, `MAGNUM21`), ese código tiene prioridad sobre fuzzy. No interpretar números sin separador como código (`Magnum 4 Kilos`, `As 2 Ladeiras`).
 
