@@ -4418,7 +4418,7 @@ _Última actualización: 2026-07-14 12:53 CEST_
 - La falta de vinos en los tickets abiertos sondeados de Jardi y Taberna no demuestra ausencia de ventas futuras; solo confirma que la muestra actual no permite validar una deducción real.
 
 ### Tareas pendientes inmediatas
-- Desplegar `winerim-proxy` con la validación de persistencia de `last_catalog_sync_at` y repetir un ciclo completo controlado.
+- `winerim-proxy` quedó desplegado desde `645b3d8`; repetir un ciclo completo controlado en la siguiente ventana para validar también el error de persistencia en runtime.
 - Pedir prueba visual y una venta de botella/copa Winerim en PurOsushi.
 - Taberna de Elia: validar una venta real desde botón Winerim y comprobar historial/stock.
 - Jardi: completar mapping/verificación de catálogo antes de activar `open_tickets_stock_sync_enabled`.

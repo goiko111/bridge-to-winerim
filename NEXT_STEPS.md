@@ -30,6 +30,7 @@
 - [x] Actualizar `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT` conservando ambos snapshots.
 - [x] Confirmar en Agora las ocho familias Winerim visibles con `337/337` productos vendibles, manteniendo a la vez las `11` familias legacy visibles del snapshot.
 - [x] Completar una vuelta de catálogo Winerim (`330` vinos), sin cambios reales y con cola final `0`.
+- [x] Corregir y desplegar `winerim-proxy` para no ocultar errores al persistir `last_catalog_sync_at` (`645b3d8`).
 - [ ] Pedir confirmacion visual al cliente tras refrescar los terminales Agora.
 
 ## P0 — tSpoonLab stock/pedidos + ventas Holded
