@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 12:53 CEST_
+_Última actualización: 2026-07-14 17:18 CEST_
 
 ## Hechos (flujo tSpoonLab/Holded y legacy PurOsushi — 2026-07-14 12:39 CEST)
 
@@ -4424,3 +4424,35 @@ _Última actualización: 2026-07-14 12:53 CEST_
 - Jardi: completar mapping/verificación de catálogo antes de activar `open_tickets_stock_sync_enabled`.
 - Sa Vida: ejecutar canary manual exitoso antes de marcar `auto_push_verified_ready=true`.
 - Yurest: solicitar permisos/scopes y corrección de los endpoints bloqueados; acordar matching para el local `2054`.
+
+## 2026-07-14 - Auditoría fresh completa de catálogo Agora, Qtomas y Taberna de Elia
+
+### Hechos
+- Se auditaron las `22` conexiones Agora registradas: `15` habilitadas y `7` excluidas por diseño (`enabled=false`, solo lectura o revertidas).
+- Este bloque sustituye los diagnósticos históricos anteriores sobre HTTP `501`, canary pendiente o catálogo incompleto de Sa Vida, y sobre publicación pendiente de Taberna de Elia.
+- Resultado corregido de las habilitadas: `14/15` tienen catálogo Winerim completo y verificado contra master fresh; `0` tienen huecos reales de catálogo; `1/15` no es verificable por red (`Qtomas`).
+- Catálogo completo y con `8/8` familias Winerim visibles: Casa Nene, Chiquilla, El Bejeque, El Higuerón, Katsu Izakaya, Kava, Luruna, PurOsushi, Cienvinos Ecija, Jardi, Restaurante Triana, Sa Pedrera, Sa Vida y Taberna de Elia.
+- Sa Vida quedó en `missing=0` tras publicación controlada y lectura fresca: `1252` BOTTLE, `254` GLASS y `20` MAGNUM presentes y vendibles.
+- Taberna de Elia tiene `8/8` familias con `ShowInPos=true` y `412/412` variantes vendibles: `351` BOTTLE, `49` GLASS y `12` MAGNUM. El cliente que no las ve está ante un problema de refresco/caché del terminal, no de ausencia en el servidor Agora.
+- Sa Pedrera está completa bajo su regla específica `single-button`: los `13` dulces activos `D701..D711`, `D714` y `D716` existen como `903xxx` en `DULCES WINERIM`, todos `SaleableAsMain=true`, con mapping `CONFIRMED` y tracking `VERIFIED`. Los huecos del primer recuento genérico eran formatos alternativos archivados, no productos ausentes.
+- Qtomas sigue inaccesible desde Lovable Cloud a `2026-07-14T15:10Z`: TCP `No route to host (errno 113)` contra `qtomas.dynalias.com:8984`. La conexión acumulaba `9` fallos consecutivos, breaker por `POS_DOWN`, `60` tareas `QUEUED` y `5` `FAILED`; no se procesó ni reencoló nada sin master fresh.
+- Las muchas alertas históricas de Qtomas son distintas manifestaciones del mismo corte: conectividad, breaker, cola y ventas estancadas. Solo queda una alerta canónica `OPEN` de conectividad; las anteriores están `RESOLVED`.
+- `connection-health-monitor` ya correlaciona conectividad y breaker, hace upsert por `(connection_id, alert_key)` y solo envía un correo por incidente. Los ciclos posteriores incrementan `occurrences` sin abrir filas ni correos duplicados.
+- Se desplegaron los commits `ce7f48a`, `9568753` y `ad67770`: verificación fresh obligatoria de escrituras/visibilidad, clasificación correcta de `NOT_FOUND` y nombres de producto únicos y estables.
+- Conexiones excluidas de publicación por decisión vigente: Baco Getafe, Don Bernardo Ponzano, Don Bernardo Santander, La Candela de Triana, O Bistro, Saddle y Tintorera.
+
+### Decisiones
+- No tocar la cola ni el catálogo de Qtomas hasta que exista conectividad fresh; el siguiente paso es externo (equipo Agora, DDNS, NAT/puerto `8984` o firewall/SAT).
+- No reimportar Taberna de Elia: el servidor ya contiene y expone todo el catálogo. Primero se debe cerrar/reabrir o refrescar el terminal y comprobar visualmente una familia Winerim.
+- No restaurar los IDs genéricos archivados de Sa Pedrera: duplicarían los botones `903xxx` que implementan la regla comercial acordada.
+- Las conexiones deshabilitadas o de solo lectura no se consideran fallos de cobertura y no reciben publicaciones automáticas.
+
+### Hipótesis
+- Si Taberna de Elia sigue sin mostrar las familias después de reiniciar completamente la aplicación Agora, habrá que revisar con el SAT el centro de venta/terminal y su actualización de datos maestros.
+- Qtomas debería recuperar automáticamente la alerta y el procesamiento cuando vuelva la ruta, pero las tareas pendientes deberán reconciliarse contra un master fresh antes de enviarlas para evitar aplicar cambios obsoletos.
+
+### Tareas pendientes inmediatas
+- Qtomas: pedir al SAT comprobar servidor encendido, resolución DDNS, NAT/port-forward `8984` y firewall; tras recuperar red, ejecutar master fresh y reconciliar las `65` tareas antes de procesar.
+- Taberna de Elia: pedir refresco/reinicio completo del terminal, captura de las familias y una venta controlada desde un botón Winerim.
+- Añadir al verificador de flota la prioridad `mapping CONFIRMED/regla de conexión -> ID determinista fallback`, para que Sa Pedrera no vuelva a aparecer como incompleta.
+- Revisar por separado productos Winerim históricos que quedaron visibles tras perder precio/actividad, siempre con lote reversible y sin mezclarlo con la cobertura actual.

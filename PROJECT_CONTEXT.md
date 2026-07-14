@@ -34,6 +34,9 @@ Flujo principal:
 - En menús/armonías, el consumo de vino debe usar una instantánea versionada de la composición aplicable al momento de la venta. Nunca recalcular una venta histórica usando solo la receta actual.
 - En Agora, las conexiones que necesiten mantener orden comercial por código pueden activar `provider_config.agora_product_sort_mode="COMMERCIAL_CODE_NUMERIC"`. El orden usa códigos explícitos de nombre (`T501`, `B437`, `E516`, `D709`, `G801`, `MAGNUM21`) y solo debe cambiar `Order`, no IDs, precios, familias ni visibilidad.
 - Matching POS -> Winerim: cuando el nombre del POS o de Winerim trae código comercial exacto (`T31`, `B303`, `G801`, `MAGNUM21`), ese código tiene prioridad sobre fuzzy. No interpretar números sin separador como código (`Magnum 4 Kilos`, `As 2 Ladeiras`).
+- Una mutación de catálogo Agora no se considera correcta solo porque `/api/import/` responda sin error: familia, producto, visibilidad y atributos críticos deben confirmarse mediante una lectura fresca posterior del catálogo.
+- Las auditorías de cobertura de catálogo resuelven primero `product_mappings` confirmados y reglas específicas de la conexión; los IDs deterministas por formato son únicamente el fallback. Esto evita falsos huecos en instalaciones con botones consolidados, como los dulces ordenados de Sa Pedrera.
+- Los nombres enviados a Agora deben ser únicos y estables por conexión. Cuando dos variantes colisionan, se usa primero la añada y después el identificador Winerim como desambiguador; un mapping ya confirmado conserva el nombre exacto enviado anteriormente.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.

@@ -1334,3 +1334,35 @@
 **Alternativa descartada:** limitarse a un `console.error` y continuar con éxito. Mantendría falsos positivos y dificultaría detectar permisos/RLS o fallos transitorios.
 
 **Rollback:** volver a registrar el error sin lanzar excepción; no afecta catálogo ni colas, pero reintroduce estados silenciosamente inconsistentes.
+
+## 2026-07-14 - Una escritura Agora exige verificación fresh
+
+**Decisión:** ninguna alta, actualización o cambio de visibilidad de familia/producto se marca como éxito hasta releer el catálogo Agora sin caché y comprobar el estado esperado.
+
+**Razón:** una respuesta aceptada por `/api/import/` no garantiza por sí sola que el objeto exista o conserve los atributos requeridos. La lectura posterior evita falsos `SUCCESS` y permite reintentos idempotentes.
+
+**Alternativa descartada:** confiar solo en HTTP/import response y actualizar tracking inmediatamente.
+
+## 2026-07-14 - Los mappings confirmados mandan en la auditoría de cobertura
+
+**Decisión:** resolver primero mappings `CONFIRMED` y reglas específicas de conexión; usar IDs deterministas solo como fallback.
+
+**Razón:** Sa Pedrera representa sus dulces con botones únicos `903xxx`. El recuento genérico BOTTLE/GLASS generó falsos huecos y habría creado duplicados si se reparaba sin contexto.
+
+**Alternativa descartada:** exigir siempre los tres IDs deterministas por vino y formato, ignorando excepciones comerciales ya verificadas.
+
+## 2026-07-14 - Qtomas se trata como un solo incidente de conectividad
+
+**Decisión:** conservar una única alerta canónica `connectivity/POS_DOWN`; breaker, backlog y ventas estancadas se correlacionan como síntomas del mismo corte mientras el probe siga `DOWN`.
+
+**Razón:** el host falla en TCP con `No route to host`; abrir y notificar una alerta independiente por cada síntoma produce ruido sin aportar acciones distintas.
+
+**Alternativa descartada:** enviar un correo nuevo en cada ciclo y por cada métrica degradada.
+
+## 2026-07-14 - Taberna de Elia no se reimporta ante un problema visual
+
+**Decisión:** con `8/8` familias visibles y `412/412` variantes verificadas fresh, pedir primero refresco/reinicio del terminal y revisión SAT si persiste.
+
+**Razón:** volver a importar productos ya correctos añade riesgo de duplicados o cambios de orden y no soluciona una caché local del terminal.
+
+**Alternativa descartada:** repetir una carga masiva para intentar forzar la interfaz.

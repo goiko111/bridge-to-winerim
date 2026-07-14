@@ -1080,4 +1080,19 @@
 - [x] Taberna de Elia: confirmar legacy oculto a nivel familia y producto; `412/412` formatos Winerim cubiertos.
 - [ ] Pedir confirmacion visual en los terminales de los seis restaurantes tras refrescar/reiniciar la pantalla de Agora.
 - [ ] Ejecutar una venta controlada botella y copa desde botones Winerim donde aun no exista validacion operativa reciente; comparar Agora, middleware e historial ERP Winerim.
-- [ ] Sa Vida: corregir aparte los formatos activos con precio que todavia no estan publicados o siguen en clasificacion geografica antigua antes de plantear una migracion total a familias planas Winerim. No confundir esta tarea de catalogo con legacy real.
+- [x] Sa Vida: completar la publicación fresh de formatos activos con precio; resultado final `missing=0` sin confundir clasificación Winerim con legacy real.
+
+## P0 - Cierre de auditoría fresh de flota Agora (2026-07-14)
+
+- [x] Auditar las `15` conexiones habilitadas contra catálogo fresh y separar las `7` deshabilitadas/solo lectura/revertidas.
+- [x] Confirmar `14/15` habilitadas con catálogo Winerim completo; única no verificable: Qtomas por `No route to host`.
+- [x] Confirmar Taberna de Elia con `8/8` familias visibles y `412/412` variantes vendibles.
+- [x] Confirmar Sa Vida con `missing=0` (`1252/254/20` por BOTTLE/GLASS/MAGNUM).
+- [x] Corregir el falso positivo de Sa Pedrera: `13/13` dulces cubiertos por la regla `single-button` y mappings confirmados.
+- [ ] Qtomas: recuperar conectividad externa y ejecutar `test` + `sync-master-data` fresh.
+- [ ] Qtomas: reconciliar `60 QUEUED` y `5 FAILED` contra el master recuperado; procesar solo cambios que sigan siendo necesarios.
+- [ ] Qtomas: confirmar que la alerta canónica se resuelve automáticamente tras dos probes sanos y que solo se emite un correo de recuperación.
+- [ ] Taberna de Elia: obtener confirmación visual tras reiniciar/refrescar el terminal; si no aparece, revisar centro de venta/terminal con SAT.
+- [ ] Taberna de Elia: hacer una venta real desde botón Winerim y comprobar historial/stock.
+- [ ] Implementar en el auditor persistente la resolución por mapping/regla específica antes del fallback determinista.
+- [ ] Clasificar como `WONT_FIX` las 7 tareas antiguas de Sa Pedrera que apuntan a formatos `ARCH`, sin reencolarlas ni tocar los botones activos `903xxx`.
