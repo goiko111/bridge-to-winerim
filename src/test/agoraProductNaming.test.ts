@@ -36,6 +36,27 @@ describe("Agora product naming", () => {
     expect(names["739276"]).toBe("B Alion 276");
   });
 
+  it("prefers a human vintage before falling back to an id suffix", () => {
+    const names = buildDuplicateSafeAgoraProductNames(
+      [{ productId: 665408, baseName: "B Prado Enea Gran Reserva", winerimId: 165408, disambiguators: [1998] }],
+      [{ Id: 665407, Name: "B Prado Enea Gran Reserva" }],
+    );
+
+    expect(names["665408"]).toBe("B Prado Enea Gran Reserva 1998");
+  });
+
+  it("preserves the suffix already stored for the same product id", () => {
+    const names = buildDuplicateSafeAgoraProductNames(
+      [{ productId: 665408, baseName: "B Prado Enea Gran Reserva", winerimId: 165408, disambiguators: [1998] }],
+      [
+        { Id: 665407, Name: "B Prado Enea Gran Reserva" },
+        { Id: 665408, Name: "B Prado Enea Gran Reserva 408" },
+      ],
+    );
+
+    expect(names["665408"]).toBe("B Prado Enea Gran Reserva 408");
+  });
+
   it("allows keeping the same name when updating the same existing product", () => {
     const names = buildDuplicateSafeAgoraProductNames(
       [{ productId: 739259, baseName: "B Alion", winerimId: 239259 }],
@@ -47,5 +68,6 @@ describe("Agora product naming", () => {
 
   it("normalizes spacing and case when checking collisions", () => {
     expect(normalizeAgoraProductNameKey("  B   Alion  ")).toBe(normalizeAgoraProductNameKey("b alion"));
+    expect(normalizeAgoraProductNameKey("B Único")).toBe(normalizeAgoraProductNameKey("b unico"));
   });
 });

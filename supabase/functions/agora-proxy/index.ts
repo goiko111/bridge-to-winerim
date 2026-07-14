@@ -414,6 +414,15 @@ function formatProductName(fmt: string, wineName: string): string {
   return `B ${wineName}`;
 }
 
+function decodeXmlAttribute(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
 function commercialDCode(wineName: string | null | undefined): string | null {
   const match = String(wineName || "").toUpperCase().match(/\bD\s*[-_ ]?(\d{3})\b/);
   return match ? `D${match[1]}` : null;
@@ -3804,6 +3813,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     productId: string;
     productName: string;
     winerimId: string;
+    nameDisambiguators: Array<string | number>;
     renderXml: (finalProductName: string) => string;
   }[] = [];
 
@@ -3871,6 +3881,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         productId: String(productId),
         productName,
         winerimId: String(winerimId),
+        nameDisambiguators: [wine.vintage || wine.raw_payload?.vintage].filter(Boolean),
         renderXml: (finalProductName: string) => {
           const buttonText = truncate(finalProductName, 20);
           return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
@@ -3919,6 +3930,7 @@ ${costPricesXml}
       productId: entry.productId,
       baseName: entry.productName,
       winerimId: entry.winerimId,
+      disambiguators: entry.nameDisambiguators,
     })),
     existingProducts,
   );
@@ -8027,6 +8039,44 @@ ${costPricesXml}
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // A long queue can create one homonymous product and immediately process
+        // another before the next master-data refresh. Merge the latest confirmed
+        // mappings into the naming snapshot so duplicate-name protection sees
+        // writes from preceding tasks without re-downloading the full catalog.
+        const baseProductNames = [...new Set(fmtTypes.map((fmt: string) =>
+          formatProductName(fmt, wineArr[0].name)
+        ))];
+        const expectedProductIds = [...new Set(fmtTypes.map((fmt: string) =>
+          fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
+          : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
+          : String(500000 + Number(winerimWineId || 0))
+        ))];
+        const [{ data: sameNameMappings }, { data: ownProductMappings }] = await Promise.all([
+          supabase.from("product_mappings")
+            .select("provider_product_id, provider_product_name")
+            .eq("connection_id", task.connection_id)
+            .eq("status", "CONFIRMED")
+            .in("provider_product_name", baseProductNames),
+          supabase.from("product_mappings")
+            .select("provider_product_id, provider_product_name")
+            .eq("connection_id", task.connection_id)
+            .eq("status", "CONFIRMED")
+            .in("provider_product_id", expectedProductIds),
+        ]);
+        const namingProductsById = new Map<string, { Id: string; Name: string }>();
+        for (const product of ((masterData.products_summary_json || []) as { Id: string; Name: string }[])) {
+          if (product.Id && product.Name) namingProductsById.set(String(product.Id), product);
+        }
+        for (const mapping of [...(sameNameMappings || []), ...(ownProductMappings || [])]) {
+          if (mapping.provider_product_id && mapping.provider_product_name) {
+            namingProductsById.set(String(mapping.provider_product_id), {
+              Id: String(mapping.provider_product_id),
+              Name: String(mapping.provider_product_name),
+            });
+          }
+        }
+        masterData.products_summary_json = [...namingProductsById.values()];
+
         let customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
         // If family override is set, create an override mapping that takes priority
         if (familyOverrideId) {
@@ -8461,7 +8511,13 @@ ${costPricesXml}
             : fmt === "GLASS"
             ? String(700000 + Number(winerimWineId || 0))
             : String(500000 + Number(winerimWineId || 0));
-          const productName = formatProductName(fmt, wineArr[0].name);
+          const sentNameMatch = new RegExp(
+            `<Product\\b[^>]*\\bId="${agoraProductId}"[^>]*\\bName="([^"]*)"`,
+            "i",
+          ).exec(xml);
+          const productName = sentNameMatch
+            ? decodeXmlAttribute(sentNameMatch[1])
+            : formatProductName(fmt, wineArr[0].name);
 
           await supabase.from("product_mappings").upsert({
             connection_id: task.connection_id,

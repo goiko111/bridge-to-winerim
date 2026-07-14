@@ -2,6 +2,7 @@ export interface AgoraProductNameCandidate {
   productId: string | number;
   baseName: string;
   winerimId?: string | number | null;
+  disambiguators?: Array<string | number | null | undefined>;
 }
 
 export interface AgoraExistingProductName {
@@ -10,14 +11,23 @@ export interface AgoraExistingProductName {
 }
 
 export function normalizeAgoraProductNameKey(name: string): string {
-  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
 }
 
-function suffixCandidates(id: string | number | null | undefined): string[] {
+function suffixCandidates(
+  disambiguators: Array<string | number | null | undefined> | undefined,
+  id: string | number | null | undefined,
+): string[] {
   const raw = String(id ?? "").trim();
   const digits = raw.replace(/\D/g, "");
   const source = digits || raw;
   const candidates = [
+    ...(disambiguators || []).map((value) => String(value ?? "").trim()).filter(Boolean),
     source.length > 3 ? source.slice(-3) : source,
     source.length > 6 ? source.slice(-6) : source,
     source,
@@ -31,6 +41,7 @@ export function buildDuplicateSafeAgoraProductNames(
   existingProducts: AgoraExistingProductName[] = [],
 ): Record<string, string> {
   const existingNameOwners = new Map<string, Set<string>>();
+  const existingNamesByOwner = new Map<string, string[]>();
 
   for (const product of existingProducts) {
     const id = String(product.Id ?? "").trim();
@@ -40,6 +51,9 @@ export function buildDuplicateSafeAgoraProductNames(
     const owners = existingNameOwners.get(key) ?? new Set<string>();
     owners.add(id);
     existingNameOwners.set(key, owners);
+    const names = existingNamesByOwner.get(id) ?? [];
+    names.push(name);
+    existingNamesByOwner.set(id, names);
   }
 
   const byBaseName = new Map<string, AgoraProductNameCandidate[]>();
@@ -84,17 +98,27 @@ export function buildDuplicateSafeAgoraProductNames(
       let finalName = String(entry.baseName || "").trim();
 
       if (index > 0 || externalBaseCollision || !isAvailable(finalName, productId)) {
-        const suffixes = suffixCandidates(entry.winerimId ?? entry.productId);
-        finalName = "";
-        for (const suffix of suffixes) {
-          const candidateName = `${entry.baseName} ${suffix}`.trim();
-          if (isAvailable(candidateName, productId)) {
-            finalName = candidateName;
-            break;
+        const baseKey = normalizeAgoraProductNameKey(entry.baseName);
+        const existingOwnName = (existingNamesByOwner.get(productId) || []).find((name) => {
+          const key = normalizeAgoraProductNameKey(name);
+          return key.startsWith(`${baseKey} `) && isAvailable(name, productId);
+        });
+
+        if (existingOwnName) {
+          finalName = existingOwnName;
+        } else {
+          const suffixes = suffixCandidates(entry.disambiguators, entry.winerimId ?? entry.productId);
+          finalName = "";
+          for (const suffix of suffixes) {
+            const candidateName = `${entry.baseName} ${suffix}`.trim();
+            if (isAvailable(candidateName, productId)) {
+              finalName = candidateName;
+              break;
+            }
           }
-        }
-        if (!finalName) {
-          finalName = `${entry.baseName} ${productId}`.trim();
+          if (!finalName) {
+            finalName = `${entry.baseName} ${productId}`.trim();
+          }
         }
       }
 
