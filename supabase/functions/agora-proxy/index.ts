@@ -6656,9 +6656,48 @@ serve(async (req) => {
         const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 30000);
         const responseBody = await importRes.text().catch(() => "");
         const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+        const verification: { id: string; expected: boolean; actual: boolean | null; ok: boolean }[] = [];
+        let verificationError: string | null = null;
+
+        if (parsed.success) {
+          try {
+            const freshRes = await fetchWithRetry(
+              famUrl,
+              { method: "GET", headers: { "Api-Token": apiTokenClean, Accept: "application/xml" } },
+              30000,
+            );
+            const freshXml = await freshRes.text().catch(() => "");
+            if (!freshRes.ok || !freshXml) {
+              verificationError = `No se pudo verificar familias tras importar: HTTP ${freshRes.status}`;
+            } else {
+              const freshFamilyById = new Map<string, string>();
+              const freshFamilyRegex = /<Family\b[^>]*\/>|<Family\b[^>]*>[\s\S]*?<\/Family>/g;
+              let freshMatch: RegExpExecArray | null;
+              while ((freshMatch = freshFamilyRegex.exec(freshXml)) !== null) {
+                const freshId = /\bId="([^"]+)"/.exec(freshMatch[0])?.[1];
+                if (freshId) freshFamilyById.set(freshId, freshMatch[0]);
+              }
+              for (const item of applied) {
+                const freshEl = freshFamilyById.get(String(item.id));
+                const actualAttr = freshEl ? /\bShowInPos="([^"]+)"/i.exec(freshEl)?.[1] : null;
+                const actual = actualAttr == null ? null : actualAttr.toLowerCase() === "true";
+                verification.push({ id: item.id, expected: item.showInPos, actual, ok: actual === item.showInPos });
+              }
+              if (verification.some((item) => !item.ok)) {
+                verificationError = "Agora aceptó la importación, pero no persistió toda la visibilidad de familias";
+              }
+            }
+          } catch (verifyError) {
+            verificationError = `Verificación de familias falló: ${String(verifyError)}`;
+          }
+        }
+
+        const verified = parsed.success && !verificationError && verification.length === applied.length;
         return new Response(JSON.stringify({
-          success: parsed.success, applied, skipped,
-          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`),
+          success: verified, applied, skipped, verification,
+          error: !parsed.success
+            ? (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`)
+            : verificationError,
           xmlPreview: xml.slice(0, 1000),
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (e) {
@@ -6740,11 +6779,62 @@ serve(async (req) => {
         const importRes = await fetchWithRetry(importUrl, { method: "POST", headers: xmlHeaders, body: xml }, 60000);
         const responseBody = await importRes.text().catch(() => "");
         const parsed = parseAgoraImportResponse(importRes.status, responseBody);
-        // Invalidate cache so the next batch sees the patched UseAsDirectSale flag
-        if (parsed.success) invalidateAgoraProductsCache(connectionId);
+        const verification: {
+          id: string;
+          expectedUseAsDirectSale: boolean;
+          expectedSaleableAsMain: boolean;
+          actualUseAsDirectSale: boolean | null;
+          actualSaleableAsMain: boolean | null;
+          ok: boolean;
+        }[] = [];
+        let verificationError: string | null = null;
+
+        if (parsed.success) {
+          try {
+            invalidateAgoraProductsCache(connectionId);
+            const fresh = await fetchAgoraProductsXmlCached(
+              connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+            );
+            if (!fresh.ok || !fresh.xml) {
+              verificationError = `No se pudo verificar productos tras importar: HTTP ${fresh.status}`;
+            } else {
+              const freshProductById = new Map<string, string>();
+              const freshProductRegex = /<Product\b[^>]*\/>|<Product\b[^>]*>[\s\S]*?<\/Product>/g;
+              let freshMatch: RegExpExecArray | null;
+              while ((freshMatch = freshProductRegex.exec(fresh.xml)) !== null) {
+                const freshId = /\bId="([^"]+)"/.exec(freshMatch[0])?.[1];
+                if (freshId) freshProductById.set(freshId, freshMatch[0]);
+              }
+              for (const item of applied) {
+                const freshEl = freshProductById.get(String(item.id));
+                const directAttr = freshEl ? /\bUseAsDirectSale="([^"]+)"/i.exec(freshEl)?.[1] : null;
+                const saleableAttr = freshEl ? /\bSaleableAsMain="([^"]+)"/i.exec(freshEl)?.[1] : null;
+                const actualUseAsDirectSale = directAttr == null ? null : directAttr.toLowerCase() === "true";
+                const actualSaleableAsMain = saleableAttr == null ? null : saleableAttr.toLowerCase() === "true";
+                verification.push({
+                  id: item.id,
+                  expectedUseAsDirectSale: item.useAsDirectSale,
+                  expectedSaleableAsMain: item.saleableAsMain,
+                  actualUseAsDirectSale,
+                  actualSaleableAsMain,
+                  ok: actualUseAsDirectSale === item.useAsDirectSale && actualSaleableAsMain === item.saleableAsMain,
+                });
+              }
+              if (verification.some((item) => !item.ok)) {
+                verificationError = "Agora aceptó la importación, pero no persistió toda la visibilidad de productos";
+              }
+            }
+          } catch (verifyError) {
+            verificationError = `Verificación de productos falló: ${String(verifyError)}`;
+          }
+        }
+
+        const verified = parsed.success && !verificationError && verification.length === applied.length;
         return new Response(JSON.stringify({
-          success: parsed.success, applied, skipped,
-          error: parsed.success ? null : (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`),
+          success: verified, applied, skipped, verification,
+          error: !parsed.success
+            ? (parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`)
+            : verificationError,
           xmlPreview: xml.slice(0, 1000),
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       } catch (e) {
