@@ -6,10 +6,11 @@
 
 - [x] Detectar que el legacy estaba oculto de forma reversible y localizar el snapshot de rollback.
 - [x] Ampliar `set-product-visibility` para restaurar los dos flags Agora exactos sin romper llamadas existentes.
-- [ ] Validar TypeScript/bundle y desplegar `agora-proxy`.
-- [ ] Restaurar `ShowInPos` de las 13 familias y los flags exactos de los productos del snapshot.
-- [ ] Ejecutar `sync-master-data` y comprobar visualmente familias/productos legacy y Winerim coexistiendo.
-- [ ] Actualizar `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT` conservando ambos snapshots.
+- [x] Validar `31/31` tests, TypeScript/bundle y desplegar `agora-proxy`.
+- [x] Restaurar `ShowInPos` de las 13 familias y los flags exactos de los 402 productos del snapshot.
+- [x] Ejecutar `sync-master-data`: `0` diferencias de familia y `0` diferencias de producto; legacy y Winerim coexisten.
+- [x] Actualizar `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT` conservando ambos snapshots.
+- [ ] Pedir confirmacion visual al cliente tras refrescar los terminales Agora.
 
 ## P0 — tSpoonLab stock/pedidos + ventas Holded
 

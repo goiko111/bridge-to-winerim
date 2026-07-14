@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 12:39 CEST_
+_Última actualización: 2026-07-14 12:53 CEST_
 
 ## Hechos (flujo tSpoonLab/Holded y legacy PurOsushi — 2026-07-14 12:39 CEST)
 
@@ -15,10 +15,17 @@ _Última actualización: 2026-07-14 12:39 CEST_
 - La base implementada sigue siendo read-only: faltan endpoints de pedidos/stock en el proxy tSpoonLab y `dry-run`/escritura idempotente de recibos en Holded.
 - Se detecto que PurOsushi tenia el legacy ocultado de forma reversible el `2026-07-14`; existe snapshot completo de familias y flags de producto para restaurarlo exactamente.
 - Se amplio de forma compatible `set-product-visibility` para admitir restauracion exacta de `UseAsDirectSale` y `SaleableAsMain`, manteniendo el parametro anterior `visible`.
+- `agora-proxy` se desplego desde `main` commit `72ffcc9` y se valido el nuevo branch exacto en runtime.
+- Se restauro el legacy de PurOsushi desde el snapshot:
+  - 13 familias procesadas, 11 visibles como antes;
+  - 402 productos procesados, 306 vendibles como antes;
+  - `0` familias omitidas y `0` productos omitidos;
+  - auditoria posterior: `0` diferencias de familia y `0` diferencias de flags de producto.
+- `provider_config.legacy_visibility_policy` quedo en `VISIBLE_DURING_PILOT`; se conservaron la instantanea original y el registro de ocultacion para rollback.
 
 ### Decision
 
-- Mantener el legacy de PurOsushi visible durante el piloto; restaurar los flags exactos del snapshot y conservarlo para un rollback posterior.
+- Mantener el legacy de PurOsushi visible durante el piloto; los flags exactos ya fueron restaurados y el snapshot se conserva para un rollback posterior.
 - El piloto Holded usara preferentemente un recibo de venta diario en borrador, desglosado por IVA y forma de pago, sin mover inventario.
 - El piloto tSpoonLab sera solo lectura y no marcara pedidos/albaranes como procesados.
 
