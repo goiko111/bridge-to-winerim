@@ -3166,14 +3166,21 @@ function verifyAgoraProductsAgainstScope(
     });
   }
 
+  // Index the catalog once. Large Agora catalogs can exceed 3 MB; scanning the
+  // full XML with one regex per mapped product exhausts the Edge Function CPU.
+  const productXmlById = new Map<string, { openingAttrs: string; xml: string }>();
+  for (const element of extractXmlElementsWithAttrs(verifyXml, "Product")) {
+    const openingMatch = element.xml.match(/^<Product\b([^>]*)>/i);
+    if (!openingMatch) continue;
+    const productId = openingMatch[1].match(/\bId="([^"]*)"/i)?.[1];
+    if (productId) productXmlById.set(productId, { openingAttrs: openingMatch[1], xml: element.xml });
+  }
+
   for (const product of products) {
     result.summary.checked++;
-    const productFullRegex = new RegExp(
-      `<Product[^>]*Id="${product.productId}"([^>]*)>([\\s\\S]*?)<\\/Product>`, "i",
-    );
-    const productMatch = verifyXml.match(productFullRegex);
+    const productElement = productXmlById.get(String(product.productId));
 
-    if (!productMatch) {
+    if (!productElement) {
       result.summary.failed++;
       result.verified_exists = false;
       result.success = false;
@@ -3198,8 +3205,8 @@ function verifyAgoraProductsAgainstScope(
       continue;
     }
 
-    const attrs = productMatch[1];
-    const innerXml = productMatch[2];
+    const attrs = productElement.openingAttrs;
+    const innerXml = productElement.xml;
     let productOk = true;
 
     // CHECK: PRICES
@@ -8107,7 +8114,13 @@ ${costPricesXml}
         const actualPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
 
         try {
-          const cachedProductsTask = await fetchAgoraProductsXmlCached(task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          // The import may have been preceded by a cached catalog read. Always
+          // verify against a fresh response so an accepted-but-not-persisted
+          // write can never be reported as SUCCESS.
+          invalidateAgoraProductsCache(task.connection_id);
+          const cachedProductsTask = await fetchAgoraProductsXmlCached(
+            task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+          );
           const verifyRes = { ok: cachedProductsTask.ok, status: cachedProductsTask.status, text: async () => cachedProductsTask.xml };
 
           const { data: cachedMaster2 } = await supabase
@@ -8160,7 +8173,7 @@ ${costPricesXml}
           });
 
           if (verifyRes.ok) {
-            const verifyXml = await verifyRes.text();
+            let verifyXml = await verifyRes.text();
 
             // ── DIAGNOSTICS: Extract actual stored prices from Agora's response ──
             for (const p of productsToVerify) {
@@ -8196,6 +8209,56 @@ ${costPricesXml}
               scope_frozen_at: taskPayload._scope_frozen_at || null,
               legacy_verification_scope: !hasFrozenScope && (!!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0)),
             };
+
+            // A newly created product can take a moment to become visible in
+            // export-master. Retry only NOT_FOUND failures with forced reads;
+            // other verification failures are deterministic and should fail now.
+            let verificationAttempts = 1;
+            while (
+              !taskVerification.success &&
+              verificationAttempts < 3 &&
+              taskVerification.errors.length > 0 &&
+              taskVerification.errors.every((issue: AgoraVerificationIssue) => issue.code === "NOT_FOUND")
+            ) {
+              verificationAttempts++;
+              await new Promise((resolve) => setTimeout(resolve, verificationAttempts * 1_500));
+              invalidateAgoraProductsCache(task.connection_id);
+              const retryProducts = await fetchAgoraProductsXmlCached(
+                task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+              );
+              if (!retryProducts.ok) break;
+              verifyXml = retryProducts.xml;
+              for (const p of productsToVerify) {
+                const pRegex = new RegExp(
+                  `<Product[^>]*Id="${p.productId}"[^>]*>([\\s\\S]*?)<\\/Product>`, "i",
+                );
+                const pMatch = verifyXml.match(pRegex);
+                const actualPrices: { priceListId: string; mainPrice: string }[] = [];
+                if (pMatch) {
+                  const apReg = /<Price[^>]*PriceListId="(\d+)"[^>]*MainPrice="([^"]*)"/gi;
+                  let ap;
+                  while ((ap = apReg.exec(pMatch[1])) !== null) {
+                    actualPrices.push({ priceListId: ap[1], mainPrice: ap[2] });
+                  }
+                }
+                actualPricesByProduct[p.productId] = actualPrices;
+              }
+              taskVerification = {
+                ...verifyAgoraProductsAgainstScope(
+                  verifyXml, productsToVerify,
+                  effectivePriceLists,
+                  effectivePlToSc,
+                ),
+                selected_sale_centers: effectiveSaleCenters,
+                selected_price_lists: effectivePriceLists,
+                ignored_price_lists: effectiveIgnoredPriceLists,
+                verification_scope_source: effectiveScopeSource,
+                scope_frozen: !!hasFrozenScope,
+                scope_frozen_at: taskPayload._scope_frozen_at || null,
+                legacy_verification_scope: !hasFrozenScope && (!!taskPayload._legacy_verification_scope || (!taskPayload._sale_center_id && normalizeStringArray(taskPayload._selected_sale_center_ids).length === 0)),
+              };
+            }
+            taskVerification.post_import_verification_attempts = verificationAttempts;
           } else {
             taskVerification.warnings.push({
               code: "VERIFY_FETCH_FAILED",
@@ -8273,47 +8336,27 @@ ${costPricesXml}
         const updatedPayload = { ...taskPayload, _diagnostics: diagnostics };
 
         if (!taskVerification.success) {
-          // Distinguish between hard failures and soft verification issues (e.g. NOT_FOUND after successful import)
-          const hardErrors = (taskVerification.errors as AgoraVerificationIssue[]).filter(
-            (e) => e.code !== "NOT_FOUND"
-          );
-          const notFoundErrors = (taskVerification.errors as AgoraVerificationIssue[]).filter(
-            (e) => e.code === "NOT_FOUND"
-          );
-
-          // If the ONLY verification failures are NOT_FOUND (product not yet indexed by Agora after import),
-          // treat as SUCCESS with warnings — the import itself was accepted (HTTP 200).
-          if (hardErrors.length === 0 && notFoundErrors.length > 0) {
-            // Downgrade NOT_FOUND to warnings
-            for (const nf of notFoundErrors) {
-              taskVerification.warnings.push({
-                ...nf,
-                code: "NOT_FOUND_POST_IMPORT",
-                message: `${nf.message} (import accepted, verification pending — Agora may need time to index)`,
-              });
-            }
-            taskVerification.errors = [];
-            taskVerification.success = true;
-            // Fall through to the success path below
-          } else {
-            const failMsg = `Post-import verification failed: ${(taskVerification.errors as AgoraVerificationIssue[]).map((e) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 1000);
-            await supabase.from("outbound_tasks").update({
-              status: "FAILED",
-              last_error: failMsg,
-              payload_json: updatedPayload,
-            }).eq("id", task.id);
-            // ── PUSH TRACKING: Mark FAILED per format ──
-            for (const fmt of fmtTypes) {
-              await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
-                sync_status: "FAILED",
-                task_id: task.id,
-                last_error: failMsg.substring(0, 500),
-                pushed_at: new Date().toISOString(),
-              });
-            }
-            return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          const verificationIssues = [
+            ...(taskVerification.errors as AgoraVerificationIssue[]),
+            ...(taskVerification.warnings as AgoraVerificationIssue[]),
+          ];
+          const failMsg = `Post-import verification failed: ${verificationIssues.map((e) => `[${e.code}] ${e.message}`).join("; ")}`.substring(0, 1000);
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED",
+            last_error: failMsg,
+            payload_json: updatedPayload,
+          }).eq("id", task.id);
+          // ── PUSH TRACKING: Mark FAILED per format ──
+          for (const fmt of fmtTypes) {
+            await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
+              sync_status: "FAILED",
+              task_id: task.id,
+              last_error: failMsg.substring(0, 500),
+              pushed_at: new Date().toISOString(),
+            });
           }
+          return new Response(JSON.stringify({ success: false, status: "FAILED", verification: taskVerification, diagnostics }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // Store diagnostics even on success
@@ -9325,18 +9368,47 @@ ${costPricesXml}
       );
 
       // ── PUSH TRACKING: Update verified status per product ──
-      for (const m of (mappings || [])) {
-        const productOk = !verifyResult.errors.some((e: any) =>
-          (e.context as Record<string, unknown>)?.productId === m.provider_product_id
-        );
-        await upsertPushTracking(supabase, connectionId, m.winerim_wine_id, m.format_type, {
+      const errorsByProductId = new Map<string, string[]>();
+      for (const issue of verifyResult.errors) {
+        const productId = String(issue.context?.productId || "");
+        if (!productId) continue;
+        const messages = errorsByProductId.get(productId) || [];
+        messages.push(issue.message);
+        errorsByProductId.set(productId, messages);
+      }
+
+      const verifiedAt = new Date().toISOString();
+      const trackingRows = (mappings || []).map((m: any) => {
+        const productId = String(m.provider_product_id || "");
+        const productErrors = errorsByProductId.get(productId) || [];
+        const productOk = productErrors.length === 0;
+        return {
+          connection_id: connectionId,
+          winerim_wine_id: m.winerim_wine_id,
+          format: m.format_type,
+          agora_product_id: productId,
+          agora_family_id: null,
+          source: "WINERIM",
           sync_status: productOk ? "VERIFIED" : "FAILED",
-          agora_product_id: m.provider_product_id,
-          verified_at: productOk ? new Date().toISOString() : null,
-          last_error: productOk ? null : verifyResult.errors
-            .filter((e: any) => (e.context as Record<string, unknown>)?.productId === m.provider_product_id)
-            .map((e: any) => e.message).join("; ").substring(0, 500),
-        });
+          task_id: null,
+          last_error: productOk ? null : productErrors.join("; ").substring(0, 500),
+          pushed_at: null,
+          verified_at: productOk ? verifiedAt : null,
+        };
+      });
+
+      const trackingErrors: string[] = [];
+      let trackingUpdated = 0;
+      for (let offset = 0; offset < trackingRows.length; offset += 250) {
+        const chunk = trackingRows.slice(offset, offset + 250);
+        const { error: trackingError } = await supabase
+          .from("winerim_push_tracking")
+          .upsert(chunk, { onConflict: "connection_id,winerim_wine_id,format" });
+        if (trackingError) {
+          trackingErrors.push(trackingError.message);
+        } else {
+          trackingUpdated += chunk.length;
+        }
       }
 
       return new Response(JSON.stringify({
@@ -9350,6 +9422,11 @@ ${costPricesXml}
         selectedPriceLists: verificationScope.selectedPriceLists,
         ignoredPriceLists: verificationScope.ignoredPriceLists,
         verificationScopeSource: verificationScope.source,
+        trackingPersistence: {
+          attempted: trackingRows.length,
+          updated: trackingUpdated,
+          errors: trackingErrors,
+        },
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

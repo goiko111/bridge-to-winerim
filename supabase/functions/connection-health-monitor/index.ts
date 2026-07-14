@@ -245,7 +245,10 @@ function buildProblems(connection: any, probe: ProbeResult, signals: any): Probl
   const pausedUntil = connection.circuit_breaker_paused_until;
   const isPaused = pausedUntil && new Date(pausedUntil).getTime() > now;
 
-  if (isPaused) {
+  // A failed probe and an open breaker are normally the same incident. Keep a
+  // single connectivity alert while the POS is unreachable so the monitor does
+  // not open two tickets (and two email threads) for one outage.
+  if (isPaused && probe.status !== "DOWN") {
     problems.push({
       key: "breaker_open",
       type: "circuit_breaker",
@@ -267,7 +270,12 @@ function buildProblems(connection: any, probe: ProbeResult, signals: any): Probl
       message: `No se puede alcanzar Agora desde Lovable Cloud. Revisar TPV encendido, puerto, router, firewall o DDNS.`,
       errorClass: probe.errorClass,
       errorMessage: probe.errorMessage,
-      details: probe.details,
+      details: {
+        ...probe.details,
+        breakerOpen: Boolean(isPaused),
+        pausedUntil: isPaused ? pausedUntil : null,
+        consecutiveFailures: connection.consecutive_failures || 0,
+      },
     });
     return problems;
   }
