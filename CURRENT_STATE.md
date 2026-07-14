@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 17:18 CEST_
+_Última actualización: 2026-07-14 17:49 CEST_
 
 ## Hechos (flujo tSpoonLab/Holded y legacy PurOsushi — 2026-07-14 12:39 CEST)
 
@@ -4456,3 +4456,32 @@ _Última actualización: 2026-07-14 17:18 CEST_
 - Taberna de Elia: pedir refresco/reinicio completo del terminal, captura de las familias y una venta controlada desde un botón Winerim.
 - Añadir al verificador de flota la prioridad `mapping CONFIRMED/regla de conexión -> ID determinista fallback`, para que Sa Pedrera no vuelva a aparecer como incompleta.
 - Revisar por separado productos Winerim históricos que quedaron visibles tras perder precio/actividad, siempre con lote reversible y sin mezclarlo con la cobertura actual.
+
+## 2026-07-14 - Auditoría operativa A-I de las 15 conexiones Agora habilitadas
+
+### Hechos
+- La auditoría fue `READ-ONLY` y separó catálogo de operación real. Resultado: `0/15` conexiones reúnen hoy evidencia de todos los bloques obligatorios para `100%_SIGNED_OFF`.
+- `Cienvinos Ecija` es la más cercana: conexión, catálogo, automatización, ventas recientes, botella+copa, stock y alertas pasan; faltan canary formal de alta/precio, cancelación/idempotencia documentada y confirmación terminal.
+- `Casa Nene` no es todavía un 100% integral: catálogo y auto-push están correctos, pero no hay copa real resuelta en siete días y conserva una alerta `sales_stale` abierta que contradice actividad reciente y debe reconciliarse.
+- `Taberna de Elia` tiene botella+copa y stock recientes, pero la ingesta se clasificó parcial, existe `sales_stale` y falta confirmación visual del terminal.
+- `Sa Pedrera` tiene ventas recientes de botella+copa y stock correcto. Bloquean el cierre operativo tareas legacy `BLOCKED` pendientes de clasificar y `10` tracking `NOT_PUSHED`; no deben restaurarse productos archivados que duplicarían sus botones especiales.
+- `El Higuerón` tiene tráfico y botella real validada; falta una copa real reciente y los canaries de catálogo.
+- `Katsu Izakaya`, `Luruna`, `Chiquilla`, `PurOsushi`, `El Bejeque` y `Kava` no aportan en los últimos siete días evidencia suficiente de líneas Winerim resueltas en botella+copa. Katsu conserva `3 QUEUED`; Luruna `4 NOT_PUSHED`; Bejeque `2 BLOCKED`; Kava y Bejeque no tienen ventas desde el 11/07.
+- `Sa Vida` conserva el catálogo fresh completo, pero la automatización futura no puede certificarse mientras `auto_push_verified_ready=false`; el tracking observado mantiene `293 NOT_PUSHED` y no hay copa real reciente.
+- `Restaurante Triana` conserva catálogo visible, pero `auto_push_glass=false`, `188 NOT_PUSHED` y ninguna línea botella/copa resuelta reciente bloquean `LIVE`.
+- `Jardi` tiene breaker y alerta crítica de conectividad abiertos y `10 QUEUED`; `Qtomas` sigue con `No route to host`, breaker, `60 QUEUED` y `5 FAILED`. Ninguna es verificable operativamente hasta recuperar red.
+- La cobertura de catálogo fresh anterior sigue vigente: `14/15` habilitadas tienen todo el catálogo esperado; Qtomas es la única no verificable. Esta cobertura no contradice los fallos operativos de tracking, ventas o configuración.
+
+### Decisiones
+- Usar desde ahora los estados `CATALOG_READY`, `LIVE` y `100%_SIGNED_OFF`; no llamar 100% a Casa Nene ni a ninguna otra conexión sin superar todos los bloques obligatorios.
+- Open tickets es `N/A` cuando el Agora local no lo expone; la ingesta de facturas cerradas nunca es opcional.
+- No convertir `NO EVIDENCE` en `PASS`. La aceptación requiere evidencia reciente, preferiblemente de los últimos siete días y con observación limpia posterior.
+
+### Hipótesis
+- Algunas alertas `sales_stale` abiertas pese a actividad reciente pueden ser alertas obsoletas o una regla de monitor incoherente, no necesariamente una interrupción actual; deben reconciliarse antes de cerrarlas.
+- Los recuentos `NOT_PUSHED` de Sa Vida y Triana pueden incluir tracking histórico aunque el master fresh ya cubra el catálogo; aun así, sus flags desactivados sí bloquean futuras altas o cambios automáticos.
+
+### Tareas pendientes inmediatas
+- Convertir la matriz A-I en auditor persistente y guardar evidencia por conexión: conectividad, catálogo, canary, ventas, stock, idempotencia, terminal y alertas.
+- Cerrar primero Cienvinos, Taberna de Elia, Sa Pedrera y Casa Nene; después Higuerón, Katsu, Luruna, Chiquilla y PurOsushi.
+- Recuperar Jardi y Qtomas con SAT antes de tocar sus colas.

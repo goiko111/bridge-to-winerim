@@ -1096,3 +1096,23 @@
 - [ ] Taberna de Elia: hacer una venta real desde botón Winerim y comprobar historial/stock.
 - [ ] Implementar en el auditor persistente la resolución por mapping/regla específica antes del fallback determinista.
 - [ ] Clasificar como `WONT_FIX` las 7 tareas antiguas de Sa Pedrera que apuntan a formatos `ARCH`, sin reencolarlas ni tocar los botones activos `903xxx`.
+
+## P0 - Cierre operativo Agora hacia `100%_SIGNED_OFF` (2026-07-14)
+
+- [x] Ejecutar auditoría `READ-ONLY` A-I de las `15` conexiones habilitadas y separar catálogo completo de operación integral.
+- [ ] Cienvinos: registrar canary de alta y cambio de precio, prueba de cancelación/reconciliación, recuperación idempotente y confirmación terminal; mantener cola y alertas a cero.
+- [ ] Taberna de Elia: reconciliar/cerrar `sales_stale`, confirmar visualmente familias en terminal y registrar una venta real botella+copa con hora y stock correctos.
+- [ ] Sa Pedrera: clasificar tareas legacy `BLOCKED` como `WONT_FIX` cuando corresponda, resolver los `10 NOT_PUSHED` elegibles y registrar canary/cancelación sin duplicar botones `903xxx`.
+- [ ] Casa Nene: investigar y cerrar la alerta `sales_stale`; ejecutar una venta real de copa desde botón Winerim y registrar canary de alta/precio e idempotencia.
+- [ ] El Higuerón: ejecutar una copa real y los canaries de alta/precio; comprobar la hora visible y la ausencia de duplicados.
+- [ ] Katsu Izakaya: drenar o diagnosticar `3 QUEUED` y obtener botella+copa Winerim resueltas en historial.
+- [ ] Luruna: resolver `4 NOT_PUSHED` y confirmar uso real botella+copa desde botones Winerim.
+- [ ] Chiquilla y PurOsushi: obtener prueba real botella+copa, stock activo/inactivo e historial TPV; PurOsushi mantiene legacy visible durante el piloto.
+- [ ] Sa Vida: reconciliar tracking frente al master fresh, ejecutar canary y activar `auto_push_verified_ready` solo tras éxito; validar copa real.
+- [ ] Restaurante Triana: revisar por qué hay `188 NOT_PUSHED`, activar copa automática solo tras canary y validar líneas resueltas.
+- [ ] El Bejeque: diagnosticar `2 BLOCKED`, confirmar TPV en uso y realizar prueba botella+copa.
+- [ ] Kava: confirmar si el POS sigue en uso, resolver `sales_stale` y validar botella+copa después del 11/07.
+- [ ] Jardi: recuperar conectividad/breaker con SAT, releer master fresh y reconciliar `10 QUEUED` antes de procesar.
+- [ ] Qtomas: recuperar ruta externa, releer master fresh y reconciliar `60 QUEUED + 5 FAILED` antes de cualquier escritura.
+- [ ] Implementar evidencia persistente para canaries de alta/precio, prueba de cancelación, recuperación e idempotencia; hoy esos bloques aparecen como `NO EVIDENCE`.
+- [ ] Corregir el monitor para que una actividad reciente cierre o invalide de forma coherente una alerta `sales_stale` obsoleta.

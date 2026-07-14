@@ -1366,3 +1366,13 @@
 **Razón:** volver a importar productos ya correctos añade riesgo de duplicados o cambios de orden y no soluciona una caché local del terminal.
 
 **Alternativa descartada:** repetir una carga masiva para intentar forzar la interfaz.
+
+## 2026-07-14 - Catálogo completo no equivale a integración al 100%
+
+**Decisión:** adoptar tres estados verificables: `CATALOG_READY`, `LIVE` y `100%_SIGNED_OFF`. Una conexión solo alcanza el último cuando supera conectividad, catálogo, automatización, ventas botella+copa, stock activo/inactivo, idempotencia/recuperación, salud y aceptación del terminal.
+
+**Razón:** la auditoría operativa mostró `14/15` catálogos completos pero `0/15` conexiones con evidencia de todos los bloques. Casa Nene sirve como referencia de onboarding y auto-push, no como prueba integral de operación.
+
+**Riesgo mitigado:** evitar prometer al cliente que todo funciona por observar familias/productos, cuando podrían faltar ventas resueltas, copas, cambios de precio, recuperación o confirmación visual.
+
+**Alternativa descartada:** usar un único porcentaje agregado o marcar `PASS` cuando no existe evidencia. Oculta fallos distintos y produce falsos positivos.

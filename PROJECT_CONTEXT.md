@@ -57,3 +57,10 @@ Separar siempre: **Hechos | Decisiones | Hipótesis | Tareas**.
 
 ## 6. Referencias técnicas locales
 - Winerim API Token v2: `/Users/GOIKO/Downloads/API_TOKEN_V2_DOCUMENTATION.html` (v2.0.1, última actualización indicada en el HTML: julio 2025).
+
+## 7. Criterio único de estado para una integración Agora
+- `CATALOG_READY`: conexión fresh, catálogo Winerim elegible publicado y verificado por lectura fresh, sin huecos reales ni cola operativa pendiente.
+- `LIVE`: además de `CATALOG_READY`, ventas recientes llegan desde Agora a Winerim con mapping correcto y el comportamiento de stock activo/inactivo está validado.
+- `100%_SIGNED_OFF`: además de `LIVE`, existe evidencia reciente de botella y copa, altas y cambios de precio automáticos, ocultación/reactivación, idempotencia, recuperación tras caída, alertas limpias y aceptación visual/operativa del cliente.
+- Una conexión no se denomina `100%` por tener solo el catálogo completo. Los criterios no aplicables requieren razón documentada; la ausencia de evidencia no equivale a `PASS`.
+- La lectura de tickets abiertos es opcional según soporte del Agora local. Las facturas cerradas y su reconciliación son obligatorias.
