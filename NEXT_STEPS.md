@@ -1130,8 +1130,16 @@
 ## P0 - Reconciliar historial de Cienvinos (2026-07-14)
 
 - [ ] Mantener Cienvinos fuera de `100%_SIGNED_OFF`: el ERP no coincide con Agora el 12, 13 ni 14 de julio.
-- [ ] Implementar conciliación por documento/producto/variante y distinguir `OpenTicket` provisional de `BasicInvoice` definitivo.
-- [ ] Corregir el cálculo para netear cantidades negativas/cancelaciones; no usar el valor absoluto para formar el total definitivo del día.
+- [x] Implementar conciliación por documento/producto/variante y distinguir `OpenTicket` provisional de documento definitivo.
+- [x] Corregir el cálculo para netear cantidades negativas/cancelaciones; no usar el valor absoluto para formar el total definitivo del día.
+- [x] Leer `DocumentType`, separar identidad de abonos y preservar IDs históricos de facturas normales.
+- [x] Desplegar `2804da4` y `20260715090000_agora_refund_sales_guard.sql` en Lovable Cloud.
+- [x] Desactivar la escritura provisional de tickets abiertos con stock Winerim inactivo, manteniendo su captura.
 - [ ] No considerar `sales/import skipped` como evidencia suficiente de una venta visible sin comprobar la referencia externa o el historial resultante.
-- [ ] Extraer los `sale_id` repetidos del 14/07 y preparar un plan de corrección reversible, sin ejecutar anulaciones automáticas.
+- [x] Extraer los `sale_id` repetidos y preparar el lote exacto: `51` anulaciones y `44` unidades a reimportar.
+- [ ] Obtener confirmación explícita y ejecutar el lote controlado; conservar la venta real `Convento botella` y comprobar que se restauran `31` botellas.
+- [ ] Reescribir/reconciliar el ledger `stock_sync_log` contra el resultado definitivo para impedir reimportaciones posteriores.
+- [ ] Verificar en ERP: 12/07 `37 / 199,50 EUR`; 13/07 `61 / 344 EUR` por limitación de PVP histórico; 14/07 `41 / 172,50 EUR`.
+- [ ] Ejecutar de nuevo los tres días y exigir delta cero antes de reabrir la escritura intradía.
 - [ ] Ejecutar una observación limpia de 24 horas y comparar Agora contra ERP Winerim por vino, variante, cantidad y hora.
+- [ ] Solicitar a Winerim una operación reversible por `external_id` (cancelar/actualizar o cantidad negativa) y soporte de precio/importe histórico en `sales/import`.

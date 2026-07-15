@@ -4554,3 +4554,44 @@ _Última actualización: 2026-07-14 18:52 CEST_
 - Construir una conciliación por `business_day + documento Agora + producto + variante`, separando estado provisional de venta definitiva y respetando cantidades negativas/cancelaciones.
 - Generar un listado de ventas ERP a corregir con `sale_id`, motivo y efecto de stock; aplicar cualquier anulación solo tras validación explícita.
 - Repetir la comparación durante un día limpio completo después del último despliegue antes de reactivar o certificar escrituras desde tickets abiertos.
+
+## 2026-07-15 - Causa raíz y plan exacto de reparación de Cienvinos
+
+### Hechos
+- Se desplegó el commit `2804da4` y la migración `20260715090000_agora_refund_sales_guard.sql` en Lovable Cloud. El runtime ya conserva cantidades negativas, distingue facturas de abonos, separa identificadores provisionales/definitivos y no vuelve a enviar como venta definitiva un ticket abierto con stock Winerim inactivo.
+- La causa del desfase era múltiple y reproducible:
+  - las cantidades se normalizaban con valor absoluto, convirtiendo devoluciones en ventas positivas;
+  - los snapshots sucesivos de un ticket abierto se enviaron a `/api/v2/sales/import` como acumulados definitivos;
+  - los eventos provisionales ya vistos podían desaparecer del cálculo de conciliación al llegar la factura;
+  - el tipo de documento se leía desde `Type` aunque Agora devuelve `DocumentType`;
+  - facturas y abonos pueden compartir numeración y colisionaban si se usaba solo `Number`;
+  - una referencia a `savedEventIds` no definida interrumpía parte del flujo intradía.
+- Verdad final de Agora, una vez cerrados los documentos:
+  - `12/07`: `37` unidades y `199,50 EUR`;
+  - `13/07`: `61` unidades y `320 EUR`;
+  - `14/07`: `65` unidades positivas y `24` anuladas, resultado neto `41` unidades y `172,50 EUR`.
+- El historial Winerim previo a la corrección contiene `33`, `53` y `90` unidades respectivamente. La cifra anterior de `72` del 14/07 era una captura parcial del día; el piloto siguió escribiendo acumulados después de esa lectura.
+- La reparación exacta queda acotada a `51` anulaciones de registros ERP incorrectos/duplicados y `44` unidades canónicas a importar:
+  - `12/07`: importar las cuatro unidades ausentes;
+  - `13/07`: anular dos filas ajenas/excedentes e importar diez unidades;
+  - `14/07`: anular cuarenta y nueve registros acumulados e importar treinta unidades netas canónicas.
+- Solo el exceso de `Convento botella` afecta stock activo: se conservará la venta real más reciente y la anulación de las otras `31` filas restaurará `31` botellas. Las demás variantes de la reparación tenían stock inactivo y solo corrigen historial.
+- `/api/v2/sales/import` calcula el importe con el precio actual de Winerim, no con el precio histórico de Agora. Por ello el 13/07 quedará correcto en cantidades (`61`) pero Winerim mostrará `344 EUR`: la diferencia de `24 EUR` corresponde a Terras Gauda, vendido en Agora a `18 EUR` y valorado hoy en Winerim a `42 EUR`.
+- La API Winerim disponible no permite cancelar/actualizar por identificador externo ni importar una venta negativa. La cancelación de los registros existentes requiere la acción autenticada del ERP.
+
+### Decisiones
+- Mantener en Cienvinos `open_tickets_sync_enabled=true` para captura, pero `open_tickets_stock_sync_enabled=false`: con stock inactivo no se publican snapshots provisionales en el historial; se espera a la factura definitiva.
+- Preservar el identificador legacy de las facturas normales para no duplicar eventos históricos, y añadir namespace únicamente a devoluciones/abonos.
+- No ejecutar las `51` anulaciones hasta recibir confirmación explícita del usuario sobre el lote exacto. La lista de `sale_id`, la venta que debe conservarse y el efecto de stock están identificados.
+- No falsear el importe histórico cambiando temporalmente el PVP vivo de Terras Gauda. La cantidad y trazabilidad prevalecen hasta que Winerim acepte precio/importe histórico en `sales/import`.
+
+### Hipótesis
+- Con el runtime desplegado y la escritura provisional desactivada para stock inactivo no deberían aparecer nuevos acumulados cada cinco minutos; esto debe confirmarse durante dos ciclos y después durante un día completo.
+- Una operación reversible y realmente inmediata para ventas sin stock requerirá ampliar Winerim con cancelación/actualización por `external_id` o con cantidades negativas idempotentes.
+
+### Tareas pendientes inmediatas
+- Tras confirmación expresa, ejecutar las `51` anulaciones controladas, verificar la restauración de `31` botellas de Convento e importar las `44` unidades canónicas.
+- Reconciliar `stock_sync_log` contra el objetivo definitivo de cada día para que el cron no reimporte diferencias ya reparadas.
+- Ejecutar `sync-intraday-sales` para los días 12, 13 y 14 y exigir delta cero.
+- Verificar en el ERP los totales finales esperados: `37 / 199,50 EUR`, `61 / 344 EUR` y `41 / 172,50 EUR`.
+- Observar dos ciclos de cinco minutos y después 24 horas sin nuevas duplicidades antes de devolver Cienvinos a `100%_SIGNED_OFF`.

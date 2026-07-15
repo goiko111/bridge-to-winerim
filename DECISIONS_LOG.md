@@ -1400,3 +1400,33 @@
 **Alternativa descartada:** seguir enviando cada estado del ticket abierto a `sales/import` o `PUT stock` y compensarlo después. Winerim no ofrece en este flujo una eliminación/actualización inequívoca de la venta provisional y la compensación de stock no limpia el historial.
 
 **Rollback:** cualquier activación futura de mutación desde tickets abiertos seguirá siendo un flag por conexión; desactivarlo conserva captura y facturas cerradas sin tocar catálogo.
+
+## 2026-07-15 - Cienvinos: capturar tickets abiertos, escribir solo facturas definitivas con stock inactivo
+
+**Decisión:** mantener la lectura de tickets abiertos para diagnóstico y baja latencia, pero no llamar a `sales/import` ni mutar stock desde ellos cuando la variante Winerim tenga el stock inactivo. La venta se escribe al recibir la factura definitiva.
+
+**Razón:** `sales/import` es una escritura irreversible con la API actual: no permite cancelar por `external_id`, actualizar una cantidad acumulada ni enviar cantidades negativas. En Cienvinos, cada snapshot `1,2,3...` terminó convertido en una venta adicional.
+
+**Riesgos controlados:** las ventas sin stock activo dejan de ser casi inmediatas y esperan al cierre del documento; a cambio, no se duplica el historial. Las variantes con stock activo siguen requiriendo una estrategia reversible antes de reactivar mutación desde tickets abiertos.
+
+**Alternativa descartada:** compensar acumulados con nuevas ventas negativas o restauraciones manuales. La API no admite ventas negativas y restaurar stock no elimina la fila incorrecta del historial.
+
+**Rollback:** `open_tickets_stock_sync_enabled` sigue siendo un flag por conexión. Solo debe reactivarse cuando Winerim soporte actualización/cancelación idempotente por referencia externa.
+
+## 2026-07-15 - Facturas y abonos Agora conservan signo e identidad distinta
+
+**Decisión:** netear cantidades con su signo, leer `DocumentType` y añadir namespace al identificador de abonos, preservando el identificador histórico de facturas normales.
+
+**Razón:** usar `abs()` convertía devoluciones en consumo y usar únicamente el número permitía que factura y abono colisionaran. Cambiar también los IDs de facturas ya procesadas habría roto la idempotencia histórica y duplicado ventas.
+
+**Riesgos controlados:** los abonos quedan almacenados para conciliación pero marcados como no elegibles para `sales/import`/stock hasta disponer de una operación reversible en Winerim.
+
+**Alternativa descartada:** renombrar retrospectivamente todos los documentos. Habría hecho que el middleware considerase nuevas facturas ya importadas.
+
+## 2026-07-15 - No alterar PVP vivo para reproducir importes históricos
+
+**Decisión:** reparar Cienvinos con cantidades y variantes exactas, aceptando que el 13/07 Winerim valore Terras Gauda al PVP actual mientras `sales/import` no acepte importe o precio histórico.
+
+**Razón:** bajar temporalmente el PVP a `18 EUR`, importar y restaurarlo a `42 EUR` expondría un precio incorrecto en Agora/carta y abriría una carrera con la sincronización automática.
+
+**Alternativa descartada:** manipular el precio productivo durante la reparación. El riesgo comercial es mayor que conservar una discrepancia monetaria conocida y documentada.
