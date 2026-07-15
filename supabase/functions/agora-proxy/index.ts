@@ -4953,7 +4953,7 @@ serve(async (req) => {
             total_amount: Number(inv.TotalAmount || docTotal),
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
-            line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv),
+            line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv, day),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
@@ -5124,7 +5124,7 @@ serve(async (req) => {
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
             line_count: lineData.length,
-            raw_json: withAgoraOperationalMetadata(inv),
+            raw_json: withAgoraOperationalMetadata(inv, day),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
@@ -5384,7 +5384,7 @@ serve(async (req) => {
               total_amount: Number(inv.TotalAmount || docTotal),
               total_tax: Number(inv.TotalTaxAmount || 0),
               total_net: Number(inv.TotalNetAmount || 0),
-              line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv),
+              line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv, day),
             }, { onConflict: "connection_id,provider_doc_id" })
             .select("id").single();
 

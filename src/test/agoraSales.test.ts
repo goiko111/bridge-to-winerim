@@ -1,6 +1,7 @@
 import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
+  isAgoraDocumentWithinBusinessDay,
   isAgoraRefundDocument,
   withAgoraOperationalMetadata,
 } from "../../supabase/functions/_shared/agoraSales";
@@ -39,6 +40,41 @@ describe("Agora sales document identity and refunds", () => {
 
   it("also recognizes a negative document total when the type is missing", () => {
     expect(isAgoraRefundDocument({ Totals: { GrossAmount: -10 } })).toBe(true);
+  });
+
+  it("keeps current and after-midnight lines inside the requested business day", () => {
+    const invoice = {
+      InvoiceItems: [{
+        Lines: [
+          { CreationDate: "2026-07-14T22:10:00" },
+          { CreationDate: "2026-07-15T01:15:00" },
+        ],
+      }],
+    };
+
+    expect(isAgoraDocumentWithinBusinessDay(invoice, "2026-07-14")).toBe(true);
+    expect(withAgoraOperationalMetadata(invoice, "2026-07-14")).toBe(invoice);
+  });
+
+  it("keeps stale refund originals for audit but excludes them from stock sync", () => {
+    const staleOriginal = {
+      DocumentType: "StandardInvoice",
+      BusinessDay: "2026-07-14",
+      InvoiceItems: [{ Lines: [{ CreationDate: "2026-06-29T21:14:52" }] }],
+    };
+
+    expect(isAgoraDocumentWithinBusinessDay(staleOriginal, "2026-07-14")).toBe(false);
+    expect(withAgoraOperationalMetadata(staleOriginal, "2026-07-14")).toMatchObject({
+      _agora_out_of_day_document: true,
+      _stock_sync_eligible: false,
+      _stock_sync_skip_reason: "provider_line_dates_outside_requested_business_day",
+    });
+  });
+
+  it("does not disable providers that omit line timestamps", () => {
+    const invoice = { BusinessDay: "2026-07-14", DocumentType: "BasicInvoice" };
+    expect(isAgoraDocumentWithinBusinessDay(invoice, "2026-07-14")).toBe(true);
+    expect(withAgoraOperationalMetadata(invoice, "2026-07-14")).toBe(invoice);
   });
 
   it("preserves the exact legacy identity priority for normal invoices", () => {

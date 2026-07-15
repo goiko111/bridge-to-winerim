@@ -76,7 +76,7 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
   it("never turns negative Agora quantities into positive sales", () => {
     expect(agoraProxySource).toContain("signedWholeSaleQuantity(line.quantity)");
     expect(agoraProxySource).not.toContain("Math.ceil(Math.abs(Number(line.quantity || 0)))");
-    expect(agoraProxySource).toContain("withAgoraOperationalMetadata(inv)");
+    expect(agoraProxySource).toContain("withAgoraOperationalMetadata(inv, day)");
     expect(agoraProxySource).toContain("agoraDocumentType(inv)");
   });
 });
