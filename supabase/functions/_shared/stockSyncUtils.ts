@@ -21,6 +21,20 @@ export function variantForAgoraFormat(format: unknown): WinerimVariant {
   return "botella";
 }
 
+export function signedWholeSaleQuantity(value: unknown): number {
+  const quantity = Number(value || 0);
+  if (!Number.isFinite(quantity) || quantity === 0) return 0;
+  return quantity > 0 ? Math.ceil(quantity) : Math.floor(quantity);
+}
+
+export function netSyncedQuantity(values: unknown[]): number {
+  const signedTotal = values.reduce((total, value) => {
+    const quantity = Number(value || 0);
+    return Number.isFinite(quantity) ? total + quantity : total;
+  }, 0);
+  return Math.max(0, signedTotal);
+}
+
 export function findEntryForVariant<T extends { variant?: unknown }>(
   entries: T[],
   variant: WinerimVariant,

@@ -8,7 +8,9 @@ import {
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
+  netSyncedQuantity,
   salesImportQtyWhenStockDidNotMove,
+  signedWholeSaleQuantity,
   variantForAgoraFormat,
 } from "../../supabase/functions/_shared/stockSyncUtils";
 
@@ -28,6 +30,15 @@ describe("stock sync utils", () => {
     expect(variantForAgoraFormat("MAGNUM")).toBe("magnum");
     expect(variantForAgoraFormat("BOTELLA")).toBe("botella");
     expect(variantForAgoraFormat(null)).toBe("botella");
+  });
+
+  it("preserves cancellation signs and nets compensating sync rows once", () => {
+    expect(signedWholeSaleQuantity(1.2)).toBe(2);
+    expect(signedWholeSaleQuantity(-1.2)).toBe(-2);
+    expect(signedWholeSaleQuantity(0)).toBe(0);
+
+    expect(netSyncedQuantity([5, -2, 1])).toBe(4);
+    expect(netSyncedQuantity([-2, 1])).toBe(0);
   });
 
   it("finds price and stock rows by variant aliases", () => {

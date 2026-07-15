@@ -3,6 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
 import {
+  agoraDocumentType,
+  buildAgoraInvoiceDocId,
+  withAgoraOperationalMetadata,
+} from "../_shared/agoraSales.ts";
+import {
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
   decideSalesCursorAdvance,
@@ -10,6 +15,7 @@ import {
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
+  signedWholeSaleQuantity,
   salesImportQtyWhenStockDidNotMove,
   variantForAgoraFormat,
   type WinerimVariant,
@@ -773,29 +779,6 @@ function staleOpenTicketRestoreLookbackHours(providerConfig: Record<string, unkn
   return Math.min(168, Math.max(1, parsed));
 }
 
-// Agora may omit InvoiceId/Id in some installations. A blank provider_doc_id
-// collapses all invoices for the day into one row, so every sales import path
-// must use the same deterministic fallback.
-function buildAgoraInvoiceDocId(invoice: Record<string, unknown>, day: string, invoiceIndex: number): string {
-  const candidates = [
-    invoice.InvoiceId,
-    invoice.Id,
-    invoice.DocumentId,
-    invoice.DocId,
-    invoice.TicketId,
-    invoice.OrderId,
-    invoice.Number,
-    invoice.InvoiceNumber,
-    invoice.DocumentNumber,
-    invoice.Code,
-  ];
-  for (const candidate of candidates) {
-    const value = String(candidate || "").trim();
-    if (value) return value;
-  }
-  return `${day}_inv_${invoiceIndex}`;
-}
-
 function todayInTimeZone(timeZone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -1120,7 +1103,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const lineCandidates = mappedLines
     .map((line: any) => {
       const variant = variantForAgoraFormat(line.format);
-      const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
+      const qty = signedWholeSaleQuantity(line.quantity);
       return {
         line,
         variant,
@@ -1599,8 +1582,8 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
     if (!line.winerim_product_id || !line.is_wine_candidate) continue;
-    const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
-    if (qty <= 0) continue;
+    const qty = signedWholeSaleQuantity(line.quantity);
+    if (qty === 0) continue;
     mappedLineCount++;
     const variant = variantForAgoraFormat(line.format);
     const groupKey = buildStockSyncGroupKey(line.sales_event_id, line.winerim_product_id, variant);
@@ -1623,6 +1606,10 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         providerSoldAt: normalizeProviderSoldAt(line.provider_sold_at),
       });
     }
+  }
+
+  for (const [key, group] of desiredGroups.entries()) {
+    if (group.desiredQty <= 0) desiredGroups.delete(key);
   }
 
   if (desiredGroups.size === 0) {
@@ -1653,9 +1640,13 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
       const variant = normalizeWinerimVariant(row.variant);
       if (!variant) continue;
       const groupKey = buildStockSyncGroupKey(row.sales_event_id, row.winerim_product_id, variant);
-      const qty = Math.max(0, Number(row.quantity || 0));
+      const qty = Number(row.quantity || 0);
+      if (!Number.isFinite(qty)) continue;
       alreadyQtyByGroup.set(groupKey, (alreadyQtyByGroup.get(groupKey) || 0) + qty);
     }
+  }
+  for (const [key, quantity] of alreadyQtyByGroup.entries()) {
+    alreadyQtyByGroup.set(key, Math.max(0, quantity));
   }
 
   const terminalGroups = new Set<string>();
@@ -2056,9 +2047,10 @@ async function syncStockForDayIncrementalByDayTotal(
     .eq("connection_id", connectionId)
     .eq("business_day", day);
 
+  const allDayEventIds = (dayEvents || []).map((event: { id: string }) => event.id);
   const eligibleEvents = (dayEvents || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
-  const allDayEventIds = eligibleEvents.map((event: { id: string }) => event.id);
-  if (allDayEventIds.length === 0) {
+  const eligibleEventIds = eligibleEvents.map((event: { id: string }) => event.id);
+  if (eligibleEventIds.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
   }
 
@@ -2069,11 +2061,13 @@ async function syncStockForDayIncrementalByDayTotal(
     .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() !== "openticket")
     .map((event: { id: string }) => event.id);
   const desiredEventIds = (desiredEventIdsOverride && desiredEventIdsOverride.length > 0)
-    ? desiredEventIdsOverride.filter((id) => allDayEventIds.includes(id))
-    : (definitiveEventIds.length > 0 ? definitiveEventIds : allDayEventIds);
+    ? desiredEventIdsOverride.filter((id) => eligibleEventIds.includes(id))
+    : (definitiveEventIds.length > 0 ? definitiveEventIds : eligibleEventIds);
   if (desiredEventIds.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No current sales events selected for this day" };
   }
+  const definitiveEventIdSet = new Set(definitiveEventIds);
+  const desiredSource = desiredEventIds.some((id) => definitiveEventIdSet.has(id)) ? "definitive" : "open_ticket";
 
   const { data: lines } = await supabase
     .from("sales_line_items")
@@ -2100,8 +2094,8 @@ async function syncStockForDayIncrementalByDayTotal(
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
     if (!line.winerim_product_id || !line.is_wine_candidate) continue;
-    const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
-    if (qty <= 0) continue;
+    const qty = signedWholeSaleQuantity(line.quantity);
+    if (qty === 0) continue;
     mappedLineCount++;
     const variant = variantForAgoraFormat(line.format);
     const wineId = String(line.winerim_product_id);
@@ -2123,6 +2117,10 @@ async function syncStockForDayIncrementalByDayTotal(
         providerSoldAt: normalizeProviderSoldAt(line.provider_sold_at),
       });
     }
+  }
+
+  for (const [key, total] of desiredTotals.entries()) {
+    if (total.desiredQty <= 0) desiredTotals.delete(key);
   }
 
   if (desiredTotals.size === 0) {
@@ -2154,8 +2152,11 @@ async function syncStockForDayIncrementalByDayTotal(
       const key = `${row.winerim_product_id}::${variant}`;
       const qty = Number(row.quantity || 0);
       if (!Number.isFinite(qty)) continue;
-      alreadyQtyByTotal.set(key, Math.max(0, (alreadyQtyByTotal.get(key) || 0) + qty));
+      alreadyQtyByTotal.set(key, (alreadyQtyByTotal.get(key) || 0) + qty);
     }
+  }
+  for (const [key, quantity] of alreadyQtyByTotal.entries()) {
+    alreadyQtyByTotal.set(key, Math.max(0, quantity));
   }
 
   const terminalTotals = new Set<string>();
@@ -2192,7 +2193,7 @@ async function syncStockForDayIncrementalByDayTotal(
         ...total,
         alreadyQty,
         deltaQty,
-        idempotencyKey: `${connectionId}:${day}:${total.winerimWineId}:${total.variant}:target:${total.desiredQty}`,
+        idempotencyKey: `${connectionId}:${day}:${total.winerimWineId}:${total.variant}:target:${total.desiredQty}:source:${desiredSource}`,
       };
     })
     .filter((total) => total.deltaQty > 0);
@@ -2205,7 +2206,7 @@ async function syncStockForDayIncrementalByDayTotal(
       .from("stock_sync_log")
       .select("idempotency_key")
       .eq("connection_id", connectionId)
-      .in("status", ["PENDING", "SUCCESS"])
+      .in("status", ["PENDING", "SUCCESS", "SKIPPED"])
       .in("idempotency_key", chunk);
     for (const row of (existingRows || []) as { idempotency_key: string }[]) {
       existingTargetKeys.add(row.idempotency_key);
@@ -2313,6 +2314,30 @@ async function syncStockForDayIncrementalByDayTotal(
 
     const previousStock = match.stock;
     if (!match.stockActive) {
+      if (desiredSource === "open_ticket") {
+        await supabase.from("stock_sync_log").update({
+          status: "SKIPPED",
+          stock_id: match.id,
+          error_message: null,
+          winerim_response: {
+            mode: "open_ticket_sales_only_deferred_to_invoice",
+            previousStock,
+            newStock: previousStock,
+            soldQty: 0,
+            desiredQty: claim.desiredQty,
+            alreadySyncedQty: claim.alreadyQty,
+            variant: claim.variant,
+            stockId: match.id,
+            stockActive: false,
+            businessDay: day,
+            providerSoldAt: claim.providerSoldAt,
+            reason: "Inactive stock sales history cannot be reversed; wait for a definitive invoice",
+          },
+          synced_at: new Date().toISOString(),
+        }).eq("id", claim.logId);
+        skipped++;
+        continue;
+      }
       const salesImport = await importWinerimSalesOnly({
         winerimBase: WINERIM_BASE,
         winerimHeaders,
@@ -2557,7 +2582,7 @@ async function restoreStaleOpenTicketStock(
     const qty = Number(row.quantity || 0);
     if (!event || !wineId || !variant || !Number.isFinite(qty)) continue;
     const key = `${event.business_day}::${wineId}::${variant}`;
-    provisionalNetByKey.set(key, Math.max(0, (provisionalNetByKey.get(key) || 0) + qty));
+    provisionalNetByKey.set(key, (provisionalNetByKey.get(key) || 0) + qty);
     if (!eventKeys.has(event.id)) eventKeys.set(event.id, new Set<string>());
     eventKeys.get(event.id)!.add(key);
     if (qty > 0) {
@@ -2600,16 +2625,17 @@ async function restoreStaleOpenTicketStock(
       const day = dayByDefinitiveEventId.get(line.sales_event_id);
       const wineId = String(line.winerim_product_id || "");
       const variant = variantForAgoraFormat(line.format);
-      const qty = Math.ceil(Math.abs(Number(line.quantity || 0)));
-      if (!day || !wineId || qty <= 0) continue;
+      const qty = signedWholeSaleQuantity(line.quantity);
+      if (!day || !wineId || qty === 0) continue;
       const key = `${day}::${wineId}::${variant}`;
       definitiveQtyByKey.set(key, (definitiveQtyByKey.get(key) || 0) + qty);
     }
   }
 
   const restoreRemainingByKey = new Map<string, number>();
-  for (const [key, provisionalQty] of provisionalNetByKey.entries()) {
-    const definitiveQty = definitiveQtyByKey.get(key) || 0;
+  for (const [key, rawProvisionalQty] of provisionalNetByKey.entries()) {
+    const provisionalQty = Math.max(0, rawProvisionalQty);
+    const definitiveQty = Math.max(0, definitiveQtyByKey.get(key) || 0);
     const restoreQty = Math.max(0, provisionalQty - definitiveQty);
     if (restoreQty > 0) restoreRemainingByKey.set(key, restoreQty);
   }
@@ -4572,7 +4598,7 @@ serve(async (req) => {
             const uPrice = Number(line.UnitPrice || 0);
             const qty = Number(line.Quantity || 0);
             const rawTotal = Number(line.TotalAmount || 0);
-            const lineTotal = rawTotal > 0 ? rawTotal : uPrice * qty;
+            const lineTotal = rawTotal !== 0 ? rawTotal : uPrice * qty;
             docTotal += lineTotal;
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
@@ -4590,7 +4616,7 @@ serve(async (req) => {
 
         return {
           provider_doc_id: docId, business_day: day,
-          doc_type: String(inv.Type || "BasicInvoice"),
+          doc_type: agoraDocumentType(inv),
           total_amount: Number(inv.TotalAmount || docTotal),
           total_tax: Number(inv.TotalTaxAmount || 0),
           total_net: Number(inv.TotalNetAmount || 0),
@@ -4717,7 +4743,7 @@ serve(async (req) => {
               const rawTotal = Number(line.TotalAmount || 0);
               const uP = Number(line.UnitPrice || 0);
               const qty = Number(line.Quantity || 0);
-              const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+              const lineTotal = rawTotal !== 0 ? rawTotal : uP * qty;
               docTotal += lineTotal;
               const pName = String(line.ProductName || "");
               const fName = String(line.SaleFormatName || "");
@@ -4765,7 +4791,7 @@ serve(async (req) => {
               connection_id: connectionId,
               provider_doc_id: docId,
               business_day: day,
-              doc_type: String(inv.Type || "BasicInvoice"),
+              doc_type: agoraDocumentType(inv),
               total_amount: Number(inv.TotalAmount || docTotal),
               total_tax: Number(inv.TotalTaxAmount || 0),
               total_net: Number(inv.TotalNetAmount || 0),
@@ -4890,7 +4916,7 @@ serve(async (req) => {
             const rawTotal = Number(line.TotalAmount || 0);
             const uP = Number(line.UnitPrice || 0);
             const qty = Number(line.Quantity || 0);
-            const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+            const lineTotal = rawTotal !== 0 ? rawTotal : uP * qty;
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
@@ -4923,11 +4949,11 @@ serve(async (req) => {
           .from("sales_events")
           .upsert({
             connection_id: connectionId, provider_doc_id: docId, business_day: day,
-            doc_type: String(inv.Type || "BasicInvoice"),
+            doc_type: agoraDocumentType(inv),
             total_amount: Number(inv.TotalAmount || docTotal),
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
-            line_count: lineData.length, raw_json: inv,
+            line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
@@ -5036,6 +5062,8 @@ serve(async (req) => {
       let savedLines = 0;
       let resolvedLines = 0;
       let unresolvedLines = 0;
+      const savedEventIds: string[] = [];
+      const ingestionErrors: string[] = [];
 
       for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
         const inv = invoices[invIdx];
@@ -5049,7 +5077,7 @@ serve(async (req) => {
             const rawTotal = Number(line.TotalAmount || 0);
             const uP = Number(line.UnitPrice || 0);
             const qty = Number(line.Quantity || 0);
-            const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+            const lineTotal = rawTotal !== 0 ? rawTotal : uP * qty;
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
@@ -5091,24 +5119,36 @@ serve(async (req) => {
             connection_id: connectionId,
             provider_doc_id: docId,
             business_day: day,
-            doc_type: String(inv.Type || "BasicInvoice"),
+            doc_type: agoraDocumentType(inv),
             total_amount: Number(inv.TotalAmount || docTotal),
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
             line_count: lineData.length,
-            raw_json: inv,
+            raw_json: withAgoraOperationalMetadata(inv),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
-        if (eventErr || !eventRow) continue;
-        savedEvents++;
+        if (eventErr || !eventRow) {
+          ingestionErrors.push(`${day}/${docId}: ${eventErr?.message || "event upsert failed"}`);
+          continue;
+        }
 
-        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+        const { error: deleteErr } = await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+        if (deleteErr) {
+          ingestionErrors.push(`${day}/${docId}: ${deleteErr.message}`);
+          continue;
+        }
         const linesToInsert = lineData.map((line) => ({ ...line, sales_event_id: eventRow.id, connection_id: connectionId }));
         if (linesToInsert.length > 0) {
           const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-          if (!lineErr) savedLines += linesToInsert.length;
+          if (lineErr) {
+            ingestionErrors.push(`${day}/${docId}: ${lineErr.message}`);
+            continue;
+          }
+          savedLines += linesToInsert.length;
         }
+        savedEvents++;
+        savedEventIds.push(eventRow.id);
       }
 
       let stockSyncResult: StockSyncTotals | null = null;
@@ -5132,12 +5172,13 @@ serve(async (req) => {
         last_intraday_sales_sync: {
           at: now,
           day,
-          success: (stockSyncResult?.failed || 0) === 0,
+          success: (stockSyncResult?.failed || 0) === 0 && ingestionErrors.length === 0,
           invoiceCount: invoices.length,
           savedEvents,
           savedLines,
           resolvedLines,
           unresolvedLines,
+          ingestionErrors,
           stockSync: stockSyncResult,
         },
       };
@@ -5148,13 +5189,14 @@ serve(async (req) => {
 
       return new Response(
         JSON.stringify({
-          success: (stockSyncResult?.failed || 0) === 0,
+          success: (stockSyncResult?.failed || 0) === 0 && ingestionErrors.length === 0,
           businessDay: day,
           invoiceCount: invoices.length,
           savedEvents,
           savedLines,
           resolvedLines,
           unresolvedLines,
+          ingestionErrors,
           stockSync: stockSyncResult,
           cursorAdvanced: false,
           warning,
@@ -5301,7 +5343,7 @@ serve(async (req) => {
               const rawTotal = Number(line.TotalAmount || 0);
               const uP = Number(line.UnitPrice || 0);
               const qty = Number(line.Quantity || 0);
-              const lineTotal = rawTotal > 0 ? rawTotal : uP * qty;
+              const lineTotal = rawTotal !== 0 ? rawTotal : uP * qty;
               docTotal += lineTotal;
               const pName = String(line.ProductName || "");
               const fName = String(line.SaleFormatName || "");
@@ -5338,11 +5380,11 @@ serve(async (req) => {
             .from("sales_events")
             .upsert({
               connection_id: connectionId, provider_doc_id: docId, business_day: day,
-              doc_type: String(inv.Type || "BasicInvoice"),
+              doc_type: agoraDocumentType(inv),
               total_amount: Number(inv.TotalAmount || docTotal),
               total_tax: Number(inv.TotalTaxAmount || 0),
               total_net: Number(inv.TotalNetAmount || 0),
-              line_count: lineData.length, raw_json: inv,
+              line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv),
             }, { onConflict: "connection_id,provider_doc_id" })
             .select("id").single();
 

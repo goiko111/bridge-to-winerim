@@ -49,7 +49,7 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("stock.stockActive ?? stock.stock_active ?? stock.active");
     expect(agoraProxySource).toContain("async function importWinerimSalesOnly");
     expect(agoraProxySource).toContain("POST /sales/import failed for inactive stock");
-    expect(agoraProxySource.match(/mode: \"sales_only_stock_inactive\"/g) || []).toHaveLength(6);
+    expect(agoraProxySource.match(/mode: "sales_only_stock_inactive"/g) || []).toHaveLength(6);
     expect((agoraProxySource.match(/if \(!match\.stockActive\)/g) || []).length).toBeGreaterThanOrEqual(3);
     expect(agoraProxySource).toContain("stockActive: false");
   });
@@ -61,7 +61,22 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("staleDayStockSkippedLines");
     expect(agoraProxySource).toContain("isOpenTicketStockDayAllowed(day, defaultDay, providerConfig)");
     expect(agoraProxySource).toContain('String(event.doc_type || "").toLowerCase() !== "openticket"');
-    expect(agoraProxySource).toContain("definitiveEventIds.length > 0 ? definitiveEventIds : allDayEventIds");
+    expect(agoraProxySource).toContain("definitiveEventIds.length > 0 ? definitiveEventIds : eligibleEventIds");
+    expect(agoraProxySource).toContain("const allDayEventIds = (dayEvents || []).map");
     expect(agoraProxySource).toContain("quantity: -restoreQty");
+  });
+
+  it("defers inactive-stock sales history until Agora emits a definitive invoice", () => {
+    expect(agoraProxySource).toContain('desiredSource === "open_ticket"');
+    expect(agoraProxySource).toContain('mode: "open_ticket_sales_only_deferred_to_invoice"');
+    expect(agoraProxySource).toContain('status: "SKIPPED"');
+    expect(agoraProxySource).toContain('source:${desiredSource}');
+  });
+
+  it("never turns negative Agora quantities into positive sales", () => {
+    expect(agoraProxySource).toContain("signedWholeSaleQuantity(line.quantity)");
+    expect(agoraProxySource).not.toContain("Math.ceil(Math.abs(Number(line.quantity || 0)))");
+    expect(agoraProxySource).toContain("withAgoraOperationalMetadata(inv)");
+    expect(agoraProxySource).toContain("agoraDocumentType(inv)");
   });
 });
