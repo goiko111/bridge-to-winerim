@@ -33,6 +33,12 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain('taskVerification.success = false');
     expect(agoraProxySource).toContain('code: "PRICE_MISMATCH"');
     expect(agoraProxySource).toContain('code: "NAME_MISMATCH"');
+    expect(agoraProxySource).toContain(
+      "const expectedName = normalizeAgoraTextAttribute(product.expectedName)",
+    );
+    expect(agoraProxySource).toContain(
+      "const actualName = normalizeAgoraTextAttribute(",
+    );
   });
 
   it("limits staged price writes to selected sale-center price lists", () => {
@@ -57,10 +63,14 @@ describe("Agora staged activation hardening", () => {
     expect(runbookSource).toContain("stock_sync_not_before_at");
     expect(agoraProxySource).toContain("isStockSyncDayAllowed");
     expect(agoraProxySource).toContain("providerSaleIsAfterStockStart");
-    expect(runbookSource).toContain("const preserveExistingLiveState = originalConnection.enabled === true");
+    expect(runbookSource).toContain(
+      "const shouldEnable = originalConnection.enabled === true || args.enableAfterVerification",
+    );
     expect(runbookSource).toContain('"CATALOG_READY_PENDING_SALE"');
-    expect(runbookSource).toContain("enabled: preserveExistingLiveState");
-    expect(runbookSource).toContain("Live activation requires an explicit Lovable Cloud service-role key");
+    expect(runbookSource).toContain('"LIVE_PENDING_SALE_CANARY"');
+    expect(runbookSource).toContain("enabled: shouldEnable");
+    expect(runbookSource).toContain("Live activation requires a service-role key");
+    expect(runbookSource).toContain("--use-disabled-connection-as-lock");
   });
 
   it("requires a fresh read-only catalog audit before and after writes", () => {
@@ -77,6 +87,8 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain('decodeXmlAttribute(expected.attrs[attr] || "")');
     expect(agoraProxySource).toContain('decodeXmlAttribute(actual.attrs[attr] || "")');
     expect(agoraProxySource).toContain("differences,");
+    expect(runbookSource).toContain("recoverableUnownedMatches");
+    expect(runbookSource).toContain("priorWinerimTrackingKeys");
   });
 
   it("serializes cron jobs per connection with an expiring database lease", () => {
