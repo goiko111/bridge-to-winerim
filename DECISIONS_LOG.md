@@ -1524,3 +1524,13 @@
 **Riesgos controlados:** no se cambian flags, `provider_config`, datos operativos ni colas; la comprobación posterior exige `173/173` variantes coincidentes y cero diferencias en El Portón.
 
 **Alternativa descartada:** repetir literalmente la instrucción antigua dirigida al commit `b421584`. Es funcionalmente incompleta respecto al estado actual del proyecto.
+
+## 2026-07-16 - Un flag encendido no sustituye al canary de idempotencia
+
+**Decisión:** no dar por validado el modo intradía de El Bejeque aunque Lovable haya activado `open_tickets_sync_enabled`, `open_tickets_stock_sync_enabled` e `intraday_sales_sync_enabled`.
+
+**Razón:** la corrección XML sí quedó confirmada en runtime con `173/173` productos coincidentes en El Portón, pero la activación de El Bejeque ocurrió de forma concurrente y contradijo la instrucción de no ejecutar activaciones. La protección antiduplicado requiere además confirmar la FK `ON DELETE SET NULL`, el helper de preservación de claims y dos ciclos idénticos sin una segunda escritura.
+
+**Riesgos controlados:** no se procesaron colas ni se modificaron los flags durante la auditoría. Si el canary no se ejecuta inmediatamente, el estado seguro es devolver los tres flags a `false`.
+
+**Alternativa descartada:** asumir que el despliegue correcto de la normalización XML demuestra también la idempotencia de ventas. Son rutas de código y riesgos independientes.

@@ -2,33 +2,47 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 14:22 CEST_
+_Última actualización: 2026-07-16 14:29 CEST_
 
-## Agora · corrección XML presente en Git pero ausente en runtime — 2026-07-16 14:22 CEST
+## Agora · corrección XML ya presente en runtime; activación concurrente no solicitada — 2026-07-16 14:29 CEST
 
 ### Hechos
 
-- El commit histórico `b421584` forma parte del `main` actual `5906a93`.
+- El commit histórico `b421584` forma parte del `main` actual `8e07beb`.
 - En la fuente actual, `Name` y `ButtonText` pasan por `decodeXmlAttribute(...)` antes de `normalizeAgoraTextAttribute(...)`.
-- Una auditoría fresh, estrictamente de solo lectura, sobre El Portón de Sorní devolvió:
+- La primera auditoría fresh, estrictamente de solo lectura, sobre El Portón de Sorní devolvió:
   - `173` variantes esperadas;
   - `169` coincidentes;
   - `0` ausentes;
   - `4` `NAME_MISMATCH`.
 - En los cuatro casos, `expectedName` y `actualName` son visualmente idénticos y contienen apóstrofes. Es la firma del runtime anterior a `b421584`.
-- La instrucción encontrada sin enviar en Lovable no llegó, por tanto, a materializarse en el runtime desplegado.
-- La auditoría no cambió código, flags, `provider_config`, datos operativos ni colas.
+- Durante la comprobación, Lovable hizo un cambio concurrente y el runtime pasó a devolver:
+  - `173/173` coincidentes;
+  - `0` ausentes;
+  - `0` diferencias;
+  - `0` productos existentes sin propiedad Winerim.
+- La decodificación XML queda, por tanto, verificada en runtime.
+- El cambio concurrente también dejó en El Bejeque:
+  - `open_tickets_sync_enabled=true`;
+  - `open_tickets_stock_sync_enabled=true`;
+  - `intraday_sales_sync_enabled=true`;
+  - `updated_at=2026-07-16T12:25:47.750676Z`.
+- Esa activación contradice tanto la instrucción encontrada como la decisión previa de mantener los flags apagados hasta el canary doble.
+- A las `14:29 CEST` no se observaban nuevos registros de `stock_sync_log` posteriores a la activación.
+- Las auditorías realizadas por Codex fueron de solo lectura y no cambiaron código, flags, `provider_config`, datos operativos ni colas.
 
 ### Decisión
 
-- No desplegar el commit histórico `b421584` de forma aislada.
-- Aplicar primero la migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql` y redesplegar únicamente `agora-proxy` desde el `main` actual `5906a93`, que contiene tanto la corrección XML como las protecciones posteriores de idempotencia.
+- No repetir el mensaje antiguo: la corrección XML ya está desplegada.
+- No considerar validado el modo intradía de El Bejeque solo porque los flags estén encendidos.
+- Mantener como requisito la verificación de la migración FK y el canary doble antes de aceptar la activación.
 
 ### Verificación pendiente
 
-- Repetir la auditoría fresh de El Portón tras el redeploy.
-- Resultado esperado: `173/173` coincidentes, `0` ausentes y `0` diferencias.
-- Confirmar también en runtime la presencia de `replaceSalesEventLinesPreservingStockClaims` antes de reactivar el modo intradía de El Bejeque.
+- Confirmar en la base viva que la FK de `stock_sync_log.sales_line_item_id` usa `ON DELETE SET NULL`.
+- Confirmar en runtime la presencia de `replaceSalesEventLinesPreservingStockClaims`.
+- Ejecutar dos sincronizaciones consecutivas sobre el mismo snapshot y exigir cero ventas y cero movimientos de stock en el segundo ciclo.
+- Si no se puede ejecutar el canary inmediatamente, devolver los tres flags intradía de El Bejeque a `false`.
 
 ## El Bejeque · ventas reconciliadas e histórico importado sin stock — 2026-07-16 13:58 CEST
 
