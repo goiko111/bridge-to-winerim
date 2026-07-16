@@ -667,6 +667,7 @@ async function main() {
             syncedAt: row.synced_at,
           })),
           erpTpvSales: erpSales,
+          erpAllSales: erpResult?.sales || [],
         },
       } : {}),
     };

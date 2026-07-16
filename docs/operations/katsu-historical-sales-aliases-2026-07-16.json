@@ -1,0 +1,244 @@
+{
+  "aliases": {
+    "B. DR. LOOSEN GRAY SLATE RIESLING": {
+      "winerimId": "326183",
+      "variant": "BOTTLE"
+    },
+    "B. ABAD DOM BUENO ROSÉ": {
+      "winerimId": "277094",
+      "variant": "BOTTLE"
+    },
+    "C. DR. LOOSEN RED SLATE RIESLING TROCKEN ( seco )": {
+      "winerimId": "272866",
+      "variant": "GLASS"
+    },
+    "C. SARMENTERO ROBLE": {
+      "winerimId": "277203",
+      "variant": "GLASS"
+    },
+    "C. TOKAJ SZAMORODNI GROF DEGENFELD": {
+      "winerimId": "272901",
+      "variant": "GLASS"
+    },
+    "TARIMA SPARKLING ( Frizzante )": {
+      "winerimId": "272908",
+      "variant": "GLASS"
+    },
+    "Tarima SPARKLING": {
+      "winerimId": "272908",
+      "variant": "GLASS"
+    },
+    "C. TARIMA SPARKLING ( Frizzante )": {
+      "winerimId": "272908",
+      "variant": "GLASS"
+    },
+    "B. SARMENTERO ROBLE": {
+      "winerimId": "277203",
+      "variant": "BOTTLE"
+    },
+    "B. TARIMA SPARKLING ( FRIZZANTE )": {
+      "winerimId": "272908",
+      "variant": "BOTTLE"
+    },
+    "C. LAWSON'S DRY HILLS SAUVIGNON BLANC": {
+      "winerimId": "272878",
+      "variant": "GLASS"
+    },
+    "B. CAVA MESTRES ROSAT GRAN RERSERVA BRUT NATURE": {
+      "winerimId": "272857",
+      "variant": "BOTTLE"
+    },
+    "C. LA RASPA": {
+      "winerimId": "272877",
+      "variant": "GLASS"
+    },
+    "C. SAIAZ": {
+      "winerimId": "272890",
+      "variant": "GLASS"
+    },
+    "B. SARMENTERO VENDIMIA SELECCIONADA": {
+      "winerimId": "272893",
+      "variant": "BOTTLE"
+    },
+    "C. ABAD DOM BUENO ROSÉ": {
+      "winerimId": "277094",
+      "variant": "GLASS"
+    },
+    "C. LAWSONS DRI HILLS GEWURZTRAMINER": {
+      "winerimId": "277154",
+      "variant": "GLASS"
+    },
+    "C. MISTELA RAFAEL CAÑIZARES": {
+      "winerimId": "326213",
+      "variant": "GLASS"
+    },
+    "B. TRIGA BLANCO": {
+      "winerimId": "272902",
+      "variant": "BOTTLE"
+    },
+    "C. SARMENTERO VENDIMIA SELECCIONADA": {
+      "winerimId": "272893",
+      "variant": "GLASS"
+    },
+    "C. TRIGA BLANCO": {
+      "winerimId": "272902",
+      "variant": "GLASS"
+    },
+    "C. SEXTO ELEMENTO": {
+      "winerimId": "277238",
+      "variant": "GLASS"
+    },
+    "C. DOMINIO DEL BENDITO LAS SABIAS": {
+      "winerimId": "277137",
+      "variant": "GLASS"
+    },
+    "C. CORAZ": {
+      "winerimId": "272863",
+      "variant": "GLASS"
+    },
+    "C. VOLVER CUVEE OLD VINES": {
+      "winerimId": "272904",
+      "variant": "GLASS"
+    },
+    "B. MERIDIANO PERDIDO": {
+      "winerimId": "277139",
+      "variant": "BOTTLE"
+    },
+    "C. PAUL CLUVER RIESLING": {
+      "winerimId": "272886",
+      "variant": "GLASS"
+    },
+    "B. PAUL CLUVER RIESLING": {
+      "winerimId": "272886",
+      "variant": "BOTTLE"
+    },
+    "C. MAJUELO DEL CHIVIRITERO": {
+      "winerimId": "272883",
+      "variant": "GLASS"
+    },
+    "C. LIRONDO": {
+      "winerimId": "272881",
+      "variant": "GLASS"
+    },
+    "B. GINESTA GEWURZTRAMINER": {
+      "winerimId": "272873",
+      "variant": "BOTTLE"
+    },
+    "C. BALADIÑA ALBARIÑO SOBRE LIAS": {
+      "winerimId": "272853",
+      "variant": "GLASS"
+    },
+    "B. LIRONDO": {
+      "winerimId": "272881",
+      "variant": "BOTTLE"
+    },
+    "C. ABALON GODELLO": {
+      "winerimId": "272847",
+      "variant": "GLASS"
+    },
+    "B. SARMENTERO GRAN RESERVA": {
+      "winerimId": "272892",
+      "variant": "BOTTLE"
+    },
+    "C. SARMENTERO GRAN RESERVA": {
+      "winerimId": "272892",
+      "variant": "GLASS"
+    },
+    "C. ALBARIÑO AÑADA DE BALADIÑA": {
+      "winerimId": "272852",
+      "variant": "GLASS"
+    },
+    "C. NERO DE SORT": {
+      "winerimId": "272884",
+      "variant": "GLASS"
+    },
+    "C. GINESTA GEWURZTRAMINER": {
+      "winerimId": "272873",
+      "variant": "GLASS"
+    },
+    "C. FINCA LES LLERES": {
+      "winerimId": "272872",
+      "variant": "GLASS"
+    },
+    "C. LA RASPA TINTO": {
+      "winerimId": "272877",
+      "variant": "GLASS"
+    },
+    "C. ABAD DOM BUENO GODELLO ESENCIA": {
+      "winerimId": "272845",
+      "variant": "GLASS"
+    },
+    "C. TARIMA HILL": {
+      "winerimId": "272898",
+      "variant": "GLASS"
+    },
+    "tarima hill": {
+      "winerimId": "272898",
+      "variant": "BOTTLE"
+    },
+    "C. Rafa Cañizares Sirah": {
+      "winerimId": "272888",
+      "variant": "GLASS"
+    },
+    "Rafa Cañizares Sirah": {
+      "winerimId": "272888",
+      "variant": "BOTTLE"
+    },
+    "Rafa CAñizares Sirah": {
+      "winerimId": "272888",
+      "variant": "BOTTLE"
+    },
+    "cañizares syrah": {
+      "winerimId": "272888",
+      "variant": "BOTTLE"
+    },
+    "PALO CORTADO LORENTE": {
+      "winerimId": "277110",
+      "variant": "GLASS"
+    },
+    "Baladiña Añada baladiña": {
+      "winerimId": "272852",
+      "variant": "GLASS"
+    },
+    "Dr. Loosen Red Slate": {
+      "winerimId": "272866",
+      "variant": "GLASS"
+    },
+    "Lorente Barba Fino": {
+      "winerimId": "277111",
+      "variant": "BOTTLE"
+    },
+    "oloroso": {
+      "winerimId": "277112",
+      "variant": "GLASS"
+    },
+    "fino": {
+      "winerimId": "277111",
+      "variant": "GLASS"
+    },
+    "Riesling Robert wEil": {
+      "winerimId": "272889",
+      "variant": "GLASS"
+    },
+    "cava coquet": {
+      "winerimId": "272856",
+      "variant": "GLASS"
+    },
+    "SASHENBURG": {
+      "winerimId": "277144",
+      "variant": "GLASS"
+    },
+    "PINOT NOIR VALLEY": {
+      "winerimId": "272896",
+      "variant": "GLASS"
+    },
+    "Spy Valley Pinot Noir": {
+      "winerimId": "272896",
+      "variant": "GLASS"
+    },
+    "La Estrecha": {
+      "winerimId": "326169",
+      "variant": "GLASS"
+    }
+  }
+}

@@ -1632,3 +1632,33 @@
 **Razón:** ventas, stock, idempotencia, catalogo y cola ya pasan; faltan una alta o cambio real de precio observado, confirmacion visual del cliente y 24 horas limpias.
 
 **Alternativa descartada:** llamar 100% a la conexion solo por una auditoria tecnica puntual.
+
+## 2026-07-16 - El histórico Agora se netea por ciclo documental firmado
+
+**Decisión:** agrupar cada línea física de Agora y sumar ticket, abono/anulación
+y factura definitiva antes de crear una venta histórica.
+
+**Razón:** ignorar cantidades negativas importó dos veces cinco unidades del
+06/05 y conservó cuatro ventas que habían sido anuladas.
+
+**Riesgos controlados:** se conserva el `orderId` de la primera línea positiva,
+se verifica el ERP contra la fecha real de `soldAt` y se exige una segunda
+ejecución íntegramente `skipped`.
+
+**Alternativa descartada:** importar solo líneas positivas de `Invoices`.
+Confunde documentos intermedios con ventas netas.
+
+## 2026-07-16 - Katsu importa solo histórico demostrable
+
+**Decisión:** registrar `253` tarjetas / `366` unidades del 16/04 al 23/06 y
+dejar fuera `118` unidades de vinos inactivos y `11` sin match fiable.
+
+**Razón:** `sales/import` no puede acceder a variantes inactivas y un alias
+aproximado podría atribuir una venta al vino o formato equivocado.
+
+**Riesgos controlados:** aliases versionados con variante explícita, stock
+invariable antes/después, seis tarjetas no canónicas anuladas y stock
+restaurado con `No, solo ajuste`.
+
+**Alternativa descartada:** reactivar temporalmente vinos o forzar Hunters y
+Garnacha Tintorera a una referencia parecida.

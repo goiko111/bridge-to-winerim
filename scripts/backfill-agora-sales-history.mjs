@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
 
@@ -69,9 +69,22 @@ export function normalizeHistoricalWineName(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/^\s*(botella|bot\.?|bottle|copa|glass|magnum|mag\.?|[bcm])\s+/, "")
+    .replace(/^\s*(botella|bot\.?|bottle|copa|glass|magnum|mag\.?|[bcm]\.?)\s+/, "")
     .replace(/\b(19|20)\d{2}\b/g, " ")
     .replace(/\b(botella|bot\.?|bottle|copa|glass|magnum|75\s*cl|150\s*cl|37[,.]5\s*cl)\b/g, " ")
+    .replace(/&/g, " y ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeHistoricalAliasLabel(value) {
+  return decodeAgoraText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/^\s*([bcm])\.?\s+/, "$1 ")
+    .replace(/\b(19|20)\d{2}\b/g, " ")
     .replace(/&/g, " y ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
@@ -92,9 +105,109 @@ export function inferHistoricalVariant(productName, saleFormatName) {
   if (/\b(copa|glass|by the glass)\b/.test(format)) return "GLASS";
   if (/\b(magnum|mag)\b/.test(format)) return "MAGNUM";
   if (/\b(botella|bottle|bot\.)\b/.test(format)) return "BOTTLE";
-  if (/^(c|copa)\s+/.test(name)) return "GLASS";
-  if (/^(m|magnum|mag)\s+/.test(name)) return "MAGNUM";
+  if (/^(c\.?|copa)\s+/.test(name)) return "GLASS";
+  if (/^(m\.?|magnum|mag\.?)\s+/.test(name)) return "MAGNUM";
   return "BOTTLE";
+}
+
+export function normalizeHistoricalAliasDefinitions(definitions) {
+  if (!definitions || typeof definitions !== "object" || Array.isArray(definitions)) {
+    return [];
+  }
+
+  const aliases = [];
+  for (const [legacyName, rawTarget] of Object.entries(definitions)) {
+    const target = rawTarget && typeof rawTarget === "object" && !Array.isArray(rawTarget)
+      ? rawTarget
+      : { winerimId: rawTarget };
+    const winerimId = String(target.winerimId ?? target.winerim_id ?? "").trim();
+    if (!winerimId) continue;
+
+    const explicitVariant = String(target.variant || "").trim().toUpperCase();
+    const variant = explicitVariant || inferHistoricalVariant(legacyName, legacyName);
+    if (!["BOTTLE", "GLASS", "MAGNUM"].includes(variant)) {
+      throw new Error(`Invalid historical alias variant for "${legacyName}": ${variant}`);
+    }
+
+    aliases.push({
+      legacyName,
+      normalizedLabel: normalizeHistoricalAliasLabel(legacyName),
+      winerimId,
+      variant,
+    });
+  }
+  return aliases;
+}
+
+export function resolveHistoricalAlias(aliasMap, productName, inferredVariant) {
+  const aliases = aliasMap.get(normalizeHistoricalAliasLabel(productName)) || [];
+  const matchingVariant = aliases.filter((alias) => alias.variant === inferredVariant);
+  const candidates = matchingVariant.length > 0 ? matchingVariant : aliases;
+  const unique = new Map(
+    candidates.map((alias) => [`${alias.wine.winerim_id}|${alias.variant}`, alias]),
+  );
+  return unique.size === 1 ? Array.from(unique.values())[0] : null;
+}
+
+export function netHistoricalCandidates(rawCandidates) {
+  const grouped = new Map();
+  for (const sale of rawCandidates) {
+    if (!grouped.has(sale.lifecycleKey)) {
+      grouped.set(sale.lifecycleKey, {
+        rows: [],
+        quantity: 0,
+        providerTotalAmount: 0,
+        positiveQuantity: 0,
+        negativeQuantity: 0,
+      });
+    }
+    const group = grouped.get(sale.lifecycleKey);
+    group.rows.push(sale);
+    group.quantity += Number(sale.qty || 0);
+    group.providerTotalAmount += Number(sale.audit?.providerTotalAmount || 0);
+    if (sale.qty > 0) group.positiveQuantity += sale.qty;
+    if (sale.qty < 0) group.negativeQuantity += Math.abs(sale.qty);
+  }
+
+  const candidates = [];
+  const netted = [];
+  const negative = [];
+  for (const [lifecycleKey, group] of grouped) {
+    const positiveRows = group.rows.filter((sale) => sale.qty > 0);
+    const base = positiveRows[0] || group.rows[0];
+    const audit = {
+      ...base.audit,
+      providerTotalAmount: group.providerTotalAmount,
+      sourceDocumentIds: Array.from(new Set(
+        group.rows.map((sale) => sale.audit?.documentId).filter(Boolean),
+      )),
+      grossPositiveQty: group.positiveQuantity,
+      grossNegativeQty: group.negativeQuantity,
+    };
+    if (group.negativeQuantity > 0 || positiveRows.length > 1) {
+      netted.push({
+        lifecycleKey,
+        quantity: group.quantity,
+        positiveQuantity: group.positiveQuantity,
+        negativeQuantity: group.negativeQuantity,
+        audit,
+      });
+    }
+    if (group.quantity > 0) {
+      candidates.push({
+        ...base,
+        qty: group.quantity,
+        audit,
+      });
+    } else if (group.quantity < 0) {
+      negative.push({
+        lifecycleKey,
+        quantity: group.quantity,
+        audit,
+      });
+    }
+  }
+  return { candidates, netted, negative };
 }
 
 function stableHash(value) {
@@ -336,6 +449,7 @@ async function main() {
   );
   const apply = args.apply === true;
   const reportPath = args.report ? String(args.report) : null;
+  const aliasesFile = args["aliases-file"] ? String(args["aliases-file"]) : null;
   const days = dayRange(fromDay, toDay);
 
   if (skipFrom && !isDay(skipFrom)) throw new Error("--skip-from must use YYYY-MM-DD");
@@ -409,15 +523,33 @@ async function main() {
   )
     ? connection.provider_config.historical_sales_name_aliases
     : {};
-  const aliasMap = new Map(
-    Object.entries(configuredAliases)
-      .map(([legacyName, winerimId]) => [
-        normalizeHistoricalWineName(legacyName),
-        wineById.get(String(winerimId || "")),
-      ])
-      .filter(([, wine]) => Boolean(wine)),
-  );
-  const candidates = [];
+  let fileAliases = {};
+  if (aliasesFile) {
+    const parsed = JSON.parse(await readFile(aliasesFile, "utf8"));
+    fileAliases = parsed?.aliases && typeof parsed.aliases === "object"
+      ? parsed.aliases
+      : parsed;
+  }
+  const aliasDefinitions = normalizeHistoricalAliasDefinitions({
+    ...configuredAliases,
+    ...fileAliases,
+  });
+  const aliasMap = new Map();
+  const rejectedAliases = [];
+  for (const alias of aliasDefinitions) {
+    const wine = wineById.get(alias.winerimId);
+    if (!wine) {
+      rejectedAliases.push({ ...alias, reason: "WINERIM_WINE_NOT_FOUND" });
+      continue;
+    }
+    if (!alias.normalizedLabel) {
+      rejectedAliases.push({ ...alias, reason: "EMPTY_NORMALIZED_NAME" });
+      continue;
+    }
+    if (!aliasMap.has(alias.normalizedLabel)) aliasMap.set(alias.normalizedLabel, []);
+    aliasMap.get(alias.normalizedLabel).push({ ...alias, wine });
+  }
+  const rawCandidates = [];
   const review = new Map();
   const unresolved = new Map();
   const skippedExisting = new Map();
@@ -454,7 +586,7 @@ async function main() {
         for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
           const line = lines[lineIndex];
           const quantity = Number(line.Quantity || 0);
-          if (!Number.isFinite(quantity) || quantity <= 0) continue;
+          if (!Number.isFinite(quantity) || quantity === 0) continue;
           scannedLines++;
 
           const productId = String(line.ProductId || line.SaleFormatId || "");
@@ -463,6 +595,14 @@ async function main() {
           const inferredVariant = inferHistoricalVariant(productName, saleFormatName);
           let resolution = resolutionMap.get(productId) || null;
 
+          const alias = resolveHistoricalAlias(aliasMap, productName, inferredVariant);
+          if (alias) {
+            resolution = {
+              wine: alias.wine,
+              variant: alias.variant,
+              method: "MANUAL_ALIAS",
+            };
+          }
           if (!resolution) {
             const exactMatches = exactNameMap.get(normalizeHistoricalWineName(productName)) || [];
             if (exactMatches.length === 1) {
@@ -470,16 +610,6 @@ async function main() {
                 wine: exactMatches[0],
                 variant: inferredVariant,
                 method: "EXACT_NAME",
-              };
-            }
-          }
-          if (!resolution) {
-            const aliasWine = aliasMap.get(normalizeHistoricalWineName(productName));
-            if (aliasWine) {
-              resolution = {
-                wine: aliasWine,
-                variant: inferredVariant,
-                method: "MANUAL_ALIAS",
               };
             }
           }
@@ -599,10 +729,20 @@ async function main() {
           }
 
           const lineKey = `${itemIndex}-${line.Index ?? lineIndex}`;
-          candidates.push({
+          const soldAt = providerSoldAt(line, item, invoice, day);
+          const lifecycleKey = [
+            day,
+            soldAt,
+            line.Index ?? lineIndex,
+            productId || normalizeHistoricalWineName(productName),
+            resolution.wine.winerim_id,
+            variant,
+            Number(line.UnitPrice ?? line.ProductPrice ?? 0).toFixed(4),
+          ].join("|");
+          rawCandidates.push({
             stockId,
             qty: quantity,
-            soldAt: providerSoldAt(line, item, invoice, day),
+            soldAt,
             orderId: buildHistoricalOrderId({
               connectionId,
               businessDay: day,
@@ -624,6 +764,7 @@ async function main() {
               matchMethod: resolution.method,
               providerTotalAmount: Number(line.TotalAmount || 0),
             },
+            lifecycleKey,
           });
         }
       }
@@ -631,6 +772,11 @@ async function main() {
     await sleep(REQUEST_GAP_MS);
   }
 
+  const {
+    candidates,
+    netted: nettedLifecycleRows,
+    negative: negativeNetRows,
+  } = netHistoricalCandidates(rawCandidates);
   const duplicateOrderIds = candidates.length - new Set(candidates.map((sale) => sale.orderId)).size;
   if (duplicateOrderIds > 0) {
     throw new Error(`Generated ${duplicateOrderIds} duplicate historical orderIds`);
@@ -719,11 +865,23 @@ async function main() {
       endpoint: "/api/v2/sales/import",
       idempotentOrderIds: true,
     },
+    aliases: {
+      file: aliasesFile,
+      configured: aliasDefinitions.length,
+      resolved: Array.from(aliasMap.values()).reduce((total, aliases) => total + aliases.length, 0),
+      rejected: rejectedAliases,
+    },
     scan: {
       days: days.length,
       invoices,
       lines: scannedLines,
       errors,
+    },
+    netting: {
+      rawRows: rawCandidates.length,
+      canonicalRows: candidates.length,
+      lifecycleGroupsAdjusted: nettedLifecycleRows,
+      negativeNetRows,
     },
     importable: {
       rows: selectedCandidates.length,
@@ -743,6 +901,7 @@ async function main() {
       ),
       byMatchMethod,
       byVariant,
+      ...(args["include-candidates"] === true ? { candidates: selectedCandidates } : {}),
     },
     review: serializeGrouped(review),
     unresolved: serializeGrouped(unresolved),
