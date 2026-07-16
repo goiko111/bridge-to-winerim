@@ -26,6 +26,7 @@ Flujo principal:
 - Agora puede activar por conexión un piloto casi en tiempo real leyendo tickets abiertos (`/api/export/tickets/`) cada pocos minutos. `Invoices` sigue siendo la reconciliación definitiva para evitar pérdidas si el TPV estuvo apagado o inaccesible.
 - Las fechas de línea de Agora sin sufijo de zona horaria se interpretan en `provider_config.sales_timezone` para filtros de antigüedad y ventanas operativas. Las fechas con `Z` u offset explícito se comparan como instantes absolutos.
 - En Agora, la deducción normal de ventas contra Winerim usa `PUT /api/v2/stock/{stockId}` con stock absoluto por variante. Si el stock no se mueve porque ya estaba a `0`, se usa `POST /api/v2/sales/import` para registrar historial de venta sin modificar inventario y con `orderId` idempotente.
+- Bajar stock mediante `PUT /api/v2/stock/{stockId}` crea una venta como efecto lateral. Para corregir inventario sin crear historial, usar la operación ERP `No, solo ajuste`; nunca compensar una cancelación con otro `PUT /stock` porque fabricaría una venta técnica.
 - `sales_events` y `sales_line_items` de Agora son snapshots reemplazables; `stock_sync_log` es evidencia duradera. Nunca se pueden borrar/reinsertar líneas sin conservar previamente los claims de stock/venta, y su FK debe usar `ON DELETE SET NULL`, no `CASCADE`.
 - Los históricos anteriores a la activación se importan exclusivamente por `POST /api/v2/sales/import`, con `orderId` determinista, sin tocar stock y solo mediante mapping confirmado, nombre exacto único o alias manual auditado. El fuzzy matching solo propone revisión; nunca escribe.
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
@@ -42,6 +43,7 @@ Flujo principal:
 - Las auditorías de cobertura de catálogo resuelven primero `product_mappings` confirmados y reglas específicas de la conexión; los IDs deterministas por formato son únicamente el fallback. Esto evita falsos huecos en instalaciones con botones consolidados, como los dulces ordenados de Sa Pedrera.
 - Los nombres enviados a Agora deben ser únicos y estables por conexión. Cuando dos variantes colisionan, se usa primero la añada y después el identificador Winerim como desambiguador; un mapping ya confirmado conserva el nombre exacto enviado anteriormente.
 - La auditoría intradía de Agora separa dos planos: idempotencia del runtime y conciliación histórica. La primera se valida con claves exactas de `stock_sync_log` y canaries observados durante varios ciclos; las diferencias agregadas entre facturas Agora e historial ERP se tratan como deuda de conciliación y nunca autorizan borrados automáticos.
+- `verify-products` no puede convertir a `VERIFIED` un formato retirado. Si el vino está inactivo o la variante ya no tiene precio, el tracking debe quedar `HIDDEN` cuando el producto Agora no sea vendible, y `FAILED` si continúa vendible.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.

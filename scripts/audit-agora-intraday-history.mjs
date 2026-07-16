@@ -8,6 +8,14 @@ const LOVABLE_ENV_FILE = process.env.LOVABLE_ENV_FILE || ".env";
 const ADMIN_EMAIL = process.env.WINERIM_ADMIN_EMAIL || "";
 const ADMIN_PASSWORD = process.env.WINERIM_ADMIN_PASSWORD || "";
 const DAYS = Math.max(1, Number(process.env.AUDIT_DAYS || 7));
+const CUTOFF_DAY_OVERRIDE = String(process.env.AUDIT_CUTOFF_DAY || "").trim();
+const CONNECTION_IDS = new Set(
+  String(process.env.AUDIT_CONNECTION_IDS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const INCLUDE_DETAILS = process.env.AUDIT_INCLUDE_DETAILS === "true";
 const OUTPUT_FILE = process.env.AUDIT_OUTPUT || "";
 const WINERIM_BASE = "https://app.winerim.com";
 
@@ -344,17 +352,33 @@ print(json.dumps({"ok": True, "restaurants": results}, ensure_ascii=False))
 
 async function main() {
   const client = await lovableClient();
-  const cutoff = new Date();
-  cutoff.setUTCDate(cutoff.getUTCDate() - DAYS);
-  const cutoffDay = isoDay(cutoff);
+  const cutoffDay = CUTOFF_DAY_OVERRIDE || (() => {
+    const cutoff = new Date();
+    cutoff.setUTCDate(cutoff.getUTCDate() - DAYS);
+    return isoDay(cutoff);
+  })();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoffDay)) {
+    throw new Error("AUDIT_CUTOFF_DAY must use YYYY-MM-DD.");
+  }
+  const auditSpanDays = Math.max(
+    1,
+    Math.floor((Date.now() - Date.parse(`${cutoffDay}T00:00:00.000Z`)) / 86_400_000),
+  );
 
-  const connections = (await client.all(
+  const allConnections = await client.all(
     "pos_connections",
     "id,location_name,provider,enabled,sync_mode,sync_frequency_minutes,last_sync_at,last_business_day_synced,provider_config",
     { provider: "eq.agora", order: "location_name.asc" },
-  ));
+  );
+  const connections = CONNECTION_IDS.size === 0
+    ? allConnections
+    : allConnections.filter((connection) => CONNECTION_IDS.has(connection.id));
+  if (connections.length === 0) {
+    throw new Error("No Agora connections matched AUDIT_CONNECTION_IDS.");
+  }
   const activeConnections = connections.filter((connection) => connection.enabled === true);
   const activeIds = new Set(activeConnections.map((connection) => connection.id));
+  const connectionFilter = `in.(${connections.map((connection) => connection.id).join(",")})`;
   const yesterday = new Date();
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const yesterdayDay = isoDay(yesterday);
@@ -363,16 +387,17 @@ async function main() {
     client.all(
       "stock_sync_log",
       "id,connection_id,sales_event_id,sales_line_item_id,idempotency_key,stock_id,winerim_product_id,variant,quantity,status,created_at,synced_at,error_message",
+      { connection_id: connectionFilter, order: "id.asc" },
     ),
     client.all(
       "sales_events",
       "id,connection_id,provider_doc_id,doc_type,business_day,created_at",
-      { business_day: `gte.${cutoffDay}`, order: "id.asc" },
+      { connection_id: connectionFilter, business_day: `gte.${cutoffDay}`, order: "id.asc" },
     ),
     client.all(
       "winerim_wines",
       "connection_id,winerim_id,bottle_stock_id,glass_stock_id,magnum_stock_id",
-      { order: "id.asc" },
+      { connection_id: connectionFilter, order: "id.asc" },
     ),
   ]);
   const eventById = new Map(events.map((event) => [event.id, event]));
@@ -410,10 +435,15 @@ async function main() {
     const row = {
       connectionId: line.connection_id,
       businessDay: event.business_day,
+      providerDocId: event.provider_doc_id,
+      providerProductId: String(line.provider_product_id || ""),
+      name: line.name,
       stockId: stockId ? String(stockId) : null,
       wineId: String(line.winerim_product_id),
       format,
       quantity: Number(line.quantity || 0),
+      unitPrice: Number(line.unit_price || 0),
+      providerSoldAt: line.provider_sold_at || null,
       salesEventId: line.sales_event_id,
       lineId: line.id,
     };
@@ -449,6 +479,26 @@ async function main() {
     const connectionCanonicalRows = canonicalClosedRows.filter(
       (row) => row.connectionId === connection.id,
     );
+    const connectionClosedCandidateLines = closedLines
+      .filter((line) => line.connection_id === connection.id && (line.mapped || line.is_wine_candidate))
+      .map((line) => {
+        const event = closedEventById.get(line.sales_event_id);
+        return {
+          businessDay: event?.business_day || null,
+          providerDocId: event?.provider_doc_id || null,
+          providerProductId: String(line.provider_product_id || ""),
+          name: line.name,
+          format: line.format,
+          quantity: Number(line.quantity || 0),
+          unitPrice: Number(line.unit_price || 0),
+          mapped: line.mapped === true,
+          isWineCandidate: line.is_wine_candidate === true,
+          winerimProductId: line.winerim_product_id ? String(line.winerim_product_id) : null,
+          providerSoldAt: line.provider_sold_at || null,
+          lineId: line.id,
+          salesEventId: line.sales_event_id,
+        };
+      });
 
     const logSums = sumBy(
       recentLogs,
@@ -599,6 +649,26 @@ async function main() {
         error: erpResult.error || null,
         candidates: erpResult.candidates || undefined,
       } : { ok: false, error: "NOT_AUDITED" },
+      ...(INCLUDE_DETAILS ? {
+        details: {
+          canonicalClosedRows: connectionCanonicalRows,
+          closedCandidateLines: connectionClosedCandidateLines,
+          successfulLogs: recentLogs.map((row) => ({
+            id: row.id,
+            businessDay: row.businessDay,
+            salesEventId: row.sales_event_id,
+            salesLineItemId: row.sales_line_item_id,
+            idempotencyKey: row.idempotency_key,
+            stockId: row.stock_id ? String(row.stock_id) : null,
+            wineId: row.winerim_product_id ? String(row.winerim_product_id) : null,
+            variant: row.variant,
+            quantity: Number(row.quantity || 0),
+            createdAt: row.created_at,
+            syncedAt: row.synced_at,
+          })),
+          erpTpvSales: erpSales,
+        },
+      } : {}),
     };
   });
 
@@ -606,7 +676,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     readOnly: true,
     cutoffDay,
-    days: DAYS,
+    days: auditSpanDays,
     summary: {
       totalAgoraConnections: connections.length,
       activeConnections: activeConnections.length,

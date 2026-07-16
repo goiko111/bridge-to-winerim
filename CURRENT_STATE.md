@@ -5062,7 +5062,32 @@ _Última actualización: 2026-07-16 17:56 CEST_
 - La eficacia casi en tiempo real seguirá siendo parcial en conexiones cuyos tickets abiertos contienen muchas líneas sin mapping, aunque sus flags estén correctamente activados.
 
 ### Tareas pendientes inmediatas
-- Priorizar conciliación histórica por volumen: Sa Pedrera, Cienvinos, Sa Vida, El Bejeque, Casa Nene y Katsu.
+- Priorizar conciliación histórica por volumen: Sa Pedrera, Cienvinos, Sa Vida, El Bejeque y Casa Nene. Katsu quedó conciliado el 2026-07-16.
 - Resolver cobertura de mapping intradía en conexiones con muchas líneas abiertas no resueltas, especialmente Higuerón, Cienvinos, Triana, Sa Vida, Luruna y El Bejeque.
 - Ejecutar el auditor después de cambios en `agora-proxy`, migraciones de `sales_line_items`/`stock_sync_log` o activaciones intradía.
 - Mantener una observación de `24` horas para confirmar que no reaparecen claves idempotentes duplicadas.
+
+## 2026-07-16 - Katsu conciliado desde la retirada del legacy
+
+### Hechos
+- El corte operativo confirmado es `2026-06-19T09:20:00+02:00`.
+- La conciliacion final Agora frente al ERP Winerim queda en `PASS`: `0` diferencias diarias, `0` diferencias acumuladas, `0` huellas duplicadas y `0` stockIds sin resolver.
+- Se limpiaron acumulados antiguos de botella/copa, se completaron `14` filas y `24` unidades por `sales/import`, y una venta nocturna se recoloco en su hora Agora real.
+- La segunda ejecucion de cada import devolvio `skipped`; el stock final no cambio.
+- Dos ejecuciones consecutivas de `sync-intraday-sales` y `sync-open-tickets` dejaron delta `0` en eventos, lineas y logs.
+- Catalogo fresh: `157/157 MATCH`, `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`; cola operativa `0`.
+- Tracking final: `157 VERIFIED`, `35 HIDDEN`, `0 FAILED`.
+- El historial del dia conserva una unica venta real observada: `Abalon Godello`, copa, `15:45`.
+- Informe completo: `docs/operations/katsu-sales-reconciliation-2026-07-16.md`.
+
+### Decisiones
+- Katsu queda `LIVE` y tecnicamente limpio, pero no se etiqueta aun `100%_SIGNED_OFF` sin canary comercial real, confirmacion visual y 24 horas de observacion.
+- Las correcciones de inventario sin venta usan el ERP `No, solo ajuste`; no se usa `PUT /stock` para compensar cancelaciones.
+
+### Hipotesis
+- Con el runtime idempotente y la FK `ON DELETE SET NULL`, no deben reaparecer los acumulados cada cinco minutos.
+
+### Tareas
+- Desplegar el ajuste de `verify-products` que conserva `HIDDEN` para formatos retirados.
+- Observar 24 horas y repetir la conciliacion.
+- Pedir confirmacion visual y aprovechar la siguiente alta/cambio de precio real como canary.

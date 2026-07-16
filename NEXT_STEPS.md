@@ -1216,7 +1216,7 @@
 - [ ] Sa Pedrera: clasificar tareas legacy `BLOCKED` como `WONT_FIX` cuando corresponda, resolver los `10 NOT_PUSHED` elegibles y registrar canary/cancelación sin duplicar botones `903xxx`.
 - [ ] Casa Nene: investigar y cerrar la alerta `sales_stale`; ejecutar una venta real de copa desde botón Winerim y registrar canary de alta/precio e idempotencia.
 - [ ] El Higuerón: ejecutar una copa real y los canaries de alta/precio; comprobar la hora visible y la ausencia de duplicados.
-- [ ] Katsu Izakaya: drenar o diagnosticar `3 QUEUED` y obtener botella+copa Winerim resueltas en historial.
+- [x] Katsu Izakaya: cola `0`, historial botella+copa conciliado desde el corte legacy e idempotencia viva confirmada.
 - [ ] Luruna: resolver `4 NOT_PUSHED` y confirmar uso real botella+copa desde botones Winerim.
 - [ ] Chiquilla y PurOsushi: obtener prueba real botella+copa, stock activo/inactivo e historial TPV; PurOsushi mantiene legacy visible durante el piloto.
 - [ ] Sa Vida: reconciliar tracking frente al master fresh, ejecutar canary y activar `auto_push_verified_ready` solo tras éxito; validar copa real.
@@ -1253,7 +1253,13 @@
 - [x] Observar canaries de Sa Pedrera y Kava durante varios ciclos y confirmar que el claim persiste al reemplazar snapshots.
 - [x] Crear `scripts/audit-agora-intraday-history.mjs` para repetir flags, ledger e historial ERP sin escrituras.
 - [ ] Mantener observación durante `24` horas y exigir que el contador de claves duplicadas siga en `0`.
-- [ ] Conciliar por documento las diferencias de los últimos catorce días, empezando por Sa Pedrera, Cienvinos, Sa Vida, El Bejeque, Casa Nene y Katsu.
+- [ ] Conciliar por documento las diferencias de los últimos catorce días, empezando por Sa Pedrera, Cienvinos, Sa Vida, El Bejeque y Casa Nene.
+- [x] Katsu: conciliar desde `2026-06-19`; resultado `PASS`, sin diferencias, duplicados ni stockIds ausentes.
+- [x] Katsu: completar `14` filas / `24` unidades por `sales/import`, repetir y confirmar idempotencia sin movimiento de stock.
+- [x] Katsu: auditar catalogo fresh `157/157`, limpiar cinco falsos fallos de whitespace y dejar cola cero.
+- [x] Katsu: ejecutar dos ciclos de intradia y tickets abiertos con delta cero.
+- [ ] Katsu: desplegar el fix de `verify-products` para preservar tracking `HIDDEN`.
+- [ ] Katsu: observar 24 horas, pedir confirmacion visual y registrar canary real de alta/cambio de precio antes de `100%_SIGNED_OFF`.
 - [ ] Revisar los ocho candidatos de huella ERP idéntica antes de cualquier anulación: Bejeque `1`, Cienvinos `3`, Sa Pedrera `3`, Taberna de Elia `1`.
 - [ ] Mejorar mapping de tickets abiertos donde la sonda sigue dejando muchas líneas sin resolver; un flag activo no basta para garantizar cobertura intradía.
 - [ ] Añadir la ejecución del auditor a la checklist posterior a despliegues de `agora-proxy` y migraciones que afecten `sales_line_items` o `stock_sync_log`.
