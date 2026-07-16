@@ -2,6 +2,22 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — De la O · cerrar piloto
+
+- [x] Actualizar accesos manteniendo la conexión desactivada.
+- [x] Validar Agora, tickets abiertos, invoices y master data.
+- [x] Enriquecer `86` vinos Winerim y resolver `87` variantes.
+- [x] Guardar snapshot completo y auditar el legacy antes de escribir.
+- [x] Configurar IVA, BODEGA, preparación y centros SALA/TERRAZA.
+- [x] Crear ocho familias Winerim manteniendo el legacy visible.
+- [x] Publicar y verificar `87/87` variantes con cola final `0`.
+- [x] Comparar `86` familias y `1.758` productos legacy: `0` diferencias.
+- [ ] Cliente: refrescar terminales y confirmar visualmente familias/botones.
+- [ ] Marcar una botella Winerim y comprobar historial, hora e idempotencia.
+- [ ] Marcar una copa de `Rodríguez y Sanzo Palo Norte` y comprobar la variante `glass`.
+- [ ] Confirmar comportamiento con stock activo y stock inactivo.
+- [ ] Tras las pruebas, habilitar conexión, catálogo y auto-push cada `5` minutos.
+
 ## P0 — El Portón de Sorní · cerrar piloto
 
 - [x] Crear conexión en modo seguro y validar Agora, master data, tickets abiertos e invoices.
@@ -42,7 +58,7 @@
 - [ ] Preparar `Abadía Yuste`, `Don Quijote Marbella`, `Finca Eslava` y `Vinatea` con el runbook de El Portón, manteniendo legacy visible y conexión desactivada hasta prueba real.
 - [ ] Decidir si se reanuda `Baco Getafe` o se conserva en rollback.
 - [ ] Confirmar destino de `La Candela de Triana`; actualmente sigue desactivada.
-- [ ] Completar onboarding Winerim de `De la O`.
+- [x] Completar onboarding Winerim de `De la O`; queda `CATALOG_READY_PENDING_SALE`.
 - [ ] Crear y auditar `Ocean Club`; las credenciales se facilitaron, pero no existe conexión registrada.
 
 ## P0 — Cienvinos · observación posterior a canaries 2026-07-14

@@ -2,7 +2,91 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 11:36 CEST_
+_Última actualización: 2026-07-16 12:08 CEST_
+
+## De la O · catálogo preparado, pendiente de venta real — 2026-07-16 12:08 CEST
+
+### Hechos
+
+- Se actualizó la conexión existente `99f3a782-844f-4515-a570-662a111ced2e` con los accesos facilitados, sin exponerlos en documentación ni activar automatismos.
+- La conexión Agora responde correctamente desde el backend:
+  - prueba general `success=true`;
+  - `/api/export/tickets/` responde HTTP `200` y devolvió un ticket en la sonda inicial;
+  - `Invoices` devolvió `70` facturas en `9` de los últimos `10` días consultados;
+  - último día cerrado observado: `2026-07-15`.
+- Master data fresh:
+  - `86` familias;
+  - `1.758` productos;
+  - `4` IVAs;
+  - listas activas `2 · SALA` y `4 · TERRAZA`;
+  - centros de venta activos `2 · SALA` y `4 · TERRAZA`;
+  - almacenes activos `1 · Almacén General` y `2 · BODEGA`;
+  - ruta de preparación dominante para vino `1 / 1 · Barra / Bebidas` en `876` de `877` productos legacy de vino.
+- Configuración seleccionada:
+  - IVA `3 / 10%`;
+  - almacén `2 · BODEGA`;
+  - preparación botella/copa/magnum `1 / 1 · Barra / Bebidas`;
+  - centros de venta `2` y `4`;
+  - escritura de precio limitada a las listas de esos centros.
+- Catálogo Winerim enriquecido:
+  - `86` vinos, todos activos y con precio;
+  - `86` variantes botella;
+  - `1` variante copa;
+  - `0` variantes magnum;
+  - `87` variantes elegibles;
+  - tipos: `35` tintos, `39` blancos, `3` rosados, `4` espumosos y `5` fortificados;
+  - todos los formatos elegibles tienen su stockId de variante resuelto.
+- Se crearon y dejaron visibles, sin tocar el legacy:
+  - `TINTOS WINERIM`: `35/35` vendibles;
+  - `BLANCOS WINERIM`: `39/39`;
+  - `ROSADOS WINERIM`: `3/3`;
+  - `ESPUMOSOS WINERIM`: `4/4`;
+  - `FORTIFICADOS WINERIM`: `5/5`;
+  - `COPAS WINERIM`: `1/1`;
+  - `DULCE WINERIM`: `0`;
+  - `MAGNUM WINERIM`: `0`.
+- Resultado técnico final:
+  - `87/87` mappings confirmados;
+  - tracking `86 BOTTLE VERIFIED` y `1 GLASS VERIFIED`;
+  - auditoría fresh `87 expected / 87 matched / 0 missing / 0 different / 0 unowned`;
+  - verificación de precios centrales: `0` ausentes;
+  - procesador final: `done=true`, `remaining=0`, `failed=0`, breaker cerrado;
+  - alertas abiertas: `0`.
+- Se comparó el catálogo anterior contra el snapshot:
+  - `86` familias legacy revisadas;
+  - `1.758` productos legacy revisados;
+  - `0` diferencias de familia;
+  - `0` diferencias de producto o flags críticos.
+- Snapshot y resultados:
+  - `docs/operations/agora-de-la-o-activation-2026-07-16T09-51-31-743Z/`.
+- Estado final:
+  - `enabled=false`;
+  - `sync_mode=BIDIRECTIONAL`;
+  - frecuencia preparada a `5` minutos;
+  - catálogo periódico y auto-push todavía apagados;
+  - `activation_status=CATALOG_READY_PENDING_SALE`;
+  - `legacy_visibility_policy=VISIBLE_DURING_PILOT`;
+  - cursor y guardas de stock fijados a `2026-07-16` para no descontar ventas anteriores.
+
+### Decisiones
+
+- Mantener todo el legacy visible durante la prueba.
+- No habilitar cron, auto-push ni ventas automáticas hasta validar en Winerim una botella y la única copa disponible.
+- Usar como prueba de copa `Rodríguez y Sanzo Palo Norte`, que tiene botella y copa publicadas con stockIds independientes.
+
+### Rollback
+
+- La conexión permanece desactivada.
+- El snapshot permite restaurar la configuración previa.
+- Si hubiera que retirar la prueba visual, se ocultan únicamente las ocho familias Winerim y sus `87` productos; no hay que reconstruir el legacy.
+
+### Pendiente inmediato
+
+- Cliente: refrescar/reiniciar los terminales y confirmar las ocho familias Winerim.
+- Marcar una botella desde una familia Winerim.
+- Marcar una copa de `Rodríguez y Sanzo Palo Norte` desde `COPAS WINERIM`.
+- Verificar historial Winerim, hora real, variante, stock activo/inactivo e idempotencia.
+- Tras el `PASS`, habilitar conexión, catálogo y auto-push cada `5` minutos.
 
 ## El Portón de Sorní · catálogo preparado, pendiente de venta real — 2026-07-16 11:36 CEST
 
@@ -143,7 +227,7 @@ _Última actualización: 2026-07-16 11:36 CEST_
 
 - `Baco Getafe`: rollback/legacy, desactivada; el catálogo Winerim publicado no coincide con los flags actuales.
 - `La Candela de Triana`: desactivada; los `90` productos Winerim no coinciden con flags/listas de precio actuales.
-- `De la O`: conexión accesible, pero onboarding Winerim no iniciado.
+- `De la O`: catálogo `87/87` preparado y legacy intacto; conexión desactivada hasta probar botella y copa.
 
 #### Bloqueadas por red
 
