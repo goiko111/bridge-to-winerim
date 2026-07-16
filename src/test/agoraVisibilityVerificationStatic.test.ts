@@ -21,4 +21,14 @@ describe("Agora visibility writes", () => {
     expect(source).toContain("actualSaleableAsMain === item.saleableAsMain");
     expect(source).toContain("fetchWithRetry, 30000, true");
   });
+
+  it("does not turn retired or unpriced products back into verified tracking rows", () => {
+    expect(source).toContain(
+      '.select("winerim_id, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price")',
+    );
+    expect(source).toContain("const shouldTrackAsHidden = Boolean(");
+    expect(source).toContain("const actualProductIsSaleable = Boolean(");
+    expect(source).toContain('Retired product ${productId} is still saleable in Agora');
+    expect(source).toContain('? "HIDDEN"');
+  });
 });

@@ -9912,6 +9912,28 @@ ${costPricesXml}
       );
 
       // ── PUSH TRACKING: Update verified status per product ──
+      const { data: verificationWines, error: verificationWinesError } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price")
+        .eq("connection_id", connectionId);
+      if (verificationWinesError) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Could not load Winerim eligibility for tracking verification: ${verificationWinesError.message}`,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const verificationWineById = new Map(
+        (verificationWines || []).map((wine: any) => [String(wine.winerim_id), wine]),
+      );
+      const actualProductById = new Map(
+        extractXmlElementsWithAttrs(verifyXml, "Product")
+          .map((product) => [String(product.attrs.Id || ""), product] as const)
+          .filter(([productId]) => Boolean(productId)),
+      );
       const errorsByProductId = new Map<string, string[]>();
       for (const issue of verifyResult.errors) {
         const productId = String(issue.context?.productId || "");
@@ -9925,7 +9947,30 @@ ${costPricesXml}
       const trackingRows = (mappings || []).map((m: any) => {
         const productId = String(m.provider_product_id || "");
         const productErrors = errorsByProductId.get(productId) || [];
-        const productOk = productErrors.length === 0;
+        const wine = verificationWineById.get(String(m.winerim_wine_id || ""));
+        const shouldTrackAsHidden = Boolean(
+          !wine ||
+          wine.is_active === false ||
+          isFormatUnavailableForAgora(wine, String(m.format_type || "")),
+        );
+        const actualProduct = actualProductById.get(productId);
+        const actualProductIsSaleable = Boolean(
+          actualProduct &&
+          (
+            ["true", "1"].includes(String(actualProduct.attrs.UseAsDirectSale || "").toLowerCase()) ||
+            ["true", "1"].includes(String(actualProduct.attrs.SaleableAsMain || "").toLowerCase())
+          ),
+        );
+        const retiredVisibilityError = shouldTrackAsHidden && actualProductIsSaleable
+          ? `Retired product ${productId} is still saleable in Agora`
+          : null;
+        const effectiveErrors = shouldTrackAsHidden
+          ? (retiredVisibilityError ? [retiredVisibilityError] : [])
+          : productErrors;
+        const productOk = effectiveErrors.length === 0;
+        const syncStatus = shouldTrackAsHidden && productOk
+          ? "HIDDEN"
+          : productOk ? "VERIFIED" : "FAILED";
         return {
           connection_id: connectionId,
           winerim_wine_id: m.winerim_wine_id,
@@ -9933,9 +9978,9 @@ ${costPricesXml}
           agora_product_id: productId,
           agora_family_id: null,
           source: "WINERIM",
-          sync_status: productOk ? "VERIFIED" : "FAILED",
+          sync_status: syncStatus,
           task_id: null,
-          last_error: productOk ? null : productErrors.join("; ").substring(0, 500),
+          last_error: productOk ? null : effectiveErrors.join("; ").substring(0, 500),
           pushed_at: null,
           verified_at: productOk ? verifiedAt : null,
         };

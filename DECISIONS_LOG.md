@@ -1604,3 +1604,31 @@
 **Riesgos controlados:** la conexión permanece desactivada durante staging y la cola se drena de forma síncrona; el resultado comercial no cambia.
 
 **Alternativa descartada:** aumentar concurrencia. Podría sobrecargar Agora/SQL Server y reproducir incidentes de saturación.
+
+## 2026-07-16 - Una correccion de stock no puede crear otra venta
+
+**Decisión:** despues de anular una tarjeta ERP incorrecta, compensar el inventario mediante `No, solo ajuste` y no mediante `PUT /api/v2/stock/{stockId}`.
+
+**Razón:** Winerim documenta y confirma en runtime que bajar stock por `PUT /stock` registra una venta como efecto lateral. Usarlo durante una limpieza recrea una tarjeta tecnica con la hora de mantenimiento.
+
+**Riesgos controlados:** se lee el stock despues de la anulacion y se resta solo la cantidad repuesta, preservando cualquier movimiento concurrente.
+
+**Alternativa descartada:** restaurar un valor absoluto por API. Mantiene el numero de unidades, pero ensucia el historial.
+
+## 2026-07-16 - La verificacion de productos conserva los estados ocultos
+
+**Decisión:** `verify-products` clasifica como `HIDDEN` los productos de vinos inactivos o formatos sin precio cuando Agora los devuelve no vendibles; si siguen vendibles, los marca `FAILED`.
+
+**Razón:** verificar existencia, nombre y precio no significa que una variante retirada deba volver a `VERIFIED`.
+
+**Riesgos controlados:** la lectura fresh de `UseAsDirectSale` y `SaleableAsMain` distingue un oculto correcto de un producto retirado que aun se puede vender.
+
+**Alternativa descartada:** reescribir todo mapping existente como `VERIFIED`; ocultaria regresiones de visibilidad y reabriria formatos retirados en tracking.
+
+## 2026-07-16 - Katsu se firma como LIVE, no como 100% formal
+
+**Decisión:** cerrar la deuda de ventas y catalogo de Katsu en estado `LIVE`, manteniendo pendiente la firma `100%_SIGNED_OFF`.
+
+**Razón:** ventas, stock, idempotencia, catalogo y cola ya pasan; faltan una alta o cambio real de precio observado, confirmacion visual del cliente y 24 horas limpias.
+
+**Alternativa descartada:** llamar 100% a la conexion solo por una auditoria tecnica puntual.
