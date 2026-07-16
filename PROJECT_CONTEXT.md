@@ -26,6 +26,8 @@ Flujo principal:
 - Agora puede activar por conexión un piloto casi en tiempo real leyendo tickets abiertos (`/api/export/tickets/`) cada pocos minutos. `Invoices` sigue siendo la reconciliación definitiva para evitar pérdidas si el TPV estuvo apagado o inaccesible.
 - Las fechas de línea de Agora sin sufijo de zona horaria se interpretan en `provider_config.sales_timezone` para filtros de antigüedad y ventanas operativas. Las fechas con `Z` u offset explícito se comparan como instantes absolutos.
 - En Agora, la deducción normal de ventas contra Winerim usa `PUT /api/v2/stock/{stockId}` con stock absoluto por variante. Si el stock no se mueve porque ya estaba a `0`, se usa `POST /api/v2/sales/import` para registrar historial de venta sin modificar inventario y con `orderId` idempotente.
+- `sales_events` y `sales_line_items` de Agora son snapshots reemplazables; `stock_sync_log` es evidencia duradera. Nunca se pueden borrar/reinsertar líneas sin conservar previamente los claims de stock/venta, y su FK debe usar `ON DELETE SET NULL`, no `CASCADE`.
+- Los históricos anteriores a la activación se importan exclusivamente por `POST /api/v2/sales/import`, con `orderId` determinista, sin tocar stock y solo mediante mapping confirmado, nombre exacto único o alias manual auditado. El fuzzy matching solo propone revisión; nunca escribe.
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
 - En Agora, los productos Winerim vendibles deben ir como `UseAsDirectSale=false` + `SaleableAsMain=true`: no salen como botones raíz, pero sí se venden dentro de su familia. `PreparationTypeId` y `PreparationOrderId` deben ir ambos vacíos o ambos informados.
 - Algunas conexiones Agora pueden conservar una estructura visual legacy con reglas en `pos_connections.provider_config.agora_family_routing_rules` para enrutar por formato/tipo/región a familias existentes del TPV.
@@ -45,6 +47,7 @@ Flujo principal:
 - NUNCA editar `src/integrations/supabase/{client,types}.ts` ni `.env`.
 - Agora `/api/export-master/?filter=Products` SOLO vía `fetchAgoraProductsXmlCached`.
 - Toda llamada saliente Agora pasa por `fetchWithRetry` (rate limit 2 req/s/conexión + circuit breaker).
+- Un backfill histórico no puede llamar a `PUT /stock/*`, reactivar vinos ni inventar variantes. Debe omitir filas fraccionarias o sin `stockId` accesible y documentarlas para revisión.
 - Comunicación al usuario: "Lovable Cloud" / "backend", nunca "Supabase".
 
 ## 5. Documentos de sesión (protocolo)

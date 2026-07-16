@@ -1482,3 +1482,35 @@
 **Razón:** las listas `1` y `3` y sus centros están eliminados. La ruta `1 / 1` aparece en `876` de `877` productos legacy de vino, por lo que representa la operativa dominante y evita que las comandas de vino pierdan su destino de preparación.
 
 **Alternativa descartada:** usar todos los centros/listas o `Almacén General` por defecto. Podría publicar precios en listas antiguas o separar el vino del almacén específico que ya utiliza el restaurante.
+
+## 2026-07-16 - Los claims de ventas sobreviven al refresco de snapshots Agora
+
+**Decisión:** antes de reemplazar `sales_line_items`, desenganchar `stock_sync_log.sales_line_item_id`, y cambiar la FK de `ON DELETE CASCADE` a `ON DELETE SET NULL`.
+
+**Razón:** en El Bejeque, cada lectura intradía borraba el claim idempotente junto con la línea transitoria y permitía volver a registrar la misma venta cada cinco minutos.
+
+**Riesgos controlados:** la idempotencia sigue resolviéndose por `sales_event_id + wine + variant` y por `idempotency_key`; la referencia a la línea pasa a ser opcional sin perder la evidencia duradera.
+
+**Alternativa descartada:** no reemplazar snapshots o mantener líneas antiguas. Rompería la representación del ticket actual y complicaría cancelaciones/cambios.
+
+**Rollback:** mantener los flags intradía apagados y volver al runtime anterior; no revertir la FK a `CASCADE`.
+
+## 2026-07-16 - El histórico Agora se importa solo como venta y con matching conservador
+
+**Decisión:** usar exclusivamente `POST /api/v2/sales/import`, `orderId` determinista y matching por mapping confirmado, nombre exacto único o alias manual auditado.
+
+**Razón:** el usuario necesita analítica histórica sin alterar el inventario actual. El fuzzy matching automático podría atribuir una venta al vino o variante equivocados.
+
+**Riesgos controlados:** dry-run obligatorio por defecto, `--apply --confirm-no-stock` para escribir, omisión de fracciones y de variantes sin stockId accesible, y filtro exacto por `orderId` para completar huecos sin solapar el tramo ya existente.
+
+**Alternativas descartadas:** reactivar vinos inactivos para importar, usar `PUT /stock/*`, o aceptar la mejor coincidencia fuzzy sin revisión.
+
+## 2026-07-16 - Los duplicados del 15/07 de El Bejeque se anulan tras un canary
+
+**Decisión:** conservar una representación por venta real, anular `27` tarjetas repetidas y validar stock tras una primera anulación controlada.
+
+**Razón:** Winerim mostraba `44` unidades frente a `15,5` unidades de Agora. La anulación canary confirmó que la operación también repone correctamente el stock activo.
+
+**Riesgos controlados:** se guardaron los IDs conservados/anulados y los stocks antes/después. Cloe y el medio magnum se mantienen como excepciones explícitas, no se corrigen inventando datos.
+
+**Alternativa descartada:** borrar filas directamente en base de datos o modificar stock sin limpiar el historial. Habría dejado ventas y stock incoherentes.
