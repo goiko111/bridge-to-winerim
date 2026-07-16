@@ -74,6 +74,8 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain(".range(offset, offset + auditWineBatchSize - 1)");
     expect(agoraProxySource).toContain("function agoraProductDifferenceReasons");
     expect(agoraProxySource).toContain('replace(/\\s+/g, " ").trim()');
+    expect(agoraProxySource).toContain('decodeXmlAttribute(expected.attrs[attr] || "")');
+    expect(agoraProxySource).toContain('decodeXmlAttribute(actual.attrs[attr] || "")');
     expect(agoraProxySource).toContain("differences,");
   });
 

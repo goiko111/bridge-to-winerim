@@ -601,10 +601,10 @@ function agoraProductDifferenceReasons(
 
   for (const attr of attrsToCompare) {
     const expectedValue = attr === "Name" || attr === "ButtonText"
-      ? normalizeAgoraTextAttribute(expected.attrs[attr])
+      ? normalizeAgoraTextAttribute(decodeXmlAttribute(expected.attrs[attr] || ""))
       : String(expected.attrs[attr] || "");
     const actualValue = attr === "Name" || attr === "ButtonText"
-      ? normalizeAgoraTextAttribute(actual.attrs[attr])
+      ? normalizeAgoraTextAttribute(decodeXmlAttribute(actual.attrs[attr] || ""))
       : String(actual.attrs[attr] || "");
     if (expectedValue !== actualValue) differences.push(`${attr.toUpperCase()}_MISMATCH`);
   }
