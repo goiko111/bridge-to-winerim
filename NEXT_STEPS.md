@@ -10,10 +10,12 @@
 - [x] Importar histórico `2026-04-15` a `2026-07-14` sin modificar stock.
 - [x] Validar idempotencia y matching manual seguro.
 - [x] Mantener temporalmente desactivados open tickets e intradía.
-- [ ] Aplicar la migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql`.
-- [ ] Redesplegar **únicamente** `agora-proxy` desde el `main` actual `5906a93`; no desplegar el commit histórico `b421584` de forma aislada.
-- [ ] Repetir la auditoría fresh de El Portón y exigir `173/173` coincidentes, `0` ausentes y `0` diferencias.
-- [ ] Confirmar en runtime `replaceSalesEventLinesPreservingStockClaims` y la decodificación `decodeXmlAttribute -> normalizeAgoraTextAttribute`.
+- [x] Redesplegar `agora-proxy` con la corrección XML incluida.
+- [x] Repetir la auditoría fresh de El Portón: `173/173` coincidentes, `0` ausentes y `0` diferencias.
+- [x] Confirmar en runtime la decodificación `decodeXmlAttribute -> normalizeAgoraTextAttribute`.
+- [ ] Confirmar en base viva que la migración de FK `ON DELETE SET NULL` está aplicada.
+- [ ] Confirmar en runtime `replaceSalesEventLinesPreservingStockClaims`.
+- [ ] Revisar la activación concurrente de los tres flags intradía de El Bejeque; devolverlos a `false` si el canary no se ejecuta inmediatamente.
 - [ ] Ejecutar canary doble sobre el mismo snapshot y confirmar cero duplicados.
 - [ ] Reactivar open tickets/intradía solo después del `PASS`.
 - [ ] Winerim: decidir cómo importar ventas de un vino inactivo como Cloe sin reactivarlo.
