@@ -72,6 +72,9 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain('expectedAuditValidationKeys.has(`${item.winerimId}:${item.formatType}`)');
     expect(agoraProxySource).toContain("const auditWineBatchSize = 500");
     expect(agoraProxySource).toContain(".range(offset, offset + auditWineBatchSize - 1)");
+    expect(agoraProxySource).toContain("function agoraProductDifferenceReasons");
+    expect(agoraProxySource).toContain('replace(/\\s+/g, " ").trim()');
+    expect(agoraProxySource).toContain("differences,");
   });
 
   it("serializes cron jobs per connection with an expiring database lease", () => {

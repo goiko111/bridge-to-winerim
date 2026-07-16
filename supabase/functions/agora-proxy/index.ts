@@ -573,11 +573,16 @@ function productPriceMap(productXml: string): Record<string, string> {
   return prices;
 }
 
-function agoraProductMatchesExpectedXml(
+function normalizeAgoraTextAttribute(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function agoraProductDifferenceReasons(
   expected: { xml: string; attrs: Record<string, string> },
   actual: { xml: string; attrs: Record<string, string> },
   scopedPriceListIds: string[],
-): boolean {
+): string[] {
+  const differences: string[] = [];
   const attrsToCompare = [
     "Name",
     "ButtonText",
@@ -595,10 +600,18 @@ function agoraProductMatchesExpectedXml(
   ];
 
   for (const attr of attrsToCompare) {
-    if (String(expected.attrs[attr] || "") !== String(actual.attrs[attr] || "")) return false;
+    const expectedValue = attr === "Name" || attr === "ButtonText"
+      ? normalizeAgoraTextAttribute(expected.attrs[attr])
+      : String(expected.attrs[attr] || "");
+    const actualValue = attr === "Name" || attr === "ButtonText"
+      ? normalizeAgoraTextAttribute(actual.attrs[attr])
+      : String(actual.attrs[attr] || "");
+    if (expectedValue !== actualValue) differences.push(`${attr.toUpperCase()}_MISMATCH`);
   }
 
-  if (normalizeAgoraMoney(expected.attrs.CostPrice) !== normalizeAgoraMoney(actual.attrs.CostPrice)) return false;
+  if (normalizeAgoraMoney(expected.attrs.CostPrice) !== normalizeAgoraMoney(actual.attrs.CostPrice)) {
+    differences.push("COST_PRICE_MISMATCH");
+  }
 
   const expectedPrices = productPriceMap(expected.xml);
   const actualPrices = productPriceMap(actual.xml);
@@ -607,11 +620,23 @@ function agoraProductMatchesExpectedXml(
     : Object.keys(expectedPrices);
 
   for (const priceListId of priceListIds) {
-    if (!Object.prototype.hasOwnProperty.call(actualPrices, priceListId)) return false;
-    if (expectedPrices[priceListId] !== actualPrices[priceListId]) return false;
+    if (!Object.prototype.hasOwnProperty.call(actualPrices, priceListId)) {
+      differences.push(`PRICE_LIST_${priceListId}_MISSING`);
+    } else if (expectedPrices[priceListId] !== actualPrices[priceListId]) {
+      differences.push(`PRICE_LIST_${priceListId}_MISMATCH`);
+    }
   }
 
-  return priceListIds.length > 0;
+  if (priceListIds.length === 0) differences.push("NO_SCOPED_PRICE_LIST");
+  return differences;
+}
+
+function agoraProductMatchesExpectedXml(
+  expected: { xml: string; attrs: Record<string, string> },
+  actual: { xml: string; attrs: Record<string, string> },
+  scopedPriceListIds: string[],
+): boolean {
+  return agoraProductDifferenceReasons(expected, actual, scopedPriceListIds).length === 0;
 }
 
 // Sa Pedrera validated that this specific DULCES WINERIM screen is ordered
@@ -10601,6 +10626,9 @@ ${costPricesXml}
       const details = expectedProducts.map((expected) => {
         const productId = String(expected.attrs.Id || "");
         const actual = actualById.get(productId);
+        const differences = actual
+          ? agoraProductDifferenceReasons(expected, actual, scope.selectedPriceListIds)
+          : ["PRODUCT_MISSING"];
         const expectedFormatOrder = inferAgoraFormatOrderFromName(decodeXmlAttribute(expected.attrs.Name || ""));
         const expectedFormat = expectedFormatOrder === 1 ? "GLASS" : expectedFormatOrder === 2 ? "MAGNUM" : "BOTTLE";
         const expectedOwner = (expectedOwnershipByProductId.get(productId) || [])
@@ -10610,7 +10638,7 @@ ${costPricesXml}
         ));
         const status = !actual
           ? "MISSING"
-          : agoraProductMatchesExpectedXml(expected, actual, scope.selectedPriceListIds)
+          : differences.length === 0
           ? "MATCH"
           : "DIFFERENT";
         return {
@@ -10623,6 +10651,7 @@ ${costPricesXml}
           actualName: actual ? decodeXmlAttribute(actual.attrs.Name || "") : null,
           expectedFamilyId: expected.attrs.FamilyId || null,
           actualFamilyId: actual?.attrs.FamilyId || null,
+          differences,
         };
       });
 
