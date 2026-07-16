@@ -2,7 +2,66 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 15:14 CEST_
+_Última actualización: 2026-07-16 17:56 CEST_
+
+## Nueve conexiones Agora - activación live-ready conservando legacy - 2026-07-16
+
+### Hechos
+
+- Ocho conexiones alcanzables quedaron en `LIVE_PENDING_SALE_CANARY`:
+  - De la O: `87/87`.
+  - El Portón de Sorní: `174` elegibles, `175` verificados; el formato retirado adicional está no vendible.
+  - Ocean Club: `113/113`.
+  - Finca Eslava: `123/123`.
+  - Vinatea: `132/132`.
+  - Don Quijote Marbella: `114/114`.
+  - Abadía Yuste: `281/281`.
+  - El Higuerón: `291/291`.
+- Las ocho tienen:
+  - conexión Agora y tickets abiertos en `PASS`;
+  - ocho familias Winerim;
+  - mappings confirmados y tracking `VERIFIED` para todos los formatos elegibles;
+  - cola `QUEUED/RUNNING=0`;
+  - catálogo, nuevas altas y cambios automáticos activos;
+  - captura intradía/open tickets y stock intradía activos;
+  - legacy visible e intacto.
+- Ocean Club se creó durante la operación y limita precios a los centros normales `1,2,4,5,6,7`; no escribe listas especiales/staff/opening.
+- Vinatea usa la ruta verificada `8/1 - BARRA/BEBIDAS`.
+- Abadía Yuste se validó en cuatro bloques: `281 MATCH`, `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`.
+- El detalle Winerim que falla en Higuerón es `351586 - Abadia Retuerta`, inactivo y sin precio; no forma parte del catálogo publicable.
+- Cinco tareas de Finca, Vinatea y Don Quijote con falso `NAME_MISMATCH` por tabuladores fueron verificadas fresh y reclasificadas como `SUCCESS`.
+- Qtomas sigue inaccesible tanto desde backend como desde esta máquina:
+  - `NETWORK_UNREACHABLE / No route to host`;
+  - puerto `8984` cerrado/no enrutable;
+  - `59` tareas repetidas quedaron `BLOCKED`, no borradas;
+  - escrituras automáticas de catálogo pausadas;
+  - lectura de ventas permanece activa para recuperación automática de conectividad.
+- El parche de normalización de whitespace está en GitHub `main` `1427141`.
+- Contradicción runtime detectada:
+  - a las `14:29 CEST`, El Portón devolvió `173/173` tras un despliegue y pareció confirmar la corrección;
+  - durante esta activación, una sonda de Finca volvió a reproducir la comparación literal antigua.
+  - Hasta redesplegar y repetir la sonda en varias invocaciones, el runtime se considera no demostrado de forma estable.
+- Evidencia y rollback: `docs/operations/agora-nine-live-ready-2026-07-16.md`.
+
+### Decisiones
+
+- Mantener legacy visible en las nueve conexiones.
+- No llamar `100%_SIGNED_OFF` a las ocho conexiones preparadas hasta observar botella y copa reales en el historial ERP Winerim.
+- En Qtomas, no procesar la cola antigua al recuperar conectividad: primero master fresh y auditoría diferencial.
+- No bloquear una activación por un detalle Winerim fallido si el vino está inactivo; cualquier fallo de vino activo sigue siendo bloqueante.
+
+### Hipótesis
+
+- Qtomas está apagado o tiene DDNS/router/firewall/puerto incorrecto; no hay evidencia de un fallo de código.
+- La discrepancia de sondas puede deberse a una revisión/región de runtime no homogénea; debe verificarse, no asumirse.
+- Tras desplegar el `agora-proxy` actual de forma explícita, los nombres con tabuladores deberían dejar de producir tareas `FAILED` sin recuperación operativa.
+
+### Tareas pendientes
+
+- Redesplegar solo `agora-proxy` desde el `main` actual y repetir el canary de whitespace.
+- Ejecutar una venta real de botella y copa por restaurante y verificar ERP, stock activo/inactivo, hora e idempotencia.
+- Recuperar Qtomas con SAT y completar la auditoría diferencial antes de reactivar catálogo.
+- Observar las ocho conexiones durante 24 horas con cola y alertas limpias.
 
 ## Agora · corrección XML ya presente en runtime; activación concurrente no solicitada — 2026-07-16 14:29 CEST
 

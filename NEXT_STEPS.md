@@ -2,6 +2,27 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Cierre de las nueve activaciones Agora del 2026-07-16
+
+- [x] De la O: `87/87`, ocho familias, flags automáticos, cola cero, legacy visible.
+- [x] El Portón de Sorní: `174` elegibles, tracking histórico extra no vendible, cola cero, legacy visible.
+- [x] Ocean Club: conexión creada, `113/113`, centros `1,2,4,5,6,7`, listas especiales excluidas.
+- [x] Finca Eslava: `123/123`, falsos `NAME_MISMATCH` cerrados.
+- [x] Vinatea: `132/132`, ruta `8/1 BARRA/BEBIDAS`.
+- [x] Don Quijote Marbella: `114/114`, falso `NAME_MISMATCH` cerrado.
+- [x] Abadía Yuste: `281/281`, auditoría final por bloques.
+- [x] El Higuerón: `291/291`; detalle fallido de vino inactivo documentado.
+- [x] Qtomas: detener crecimiento de cola; `59` tareas bloqueadas y auto-push pausado.
+- [ ] Redesplegar únicamente `agora-proxy` desde el `main` actual y confirmar que el canary con tabulador ya no produce `NAME_MISMATCH`.
+- [ ] Qtomas: recuperar puerto/DDNS/router, exigir tres probes sanos y ejecutar master/auditoría fresh.
+- [ ] Qtomas: reencolar solo `MISSING/DIFFERENT` con ownership Winerim y reactivar auto-push.
+- [ ] En cada una de las ocho activas, pedir una venta real de botella y copa desde botones Winerim.
+- [ ] Verificar en ERP Winerim hora, variante, origen TPV, stock activo/inactivo e idempotencia.
+- [ ] Confirmar visualmente en terminal las ocho familias y que el legacy sigue visible.
+- [ ] Observar 24 horas con `QUEUED/RUNNING=0`, sin nuevas tareas `FAILED` ni alertas de ventas.
+- [ ] Promover cada conexión de `LIVE_PENDING_SALE_CANARY` a `LIVE` solo con evidencia real.
+- [ ] Usar `docs/operations/agora-nine-live-ready-2026-07-16.md` como rollback y evidencia.
+
 ## P0 — El Bejeque · cerrar protección antiduplicado
 
 - [x] Conciliar Agora y ERP Winerim para `2026-07-15`.
@@ -36,7 +57,7 @@
 - [ ] Marcar una botella Winerim y comprobar historial, hora e idempotencia.
 - [ ] Marcar una copa de `Rodríguez y Sanzo Palo Norte` y comprobar la variante `glass`.
 - [ ] Confirmar comportamiento con stock activo y stock inactivo.
-- [ ] Tras las pruebas, habilitar conexión, catálogo y auto-push cada `5` minutos.
+- [x] Habilitar conexión, catálogo y auto-push cada `5` minutos; queda pendiente la prueba real.
 
 ## P0 — El Portón de Sorní · cerrar piloto
 
@@ -49,7 +70,7 @@
 - [ ] Marcar una botella Winerim y comprobar historial, hora, variante e idempotencia.
 - [ ] Marcar una copa Winerim y comprobar historial, hora, variante e idempotencia.
 - [ ] Probar una variante con stock activo y otra con stock inactivo.
-- [ ] Tras las pruebas, habilitar conexión, catálogo cada `5` minutos y auto-push.
+- [x] Habilitar conexión, catálogo cada `5` minutos y auto-push; queda pendiente la prueba real.
 
 ## P0 — Flota Agora · correcciones prioritarias 2026-07-16
 
@@ -60,7 +81,7 @@
 - [ ] `Luruna`: reconciliar los dos vinos con precios distintos en listas.
 - [ ] `PurOsushi`: reconciliar dos precios y completar venta real botella/copa manteniendo legacy visible.
 - [ ] `Cienvinos`: reconciliar diez precios de lista `1` y completar observación de 24 horas.
-- [ ] `Qtomas`: reconciliar dos precios, revisar nueve tareas de corte de red y resolver la alerta cuando el POS siga estable.
+- [ ] `Qtomas`: recuperar conectividad, releer master fresh y reconciliar las `59` tareas ahora `BLOCKED`; no procesar la cola antigua directamente.
 - [ ] `Restaurante Triana`: corregir `PrintWhenPriceIsZero` y confirmar historial sales-only.
 - [ ] `Sa Pedrera`: reconciliar cinco precios y separar/archivar las `979` tareas históricas truncadas sin reintentarlas en masa.
 - [ ] `Katsu`: tras el redeploy de `agora-proxy` desde `main` `5906a93`, reevaluar las cinco tareas y resolver la alerta sin duplicar productos.
@@ -75,11 +96,11 @@
 
 ## P1 — Agora · siguientes altas
 
-- [ ] Preparar `Abadía Yuste`, `Don Quijote Marbella`, `Finca Eslava` y `Vinatea` con el runbook de El Portón, manteniendo legacy visible y conexión desactivada hasta prueba real.
+- [x] Preparar `Abadía Yuste`, `Don Quijote Marbella`, `Finca Eslava` y `Vinatea` con el runbook de El Portón; quedaron `LIVE_PENDING_SALE_CANARY` con legacy visible.
 - [ ] Decidir si se reanuda `Baco Getafe` o se conserva en rollback.
 - [ ] Confirmar destino de `La Candela de Triana`; actualmente sigue desactivada.
-- [x] Completar onboarding Winerim de `De la O`; queda `CATALOG_READY_PENDING_SALE`.
-- [ ] Crear y auditar `Ocean Club`; las credenciales se facilitaron, pero no existe conexión registrada.
+- [x] Completar onboarding Winerim de `De la O`; queda `LIVE_PENDING_SALE_CANARY`.
+- [x] Crear y auditar `Ocean Club`; queda `LIVE_PENDING_SALE_CANARY` con legacy visible.
 
 ## P0 — Cienvinos · observación posterior a canaries 2026-07-14
 
@@ -232,7 +253,8 @@
 - [x] `El Higuerón`: credencial literal terminada en `ROn` validada; Agora responde HTTP `200` y la conexión está activa.
 - [ ] `O Bistro`: pedir URL pública/DDNS/túnel; la IP privada no responde desde Lovable Cloud/backend.
 - [ ] `Tintorera` y `Saddle`: revisar conectividad externa porque la sonda corta acaba en timeout.
-- [ ] `Restaurante Qtomas`: no reintentar en bucle mientras el breaker `POS_DOWN` siga abierto; revisar conectividad/DDNS antes de procesar las `60` tareas diferidas.
+- [x] `Restaurante Qtomas`: detener reintentos; `59` tareas quedaron `BLOCKED` y auto-push de catálogo pausado.
+- [ ] `Restaurante Qtomas`: revisar conectividad/DDNS/puerto antes de cualquier auditoría o reencolado.
 
 ## P0 — Agora open tickets / Sa Pedrera copas 2026-07-11
 - [x] Sa Pedrera: resolver caso `E510-Izar-Leku`:
@@ -1097,7 +1119,7 @@
 - [ ] Jardí: pedir a SAT/cliente revisar TPV encendido, DDNS, router/firewall y puerto `8984`; no activar `open_tickets_sync_enabled` hasta que `/api/export/tickets/` responda desde backend.
 - [ ] Decidir política global por conexión para `auto_push_on_update`: si queda desactivado, cambios de precio, inactivos y retirada de precios no se propagan automáticamente. Activarlo solo tras confirmar diff/idempotencia y sin bucles de `AUTO_UPDATE`.
 - [x] Crear/documentar conexiones faltantes en `pos_connections`: Saddle, Higuerón, O Bistro, Tintorera y Taberna de Elia.
-- [ ] Don Quijote Marbella: faltan URL servidor Agora, clave API HTTP y token Winerim; no hay conexión creada todavía.
+- [x] Don Quijote Marbella: conexión creada, catálogo `114/114`, flags automáticos y cola cero; pendiente canary real.
 - [ ] Saddle: backend aborta contra la IP aunque desde la máquina local responde; pedir DDNS/URL alternativa o revisión firewall/ruta desde Lovable Cloud/backend.
 - [x] El Higuerón: `Invoices`, `tickets`, `Families` y `Products` revalidados con HTTP `200` usando la credencial literal correcta.
 - [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
@@ -1110,9 +1132,9 @@
 - [x] El Higuerón: recuperar de forma idempotente la venta de `B Viña Real Reserva`; stock Winerim confirmado `2 -> 1`, `SUCCESS`, sin duplicados.
 - [ ] El Higuerón/flota Agora: desplegar `agora-proxy` con comparación de fechas naive en `sales_timezone` y observar el siguiente ciclo automático (`stockDeferredLines=0` para líneas ya maduras).
 - [x] El Higuerón: confirmado visualmente en ERP Winerim `Viña Real Reserva · Botella · 13:32 · TPV · 1 ud · 28 €`.
-- [ ] Abadía Yuste: crear conexión en Lovable Cloud cuando deje de devolver `522`; datos técnicos ya validados externamente contra Agora y Winerim.
-- [ ] Abadía Yuste: tras alta, ejecutar `test`, `sync-master-data`, `probe-open-tickets`, `find-last-business-day` y `fetch-catalog` completo.
-- [ ] Abadía Yuste: preparar informe de familias legacy/DO vs Winerim antes de publicar familias Winerim u ocultar legacy.
+- [x] Abadía Yuste: conexión creada y pruebas de conectividad/master/tickets completadas.
+- [x] Abadía Yuste: catálogo `281/281 MATCH` validado por bloques, con legacy visible.
+- [ ] Abadía Yuste: ejecutar canary real de botella y copa y confirmar ERP/stock/idempotencia.
 - [ ] Añadir auditoría periódica que compare Winerim activo/preciado vs Agora visible por formato y genere lista de productos a ocultar/republicar sin tocar nada automáticamente.
 - [ ] Jardí: confirmar con el cliente el nombre/ID exacto del "vino nuevo" que dice no ver. Auditoría 2026-06-18 no detecta ningún formato Winerim activo/con precio ausente en Agora; `Anais Blanc Organic` ya aparece en `BLANCOS WINERIM` y `COPAS WINERIM`.
 - [ ] Jardí: explicar que las ventas importadas actuales vienen de botones legacy sin mapping (`mapped=false`) y por eso no descuentan stock ni generan historial Winerim. Para descontar: vender desde botones Winerim o hacer matching legacy -> Winerim producto a producto.
@@ -1179,7 +1201,7 @@
 - [x] Confirmar Sa Vida con `missing=0` (`1252/254/20` por BOTTLE/GLASS/MAGNUM).
 - [x] Corregir el falso positivo de Sa Pedrera: `13/13` dulces cubiertos por la regla `single-button` y mappings confirmados.
 - [ ] Qtomas: recuperar conectividad externa y ejecutar `test` + `sync-master-data` fresh.
-- [ ] Qtomas: reconciliar `60 QUEUED` y `5 FAILED` contra el master recuperado; procesar solo cambios que sigan siendo necesarios.
+- [ ] Qtomas: reconciliar `59 BLOCKED` y fallos históricos contra el master recuperado; procesar solo cambios que sigan siendo necesarios.
 - [ ] Qtomas: confirmar que la alerta canónica se resuelve automáticamente tras dos probes sanos y que solo se emite un correo de recuperación.
 - [ ] Taberna de Elia: obtener confirmación visual tras reiniciar/refrescar el terminal; si no aparece, revisar centro de venta/terminal con SAT.
 - [ ] Taberna de Elia: hacer una venta real desde botón Winerim y comprobar historial/stock.
@@ -1202,7 +1224,7 @@
 - [ ] El Bejeque: diagnosticar `2 BLOCKED`, confirmar TPV en uso y realizar prueba botella+copa.
 - [ ] Kava: confirmar si el POS sigue en uso, resolver `sales_stale` y validar botella+copa después del 11/07.
 - [ ] Jardi: recuperar conectividad/breaker con SAT, releer master fresh y reconciliar `10 QUEUED` antes de procesar.
-- [ ] Qtomas: recuperar ruta externa, releer master fresh y reconciliar `60 QUEUED + 5 FAILED` antes de cualquier escritura.
+- [ ] Qtomas: recuperar ruta externa, releer master fresh y reconciliar `59 BLOCKED` más fallos históricos antes de cualquier escritura.
 - [ ] Implementar evidencia persistente para canaries de alta/precio, prueba de cancelación, recuperación e idempotencia; hoy esos bloques aparecen como `NO EVIDENCE`.
 - [ ] Corregir el monitor para que una actividad reciente cierre o invalide de forma coherente una alerta `sales_stale` obsoleta.
 

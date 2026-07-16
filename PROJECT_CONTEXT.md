@@ -37,6 +37,8 @@ Flujo principal:
 - En Agora, las conexiones que necesiten mantener orden comercial por código pueden activar `provider_config.agora_product_sort_mode="COMMERCIAL_CODE_NUMERIC"`. El orden usa códigos explícitos de nombre (`T501`, `B437`, `E516`, `D709`, `G801`, `MAGNUM21`) y solo debe cambiar `Order`, no IDs, precios, familias ni visibilidad.
 - Matching POS -> Winerim: cuando el nombre del POS o de Winerim trae código comercial exacto (`T31`, `B303`, `G801`, `MAGNUM21`), ese código tiene prioridad sobre fuzzy. No interpretar números sin separador como código (`Magnum 4 Kilos`, `As 2 Ladeiras`).
 - Una mutación de catálogo Agora no se considera correcta solo porque `/api/import/` responda sin error: familia, producto, visibilidad y atributos críticos deben confirmarse mediante una lectura fresca posterior del catálogo.
+- Las activaciones masivas Agora usan un runbook de staging: modo lectura por defecto, snapshot previo, conexión desactivada como exclusión cuando no hay lock privilegiado, publicación por lotes, auditoría fresh y rollback que nunca toca legacy.
+- La verificación textual Agora decodifica entidades XML y normaliza espacios de control. Solo puede recuperarse ownership de un producto existente si coincide exactamente y ya existe tracking previo `source=WINERIM` para el mismo ID, vino y formato.
 - Las auditorías de cobertura de catálogo resuelven primero `product_mappings` confirmados y reglas específicas de la conexión; los IDs deterministas por formato son únicamente el fallback. Esto evita falsos huecos en instalaciones con botones consolidados, como los dulces ordenados de Sa Pedrera.
 - Los nombres enviados a Agora deben ser únicos y estables por conexión. Cuando dos variantes colisionan, se usa primero la añada y después el identificador Winerim como desambiguador; un mapping ya confirmado conserva el nombre exacto enviado anteriormente.
 - La auditoría intradía de Agora separa dos planos: idempotencia del runtime y conciliación histórica. La primera se valida con claves exactas de `stock_sync_log` y canaries observados durante varios ciclos; las diferencias agregadas entre facturas Agora e historial ERP se tratan como deuda de conciliación y nunca autorizan borrados automáticos.
@@ -64,6 +66,7 @@ Separar siempre: **Hechos | Decisiones | Hipótesis | Tareas**.
 
 ## 7. Criterio único de estado para una integración Agora
 - `CATALOG_READY`: conexión fresh, catálogo Winerim elegible publicado y verificado por lectura fresh, sin huecos reales ni cola operativa pendiente.
+- `LIVE_PENDING_SALE_CANARY`: catálogo, flags automáticos, conectividad, mappings y colas están preparados, pero todavía falta observar una venta real de botella/copa en el ERP Winerim.
 - `LIVE`: además de `CATALOG_READY`, ventas recientes llegan desde Agora a Winerim con mapping correcto y el comportamiento de stock activo/inactivo está validado.
 - `100%_SIGNED_OFF`: además de `LIVE`, existe evidencia reciente de botella y copa, altas y cambios de precio automáticos, ocultación/reactivación, idempotencia, recuperación tras caída, alertas limpias y aceptación visual/operativa del cliente.
 - Una conexión no se denomina `100%` por tener solo el catálogo completo. Los criterios no aplicables requieren razón documentada; la ausencia de evidencia no equivale a `PASS`.
