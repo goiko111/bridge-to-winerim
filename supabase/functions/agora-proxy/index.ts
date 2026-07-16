@@ -10468,14 +10468,35 @@ ${costPricesXml}
         });
       }
 
-      let wineQuery = supabase
-        .from("winerim_wines")
-        .select("*")
-        .eq("connection_id", connectionId)
-        .eq("is_active", true);
-      if (requestedWineIds.length > 0) wineQuery = wineQuery.in("winerim_id", requestedWineIds);
-      const { data: wines, error: winesError } = await wineQuery;
-      if (winesError) throw winesError;
+      const wines: any[] = [];
+      const auditWineBatchSize = 500;
+      if (requestedWineIds.length > 0) {
+        for (let offset = 0; offset < requestedWineIds.length; offset += auditWineBatchSize) {
+          const requestedBatch = requestedWineIds.slice(offset, offset + auditWineBatchSize);
+          const { data: wineBatch, error: winesError } = await supabase
+            .from("winerim_wines")
+            .select("*")
+            .eq("connection_id", connectionId)
+            .eq("is_active", true)
+            .in("winerim_id", requestedBatch)
+            .order("winerim_id", { ascending: true });
+          if (winesError) throw winesError;
+          wines.push(...(wineBatch || []));
+        }
+      } else {
+        for (let offset = 0; ; offset += auditWineBatchSize) {
+          const { data: wineBatch, error: winesError } = await supabase
+            .from("winerim_wines")
+            .select("*")
+            .eq("connection_id", connectionId)
+            .eq("is_active", true)
+            .order("winerim_id", { ascending: true })
+            .range(offset, offset + auditWineBatchSize - 1);
+          if (winesError) throw winesError;
+          wines.push(...(wineBatch || []));
+          if (!wineBatch || wineBatch.length < auditWineBatchSize) break;
+        }
+      }
 
       const customMappings = await loadCustomFamilyMappings(connectionId);
       const selectedScope = (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS";
@@ -10487,7 +10508,7 @@ ${costPricesXml}
       const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
       const expectedOwnershipByProductId = new Map<string, { winerimWineId: string; format: string }[]>();
       const expectedAuditValidationKeys = new Set<string>();
-      for (const wine of wines || []) {
+      for (const wine of wines) {
         for (const format of ["BOTTLE", "GLASS", "MAGNUM"]) {
           const productId = deterministicAgoraProductId(connection, wine, format);
           const owners = expectedOwnershipByProductId.get(productId) || [];
@@ -10509,14 +10530,14 @@ ${costPricesXml}
         }
       }
       const { xml: expectedXml, validationResults } = generateImportXml(
-        wines || [],
+        wines,
         masterData,
         connection,
         ["BOTTLE", "GLASS", "MAGNUM"],
         customMappings,
         false,
         isGeoMode ? geoConfig : undefined,
-        isGeoMode ? wines || [] : undefined,
+        isGeoMode ? wines : undefined,
         scope.selectedPriceListIds,
       );
       const validationFailures = validationResults.filter((item) =>

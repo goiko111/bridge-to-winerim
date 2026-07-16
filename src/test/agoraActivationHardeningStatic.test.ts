@@ -70,6 +70,8 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain("EXPECTED_XML_VALIDATION_FAILED");
     expect(agoraProxySource).toContain("expectedAuditValidationKeys");
     expect(agoraProxySource).toContain('expectedAuditValidationKeys.has(`${item.winerimId}:${item.formatType}`)');
+    expect(agoraProxySource).toContain("const auditWineBatchSize = 500");
+    expect(agoraProxySource).toContain(".range(offset, offset + auditWineBatchSize - 1)");
   });
 
   it("serializes cron jobs per connection with an expiring database lease", () => {
