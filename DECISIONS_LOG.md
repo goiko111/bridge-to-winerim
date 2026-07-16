@@ -1534,3 +1534,31 @@
 **Riesgos controlados:** no se procesaron colas ni se modificaron los flags durante la auditoría. Si el canary no se ejecuta inmediatamente, el estado seguro es devolver los tres flags a `false`.
 
 **Alternativa descartada:** asumir que el despliegue correcto de la normalización XML demuestra también la idempotencia de ventas. Son rutas de código y riesgos independientes.
+
+## 2026-07-16 - El núcleo intradía queda habilitado en toda conexión Agora activa
+
+**Decisión:** mantener `open_tickets_sync_enabled` e `intraday_sales_sync_enabled` en las `15` conexiones activas; el permiso de escribir stock desde tickets abiertos se decide por conexión.
+
+**Razón:** todas las activas exponen el endpoint y ya tienen los dos flags de captura. Cienvinos y Jardi necesitan reconciliación definitiva por factura antes de aceptar mutaciones provisionales.
+
+**Riesgos controlados:** una conexión puede capturar actividad sin mover stock. Las `13` conexiones desactivadas siguen `NOT_ACTIVE` y no se activan como efecto secundario.
+
+**Alternativa descartada:** imponer `open_tickets_stock_sync_enabled=true` a toda la flota. Confundiría disponibilidad técnica con seguridad operativa.
+
+## 2026-07-16 - La aceptación antiduplicado exige ledger exacto y varios ciclos
+
+**Decisión:** validar la idempotencia intradía mediante ausencia de `idempotency_key` repetidas en `stock_sync_log` y un canary que sobreviva a varios reemplazos de snapshot.
+
+**Razón:** los agregados del ERP pueden contener deuda histórica, mientras que la clave exacta demuestra si el runtime actual emitió dos veces el mismo objetivo.
+
+**Evidencia:** `1.808` escrituras `SUCCESS` con clave, `0` claves duplicadas; canaries de Sa Pedrera y Kava sin repetición y con `sales_line_item_id=null` tras el refresco.
+
+**Alternativa descartada:** considerar una huella visual idéntica o una diferencia agregada como prueba automática de duplicación. Puede representar dos ventas legítimas o datos anteriores al runtime actual.
+
+## 2026-07-16 - La conciliación histórica nunca ejecuta limpiezas automáticas
+
+**Decisión:** los desajustes Agora frente a ERP se convierten en tareas de revisión por restaurante y documento; no autorizan anulaciones, imports ni cambios de stock automáticos.
+
+**Razón:** las ventanas históricas mezclan ventas manuales, aliases, mappings antiguos, pilotos intradía y facturas definitivas. Una limpieza por suma podría borrar una venta real.
+
+**Alternativa descartada:** igualar totales anulando cualquier excedente aparente. No preserva trazabilidad ni garantiza la variante correcta.
