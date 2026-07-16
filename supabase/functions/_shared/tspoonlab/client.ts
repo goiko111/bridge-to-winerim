@@ -139,7 +139,7 @@ export function createTspoonlabClient(config: TspoonlabClientConfig) {
   return {
     login,
     listOrderCenters: () => request("/orderCenters", {}, false),
-    listMenus: (params: TspoonlabListParams = {}) => request(listPath("/listMenusPagedEx", params)),
+    listMenus: (params: TspoonlabListParams & Record<string, unknown> = {}) => request(listPath("/listMenusPagedEx", params)),
     getMenu: (id: string) => request(`/menu/ext/${encodeURIComponent(id)}`),
     listRecipes: (params: TspoonlabListParams & Record<string, unknown> = {}) =>
       request(listPath("/listRecipesPaged", params)),
