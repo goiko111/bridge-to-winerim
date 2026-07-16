@@ -10,8 +10,10 @@
 - [x] Importar histórico `2026-04-15` a `2026-07-14` sin modificar stock.
 - [x] Validar idempotencia y matching manual seguro.
 - [x] Mantener temporalmente desactivados open tickets e intradía.
-- [ ] Publicar `agora-proxy` con preservación de claims.
-- [ ] Aplicar migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql`.
+- [ ] Aplicar la migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql`.
+- [ ] Redesplegar **únicamente** `agora-proxy` desde el `main` actual `5906a93`; no desplegar el commit histórico `b421584` de forma aislada.
+- [ ] Repetir la auditoría fresh de El Portón y exigir `173/173` coincidentes, `0` ausentes y `0` diferencias.
+- [ ] Confirmar en runtime `replaceSalesEventLinesPreservingStockClaims` y la decodificación `decodeXmlAttribute -> normalizeAgoraTextAttribute`.
 - [ ] Ejecutar canary doble sobre el mismo snapshot y confirmar cero duplicados.
 - [ ] Reactivar open tickets/intradía solo después del `PASS`.
 - [ ] Winerim: decidir cómo importar ventas de un vino inactivo como Cloe sin reactivarlo.
@@ -59,7 +61,7 @@
 - [ ] `Qtomas`: reconciliar dos precios, revisar nueve tareas de corte de red y resolver la alerta cuando el POS siga estable.
 - [ ] `Restaurante Triana`: corregir `PrintWhenPriceIsZero` y confirmar historial sales-only.
 - [ ] `Sa Pedrera`: reconciliar cinco precios y separar/archivar las `979` tareas históricas truncadas sin reintentarlas en masa.
-- [ ] `Katsu`: desplegar normalización XML del commit `b421584`, reevaluar las cinco tareas y resolver la alerta sin duplicar productos.
+- [ ] `Katsu`: tras el redeploy de `agora-proxy` desde `main` `5906a93`, reevaluar las cinco tareas y resolver la alerta sin duplicar productos.
 - [ ] `El Bejeque`: revisar y cerrar dos tareas `BLOCKED` antiguas por XML truncado.
 - [ ] `Jardi` y `Kava`: limpiar metadatos de breaker caducados solo después de otra sonda estable.
 
