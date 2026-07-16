@@ -68,6 +68,8 @@ describe("Agora staged activation hardening", () => {
     expect(agoraProxySource).toContain("readOnly: true");
     expect(runbookSource.match(/action: "audit-winerim-products"/g) || []).toHaveLength(2);
     expect(agoraProxySource).toContain("EXPECTED_XML_VALIDATION_FAILED");
+    expect(agoraProxySource).toContain("expectedAuditValidationKeys");
+    expect(agoraProxySource).toContain('expectedAuditValidationKeys.has(`${item.winerimId}:${item.formatType}`)');
   });
 
   it("serializes cron jobs per connection with an expiring database lease", () => {

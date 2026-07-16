@@ -10486,6 +10486,7 @@ ${costPricesXml}
       const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
       const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
       const expectedOwnershipByProductId = new Map<string, { winerimWineId: string; format: string }[]>();
+      const expectedAuditValidationKeys = new Set<string>();
       for (const wine of wines || []) {
         for (const format of ["BOTTLE", "GLASS", "MAGNUM"]) {
           const productId = deterministicAgoraProductId(connection, wine, format);
@@ -10495,6 +10496,16 @@ ${costPricesXml}
               format,
           });
           expectedOwnershipByProductId.set(productId, owners);
+        }
+        const winerimWineId = String(wine.winerim_id || wine.id || "");
+        if (Number(extractBottleSalePrice(wine) || 0) > 0) {
+          expectedAuditValidationKeys.add(`${winerimWineId}:BOTTLE`);
+        }
+        if (Number(extractGlassSalePrice(wine) || 0) > 0) {
+          expectedAuditValidationKeys.add(`${winerimWineId}:GLASS`);
+        }
+        if (Number(wine.magnum_sale_price || 0) > 0) {
+          expectedAuditValidationKeys.add(`${winerimWineId}:MAGNUM`);
         }
       }
       const { xml: expectedXml, validationResults } = generateImportXml(
@@ -10508,7 +10519,12 @@ ${costPricesXml}
         isGeoMode ? wines || [] : undefined,
         scope.selectedPriceListIds,
       );
-      const validationFailures = validationResults.filter((item) => !item.validation.valid);
+      const validationFailures = validationResults.filter((item) =>
+        !item.validation.valid && (
+          item.winerimId === "_CONNECTION_CONFIG" ||
+          expectedAuditValidationKeys.has(`${item.winerimId}:${item.formatType}`)
+        )
+      );
       if (validationFailures.length > 0) {
         return new Response(JSON.stringify({
           success: false,
