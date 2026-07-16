@@ -1258,6 +1258,17 @@
 - [x] Katsu: completar `14` filas / `24` unidades por `sales/import`, repetir y confirmar idempotencia sin movimiento de stock.
 - [x] Katsu: auditar catalogo fresh `157/157`, limpiar cinco falsos fallos de whitespace y dejar cola cero.
 - [x] Katsu: ejecutar dos ciclos de intradia y tickets abiertos con delta cero.
+- [x] Katsu: importar histórico canónico `2026-04-16..2026-06-23` mediante
+  `sales/import`: `253` tarjetas / `366` unidades, stock inalterado y segunda
+  ejecución `253 skipped`.
+- [x] Katsu: netear ticket/abono/factura, retirar seis tarjetas no canónicas y
+  restaurar exactamente el stock mediante `No, solo ajuste`.
+- [x] Katsu: auditar desde `2026-06-24`; historial y stock activo `PASS`, sin
+  diferencias canónicas ni duplicados.
+- [ ] Katsu: decidir con Winerim si se habilita histórico para `118` unidades
+  de variantes actualmente inactivas, sin reactivarlas.
+- [ ] Katsu: revisar manualmente `11` unidades de Hunters Sauvignon Blanc y
+  Garnacha Tintorera, sin fuzzy automático.
 - [ ] Katsu: desplegar el fix de `verify-products` para preservar tracking `HIDDEN`.
 - [ ] Katsu: observar 24 horas, pedir confirmacion visual y registrar canary real de alta/cambio de precio antes de `100%_SIGNED_OFF`.
 - [ ] Revisar los ocho candidatos de huella ERP idéntica antes de cualquier anulación: Bejeque `1`, Cienvinos `3`, Sa Pedrera `3`, Taberna de Elia `1`.

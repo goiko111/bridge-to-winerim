@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 17:56 CEST_
+_Última actualización: 2026-07-16 19:46 CEST_
 
 ## Nueve conexiones Agora - activación live-ready conservando legacy - 2026-07-16
 
@@ -5091,3 +5091,47 @@ _Última actualización: 2026-07-16 17:56 CEST_
 - Desplegar el ajuste de `verify-products` que conserva `HIDDEN` para formatos retirados.
 - Observar 24 horas y repetir la conciliacion.
 - Pedir confirmacion visual y aprovechar la siguiente alta/cambio de precio real como canary.
+
+## 2026-07-16 - Katsu: histórico de tres meses sin stock y auditoría desde el 24/06
+
+### Hechos
+- Se leyó Agora desde `2026-04-16` hasta `2026-06-23`: `69` días,
+  `1.201` documentos y `10.309` líneas.
+- Se versionaron `60` aliases legacy con variante explícita.
+- El backfill netea ahora ticket, anulación y factura definitiva usando
+  cantidades firmadas; no descarta negativos.
+- Resultado final visible en el ERP:
+  - `253` tarjetas `TPV`;
+  - `366` unidades;
+  - `0` diferencias por fecha real + stockId.
+- La repetición del lote canónico devolvió `0 imported / 253 skipped / 0 failed`.
+- El stock no cambió durante ninguna ejecución de `sales/import`.
+- Se anularon seis tarjetas no canónicas creadas por la primera versión del
+  backfill (`141593`, `141594`, `141658`, `141659`, `141792`, `141793`) y se
+  restauró el inventario exacto mediante `No, solo ajuste`.
+- Quedan fuera `129` unidades:
+  - `118` de vinos actualmente inactivos;
+  - `11` sin match fiable.
+- Desde `2026-06-24`, Agora frente al ERP continúa `PASS`:
+  `0` diferencias diarias/acumuladas, `0` claves duplicadas, `0` huellas
+  duplicadas y `0` stockIds ausentes.
+- Las cuatro ventas observadas sobre variantes con stock activo tienen
+  transición coherente. Una de ellas partía de stock `0` y quedó en `0`.
+- Informe completo:
+  `docs/operations/katsu-three-month-history-2026-07-16.md`.
+
+### Decisiones
+- Importar solo las `366` unidades con match seguro y vino accesible.
+- No reactivar vinos ni mapear Hunters/Garnacha Tintorera por aproximación.
+- Mantener como diferencia informativa el ledger antiguo de Sarmentero copa
+  del 24/06: el stock está desactivado y el historial final ya está conciliado.
+
+### Hipótesis
+- Las `118` unidades de vinos inactivos solo podrán incorporarse si Winerim
+  permite importar histórico contra variantes retiradas sin reactivarlas.
+
+### Tareas
+- Observar Katsu durante 24 horas y repetir el auditor desde `2026-06-24`.
+- Solicitar soporte Winerim para histórico de variantes inactivas si se desea
+  completar las `118` unidades pendientes.
+- Mantener Hunters Sauvignon Blanc y Garnacha Tintorera en revisión manual.
