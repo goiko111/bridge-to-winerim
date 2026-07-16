@@ -661,7 +661,19 @@ async function main() {
         catalogDetailFailures += Number(catalog.detailRequestsFailed || catalog.detailsMissing || 0);
       }
       if (catalogDetailFailures > 0) {
-        throw new Error(`Winerim catalog enrichment completed with failures: ${JSON.stringify(catalog).slice(0, 700)}`);
+        const failedDetailRows = await restAll(
+          `winerim_wines?connection_id=eq.${connection.id}&pricing_status=in.(FAILED,RETRYING)&select=winerim_id,name,is_active,pricing_status,pricing_missing_reason`,
+        );
+        const blockingDetailFailures = failedDetailRows.filter((wine) => wine.is_active === true);
+        if (blockingDetailFailures.length > 0) {
+          throw new Error(
+            `Winerim catalog enrichment failed for active wines (${blockingDetailFailures.length}): ` +
+            JSON.stringify(blockingDetailFailures.slice(0, 20)),
+          );
+        }
+        console.log(
+          `[catalog] ${connection.location_name}: ignored ${failedDetailRows.length} detail failures for inactive wines.`,
+        );
       }
 
       const masterRowsForRouting = await restAll(
@@ -912,7 +924,9 @@ async function main() {
         provider_config: autoConfig,
       });
 
-      for (const batch of chunks(wines.map((wine) => String(wine.winerim_id)), 50)) {
+      // Keep each differential evaluation small: large catalogs can exhaust the
+      // hosted Edge Function CPU while generating XML and checking ownership.
+      for (const batch of chunks(wines.map((wine) => String(wine.winerim_id)), 10)) {
         await invoke("agora-proxy", {
           action: "evaluate-auto-push", connectionId: connection.id,
           winerimWineIds: batch, eventType: "UPDATE",

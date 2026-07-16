@@ -61,6 +61,11 @@ describe("Agora staged activation hardening", () => {
     expect(runbookSource).toContain("ACTIVATION_ROLLBACK_CANCELLED");
     expect(runbookSource).toContain("stock_sync_not_before");
     expect(runbookSource).toContain("stock_sync_not_before_at");
+    expect(runbookSource).toContain("blockingDetailFailures");
+    expect(runbookSource).toContain("detail failures for inactive wines");
+    expect(runbookSource).toContain(
+      'chunks(wines.map((wine) => String(wine.winerim_id)), 10)',
+    );
     expect(agoraProxySource).toContain("isStockSyncDayAllowed");
     expect(agoraProxySource).toContain("providerSaleIsAfterStockStart");
     expect(runbookSource).toContain(
