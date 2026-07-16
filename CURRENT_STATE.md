@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 14:29 CEST_
+_Última actualización: 2026-07-16 15:14 CEST_
 
 ## Agora · corrección XML ya presente en runtime; activación concurrente no solicitada — 2026-07-16 14:29 CEST
 
@@ -4965,3 +4965,45 @@ _Última actualización: 2026-07-16 14:29 CEST_
 - Ejecutar `sync-intraday-sales` para los días 12, 13 y 14 y exigir delta cero.
 - Verificar en el ERP los totales finales esperados: `37 / 199,50 EUR`, `61 / 344 EUR` y `41 / 172,50 EUR`.
 - Observar dos ciclos de cinco minutos y después 24 horas sin nuevas duplicidades antes de devolver Cienvinos a `100%_SIGNED_OFF`.
+
+## 2026-07-16 - Auditoría completa de flags intradía e idempotencia Agora
+
+### Hechos
+- Se auditaron en modo `READ-ONLY` las `28` conexiones Agora registradas: `15` activas y `13` desactivadas.
+- Las `15/15` conexiones activas tienen `open_tickets_sync_enabled=true` e `intraday_sales_sync_enabled=true`.
+- `13/15` activas tienen también `open_tickets_stock_sync_enabled=true`.
+- Las dos excepciones son deliberadas:
+  - `Restaurante Cienvinos Ecija`: captura intradía activa, pero sin escribir stock/historial provisional desde tickets abiertos mientras se reconcilia el histórico.
+  - `Restaurante Jardi`: captura intradía activa, pero sin escribir stock provisional hasta completar cobertura de mapping/verificación.
+- El endpoint de tickets abiertos respondió HTTP `200` en las `15` conexiones activas durante la sonda.
+- El ledger completo contiene `1.808` filas `SUCCESS` con `idempotency_key`; se encontraron `0` claves exactas repetidas.
+- Canaries vivos observados durante varios ciclos:
+  - Sa Pedrera registró tres objetivos distintos y no repitió ninguna clave en ciclos posteriores.
+  - Kava registró una botella con objetivo `1` y no repitió la clave en ciclos posteriores.
+  - Tras refrescar los snapshots, `sales_line_item_id` quedó `null` en ambos restaurantes y los claims persistieron. Esto confirma en runtime el helper de preservación y la FK `ON DELETE SET NULL`.
+- Se compararon los `15` historiales ERP Winerim contra las líneas canónicas de facturas cerradas de los últimos `14` días.
+- `El Higuerón` y `Restaurante Triana` no presentan diferencias agregadas en esa ventana.
+- Las otras `13` conexiones requieren conciliación histórica. Esto no es evidencia de una duplicación nueva: mezcla pilotos antiguos, ventas manuales/importadas, aliases/mappings históricos y posibles faltantes o excedentes reales.
+- Candidatos de huella ERP idéntica que requieren contraste documental antes de tocar nada:
+  - El Bejeque: `1`.
+  - Cienvinos Ecija: `3`.
+  - Sa Pedrera: `3`.
+  - Taberna de Elia: `1`.
+- El auditor reutilizable queda en `scripts/audit-agora-intraday-history.mjs`; no almacena credenciales y exige variables de entorno para acceder al ERP.
+- No se cambiaron flags, conexiones, stock, historial, catálogo ni colas durante esta auditoría.
+
+### Decisiones
+- Mantener los flags intradía actuales: el núcleo está completo en las `15` activas y no existe razón para una activación masiva adicional.
+- Mantener `open_tickets_stock_sync_enabled=false` en Cienvinos y Jardi hasta resolver sus condiciones documentadas.
+- Considerar la idempotencia actual `PASS` cuando no existen claves exactas repetidas y el canary sobrevive a varios reemplazos de snapshot sin una nueva escritura.
+- Tratar las diferencias históricas como expedientes de conciliación por restaurante. No anular ni reimportar ventas en bloque a partir de agregados.
+
+### Hipótesis
+- Gran parte de las diferencias de catorce días procede de datos anteriores al runtime actual, imports manuales o mappings que no quedaron representados en `sales_line_items`; aun así, cada diferencia debe contrastarse contra documentos Agora antes de cerrarla.
+- La eficacia casi en tiempo real seguirá siendo parcial en conexiones cuyos tickets abiertos contienen muchas líneas sin mapping, aunque sus flags estén correctamente activados.
+
+### Tareas pendientes inmediatas
+- Priorizar conciliación histórica por volumen: Sa Pedrera, Cienvinos, Sa Vida, El Bejeque, Casa Nene y Katsu.
+- Resolver cobertura de mapping intradía en conexiones con muchas líneas abiertas no resueltas, especialmente Higuerón, Cienvinos, Triana, Sa Vida, Luruna y El Bejeque.
+- Ejecutar el auditor después de cambios en `agora-proxy`, migraciones de `sales_line_items`/`stock_sync_log` o activaciones intradía.
+- Mantener una observación de `24` horas para confirmar que no reaparecen claves idempotentes duplicadas.

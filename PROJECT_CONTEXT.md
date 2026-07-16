@@ -39,6 +39,7 @@ Flujo principal:
 - Una mutación de catálogo Agora no se considera correcta solo porque `/api/import/` responda sin error: familia, producto, visibilidad y atributos críticos deben confirmarse mediante una lectura fresca posterior del catálogo.
 - Las auditorías de cobertura de catálogo resuelven primero `product_mappings` confirmados y reglas específicas de la conexión; los IDs deterministas por formato son únicamente el fallback. Esto evita falsos huecos en instalaciones con botones consolidados, como los dulces ordenados de Sa Pedrera.
 - Los nombres enviados a Agora deben ser únicos y estables por conexión. Cuando dos variantes colisionan, se usa primero la añada y después el identificador Winerim como desambiguador; un mapping ya confirmado conserva el nombre exacto enviado anteriormente.
+- La auditoría intradía de Agora separa dos planos: idempotencia del runtime y conciliación histórica. La primera se valida con claves exactas de `stock_sync_log` y canaries observados durante varios ciclos; las diferencias agregadas entre facturas Agora e historial ERP se tratan como deuda de conciliación y nunca autorizan borrados automáticos.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.
@@ -67,3 +68,4 @@ Separar siempre: **Hechos | Decisiones | Hipótesis | Tareas**.
 - `100%_SIGNED_OFF`: además de `LIVE`, existe evidencia reciente de botella y copa, altas y cambios de precio automáticos, ocultación/reactivación, idempotencia, recuperación tras caída, alertas limpias y aceptación visual/operativa del cliente.
 - Una conexión no se denomina `100%` por tener solo el catálogo completo. Los criterios no aplicables requieren razón documentada; la ausencia de evidencia no equivale a `PASS`.
 - La lectura de tickets abiertos es opcional según soporte del Agora local. Las facturas cerradas y su reconciliación son obligatorias.
+- Las conexiones desactivadas se informan como `NOT_ACTIVE`; no se consideran fallos por no tener flags intradía ni se deben activar como efecto secundario de una auditoría.

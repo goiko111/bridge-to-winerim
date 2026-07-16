@@ -1222,3 +1222,16 @@
 - [ ] Ejecutar de nuevo los tres días y exigir delta cero antes de reabrir la escritura intradía.
 - [ ] Ejecutar una observación limpia de 24 horas y comparar Agora contra ERP Winerim por vino, variante, cantidad y hora.
 - [ ] Solicitar a Winerim una operación reversible por `external_id` (cancelar/actualizar o cantidad negativa) y soporte de precio/importe histórico en `sales/import`.
+
+## P0 - Auditoría intradía e idempotencia de flota (2026-07-16)
+
+- [x] Confirmar `open_tickets_sync_enabled=true` e `intraday_sales_sync_enabled=true` en las `15/15` conexiones Agora activas.
+- [x] Confirmar `open_tickets_stock_sync_enabled=true` en `13/15`; mantener Cienvinos y Jardi en captura sin mutación provisional por decisión documentada.
+- [x] Auditar el ledger completo: `1.808` filas `SUCCESS` con clave y `0` `idempotency_key` duplicadas.
+- [x] Observar canaries de Sa Pedrera y Kava durante varios ciclos y confirmar que el claim persiste al reemplazar snapshots.
+- [x] Crear `scripts/audit-agora-intraday-history.mjs` para repetir flags, ledger e historial ERP sin escrituras.
+- [ ] Mantener observación durante `24` horas y exigir que el contador de claves duplicadas siga en `0`.
+- [ ] Conciliar por documento las diferencias de los últimos catorce días, empezando por Sa Pedrera, Cienvinos, Sa Vida, El Bejeque, Casa Nene y Katsu.
+- [ ] Revisar los ocho candidatos de huella ERP idéntica antes de cualquier anulación: Bejeque `1`, Cienvinos `3`, Sa Pedrera `3`, Taberna de Elia `1`.
+- [ ] Mejorar mapping de tickets abiertos donde la sonda sigue dejando muchas líneas sin resolver; un flag activo no basta para garantizar cobertura intradía.
+- [ ] Añadir la ejecución del auditor a la checklist posterior a despliegues de `agora-proxy` y migraciones que afecten `sales_line_items` o `stock_sync_log`.
