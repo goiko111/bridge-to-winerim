@@ -65,6 +65,9 @@ _Última actualización: 2026-07-16 13:58 CEST_
   - helper único que desengancha `sales_line_item_id` antes de reemplazar snapshots;
   - migración FK a `ON DELETE SET NULL`;
   - script de histórico con dry-run por defecto, alias manuales, filtro por `orderId` y errores enriquecidos.
+- Fuente publicada:
+  - PR GitHub `#10`;
+  - merge en `main` `d87e68b`.
 - Verificación local:
   - `74/74` tests;
   - TypeScript `PASS`;
@@ -85,6 +88,7 @@ _Última actualización: 2026-07-16 13:58 CEST_
 ### Despliegue pendiente
 
 - El código y la migración deben publicarse en runtime antes de volver a activar el modo intradía.
+- Esta máquina no tiene `SUPABASE_ACCESS_TOKEN`; no se pudo ejecutar el redeploy ni aplicar DDL con CLI.
 - Tras el deploy:
   - ejecutar dos sincronizaciones consecutivas sobre el mismo snapshot;
   - confirmar que el segundo ciclo no crea historial ni mueve stock;

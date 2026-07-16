@@ -103,6 +103,7 @@ ticket antiguo si el precio cambio.
 
 ## Proteccion y rollback
 
+- Fuente publicada en GitHub `main`: merge `d87e68b` / PR `#10`.
 - Mientras el runtime no incorpore el fix:
   - `open_tickets_sync_enabled=false`;
   - `open_tickets_stock_sync_enabled=false`;
