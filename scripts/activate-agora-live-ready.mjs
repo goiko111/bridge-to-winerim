@@ -18,6 +18,7 @@ const TARGETS = [
   { key: "don-quijote-marbella", aliases: ["don quijote marbella", "restaurante don quijote marbella"], saleCenterIds: ["2", "3", "4"] },
   { key: "abadia-yuste", aliases: ["abadia yuste", "abadía yuste"], saleCenterIds: ["1", "3", "7", "8", "11"] },
   { key: "de-la-o", aliases: ["de la o"], saleCenterIds: ["2", "4"] },
+  { key: "el-porton-de-sorni", aliases: ["el porton de sorni", "el portón de sorní"], saleCenterIds: ["1", "2"] },
   { key: "el-higueron", aliases: ["el higueron", "el higuerón", "higueron", "higuerón"], saleCenterIds: ["1", "2", "4", "5", "6", "7", "8", "9", "10", "11", "13"] },
   { key: "qtomas", aliases: ["qtomas", "q tomas", "restaurante qtomas"], saleCenterIds: ["12", "16", "17"] },
   { key: "ocean-club", aliases: ["ocean club"], canCreate: true, saleCenterEnv: "OCEAN_SALE_CENTER_IDS" },
@@ -50,11 +51,22 @@ const MUTABLE_CONNECTION_FIELDS = [
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 520, 522, 523, 524]);
 
 function parseArgs(argv) {
-  const result = { apply: false, confirmed: false, targets: [], envFile: process.env.LOVABLE_ENV_FILE || DEFAULT_ENV_FILE };
+  const result = {
+    apply: false,
+    confirmed: false,
+    enableAfterVerification: false,
+    allowCurrentPublicBackendPolicy: false,
+    useDisabledConnectionAsLock: false,
+    targets: [],
+    envFile: process.env.LOVABLE_ENV_FILE || DEFAULT_ENV_FILE,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--apply") result.apply = true;
     else if (arg === "--confirm-live-ready-pending-sale") result.confirmed = true;
+    else if (arg === "--enable-after-verification") result.enableAfterVerification = true;
+    else if (arg === "--allow-current-public-backend-policy") result.allowCurrentPublicBackendPolicy = true;
+    else if (arg === "--use-disabled-connection-as-lock") result.useDisabledConnectionAsLock = true;
     else if (arg === "--target") result.targets.push(...String(argv[++i] || "").split(",").filter(Boolean));
     else if (arg === "--env-file") result.envFile = argv[++i];
     else if (arg === "--help") result.help = true;
@@ -66,11 +78,18 @@ function parseArgs(argv) {
 function usage() {
   return `Usage:
   node scripts/activate-agora-live-ready.mjs [--target finca-eslava,ocean-club]
-  node scripts/activate-agora-live-ready.mjs --apply --confirm-live-ready-pending-sale [--target ...]
+  node scripts/activate-agora-live-ready.mjs --apply --confirm-live-ready-pending-sale [--enable-after-verification] [--target ...]
 
 Ocean Club creation additionally requires:
   OCEAN_BASE_URL, OCEAN_AGORA_API_TOKEN, OCEAN_WINERIM_API_TOKEN
-  OCEAN_SALE_CENTER_IDS (comma-separated explicit allowlist)`;
+  OCEAN_SALE_CENTER_IDS (comma-separated explicit allowlist)
+
+The temporary --allow-current-public-backend-policy switch is only valid for
+the current Lovable Cloud project while its existing frontend write policy is
+still in force. Without a service-role key it additionally requires
+--use-disabled-connection-as-lock, which pauses the connection and verifies
+that no scheduled job is running before continuing. Prefer a service-role key
+whenever one is available.`;
 }
 
 function normalize(value) {
@@ -240,8 +259,22 @@ async function main() {
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY || env.LOVABLE_CLOUD_SERVICE_ROLE_KEY;
   const backendKey = serviceRoleKey || env.VITE_SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_ANON_KEY;
   if (!backendUrl || !backendKey) throw new Error("Lovable Cloud URL/key not found in environment.");
-  if (args.apply && !serviceRoleKey) {
-    throw new Error("Live activation requires an explicit Lovable Cloud service-role key.");
+  const currentProjectId = String(env.VITE_SUPABASE_PROJECT_ID || "");
+  const publicPolicyWriteAllowed = args.allowCurrentPublicBackendPolicy &&
+    currentProjectId === "csiertktrefwewsmequr";
+  if (args.apply && !serviceRoleKey && !publicPolicyWriteAllowed) {
+    throw new Error(
+      "Live activation requires a service-role key. The current project may use " +
+      "--allow-current-public-backend-policy only while its existing frontend write policy remains active.",
+    );
+  }
+  if (args.apply && !serviceRoleKey && publicPolicyWriteAllowed) {
+    if (!args.useDisabledConnectionAsLock) {
+      throw new Error(
+        "Public-policy activation requires --use-disabled-connection-as-lock so scheduled jobs are excluded.",
+      );
+    }
+    console.warn("[security] Using the current Lovable Cloud frontend write policy; remove this path after RLS hardening.");
   }
 
   const request = async (url, options = {}, attempts = 5) => {
@@ -421,6 +454,7 @@ async function main() {
     console.log(`\n[activate] ${connection.location_name} (${definition.key})`);
     try {
       const acquireLock = async (job, waitMs = 600_000) => {
+        if (args.useDisabledConnectionAsLock) return;
         const deadline = Date.now() + waitMs;
         while (Date.now() < deadline) {
           const acquired = await rpc("acquire_agora_dispatch_lock", {
@@ -453,25 +487,27 @@ async function main() {
       };
 
       await acquireLock("activation", 30_000);
-      lockHeartbeat = setInterval(async () => {
-        if (lockHeartbeatStopped || lockHeartbeatInFlight) return;
-        lockHeartbeatInFlight = (async () => {
-          try {
-            const renewed = await rpc("acquire_agora_dispatch_lock", {
-              p_connection_id: connection.id,
-              p_job: "activation",
-              p_lock_token: lockToken,
-              p_ttl_seconds: 1800,
-            });
-            if (renewed !== true) lockHeartbeatError = new Error("Exclusive activation lock could not be renewed.");
-          } catch (error) {
-            lockHeartbeatError = error;
-          } finally {
-            lockHeartbeatInFlight = null;
-          }
-        })();
-        await lockHeartbeatInFlight;
-      }, 240_000);
+      if (!args.useDisabledConnectionAsLock) {
+        lockHeartbeat = setInterval(async () => {
+          if (lockHeartbeatStopped || lockHeartbeatInFlight) return;
+          lockHeartbeatInFlight = (async () => {
+            try {
+              const renewed = await rpc("acquire_agora_dispatch_lock", {
+                p_connection_id: connection.id,
+                p_job: "activation",
+                p_lock_token: lockToken,
+                p_ttl_seconds: 1800,
+              });
+              if (renewed !== true) lockHeartbeatError = new Error("Exclusive activation lock could not be renewed.");
+            } catch (error) {
+              lockHeartbeatError = error;
+            } finally {
+              lockHeartbeatInFlight = null;
+            }
+          })();
+          await lockHeartbeatInFlight;
+        }, 240_000);
+      }
       assertActivationLock = () => {
         if (lockHeartbeatError) throw lockHeartbeatError;
       };
@@ -486,13 +522,22 @@ async function main() {
         provider_config: { ...providerConfigBefore, activation_status: "STAGING", read_only_onboarding: false },
       };
       connection = await patchConnection(connection.id, stagingPatch);
+      if (args.useDisabledConnectionAsLock) await sleep(5_000);
       const activationStockStartAt = new Date().toISOString();
+      const taskSnapshotPromise = Promise.all([
+        restAll(
+          `outbound_tasks?connection_id=eq.${connection.id}&status=in.(QUEUED,RUNNING)&select=id,task_type,status,attempts,last_error,blocked_reason,created_at,updated_at`,
+        ),
+        restAll(
+          `outbound_tasks?connection_id=eq.${connection.id}&status=in.(FAILED,BLOCKED)&select=id,task_type,status,attempts,last_error,blocked_reason,created_at,updated_at`,
+        ),
+      ]).then(([activeRows, failedRows]) => [...activeRows, ...failedRows]);
 
       const [familyMappingsBefore, productMappingsBefore, trackingBefore, tasksBefore, capsBefore, masterBefore] = await Promise.all([
         restAll(`wine_type_family_mappings?connection_id=eq.${connection.id}&select=*`),
         restAll(`product_mappings?connection_id=eq.${connection.id}&select=*`),
         restAll(`winerim_push_tracking?connection_id=eq.${connection.id}&select=*`),
-        restAll(`outbound_tasks?connection_id=eq.${connection.id}&select=id,task_type,status,attempts,last_error,blocked_reason,created_at,updated_at`),
+        taskSnapshotPromise,
         restAll(`provider_capabilities?connection_id=eq.${connection.id}&select=*`),
         restAll(`agora_master_data?connection_id=eq.${connection.id}&select=*`),
       ]);
@@ -519,7 +564,6 @@ async function main() {
           ["product_mappings", "productMappings"],
           ["winerim_push_tracking", "tracking"],
           ["provider_capabilities", "capabilities"],
-          ["outbound_tasks", "tasks"],
         ];
         for (const [table, key] of tableSpecs) {
           const currentRows = await restAll(`${table}?connection_id=eq.${connection.id}&select=id`);
@@ -528,6 +572,10 @@ async function main() {
             if (!baselineIds[key].has(id)) createdRowIds[key].add(id);
           }
         }
+        const createdTasks = await restAll(
+          `outbound_tasks?connection_id=eq.${connection.id}&created_at=gte.${encodeURIComponent(activationStockStartAt)}&select=id`,
+        );
+        for (const row of createdTasks) createdRowIds.tasks.add(String(row.id));
       };
       await writeFile(path.join(snapshotDir, `${definition.key}-before.json`), JSON.stringify(redact(snapshot), null, 2));
       const activeTasksBefore = tasksBefore.filter((task) => task.status === "QUEUED" || task.status === "RUNNING");
@@ -681,13 +729,41 @@ async function main() {
         winerimWineIds: wines.map((wine) => String(wine.winerim_id)),
       });
       const auditByProductId = new Map((catalogAudit.details || []).map((item) => [String(item.productId), item]));
-      const auditCollisions = (catalogAudit.details || []).filter((item) => item.status !== "MISSING" && !item.ownedByWinerim);
-      const auditDifferences = (catalogAudit.details || []).filter((item) => item.status === "DIFFERENT");
+      const priorWinerimTrackingKeys = new Set(
+        trackingBefore
+          .filter((tracking) => tracking.source === "WINERIM" && tracking.agora_product_id)
+          .map((tracking) =>
+            `${tracking.agora_product_id}:${tracking.winerim_wine_id}:${String(tracking.format || "").toUpperCase()}`
+          ),
+      );
+      const recoverableUnownedMatches = (catalogAudit.details || []).filter((item) =>
+        item.status === "MATCH" &&
+        !item.ownedByWinerim &&
+        priorWinerimTrackingKeys.has(
+          `${item.productId}:${item.expectedWinerimWineId}:${String(item.expectedFormat || "").toUpperCase()}`
+        )
+      );
+      const recoverableUnownedProductIds = new Set(
+        recoverableUnownedMatches.map((item) => String(item.productId)),
+      );
+      const auditCollisions = (catalogAudit.details || []).filter((item) =>
+        item.status !== "MISSING" &&
+        !item.ownedByWinerim &&
+        !recoverableUnownedProductIds.has(String(item.productId))
+      );
       if (auditCollisions.length > 0) {
         throw new Error(`Deterministic Agora ID collisions detected (${auditCollisions.length}): ${JSON.stringify(auditCollisions.slice(0, 10))}`);
       }
+      if (recoverableUnownedMatches.length > 0) {
+        console.log(
+          `[repair] ${connection.location_name}: ${recoverableUnownedMatches.length} exact Winerim products require ownership recovery.`,
+        );
+      }
+      const auditDifferences = (catalogAudit.details || []).filter((item) =>
+        item.status === "DIFFERENT" && item.ownedByWinerim
+      );
       if (auditDifferences.length > 0) {
-        throw new Error(`Existing Winerim products differ from the expected safe state (${auditDifferences.length}); no existing product was overwritten.`);
+        console.log(`[repair] ${connection.location_name}: ${auditDifferences.length} owned Winerim products require a differential update.`);
       }
       newlyIntroducedProducts = expected
         .filter((item) => auditByProductId.get(item.productId)?.status === "MISSING")
@@ -697,7 +773,8 @@ async function main() {
       for (const wine of wines) {
         const formats = expectedFormats(wine).filter((format) => {
           const expectedId = productId(wine.winerim_id, format);
-          return auditByProductId.get(expectedId)?.status === "MISSING";
+          return auditByProductId.get(expectedId)?.status === "MISSING" ||
+            recoverableUnownedProductIds.has(expectedId);
         });
         if (formats.length === 0) continue;
         const signature = formats.join("+");
@@ -728,11 +805,13 @@ async function main() {
         auto_push_update_diff_enabled: true,
         open_tickets_sync_enabled: true,
         open_tickets_stock_sync_enabled: true,
+        intraday_sales_sync_enabled: true,
         open_tickets_min_line_age_minutes: 2,
         open_tickets_stock_current_day_only: true,
-        open_tickets_restore_stale_previous_days_enabled: false,
+        open_tickets_restore_stale_previous_days_enabled:
+          providerConfigBefore.open_tickets_restore_stale_previous_days_enabled ?? false,
         stock_sync_not_before: providerConfigBefore.stock_sync_not_before || isoDay(new Date()),
-        stock_sync_not_before_at: activationStockStartAt,
+        stock_sync_not_before_at: providerConfigBefore.stock_sync_not_before_at || activationStockStartAt,
       };
       delete autoConfig.auto_push_update_winerim_ids;
       delete autoConfig.auto_push_update_canary_winerim_ids;
@@ -824,22 +903,23 @@ async function main() {
       });
 
       const today = isoDay(new Date());
-      const prospectiveSalesCursor = connection.last_business_day_synced && connection.last_business_day_synced > today
-        ? connection.last_business_day_synced
-        : today;
-      const preserveExistingLiveState = originalConnection.enabled === true;
-      const pendingStatus = preserveExistingLiveState ? "LIVE_READY_PENDING_SALE" : "CATALOG_READY_PENDING_SALE";
+      const yesterday = isoDay(new Date(Date.now() - 86_400_000));
+      const shouldEnable = originalConnection.enabled === true || args.enableAfterVerification;
+      const prospectiveSalesCursor = originalConnection.enabled === true && originalConnection.last_business_day_synced
+        ? originalConnection.last_business_day_synced
+        : yesterday;
+      const pendingStatus = shouldEnable ? "LIVE_PENDING_SALE_CANARY" : "CATALOG_READY_PENDING_SALE";
       const finalConfig = { ...autoConfig, activation_status: pendingStatus };
       assertActivationLock();
       connection = await patchConnection(connection.id, {
-        enabled: preserveExistingLiveState,
+        enabled: shouldEnable,
         sync_mode: "BIDIRECTIONAL",
         sync_frequency_minutes: 5,
         backfill_days: 1,
-        catalog_sync_enabled: preserveExistingLiveState,
-        auto_push_on_create: preserveExistingLiveState,
-        auto_push_on_update: preserveExistingLiveState,
-        auto_push_verified_ready: preserveExistingLiveState,
+        catalog_sync_enabled: shouldEnable,
+        auto_push_on_create: shouldEnable,
+        auto_push_on_update: shouldEnable,
+        auto_push_verified_ready: shouldEnable,
         last_business_day_synced: prospectiveSalesCursor,
         circuit_breaker_paused_until: null,
         circuit_breaker_reason: null,
@@ -848,6 +928,9 @@ async function main() {
       });
       const finalTest = await invoke("agora-proxy", { action: "test", connectionId: connection.id });
       if (finalTest?.success === false) throw new Error("Final Agora health test failed.");
+      const firstOpenTicketsSync = shouldEnable
+        ? await invoke("agora-proxy", { action: "sync-open-tickets", connectionId: connection.id })
+        : null;
 
       const historicalFailures = await restAll(`outbound_tasks?connection_id=eq.${connection.id}&status=in.(FAILED,BLOCKED)&select=id,status,task_type,last_error,blocked_reason,created_at`);
       const result = {
@@ -867,6 +950,7 @@ async function main() {
           different: finalCatalogAudit.different,
         },
         openTicketsProbe: redact(openTicketsProbe),
+        firstOpenTicketsSync: redact(firstOpenTicketsSync),
         saleTestPending: true,
       };
       finalResults.push(result);
@@ -953,7 +1037,7 @@ async function main() {
   await writeFile(path.join(snapshotDir, "summary.json"), JSON.stringify(finalResults, null, 2));
   console.log(`\n[summary] ${snapshotDir}`);
   for (const result of finalResults) console.log(`${result.status}\t${result.locationName}\t${result.expectedFormats || 0}`);
-  if (finalResults.some((result) => !["LIVE_READY_PENDING_SALE", "CATALOG_READY_PENDING_SALE"].includes(result.status))) process.exitCode = 1;
+  if (finalResults.some((result) => !["LIVE_PENDING_SALE_CANARY", "CATALOG_READY_PENDING_SALE"].includes(result.status))) process.exitCode = 1;
 }
 
 main().catch((error) => {

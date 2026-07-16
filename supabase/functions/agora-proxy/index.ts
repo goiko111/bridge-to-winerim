@@ -3357,15 +3357,18 @@ function verifyAgoraProductsAgainstScope(
     let productOk = true;
 
     if (product.expectedName) {
-      const actualName = decodeXmlAttribute(attrs.match(/\bName="([^"]*)"/i)?.[1] || "");
-      if (actualName !== product.expectedName) {
+      const expectedName = normalizeAgoraTextAttribute(product.expectedName);
+      const actualName = normalizeAgoraTextAttribute(
+        decodeXmlAttribute(attrs.match(/\bName="([^"]*)"/i)?.[1] || ""),
+      );
+      if (actualName !== expectedName) {
         productOk = false;
         result.success = false;
         result.errors.push({
           code: "NAME_MISMATCH",
-          message: `Product ${product.productId}: expected name "${product.expectedName}", got "${actualName}"`,
+          message: `Product ${product.productId}: expected name "${expectedName}", got "${actualName}"`,
           field: "Name",
-          context: { productId: product.productId, expected: product.expectedName, actual: actualName },
+          context: { productId: product.productId, expected: expectedName, actual: actualName },
         });
       }
     }
