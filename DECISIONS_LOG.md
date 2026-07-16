@@ -1430,3 +1430,35 @@
 **Razón:** bajar temporalmente el PVP a `18 EUR`, importar y restaurarlo a `42 EUR` expondría un precio incorrecto en Agora/carta y abriría una carrera con la sincronización automática.
 
 **Alternativa descartada:** manipular el precio productivo durante la reparación. El riesgo comercial es mayor que conservar una discrepancia monetaria conocida y documentada.
+
+## 2026-07-16 - El Portón queda desactivado hasta una venta real de botella y copa
+
+**Decisión:** publicar y verificar el catálogo Winerim de El Portón, mantener visible el legacy y conservar la conexión en `CATALOG_READY_PENDING_SALE`.
+
+**Razón:** el catálogo, la cola y los endpoints de lectura pueden validarse sin riesgo, pero la activación definitiva exige comprobar en el restaurante el recorrido Agora -> historial Winerim para botella y copa.
+
+**Riesgos controlados:** no se ejecuta sincronización periódica ni se descuenta stock antes de la prueba. Las guardas de inicio evitan procesar ventas anteriores al piloto.
+
+**Alternativa descartada:** habilitar inmediatamente la conexión por haber publicado `173/173` variantes. Un catálogo correcto no demuestra todavía ventas, stock, horario ni aceptación del terminal.
+
+**Rollback:** ocultar únicamente las ocho familias Winerim y sus productos. El catálogo anterior no se ha ocultado ni modificado.
+
+## 2026-07-16 - Las auditorías de catálogo separan texto XML de diferencias comerciales
+
+**Decisión:** un `NAME_MISMATCH` o `BUTTONTEXT_MISMATCH` solo se considera diferencia real después de decodificar entidades XML y normalizar espacios de control; IVA, precio, familia y flags de venta nunca se ignoran.
+
+**Razón:** el runtime actual marca diferencias en apóstrofes codificados, tabuladores y espacios aunque el texto visible en Agora sea idéntico. Mezclar esos falsos positivos con precios o flags incorrectos genera tareas y alertas innecesarias.
+
+**Riesgos controlados:** la normalización se limita a texto visible. No cambia IDs, precios, familias, preparación ni capacidad de venta.
+
+**Alternativa descartada:** tratar todos los `DIFFERENT` como error real o ignorarlos todos. La primera opción crea ruido y reimportaciones; la segunda ocultaría fallos comerciales.
+
+## 2026-07-16 - Ninguna conexión se etiqueta al 100% sin evidencia integral
+
+**Decisión:** mantener la clasificación `CATALOG_READY`, `LIVE` y `100%_SIGNED_OFF`; el estado final exige pruebas recientes de alta, precio, botella, copa, stock activo/inactivo, idempotencia, recuperación, historial ERP y terminal.
+
+**Razón:** la auditoría fresh de las `28` conexiones encontró instalaciones con catálogo correcto pero ventas sin firma, y otras con ventas activas pero diferencias de precio, familia, flags o deuda histórica.
+
+**Riesgos controlados:** el informe distingue bloqueos actuales, deuda histórica y falsos positivos. No se desactiva una conexión sana únicamente por una tarea antigua.
+
+**Alternativa descartada:** llamar “100%” a cualquier conexión habilitada que responda a `/api/`. La conectividad no prueba la integración completa.

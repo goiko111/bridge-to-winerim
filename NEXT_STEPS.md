@@ -2,6 +2,49 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — El Portón de Sorní · cerrar piloto
+
+- [x] Crear conexión en modo seguro y validar Agora, master data, tickets abiertos e invoices.
+- [x] Leer y enriquecer `157` vinos Winerim.
+- [x] Configurar IVA, almacén, preparación, centros de venta y scope de precios.
+- [x] Crear ocho familias Winerim manteniendo el legacy visible.
+- [x] Publicar y verificar `173/173` variantes con cola final `0`.
+- [ ] Cliente: refrescar terminales y confirmar familias/botones visibles.
+- [ ] Marcar una botella Winerim y comprobar historial, hora, variante e idempotencia.
+- [ ] Marcar una copa Winerim y comprobar historial, hora, variante e idempotencia.
+- [ ] Probar una variante con stock activo y otra con stock inactivo.
+- [ ] Tras las pruebas, habilitar conexión, catálogo cada `5` minutos y auto-push.
+
+## P0 — Flota Agora · correcciones prioritarias 2026-07-16
+
+- [ ] `Sa Vida`: resolver `sales_stale`, auditar el catálogo divergente y no declararla sana hasta reconciliar flags, familias y precios.
+- [ ] `Taberna de Elia`: reparar el producto ausente y resolver tres tareas `BLOCKED` HTTP `404`.
+- [ ] `Chiquilla`: reconciliar `16` diferencias de IVA/`SaleableAsAddin`.
+- [ ] `Kava`: corregir una diferencia de precio y una de familia; resolver la alerta y archivar fallos de red cuando la sonda siga estable.
+- [ ] `Luruna`: reconciliar los dos vinos con precios distintos en listas.
+- [ ] `PurOsushi`: reconciliar dos precios y completar venta real botella/copa manteniendo legacy visible.
+- [ ] `Cienvinos`: reconciliar diez precios de lista `1` y completar observación de 24 horas.
+- [ ] `Qtomas`: reconciliar dos precios, revisar nueve tareas de corte de red y resolver la alerta cuando el POS siga estable.
+- [ ] `Restaurante Triana`: corregir `PrintWhenPriceIsZero` y confirmar historial sales-only.
+- [ ] `Sa Pedrera`: reconciliar cinco precios y separar/archivar las `979` tareas históricas truncadas sin reintentarlas en masa.
+- [ ] `Katsu`: desplegar normalización XML del commit `b421584`, reevaluar las cinco tareas y resolver la alerta sin duplicar productos.
+- [ ] `El Bejeque`: revisar y cerrar dos tareas `BLOCKED` antiguas por XML truncado.
+- [ ] `Jardi` y `Kava`: limpiar metadatos de breaker caducados solo después de otra sonda estable.
+
+## P0 — Agora · bloqueos de conectividad
+
+- [ ] `O Bistro`: obtener URL pública/DDNS o túnel; no sirve la IP privada desde el backend.
+- [ ] `Saddle`: SAT debe revisar NAT/firewall/DDNS y puerto `8984`.
+- [ ] `Tintorera`: SAT debe revisar NAT/firewall/DDNS y puerto `8984`; mantener desactivada.
+
+## P1 — Agora · siguientes altas
+
+- [ ] Preparar `Abadía Yuste`, `Don Quijote Marbella`, `Finca Eslava` y `Vinatea` con el runbook de El Portón, manteniendo legacy visible y conexión desactivada hasta prueba real.
+- [ ] Decidir si se reanuda `Baco Getafe` o se conserva en rollback.
+- [ ] Confirmar destino de `La Candela de Triana`; actualmente sigue desactivada.
+- [ ] Completar onboarding Winerim de `De la O`.
+- [ ] Crear y auditar `Ocean Club`; las credenciales se facilitaron, pero no existe conexión registrada.
+
 ## P0 — Cienvinos · observación posterior a canaries 2026-07-14
 
 - [x] Probar cambio de precio real `14,00 -> 14,01 -> 14,00` desde Winerim y confirmar una tarea automática por cambio, sin duplicados.
