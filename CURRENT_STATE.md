@@ -2,7 +2,158 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-14 18:52 CEST_
+_Última actualización: 2026-07-16 11:36 CEST_
+
+## El Portón de Sorní · catálogo preparado, pendiente de venta real — 2026-07-16 11:36 CEST
+
+### Hechos
+
+- Se creó la conexión Agora `a3bc8cbe-baf0-4b4c-b460-1baafd8cdbc2` y se mantuvo desactivada durante toda la preparación.
+- Lectura Agora correcta:
+  - `59` familias;
+  - `441` productos;
+  - `4` IVAs;
+  - `2` listas de precio, con la lista `2 · Barra` activa;
+  - `2` tipos y `4` órdenes de preparación;
+  - `1` almacén;
+  - centros de venta `1 · Sala` y `2 · Terraza`, ambos asociados a la lista activa.
+- `/api/export/tickets/` responde HTTP `200`; el endpoint existe, aunque todavía no se ha validado una venta real de vino.
+- Catálogo Winerim leído y enriquecido:
+  - `157` vinos activos con precio;
+  - `152` variantes botella;
+  - `21` variantes copa;
+  - `0` variantes magnum;
+  - `173` variantes publicables en total.
+- Se configuró de forma explícita:
+  - IVA `3 / 10%`;
+  - almacén `1`;
+  - preparación `1 / 1` (`Barra / Bebidas`);
+  - centros de venta `1` y `2`;
+  - escritura de precios limitada a esos centros de venta.
+- Se crearon y dejaron visibles las ocho familias Winerim, sin ocultar ni modificar el legacy:
+  - `TINTOS WINERIM`: `77/77` productos vendibles;
+  - `BLANCOS WINERIM`: `42/42`;
+  - `ROSADOS WINERIM`: `5/5`;
+  - `ESPUMOSOS WINERIM`: `23/23`;
+  - `DULCE WINERIM`: `5/5`;
+  - `COPAS WINERIM`: `21/21`;
+  - `FORTIFICADOS WINERIM`: `0`;
+  - `MAGNUM WINERIM`: `0`.
+- Las `157` tareas de alta se procesaron secuencialmente:
+  - `157 SUCCESS`;
+  - `0 QUEUED`;
+  - `0 RUNNING`;
+  - `0 FAILED`;
+  - `0 BLOCKED`.
+- Tracking final: `152 BOTTLE VERIFIED` y `21 GLASS VERIFIED`.
+- Auditoría fresh final:
+  - `0` productos ausentes;
+  - `0` colisiones o productos no propiedad de Winerim;
+  - `0` diferencias reales;
+  - el runtime todavía informa `4` falsos `NAME_MISMATCH` por entidades XML, aunque el texto decodificado esperado y real es idéntico.
+- `Invoices` responde y se encontraron `174` facturas en `9` de los últimos `10` días consultados; el último día cerrado observado fue `2026-07-15`.
+- Estado final guardado:
+  - `enabled=false`;
+  - `sync_mode=PULL_ONLY`;
+  - auto-push y sincronización periódica de catálogo apagados;
+  - `provider_config.activation_status=CATALOG_READY_PENDING_SALE`;
+  - `provider_config.legacy_visibility_policy=VISIBLE_DURING_PILOT`;
+  - guardas de stock inicial fijadas al instante de preparación.
+
+### Decisiones
+
+- No activar ventas ni automatismos definitivos hasta comprobar una venta real de botella y otra de copa en Agora y su reflejo correcto en el historial de Winerim.
+- Mantener visible el catálogo anterior durante el piloto. No se ha borrado ni ocultado ninguna familia o producto legacy.
+
+### Rollback
+
+- La conexión sigue desactivada. Si hubiera que volver atrás, basta con ocultar de forma reversible las ocho familias Winerim y sus productos; el legacy continúa intacto.
+
+### Pendiente inmediato
+
+- Cliente: refrescar terminales y confirmar visualmente familias y botones.
+- Marcar una botella y una copa desde botones Winerim.
+- Verificar historial Winerim, variante, hora real, stock activo/inactivo e idempotencia.
+- Solo después: habilitar la conexión, catálogo cada `5` minutos y auto-push de altas/cambios.
+
+## Agora · auditoría fresh de las 28 conexiones registradas — 2026-07-16 11:36 CEST
+
+### Hechos globales
+
+- Hay `28` conexiones Agora registradas; `15` están habilitadas.
+- Prueba fresh de conectividad:
+  - `25` conexiones responden correctamente;
+  - `O Bistro`, `Saddle` y `Tintorera` terminan en timeout o no son alcanzables desde el backend.
+- Las `25` conexiones alcanzables responden HTTP `200` en `/api/export/tickets/`. Esto confirma capacidad de lectura, no autoriza por sí solo a tratar tickets abiertos como venta definitiva.
+- Alertas abiertas actuales:
+  - `Sa Vida`: ventas sin avanzar desde el día de negocio `2026-07-14`;
+  - `Kava`: dos tareas fallidas por corte de red, aunque el POS ya responde;
+  - `Qtomas`: nueve tareas fallidas por `No route to host`, aunque el POS vuelve a responder;
+  - `Katsu Izakaya`: cinco tareas fallidas por un falso `NAME_MISMATCH` entre tabulador y espacio.
+- Breakers caducados todavía persistidos:
+  - `Kava`;
+  - `Restaurante Jardi`.
+  Ambos responden y tienen `consecutive_failures=0`.
+- El runtime desplegado todavía no contiene la decodificación XML del commit `b421584`; por ello algunos `NAME_MISMATCH` y `BUTTONTEXT_MISMATCH` son falsos positivos. Las diferencias de precio, familia, IVA y flags de venta sí se han tratado como reales.
+- Con el criterio estricto acordado, ninguna conexión debe declararse `100%_SIGNED_OFF` sin una evidencia reciente de:
+  - alta y cambio de precio;
+  - botella y copa;
+  - historial Winerim;
+  - stock activo e inactivo;
+  - idempotencia y recuperación;
+  - aceptación visual del terminal.
+
+### Clasificación actual
+
+#### Operativas y cerca del cierre
+
+- `Casa Nene`: activa, catálogo y ventas al día, cola y alertas a cero; auditoría sin diferencias reales.
+- `El Bejeque`: activo, ventas/stock del `2026-07-16`, catálogo sin diferencias reales; quedan dos tareas `BLOCKED` antiguas por XML truncado.
+- `El Higuerón`: activo, `291/291` variantes verificadas y sin diferencias reales; falta cierre formal de prueba botella/copa e historial.
+- `Restaurante Jardi`: activo y recuperado; catálogo sin diferencias reales. Falta limpiar metadato de breaker caducado y cerrar prueba visual/ERP.
+
+#### Operativas con deuda concreta
+
+- `Chiquilla`: ventas y stock activos; `16` productos difieren en IVA/`SaleableAsAddin`.
+- `Katsu Izakaya`: ventas y stock activos; catálogo real correcto, pero cinco tareas fallan por normalización tabulador/espacio y hay una alerta abierta.
+- `Kava`: ventas y stock activos; quedan una diferencia de precio, una de familia, dos fallos de red históricos y una alerta abierta.
+- `Luruna`: ventas actuales; quedan dos vinos con precios distintos en varias listas y falta evidencia reciente de stock.
+- `PurOsushi`: catálogo activo y legacy visible; quedan dos diferencias de precio y no existe todavía una venta/stock real firmada.
+- `Restaurante Cienvinos Ecija`: operativo y con canaries superados; quedan diez precios distintos en la lista `1` y la observación de 24 horas.
+- `Restaurante Qtomas`: operativo de nuevo; quedan dos diferencias reales de precio, nueve tareas fallidas históricas y una alerta abierta.
+- `Restaurante Triana`: operativo en modo ventas sin stock; queda un flag `PrintWhenPriceIsZero` distinto y falta confirmación ERP.
+- `Sa Pedrera`: operativo; quedan cinco diferencias de precio y `979` tareas `BLOCKED` históricas por XML truncado. El piloto de cancelaciones está desplegado.
+- `Sa Vida`: activa pero no sana; ventas estancadas desde `2026-07-14` y divergencia masiva de catálogo, con diferencias de flags de venta, familia y precio.
+- `Taberna de Elia`: operativa; falta un producto Winerim, quedan tres tareas `BLOCKED` por HTTP `404` y falta firma visual/venta.
+
+#### Catálogo preparado, pendiente de venta
+
+- `El Portón de Sorní`: `173/173` variantes publicadas y verificadas, legacy visible, conexión desactivada hasta probar botella y copa.
+
+#### Read-only o listas para preparar
+
+- `Abadía Yuste`: lectura y catálogo Winerim disponibles; sin publicación, mapping ni ventas.
+- `Don Quijote Marbella`: lectura y catálogo Winerim disponibles; sin publicación ni ventas.
+- `Finca Eslava`: lectura y catálogo Winerim disponibles; sin publicación ni ventas.
+- `Vinatea`: lectura y catálogo Winerim disponibles; sin publicación ni ventas.
+- `Don Bernardo Ponzano`: solo lectura histórica; no hay tracking ni publicación Winerim.
+- `Don Bernardo Santander`: solo lectura histórica; no hay tracking ni publicación Winerim.
+
+#### Desactivadas o en rollback
+
+- `Baco Getafe`: rollback/legacy, desactivada; el catálogo Winerim publicado no coincide con los flags actuales.
+- `La Candela de Triana`: desactivada; los `90` productos Winerim no coinciden con flags/listas de precio actuales.
+- `De la O`: conexión accesible, pero onboarding Winerim no iniciado.
+
+#### Bloqueadas por red
+
+- `O Bistro`: la URL configurada es privada/local y no es alcanzable desde el backend.
+- `Saddle`: timeout externo.
+- `Tintorera`: timeout externo; no debe activarse ni encolarse catálogo hasta recuperar acceso.
+
+### Ausencia detectada
+
+- `Ocean Club` fue facilitado en conversaciones anteriores, pero no existe una fila de conexión Agora registrada actualmente. No se incluye entre las `28` hasta crearla y auditarla.
 
 ## Cienvinos · certificación controlada puntos 1-4 — 2026-07-14 18:52 CEST
 
