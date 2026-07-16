@@ -19,10 +19,10 @@ const dispatcherSource = readFileSync(
   resolve(repoRoot, "supabase/functions/agora-cron-dispatcher/index.ts"),
   "utf8",
 );
-const lockMigrationSource = readFileSync(
-  resolve(repoRoot, "supabase/migrations/20260716070947_agora_dispatch_locks.sql"),
-  "utf8",
-);
+const lockMigrationSource = [
+  "supabase/migrations/20260716073810_7228e9d1-4322-4852-8f43-6181cf8ab9d5.sql",
+  "supabase/migrations/20260716074136_2e472ece-158f-4c6b-a46c-806487c539ba.sql",
+].map((file) => readFileSync(resolve(repoRoot, file), "utf8")).join("\n");
 
 describe("Agora staged activation hardening", () => {
   it("fails closed on deterministic ID collisions and unverified writes", () => {

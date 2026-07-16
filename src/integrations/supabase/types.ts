@@ -14,38 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      agora_dispatch_locks: {
-        Row: {
-          acquired_at: string
-          connection_id: string
-          job: string
-          lock_token: string
-          locked_until: string
-        }
-        Insert: {
-          acquired_at?: string
-          connection_id: string
-          job: string
-          lock_token: string
-          locked_until: string
-        }
-        Update: {
-          acquired_at?: string
-          connection_id?: string
-          job?: string
-          lock_token?: string
-          locked_until?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "agora_dispatch_locks_connection_id_fkey"
-            columns: ["connection_id"]
-            isOneToOne: true
-            referencedRelation: "pos_connections"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       agora_master_data: {
         Row: {
           connection_id: string
@@ -1354,15 +1322,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      acquire_agora_dispatch_lock: {
-        Args: {
-          p_connection_id: string
-          p_job: string
-          p_lock_token: string
-          p_ttl_seconds?: number
-        }
-        Returns: boolean
-      }
       claim_outbound_tasks: {
         Args: {
           p_connection_id: string
@@ -1404,10 +1363,6 @@ export type Database = {
           notify_clients?: boolean
         }
         Returns: undefined
-      }
-      release_agora_dispatch_lock: {
-        Args: { p_connection_id: string; p_job: string; p_lock_token: string }
-        Returns: boolean
       }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
       schedule_next_catalog_batch: {
