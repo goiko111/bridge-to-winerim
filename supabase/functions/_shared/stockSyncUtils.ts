@@ -28,7 +28,7 @@ export function signedWholeSaleQuantity(value: unknown): number {
 }
 
 export function netSyncedQuantity(values: unknown[]): number {
-  const signedTotal = values.reduce((total, value) => {
+  const signedTotal = values.reduce<number>((total, value) => {
     const quantity = Number(value || 0);
     return Number.isFinite(quantity) ? total + quantity : total;
   }, 0);
