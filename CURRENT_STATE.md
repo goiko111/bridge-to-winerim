@@ -2,7 +2,98 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 12:08 CEST_
+_Última actualización: 2026-07-16 13:58 CEST_
+
+## El Bejeque · ventas reconciliadas e histórico importado sin stock — 2026-07-16 13:58 CEST
+
+### Hechos
+
+- La lectura fresh de Agora para `2026-07-15` contiene `8` facturas cerradas.
+- Antes de la reparación, el ERP Winerim mostraba para ese día:
+  - `35` tarjetas;
+  - `44` unidades;
+  - `1.286 EUR`.
+- Agora contiene realmente:
+  - `15` unidades enteras;
+  - una línea adicional de `0,5` magnum de Malpastor;
+  - una copa de Cloe que Winerim no acepta porque el vino está inactivo e inaccesible.
+- Se identificó la causa de los duplicados:
+  - `stock_sync_log.sales_line_item_id` tenía `ON DELETE CASCADE`;
+  - cada refresco intradía sustituía `sales_line_items`;
+  - el borrado eliminaba también el claim idempotente;
+  - el siguiente ciclo volvía a registrar la misma venta.
+- Se hizo una anulación canary y se verificó que Winerim:
+  - elimina la tarjeta;
+  - repone exactamente la cantidad correspondiente cuando el stock está activo.
+- Se anularon `27` tarjetas duplicadas. Estado final del `2026-07-15`:
+  - `8` tarjetas;
+  - `15` unidades enteras;
+  - Bozeto botella `1`;
+  - Mondalón botella `2` y copa `2`;
+  - Malpastor magnum `2`;
+  - Dosterras botella `1`;
+  - Vulcano copa `6`;
+  - Celeste copa `1`.
+- El resultado ya no contiene sobreconteo, pero conserva dos diferencias conocidas:
+  - Winerim suma `15` unidades y `267 EUR`;
+  - Agora suma `15,5` unidades y `248,50 EUR`;
+  - la diferencia procede de Cloe copa ausente (`-1`) y del medio magnum de Malpastor representado como una unidad entera adicional (`+0,5` y `+23,50 EUR`).
+- Stock final corregido:
+  - Bozeto botella: `5`;
+  - Mondalón botella: `9`;
+  - Malpastor magnum: `13`;
+  - Dosterras botella: `5`.
+- Se implementó el backfill histórico `2026-04-15` a `2026-07-14`:
+  - `91` días consultados;
+  - `413` facturas;
+  - `3.899` líneas de restaurante examinadas;
+  - `286` líneas históricas nuevas importadas;
+  - `414` unidades registradas;
+  - primera venta importada visible: `2026-04-17`;
+  - repetición final: `0 imported`, `285 skipped`, confirmando idempotencia para el bloque masivo.
+- Se validó antes y después una muestra de `9` stocks activos/inactivos: todos quedaron sin cambios durante el backfill.
+- Matching histórico seguro aplicado:
+  - nombre exacto único;
+  - mappings/tracking confirmados;
+  - seis alias manuales auditados para abreviaturas inequívocas.
+- Pendientes no importados:
+  - Cloe: `6` unidades históricas hasta el `2026-07-14`, más `1` copa del `2026-07-15`; el vino `57683` está inactivo y sus stockIds devuelven `404`;
+  - `ABAD DOM BUENO GODELLO`: `2` unidades, equivalencia no suficientemente segura;
+  - copas legacy de Pazo das Bruxas, Brezo y Natureo sin variante copa accesible;
+  - referencias legacy sin equivalente actual inequívoco.
+- Protección de runtime implementada localmente:
+  - helper único que desengancha `sales_line_item_id` antes de reemplazar snapshots;
+  - migración FK a `ON DELETE SET NULL`;
+  - script de histórico con dry-run por defecto, alias manuales, filtro por `orderId` y errores enriquecidos.
+- Verificación local:
+  - `74/74` tests;
+  - TypeScript `PASS`;
+  - build frontend `PASS`;
+  - bundle de `agora-proxy` `PASS`;
+  - lint global sigue fallando por deuda previa del repositorio (`1004` problemas), no introducida por este cambio.
+
+### Decisiones
+
+- Mantener temporalmente El Bejeque en facturas cerradas:
+  - `open_tickets_sync_enabled=false`;
+  - `open_tickets_stock_sync_enabled=false`;
+  - `intraday_sales_sync_enabled=false`.
+- No reactivar Cloe para forzar el histórico, porque podría volver a publicarse en Agora.
+- Representar las dos líneas de Malpastor (`1` y `0,5`) como `2` unidades enteras hasta definir una política para cantidades fraccionarias.
+- No aplicar fuzzy matching automáticamente.
+
+### Despliegue pendiente
+
+- El código y la migración deben publicarse en runtime antes de volver a activar el modo intradía.
+- Tras el deploy:
+  - ejecutar dos sincronizaciones consecutivas sobre el mismo snapshot;
+  - confirmar que el segundo ciclo no crea historial ni mueve stock;
+  - reactivar los tres flags únicamente con el canary en `PASS`.
+
+### Evidencia
+
+- Informe operativo y rollback:
+  - `docs/operations/el-bejeque-sales-reconciliation-2026-07-16.md`.
 
 ## De la O · catálogo preparado, pendiente de venta real — 2026-07-16 12:08 CEST
 

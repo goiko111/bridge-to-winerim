@@ -2,6 +2,22 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 — El Bejeque · cerrar protección antiduplicado
+
+- [x] Conciliar Agora y ERP Winerim para `2026-07-15`.
+- [x] Identificar la cascada de `stock_sync_log` como causa de repetición cada cinco minutos.
+- [x] Anular `27` tarjetas duplicadas y verificar stocks finales.
+- [x] Importar histórico `2026-04-15` a `2026-07-14` sin modificar stock.
+- [x] Validar idempotencia y matching manual seguro.
+- [x] Mantener temporalmente desactivados open tickets e intradía.
+- [ ] Publicar `agora-proxy` con preservación de claims.
+- [ ] Aplicar migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql`.
+- [ ] Ejecutar canary doble sobre el mismo snapshot y confirmar cero duplicados.
+- [ ] Reactivar open tickets/intradía solo después del `PASS`.
+- [ ] Winerim: decidir cómo importar ventas de un vino inactivo como Cloe sin reactivarlo.
+- [ ] Definir política para cantidades Agora fraccionarias (`0,5` magnum).
+- [ ] Cliente/Winerim: validar si `ABAD DOM BUENO GODELLO` corresponde realmente a `Abad Dom Bueno Esencia`.
+
 ## P0 — De la O · cerrar piloto
 
 - [x] Actualizar accesos manteniendo la conexión desactivada.

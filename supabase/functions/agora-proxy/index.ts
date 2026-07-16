@@ -913,6 +913,54 @@ function withHistoricalAnalyticsMetadata(rawJson: unknown, importedAt: string): 
   };
 }
 
+type SalesLineReplacementResult = {
+  ok: boolean;
+  inserted: number;
+  error?: string;
+};
+
+// Agora open tickets are snapshots and their lines are replaced on every poll.
+// Detach durable stock claims first so deleting an old snapshot cannot erase the
+// idempotency evidence that prevents the next poll from recording the sale again.
+async function replaceSalesEventLinesPreservingStockClaims(
+  supabase: any,
+  connectionId: string,
+  salesEventId: string,
+  lines: Record<string, unknown>[],
+): Promise<SalesLineReplacementResult> {
+  const { error: detachError } = await supabase
+    .from("stock_sync_log")
+    .update({ sales_line_item_id: null })
+    .eq("connection_id", connectionId)
+    .eq("sales_event_id", salesEventId)
+    .not("sales_line_item_id", "is", null);
+  if (detachError) {
+    return { ok: false, inserted: 0, error: `stock claim detach failed: ${detachError.message}` };
+  }
+
+  const { error: deleteError } = await supabase
+    .from("sales_line_items")
+    .delete()
+    .eq("sales_event_id", salesEventId);
+  if (deleteError) {
+    return { ok: false, inserted: 0, error: `sales line delete failed: ${deleteError.message}` };
+  }
+
+  if (lines.length === 0) return { ok: true, inserted: 0 };
+
+  const rows = lines.map((line) => ({
+    ...line,
+    sales_event_id: salesEventId,
+    connection_id: connectionId,
+  }));
+  const { error: insertError } = await supabase.from("sales_line_items").insert(rows);
+  if (insertError) {
+    return { ok: false, inserted: 0, error: `sales line insert failed: ${insertError.message}` };
+  }
+
+  return { ok: true, inserted: rows.length };
+}
+
 type WinerimSalesImportOutcome = {
   attempted: boolean;
   ok: boolean;
@@ -4624,16 +4672,20 @@ serve(async (req) => {
           .select("id").single();
 
         if (eventErr || !eventRow) continue;
+        const replacement = await replaceSalesEventLinesPreservingStockClaims(
+          supabase,
+          connectionId,
+          eventRow.id,
+          lineData,
+        );
+        if (!replacement.ok) {
+          console.error(`[sync-open-tickets] ${day}/${docId}: ${replacement.error}`);
+          continue;
+        }
         savedEvents++;
+        savedLines += replacement.inserted;
         savedEventIdsByDay[day] ||= [];
         savedEventIdsByDay[day].push(eventRow.id);
-
-        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-        const linesToInsert = lineData.map((line) => ({ ...line, sales_event_id: eventRow.id, connection_id: connectionId }));
-        if (linesToInsert.length > 0) {
-          const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-          if (!lineErr) savedLines += linesToInsert.length;
-        }
       }
 
       let stockSyncResult: StockSyncTotals | null = null;
@@ -4953,18 +5005,18 @@ serve(async (req) => {
             errors.push(`${day}/${docId}: ${eventErr?.message || "event upsert failed"}`);
             continue;
           }
-          savedEvents++;
-
-          await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-          const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
-          if (linesToInsert.length > 0) {
-            const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-            if (lineErr) {
-              errors.push(`${day}/${docId}: ${lineErr.message}`);
-            } else {
-              savedLines += linesToInsert.length;
-            }
+          const replacement = await replaceSalesEventLinesPreservingStockClaims(
+            supabase,
+            connectionId,
+            eventRow.id,
+            lineData,
+          );
+          if (!replacement.ok) {
+            errors.push(`${day}/${docId}: ${replacement.error}`);
+            continue;
           }
+          savedEvents++;
+          savedLines += replacement.inserted;
         }
 
         daySummaries.push({
@@ -5107,15 +5159,16 @@ serve(async (req) => {
           .select("id").single();
 
         if (eventErr || !eventRow) continue;
+        const replacement = await replaceSalesEventLinesPreservingStockClaims(
+          supabase,
+          connectionId,
+          eventRow.id,
+          lineData,
+        );
+        if (!replacement.ok) continue;
         savedEvents++;
+        savedLines += replacement.inserted;
         savedEventIds.push(eventRow.id);
-
-        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-        const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
-        if (linesToInsert.length > 0) {
-          const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-          if (!lineErr) savedLines += linesToInsert.length;
-        }
       }
 
       let stockSyncResult: StockSyncTotals | null = null;
@@ -5282,20 +5335,17 @@ serve(async (req) => {
           continue;
         }
 
-        const { error: deleteErr } = await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-        if (deleteErr) {
-          ingestionErrors.push(`${day}/${docId}: ${deleteErr.message}`);
+        const replacement = await replaceSalesEventLinesPreservingStockClaims(
+          supabase,
+          connectionId,
+          eventRow.id,
+          lineData,
+        );
+        if (!replacement.ok) {
+          ingestionErrors.push(`${day}/${docId}: ${replacement.error}`);
           continue;
         }
-        const linesToInsert = lineData.map((line) => ({ ...line, sales_event_id: eventRow.id, connection_id: connectionId }));
-        if (linesToInsert.length > 0) {
-          const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-          if (lineErr) {
-            ingestionErrors.push(`${day}/${docId}: ${lineErr.message}`);
-            continue;
-          }
-          savedLines += linesToInsert.length;
-        }
+        savedLines += replacement.inserted;
         savedEvents++;
         savedEventIds.push(eventRow.id);
       }
@@ -5539,17 +5589,22 @@ serve(async (req) => {
             .select("id").single();
 
           if (eventErr || !eventRow) continue;
+          const replacement = await replaceSalesEventLinesPreservingStockClaims(
+            supabase,
+            connectionId,
+            eventRow.id,
+            lineData,
+          );
+          if (!replacement.ok) {
+            saveBlockedDay = day;
+            break;
+          }
           totalEvents++;
           dayEvents++;
-
-          await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
-          const linesToInsert = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
-          if (linesToInsert.length > 0) {
-            const { error: lineErr } = await supabase.from("sales_line_items").insert(linesToInsert);
-            if (!lineErr) totalLines += linesToInsert.length;
-          }
+          totalLines += replacement.inserted;
         }
 
+        if (saveBlockedDay) break;
         if (invoices.length > 0 && dayEvents === 0) {
           saveBlockedDay = day;
           break;
