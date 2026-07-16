@@ -1514,3 +1514,13 @@
 **Riesgos controlados:** se guardaron los IDs conservados/anulados y los stocks antes/después. Cloe y el medio magnum se mantienen como excepciones explícitas, no se corrigen inventando datos.
 
 **Alternativa descartada:** borrar filas directamente en base de datos o modificar stock sin limpiar el historial. Habría dejado ventas y stock incoherentes.
+
+## 2026-07-16 - Un hotfix histórico se despliega desde el main actual, no desde su commit aislado
+
+**Decisión:** redesplegar únicamente `agora-proxy` desde `main` `5906a93`, que ya contiene `b421584`, en vez de desplegar directamente el commit histórico.
+
+**Razón:** una sonda fresh de El Portón confirmó que el runtime todavía devuelve cuatro falsos `NAME_MISMATCH` por entidades XML, aunque la fuente actual decodifica `Name` y `ButtonText` antes de normalizar espacios. Desplegar el commit antiguo de forma aislada podría retirar las correcciones posteriores de idempotencia de ventas de El Bejeque.
+
+**Riesgos controlados:** no se cambian flags, `provider_config`, datos operativos ni colas; la comprobación posterior exige `173/173` variantes coincidentes y cero diferencias en El Portón.
+
+**Alternativa descartada:** repetir literalmente la instrucción antigua dirigida al commit `b421584`. Es funcionalmente incompleta respecto al estado actual del proyecto.

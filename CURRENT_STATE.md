@@ -2,7 +2,33 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 13:58 CEST_
+_Última actualización: 2026-07-16 14:22 CEST_
+
+## Agora · corrección XML presente en Git pero ausente en runtime — 2026-07-16 14:22 CEST
+
+### Hechos
+
+- El commit histórico `b421584` forma parte del `main` actual `5906a93`.
+- En la fuente actual, `Name` y `ButtonText` pasan por `decodeXmlAttribute(...)` antes de `normalizeAgoraTextAttribute(...)`.
+- Una auditoría fresh, estrictamente de solo lectura, sobre El Portón de Sorní devolvió:
+  - `173` variantes esperadas;
+  - `169` coincidentes;
+  - `0` ausentes;
+  - `4` `NAME_MISMATCH`.
+- En los cuatro casos, `expectedName` y `actualName` son visualmente idénticos y contienen apóstrofes. Es la firma del runtime anterior a `b421584`.
+- La instrucción encontrada sin enviar en Lovable no llegó, por tanto, a materializarse en el runtime desplegado.
+- La auditoría no cambió código, flags, `provider_config`, datos operativos ni colas.
+
+### Decisión
+
+- No desplegar el commit histórico `b421584` de forma aislada.
+- Aplicar primero la migración `20260716110655_preserve_stock_sync_log_on_sales_line_refresh.sql` y redesplegar únicamente `agora-proxy` desde el `main` actual `5906a93`, que contiene tanto la corrección XML como las protecciones posteriores de idempotencia.
+
+### Verificación pendiente
+
+- Repetir la auditoría fresh de El Portón tras el redeploy.
+- Resultado esperado: `173/173` coincidentes, `0` ausentes y `0` diferencias.
+- Confirmar también en runtime la presencia de `replaceSalesEventLinesPreservingStockClaims` antes de reactivar el modo intradía de El Bejeque.
 
 ## El Bejeque · ventas reconciliadas e histórico importado sin stock — 2026-07-16 13:58 CEST
 
