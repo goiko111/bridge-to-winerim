@@ -16,6 +16,15 @@ interface DispatchBody {
   connectionId?: string; // optional: limit to one connection (testing)
 }
 
+interface AgoraConnection {
+  id: string;
+  location_name: string;
+  base_url: string | null;
+  api_token: string | null;
+  provider_config?: Record<string, unknown> | null;
+  circuit_breaker_paused_until: string | null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -45,7 +54,7 @@ Deno.serve(async (req: Request) => {
     const { data: allConnections, error: connErr } = await query;
     if (connErr) throw connErr;
 
-    let connections = (allConnections || []).filter((c: any) =>
+    let connections = ((allConnections || []) as AgoraConnection[]).filter((c) =>
       !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso
     );
     const skippedByBreaker = (allConnections?.length || 0) - connections.length;
@@ -56,7 +65,7 @@ Deno.serve(async (req: Request) => {
     // pause it on the natural call path; we just avoid filling the queue with FAILED).
     let skippedByPreflight = 0;
     if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock")) {
-      const checks = await Promise.all(connections.map(async (c: any) => {
+      const checks = await Promise.all(connections.map(async (c) => {
         const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
         if (!baseUrl) return { id: c.id, ok: false };
         const url = `${(baseUrl.startsWith("http") ? baseUrl : `http://${baseUrl}`)}/api/`;
@@ -74,7 +83,7 @@ Deno.serve(async (req: Request) => {
       }));
       const reachableIds = new Set(checks.filter((x) => x.ok).map((x) => x.id));
       const before = connections.length;
-      connections = connections.filter((c: any) => reachableIds.has(c.id));
+      connections = connections.filter((c) => reachableIds.has(c.id));
       skippedByPreflight = before - connections.length;
     }
 
@@ -93,11 +102,11 @@ Deno.serve(async (req: Request) => {
 
     // Map job → one or more target function calls.
     // Catalog sync must refresh BOTH sides: Winerim wines and Agora master data.
-    const buildRequests = (connection: { id: string; location_name: string; provider_config?: Record<string, unknown> | null }): DispatchRequest[] => {
+    const buildRequests = (connection: AgoraConnection): DispatchRequest[] => {
       if (job === "catalog") {
         return [
-          { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
           { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "sync-master-data", connectionId: connection.id } },
+          { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
         ];
       }
       if (job === "outbound-queue") {
@@ -125,12 +134,10 @@ Deno.serve(async (req: Request) => {
       return requests;
     };
 
-    const dispatchRequests = connections.flatMap((c) => buildRequests(c));
-
-    // STAGGERED dispatch: process in chunks of CONCURRENCY with a small delay between chunks.
-    // Goal: never have more than CONCURRENCY in-flight HTTP calls at once, to protect
-    // both our edge function pool and downstream Agora SQL Server pools.
-    const CONCURRENCY = 10;
+    // Process different connections in parallel, but serialize all actions for the
+    // same connection. A database lease prevents overlapping cron invocations from
+    // racing catalog cursors, open tickets, invoices, stock or outbound tasks.
+    const CONCURRENCY = 6;
     const CHUNK_DELAY_MS = 1500;
 
     const invokeOne = async (dispatch: DispatchRequest) => {
@@ -159,21 +166,97 @@ Deno.serve(async (req: Request) => {
       }
     };
 
+    const invokeConnection = async (connection: AgoraConnection) => {
+      const lockToken = crypto.randomUUID();
+      let lockHeartbeat: ReturnType<typeof setInterval> | null = null;
+      let lockHeartbeatInFlight: Promise<void> | null = null;
+      let lockHeartbeatStopped = false;
+      let lockHeartbeatError: Error | null = null;
+      const { data: acquired, error: lockError } = await supabase.rpc("acquire_agora_dispatch_lock", {
+        p_connection_id: connection.id,
+        p_job: job,
+        p_lock_token: lockToken,
+        p_ttl_seconds: 900,
+      });
+      if (lockError) {
+        return [{
+          connection_id: connection.id,
+          name: connection.location_name,
+          ok: false,
+          skipped: true,
+          reason: `LOCK_ERROR: ${lockError.message}`,
+        }];
+      }
+      if (acquired !== true) {
+        return [{
+          connection_id: connection.id,
+          name: connection.location_name,
+          ok: true,
+          skipped: true,
+          reason: "DISPATCH_ALREADY_RUNNING",
+        }];
+      }
+
+      const results: unknown[] = [];
+      try {
+        lockHeartbeat = setInterval(async () => {
+          if (lockHeartbeatStopped || lockHeartbeatInFlight) return;
+          lockHeartbeatInFlight = (async () => {
+            try {
+              const { data: renewed, error: renewError } = await supabase.rpc("acquire_agora_dispatch_lock", {
+                p_connection_id: connection.id,
+                p_job: job,
+                p_lock_token: lockToken,
+                p_ttl_seconds: 900,
+              });
+              if (renewError || renewed !== true) {
+                lockHeartbeatError = new Error(renewError?.message || "Agora dispatch lock could not be renewed");
+              }
+            } catch (error) {
+              lockHeartbeatError = error instanceof Error ? error : new Error(String(error));
+            } finally {
+              lockHeartbeatInFlight = null;
+            }
+          })();
+          await lockHeartbeatInFlight;
+        }, 240_000);
+
+        for (const dispatch of buildRequests(connection)) {
+          if (lockHeartbeatError) throw lockHeartbeatError;
+          results.push(await invokeOne(dispatch));
+        }
+      } finally {
+        lockHeartbeatStopped = true;
+        if (lockHeartbeat) clearInterval(lockHeartbeat);
+        if (lockHeartbeatInFlight) await lockHeartbeatInFlight;
+        await supabase.rpc("release_agora_dispatch_lock", {
+          p_connection_id: connection.id,
+          p_job: job,
+          p_lock_token: lockToken,
+        });
+      }
+      return results;
+    };
+
     const allResults: unknown[] = [];
     let okCount = 0;
-    for (let i = 0; i < dispatchRequests.length; i += CONCURRENCY) {
-      const chunk = dispatchRequests.slice(i, i + CONCURRENCY);
-      const chunkResults = await Promise.allSettled(chunk.map(invokeOne));
+    let lockedCount = 0;
+    for (let i = 0; i < connections.length; i += CONCURRENCY) {
+      const chunk = connections.slice(i, i + CONCURRENCY);
+      const chunkResults = await Promise.allSettled(chunk.map(invokeConnection));
       for (const r of chunkResults) {
         if (r.status === "fulfilled") {
-          allResults.push(r.value);
-          if ((r.value as { ok: boolean }).ok) okCount++;
+          for (const result of r.value as Array<{ ok?: boolean; reason?: string }>) {
+            allResults.push(result);
+            if (result.ok && result.reason !== "DISPATCH_ALREADY_RUNNING") okCount++;
+            if (result.reason === "DISPATCH_ALREADY_RUNNING") lockedCount++;
+          }
         } else {
           allResults.push({ error: String(r.reason) });
         }
       }
       // Pause between chunks to spread the load (skip on the last chunk)
-      if (i + CONCURRENCY < dispatchRequests.length) {
+      if (i + CONCURRENCY < connections.length) {
         await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
       }
     }
@@ -186,7 +269,8 @@ Deno.serve(async (req: Request) => {
         connections: connections.length,
         skippedByBreaker,
         skippedByPreflight,
-        dispatched: dispatchRequests.length,
+        skippedByLock: lockedCount,
+        dispatched: allResults.length - lockedCount,
         succeeded: okCount,
         results: summary,
         timestamp: new Date().toISOString(),

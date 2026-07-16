@@ -443,6 +443,8 @@ serve(async (req) => {
       const mode = String(body.mode || "start"); // start | enrich
       const detailOffset = Math.max(0, Number(body.detailOffset || 0));
       const detailBatchSize = Math.min(200, Math.max(25, Number(body.detailBatchSize || 100)));
+      const scheduleNextBatch = body.scheduleNextBatch !== false;
+      const runSelfHealing = body.runSelfHealing !== false;
 
       function toPositiveNumber(val: unknown): number | null {
         if (val === null || val === undefined) return null;
@@ -776,23 +778,23 @@ serve(async (req) => {
           grape_variety: grapeVariety,
           pricing_status: pricingStatus,
           pricing_missing_reason: pricingMissingReason,
+          // The detail endpoint is authoritative. Clearing removed variants here
+          // prevents an old price from keeping a retired Agora button sellable.
+          bottle_sale_price: nf.bottleSalePrice,
+          price: nf.bottleSalePrice,
+          bottle_purchase_price: nf.bottlePurchasePrice,
+          glass_sale_price: nf.glassSalePrice,
+          glass_cost_price: nf.glassCostPrice,
+          magnum_sale_price: nf.magnumSalePrice,
+          magnum_purchase_price: nf.magnumPurchasePrice,
         };
 
         if (detail.name || (baseWine as any).name) updateData.name = String(detail.name || (baseWine as any).name || "Unknown");
         if (nf.wineType) updateData.wine_type = nf.wineType;
-        if (nf.bottleSalePrice != null) {
-          updateData.bottle_sale_price = nf.bottleSalePrice;
-          updateData.price = nf.bottleSalePrice;
-          winesUpdatedWithBottlePrice++;
-        }
-        if (nf.bottlePurchasePrice != null) updateData.bottle_purchase_price = nf.bottlePurchasePrice;
+        if (nf.bottleSalePrice != null) winesUpdatedWithBottlePrice++;
         if (nf.glassSalePrice != null) {
-          updateData.glass_sale_price = nf.glassSalePrice;
           winesUpdatedWithGlassPrice++;
         }
-        if (nf.glassCostPrice != null) updateData.glass_cost_price = nf.glassCostPrice;
-        if (nf.magnumSalePrice != null) updateData.magnum_sale_price = nf.magnumSalePrice;
-        if (nf.magnumPurchasePrice != null) updateData.magnum_purchase_price = nf.magnumPurchasePrice;
         if (nf.stockQuantity != null) updateData.stock_quantity = nf.stockQuantity;
         if (nf.bottleStockId != null) updateData.bottle_stock_id = nf.bottleStockId;
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
@@ -912,7 +914,7 @@ serve(async (req) => {
       // ── CHAIN NEXT BATCH via pg_net (fire-and-forget) ──
       // Without this, cron always restarts at offset=0 and only the first 100 wines ever get
       // re-enriched. Chaining lets a single cron tick walk the entire catalog over a few minutes.
-      if (!complete) {
+      if (!complete && scheduleNextBatch) {
         try {
           const fnUrl = `${supabaseUrl}/functions/v1/winerim-proxy`;
           await supabase.rpc("schedule_next_catalog_batch" as never, {
@@ -935,7 +937,7 @@ serve(async (req) => {
       // partial responses without `prices`, etc.) and wines whose price was added in
       // Winerim AFTER the original enrich. It is fire-and-forget so it never blocks
       // the current request.
-      if (complete) {
+      if (complete && runSelfHealing) {
         try {
           supabase.functions.invoke("winerim-proxy", {
             body: { action: "fetch-wine-details", connectionId },

@@ -661,6 +661,15 @@ function saPedreraDedicatedFamily(
   return null;
 }
 
+function deterministicAgoraProductId(connection: any, wine: any, formatType: string): string {
+  const winerimId = Number(wine?.winerim_id || wine?.id || 0);
+  const orderedDulceCode = saPedreraDulceCode(connection, wine);
+  if (orderedDulceCode) return String(903000 + Number(orderedDulceCode.replace("D", "")));
+  if (formatType === "MAGNUM") return String(900000 + winerimId);
+  if (formatType === "GLASS") return String(700000 + winerimId);
+  return String(500000 + winerimId);
+}
+
 function preferredSingleFormatForDulce(wine: any): "BOTTLE" | "GLASS" {
   const glassPrice = extractGlassSalePrice(wine) || 0;
   return glassPrice > 0 ? "GLASS" : "BOTTLE";
@@ -764,7 +773,13 @@ function openTicketsStockCurrentDayOnly(providerConfig: Record<string, unknown>)
   return providerConfig.open_tickets_stock_current_day_only !== false;
 }
 
+function isStockSyncDayAllowed(day: string, providerConfig: Record<string, unknown>): boolean {
+  const notBefore = String(providerConfig.stock_sync_not_before || "").trim();
+  return !isBusinessDay(notBefore) || day >= notBefore;
+}
+
 function isOpenTicketStockDayAllowed(day: string, defaultDay: string, providerConfig: Record<string, unknown>): boolean {
+  if (!isStockSyncDayAllowed(day, providerConfig)) return false;
   if (!openTicketsStockCurrentDayOnly(providerConfig)) return true;
   return day >= defaultDay;
 }
@@ -833,6 +848,7 @@ function buildBusinessDayRange(fromDay: string, toDay: string, maxDays: number):
 function configuredStockSyncStartDate(providerConfig: unknown): string | null {
   const cfg = (providerConfig && typeof providerConfig === "object" ? providerConfig : {}) as Record<string, unknown>;
   const candidates = [
+    cfg.stock_sync_not_before,
     cfg.stock_sync_start_date,
     cfg.sales_stock_sync_start_date,
     cfg.operational_stock_start_date,
@@ -841,6 +857,20 @@ function configuredStockSyncStartDate(providerConfig: unknown): string | null {
     if (isBusinessDay(candidate)) return candidate;
   }
   return null;
+}
+
+function configuredStockSyncStartAt(providerConfig: unknown): string | null {
+  const cfg = (providerConfig && typeof providerConfig === "object" ? providerConfig : {}) as Record<string, unknown>;
+  const raw = String(cfg.stock_sync_not_before_at || cfg.operational_stock_start_at || "").trim();
+  if (!raw || !Number.isFinite(Date.parse(raw))) return null;
+  return new Date(raw).toISOString();
+}
+
+function providerSaleIsAfterStockStart(providerSoldAt: unknown, stockSyncStartAt: string | null): boolean {
+  if (!stockSyncStartAt) return true;
+  const soldAt = String(providerSoldAt || "").trim();
+  if (!soldAt || !Number.isFinite(Date.parse(soldAt))) return false;
+  return Date.parse(soldAt) >= Date.parse(stockSyncStartAt);
 }
 
 function rawJsonDisablesStockSync(rawJson: unknown): boolean {
@@ -1026,6 +1056,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     .eq("id", connectionId)
     .single();
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -1064,7 +1095,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   // deno-lint-ignore no-explicit-any
-  const mappedLines = (lines as any[]).filter((l: any) => l.winerim_product_id && l.is_wine_candidate);
+  const mappedLines = (lines as any[]).filter((l: any) =>
+    l.winerim_product_id && l.is_wine_candidate && providerSaleIsAfterStockStart(l.provider_sold_at, stockSyncStartAt)
+  );
 
   type Claim = {
     id: string;
@@ -1512,6 +1545,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     .eq("id", connectionId)
     .single();
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -1582,6 +1616,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
     if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    if (!providerSaleIsAfterStockStart(line.provider_sold_at, stockSyncStartAt)) continue;
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
     mappedLineCount++;
@@ -2031,6 +2066,7 @@ async function syncStockForDayIncrementalByDayTotal(
     .eq("id", connectionId)
     .single();
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
+  const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -2094,6 +2130,7 @@ async function syncStockForDayIncrementalByDayTotal(
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
     if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    if (!providerSaleIsAfterStockStart(line.provider_sold_at, stockSyncStartAt)) continue;
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
     mappedLineCount++;
@@ -3166,6 +3203,8 @@ interface AgoraProductToVerify {
   format: string;
   erpId: string;
   expectedFamilyId?: string;
+  expectedName?: string;
+  expectedPrices?: Record<string, number>;
 }
 
 /**
@@ -3244,6 +3283,20 @@ function verifyAgoraProductsAgainstScope(
     const innerXml = productElement.xml;
     let productOk = true;
 
+    if (product.expectedName) {
+      const actualName = decodeXmlAttribute(attrs.match(/\bName="([^"]*)"/i)?.[1] || "");
+      if (actualName !== product.expectedName) {
+        productOk = false;
+        result.success = false;
+        result.errors.push({
+          code: "NAME_MISMATCH",
+          message: `Product ${product.productId}: expected name "${product.expectedName}", got "${actualName}"`,
+          field: "Name",
+          context: { productId: product.productId, expected: product.expectedName, actual: actualName },
+        });
+      }
+    }
+
     // CHECK: PRICES
     for (const pl of scopedPriceLists) {
       const priceRegex = new RegExp(`<Price[^>]*PriceListId="${pl.id}"[^>]*MainPrice="([^"]*)"`, "i");
@@ -3270,6 +3323,26 @@ function verifyAgoraProductsAgainstScope(
           message: `Product ${product.productId} (${product.format}): ${issue} price in PriceList "${pl.name}"`,
           field: "prices",
           context: { productId: product.productId, format: product.format, priceListId: pl.id, priceListName: pl.name, affectedSaleCenters: scNames },
+        });
+      } else if (
+        product.expectedPrices &&
+        Number.isFinite(product.expectedPrices[pl.id]) &&
+        Math.abs(priceVal - product.expectedPrices[pl.id]) > 0.005
+      ) {
+        productOk = false;
+        result.verified_prices = false;
+        result.errors.push({
+          code: "PRICE_MISMATCH",
+          message: `Product ${product.productId} (${product.format}): expected ${product.expectedPrices[pl.id].toFixed(2)} in PriceList "${pl.name}", got ${priceVal.toFixed(2)}`,
+          field: "prices",
+          context: {
+            productId: product.productId,
+            format: product.format,
+            priceListId: pl.id,
+            priceListName: pl.name,
+            expected: product.expectedPrices[pl.id],
+            actual: priceVal,
+          },
         });
       }
     }
@@ -3586,12 +3659,26 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
   const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
-  const priceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+  const activePriceLists = allPriceListsRaw.filter(e => !isDeletedEntity(e)) as { Id: string; Name: string }[];
+  const providerConfig = (connection.provider_config || {}) as Record<string, unknown>;
+  const selectedPriceListIds = normalizeStringArray(explicitPriceListIds);
+  if (selectedPriceListIds.length === 0 && providerConfig.price_write_scope === "SELECTED_SALE_CENTERS") {
+    const selectedSaleCenterIds = new Set(normalizeStringArray(connection.selected_sale_center_ids));
+    const saleCenters = (Array.isArray(masterData.sale_centers_json) ? masterData.sale_centers_json : []) as Record<string, unknown>[];
+    for (const saleCenter of saleCenters) {
+      if (isDeletedEntity(saleCenter) || !selectedSaleCenterIds.has(String(saleCenter.Id || ""))) continue;
+      const priceListId = String(saleCenter.CurrentPriceListId || saleCenter.PriceListId || saleCenter.PriceList || "");
+      if (priceListId && !selectedPriceListIds.includes(priceListId)) selectedPriceListIds.push(priceListId);
+    }
+  }
+  const priceLists = providerConfig.price_write_scope === "SELECTED_SALE_CENTERS"
+    ? activePriceLists.filter((priceList) => selectedPriceListIds.includes(String(priceList.Id)))
+    : activePriceLists;
   const prepTypes = (masterData.preparation_types_json || []) as { Id: string; Name: string }[];
   const prepOrders = (masterData.preparation_orders_json || []) as { Id: string; Name: string }[];
   const warehouses = (masterData.warehouses_json || []) as { Id: string; Name: string }[];
@@ -3644,6 +3731,30 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   }
   const defaultWarehouseId = connection.default_warehouse_id || (warehouses.length > 0 ? warehouses[0].Id : "1");
   const autoCreateFamilies = connection.auto_create_families ?? false;
+
+  function preparationPairForFormat(formatType: string): { typeId: string; orderId: string; valid: boolean; error?: string } {
+    if (forceEmptyPreparation) return { typeId: "", orderId: "", valid: true };
+
+    const routes = providerConfig.preparation_routes && typeof providerConfig.preparation_routes === "object"
+      ? providerConfig.preparation_routes as Record<string, unknown>
+      : {};
+    const route = routes[formatType] && typeof routes[formatType] === "object"
+      ? routes[formatType] as Record<string, unknown>
+      : null;
+    const typeId = String(route?.typeId || route?.preparationTypeId || defaultPrepTypeId || "");
+    const orderId = String(route?.orderId || route?.preparationOrderId || defaultPrepOrderId || "");
+
+    if (Boolean(typeId) !== Boolean(orderId)) {
+      return { typeId: "", orderId: "", valid: false, error: `Incomplete preparation route for ${formatType}` };
+    }
+    if (typeId && !prepTypes.some((item) => String(item.Id) === typeId)) {
+      return { typeId: "", orderId: "", valid: false, error: `Unknown PreparationTypeId ${typeId} for ${formatType}` };
+    }
+    if (orderId && !prepOrders.some((item) => String(item.Id) === orderId)) {
+      return { typeId: "", orderId: "", valid: false, error: `Unknown PreparationOrderId ${orderId} for ${formatType}` };
+    }
+    return { typeId, orderId, valid: true };
+  }
 
   // deno-lint-ignore no-explicit-any
   function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string } {
@@ -3856,13 +3967,26 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       // Skip formats with missing required fields
       if (!validation.valid) continue;
 
+      const preparationPair = preparationPairForFormat(fmt);
+      if (!preparationPair.valid) {
+        validationResults.push({
+          winerimId: String(winerimId),
+          formatType: fmt,
+          validation: {
+            valid: false,
+            warnings: [],
+            missingFields: ["PreparationTypeId", "PreparationOrderId"],
+            error: { code: "INVALID_PREPARATION_ROUTE", message: preparationPair.error || "Invalid preparation route" },
+          },
+        });
+        continue;
+      }
+
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
       const orderedDulceCode = saPedreraDulceCode(connection, wine);
       const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, wine, fmt);
-      const productId = orderedDulceCode
-        ? 903000 + Number(orderedDulceCode.replace("D", ""))
-        : isMagnum ? 900000 + winerimId : isGlass ? 700000 + winerimId : 500000 + winerimId;
+      const productId = deterministicAgoraProductId(connection, wine, fmt);
 
       const familyResult = orderedDulceCode
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
@@ -3910,7 +4034,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         nameDisambiguators: [wine.vintage || wine.raw_payload?.vintage].filter(Boolean),
         renderXml: (finalProductName: string) => {
           const buttonText = truncate(finalProductName, 20);
-          return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${defaultPrepTypeId}" PreparationOrderId="${defaultPrepOrderId}" CostPrice="${costPrice}">
+          return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -5256,7 +5380,8 @@ serve(async (req) => {
           const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
           const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
           const toDay = yesterday.toISOString().split("T")[0];
-          const stockCandidateDays = await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay);
+          const stockCandidateDays = (await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay))
+            .filter((day) => isStockSyncDayAllowed(day, providerConfig));
           if (stockCandidateDays.length > 0) {
             stockSyncResult = await syncStockForDays(supabase, connectionId, stockCandidateDays, winerimToken, { incremental: useIncrementalStockSync });
           }
@@ -5406,7 +5531,7 @@ serve(async (req) => {
         }
 
         let stockOk = true;
-        if (dayResolvedLines > 0) {
+        if (dayResolvedLines > 0 && isStockSyncDayAllowed(day, providerConfig)) {
           if (!winerimToken) {
             stockOk = false;
             stockSyncTotals.failed++;
@@ -5435,6 +5560,7 @@ serve(async (req) => {
         const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
         const toDay = yesterday.toISOString().split("T")[0];
         const catchupDays = (await findSavedStockCandidateDays(supabase, connectionId, fromDay, toDay))
+          .filter((day) => isStockSyncDayAllowed(day, providerConfig))
           .filter((day) => !stockDaysAttempted.has(day));
         if (catchupDays.length > 0) {
           addStockTotals(await syncStockForDays(supabase, connectionId, catchupDays, winerimToken, { incremental: useIncrementalStockSync }));
@@ -6464,6 +6590,9 @@ serve(async (req) => {
         SaleableAsMain: (p as any).SaleableAsMain,
         ButtonText: (p as any).ButtonText,
         Color: (p as any).Color,
+        PreparationTypeId: (p as any).PreparationTypeId,
+        PreparationOrderId: (p as any).PreparationOrderId,
+        Order: (p as any).Order,
       }));
 
       await supabase.from("agora_master_data").upsert({
@@ -6559,6 +6688,8 @@ serve(async (req) => {
 
       const toCreate: { id: string; name: string; key: string }[] = [];
       const alreadyExist: { id: string; name: string; key: string }[] = [];
+      const familyById = new Map(existingFamilies.map((family) => [String(family.Id), family]));
+      const idCollisions: { id: string; expectedName: string; actualName: string }[] = [];
 
       for (const pf of PILOT_FAMILIES) {
         const existing = existingFamilies.find(f => f.Name.toUpperCase() === pf.name.toUpperCase());
@@ -6566,8 +6697,21 @@ serve(async (req) => {
           alreadyExist.push({ id: existing.Id, name: existing.Name, key: pf.key });
         } else {
           const newId = stableFamilyId(pf.name);
-          toCreate.push({ id: newId, name: pf.name, key: pf.key });
+          const occupied = familyById.get(String(newId));
+          if (occupied && occupied.Name.toUpperCase() !== pf.name.toUpperCase()) {
+            idCollisions.push({ id: String(newId), expectedName: pf.name, actualName: occupied.Name });
+          } else {
+            toCreate.push({ id: newId, name: pf.name, key: pf.key });
+          }
         }
+      }
+
+      if (idCollisions.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "AGORA_FAMILY_ID_COLLISION",
+          collisions: idCollisions,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       let importSuccess = true;
@@ -6580,7 +6724,7 @@ serve(async (req) => {
         }
         let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Families>\n`;
         for (const f of toCreate) {
-          xml += `    <Family Id="${f.id}" Name="${escXml(f.name)}" ShowInPos="true" ButtonText="${escXml(f.name.substring(0, 15))}" Color="#722F37" Order="200" />\n`;
+          xml += `    <Family Id="${f.id}" Name="${escXml(f.name)}" ShowInPos="false" ButtonText="${escXml(f.name.substring(0, 15))}" Color="#722F37" Order="200" />\n`;
         }
         xml += `  </Families>\n</Import>`;
 
@@ -6603,6 +6747,40 @@ serve(async (req) => {
         } catch (e) {
           importSuccess = false;
           importError = String(e);
+        }
+      }
+
+      if (!importSuccess) {
+        return new Response(JSON.stringify({
+          success: false,
+          created: [],
+          reused: alreadyExist,
+          error: importError,
+          totalMappings: alreadyExist.length,
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (toCreate.length > 0) {
+        const verifyUrl = `${baseUrlClean}/api/export-master/?filter=Families`;
+        const verifyRes = await fetchWithRetry(verifyUrl, {
+          headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+        }, 30000);
+        const verifyXml = verifyRes.ok ? await verifyRes.text() : "";
+        const verifiedFamilies = new Map(
+          extractXmlElementsWithAttrs(verifyXml, "Family").map((family) => [String(family.attrs.Id || ""), family.attrs]),
+        );
+        const missingOrDifferent = toCreate.filter((family) => {
+          const actual = verifiedFamilies.get(String(family.id));
+          return !actual || String(actual.Name || "").toUpperCase() !== family.name.toUpperCase();
+        });
+        if (!verifyRes.ok || missingOrDifferent.length > 0) {
+          return new Response(JSON.stringify({
+            success: false,
+            created: [],
+            reused: alreadyExist,
+            error: "AGORA_FAMILY_VERIFICATION_FAILED",
+            missingOrDifferent,
+          }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
       }
 
@@ -7981,13 +8159,19 @@ ${costPricesXml}
             verification.summary.failed = unifiedResult.summary.failed;
             verification.summary.totalPriceListsChecked = scopedPriceLists.length;
           } else {
-            verification.warnings.push({
+            verification.success = false;
+            verification.verified_exists = false;
+            verification.verified_prices = false;
+            verification.errors.push({
               code: "VERIFY_FETCH_FAILED",
-              message: `Export-master returned ${verifyRes.status} — verification incomplete`,
+              message: `Export-master returned ${cachedProducts.status} — verification incomplete`,
             });
           }
         } catch (verifyErr) {
-          verification.warnings.push({
+          verification.success = false;
+          verification.verified_exists = false;
+          verification.verified_prices = false;
+          verification.errors.push({
             code: "VERIFY_EXCEPTION",
             message: `Verification failed: ${String(verifyErr).substring(0, 200)}`,
           });
@@ -8130,7 +8314,18 @@ ${costPricesXml}
         }
         const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
         const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
-        const { xml, validationResults } = generateImportXml(wineArr, masterData, connection, fmtTypes, customFamilyMappings, forceEmptyPreparation, isGeoMode ? geoConfig : undefined, isGeoMode ? wineArr : undefined);
+        const frozenPriceListIds = normalizeStringArray(taskPayload._effective_price_list_ids);
+        const { xml, validationResults } = generateImportXml(
+          wineArr,
+          masterData,
+          connection,
+          fmtTypes,
+          customFamilyMappings,
+          forceEmptyPreparation,
+          isGeoMode ? geoConfig : undefined,
+          isGeoMode ? wineArr : undefined,
+          frozenPriceListIds,
+        );
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
         const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
@@ -8345,12 +8540,22 @@ ${costPricesXml}
               : fmt === "GLASS"
               ? String(700000 + Number(winerimWineId || 0))
               : String(500000 + Number(winerimWineId || 0));
+            const sentName = new RegExp(
+              `<Product\\b[^>]*\\bId="${productId}"[^>]*\\bName="([^"]*)"`,
+              "i",
+            ).exec(xml)?.[1];
+            const expectedName = sentName ? decodeXmlAttribute(sentName) : formatProductName(fmt, wineArr[0].name);
+            const expectedPrices = Object.fromEntries(
+              (sentPricesByProduct[productId] || []).map((price) => [price.priceListId, Number(price.mainPrice)]),
+            );
             return {
               productId,
-              productName: wineArr[0].name,
+              productName: expectedName,
               format: fmt,
               erpId: winerimWineId || "",
               expectedFamilyId: expectedFamilies[productId] || undefined,
+              expectedName,
+              expectedPrices,
             };
           });
 
@@ -8442,13 +8647,19 @@ ${costPricesXml}
             }
             taskVerification.post_import_verification_attempts = verificationAttempts;
           } else {
-            taskVerification.warnings.push({
+            taskVerification.success = false;
+            taskVerification.verified_exists = false;
+            taskVerification.verified_prices = false;
+            taskVerification.errors.push({
               code: "VERIFY_FETCH_FAILED",
               message: `Export-master returned ${verifyRes.status} — verification incomplete`,
             });
           }
         } catch (_verifyErr) {
-          taskVerification.warnings.push({
+          taskVerification.success = false;
+          taskVerification.verified_exists = false;
+          taskVerification.verified_prices = false;
+          taskVerification.errors.push({
             code: "VERIFY_EXCEPTION",
             message: `Verification fetch failed: ${String(_verifyErr).substring(0, 200)}`,
           });
@@ -8640,10 +8851,11 @@ ${costPricesXml}
         .from("agora_master_data").select("products_summary_json, sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const existingProducts = (masterData?.products_summary_json || []) as { Id: string; Name: string }[];
       const existingProductIds = new Set(existingProducts.map((p: any) => String(p.Id)));
+      const selectedPriceWriteScope = (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS";
       const scopePayload = buildAgoraVerificationScopePayload(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
-        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+        verificationMode: selectedPriceWriteScope ? "SELECTED_SALE_CENTERS" : "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       // ── Pre-load wine eligibility data to filter formats per wine ──
@@ -8665,9 +8877,9 @@ ${costPricesXml}
         }
       }
 
-      let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0, skippedNoFormats = 0;
+      const eligibleFormatsByWine = new Map<string, string[]>();
+      const requestedProductIds: string[] = [];
       for (const wineId of winerimWineIds) {
-        // ── Filter formats based on wine eligibility ──
         const elig = wineEligibility[wineId];
         const eligibleFormats = formatTypes.filter((fmt: string) => {
           if (fmt === "GLASS") return (elig?.glass_sale_price ?? 0) > 0;
@@ -8675,10 +8887,67 @@ ${costPricesXml}
           if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
           return false;
         });
+        eligibleFormatsByWine.set(String(wineId), eligibleFormats);
+        for (const fmt of eligibleFormats) {
+          const base = fmt === "MAGNUM" ? 900000 : fmt === "GLASS" ? 700000 : 500000;
+          requestedProductIds.push(String(base + Number(wineId || 0)));
+        }
+      }
+
+      // A deterministic Winerim ID must never overwrite an unrelated Agora
+      // product. Existing IDs are writable only when prior Winerim ownership is
+      // proven by tracking or an XML_IMPORT mapping for the same wine/format.
+      const ownershipKeys = new Set<string>();
+      for (let i = 0; i < requestedProductIds.length; i += 500) {
+        const productIdChunk = requestedProductIds.slice(i, i + 500);
+        const [{ data: trackingRows }, { data: mappingRows }] = await Promise.all([
+          supabase.from("winerim_push_tracking")
+            .select("agora_product_id,winerim_wine_id,format,source,sync_status")
+            .eq("connection_id", connectionId)
+            .eq("source", "WINERIM")
+            .eq("sync_status", "VERIFIED")
+            .in("agora_product_id", productIdChunk),
+          supabase.from("product_mappings")
+            .select("provider_product_id,winerim_wine_id,format_type,match_method,status")
+            .eq("connection_id", connectionId)
+            .eq("status", "CONFIRMED")
+            .in("provider_product_id", productIdChunk),
+        ]);
+        for (const row of trackingRows || []) {
+          ownershipKeys.add(`${row.agora_product_id}:${row.winerim_wine_id}:${String(row.format || "").toUpperCase()}`);
+        }
+        for (const row of mappingRows || []) {
+          if (!String(row.match_method || "").startsWith("XML_IMPORT")) continue;
+          ownershipKeys.add(`${row.provider_product_id}:${row.winerim_wine_id}:${String(row.format_type || "").toUpperCase()}`);
+        }
+      }
+      const idCollisions: Record<string, unknown>[] = [];
+      for (const wineId of winerimWineIds) {
+        for (const fmt of eligibleFormatsByWine.get(String(wineId)) || []) {
+          const base = fmt === "MAGNUM" ? 900000 : fmt === "GLASS" ? 700000 : 500000;
+          const providerProductId = String(base + Number(wineId || 0));
+          if (!existingProductIds.has(providerProductId)) continue;
+          if (!ownershipKeys.has(`${providerProductId}:${wineId}:${fmt}`)) {
+            idCollisions.push({ providerProductId, winerimWineId: wineId, format: fmt });
+          }
+        }
+      }
+      if (idCollisions.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "AGORA_PRODUCT_ID_COLLISION",
+          message: "A deterministic Winerim product ID is already occupied by a product without proven Winerim ownership.",
+          collisions: idCollisions.slice(0, 50),
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let queuedCreate = 0, queuedUpdate = 0, skippedDuplicate = 0, skippedNoFormats = 0;
+      for (const wineId of winerimWineIds) {
+        // ── Filter formats based on wine eligibility ──
+        const eligibleFormats = eligibleFormatsByWine.get(String(wineId)) || [];
         if (eligibleFormats.length === 0) {
-          // Fallback: if no format qualifies but BOTTLE was requested, still push BOTTLE
-          if (formatTypes.includes("BOTTLE")) eligibleFormats.push("BOTTLE");
-          else { skippedNoFormats++; continue; }
+          skippedNoFormats++;
+          continue;
         }
 
         // Skip if already queued/running
@@ -9488,7 +9757,9 @@ ${costPricesXml}
         .from("agora_master_data").select("sale_centers_json, price_lists_json").eq("connection_id", connectionId).single();
       const scopePayload = buildAgoraVerificationScopePayload(masterDataForScope, {
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
-        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+        verificationMode: (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS"
+          ? "SELECTED_SALE_CENTERS"
+          : "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
 
       const taskPayload = (taskToClone.payload_json || {}) as Record<string, unknown>;
@@ -9523,7 +9794,9 @@ ${costPricesXml}
       const verificationScope = buildAgoraVerificationScope(masterData, {
         explicitSaleCenterIds: normalizeStringArray(payload.saleCenterIds || payload.saleCenterId),
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
-        verificationMode: "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+        verificationMode: (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS"
+          ? "SELECTED_SALE_CENTERS"
+          : "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
       });
       const scopedPriceLists = verificationScope.selectedPriceLists;
       const priceListToSaleCenters = verificationScope.priceListToSaleCenters;
@@ -9898,8 +10171,9 @@ ${costPricesXml}
         if (wine.is_active === false) {
           // Check if already has a verified push (i.e. product exists in Agora)
           const { data: existingPush } = await supabase
-            .from("winerim_push_tracking").select("format, agora_product_id")
+            .from("winerim_push_tracking").select("format, agora_product_id, source")
             .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+            .eq("source", "WINERIM")
             .in("sync_status", ["VERIFIED", "PUSHED"]);
           
           if (existingPush && existingPush.length > 0) {
@@ -9943,8 +10217,9 @@ ${costPricesXml}
         }
 
         const { data: existingPublishedFormats } = await supabase
-          .from("winerim_push_tracking").select("format, agora_product_id")
+          .from("winerim_push_tracking").select("format, agora_product_id, source")
           .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
+          .eq("source", "WINERIM")
           .in("sync_status", ["VERIFIED", "PUSHED"]);
         const formatsToHide = (existingPublishedFormats || [])
           .filter((push: any) => Boolean(push.agora_product_id))
@@ -10090,6 +10365,7 @@ ${costPricesXml}
             false,
             updateDiffIsGeoMode ? updateDiffGeoConfig : undefined,
             updateDiffIsGeoMode ? [wine] : undefined,
+            updateDiffScopedPriceListIds,
           );
           const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
           const allExpectedProductsMatch = expectedProducts.length > 0 && expectedProducts.every((expectedProduct) => {
@@ -10172,6 +10448,158 @@ ${costPricesXml}
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
         totalWines: wines.length, eventType: evtType, forceEvaluate,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── READ-ONLY EXPECTED CATALOG AUDIT ──
+    // Generates the exact XML Winerim would send, compares it with a forced
+    // fresh Agora Products read and reports ownership. It performs no writes.
+    if (action === "audit-winerim-products") {
+      const requestedWineIds = normalizeStringArray(payload.winerimWineIds);
+      const { data: masterData } = await supabase
+        .from("agora_master_data")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .single();
+      if (!masterData) {
+        return new Response(JSON.stringify({ success: false, error: "NO_MASTER_DATA" }), {
+          status: 409,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      let wineQuery = supabase
+        .from("winerim_wines")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("is_active", true);
+      if (requestedWineIds.length > 0) wineQuery = wineQuery.in("winerim_id", requestedWineIds);
+      const { data: wines, error: winesError } = await wineQuery;
+      if (winesError) throw winesError;
+
+      const customMappings = await loadCustomFamilyMappings(connectionId);
+      const selectedScope = (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS";
+      const scope = buildAgoraVerificationScope(masterData, {
+        connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
+        verificationMode: selectedScope ? "SELECTED_SALE_CENTERS" : "PRODUCTION_ALL_ACTIVE_SALE_CENTERS",
+      });
+      const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
+      const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
+      const expectedOwnershipByProductId = new Map<string, { winerimWineId: string; format: string }[]>();
+      for (const wine of wines || []) {
+        for (const format of ["BOTTLE", "GLASS", "MAGNUM"]) {
+          const productId = deterministicAgoraProductId(connection, wine, format);
+          const owners = expectedOwnershipByProductId.get(productId) || [];
+          owners.push({
+              winerimWineId: String(wine.winerim_id),
+              format,
+          });
+          expectedOwnershipByProductId.set(productId, owners);
+        }
+      }
+      const { xml: expectedXml, validationResults } = generateImportXml(
+        wines || [],
+        masterData,
+        connection,
+        ["BOTTLE", "GLASS", "MAGNUM"],
+        customMappings,
+        false,
+        isGeoMode ? geoConfig : undefined,
+        isGeoMode ? wines || [] : undefined,
+        scope.selectedPriceListIds,
+      );
+      const validationFailures = validationResults.filter((item) => !item.validation.valid);
+      if (validationFailures.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          readOnly: true,
+          error: "EXPECTED_XML_VALIDATION_FAILED",
+          validationFailures,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      const actualCatalog = await fetchAgoraProductsXmlCached(
+        connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+      );
+      if (!actualCatalog.ok) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "AGORA_PRODUCTS_READ_FAILED",
+          status: actualCatalog.status,
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const expectedProducts = extractXmlElementsWithAttrs(expectedXml, "Product");
+      const actualById = new Map(
+        extractXmlElementsWithAttrs(actualCatalog.xml, "Product")
+          .map((product) => [String(product.attrs.Id || ""), product]),
+      );
+      const expectedIds = expectedProducts.map((product) => String(product.attrs.Id || "")).filter(Boolean);
+      const ownershipKeys = new Set<string>();
+      for (let i = 0; i < expectedIds.length; i += 500) {
+        const idChunk = expectedIds.slice(i, i + 500);
+        const [{ data: trackingRows }, { data: mappingRows }] = await Promise.all([
+          supabase.from("winerim_push_tracking")
+            .select("agora_product_id,winerim_wine_id,format,source,sync_status")
+            .eq("connection_id", connectionId)
+            .eq("source", "WINERIM")
+            .eq("sync_status", "VERIFIED")
+            .in("agora_product_id", idChunk),
+          supabase.from("product_mappings")
+            .select("provider_product_id,winerim_wine_id,format_type,match_method,status")
+            .eq("connection_id", connectionId)
+            .eq("status", "CONFIRMED")
+            .in("provider_product_id", idChunk),
+        ]);
+        for (const row of trackingRows || []) {
+          ownershipKeys.add(`${row.agora_product_id}:${row.winerim_wine_id}:${String(row.format || "").toUpperCase()}`);
+        }
+        for (const row of mappingRows || []) {
+          if (!String(row.match_method || "").startsWith("XML_IMPORT")) continue;
+          ownershipKeys.add(`${row.provider_product_id}:${row.winerim_wine_id}:${String(row.format_type || "").toUpperCase()}`);
+        }
+      }
+
+      const details = expectedProducts.map((expected) => {
+        const productId = String(expected.attrs.Id || "");
+        const actual = actualById.get(productId);
+        const expectedFormatOrder = inferAgoraFormatOrderFromName(decodeXmlAttribute(expected.attrs.Name || ""));
+        const expectedFormat = expectedFormatOrder === 1 ? "GLASS" : expectedFormatOrder === 2 ? "MAGNUM" : "BOTTLE";
+        const expectedOwner = (expectedOwnershipByProductId.get(productId) || [])
+          .find((owner) => owner.format === expectedFormat) || expectedOwnershipByProductId.get(productId)?.[0];
+        const ownedByWinerim = Boolean(expectedOwner && ownershipKeys.has(
+          `${productId}:${expectedOwner.winerimWineId}:${expectedOwner.format}`,
+        ));
+        const status = !actual
+          ? "MISSING"
+          : agoraProductMatchesExpectedXml(expected, actual, scope.selectedPriceListIds)
+          ? "MATCH"
+          : "DIFFERENT";
+        return {
+          productId,
+          status,
+          ownedByWinerim,
+          expectedWinerimWineId: expectedOwner?.winerimWineId || null,
+          expectedFormat: expectedOwner?.format || null,
+          expectedName: decodeXmlAttribute(expected.attrs.Name || ""),
+          actualName: actual ? decodeXmlAttribute(actual.attrs.Name || "") : null,
+          expectedFamilyId: expected.attrs.FamilyId || null,
+          actualFamilyId: actual?.attrs.FamilyId || null,
+        };
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        readOnly: true,
+        expected: details.length,
+        matched: details.filter((item) => item.status === "MATCH").length,
+        missing: details.filter((item) => item.status === "MISSING").length,
+        different: details.filter((item) => item.status === "DIFFERENT").length,
+        unownedExisting: details.filter((item) => item.status !== "MISSING" && !item.ownedByWinerim).length,
+        selectedPriceLists: scope.selectedPriceLists,
+        validationFailures: [],
+        details,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
