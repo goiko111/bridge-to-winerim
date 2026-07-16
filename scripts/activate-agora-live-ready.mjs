@@ -758,6 +758,60 @@ async function main() {
         console.log(
           `[repair] ${connection.location_name}: ${recoverableUnownedMatches.length} exact Winerim products require ownership recovery.`,
         );
+        const recoveredAt = new Date().toISOString();
+        const expectedByProductId = new Map(expected.map((item) => [item.productId, item]));
+        const mappingRows = [];
+        const trackingRows = [];
+        for (const match of recoverableUnownedMatches) {
+          const expectedItem = expectedByProductId.get(String(match.productId));
+          if (!expectedItem) {
+            throw new Error(`Ownership recovery target ${match.productId} is not in the expected catalog.`);
+          }
+          mappingRows.push({
+            connection_id: connection.id,
+            provider_product_id: String(match.productId),
+            provider_product_name: String(match.actualName || match.expectedName || expectedItem.wine.name),
+            winerim_wine_id: String(match.expectedWinerimWineId),
+            winerim_wine_name: expectedItem.wine.name,
+            match_method: "XML_IMPORT_RECOVERED_EXACT",
+            match_score: 100,
+            match_reasons: [
+              "Deterministic Agora ID",
+              "Exact fresh catalog match",
+              "Prior Winerim push tracking",
+            ],
+            status: "CONFIRMED",
+            format_type: String(match.expectedFormat || "").toUpperCase(),
+            agora_product_id: String(match.productId),
+            last_synced_at: recoveredAt,
+            last_sync_error: null,
+          });
+          trackingRows.push({
+            connection_id: connection.id,
+            winerim_wine_id: String(match.expectedWinerimWineId),
+            format: String(match.expectedFormat || "").toUpperCase(),
+            agora_product_id: String(match.productId),
+            agora_family_id: String(match.expectedFamilyId || expectedItem.familyId),
+            source: "WINERIM",
+            sync_status: "VERIFIED",
+            task_id: null,
+            last_error: null,
+            pushed_at: recoveredAt,
+            verified_at: recoveredAt,
+          });
+        }
+        await rest(
+          "POST",
+          "product_mappings?on_conflict=connection_id,provider_product_id",
+          mappingRows,
+          { Prefer: "resolution=merge-duplicates,return=minimal" },
+        );
+        await rest(
+          "POST",
+          "winerim_push_tracking?on_conflict=connection_id,winerim_wine_id,format",
+          trackingRows,
+          { Prefer: "resolution=merge-duplicates,return=minimal" },
+        );
       }
       const auditDifferences = (catalogAudit.details || []).filter((item) =>
         item.status === "DIFFERENT" && item.ownedByWinerim
@@ -773,8 +827,7 @@ async function main() {
       for (const wine of wines) {
         const formats = expectedFormats(wine).filter((format) => {
           const expectedId = productId(wine.winerim_id, format);
-          return auditByProductId.get(expectedId)?.status === "MISSING" ||
-            recoverableUnownedProductIds.has(expectedId);
+          return auditByProductId.get(expectedId)?.status === "MISSING";
         });
         if (formats.length === 0) continue;
         const signature = formats.join("+");
