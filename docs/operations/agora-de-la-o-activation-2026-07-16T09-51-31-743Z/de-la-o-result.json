@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-07-16T10:04:59.945Z",
+  "status": "CATALOG_READY_PENDING_SALE",
+  "connection": {
+    "enabled": false,
+    "syncMode": "BIDIRECTIONAL",
+    "catalogSyncEnabled": false,
+    "autoPushOnCreate": false,
+    "autoPushOnUpdate": false,
+    "lastBusinessDaySynced": "2026-07-16"
+  },
+  "families": [
+    {
+      "key": "botella_blanco",
+      "id": "904241",
+      "name": "BLANCOS WINERIM",
+      "visible": true,
+      "products": 39,
+      "saleable": 39
+    },
+    {
+      "key": "copa",
+      "id": "901954",
+      "name": "COPAS WINERIM",
+      "visible": true,
+      "products": 1,
+      "saleable": 1
+    },
+    {
+      "key": "botella_dulce",
+      "id": "903925",
+      "name": "DULCE WINERIM",
+      "visible": true,
+      "products": 0,
+      "saleable": 0
+    },
+    {
+      "key": "botella_espumoso",
+      "id": "908875",
+      "name": "ESPUMOSOS WINERIM",
+      "visible": true,
+      "products": 4,
+      "saleable": 4
+    },
+    {
+      "key": "botella_fortificado",
+      "id": "908182",
+      "name": "FORTIFICADOS WINERIM",
+      "visible": true,
+      "products": 5,
+      "saleable": 5
+    },
+    {
+      "key": "magnum",
+      "id": "904289",
+      "name": "MAGNUM WINERIM",
+      "visible": true,
+      "products": 0,
+      "saleable": 0
+    },
+    {
+      "key": "botella_rosado",
+      "id": "903516",
+      "name": "ROSADOS WINERIM",
+      "visible": true,
+      "products": 3,
+      "saleable": 3
+    },
+    {
+      "key": "botella_tinto",
+      "id": "900157",
+      "name": "TINTOS WINERIM",
+      "visible": true,
+      "products": 35,
+      "saleable": 35
+    }
+  ],
+  "legacyChanged": false,
+  "saleTestPending": true
+}

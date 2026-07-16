@@ -17,6 +17,7 @@ const TARGETS = [
   { key: "vinatea", aliases: ["vinatea", "vina tea"], saleCenterIds: ["4", "12", "15", "16"] },
   { key: "don-quijote-marbella", aliases: ["don quijote marbella", "restaurante don quijote marbella"], saleCenterIds: ["2", "3", "4"] },
   { key: "abadia-yuste", aliases: ["abadia yuste", "abadía yuste"], saleCenterIds: ["1", "3", "7", "8", "11"] },
+  { key: "de-la-o", aliases: ["de la o"], saleCenterIds: ["2", "4"] },
   { key: "el-higueron", aliases: ["el higueron", "el higuerón", "higueron", "higuerón"], saleCenterIds: ["1", "2", "4", "5", "6", "7", "8", "9", "10", "11", "13"] },
   { key: "qtomas", aliases: ["qtomas", "q tomas", "restaurante qtomas"], saleCenterIds: ["12", "16", "17"] },
   { key: "ocean-club", aliases: ["ocean club"], canCreate: true, saleCenterEnv: "OCEAN_SALE_CENTER_IDS" },

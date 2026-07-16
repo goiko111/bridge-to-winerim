@@ -1462,3 +1462,23 @@
 **Riesgos controlados:** el informe distingue bloqueos actuales, deuda histórica y falsos positivos. No se desactiva una conexión sana únicamente por una tarea antigua.
 
 **Alternativa descartada:** llamar “100%” a cualquier conexión habilitada que responda a `/api/`. La conectividad no prueba la integración completa.
+
+## 2026-07-16 - De la O mantiene legacy y queda pendiente de venta real
+
+**Decisión:** publicar las ocho familias Winerim y sus `87` variantes, conservar íntegramente el catálogo anterior y dejar la conexión desactivada en `CATALOG_READY_PENDING_SALE`.
+
+**Razón:** catálogo, precios, mappings y estructura pueden verificarse mediante lectura fresh sin poner en marcha ventas históricas. La prueba real de botella y copa sigue siendo necesaria para validar el flujo Agora -> Winerim.
+
+**Riesgos controlados:** el cursor y las guardas de stock empiezan el `2026-07-16`; el catálogo periódico y el auto-push siguen apagados. La comparación posterior confirmó `0` cambios en las `86` familias y `1.758` productos legacy.
+
+**Alternativa descartada:** ocultar el legacy o activar directamente el cron por haber alcanzado `87/87`. Se descarta hasta la aceptación visual y la prueba operativa.
+
+**Rollback:** usar el snapshot `docs/operations/agora-de-la-o-activation-2026-07-16T09-51-31-743Z/`, mantener la conexión desactivada y ocultar solo familias/productos Winerim.
+
+## 2026-07-16 - De la O usa las rutas reales de sala, terraza y bodega
+
+**Decisión:** escribir precios únicamente en los centros activos `2 · SALA` y `4 · TERRAZA`, usar almacén `2 · BODEGA`, IVA `3 / 10%` y preparación `1 / 1 · Barra / Bebidas`.
+
+**Razón:** las listas `1` y `3` y sus centros están eliminados. La ruta `1 / 1` aparece en `876` de `877` productos legacy de vino, por lo que representa la operativa dominante y evita que las comandas de vino pierdan su destino de preparación.
+
+**Alternativa descartada:** usar todos los centros/listas o `Almacén General` por defecto. Podría publicar precios en listas antiguas o separar el vino del almacén específico que ya utiliza el restaurante.

@@ -1,0 +1,45 @@
+{
+  "created": [
+    {
+      "id": "901954",
+      "name": "COPAS WINERIM",
+      "key": "copa"
+    },
+    {
+      "id": "900157",
+      "name": "TINTOS WINERIM",
+      "key": "botella_tinto"
+    },
+    {
+      "id": "904241",
+      "name": "BLANCOS WINERIM",
+      "key": "botella_blanco"
+    },
+    {
+      "id": "908875",
+      "name": "ESPUMOSOS WINERIM",
+      "key": "botella_espumoso"
+    },
+    {
+      "id": "908182",
+      "name": "FORTIFICADOS WINERIM",
+      "key": "botella_fortificado"
+    },
+    {
+      "id": "903925",
+      "name": "DULCE WINERIM",
+      "key": "botella_dulce"
+    },
+    {
+      "id": "903516",
+      "name": "ROSADOS WINERIM",
+      "key": "botella_rosado"
+    },
+    {
+      "id": "904289",
+      "name": "MAGNUM WINERIM",
+      "key": "magnum"
+    }
+  ],
+  "reused": []
+}
