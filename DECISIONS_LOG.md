@@ -1562,3 +1562,45 @@
 **Razón:** las ventanas históricas mezclan ventas manuales, aliases, mappings antiguos, pilotos intradía y facturas definitivas. Una limpieza por suma podría borrar una venta real.
 
 **Alternativa descartada:** igualar totales anulando cualquier excedente aparente. No preserva trazabilidad ni garantiza la variante correcta.
+
+## 2026-07-16 - Ocho conexiones quedan live-ready sin ocultar legacy
+
+**Decisión:** activar De la O, El Portón de Sorní, Ocean Club, Finca Eslava, Vinatea, Don Quijote Marbella, Abadía Yuste y El Higuerón con catálogo/precios automáticos y captura intradía, manteniendo todo el legacy visible.
+
+**Razón:** las ocho superan conectividad, ocho familias, cobertura completa de formatos elegibles, mappings/tracking verificados y cola cero.
+
+**Riesgos controlados:** guardas de inicio de stock, centros/listas explícitos, conexión desactivada durante staging, lotes pequeños y auditoría fresh posterior.
+
+**Alternativa descartada:** ocultar legacy o declarar `100%_SIGNED_OFF` sin una venta real de botella y copa observada en el ERP.
+
+**Rollback:** desactivar conexión/auto-push y ocultar únicamente familias/productos Winerim; no borrar trazabilidad ni tocar legacy.
+
+## 2026-07-16 - Ownership exacto puede recuperarse sin adoptar legacy
+
+**Decisión:** recuperar mapping/tracking únicamente cuando el ID determinista coincide, el catálogo fresh devuelve `MATCH` total y existe tracking previo `source=WINERIM` para el mismo vino/formato.
+
+**Razón:** una verificación literal de tabs frente a espacios dejó productos correctamente importados sin ownership confirmado.
+
+**Riesgos controlados:** cualquier diferencia de precio, familia, flags, preparación o texto normalizado sigue abortando; un producto sin tracking previo nunca se adopta.
+
+**Alternativa descartada:** hacer matching por nombre o reimportar a ciegas un ID ocupado.
+
+## 2026-07-16 - Qtomas pausa catálogo pero conserva ventas
+
+**Decisión:** bloquear de forma reversible las `59` tareas de catálogo, apagar auto-push y mantener la conexión/lectura de ventas activas.
+
+**Razón:** Qtomas devuelve `No route to host` desde backend y desde esta máquina; seguir generando tareas solo amplía la cola y las alertas.
+
+**Riesgos controlados:** no se elimina ninguna tarea; cuando el POS vuelva, se hará master fresh y se reencolarán solo diferencias reales.
+
+**Alternativa descartada:** procesar los `QUEUED/FAILED` antiguos sin conocer el estado actual de Agora.
+
+## 2026-07-16 - Las activaciones grandes se evalúan en lotes de diez
+
+**Decisión:** reducir `evaluate-auto-push` a lotes de `10` y validar catálogos grandes por bloques cuando sea necesario.
+
+**Razón:** lotes de `50` y auditorías monolíticas agotaron el límite de CPU alojado en Abadía Yuste e Higuerón.
+
+**Riesgos controlados:** la conexión permanece desactivada durante staging y la cola se drena de forma síncrona; el resultado comercial no cambia.
+
+**Alternativa descartada:** aumentar concurrencia. Podría sobrecargar Agora/SQL Server y reproducir incidentes de saturación.

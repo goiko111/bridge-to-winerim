@@ -14,7 +14,16 @@ import path from "node:path";
 const DEFAULT_ENV_FILE = "/Users/GOIKO/Documents/Playground/bridge-to-winerim-audit/bridge-to-winerim-main/.env";
 const TARGETS = [
   { key: "finca-eslava", aliases: ["finca eslava"], saleCenterIds: ["1", "4", "5"] },
-  { key: "vinatea", aliases: ["vinatea", "vina tea"], saleCenterIds: ["4", "12", "15", "16"] },
+  {
+    key: "vinatea",
+    aliases: ["vinatea", "vina tea"],
+    saleCenterIds: ["4", "12", "15", "16"],
+    preparationRoutes: {
+      BOTTLE: { typeId: "8", orderId: "1" },
+      GLASS: { typeId: "8", orderId: "1" },
+      MAGNUM: { typeId: "8", orderId: "1" },
+    },
+  },
   { key: "don-quijote-marbella", aliases: ["don quijote marbella", "restaurante don quijote marbella"], saleCenterIds: ["2", "3", "4"] },
   { key: "abadia-yuste", aliases: ["abadia yuste", "abadía yuste"], saleCenterIds: ["1", "3", "7", "8", "11"] },
   { key: "de-la-o", aliases: ["de la o"], saleCenterIds: ["2", "4"] },
@@ -652,7 +661,19 @@ async function main() {
         catalogDetailFailures += Number(catalog.detailRequestsFailed || catalog.detailsMissing || 0);
       }
       if (catalogDetailFailures > 0) {
-        throw new Error(`Winerim catalog enrichment completed with failures: ${JSON.stringify(catalog).slice(0, 700)}`);
+        const failedDetailRows = await restAll(
+          `winerim_wines?connection_id=eq.${connection.id}&pricing_status=in.(FAILED,RETRYING)&select=winerim_id,name,is_active,pricing_status,pricing_missing_reason`,
+        );
+        const blockingDetailFailures = failedDetailRows.filter((wine) => wine.is_active === true);
+        if (blockingDetailFailures.length > 0) {
+          throw new Error(
+            `Winerim catalog enrichment failed for active wines (${blockingDetailFailures.length}): ` +
+            JSON.stringify(blockingDetailFailures.slice(0, 20)),
+          );
+        }
+        console.log(
+          `[catalog] ${connection.location_name}: ignored ${failedDetailRows.length} detail failures for inactive wines.`,
+        );
       }
 
       const masterRowsForRouting = await restAll(
@@ -661,12 +682,33 @@ async function main() {
       const masterForRouting = masterRowsForRouting[0] || {};
       const wines = await restAll(`winerim_wines?connection_id=eq.${connection.id}&select=winerim_id,name,wine_type,is_active,pricing_status,bottle_sale_price,glass_sale_price,magnum_sale_price`);
       const requiredFormats = new Set(wines.flatMap((wine) => expectedFormats(wine)));
-      const preparation = inferPreparationRoutes({
-        families: masterForRouting.families_json || [],
-        preparationTypes: masterForRouting.preparation_types_json || [],
-        preparationOrders: masterForRouting.preparation_orders_json || [],
-        products: masterForRouting.products_summary_json || [],
-      }, requiredFormats);
+      const availablePreparationTypeIds = new Set(
+        (masterForRouting.preparation_types_json || []).filter((item) => !isDeleted(item)).map((item) => String(item.Id)),
+      );
+      const availablePreparationOrderIds = new Set(
+        (masterForRouting.preparation_orders_json || []).filter((item) => !isDeleted(item)).map((item) => String(item.Id)),
+      );
+      const explicitPreparationRoutes = definition.preparationRoutes || null;
+      if (explicitPreparationRoutes) {
+        for (const format of requiredFormats) {
+          const route = explicitPreparationRoutes[format];
+          if (
+            !route ||
+            !availablePreparationTypeIds.has(String(route.typeId)) ||
+            !availablePreparationOrderIds.has(String(route.orderId))
+          ) {
+            throw new Error(`Configured Agora preparation route is invalid for ${format}.`);
+          }
+        }
+      }
+      const preparation = explicitPreparationRoutes
+        ? { routes: explicitPreparationRoutes, source: "EXPLICIT_VERIFIED_LEGACY_ROUTE" }
+        : inferPreparationRoutes({
+          families: masterForRouting.families_json || [],
+          preparationTypes: masterForRouting.preparation_types_json || [],
+          preparationOrders: masterForRouting.preparation_orders_json || [],
+          products: masterForRouting.products_summary_json || [],
+        }, requiredFormats);
       const defaultPreparation = preparation.routes.BOTTLE || Object.values(preparation.routes)[0] || { typeId: "", orderId: "" };
       connection = await patchConnection(connection.id, {
         default_preparation_type_id: defaultPreparation.typeId || null,
@@ -712,6 +754,63 @@ async function main() {
         throw new Error(`Unroutable Winerim formats (${unroutable.length}): ${JSON.stringify(unroutable.slice(0, 10))}`);
       }
       if (expected.length === 0) throw new Error("No active Winerim formats with a positive price.");
+      const expectedByProductId = new Map(expected.map((item) => [item.productId, item]));
+      const recoverExactOwnership = async (matches) => {
+        if (matches.length === 0) return;
+        const recoveredAt = new Date().toISOString();
+        const mappingRows = [];
+        const trackingRows = [];
+        for (const match of matches) {
+          const expectedItem = expectedByProductId.get(String(match.productId));
+          if (!expectedItem) {
+            throw new Error(`Ownership recovery target ${match.productId} is not in the expected catalog.`);
+          }
+          mappingRows.push({
+            connection_id: connection.id,
+            provider_product_id: String(match.productId),
+            provider_product_name: String(match.actualName || match.expectedName || expectedItem.wine.name),
+            winerim_wine_id: String(match.expectedWinerimWineId),
+            winerim_wine_name: expectedItem.wine.name,
+            match_method: "XML_IMPORT",
+            match_score: 100,
+            match_reasons: [
+              "Deterministic Agora ID",
+              "Exact fresh catalog match",
+              "Prior Winerim push tracking",
+            ],
+            status: "CONFIRMED",
+            format_type: String(match.expectedFormat || "").toUpperCase(),
+            agora_product_id: String(match.productId),
+            last_synced_at: recoveredAt,
+            last_sync_error: null,
+          });
+          trackingRows.push({
+            connection_id: connection.id,
+            winerim_wine_id: String(match.expectedWinerimWineId),
+            format: String(match.expectedFormat || "").toUpperCase(),
+            agora_product_id: String(match.productId),
+            agora_family_id: String(match.expectedFamilyId || expectedItem.familyId),
+            source: "WINERIM",
+            sync_status: "VERIFIED",
+            task_id: null,
+            last_error: null,
+            pushed_at: recoveredAt,
+            verified_at: recoveredAt,
+          });
+        }
+        await rest(
+          "POST",
+          "product_mappings?on_conflict=connection_id,provider_product_id",
+          mappingRows,
+          { Prefer: "resolution=merge-duplicates,return=minimal" },
+        );
+        await rest(
+          "POST",
+          "winerim_push_tracking?on_conflict=connection_id,winerim_wine_id,format",
+          trackingRows,
+          { Prefer: "resolution=merge-duplicates,return=minimal" },
+        );
+      };
 
       const mappingsBefore = await restAll(`product_mappings?connection_id=eq.${connection.id}&status=eq.CONFIRMED&select=provider_product_id,winerim_wine_id,format_type,match_method`);
       const nonDeterministicWinerimMappings = mappingsBefore.filter((mapping) => {
@@ -758,6 +857,7 @@ async function main() {
         console.log(
           `[repair] ${connection.location_name}: ${recoverableUnownedMatches.length} exact Winerim products require ownership recovery.`,
         );
+        await recoverExactOwnership(recoverableUnownedMatches);
       }
       const auditDifferences = (catalogAudit.details || []).filter((item) =>
         item.status === "DIFFERENT" && item.ownedByWinerim
@@ -773,8 +873,7 @@ async function main() {
       for (const wine of wines) {
         const formats = expectedFormats(wine).filter((format) => {
           const expectedId = productId(wine.winerim_id, format);
-          return auditByProductId.get(expectedId)?.status === "MISSING" ||
-            recoverableUnownedProductIds.has(expectedId);
+          return auditByProductId.get(expectedId)?.status === "MISSING";
         });
         if (formats.length === 0) continue;
         const signature = formats.join("+");
@@ -825,7 +924,9 @@ async function main() {
         provider_config: autoConfig,
       });
 
-      for (const batch of chunks(wines.map((wine) => String(wine.winerim_id)), 50)) {
+      // Keep each differential evaluation small: large catalogs can exhaust the
+      // hosted Edge Function CPU while generating XML and checking ownership.
+      for (const batch of chunks(wines.map((wine) => String(wine.winerim_id)), 10)) {
         await invoke("agora-proxy", {
           action: "evaluate-auto-push", connectionId: connection.id,
           winerimWineIds: batch, eventType: "UPDATE",
@@ -834,11 +935,41 @@ async function main() {
       await processQueue(connection.id);
       await invoke("agora-proxy", { action: "sync-master-data", connectionId: connection.id, preserveWriteMode: true });
 
-      const finalCatalogAudit = await invoke("agora-proxy", {
+      let finalCatalogAudit = await invoke("agora-proxy", {
         action: "audit-winerim-products",
         connectionId: connection.id,
         winerimWineIds: wines.map((wine) => String(wine.winerim_id)),
       });
+      if (Number(finalCatalogAudit.unownedExisting || 0) > 0) {
+        const currentTracking = await restAll(
+          `winerim_push_tracking?connection_id=eq.${connection.id}&source=eq.WINERIM&select=agora_product_id,winerim_wine_id,format`,
+        );
+        const currentTrackingKeys = new Set(
+          currentTracking
+            .filter((tracking) => tracking.agora_product_id)
+            .map((tracking) =>
+              `${tracking.agora_product_id}:${tracking.winerim_wine_id}:${String(tracking.format || "").toUpperCase()}`
+            ),
+        );
+        const finalRecoverableMatches = (finalCatalogAudit.details || []).filter((item) =>
+          item.status === "MATCH" &&
+          !item.ownedByWinerim &&
+          currentTrackingKeys.has(
+            `${item.productId}:${item.expectedWinerimWineId}:${String(item.expectedFormat || "").toUpperCase()}`
+          )
+        );
+        if (finalRecoverableMatches.length > 0) {
+          console.log(
+            `[repair] ${connection.location_name}: recovering ${finalRecoverableMatches.length} exact products after queue verification.`,
+          );
+          await recoverExactOwnership(finalRecoverableMatches);
+          finalCatalogAudit = await invoke("agora-proxy", {
+            action: "audit-winerim-products",
+            connectionId: connection.id,
+            winerimWineIds: wines.map((wine) => String(wine.winerim_id)),
+          });
+        }
+      }
       if (
         Number(finalCatalogAudit.missing || 0) > 0 ||
         Number(finalCatalogAudit.different || 0) > 0 ||

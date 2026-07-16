@@ -61,6 +61,11 @@ describe("Agora staged activation hardening", () => {
     expect(runbookSource).toContain("ACTIVATION_ROLLBACK_CANCELLED");
     expect(runbookSource).toContain("stock_sync_not_before");
     expect(runbookSource).toContain("stock_sync_not_before_at");
+    expect(runbookSource).toContain("blockingDetailFailures");
+    expect(runbookSource).toContain("detail failures for inactive wines");
+    expect(runbookSource).toContain(
+      'chunks(wines.map((wine) => String(wine.winerim_id)), 10)',
+    );
     expect(agoraProxySource).toContain("isStockSyncDayAllowed");
     expect(agoraProxySource).toContain("providerSaleIsAfterStockStart");
     expect(runbookSource).toContain(
@@ -76,7 +81,7 @@ describe("Agora staged activation hardening", () => {
   it("requires a fresh read-only catalog audit before and after writes", () => {
     expect(agoraProxySource).toContain('action === "audit-winerim-products"');
     expect(agoraProxySource).toContain("readOnly: true");
-    expect(runbookSource.match(/action: "audit-winerim-products"/g) || []).toHaveLength(2);
+    expect(runbookSource.match(/action: "audit-winerim-products"/g) || []).toHaveLength(3);
     expect(agoraProxySource).toContain("EXPECTED_XML_VALIDATION_FAILED");
     expect(agoraProxySource).toContain("expectedAuditValidationKeys");
     expect(agoraProxySource).toContain('expectedAuditValidationKeys.has(`${item.winerimId}:${item.formatType}`)');
