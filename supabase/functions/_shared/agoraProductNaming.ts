@@ -70,15 +70,23 @@ export function buildDuplicateSafeAgoraProductNames(
   const assignedKeys = new Set<string>();
   const finalNames: Record<string, string> = {};
 
-  function hasExternalOwner(name: string, productId: string): boolean {
+  function hasExternalOwner(
+    name: string,
+    productId: string,
+    generatedIds: Set<string> = new Set<string>(),
+  ): boolean {
     const owners = existingNameOwners.get(normalizeAgoraProductNameKey(name));
     if (!owners) return false;
-    return [...owners].some((owner) => owner !== productId);
+    return [...owners].some((owner) => owner !== productId && !generatedIds.has(owner));
   }
 
-  function isAvailable(name: string, productId: string): boolean {
+  function isAvailable(
+    name: string,
+    productId: string,
+    generatedIds: Set<string> = new Set<string>(),
+  ): boolean {
     const key = normalizeAgoraProductNameKey(name);
-    return !assignedKeys.has(key) && !hasExternalOwner(name, productId);
+    return !assignedKeys.has(key) && !hasExternalOwner(name, productId, generatedIds);
   }
 
   for (const group of byBaseName.values()) {
@@ -97,11 +105,11 @@ export function buildDuplicateSafeAgoraProductNames(
       const productId = String(entry.productId);
       let finalName = String(entry.baseName || "").trim();
 
-      if (index > 0 || externalBaseCollision || !isAvailable(finalName, productId)) {
+      if (index > 0 || externalBaseCollision || !isAvailable(finalName, productId, generatedIds)) {
         const baseKey = normalizeAgoraProductNameKey(entry.baseName);
         const existingOwnName = (existingNamesByOwner.get(productId) || []).find((name) => {
           const key = normalizeAgoraProductNameKey(name);
-          return key.startsWith(`${baseKey} `) && isAvailable(name, productId);
+          return key.startsWith(`${baseKey} `) && isAvailable(name, productId, generatedIds);
         });
 
         if (existingOwnName) {
@@ -111,7 +119,7 @@ export function buildDuplicateSafeAgoraProductNames(
           finalName = "";
           for (const suffix of suffixes) {
             const candidateName = `${entry.baseName} ${suffix}`.trim();
-            if (isAvailable(candidateName, productId)) {
+            if (isAvailable(candidateName, productId, generatedIds)) {
               finalName = candidateName;
               break;
             }

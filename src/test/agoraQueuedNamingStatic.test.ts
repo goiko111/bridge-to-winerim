@@ -16,6 +16,12 @@ describe("Agora queued product naming", () => {
     expect(source).not.toContain("ownProductMappings");
   });
 
+  it("resolves queued names with every active homonymous Winerim wine", () => {
+    expect(source).toContain("const queuedProductNameOverrides = buildQueuedProductNameOverrides");
+    expect(source).toContain('.eq("name", wineArr[0].name)');
+    expect(source).toContain("queuedProductNameOverrides,");
+  });
+
   it("persists the exact product name sent in XML", () => {
     expect(source).toContain("const sentNameMatch = new RegExp");
     expect(source).toContain("decodeXmlAttribute(sentNameMatch[1])");

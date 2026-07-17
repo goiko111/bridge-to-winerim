@@ -57,6 +57,22 @@ describe("Agora product naming", () => {
     expect(names["665408"]).toBe("B Prado Enea Gran Reserva 408");
   });
 
+  it("reassigns the base name deterministically when a generated sibling currently owns it", () => {
+    const names = buildDuplicateSafeAgoraProductNames(
+      [
+        { productId: 656631, baseName: "B Ho·be", winerimId: 156631, disambiguators: [2019] },
+        { productId: 670910, baseName: "B Ho·be", winerimId: 170910, disambiguators: [2019] },
+      ],
+      [
+        { Id: 656631, Name: "B Ho·be 2019" },
+        { Id: 670910, Name: "B Ho·be" },
+      ],
+    );
+
+    expect(names["656631"]).toBe("B Ho·be");
+    expect(names["670910"]).toBe("B Ho·be 2019");
+  });
+
   it("allows keeping the same name when updating the same existing product", () => {
     const names = buildDuplicateSafeAgoraProductNames(
       [{ productId: 739259, baseName: "B Alion", winerimId: 239259 }],

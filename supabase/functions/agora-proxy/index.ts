@@ -3641,6 +3641,64 @@ function extractGlassCostPrice(wine: any, connection?: any): number | null {
   return null;
 }
 
+// A queued task normally contains one wine, but duplicate-safe naming depends
+// on every active homonym. Build the same candidate group used by a full audit
+// so independent tasks cannot alternately remove and restore suffixes.
+// deno-lint-ignore no-explicit-any
+function buildQueuedProductNameOverrides(
+  connection: any,
+  currentWine: any,
+  homonymousWines: any[],
+  formatTypes: string[],
+  existingProducts: { Id: string; Name: string }[],
+): Record<string, string> {
+  const currentWineId = String(currentWine?.winerim_id || currentWine?.id || "");
+  const winesById = new Map<string, any>();
+  for (const wine of [...homonymousWines, currentWine]) {
+    const wineId = String(wine?.winerim_id || wine?.id || "");
+    if (wineId && wine?.is_active !== false) winesById.set(wineId, wine);
+  }
+
+  const requestedFormats = [...new Set(formatTypes.map((format) => String(format || "").toUpperCase()))];
+  const candidatesByProductId = new Map<string, {
+    productId: string;
+    baseName: string;
+    winerimId: string;
+    disambiguators: Array<string | number | null | undefined>;
+  }>();
+
+  for (const wine of winesById.values()) {
+    const orderedDulceCode = saPedreraDulceCode(connection, wine);
+    const singleDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null;
+    for (const format of requestedFormats) {
+      if (singleDulceFormat && format !== singleDulceFormat) continue;
+      if (isFormatUnavailableForAgora(wine, format)) continue;
+      const productId = deterministicAgoraProductId(connection, wine, format);
+      if (candidatesByProductId.has(productId)) continue;
+      candidatesByProductId.set(productId, {
+        productId,
+        baseName: formatProductName(format, String(wine.name || "")),
+        winerimId: String(wine.winerim_id || wine.id || ""),
+        disambiguators: [wine.vintage || wine.raw_payload?.vintage],
+      });
+    }
+  }
+
+  const resolvedNames = buildDuplicateSafeAgoraProductNames(
+    [...candidatesByProductId.values()],
+    existingProducts,
+  );
+  const overrides: Record<string, string> = {};
+  for (const format of requestedFormats) {
+    const productId = deterministicAgoraProductId(connection, currentWine, format);
+    const candidate = candidatesByProductId.get(productId);
+    if (candidate?.winerimId === currentWineId && resolvedNames[productId]) {
+      overrides[productId] = resolvedNames[productId];
+    }
+  }
+  return overrides;
+}
+
 // ── GEOGRAPHIC FAMILY HELPERS ──
 const GEO_COUNTRY_NAMES: Record<string, string> = {
   ES: "España", FR: "Francia", IT: "Italia", PT: "Portugal", DE: "Alemania",
@@ -3735,7 +3793,7 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[]): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
@@ -4163,7 +4221,7 @@ ${costPricesXml}
 
   // Inject Order attribute into each <Product> based on sorted position
   const productXmls = productEntries.map((entry, idx) => {
-    const finalProductName = duplicateSafeProductNames[entry.productId] || entry.productName;
+    const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductNames[entry.productId] || entry.productName;
     return entry.renderXml(finalProductName).replace('<Product Id=', `<Product Order="${idx + 1}" Id=`);
   });
 
@@ -8372,6 +8430,23 @@ ${costPricesXml}
         }
         masterData.products_summary_json = [...namingProductsById.values()];
 
+        const { data: homonymousWines, error: homonymousWinesError } = await supabase
+          .from("winerim_wines")
+          .select("*")
+          .eq("connection_id", task.connection_id)
+          .eq("is_active", true)
+          .eq("name", wineArr[0].name);
+        if (homonymousWinesError) {
+          throw new Error(`Could not resolve duplicate-safe product names: ${homonymousWinesError.message}`);
+        }
+        const queuedProductNameOverrides = buildQueuedProductNameOverrides(
+          connection,
+          wineArr[0],
+          homonymousWines || [],
+          fmtTypes,
+          [...namingProductsById.values()],
+        );
+
         let customFamilyMappings = await loadCustomFamilyMappings(task.connection_id);
         // If family override is set, create an override mapping that takes priority
         if (familyOverrideId) {
@@ -8394,6 +8469,7 @@ ${costPricesXml}
           isGeoMode ? geoConfig : undefined,
           isGeoMode ? wineArr : undefined,
           frozenPriceListIds,
+          queuedProductNameOverrides,
         );
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
