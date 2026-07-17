@@ -96,6 +96,16 @@ export function buildDuplicateSafeAgoraProductNames(
       return aId.localeCompare(bId, "en", { numeric: true });
     });
 
+    const disambiguatorCounts = new Map<string, number>();
+    for (const entry of sorted) {
+      const entryValues = new Set((entry.disambiguators || [])
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean));
+      for (const value of entryValues) {
+        disambiguatorCounts.set(value, (disambiguatorCounts.get(value) || 0) + 1);
+      }
+    }
+
     const baseName = String(sorted[0]?.baseName || "").trim();
     const generatedIds = new Set(sorted.map((entry) => String(entry.productId)));
     const externalBaseCollision = [...(existingNameOwners.get(normalizeAgoraProductNameKey(baseName)) ?? new Set<string>())]
@@ -115,7 +125,11 @@ export function buildDuplicateSafeAgoraProductNames(
         if (existingOwnName) {
           finalName = existingOwnName;
         } else {
-          const suffixes = suffixCandidates(entry.disambiguators, entry.winerimId ?? entry.productId);
+          const uniqueDisambiguators = (entry.disambiguators || []).filter((value) => {
+            const normalized = String(value ?? "").trim();
+            return Boolean(normalized) && disambiguatorCounts.get(normalized) === 1;
+          });
+          const suffixes = suffixCandidates(uniqueDisambiguators, entry.winerimId ?? entry.productId);
           finalName = "";
           for (const suffix of suffixes) {
             const candidateName = `${entry.baseName} ${suffix}`.trim();

@@ -352,7 +352,16 @@ async function main() {
         : auditBefore;
       const mutableDetails = (freshAfterRecovery.details || []).filter((item) =>
         item.status === "MISSING" || (item.status === "DIFFERENT" && item.ownedByWinerim)
-      );
+      ).sort((left, right) => {
+        const transitionPriority = (item) => {
+          const expectedName = String(item.expectedName || "").trim();
+          const actualName = String(item.actualName || "").trim();
+          if (actualName && expectedName.startsWith(`${actualName} `)) return 0;
+          if (expectedName && actualName.startsWith(`${expectedName} `)) return 2;
+          return 1;
+        };
+        return transitionPriority(left) - transitionPriority(right);
+      });
       const unsafeUnowned = (freshAfterRecovery.details || []).filter((item) =>
         item.status !== "MISSING" && item.status !== "MATCH" && !item.ownedByWinerim
       );

@@ -70,7 +70,17 @@ describe("Agora product naming", () => {
     );
 
     expect(names["656631"]).toBe("B Ho·be");
-    expect(names["670910"]).toBe("B Ho·be 2019");
+    expect(names["670910"]).toBe("B Ho·be 910");
+  });
+
+  it("uses a human vintage when it uniquely distinguishes generated siblings", () => {
+    const names = buildDuplicateSafeAgoraProductNames([
+      { productId: 656730, baseName: "B Remelluri Reserva", winerimId: 156730, disambiguators: [2016] },
+      { productId: 656738, baseName: "B Remelluri Reserva", winerimId: 156738, disambiguators: [2010] },
+    ]);
+
+    expect(names["656730"]).toBe("B Remelluri Reserva");
+    expect(names["656738"]).toBe("B Remelluri Reserva 2010");
   });
 
   it("allows keeping the same name when updating the same existing product", () => {
