@@ -397,21 +397,27 @@ async function main() {
             formatTypes: signature.split("+"),
           });
           await processQueue(connection.id);
-          const batchAudit = await invoke("audit-winerim-products", {
+          const fullBatchAudit = await invoke("audit-winerim-products", {
             connectionId: connection.id,
-            winerimWineIds: batch,
           });
+          const batchWineIds = new Set(batch.map(String));
+          const batchFormats = new Set(signature.split("+"));
+          const batchDetails = (fullBatchAudit.details || []).filter((item) =>
+            batchWineIds.has(String(item.expectedWinerimWineId || "")) &&
+            batchFormats.has(String(item.expectedFormat || "").toUpperCase())
+          );
+          const batchAudit = {
+            expected: batchDetails.length,
+            matched: batchDetails.filter((item) => item.status === "MATCH").length,
+            missing: batchDetails.filter((item) => item.status === "MISSING").length,
+            different: batchDetails.filter((item) => item.status === "DIFFERENT").length,
+            unownedExisting: batchDetails.filter((item) => item.status === "DIFFERENT" && !item.ownedByWinerim).length,
+          };
           result.catalogBatches.push({
             signature,
             wineIds: batch,
             queued: queueResult.queued,
-            audit: {
-              expected: batchAudit.expected,
-              matched: batchAudit.matched,
-              missing: batchAudit.missing,
-              different: batchAudit.different,
-              unownedExisting: batchAudit.unownedExisting,
-            },
+            audit: batchAudit,
           });
           if (Number(batchAudit.missing || 0) > 0 || Number(batchAudit.different || 0) > 0 || Number(batchAudit.unownedExisting || 0) > 0) {
             throw new Error(`Batch verification failed for ${batch.join(",")}: ${JSON.stringify(result.catalogBatches.at(-1).audit)}`);

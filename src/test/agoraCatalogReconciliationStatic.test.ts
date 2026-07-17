@@ -14,4 +14,11 @@ describe("Agora controlled catalog reconciliation", () => {
     expect(source).toContain('actualName.startsWith(`${expectedName} `)');
     expect(source).toContain("transitionPriority(left) - transitionPriority(right)");
   });
+
+  it("verifies each batch against the full homonym-aware catalog audit", () => {
+    expect(source).toContain("const fullBatchAudit = await invoke");
+    expect(source).toContain("const batchWineIds = new Set(batch.map(String))");
+    expect(source).toContain("const batchDetails = (fullBatchAudit.details || []).filter");
+    expect(source).not.toContain("winerimWineIds: batch,\n          });\n          result.catalogBatches");
+  });
 });
