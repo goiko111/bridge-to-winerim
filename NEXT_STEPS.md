@@ -2,6 +2,16 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Katsu Izakaya · cierre automático de ventas tardías
+
+- [x] Comparar Agora y ERP Winerim para el `2026-07-16`.
+- [x] Detectar que faltaban las `2` copas de Sarmentero vendidas a las `22:38`.
+- [x] Ejecutar replay dirigido e idempotente: `1` venta aplicada, `1` ya existente omitida y `0` fallos.
+- [x] Confirmar conciliación final: `3` copas, `17,92 EUR`, horas `15:45` y `22:38`, origen `TPV`, sin duplicados.
+- [ ] Vigilar Katsu durante `24` horas y confirmar que una venta tardía entra sin intervención manual.
+- [ ] Revisar el último ciclo intradía y el catch-up D-1 para que cualquier venta posterior al último pase se recupere automáticamente.
+- [ ] Extender la comprobación de cierre tardío al resto de conexiones Agora activas.
+
 ## P0 - Cierre de las nueve activaciones Agora del 2026-07-16
 
 - [x] De la O: `87/87`, ocho familias, flags automáticos, cola cero, legacy visible.

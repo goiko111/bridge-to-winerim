@@ -1662,3 +1662,13 @@ restaurado con `No, solo ajuste`.
 
 **Alternativa descartada:** reactivar temporalmente vinos o forzar Hunters y
 Garnacha Tintorera a una referencia parecida.
+
+## 2026-07-17 - Un replay de ventas cerradas se ejecuta solo tras demostrar un hueco exacto
+
+**Decisión:** permitir un `save-sales` dirigido a una única conexión y día cuando una lectura fresh de Agora y el ERP Winerim demuestran una línea cerrada ausente; repetir inmediatamente la auditoría después del replay.
+
+**Razón:** Katsu tenía las dos ventas correctamente mapeadas, pero la venta de dos copas de Sarmentero a las `22:38` no había llegado al ERP. El replay recuperó esa única venta y omitió por idempotencia la de Abalón ya registrada.
+
+**Riesgos controlados:** alcance limitado por `connection_id` y `businessDay`, claves idempotentes sin duplicados, cero cambios de catálogo y segunda conciliación obligatoria de unidades, importes, horas y origen `TPV`.
+
+**Alternativa descartada:** reimportar una ventana amplia o corregir el ERP manualmente. Ambas opciones aumentarían el riesgo de duplicados y perderían la trazabilidad con el documento Agora original.

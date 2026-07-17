@@ -2,7 +2,40 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-16 19:46 CEST_
+_Última actualización: 2026-07-17 18:42 CEST_
+
+## Katsu Izakaya - conciliación de ventas del 2026-07-16 - 2026-07-17
+
+### Hechos
+
+- La lectura fresh de Agora para el `2026-07-16` contiene `16` facturas cerradas y exactamente dos líneas de vino Winerim:
+  - `C Abalón Godello`: `1` copa, `5,96 EUR`, vendida a las `15:45:22`.
+  - `C Sarmentero Vendimia Seleccionada`: `2` copas, `5,98 EUR` cada una, vendidas a las `22:38:04`.
+- Total Agora del día: `3` copas y `17,92 EUR`.
+- Antes de reparar, el ERP Winerim solo mostraba Abalón: `1` copa y `5,96 EUR`; faltaba la venta tardía de Sarmentero.
+- Los dos productos ya tenían mapping, variante `COPA` y `stockId` correctos; no había claves idempotentes duplicadas.
+- Se ejecutó un `save-sales` dirigido exclusivamente a Katsu y al `2026-07-16`:
+  - `16` eventos y `133` líneas guardados;
+  - `2` líneas de vino resueltas;
+  - `1` sincronización aplicada, `1` omitida por idempotencia y `0` fallos.
+- La segunda auditoría del ERP muestra:
+  - Abalón: `1` copa, `5,96 EUR`, `15:45`, origen `TPV`.
+  - Sarmentero: `2` copas, `5,98 EUR` cada una, `22:38`, origen `TPV`.
+- Resultado final del `2026-07-16`: `PASS`, `3` copas, `17,92 EUR`, sin diferencias canónicas ni duplicados exactos.
+- El `2026-07-17` ya aparece una venta TPV de `Saiaz Tinto`, lo que confirma que el flujo actual sigue recibiendo actividad.
+
+### Decisión
+
+- Mantener Katsu en `LIVE`, pero no cerrar todavía `100%_SIGNED_OFF`: el día está corregido y conciliado, aunque la venta tardía de las `22:38` necesitó un replay dirigido.
+
+### Hipótesis
+
+- El último ciclo automático intradía/D-1 no completó la venta tardía antes de cerrar la ventana; no hay evidencia de un fallo de mapping, `stockId` o idempotencia.
+
+### Tareas pendientes
+
+- Confirmar durante las próximas `24` horas que las ventas tardías entran automáticamente sin replay manual.
+- Auditar y, si procede, reforzar el ciclo final D-1 de Katsu y de la flota para recuperar ventas posteriores al último pase intradía.
 
 ## Nueve conexiones Agora - activación live-ready conservando legacy - 2026-07-16
 
