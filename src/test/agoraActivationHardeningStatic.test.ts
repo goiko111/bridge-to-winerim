@@ -116,6 +116,13 @@ describe("Agora staged activation hardening", () => {
     expect(lockMigrationSource).toContain("return coalesce(acquired_token = p_lock_token, false)");
   });
 
+  it("clears stale breaker metadata after a successful Agora write", () => {
+    expect(agoraProxySource).toContain("circuit_breaker_paused_until: null");
+    expect(agoraProxySource).toContain("circuit_breaker_reason: null");
+    expect(runbookSource).toContain("historicalFailureWindowDays: failureWindowDays");
+    expect(runbookSource).toContain("recent failure count unavailable");
+  });
+
   it("uses verified preparation routes and creates pilot families hidden", () => {
     expect(agoraProxySource).toContain("preparation_routes");
     expect(agoraProxySource).toContain("INVALID_PREPARATION_ROUTE");

@@ -152,7 +152,11 @@ async function applyCircuitBreaker(
 }
 
 async function resetFailureCounter(supabase: any, connectionId: string): Promise<void> {
-  await supabase.from("pos_connections").update({ consecutive_failures: 0 }).eq("id", connectionId);
+  await supabase.from("pos_connections").update({
+    consecutive_failures: 0,
+    circuit_breaker_paused_until: null,
+    circuit_breaker_reason: null,
+  }).eq("id", connectionId);
 }
 
 // ── Default keyword lists ──

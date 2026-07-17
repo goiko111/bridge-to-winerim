@@ -1063,7 +1063,20 @@ async function main() {
         ? await invoke("agora-proxy", { action: "sync-open-tickets", connectionId: connection.id })
         : null;
 
-      const historicalFailures = await restAll(`outbound_tasks?connection_id=eq.${connection.id}&status=in.(FAILED,BLOCKED)&select=id,status,task_type,last_error,blocked_reason,created_at`);
+      // Historical failure counts are report-only. Keep the activation result
+      // independent from an unbounded scan of the shared outbound table.
+      const failureWindowDays = 30;
+      const failureCutoff = new Date(Date.now() - failureWindowDays * 86_400_000).toISOString();
+      let recentFailures = [];
+      let failureAuditError = null;
+      try {
+        recentFailures = await restAll(
+          `outbound_tasks?connection_id=eq.${connection.id}&status=in.(FAILED,BLOCKED)&created_at=gte.${encodeURIComponent(failureCutoff)}&select=id,status,task_type,last_error,blocked_reason,created_at&order=created_at.desc`,
+        );
+      } catch (error) {
+        failureAuditError = error instanceof Error ? error.message : String(error);
+        console.warn(`[warning] ${connection.location_name}: recent failure count unavailable: ${failureAuditError}`);
+      }
       const result = {
         key: definition.key,
         locationName: connection.location_name,
@@ -1073,7 +1086,9 @@ async function main() {
         familyCount: allPilotFamilies.length,
         legacyChanged: false,
         activeQueue: 0,
-        historicalFailedOrBlockedTasks: historicalFailures.length,
+        historicalFailedOrBlockedTasks: failureAuditError ? null : recentFailures.length,
+        historicalFailureWindowDays: failureWindowDays,
+        historicalFailureAuditError: failureAuditError,
         catalogAudit: {
           expected: finalCatalogAudit.expected,
           matched: finalCatalogAudit.matched,
