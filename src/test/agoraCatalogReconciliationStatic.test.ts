@@ -21,4 +21,16 @@ describe("Agora controlled catalog reconciliation", () => {
     expect(source).toContain("const batchDetails = (fullBatchAudit.details || []).filter");
     expect(source).not.toContain("winerimWineIds: batch,\n          });\n          result.catalogBatches");
   });
+
+  it("paginates mutable catalog state in a deterministic order", () => {
+    expect(source).toContain("&order=winerim_id.asc");
+    expect(source).toContain("&order=winerim_wine_id.asc,format.asc");
+  });
+
+  it("recovers legacy ownership only with canonical evidence or an explicit current override", () => {
+    expect(source).toContain("--recover-legacy-prefix-ownership");
+    expect(source).toContain("canonicalProductName(item.actualName, item.expectedFormat) === canonicalProductName(item.expectedName, item.expectedFormat)");
+    expect(source).toContain("Ownership overrides did not match current unowned differences");
+    expect(source).toContain("Ownership recovery conflict for Agora product");
+  });
 });

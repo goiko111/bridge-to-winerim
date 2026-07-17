@@ -415,9 +415,10 @@ function earlierProviderSoldAt(current: unknown, next: unknown): string | null {
 // ── PRODUCT NAME BUILDER: prefix B (botella) / C (copa) / M (magnum) ──
 function formatProductName(fmt: string, wineName: string): string {
   const f = String(fmt || "").toUpperCase();
-  if (f === "MAGNUM") return `M ${wineName}`;
-  if (f === "GLASS" || f === "COPA") return `C ${wineName}`;
-  return `B ${wineName}`;
+  const normalizedWineName = String(wineName || "").replace(/\s+/g, " ").trim();
+  if (f === "MAGNUM") return `M ${normalizedWineName}`;
+  if (f === "GLASS" || f === "COPA") return `C ${normalizedWineName}`;
+  return `B ${normalizedWineName}`;
 }
 
 function decodeXmlAttribute(value: string): string {
@@ -8436,19 +8437,24 @@ ${costPricesXml}
         }
         masterData.products_summary_json = [...namingProductsById.values()];
 
-        const { data: homonymousWines, error: homonymousWinesError } = await supabase
+        const normalizedCurrentWineName = normalizeAgoraTextAttribute(wineArr[0].name).toLocaleLowerCase("es");
+        const homonymPrefix = String(wineArr[0].name || "").trim().replace(/([\\%_])/g, "\\$1");
+        const { data: homonymCandidates, error: homonymousWinesError } = await supabase
           .from("winerim_wines")
           .select("*")
           .eq("connection_id", task.connection_id)
           .eq("is_active", true)
-          .eq("name", wineArr[0].name);
+          .ilike("name", `${homonymPrefix}%`);
         if (homonymousWinesError) {
           throw new Error(`Could not resolve duplicate-safe product names: ${homonymousWinesError.message}`);
         }
+        const homonymousWines = (homonymCandidates || []).filter((wine) =>
+          normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase("es") === normalizedCurrentWineName
+        );
         const queuedProductNameOverrides = buildQueuedProductNameOverrides(
           connection,
           wineArr[0],
-          homonymousWines || [],
+          homonymousWines,
           fmtTypes,
           [...namingProductsById.values()],
         );

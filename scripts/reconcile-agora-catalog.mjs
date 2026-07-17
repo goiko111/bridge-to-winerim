@@ -22,6 +22,8 @@ function parseArgs(argv) {
     confirmed: false,
     hideRetired: false,
     recoverExactOwnership: false,
+    recoverLegacyPrefixOwnership: false,
+    ownershipOverrides: [],
     allowLargeCatalog: false,
     batchSize: 10,
     maxChanges: 250,
@@ -34,6 +36,8 @@ function parseArgs(argv) {
     else if (arg === CONFIRM_FLAG) args.confirmed = true;
     else if (arg === "--hide-retired") args.hideRetired = true;
     else if (arg === "--recover-exact-ownership") args.recoverExactOwnership = true;
+    else if (arg === "--recover-legacy-prefix-ownership") args.recoverLegacyPrefixOwnership = true;
+    else if (arg === "--ownership-override") args.ownershipOverrides.push(String(argv[++index] || ""));
     else if (arg === "--allow-large-catalog") args.allowLargeCatalog = true;
     else if (arg === "--batch-size") args.batchSize = Number(argv[++index]);
     else if (arg === "--max-changes") args.maxChanges = Number(argv[++index]);
@@ -55,6 +59,7 @@ function usage() {
   return `Usage:
   node scripts/reconcile-agora-catalog.mjs --target "Casa Nene,Kava"
   node scripts/reconcile-agora-catalog.mjs --target "Casa Nene" --apply ${CONFIRM_FLAG} --hide-retired --recover-exact-ownership
+  node scripts/reconcile-agora-catalog.mjs --target "Sa Vida" --apply ${CONFIRM_FLAG} --recover-legacy-prefix-ownership --ownership-override "665339:165339:BOTTLE"
 
 Default mode is strictly read-only. Catalogs with more than 250 required
 changes also require --allow-large-catalog. Credentials are never printed.`;
@@ -83,6 +88,21 @@ function normalize(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+function canonicalProductName(value, format) {
+  const normalized = normalize(value);
+  const prefixes = format === "GLASS"
+    ? ["copa ", "c "]
+    : format === "MAGNUM"
+    ? ["magnum ", "m "]
+    : ["botella ", "bot ", "b "];
+  const prefix = prefixes.find((candidate) => normalized.startsWith(candidate));
+  return prefix ? normalized.slice(prefix.length).trim() : normalized;
+}
+
+function ownershipKey(item) {
+  return `${item.productId}:${item.expectedWinerimWineId}:${String(item.expectedFormat || "").toUpperCase()}`;
 }
 
 function sleep(ms) {
@@ -212,7 +232,7 @@ async function main() {
     return data;
   };
 
-  const allConnections = await restAll("pos_connections?provider=eq.agora&select=*");
+  const allConnections = await restAll("pos_connections?provider=eq.agora&select=*&order=id.asc");
   const targets = args.targets.map((requested) => {
     const normalized = normalize(requested);
     const exact = allConnections.find((row) => normalize(row.location_name) === normalized);
@@ -228,7 +248,7 @@ async function main() {
   const results = [];
 
   const activeQueue = async (connectionId) => restAll(
-    `outbound_tasks?connection_id=eq.${connectionId}&status=in.(QUEUED,RUNNING)&select=id,task_type,status,created_at,payload_json`,
+    `outbound_tasks?connection_id=eq.${connectionId}&status=in.(QUEUED,RUNNING)&select=id,task_type,status,created_at,payload_json&order=id.asc`,
   );
 
   const processQueue = async (connectionId) => {
@@ -282,7 +302,7 @@ async function main() {
       console.log(`  fresh: ${auditBefore.matched}/${auditBefore.expected} match, missing=${auditBefore.missing}, different=${auditBefore.different}, unowned=${auditBefore.unownedExisting}`);
 
       const wineRows = await restAll(
-        `winerim_wines?connection_id=eq.${connection.id}&select=winerim_id,name,is_active,bottle_sale_price,glass_sale_price,magnum_sale_price`,
+        `winerim_wines?connection_id=eq.${connection.id}&select=winerim_id,name,is_active,bottle_sale_price,glass_sale_price,magnum_sale_price&order=winerim_id.asc`,
       );
       const wineById = new Map(wineRows.map((wine) => [String(wine.winerim_id), wine]));
       result.eligibleFormats = wineRows.reduce((sum, wine) => sum + expectedFormats(wine).length, 0);
@@ -296,35 +316,83 @@ async function main() {
       }
 
       const exactRecoverable = [];
-      if (args.recoverExactOwnership) {
+      const legacyPrefixRecoverable = [];
+      const overrideRecoverable = [];
+      if (args.recoverExactOwnership || args.recoverLegacyPrefixOwnership || args.ownershipOverrides.length > 0) {
         const allTracking = await restAll(
-          `winerim_push_tracking?connection_id=eq.${connection.id}&source=eq.WINERIM&select=agora_product_id,winerim_wine_id,format,source,sync_status`,
+          `winerim_push_tracking?connection_id=eq.${connection.id}&source=eq.WINERIM&select=agora_product_id,winerim_wine_id,format,source,sync_status&order=winerim_wine_id.asc,format.asc`,
+        );
+        const allMappings = await restAll(
+          `product_mappings?connection_id=eq.${connection.id}&select=provider_product_id,winerim_wine_id,format_type,status,match_method&order=provider_product_id.asc`,
         );
         const priorTrackingKeys = new Set(allTracking
           .filter((row) => row.agora_product_id)
           .map((row) => `${row.agora_product_id}:${row.winerim_wine_id}:${String(row.format || "").toUpperCase()}`));
-        for (const item of auditBefore.details || []) {
-          const key = `${item.productId}:${item.expectedWinerimWineId}:${String(item.expectedFormat || "").toUpperCase()}`;
-          if (item.status === "MATCH" && !item.ownedByWinerim && priorTrackingKeys.has(key)) exactRecoverable.push(item);
+        const mappingByProductId = new Map();
+        for (const row of allMappings) {
+          const rows = mappingByProductId.get(String(row.provider_product_id)) || [];
+          rows.push(row);
+          mappingByProductId.set(String(row.provider_product_id), rows);
         }
-        if (exactRecoverable.length > 0) {
+        const requestedOverrides = new Set(args.ownershipOverrides);
+        for (const item of auditBefore.details || []) {
+          const key = ownershipKey(item);
+          if (args.recoverExactOwnership && item.status === "MATCH" && !item.ownedByWinerim && priorTrackingKeys.has(key)) {
+            exactRecoverable.push(item);
+          }
+          if (args.recoverLegacyPrefixOwnership && item.status === "DIFFERENT" && !item.ownedByWinerim &&
+              canonicalProductName(item.actualName, item.expectedFormat) === canonicalProductName(item.expectedName, item.expectedFormat)) {
+            legacyPrefixRecoverable.push(item);
+          }
+          if (requestedOverrides.has(key) && item.status === "DIFFERENT" && !item.ownedByWinerim) {
+            overrideRecoverable.push(item);
+          }
+        }
+        const foundOverrideKeys = new Set(overrideRecoverable.map(ownershipKey));
+        const missingOverrides = [...requestedOverrides].filter((key) => !foundOverrideKeys.has(key));
+        if (missingOverrides.length > 0) {
+          throw new Error(`Ownership overrides did not match current unowned differences: ${missingOverrides.join(",")}`);
+        }
+        const ownershipRecoverable = [...new Map(
+          [...exactRecoverable, ...legacyPrefixRecoverable, ...overrideRecoverable].map((item) => [ownershipKey(item), item]),
+        ).values()];
+        for (const item of ownershipRecoverable) {
+          const conflicts = (mappingByProductId.get(String(item.productId)) || []).filter((row) =>
+            row.status === "CONFIRMED" && (
+              String(row.winerim_wine_id) !== String(item.expectedWinerimWineId) ||
+              String(row.format_type || "").toUpperCase() !== String(item.expectedFormat || "").toUpperCase()
+            )
+          );
+          if (conflicts.length > 0) {
+            throw new Error(`Ownership recovery conflict for Agora product ${item.productId}`);
+          }
+        }
+        if (ownershipRecoverable.length > 0) {
           const now = new Date().toISOString();
-          const mappings = exactRecoverable.map((item) => ({
+          const mappings = ownershipRecoverable.map((item) => ({
             connection_id: connection.id,
             provider_product_id: String(item.productId),
             provider_product_name: String(item.actualName || item.expectedName || ""),
             winerim_wine_id: String(item.expectedWinerimWineId),
             winerim_wine_name: wineById.get(String(item.expectedWinerimWineId))?.name || String(item.expectedName || ""),
-            match_method: "XML_IMPORT_OWNERSHIP_RECOVERY",
+            match_method: overrideRecoverable.includes(item)
+              ? "XML_IMPORT_OWNERSHIP_RECOVERY_EXPLICIT"
+              : legacyPrefixRecoverable.includes(item)
+              ? "XML_IMPORT_OWNERSHIP_RECOVERY_LEGACY_PREFIX"
+              : "XML_IMPORT_OWNERSHIP_RECOVERY",
             match_score: 100,
-            match_reasons: ["Exact fresh catalog match", "Prior Winerim tracking for the same product and format"],
+            match_reasons: overrideRecoverable.includes(item)
+              ? ["Explicit reviewed ownership override", "Deterministic Winerim product ID"]
+              : legacyPrefixRecoverable.includes(item)
+              ? ["Exact canonical name after legacy format prefix removal", "Deterministic Winerim product ID"]
+              : ["Exact fresh catalog match", "Prior Winerim tracking for the same product and format"],
             status: "CONFIRMED",
             format_type: String(item.expectedFormat || "").toUpperCase(),
             agora_product_id: String(item.productId),
             last_synced_at: now,
             last_sync_error: null,
           }));
-          const tracking = exactRecoverable.map((item) => ({
+          const tracking = ownershipRecoverable.map((item) => ({
             connection_id: connection.id,
             winerim_wine_id: String(item.expectedWinerimWineId),
             format: String(item.expectedFormat || "").toUpperCase(),
@@ -346,8 +414,11 @@ async function main() {
         }
       }
       result.recoveredExactOwnership = exactRecoverable.length;
+      result.recoveredLegacyPrefixOwnership = legacyPrefixRecoverable.length;
+      result.recoveredExplicitOwnership = overrideRecoverable.length;
 
-      const freshAfterRecovery = exactRecoverable.length > 0
+      const recoveredOwnershipCount = exactRecoverable.length + legacyPrefixRecoverable.length + overrideRecoverable.length;
+      const freshAfterRecovery = recoveredOwnershipCount > 0
         ? await invoke("audit-winerim-products", { connectionId: connection.id })
         : auditBefore;
       const mutableDetails = (freshAfterRecovery.details || []).filter((item) =>
@@ -418,6 +489,7 @@ async function main() {
             wineIds: batch,
             queued: queueResult.queued,
             audit: batchAudit,
+            issues: batchDetails.filter((item) => item.status !== "MATCH"),
           });
           if (Number(batchAudit.missing || 0) > 0 || Number(batchAudit.different || 0) > 0 || Number(batchAudit.unownedExisting || 0) > 0) {
             throw new Error(`Batch verification failed for ${batch.join(",")}: ${JSON.stringify(result.catalogBatches.at(-1).audit)}`);

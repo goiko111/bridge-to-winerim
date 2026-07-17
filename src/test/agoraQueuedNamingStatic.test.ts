@@ -18,8 +18,13 @@ describe("Agora queued product naming", () => {
 
   it("resolves queued names with every active homonymous Winerim wine", () => {
     expect(source).toContain("const queuedProductNameOverrides = buildQueuedProductNameOverrides");
-    expect(source).toContain('.eq("name", wineArr[0].name)');
+    expect(source).toContain('.ilike("name", `${homonymPrefix}%`)');
+    expect(source).toContain("normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase");
     expect(source).toContain("queuedProductNameOverrides,");
+  });
+
+  it("normalizes whitespace before applying bottle, glass, or magnum prefixes", () => {
+    expect(source).toContain('String(wineName || "").replace(/\\s+/g, " ").trim()');
   });
 
   it("persists the exact product name sent in XML", () => {
