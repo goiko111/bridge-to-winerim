@@ -27,7 +27,9 @@ describe("Agora controlled catalog reconciliation", () => {
     expect(source).toContain('action, ...body');
     expect(source).toContain('const directResult = await invoke("xml-import"');
     expect(source).toContain('mode: "DIRECT_XML_BATCH"');
-    expect(source).toContain('directResult?.verification?.success === false');
+    expect(source).toContain('if (directResult?.verification?.success === false)');
+    expect(source).toContain('await sleep(2_000)');
+    expect(source).toContain('inlineVerificationSuccess: directResult?.verification?.success !== false');
     expect(source).toContain('const fullBatchAudit = await invoke');
     expect(source).toContain('const directVerification = await invoke("verify-products"');
     expect(source).toContain('Direct XML final verification failed');

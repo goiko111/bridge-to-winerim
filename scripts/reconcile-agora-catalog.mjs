@@ -473,7 +473,7 @@ async function main() {
               formatTypes: signature.split("+"),
               dryRun: false,
             });
-            if (directResult?.success !== true || directResult?.verification?.success === false) {
+            if (directResult?.success !== true) {
               throw new Error(
                 `Direct XML batch failed for ${batch.join(",")}: ${JSON.stringify({
                   success: directResult?.success,
@@ -482,10 +482,17 @@ async function main() {
                 }).slice(0, 1200)}`,
               );
             }
+            if (directResult?.verification?.success === false) {
+              // Agora can acknowledge the import before export-master exposes
+              // every changed product. The forced fresh audit below remains the
+              // authority; give the read model a short convergence window.
+              await sleep(2_000);
+            }
             writeResult = {
               mode: "DIRECT_XML_BATCH",
               queued: 0,
               status: directResult.status,
+              inlineVerificationSuccess: directResult?.verification?.success !== false,
               verification: directResult.verification?.summary || null,
             };
           } else {
