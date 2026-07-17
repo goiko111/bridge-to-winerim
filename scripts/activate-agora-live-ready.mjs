@@ -451,6 +451,7 @@ async function main() {
     let lockHeartbeatInFlight = null;
     let lockHeartbeatStopped = false;
     let lockHeartbeatError = null;
+    let activationStockStartAt = null;
     let assertActivationLock = () => {};
     let captureCreatedRows = async () => {};
     const createdRowIds = {
@@ -532,7 +533,7 @@ async function main() {
       };
       connection = await patchConnection(connection.id, stagingPatch);
       if (args.useDisabledConnectionAsLock) await sleep(5_000);
-      const activationStockStartAt = new Date().toISOString();
+      activationStockStartAt = new Date().toISOString();
       const taskSnapshotPromise = Promise.all([
         restAll(
           `outbound_tasks?connection_id=eq.${connection.id}&status=in.(QUEUED,RUNNING)&select=id,task_type,status,attempts,last_error,blocked_reason,created_at,updated_at`,
@@ -582,7 +583,9 @@ async function main() {
           }
         }
         const createdTasks = await restAll(
-          `outbound_tasks?connection_id=eq.${connection.id}&created_at=gte.${encodeURIComponent(activationStockStartAt)}&select=id`,
+          `outbound_tasks?connection_id=eq.${connection.id}` +
+          `&created_at=gte.${encodeURIComponent(activationStockStartAt)}` +
+          "&status=in.(QUEUED,RUNNING)&select=id",
         );
         for (const row of createdTasks) createdRowIds.tasks.add(String(row.id));
       };
@@ -1106,8 +1109,27 @@ async function main() {
 
     } catch (error) {
       console.error(`[failed] ${connection.location_name}: ${error.message}`);
-      try {
-        await captureCreatedRows();
+      const rollbackWarnings = [];
+      const rollbackStep = async (label, callback) => {
+        try {
+          await callback();
+        } catch (rollbackError) {
+          const message = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          rollbackWarnings.push({ label, message });
+          console.error(`[rollback-warning] ${connection.location_name} (${label}): ${message}`);
+        }
+      };
+
+      await rollbackStep("capture-created-rows", captureCreatedRows);
+      await rollbackStep("capture-active-activation-tasks", async () => {
+        if (!activationStockStartAt) return;
+        const activeCreatedTasks = await restAll(
+          `outbound_tasks?connection_id=eq.${connection.id}&created_at=gte.${encodeURIComponent(activationStockStartAt)}` +
+          "&status=in.(QUEUED,RUNNING)&select=id",
+        );
+        for (const row of activeCreatedTasks) createdRowIds.tasks.add(String(row.id));
+      });
+      await rollbackStep("block-created-tasks", async () => {
         for (const idBatch of chunks(Array.from(createdRowIds.tasks), 100)) {
           await rest("PATCH", `outbound_tasks?id=in.(${idBatch.join(",")})&status=in.(QUEUED,RUNNING)`, {
             status: "BLOCKED",
@@ -1116,65 +1138,77 @@ async function main() {
             next_retry_at: null,
           });
         }
-        if (newlyIntroducedProducts.length > 0) {
-          for (const batch of chunks(newlyIntroducedProducts, 100)) {
-            await invoke("agora-proxy", {
-              action: "set-product-visibility", connectionId: connection.id,
-              updates: batch.map((id) => ({ productId: id, visible: false })),
-            }, { allowFailure: true });
-          }
-        }
-        if (touchedPilotFamilies.length > 0) {
+      });
+      await rollbackStep("hide-new-products", async () => {
+        for (const batch of chunks(newlyIntroducedProducts, 100)) {
           await invoke("agora-proxy", {
-            action: "set-family-visibility", connectionId: connection.id,
-            updates: touchedPilotFamilies.map((family) => ({
-              familyId: String(family.id),
-              showInPos: familyVisibilityBefore.get(String(family.id)) === true,
-            })),
+            action: "set-product-visibility", connectionId: connection.id,
+            updates: batch.map((id) => ({ productId: id, visible: false })),
           }, { allowFailure: true });
         }
-        if (snapshot?.connection) {
-          // agora_master_data and winerim_wines are authoritative read-through
-          // caches refreshed from each source. Keeping a newer successful read is
-          // safer than restoring stale catalog data during a write rollback.
-          const deleteExactRows = async (table, ids) => {
-            for (const idBatch of chunks(Array.from(ids), 100)) {
-              await rest("DELETE", `${table}?id=in.(${idBatch.join(",")})`);
-            }
-          };
-          const restoreRows = async (table, rows) => {
-            for (const rowBatch of chunks(rows || [], 250)) {
-              await rest("POST", `${table}?on_conflict=id`, rowBatch, {
-                Prefer: "resolution=merge-duplicates,return=minimal",
-              });
-            }
-          };
-          await deleteExactRows("wine_type_family_mappings", createdRowIds.familyMappings);
-          await deleteExactRows("product_mappings", createdRowIds.productMappings);
-          await deleteExactRows("winerim_push_tracking", createdRowIds.tracking);
-          await deleteExactRows("provider_capabilities", createdRowIds.capabilities);
-          await restoreRows("wine_type_family_mappings", snapshot.familyMappings);
-          await restoreRows("product_mappings", snapshot.productMappings);
-          await restoreRows("winerim_push_tracking", snapshot.tracking);
-          await restoreRows("provider_capabilities", snapshot.capabilities);
-          const restore = Object.fromEntries(MUTABLE_CONNECTION_FIELDS.map((field) => [field, snapshot.connection[field]]));
-          await patchConnection(connection.id, restore);
-        } else if (initialConnection.__createdByRunbook) {
-          await patchConnection(connection.id, {
-            enabled: false,
-            sync_mode: "PULL_ONLY",
-            catalog_sync_enabled: false,
-            auto_push_on_create: false,
-            auto_push_on_update: false,
-            auto_push_verified_ready: false,
-            provider_config: { read_only_onboarding: true, activation_status: "FAILED_ROLLED_BACK" },
-          });
+      });
+      await rollbackStep("restore-family-visibility", async () => {
+        if (touchedPilotFamilies.length === 0) return;
+        await invoke("agora-proxy", {
+          action: "set-family-visibility", connectionId: connection.id,
+          updates: touchedPilotFamilies.map((family) => ({
+            familyId: String(family.id),
+            showInPos: familyVisibilityBefore.get(String(family.id)) === true,
+          })),
+        }, { allowFailure: true });
+      });
+
+      if (snapshot?.connection) {
+        // agora_master_data and winerim_wines are authoritative read-through
+        // caches refreshed from each source. Keeping a newer successful read is
+        // safer than restoring stale catalog data during a write rollback.
+        const deleteExactRows = async (table, ids) => {
+          for (const idBatch of chunks(Array.from(ids), 100)) {
+            await rest("DELETE", `${table}?id=in.(${idBatch.join(",")})`);
+          }
+        };
+        const restoreRows = async (table, rows) => {
+          for (const rowBatch of chunks(rows || [], 250)) {
+            await rest("POST", `${table}?on_conflict=id`, rowBatch, {
+              Prefer: "resolution=merge-duplicates,return=minimal",
+            });
+          }
+        };
+        const rollbackTables = [
+          ["wine_type_family_mappings", "familyMappings"],
+          ["product_mappings", "productMappings"],
+          ["winerim_push_tracking", "tracking"],
+          ["provider_capabilities", "capabilities"],
+        ];
+        for (const [table, key] of rollbackTables) {
+          await rollbackStep(`delete-created-${table}`, () => deleteExactRows(table, createdRowIds[key]));
+          await rollbackStep(`restore-${table}`, () => restoreRows(table, snapshot[key]));
         }
-      } catch (rollbackError) {
-        console.error(`[rollback-warning] ${connection.location_name}: ${rollbackError.message}`);
+        await rollbackStep("restore-connection", async () => {
+          const restore = Object.fromEntries(
+            MUTABLE_CONNECTION_FIELDS.map((field) => [field, snapshot.connection[field]]),
+          );
+          await patchConnection(connection.id, restore);
+        });
+      } else if (initialConnection.__createdByRunbook) {
+        await rollbackStep("disable-created-connection", () => patchConnection(connection.id, {
+          enabled: false,
+          sync_mode: "PULL_ONLY",
+          catalog_sync_enabled: false,
+          auto_push_on_create: false,
+          auto_push_on_update: false,
+          auto_push_verified_ready: false,
+          provider_config: { read_only_onboarding: true, activation_status: "FAILED_ROLLED_BACK" },
+        }));
       }
       await releaseLocks();
-      const failedResult = { key: definition.key, locationName: connection.location_name, status: "FAILED_ROLLED_BACK", error: error.message };
+      const failedResult = {
+        key: definition.key,
+        locationName: connection.location_name,
+        status: rollbackWarnings.length === 0 ? "FAILED_ROLLED_BACK" : "FAILED_ROLLBACK_WARNINGS",
+        error: error.message,
+        rollbackWarnings,
+      };
       finalResults.push(failedResult);
       await writeFile(path.join(snapshotDir, `${definition.key}-result.json`), JSON.stringify(failedResult, null, 2));
     }

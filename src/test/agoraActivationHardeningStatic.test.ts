@@ -59,6 +59,11 @@ describe("Agora staged activation hardening", () => {
     expect(runbookSource).toContain("scheduleNextBatch: false");
     expect(runbookSource).toContain("runSelfHealing: false");
     expect(runbookSource).toContain("ACTIVATION_ROLLBACK_CANCELLED");
+    expect(runbookSource).toContain('rollbackStep("capture-created-rows", captureCreatedRows)');
+    expect(runbookSource).toContain('rollbackStep("capture-active-activation-tasks"');
+    expect(runbookSource).toContain('rollbackStep("restore-connection"');
+    expect(runbookSource).toContain('"&status=in.(QUEUED,RUNNING)&select=id"');
+    expect(runbookSource).toContain('status: rollbackWarnings.length === 0 ? "FAILED_ROLLED_BACK" : "FAILED_ROLLBACK_WARNINGS"');
     expect(runbookSource).toContain("stock_sync_not_before");
     expect(runbookSource).toContain("stock_sync_not_before_at");
     expect(runbookSource).toContain("blockingDetailFailures");
