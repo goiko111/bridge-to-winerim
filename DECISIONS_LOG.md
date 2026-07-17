@@ -1672,3 +1672,13 @@ Garnacha Tintorera a una referencia parecida.
 **Riesgos controlados:** alcance limitado por `connection_id` y `businessDay`, claves idempotentes sin duplicados, cero cambios de catálogo y segunda conciliación obligatoria de unidades, importes, horas y origen `TPV`.
 
 **Alternativa descartada:** reimportar una ventana amplia o corregir el ERP manualmente. Ambas opciones aumentarían el riesgo de duplicados y perderían la trazabilidad con el documento Agora original.
+
+## 2026-07-17 - Casa Esteban no oculta legacy sin túnel ni snapshot fresh
+
+**Decisión:** crear la conexión en staging desactivado, pero aplazar toda escritura y ocultación hasta que ConnectManager vuelva a exponer el Agora y exista un snapshot fresh verificable.
+
+**Razón:** la URL facilitada devuelve `tunnel_not_found`. Sin leer familias, productos, centros, preparación y flags actuales no se puede distinguir legacy de elementos operativos ni garantizar una reversión exacta.
+
+**Riesgos controlados:** `enabled=false`, `PULL_ONLY`, `write_mode=NONE`, catálogo y auto-push apagados. El token Winerim se valida de forma independiente sin enviar nada al TPV.
+
+**Alternativa descartada:** preparar importaciones u ocultar por datos cacheados/inferidos. Podría dejar al restaurante sin botones de vino o escribir precios en centros/listas equivocados.

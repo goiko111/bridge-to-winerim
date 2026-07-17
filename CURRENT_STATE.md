@@ -2,7 +2,39 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-17 18:42 CEST_
+_Última actualización: 2026-07-17 18:58 CEST_
+
+## Casa Esteban - staging bloqueado por túnel ConnectManager - 2026-07-17
+
+### Hechos
+
+- Se creó la conexión Agora `Casa Esteban` en estado seguro y desactivado:
+  - `enabled=false`;
+  - `sync_mode=PULL_ONLY`;
+  - `write_mode=NONE`;
+  - catálogo y auto-push apagados;
+  - `activation_status=STAGING_BLOCKED_TUNNEL`.
+- El token Winerim es válido y el listado expone `261` vinos en `3` páginas.
+- La URL Agora devuelve HTTP `404` con `tunnel_not_found`: el equipo de destino no está disponible o el subdominio no tiene un túnel activo.
+- No se pudo leer master data fresh, obtener centros/listas/IVA/almacén/preparación ni crear snapshot del legacy.
+- No se escribió ningún producto o familia en Agora y no se ocultó legacy.
+
+### Decisión
+
+- Mantener la conexión desactivada y no ocultar legacy hasta recuperar el túnel y completar una activación por etapas con verificación fresh y rollback.
+
+### Hipótesis
+
+- El servidor principal de Agora está apagado o desconectado, el agente ConnectManager no está iniciado o el subdominio facilitado ya no corresponde a un túnel activo.
+
+### Tareas pendientes
+
+- Cliente/SAT: encender el servidor Agora y confirmar en ConnectManager que el túnel `marisqueriasanchis.connectmanager.live` está activo.
+- Repetir test desde backend y exigir HTTP `200` en API, master data, tickets e invoices.
+- Guardar snapshot completo de familias/productos legacy antes de cualquier escritura.
+- Publicar y verificar las ocho familias Winerim y todos los formatos elegibles.
+- Ocultar legacy de forma reversible a nivel familia y producto solo después del `PASS` fresh.
+- Activar ciclo de cinco minutos y cerrar con pruebas reales de botella y copa en el ERP Winerim.
 
 ## Katsu Izakaya - conciliación de ventas del 2026-07-16 - 2026-07-17
 

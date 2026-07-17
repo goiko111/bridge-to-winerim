@@ -2,6 +2,19 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Casa Esteban · recuperar túnel y completar activación
+
+- [x] Validar token Winerim: `261` vinos accesibles.
+- [x] Crear conexión desactivada en staging, sin escrituras ni auto-push.
+- [x] Confirmar el bloqueo externo: HTTP `404 tunnel_not_found` de ConnectManager.
+- [ ] Cliente/SAT: levantar el servidor/túnel y confirmar que la URL pública vuelve a responder.
+- [ ] Leer master data fresh y fijar centros, listas, IVA, almacén y preparación.
+- [ ] Guardar snapshot reversible de familias y productos legacy.
+- [ ] Publicar y verificar familias/productos Winerim con cola final cero.
+- [ ] Ocultar legacy a nivel familia y producto sin borrarlo.
+- [ ] Activar ventas y catálogo cada cinco minutos.
+- [ ] Validar botella y copa reales en el ERP Winerim antes de `100%_SIGNED_OFF`.
+
 ## P0 - Katsu Izakaya · cierre automático de ventas tardías
 
 - [x] Comparar Agora y ERP Winerim para el `2026-07-16`.
