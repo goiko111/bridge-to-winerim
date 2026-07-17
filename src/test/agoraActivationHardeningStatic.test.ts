@@ -96,6 +96,13 @@ describe("Agora staged activation hardening", () => {
     expect(runbookSource).toContain("priorWinerimTrackingKeys");
   });
 
+  it("emits one preferred format for each Sa Pedrera D-code product id", () => {
+    expect(agoraProxySource).toContain(
+      "const orderedDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null",
+    );
+    expect(agoraProxySource).toContain("if (orderedDulceFormat && fmt !== orderedDulceFormat) continue");
+  });
+
   it("serializes cron jobs per connection with an expiring database lease", () => {
     expect(dispatcherSource).toContain('rpc("acquire_agora_dispatch_lock"');
     expect(dispatcherSource).toContain('rpc("release_agora_dispatch_lock"');

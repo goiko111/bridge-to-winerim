@@ -4092,8 +4092,15 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     const winerimId = Number(wine.winerim_id || wine.id || 0);
     const wineName = wine.name || "Unknown Wine";
     const wineType = extractWineType(wine);
+    const orderedDulceCode = saPedreraDulceCode(connection, wine);
+    const orderedDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null;
 
     for (const fmt of formatTypes) {
+      // Sa Pedrera's D701-D709 screen uses one deterministic Agora product ID
+      // per commercial code. Never emit bottle and glass entries with the same
+      // ID; copa wins whenever it has a valid price.
+      if (orderedDulceFormat && fmt !== orderedDulceFormat) continue;
+
       // Validate before generating (pass connection for glass cost fallback + priceLists emptiness check)
       const validation = validateWineForAgora(wine, fmt, connection, priceLists);
       validationResults.push({ winerimId: String(winerimId), formatType: fmt, validation });
@@ -4118,7 +4125,6 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
-      const orderedDulceCode = saPedreraDulceCode(connection, wine);
       const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, wine, fmt);
       const productId = deterministicAgoraProductId(connection, wine, fmt);
 
