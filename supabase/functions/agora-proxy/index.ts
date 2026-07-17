@@ -8348,6 +8348,10 @@ ${costPricesXml}
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        const productIdByFormat = Object.fromEntries(
+          fmtTypes.map((fmt: string) => [fmt, deterministicAgoraProductId(connection, wineArr[0], fmt)]),
+        ) as Record<string, string>;
+
         // A long queue can create one homonymous product and immediately process
         // another before the next master-data refresh. Merge the latest confirmed
         // mappings into the naming snapshot so duplicate-name protection sees
@@ -8355,11 +8359,7 @@ ${costPricesXml}
         const baseProductNames = [...new Set(fmtTypes.map((fmt: string) =>
           formatProductName(fmt, wineArr[0].name)
         ))];
-        const expectedProductIds = [...new Set(fmtTypes.map((fmt: string) =>
-          fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
-          : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
-          : String(500000 + Number(winerimWineId || 0))
-        ))];
+        const expectedProductIds = [...new Set(fmtTypes.map((fmt: string) => productIdByFormat[fmt]))];
         const [{ data: sameNameMappings }, { data: ownProductMappings }] = await Promise.all([
           supabase.from("product_mappings")
             .select("provider_product_id, provider_product_name")
@@ -8427,7 +8427,7 @@ ${costPricesXml}
 
         // ── HARD VALIDATION: Block if any sellable product has 0 <Price> entries ──
         const zeroPriceProducts: string[] = [];
-        const preSendProductRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        const preSendProductRegex = /<Product\b[^>]*\bId="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
         let preSendMatch;
         while ((preSendMatch = preSendProductRegex.exec(xml)) !== null) {
           const pid = preSendMatch[1];
@@ -8538,9 +8538,9 @@ ${costPricesXml}
         }
 
         // ── DIAGNOSTICS: Extract PriceListIds from the XML we actually sent ──
-        // FIX: Use `<Product\s+Id=` to match the FIRST Id attribute, NOT FamilyId/VatId
+        // Match the Product Id regardless of attribute order, without capturing FamilyId/VatId.
         const sentPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
-        const productBlockRegex = /<Product\s+Id="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
+        const productBlockRegex = /<Product\b[^>]*\bId="(\d+)"[^>]*>([\s\S]*?)<\/Product>/gi;
         let pm;
         while ((pm = productBlockRegex.exec(xml)) !== null) {
           const prodId = pm[1];
@@ -8555,9 +8555,9 @@ ${costPricesXml}
         }
 
         // ── UNIFIED POST-IMPORT VERIFICATION (using shared function) ──
-        // Extract expected familyIds from sent XML (use \s+Id= to avoid FamilyId capture)
+        // Extract expected familyIds from sent XML regardless of attribute order.
         const expectedFamilies: Record<string, string> = {};
-        const famRegex = /<Product\s+Id="(\d+)"[^>]*\sFamilyId="([^"]*)"/g;
+        const famRegex = /<Product\b[^>]*\bId="(\d+)"[^>]*\bFamilyId="([^"]*)"/g;
         let fm;
         while ((fm = famRegex.exec(xml)) !== null) {
           expectedFamilies[fm[1]] = fm[2];
@@ -8618,11 +8618,7 @@ ${costPricesXml}
 
           // Build product list for this task
           const productsToVerify: AgoraProductToVerify[] = fmtTypes.map((fmt: string) => {
-            const productId = fmt === "MAGNUM"
-              ? String(900000 + Number(winerimWineId || 0))
-              : fmt === "GLASS"
-              ? String(700000 + Number(winerimWineId || 0))
-              : String(500000 + Number(winerimWineId || 0));
+            const productId = productIdByFormat[fmt];
             const sentName = new RegExp(
               `<Product\\b[^>]*\\bId="${productId}"[^>]*\\bName="([^"]*)"`,
               "i",
@@ -8758,11 +8754,7 @@ ${costPricesXml}
           products_diagnosed: [] as unknown[],
         };
 
-        const productsToVerifyIds = fmtTypes.map((fmt: string) =>
-          fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
-          : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
-          : String(500000 + Number(winerimWineId || 0))
-        );
+        const productsToVerifyIds = fmtTypes.map((fmt: string) => productIdByFormat[fmt]);
 
         let hasImportPersistenceBug = false;
         for (const prodId of productsToVerifyIds) {
@@ -8842,11 +8834,7 @@ ${costPricesXml}
 
         // Success - update mappings
         for (const fmt of fmtTypes) {
-          const agoraProductId = fmt === "MAGNUM"
-            ? String(900000 + Number(winerimWineId || 0))
-            : fmt === "GLASS"
-            ? String(700000 + Number(winerimWineId || 0))
-            : String(500000 + Number(winerimWineId || 0));
+          const agoraProductId = productIdByFormat[fmt];
           const sentNameMatch = new RegExp(
             `<Product\\b[^>]*\\bId="${agoraProductId}"[^>]*\\bName="([^"]*)"`,
             "i",
@@ -8880,7 +8868,7 @@ ${costPricesXml}
 
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,
-          external_id: String(500000 + Number(winerimWineId || 0)),
+          external_id: productIdByFormat[fmtTypes[0]] || null,
         }).eq("id", task.id);
 
         // auto_push_verified_ready is NOT set here — manual verification required
@@ -8888,9 +8876,7 @@ ${costPricesXml}
         // ── PUSH TRACKING: Mark PUSHED (or VERIFIED if verification passed) per format ──
         const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
         for (const fmt of fmtTypes) {
-          const fmtProductId = fmt === "MAGNUM" ? String(900000 + Number(winerimWineId || 0))
-            : fmt === "GLASS" ? String(700000 + Number(winerimWineId || 0))
-            : String(500000 + Number(winerimWineId || 0));
+          const fmtProductId = productIdByFormat[fmt];
           await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
             sync_status: pushStatus,
             task_id: task.id,
@@ -8942,16 +8928,29 @@ ${costPricesXml}
       });
 
       // ── Pre-load wine eligibility data to filter formats per wine ──
-      const wineEligibility: Record<string, { serve_by_glass: boolean; bottle_sale_price: number | null; glass_sale_price: number | null; magnum_sale_price: number | null }> = {};
+      const wineEligibility: Record<string, {
+        winerim_id: string;
+        name: string;
+        wine_type: string | null;
+        raw_payload: Record<string, unknown> | null;
+        serve_by_glass: boolean;
+        bottle_sale_price: number | null;
+        glass_sale_price: number | null;
+        magnum_sale_price: number | null;
+      }> = {};
       for (let i = 0; i < winerimWineIds.length; i += 500) {
         const chunk = winerimWineIds.slice(i, i + 500);
         const { data: wines } = await supabase
           .from("winerim_wines")
-          .select("winerim_id, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price")
+          .select("winerim_id, name, wine_type, raw_payload, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price")
           .eq("connection_id", connectionId)
           .in("winerim_id", chunk);
         for (const w of (wines || [])) {
           wineEligibility[w.winerim_id] = {
+            winerim_id: String(w.winerim_id),
+            name: String(w.name || ""),
+            wine_type: w.wine_type,
+            raw_payload: w.raw_payload,
             serve_by_glass: w.serve_by_glass,
             bottle_sale_price: w.bottle_sale_price,
             glass_sale_price: w.glass_sale_price,
@@ -8972,8 +8971,7 @@ ${costPricesXml}
         });
         eligibleFormatsByWine.set(String(wineId), eligibleFormats);
         for (const fmt of eligibleFormats) {
-          const base = fmt === "MAGNUM" ? 900000 : fmt === "GLASS" ? 700000 : 500000;
-          requestedProductIds.push(String(base + Number(wineId || 0)));
+          requestedProductIds.push(deterministicAgoraProductId(connection, elig, fmt));
         }
       }
 
@@ -9006,9 +9004,9 @@ ${costPricesXml}
       }
       const idCollisions: Record<string, unknown>[] = [];
       for (const wineId of winerimWineIds) {
+        const wine = wineEligibility[String(wineId)];
         for (const fmt of eligibleFormatsByWine.get(String(wineId)) || []) {
-          const base = fmt === "MAGNUM" ? 900000 : fmt === "GLASS" ? 700000 : 500000;
-          const providerProductId = String(base + Number(wineId || 0));
+          const providerProductId = deterministicAgoraProductId(connection, wine, fmt);
           if (!existingProductIds.has(providerProductId)) continue;
           if (!ownershipKeys.has(`${providerProductId}:${wineId}:${fmt}`)) {
             idCollisions.push({ providerProductId, winerimWineId: wineId, format: fmt });
@@ -9048,12 +9046,10 @@ ${costPricesXml}
         }
 
         // Determine CREATE vs UPDATE per format by checking existing Agora products
-        const winerimIdNum = Number(wineId || 0);
-        const formatProductIds: Record<string, string> = {
-          BOTTLE: String(500000 + winerimIdNum),
-          GLASS: String(700000 + winerimIdNum),
-          MAGNUM: String(900000 + winerimIdNum),
-        };
+        const wine = wineEligibility[String(wineId)];
+        const formatProductIds = Object.fromEntries(
+          eligibleFormats.map((fmt: string) => [fmt, deterministicAgoraProductId(connection, wine, fmt)]),
+        ) as Record<string, string>;
         const existsInAgora = eligibleFormats.some((fmt: string) => existingProductIds.has(formatProductIds[fmt] || ""));
         const operationType = existsInAgora ? "UPDATE" : "CREATE";
 
@@ -10626,6 +10622,27 @@ ${costPricesXml}
         }
       }
 
+      // Product names can be disambiguated by other products already present in
+      // Agora. Build expected XML from the same fresh catalog that will be used
+      // for comparison; a stale master-data summary can otherwise report a
+      // deliberate suffix as a false mismatch.
+      invalidateAgoraProductsCache(connectionId);
+      const actualCatalog = await fetchAgoraProductsXmlCached(
+        connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+      );
+      if (!actualCatalog.ok) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "AGORA_PRODUCTS_READ_FAILED",
+          status: actualCatalog.status,
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const actualCatalogProducts = extractXmlElementsWithAttrs(actualCatalog.xml, "Product");
+      masterData.products_summary_json = actualCatalogProducts.map((product) => ({
+        Id: String(product.attrs.Id || ""),
+        Name: decodeXmlAttribute(product.attrs.Name || ""),
+      })).filter((product) => product.Id && product.Name);
+
       const customMappings = await loadCustomFamilyMappings(connectionId);
       const selectedScope = (connection.provider_config as any)?.price_write_scope === "SELECTED_SALE_CENTERS";
       const scope = buildAgoraVerificationScope(masterData, {
@@ -10683,22 +10700,9 @@ ${costPricesXml}
         }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      invalidateAgoraProductsCache(connectionId);
-      const actualCatalog = await fetchAgoraProductsXmlCached(
-        connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
-      );
-      if (!actualCatalog.ok) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: "AGORA_PRODUCTS_READ_FAILED",
-          status: actualCatalog.status,
-        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
       const expectedProducts = extractXmlElementsWithAttrs(expectedXml, "Product");
       const actualById = new Map(
-        extractXmlElementsWithAttrs(actualCatalog.xml, "Product")
-          .map((product) => [String(product.attrs.Id || ""), product]),
+        actualCatalogProducts.map((product) => [String(product.attrs.Id || ""), product]),
       );
       const expectedIds = expectedProducts.map((product) => String(product.attrs.Id || "")).filter(Boolean);
       const ownershipKeys = new Set<string>();

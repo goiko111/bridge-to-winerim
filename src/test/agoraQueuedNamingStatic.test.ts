@@ -21,4 +21,35 @@ describe("Agora queued product naming", () => {
     expect(source).toContain("decodeXmlAttribute(sentNameMatch[1])");
     expect(source).toContain("provider_product_name: productName");
   });
+
+  it("builds audit expectations from the forced fresh Agora catalog", () => {
+    const auditStart = source.indexOf('if (action === "audit-winerim-products")');
+    const freshCatalog = source.indexOf("const actualCatalogProducts =", auditStart);
+    const expectedXml = source.indexOf("const { xml: expectedXml, validationResults }", auditStart);
+
+    expect(auditStart).toBeGreaterThan(-1);
+    expect(freshCatalog).toBeGreaterThan(auditStart);
+    expect(expectedXml).toBeGreaterThan(freshCatalog);
+    expect(source.slice(auditStart, expectedXml)).toContain(
+      "masterData.products_summary_json = actualCatalogProducts.map",
+    );
+  });
+
+  it("uses deterministic per-connection product ids throughout queue processing", () => {
+    const processStart = source.indexOf('if (action === "process-xml-outbound-task")');
+    const processEnd = source.indexOf("// ── QUEUE XML OUTBOUND TASKS", processStart);
+    const processSource = source.slice(processStart, processEnd);
+
+    expect(processSource).toContain("const productIdByFormat = Object.fromEntries");
+    expect(processSource).toContain("deterministicAgoraProductId(connection, wineArr[0], fmt)");
+    expect(processSource).not.toContain("500000 + Number(winerimWineId");
+    expect(processSource).not.toContain("700000 + Number(winerimWineId");
+    expect(processSource).not.toContain("900000 + Number(winerimWineId");
+  });
+
+  it("parses generated Product XML regardless of attribute order", () => {
+    expect(source).toContain('const preSendProductRegex = /<Product\\b[^>]*\\bId=');
+    expect(source).toContain('const productBlockRegex = /<Product\\b[^>]*\\bId=');
+    expect(source).toContain('const famRegex = /<Product\\b[^>]*\\bId=');
+  });
 });
