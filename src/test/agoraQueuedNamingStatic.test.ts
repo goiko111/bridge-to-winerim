@@ -8,12 +8,12 @@ const source = readFileSync(
 );
 
 describe("Agora queued product naming", () => {
-  it("merges recent confirmed mappings into a stale master-data snapshot", () => {
-    expect(source).toContain("const baseProductNames = [...new Set");
-    expect(source).toContain("const expectedProductIds = [...new Set");
-    expect(source).toContain("sameNameMappings");
-    expect(source).toContain("ownProductMappings");
+  it("uses the current Agora catalog instead of stale mapping names", () => {
+    expect(source).toContain("const namingCatalog = await fetchAgoraProductsXmlCached");
+    expect(source).toContain('extractXmlElementsWithAttrs(namingCatalog.xml, "Product")');
     expect(source).toContain("masterData.products_summary_json = [...namingProductsById.values()]");
+    expect(source).not.toContain("sameNameMappings");
+    expect(source).not.toContain("ownProductMappings");
   });
 
   it("persists the exact product name sent in XML", () => {

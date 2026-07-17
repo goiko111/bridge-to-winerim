@@ -66,6 +66,15 @@ describe("Agora product naming", () => {
     expect(names["739259"]).toBe("B Alion");
   });
 
+  it("removes an obsolete suffix when no other current product owns the base name", () => {
+    const names = buildDuplicateSafeAgoraProductNames(
+      [{ productId: 763514, baseName: "B Allende Blanco", winerimId: 263514 }],
+      [{ Id: 763514, Name: "B Allende Blanco 514" }],
+    );
+
+    expect(names["763514"]).toBe("B Allende Blanco");
+  });
+
   it("normalizes spacing and case when checking collisions", () => {
     expect(normalizeAgoraProductNameKey("  B   Alion  ")).toBe(normalizeAgoraProductNameKey("b alion"));
     expect(normalizeAgoraProductNameKey("B Único")).toBe(normalizeAgoraProductNameKey("b unico"));

@@ -8352,37 +8352,23 @@ ${costPricesXml}
           fmtTypes.map((fmt: string) => [fmt, deterministicAgoraProductId(connection, wineArr[0], fmt)]),
         ) as Record<string, string>;
 
-        // A long queue can create one homonymous product and immediately process
-        // another before the next master-data refresh. Merge the latest confirmed
-        // mappings into the naming snapshot so duplicate-name protection sees
-        // writes from preceding tasks without re-downloading the full catalog.
-        const baseProductNames = [...new Set(fmtTypes.map((fmt: string) =>
-          formatProductName(fmt, wineArr[0].name)
-        ))];
-        const expectedProductIds = [...new Set(fmtTypes.map((fmt: string) => productIdByFormat[fmt]))];
-        const [{ data: sameNameMappings }, { data: ownProductMappings }] = await Promise.all([
-          supabase.from("product_mappings")
-            .select("provider_product_id, provider_product_name")
-            .eq("connection_id", task.connection_id)
-            .eq("status", "CONFIRMED")
-            .in("provider_product_name", baseProductNames),
-          supabase.from("product_mappings")
-            .select("provider_product_id, provider_product_name")
-            .eq("connection_id", task.connection_id)
-            .eq("status", "CONFIRMED")
-            .in("provider_product_id", expectedProductIds),
-        ]);
+        // Resolve duplicate names against Agora's current product catalog. A
+        // confirmed mapping may outlive a hidden/deleted product and must never
+        // keep an obsolete suffix alive. The shared cache avoids re-downloading
+        // export-master for every item in a long queue; post-write verification
+        // invalidates and refreshes it after each accepted import.
+        const namingCatalog = await fetchAgoraProductsXmlCached(
+          task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000,
+        );
         const namingProductsById = new Map<string, { Id: string; Name: string }>();
-        for (const product of ((masterData.products_summary_json || []) as { Id: string; Name: string }[])) {
+        const namingProducts = namingCatalog.ok
+          ? extractXmlElementsWithAttrs(namingCatalog.xml, "Product").map((product) => ({
+              Id: String(product.attrs.Id || ""),
+              Name: decodeXmlAttribute(product.attrs.Name || ""),
+            }))
+          : ((masterData.products_summary_json || []) as { Id: string; Name: string }[]);
+        for (const product of namingProducts) {
           if (product.Id && product.Name) namingProductsById.set(String(product.Id), product);
-        }
-        for (const mapping of [...(sameNameMappings || []), ...(ownProductMappings || [])]) {
-          if (mapping.provider_product_id && mapping.provider_product_name) {
-            namingProductsById.set(String(mapping.provider_product_id), {
-              Id: String(mapping.provider_product_id),
-              Name: String(mapping.provider_product_name),
-            });
-          }
         }
         masterData.products_summary_json = [...namingProductsById.values()];
 
