@@ -9969,9 +9969,28 @@ ${costPricesXml}
 
       const verifyXml = cachedProductsManual.xml;
       
-      const { data: mappings } = await supabase
-        .from("product_mappings").select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
-        .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("match_method", "XML_IMPORT");
+      const verificationPageSize = 500;
+      const mappings: any[] = [];
+      for (let offset = 0; ; offset += verificationPageSize) {
+        const { data: mappingPage, error: mappingPageError } = await supabase
+          .from("product_mappings")
+          .select("provider_product_id, provider_product_name, winerim_wine_id, format_type")
+          .eq("connection_id", connectionId)
+          .eq("status", "CONFIRMED")
+          .eq("match_method", "XML_IMPORT")
+          .range(offset, offset + verificationPageSize - 1);
+        if (mappingPageError) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Could not load product mappings for verification: ${mappingPageError.message}`,
+          }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        mappings.push(...(mappingPage || []));
+        if ((mappingPage || []).length < verificationPageSize) break;
+      }
 
       // Build product list from mappings (no expectedFamilyId → triggers FAMILY_EMPTY warning path)
       const productsToVerify: AgoraProductToVerify[] = (mappings || []).map((m: any) => ({
@@ -9986,22 +10005,28 @@ ${costPricesXml}
       );
 
       // ── PUSH TRACKING: Update verified status per product ──
-      const { data: verificationWines, error: verificationWinesError } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price")
-        .eq("connection_id", connectionId);
-      if (verificationWinesError) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: `Could not load Winerim eligibility for tracking verification: ${verificationWinesError.message}`,
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      const verificationWines: any[] = [];
+      for (let offset = 0; ; offset += verificationPageSize) {
+        const { data: winePage, error: winePageError } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price")
+          .eq("connection_id", connectionId)
+          .range(offset, offset + verificationPageSize - 1);
+        if (winePageError) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Could not load Winerim eligibility for tracking verification: ${winePageError.message}`,
+          }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        verificationWines.push(...(winePage || []));
+        if ((winePage || []).length < verificationPageSize) break;
       }
 
       const verificationWineById = new Map(
-        (verificationWines || []).map((wine: any) => [String(wine.winerim_id), wine]),
+        verificationWines.map((wine: any) => [String(wine.winerim_id), wine]),
       );
       const actualProductById = new Map(
         extractXmlElementsWithAttrs(verifyXml, "Product")

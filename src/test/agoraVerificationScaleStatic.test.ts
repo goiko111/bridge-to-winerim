@@ -23,6 +23,15 @@ describe("Agora catalog verification at fleet scale", () => {
     expect(agoraProxySource).toContain("trackingPersistence");
   });
 
+  it("paginates mappings and Winerim wines beyond the backend row limit", () => {
+    expect(agoraProxySource).toContain("const verificationPageSize = 500");
+    expect(agoraProxySource).toContain("const mappings: any[] = []");
+    expect(agoraProxySource).toContain("const verificationWines: any[] = []");
+    expect(agoraProxySource.match(/\.range\(offset, offset \+ verificationPageSize - 1\)/g) || []).toHaveLength(2);
+    expect(agoraProxySource).toContain("Could not load product mappings for verification");
+    expect(agoraProxySource).toContain("Could not load Winerim eligibility for tracking verification");
+  });
+
   it("never treats a post-import NOT_FOUND as a successful write", () => {
     expect(agoraProxySource).toContain("post_import_verification_attempts");
     expect(agoraProxySource).toContain("verificationAttempts < 3");

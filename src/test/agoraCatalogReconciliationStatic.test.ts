@@ -22,6 +22,17 @@ describe("Agora controlled catalog reconciliation", () => {
     expect(source).not.toContain("winerimWineIds: batch,\n          });\n          result.catalogBatches");
   });
 
+  it("keeps direct XML batches explicit, bounded and freshly verified", () => {
+    expect(source).toContain('--direct-xml-batches');
+    expect(source).toContain('action, ...body');
+    expect(source).toContain('const directResult = await invoke("xml-import"');
+    expect(source).toContain('mode: "DIRECT_XML_BATCH"');
+    expect(source).toContain('directResult?.verification?.success === false');
+    expect(source).toContain('const fullBatchAudit = await invoke');
+    expect(source).toContain('const directVerification = await invoke("verify-products"');
+    expect(source).toContain('Direct XML final verification failed');
+  });
+
   it("paginates mutable catalog state in a deterministic order", () => {
     expect(source).toContain("&order=winerim_id.asc");
     expect(source).toContain("&order=winerim_wine_id.asc,format.asc");

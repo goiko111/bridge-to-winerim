@@ -23,6 +23,7 @@ function parseArgs(argv) {
     hideRetired: false,
     recoverExactOwnership: false,
     recoverLegacyPrefixOwnership: false,
+    directXmlBatches: false,
     ownershipOverrides: [],
     allowLargeCatalog: false,
     batchSize: 10,
@@ -37,6 +38,7 @@ function parseArgs(argv) {
     else if (arg === "--hide-retired") args.hideRetired = true;
     else if (arg === "--recover-exact-ownership") args.recoverExactOwnership = true;
     else if (arg === "--recover-legacy-prefix-ownership") args.recoverLegacyPrefixOwnership = true;
+    else if (arg === "--direct-xml-batches") args.directXmlBatches = true;
     else if (arg === "--ownership-override") args.ownershipOverrides.push(String(argv[++index] || ""));
     else if (arg === "--allow-large-catalog") args.allowLargeCatalog = true;
     else if (arg === "--batch-size") args.batchSize = Number(argv[++index]);
@@ -59,6 +61,7 @@ function usage() {
   return `Usage:
   node scripts/reconcile-agora-catalog.mjs --target "Casa Nene,Kava"
   node scripts/reconcile-agora-catalog.mjs --target "Casa Nene" --apply ${CONFIRM_FLAG} --hide-retired --recover-exact-ownership
+  node scripts/reconcile-agora-catalog.mjs --target "Sa Vida" --apply ${CONFIRM_FLAG} --direct-xml-batches --batch-size 10 --allow-large-catalog
   node scripts/reconcile-agora-catalog.mjs --target "Sa Vida" --apply ${CONFIRM_FLAG} --recover-legacy-prefix-ownership --ownership-override "665339:165339:BOTTLE"
 
 Default mode is strictly read-only. Catalogs with more than 250 required
@@ -462,12 +465,38 @@ async function main() {
       result.catalogBatches = [];
       for (const [signature, ids] of groups) {
         for (const batch of chunks(ids, args.batchSize)) {
-          const queueResult = await invoke("queue-xml-outbound", {
-            connectionId: connection.id,
-            winerimWineIds: batch,
-            formatTypes: signature.split("+"),
-          });
-          await processQueue(connection.id);
+          let writeResult;
+          if (args.directXmlBatches) {
+            const directResult = await invoke("xml-import", {
+              connectionId: connection.id,
+              winerimWineIds: batch,
+              formatTypes: signature.split("+"),
+              dryRun: false,
+            });
+            if (directResult?.success !== true || directResult?.verification?.success === false) {
+              throw new Error(
+                `Direct XML batch failed for ${batch.join(",")}: ${JSON.stringify({
+                  success: directResult?.success,
+                  status: directResult?.status,
+                  verification: directResult?.verification,
+                }).slice(0, 1200)}`,
+              );
+            }
+            writeResult = {
+              mode: "DIRECT_XML_BATCH",
+              queued: 0,
+              status: directResult.status,
+              verification: directResult.verification?.summary || null,
+            };
+          } else {
+            const queueResult = await invoke("queue-xml-outbound", {
+              connectionId: connection.id,
+              winerimWineIds: batch,
+              formatTypes: signature.split("+"),
+            });
+            await processQueue(connection.id);
+            writeResult = { mode: "OUTBOUND_QUEUE", queued: queueResult.queued };
+          }
           const fullBatchAudit = await invoke("audit-winerim-products", {
             connectionId: connection.id,
           });
@@ -487,13 +516,25 @@ async function main() {
           result.catalogBatches.push({
             signature,
             wineIds: batch,
-            queued: queueResult.queued,
+            ...writeResult,
             audit: batchAudit,
             issues: batchDetails.filter((item) => item.status !== "MATCH"),
           });
           if (Number(batchAudit.missing || 0) > 0 || Number(batchAudit.different || 0) > 0 || Number(batchAudit.unownedExisting || 0) > 0) {
             throw new Error(`Batch verification failed for ${batch.join(",")}: ${JSON.stringify(result.catalogBatches.at(-1).audit)}`);
           }
+        }
+      }
+
+      if (args.directXmlBatches && result.catalogBatches.length > 0) {
+        const directVerification = await invoke("verify-products", {
+          connectionId: connection.id,
+        });
+        result.directVerification = directVerification;
+        if (directVerification?.success === false) {
+          throw new Error(
+            `Direct XML final verification failed: ${JSON.stringify(directVerification).slice(0, 1200)}`,
+          );
         }
       }
 
