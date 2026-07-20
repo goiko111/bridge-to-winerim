@@ -56,6 +56,7 @@ Flujo principal:
 - Los nombres enviados a Agora deben ser únicos y estables por conexión. Cuando dos variantes colisionan, se usa primero la añada y después el identificador Winerim como desambiguador; un mapping ya confirmado conserva el nombre exacto enviado anteriormente.
 - La auditoría intradía de Agora separa dos planos: idempotencia del runtime y conciliación histórica. La primera se valida con claves exactas de `stock_sync_log` y canaries observados durante varios ciclos; las diferencias agregadas entre facturas Agora e historial ERP se tratan como deuda de conciliación y nunca autorizan borrados automáticos.
 - `verify-products` no puede convertir a `VERIFIED` un formato retirado. Si el vino está inactivo o la variante ya no tiene precio, el tracking debe quedar `HIDDEN` cuando el producto Agora no sea vendible, y `FAILED` si continúa vendible.
+- Una excepcion de venta interna para una ficha oculta solo puede habilitarse por conexion, con IDs y precio explicitos, y limitada al formato autorizado. La politica `publish_hidden_glass_variants` permite `GLASS` sin reactivar la carta publica; nunca habilita botella o magnum ni se generaliza a otra conexion.
 
 ## 4. Reglas duras (no romper)
 - Proxies leen `await req.json()` **una sola vez**.

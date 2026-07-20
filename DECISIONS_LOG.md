@@ -2080,3 +2080,23 @@ logica incompleta.
 
 **Alternativa descartada:** encolar primero y confiar en que el despliegue se
 produzca antes del dispatcher. Ese orden introduce una carrera evitable.
+
+## 2026-07-20 - Publicacion controlada de las 31 copas internas de Casa Nene
+
+**Decision:** publicar exclusivamente las 31 variantes `GLASS` configuradas en
+Casa Nene, en lotes de cinco como maximo y con auditoria fresh obligatoria tras
+cada lote.
+
+**Razon:** el runtime `5d30421` confirmo que botella y magnum de esas fichas
+inactivas siguen bloqueados y que las unicas diferencias reales eran 31 copas
+ausentes. La ejecucion termino en `348/348 MATCH`, 31 mappings confirmados, 31
+tracking verificados y cola vacia.
+
+**Riesgos controlados:** la auditoria rechaza colisiones, diferencias sin
+ownership y fallos de validacion; el proceso se detiene si un lote no converge.
+La carta publica de Winerim no se modifica y el rollback oculta solo esos 31
+productos `GLASS`.
+
+**Alternativa descartada:** una importacion masiva sin verificaciones
+intermedias o reactivar las fichas en la carta publica. Ambas opciones amplian
+el impacto y la segunda contradice la peticion comercial del cliente.

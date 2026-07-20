@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-20 14:11 CEST_
+_Última actualización: 2026-07-20 17:01 CEST_
 
 ## Casa Esteban - staging bloqueado por túnel ConnectManager - 2026-07-17
 
@@ -5682,16 +5682,15 @@ _Última actualización: 2026-07-20 14:11 CEST_
 ## 2026-07-20 - Casa Nene auditada; limpieza historica pendiente de autorizacion
 
 ### Hechos
-- Conectividad y catalogo fresh correctos: `317/317 MATCH`, cero ausentes,
+- Conectividad y catalogo fresh correctos: `348/348 MATCH`, cero ausentes,
   diferentes, sin ownership, tareas activas o alertas abiertas.
-- Las ocho familias Winerim estan visibles y contienen exactamente `317`
-  formatos vendibles. `COPAS WINERIM` esta vacia porque Winerim no expone
-  ninguna copa activa con precio.
+- Las ocho familias Winerim estan visibles y contienen exactamente `348`
+  formatos vendibles. `COPAS WINERIM` contiene las `31` excepciones internas
+  solicitadas por Casa Nene.
 - Legacy de vino completamente oculto: seis familias y `148` productos no
   vendibles. Los `30` formatos Winerim retirados tampoco son vendibles.
-- Se ejecuto `verify-products` sin escribir en Agora: `345/345` productos
-  comprobados, cero fallos. Tracking queda coherente en `317 VERIFIED` y
-  `30 HIDDEN`.
+- El catalogo regular mas las excepciones queda en `348 VERIFIED`; los otros
+  `30` formatos retirados permanecen `HIDDEN`.
 - Automatizacion activa cada cinco minutos, cursor `2026-07-19`, intradia y
   tickets abiertos habilitados, segundo ciclo sin claves idempotentes exactas
   repetidas.
@@ -5707,17 +5706,20 @@ _Última actualización: 2026-07-20 14:11 CEST_
   `provider_sold_at` y su fuente; antes intentaba comparar campos no leidos.
 
 ### Decisiones
-- Mantener Casa Nene en `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`.
+- Mantener Casa Nene en
+  `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL_AND_GLASS_CANARY`.
 - No anular tarjetas productivas sin autorizacion expresa. La limpieza solo
   puede afectar los `17` IDs documentados.
-- No crear una copa ficticia: el formato es `NOT_APPLICABLE` mientras no haya
-  una copa activa y con precio en Winerim.
+- No crear una venta ficticia para validar las copas: el canary debe ser una
+  venta real marcada por el restaurante desde uno de los 31 botones.
 
 ### Tareas pendientes inmediatas
 - Tras autorizacion, anular las `17` tarjetas, verificar cada delta y devolver
   Bancales de `23` a `22` mediante `No, solo ajuste`.
 - Repetir conciliacion y exigir delta cero; observar dos ciclos de cinco
   minutos sin reaparicion.
+- Registrar una venta real de copa y comprobar historial `TPV`, hora, variante,
+  stock e idempotencia.
 - Registrar una venta real de magnum solo si el cliente usa ese formato.
 
 ## 2026-07-20 - Casa Nene solicita copas internas ocultas en la carta publica
@@ -5731,11 +5733,18 @@ _Última actualización: 2026-07-20 14:11 CEST_
 - Se implemento una excepcion por conexion y solo para `GLASS`, cubierta por
   auditoria, verificacion, cola y reconciliador. TypeScript, bundle, build y
   `104` pruebas pasan.
-- Commit `e10e1ac` publicado en `main`.
+- Commits `e10e1ac` y `5d30421` publicados en `main`; el segundo evita que la
+  auditoria espere botella/magnum para una excepcion exclusivamente `GLASS`.
 - `provider_config` de Casa Nene conserva sus claves previas y ahora contiene
   `publish_hidden_glass_variants=true` y una lista explicita de `31` precios.
-- La sonda segura del runtime devuelve todavia `no wines found`: Lovable Cloud
-  sigue ejecutando el proxy anterior. No se encolo ni publico ningun producto.
+- Lovable Cloud ejecuta `5d30421`. La sonda de `270679` devolvio
+  `would_queue:GLASS` sin escrituras.
+- Auditoria previa: `31 MISSING`, `0 DIFFERENT`, `0 UNOWNED` y cero fallos de
+  validacion. Publicacion controlada en siete lotes de cinco como maximo.
+- Cada lote termino en `MATCH`; auditoria final `348/348`, `31 VERIFIED`, `31`
+  mappings `CONFIRMED/XML_IMPORT` y cero tareas activas.
+- Tras la siguiente ventana automatica de cinco minutos, las copas continuan
+  `31/31 MATCH`, sin tareas activas ni alertas abiertas.
 - Snapshot, lista y rollback:
   `docs/operations/casa-nene-hidden-glass-policy-2026-07-20.md`.
 
@@ -5744,22 +5753,15 @@ _Última actualización: 2026-07-20 14:11 CEST_
   solo cuando exista una politica explicita por conexion.
 - Mantener bloqueadas botella y magnum de vinos inactivos y exigir un precio
   de copa positivo; no generalizar la excepcion a otros restaurantes.
-- No ejecutar ninguna escritura de catalogo hasta redesplegar el proxy y
-  validar el dry-run con el runtime nuevo.
+- Mantener la excepcion limitada a esta conexion y a las 31 IDs configuradas;
+  cualquier ampliacion requiere inventario y auditoria fresh nuevos.
 
 ### Hipotesis
-- Tras el redeploy, las 31 variantes deben aparecer como diferencias
-  controladas `GLASS` y poder publicarse en `COPAS WINERIM` sin alterar la
-  carta publica.
 - La importacion de una venta de una ficha inactiva debe validarse con una
   venta real; no se generara una venta ficticia.
 
 ### Tareas pendientes inmediatas
-- Redesplegar unicamente `agora-proxy` desde el commit `e10e1ac`.
-- Repetir la sonda de `270679`; debe devolver `would_queue:GLASS` y no `no wines
-  found`.
-- Auditar, publicar y verificar las 31 copas; exigir 31 `MATCH`, 31 tracking
-  `VERIFIED` y cola vacia.
-- Confirmar que Winerim sigue en `0/31` y ejecutar una venta real de copa.
+- Ejecutar una venta real de copa y comprobar historial `TPV`, hora, variante,
+  stock e idempotencia durante dos ciclos.
 - Solicitar a Winerim API una vista de integracion para variantes ocultas, de
   modo que futuros cambios de precio no dependan de una captura manual.

@@ -1,0 +1,614 @@
+{
+  "connectionId": "e3cb6dbb-3474-4926-b740-706fbd0ef7e0",
+  "locationName": "Casa Nene",
+  "mode": "APPLY",
+  "startedAt": "2026-07-20T14:53:35.130Z",
+  "connection": {
+    "enabled": true,
+    "writeMode": "XML_IMPORT",
+    "autoPushOnCreate": true,
+    "autoPushOnUpdate": true,
+    "autoPushVerifiedReady": true,
+    "breakerPausedUntil": null,
+    "activationStatus": null
+  },
+  "activeQueueBefore": 0,
+  "auditBefore": {
+    "expected": 348,
+    "matched": 317,
+    "missing": 31,
+    "different": 0,
+    "unownedExisting": 0
+  },
+  "differencesBefore": [
+    {
+      "productId": "942214",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242214",
+      "expectedFormat": "GLASS",
+      "expectedName": "C A Teixa",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942217",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242217",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Algueira Brandán",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942224",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242224",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Algueira Mencía Joven",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957273",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257273",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Altún Crianza",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942235",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242235",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Antídoto",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957276",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257276",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Antídoto 276",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942211",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242211",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Antonio Montero",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957027",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257027",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Atrium Vitis SS Sousón",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942233",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242233",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Balbás Barrica 5",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "970679",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "270679",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Bizi Goxo",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942226",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242226",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Camiño Real",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942234",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242234",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Cillar de Silos Crianza",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "947696",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "247696",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Delicado",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942240",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242240",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Desvelo Garnacha",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957292",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257292",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Eidos Ermos",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942248",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242248",
+      "expectedFormat": "GLASS",
+      "expectedName": "C El Sequé",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957199",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257199",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Harveys Palo Cortado",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942219",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242219",
+      "expectedFormat": "GLASS",
+      "expectedName": "C La Llorona",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942227",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242227",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Lalama",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942218",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242218",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Neno Sobre Lías",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942270",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242270",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Pazo de Señorans Colección",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "957159",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "257159",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Pizarras y Esquistos",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942208",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242208",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Quinta de Couselo",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942232",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242232",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Quite",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942210",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242210",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Sin Palabras Especial",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942283",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242283",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Tosca Cerrada Palomino Fino en Rama",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "972013",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "272013",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Valdamor",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "970553",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "270553",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Vi De Glass Riesling",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942213",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242213",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Village",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942244",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242244",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Viña de Martín Os Pasas Blanco",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    },
+    {
+      "productId": "942206",
+      "status": "MISSING",
+      "ownedByWinerim": false,
+      "expectedWinerimWineId": "242206",
+      "expectedFormat": "GLASS",
+      "expectedName": "C Xión Albariño",
+      "actualName": null,
+      "expectedFamilyId": "901954",
+      "actualFamilyId": null,
+      "differences": [
+        "PRODUCT_MISSING"
+      ]
+    }
+  ],
+  "eligibleFormats": 348,
+  "recoveredExactOwnership": 0,
+  "recoveredLegacyPrefixOwnership": 0,
+  "recoveredExplicitOwnership": 0,
+  "unsafeUnowned": [],
+  "catalogBatches": [
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242214",
+        "242217",
+        "242224",
+        "257273",
+        "242235"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "257276",
+        "242211",
+        "257027",
+        "242233",
+        "270679"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242226",
+        "242234",
+        "247696",
+        "242240",
+        "257292"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242248",
+        "257199",
+        "242219",
+        "242227",
+        "242218"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242270",
+        "257159",
+        "242208",
+        "242232",
+        "242210"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242283",
+        "272013",
+        "270553",
+        "242213",
+        "242244"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 5,
+      "audit": {
+        "expected": 5,
+        "matched": 5,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    },
+    {
+      "signature": "GLASS",
+      "wineIds": [
+        "242206"
+      ],
+      "mode": "OUTBOUND_QUEUE",
+      "queued": 1,
+      "audit": {
+        "expected": 1,
+        "matched": 1,
+        "missing": 0,
+        "different": 0,
+        "unownedExisting": 0
+      },
+      "issues": []
+    }
+  ],
+  "retiredCandidates": [],
+  "auditAfter": {
+    "expected": 348,
+    "matched": 348,
+    "missing": 0,
+    "different": 0,
+    "unownedExisting": 0
+  },
+  "differencesAfter": [],
+  "activeQueueAfter": 0,
+  "status": "PASS",
+  "finishedAt": "2026-07-20T14:55:21.798Z"
+}

@@ -1491,12 +1491,12 @@
 - [x] Publicar commit `e10e1ac` y activar la lista de 31 variantes en la
   configuracion de Casa Nene, preservando todas las claves anteriores.
 - [x] Verificar que no se ha encolado ni escrito nada con el runtime anterior.
-- [ ] Redesplegar unicamente `agora-proxy` desde `e10e1ac`.
-- [ ] Repetir dry-run con `270679` y exigir `would_queue:GLASS`.
-- [ ] Ejecutar auditoria fresh y revisar las 31 diferencias antes de escribir.
-- [ ] Publicar solo las 31 variantes `GLASS` en lotes pequenos y verificar cada
+- [x] Redesplegar unicamente `agora-proxy` desde `5d30421`.
+- [x] Repetir dry-run con `270679` y exigir `would_queue:GLASS`.
+- [x] Ejecutar auditoria fresh y revisar las 31 diferencias antes de escribir.
+- [x] Publicar solo las 31 variantes `GLASS` en lotes pequenos y verificar cada
   lote; exigir familia `901954`, precio exacto y vendibilidad.
-- [ ] Exigir `31 MATCH`, `31 VERIFIED`, cero tareas activas/fallidas y carta
+- [x] Exigir `31 MATCH`, `31 VERIFIED`, cero tareas activas/fallidas y carta
   publica Winerim todavia en `0/31`.
 - [ ] Pedir una venta real de copa y comprobar historial `TPV`, hora, variante,
   idempotencia y stock segun configuracion.

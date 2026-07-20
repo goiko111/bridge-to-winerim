@@ -4,7 +4,7 @@ Fecha: `2026-07-20`
 
 Conexion: `e3cb6dbb-3474-4926-b740-706fbd0ef7e0`
 
-Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
+Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL_AND_GLASS_CANARY`
 
 ## Checklist
 
@@ -12,13 +12,13 @@ Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
 |---|---|---|
 | Conexion y autenticacion Agora | PASS | Lecturas fresh de API, catalogo, facturas y tickets HTTP `200`; breaker cerrado. |
 | Configuracion general | PASS | `enabled=true`, `BIDIRECTIONAL`, `XML_IMPORT`, frecuencia `5 min` y zona `Europe/Madrid`. |
-| Catalogo Winerim -> Agora | PASS | Auditoria fresh `317/317 MATCH`, `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`. |
+| Catalogo Winerim -> Agora | PASS | Auditoria fresh `348/348 MATCH`, `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`. |
 | Automatizacion de catalogo | PASS | Alta, cambio y verified-ready activos; `Remirez de Ganuza Gran Reserva` se verifico en `50 s`. |
 | Cola y alertas | PASS | `0` tareas activas, `0` diferencias fresh y `0` alertas abiertas. |
-| Familias Winerim | PASS | Ocho familias creadas y visibles; contienen exactamente los `317` formatos elegibles. |
+| Familias Winerim | PASS | Ocho familias creadas y visibles; contienen exactamente los `348` formatos vendibles esperados. |
 | Legacy | PASS | `VINO`, `VINO FUERA DE CARTA`, `ESPUMOSO`, `BLANCO`, `TINTO` y `DULCES` estan ocultas. Sus `148` productos no son vendibles. |
-| Retirados | PASS | `30` formatos Winerim inactivos o sin precio siguen presentes como trazabilidad, pero no son vendibles. Tracking corregido a `30 HIDDEN`. |
-| Copas | PENDING_DEPLOYMENT | Casa Nene ha solicitado mantener 31 copas ocultas en la carta publica pero vendibles en Agora. La politica por conexion y los 31 precios estan configurados; falta redesplegar `agora-proxy`, publicar y verificar. |
+| Retirados | PASS | Los otros `30` formatos Winerim inactivos o sin precio siguen presentes como trazabilidad, pero no son vendibles. Tracking `30 HIDDEN`. |
+| Copas | PASS_CATALOG / PENDING_EXTERNAL | Las `31` copas internas estan vendibles en `COPAS WINERIM`, con precio exacto, mapping `CONFIRMED/XML_IMPORT` y tracking `WINERIM/VERIFIED`; falta una venta real. |
 | Captura intradia | PASS | Invoices y tickets se consultan cada `5 min`; edad minima de linea `2 min`. Ultimo ciclo correcto del `20/07`. |
 | Cierre diario | PASS | Cursor en `2026-07-19`; el dia en curso se consulta sin avanzar el cursor. |
 | Hora de venta | PASS | Las tarjetas TPV recientes conservan la hora de la linea Agora. |
@@ -26,6 +26,7 @@ Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
 | Historial ERP | FAIL | Quedan `17` tarjetas incorrectas creadas por el piloto antiguo: `16` duplicadas del 15/07 y `1` provisional cancelada del 17/07. |
 | Stock | FAIL | El stock refleja esas tarjetas antiguas. La correccion esta calculada, pero requiere anular datos productivos y autorizacion expresa. |
 | Venta real botella | PASS | Hay ventas reales Winerim/Agora conciliadas y visibles como `TPV` con hora real. |
+| Venta real copa | PENDING_EXTERNAL | Falta marcar una de las nuevas copas en Agora y comprobar historial `TPV`, hora, variante, stock e idempotencia. |
 | Venta real magnum | PENDING_EXTERNAL | Hay `14` magnums elegibles, pero no aparece una venta real reciente de magnum en la ventana auditada. |
 
 ## Estructura Winerim actual
@@ -39,7 +40,7 @@ Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
 | FORTIFICADOS WINERIM | 1 | 1 | 0 |
 | DULCE WINERIM | 3 | 3 | 0 |
 | MAGNUM WINERIM | 15 | 14 | 1 |
-| COPAS WINERIM | 0 antes del despliegue | 0 antes del despliegue | 31 excepciones configuradas |
+| COPAS WINERIM | 31 | 31 | 0 |
 
 ## Conciliacion de la incidencia antigua
 
@@ -99,8 +100,9 @@ Tras autorizacion:
    Pepe Luis cuyo `CreationDate` real es 27/06 aunque la factura cerro el 16/07.
 4. Ejecutar dos ciclos de cinco minutos y confirmar que no reaparece ninguna
    tarjeta.
-5. Mantener `LIVE_AUTOMATIC`; firmar `100%_SIGNED_OFF` solo con la limpieza y
-   una venta real de magnum si el cliente utiliza ese formato.
+5. Mantener `LIVE_AUTOMATIC`; firmar `100%_SIGNED_OFF` solo con la limpieza,
+   una venta real de copa y una venta real de magnum si el cliente utiliza ese
+   formato.
 
 ## Excepcion de copas internas solicitada el 20/07
 
@@ -109,7 +111,15 @@ pero no quiere mostrar esas copas al cliente en la carta publica de Winerim.
 La lista, precios, guardas y rollback estan en
 `docs/operations/casa-nene-hidden-glass-policy-2026-07-20.md`.
 
-La configuracion ya contiene las 31 excepciones. No se ha escrito en Agora
-porque la sonda posterior al commit `e10e1ac` confirmo que Lovable Cloud sigue
-ejecutando el proxy anterior. Tras el redeploy se publicaran solo las variantes
-`GLASS`; botella y magnum inactivos continuaran ocultos.
+Lovable Cloud ejecuta `agora-proxy` desde `5d30421`. Una sonda segura confirmo
+`would_queue:GLASS` para la referencia ausente de cache y la auditoria previa
+devolvio exactamente `31 MISSING`, sin diferencias ni colisiones.
+
+Las `31` variantes se publicaron exclusivamente como `GLASS` en siete lotes
+de cinco como maximo. Cada lote termino en `MATCH`; la auditoria final devolvio
+`348/348 MATCH`, la cola quedo vacia y botella/magnum inactivos continuan
+bloqueados. La evidencia machine-readable queda en
+`docs/operations/agora-catalog-reconciliation-2026-07-20T14-53-35-126Z/`.
+La auditoria posterior a la siguiente ventana automatica mantuvo `31/31 MATCH`,
+cero tareas activas y cero alertas. Falta una venta real de copa para cerrar el
+flujo de ventas.

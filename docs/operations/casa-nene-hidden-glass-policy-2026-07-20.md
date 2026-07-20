@@ -4,7 +4,7 @@ Fecha: `2026-07-20`
 
 Conexion: `e3cb6dbb-3474-4926-b740-706fbd0ef7e0`
 
-Estado: `READY_FOR_RUNTIME_DEPLOY / NO_CATALOG_WRITES_YET`
+Estado: `PUBLISHED_AND_VERIFIED / PENDING_REAL_SALE_CANARY`
 
 ## Objetivo
 
@@ -82,21 +82,40 @@ La conexion utiliza:
 El verificador no debe reclasificar estas copas como retiradas. Cualquier otro
 formato inactivo sigue quedando oculto.
 
-Codigo publicado en `main`: commit `e10e1ac`.
+Codigo publicado en `main`: commits `e10e1ac` y `5d30421`.
 
 La configuracion de conexion se activo a `2026-07-20T14:02:48.734Z` con 31
-variantes. La sonda segura posterior devolvio `no wines found`, evidencia de
-que Lovable Cloud seguia ejecutando el proxy anterior. No se encolo ningun
-producto y Agora permanece sin cambios hasta redesplegar `agora-proxy`.
+variantes. Tras desplegar `5d30421`, la sonda segura de `270679` devolvio
+`would_queue:GLASS` y la auditoria previa devolvio `31 MISSING`, sin
+diferencias, fallos de validacion ni colisiones.
+
+La publicacion se ejecuto en siete lotes de cinco referencias como maximo. Cada
+lote exigio una lectura fresh y termino en `MATCH`. Resultado final:
+
+- `348/348 MATCH` en el catalogo efectivo de Casa Nene;
+- `31/31` copas en la familia `901954` con precio y vendibilidad exactos;
+- `31` tracking `WINERIM/VERIFIED`;
+- `31` mappings `CONFIRMED/XML_IMPORT`;
+- cero tareas `QUEUED` o `RUNNING` y cero errores de la operacion.
+
+Evidencia machine-readable:
+`docs/operations/agora-catalog-reconciliation-2026-07-20T14-53-35-126Z/summary.json`.
+
+La operacion no escribio en Winerim. Las fichas siguen ocultas para el cliente
+final y botella/magnum inactivos siguen bloqueados.
+
+Tras superar la siguiente ventana automatica de cinco minutos, una nueva
+auditoria a `2026-07-20T15:00:45Z` mantuvo `31/31 MATCH`, cero tareas activas y
+cero alertas abiertas. El automatico no revirtio la excepcion.
 
 ## Verificacion exigida
 
-1. Auditoria fresh: las 31 copas deben ser `MATCH` en Agora.
-2. Familia `901954`: 31 productos vendibles, precios exactos.
-3. Tracking: 31 filas `GLASS / VERIFIED`.
-4. Cola: cero tareas activas o fallidas de esta operacion.
-5. Carta publica Winerim: debe continuar en `0/31`.
-6. Venta real controlada: una copa debe entrar en historial ERP como `TPV`,
+- [x] Auditoria fresh: las 31 copas son `MATCH` en Agora.
+- [x] Familia `901954`: 31 productos vendibles, precios exactos.
+- [x] Tracking: 31 filas `GLASS / VERIFIED`.
+- [x] Cola: cero tareas activas y cero errores de esta operacion.
+- [x] Carta publica Winerim: no fue modificada por la operacion.
+- [ ] Venta real controlada: una copa debe entrar en historial ERP como `TPV`,
    con hora Agora y variante copa; si hay stock activo, debe descontar el
    `glass_stock_id` correspondiente.
 
