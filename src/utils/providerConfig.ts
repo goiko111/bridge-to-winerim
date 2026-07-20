@@ -22,6 +22,16 @@ export interface AgoraConfig {
   write_mode?: string;
   catalog_endpoint?: string;
   catalog_sync_enabled?: boolean;
+  publish_hidden_glass_variants?: boolean;
+  agora_hidden_glass_variants?: Array<{
+    winerim_id: string;
+    name: string;
+    wine_type?: string | null;
+    glass_sale_price: number;
+    enabled?: boolean;
+    source?: string;
+    captured_at?: string;
+  }>;
 }
 
 export interface ToastConfig {

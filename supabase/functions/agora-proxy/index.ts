@@ -3510,16 +3510,99 @@ interface WineValidationResult {
   error?: { code: string; message: string };
 }
 
+interface AgoraHiddenGlassVariant {
+  winerim_id: string;
+  name: string;
+  wine_type?: string | null;
+  glass_sale_price: number;
+  enabled?: boolean;
+  source?: string;
+  captured_at?: string;
+}
+
+function configuredHiddenGlassVariants(connection?: any): AgoraHiddenGlassVariant[] {
+  const providerConfig = connection?.provider_config && typeof connection.provider_config === "object"
+    ? connection.provider_config as Record<string, unknown>
+    : {};
+  if (providerConfig.publish_hidden_glass_variants !== true) return [];
+
+  const configured = Array.isArray(providerConfig.agora_hidden_glass_variants)
+    ? providerConfig.agora_hidden_glass_variants as Record<string, unknown>[]
+    : [];
+
+  return configured.flatMap((item) => {
+    const winerimId = String(item?.winerim_id || item?.winerimWineId || "").trim();
+    const name = String(item?.name || "").trim();
+    const glassSalePrice = Number(item?.glass_sale_price ?? item?.price ?? 0);
+    if (!winerimId || !name || !Number.isFinite(glassSalePrice) || glassSalePrice <= 0 || item?.enabled === false) {
+      return [];
+    }
+    return [{
+      winerim_id: winerimId,
+      name,
+      wine_type: item?.wine_type ? String(item.wine_type).toLowerCase() : null,
+      glass_sale_price: glassSalePrice,
+      enabled: true,
+      source: item?.source ? String(item.source) : undefined,
+      captured_at: item?.captured_at ? String(item.captured_at) : undefined,
+    }];
+  });
+}
+
+function configuredHiddenGlassVariant(connection: any, winerimWineId: unknown): AgoraHiddenGlassVariant | null {
+  const targetId = String(winerimWineId || "").trim();
+  if (!targetId) return null;
+  return configuredHiddenGlassVariants(connection).find((item) => item.winerim_id === targetId) || null;
+}
+
+// Winerim's public-menu active flag is intentionally independent from this
+// per-connection POS exception. The marker exists only in memory and is never
+// persisted back to the Winerim catalog cache.
+// deno-lint-ignore no-explicit-any
+function applyHiddenGlassVariantForAgora(connection: any, wine: any): any {
+  const winerimWineId = wine?.winerim_id || wine?.id;
+  const configured = configuredHiddenGlassVariant(connection, winerimWineId);
+  if (!configured) return wine;
+  return {
+    ...(wine || {}),
+    winerim_id: configured.winerim_id,
+    id: wine?.id || configured.winerim_id,
+    name: configured.name,
+    wine_type: configured.wine_type || wine?.wine_type || null,
+    glass_sale_price: configured.glass_sale_price,
+    serve_by_glass: true,
+    raw_payload: {
+      ...(wine?.raw_payload || {}),
+      agora_hidden_glass_variant: {
+        source: configured.source || "CONNECTION_OVERRIDE",
+        captured_at: configured.captured_at || null,
+      },
+    },
+    _agora_allow_inactive_glass: true,
+  };
+}
+
+function isConfiguredHiddenGlassVariant(connection: any, wineOrId: any): boolean {
+  const winerimWineId = typeof wineOrId === "object"
+    ? wineOrId?.winerim_id || wineOrId?.id
+    : wineOrId;
+  return Boolean(configuredHiddenGlassVariant(connection, winerimWineId));
+}
+
 // deno-lint-ignore no-explicit-any
 function validateWineForAgora(wine: any, formatType: string, connection?: any, priceLists?: { Id: string; Name: string }[]): WineValidationResult {
   const warnings: string[] = [];
   const missingFields: string[] = [];
 
-  // BLOCK inactive wines — never create sellable products for inactive wines
-  if (wine.is_active === false) {
+  // Inactive public-menu wines remain blocked except for an explicit,
+  // connection-scoped GLASS override. This lets a restaurant hide a cup from
+  // its public Winerim menu while keeping the corresponding POS key sellable.
+  const inactiveGlassOverride = formatType === "GLASS" && wine._agora_allow_inactive_glass === true;
+  if (wine.is_active === false && !inactiveGlassOverride) {
     missingFields.push("wine_inactive");
     return { valid: false, warnings: ["Wine is inactive in Winerim — blocked from Agora push"], missingFields };
   }
+  if (inactiveGlassOverride) warnings.push("inactive_public_menu_glass_published_by_connection_policy");
 
   if (!wine.name || wine.name.length < 2) {
     missingFields.push("missing_wine_name");
@@ -3677,13 +3760,16 @@ function buildQueuedProductNameOverrides(
   existingProducts: { Id: string; Name: string }[],
 ): Record<string, string> {
   const currentWineId = String(currentWine?.winerim_id || currentWine?.id || "");
+  const requestedFormats = [...new Set(formatTypes.map((format) => String(format || "").toUpperCase()))];
   const winesById = new Map<string, any>();
   for (const wine of [...homonymousWines, currentWine]) {
     const wineId = String(wine?.winerim_id || wine?.id || "");
-    if (wineId && wine?.is_active !== false) winesById.set(wineId, wine);
+    const includeHiddenGlass = requestedFormats.includes("GLASS") && isConfiguredHiddenGlassVariant(connection, wineId);
+    if (wineId && (wine?.is_active !== false || includeHiddenGlass)) {
+      winesById.set(wineId, includeHiddenGlass ? applyHiddenGlassVariantForAgora(connection, wine) : wine);
+    }
   }
 
-  const requestedFormats = [...new Set(formatTypes.map((format) => String(format || "").toUpperCase()))];
   const candidatesByProductId = new Map<string, {
     productId: string;
     baseName: string;
@@ -4114,19 +4200,20 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   for (const wine of wines) {
     const winerimId = Number(wine.winerim_id || wine.id || 0);
-    const wineName = wine.name || "Unknown Wine";
-    const wineType = extractWineType(wine);
     const orderedDulceCode = saPedreraDulceCode(connection, wine);
     const orderedDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null;
 
     for (const fmt of formatTypes) {
+      const formatWine = fmt === "GLASS" ? applyHiddenGlassVariantForAgora(connection, wine) : wine;
+      const wineName = formatWine.name || "Unknown Wine";
+      const wineType = extractWineType(formatWine);
       // Sa Pedrera's D701-D709 screen uses one deterministic Agora product ID
       // per commercial code. Never emit bottle and glass entries with the same
       // ID; copa wins whenever it has a valid price.
       if (orderedDulceFormat && fmt !== orderedDulceFormat) continue;
 
       // Validate before generating (pass connection for glass cost fallback + priceLists emptiness check)
-      const validation = validateWineForAgora(wine, fmt, connection, priceLists);
+      const validation = validateWineForAgora(formatWine, fmt, connection, priceLists);
       validationResults.push({ winerimId: String(winerimId), formatType: fmt, validation });
 
       // Skip formats with missing required fields
@@ -4149,14 +4236,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
-      const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, wine, fmt);
-      const productId = deterministicAgoraProductId(connection, wine, fmt);
+      const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, formatWine, fmt);
+      const productId = deterministicAgoraProductId(connection, formatWine, fmt);
 
       const familyResult = orderedDulceCode
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
         : dedicatedSaPedreraFamily
           ? dedicatedSaPedreraFamily
-        : findFamilyId(wineType, fmt, wine);
+        : findFamilyId(wineType, fmt, formatWine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
@@ -4167,14 +4254,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       let costPrice: string;
 
       if (isMagnum) {
-        mainPrice = (Number(wine.magnum_sale_price) || 0).toFixed(2);
-        costPrice = (Number(wine.magnum_purchase_price) || 0).toFixed(2);
+        mainPrice = (Number(formatWine.magnum_sale_price) || 0).toFixed(2);
+        costPrice = (Number(formatWine.magnum_purchase_price) || 0).toFixed(2);
       } else if (isGlass) {
-        mainPrice = (extractGlassSalePrice(wine) || 0).toFixed(2);
-        costPrice = (extractGlassCostPrice(wine, connection) || 0).toFixed(2);
+        mainPrice = (extractGlassSalePrice(formatWine) || 0).toFixed(2);
+        costPrice = (extractGlassCostPrice(formatWine, connection) || 0).toFixed(2);
       } else {
-        mainPrice = (extractBottleSalePrice(wine) || 0).toFixed(2);
-        costPrice = (extractBottleCostPrice(wine) || 0).toFixed(2);
+        mainPrice = (extractBottleSalePrice(formatWine) || 0).toFixed(2);
+        costPrice = (extractBottleCostPrice(formatWine) || 0).toFixed(2);
       }
 
       // Generate prices for ALL PriceLists (same price everywhere)
@@ -4195,7 +4282,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         productId: String(productId),
         productName,
         winerimId: String(winerimId),
-        nameDisambiguators: [wine.vintage || wine.raw_payload?.vintage].filter(Boolean),
+        nameDisambiguators: [formatWine.vintage || formatWine.raw_payload?.vintage].filter(Boolean),
         renderXml: (finalProductName: string) => {
           const buttonText = truncate(finalProductName, 20);
           return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
@@ -8470,11 +8557,25 @@ ${costPricesXml}
         const familyOverrideId = taskPayload._family_override_id as string | undefined;
         const forceEmptyPreparation = taskPayload._force_empty_preparation === true;
 
-        const { data: wineArr } = await supabase
+        const { data: cachedWineArr } = await supabase
           .from("winerim_wines").select("*")
           .eq("connection_id", task.connection_id).eq("winerim_id", winerimWineId).limit(1);
 
-        if (!wineArr || wineArr.length === 0) {
+        let wineArr = cachedWineArr || [];
+        if (wineArr.length === 0) {
+          const hiddenGlass = configuredHiddenGlassVariant(connection, winerimWineId);
+          if (hiddenGlass) {
+            wineArr = [applyHiddenGlassVariantForAgora(connection, {
+              winerim_id: hiddenGlass.winerim_id,
+              name: hiddenGlass.name,
+              wine_type: hiddenGlass.wine_type || null,
+              is_active: false,
+              raw_payload: {},
+            })];
+          }
+        }
+
+        if (wineArr.length === 0) {
           await supabase.from("outbound_tasks").update({
             status: "FAILED", last_error: `Wine ${winerimWineId} not found in cache`,
           }).eq("id", task.id);
@@ -9076,6 +9177,7 @@ ${costPricesXml}
         name: string;
         wine_type: string | null;
         raw_payload: Record<string, unknown> | null;
+        is_active?: boolean;
         serve_by_glass: boolean;
         bottle_sale_price: number | null;
         glass_sale_price: number | null;
@@ -9085,21 +9187,36 @@ ${costPricesXml}
         const chunk = winerimWineIds.slice(i, i + 500);
         const { data: wines } = await supabase
           .from("winerim_wines")
-          .select("winerim_id, name, wine_type, raw_payload, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price")
+          .select("winerim_id, name, wine_type, raw_payload, is_active, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price")
           .eq("connection_id", connectionId)
           .in("winerim_id", chunk);
         for (const w of (wines || [])) {
+          const effectiveWine = applyHiddenGlassVariantForAgora(connection, w);
           wineEligibility[w.winerim_id] = {
             winerim_id: String(w.winerim_id),
-            name: String(w.name || ""),
-            wine_type: w.wine_type,
-            raw_payload: w.raw_payload,
-            serve_by_glass: w.serve_by_glass,
-            bottle_sale_price: w.bottle_sale_price,
-            glass_sale_price: w.glass_sale_price,
-            magnum_sale_price: w.magnum_sale_price,
+            name: String(effectiveWine.name || ""),
+            wine_type: effectiveWine.wine_type,
+            raw_payload: effectiveWine.raw_payload,
+            is_active: effectiveWine.is_active,
+            serve_by_glass: effectiveWine.serve_by_glass,
+            bottle_sale_price: effectiveWine.bottle_sale_price,
+            glass_sale_price: effectiveWine.glass_sale_price,
+            magnum_sale_price: effectiveWine.magnum_sale_price,
           };
         }
+      }
+      for (const hiddenGlass of configuredHiddenGlassVariants(connection)) {
+        if (!winerimWineIds.map(String).includes(hiddenGlass.winerim_id)) continue;
+        const existing = wineEligibility[hiddenGlass.winerim_id] || {};
+        const effectiveWine = applyHiddenGlassVariantForAgora(connection, {
+          ...existing,
+          winerim_id: hiddenGlass.winerim_id,
+          name: existing.name || hiddenGlass.name,
+          wine_type: existing.wine_type || hiddenGlass.wine_type || null,
+          is_active: existing.is_active ?? false,
+          raw_payload: existing.raw_payload || {},
+        });
+        wineEligibility[hiddenGlass.winerim_id] = effectiveWine;
       }
 
       const eligibleFormatsByWine = new Map<string, string[]>();
@@ -9107,6 +9224,9 @@ ${costPricesXml}
       for (const wineId of winerimWineIds) {
         const elig = wineEligibility[wineId];
         const eligibleFormats = formatTypes.filter((fmt: string) => {
+          if (elig?.is_active === false && !(
+            fmt === "GLASS" && isConfiguredHiddenGlassVariant(connection, wineId)
+          )) return false;
           if (fmt === "GLASS") return (elig?.glass_sale_price ?? 0) > 0;
           if (fmt === "BOTTLE") return (elig?.bottle_sale_price ?? 0) > 0;
           if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
@@ -10112,10 +10232,14 @@ ${costPricesXml}
         const productId = String(m.provider_product_id || "");
         const productErrors = errorsByProductId.get(productId) || [];
         const wine = verificationWineById.get(String(m.winerim_wine_id || ""));
+        const configuredHiddenGlass = String(m.format_type || "").toUpperCase() === "GLASS" &&
+          isConfiguredHiddenGlassVariant(connection, m.winerim_wine_id);
         const shouldTrackAsHidden = Boolean(
-          !wine ||
-          wine.is_active === false ||
-          isFormatUnavailableForAgora(wine, String(m.format_type || "")),
+          !configuredHiddenGlass && (
+            !wine ||
+            wine.is_active === false ||
+            isFormatUnavailableForAgora(wine, String(m.format_type || ""))
+          ),
         );
         const actualProduct = actualProductById.get(productId);
         const actualProductIsSaleable = Boolean(
@@ -10413,11 +10537,25 @@ ${costPricesXml}
         connectionSelectedSaleCenterIds: connection.selected_sale_center_ids || [],
       });
 
-      const { data: wines } = await supabase
+      const { data: cachedWines } = await supabase
         .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
-      if (!wines || wines.length === 0) {
+      const wines = (cachedWines || []).map((wine: any) => applyHiddenGlassVariantForAgora(connection, wine));
+      const cachedWineIds = new Set(wines.map((wine: any) => String(wine.winerim_id)));
+      const requestedWineIdSet = new Set(winerimWineIds.map(String));
+      for (const hiddenGlass of configuredHiddenGlassVariants(connection)) {
+        if (!requestedWineIdSet.has(hiddenGlass.winerim_id) || cachedWineIds.has(hiddenGlass.winerim_id)) continue;
+        wines.push(applyHiddenGlassVariantForAgora(connection, {
+          winerim_id: hiddenGlass.winerim_id,
+          name: hiddenGlass.name,
+          wine_type: hiddenGlass.wine_type || null,
+          is_active: false,
+          raw_payload: {},
+        }));
+      }
+
+      if (wines.length === 0) {
         return new Response(JSON.stringify({ success: true, skipped: true, reason: "no wines found" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -10461,14 +10599,18 @@ ${costPricesXml}
       for (const wine of wines) {
         // ── INACTIVE WINE → queue HIDE task to set ShowInPos=false in Agora ──
         if (wine.is_active === false) {
+          const keepHiddenGlassInAgora = isConfiguredHiddenGlassVariant(connection, wine);
           // Check if already has a verified push (i.e. product exists in Agora)
           const { data: existingPush } = await supabase
             .from("winerim_push_tracking").select("format, agora_product_id, source")
             .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id)
             .eq("source", "WINERIM")
             .in("sync_status", ["VERIFIED", "PUSHED"]);
-          
-          if (existingPush && existingPush.length > 0) {
+
+          const existingPushesToHide = (existingPush || []).filter((push: any) =>
+            !keepHiddenGlassInAgora || String(push.format || "").toUpperCase() !== "GLASS"
+          );
+          if (existingPushesToHide.length > 0) {
             // Check no existing hide task queued
             const { data: existingHide } = await supabase
               .from("outbound_tasks").select("id")
@@ -10478,7 +10620,7 @@ ${costPricesXml}
               .in("status", ["QUEUED", "RUNNING"]).limit(1);
             
             if (!existingHide || existingHide.length === 0) {
-              const productIds = existingPush.map(p => p.agora_product_id).filter(Boolean);
+              const productIds = existingPushesToHide.map(p => p.agora_product_id).filter(Boolean);
               if (!forceEvaluate && !dryRun) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
@@ -10492,7 +10634,7 @@ ${costPricesXml}
                   status: "QUEUED",
                 });
                 // Update tracking to reflect hidden status
-                for (const p of existingPush) {
+                for (const p of existingPushesToHide) {
                   await supabase.from("winerim_push_tracking")
                     .update({ sync_status: "HIDDEN" })
                     .eq("connection_id", connectionId)
@@ -10503,9 +10645,12 @@ ${costPricesXml}
               hidQueued++;
             }
           }
-          skipped++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: (forceEvaluate || dryRun) ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
-          continue;
+          if (!keepHiddenGlassInAgora) {
+            skipped++;
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: (forceEvaluate || dryRun) ? "wine_inactive_would_hide" : "wine_inactive_hide_queued" });
+            continue;
+          }
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: "inactive_public_menu_glass_kept_by_connection_policy" });
         }
 
         const { data: existingPublishedFormats } = await supabase
@@ -10787,7 +10932,43 @@ ${costPricesXml}
           if (winesError) throw winesError;
           wines.push(...(wineBatch || []));
           if (!wineBatch || wineBatch.length < auditWineBatchSize) break;
+          }
+      }
+
+      // The regular Winerim catalog endpoint intentionally omits public-menu
+      // inactive wines. Merge the connection-scoped GLASS exceptions after
+      // the active query so the audit sees exactly what Agora should expose.
+      const hiddenGlassConfig = configuredHiddenGlassVariants(connection)
+        .filter((item) => requestedWineIds.length === 0 || requestedWineIds.includes(item.winerim_id));
+      if (hiddenGlassConfig.length > 0) {
+        const hiddenWineIds = hiddenGlassConfig.map((item) => item.winerim_id);
+        const hiddenCachedById = new Map<string, any>();
+        for (let offset = 0; offset < hiddenWineIds.length; offset += auditWineBatchSize) {
+          const hiddenBatch = hiddenWineIds.slice(offset, offset + auditWineBatchSize);
+          const { data: hiddenCached, error: hiddenCachedError } = await supabase
+            .from("winerim_wines")
+            .select("*")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", hiddenBatch);
+          if (hiddenCachedError) throw hiddenCachedError;
+          for (const wine of hiddenCached || []) hiddenCachedById.set(String(wine.winerim_id), wine);
         }
+
+        const auditWineById = new Map(wines.map((wine: any) => [String(wine.winerim_id), wine]));
+        for (const hiddenGlass of hiddenGlassConfig) {
+          const cachedWine = hiddenCachedById.get(hiddenGlass.winerim_id) || {
+            winerim_id: hiddenGlass.winerim_id,
+            name: hiddenGlass.name,
+            wine_type: hiddenGlass.wine_type || null,
+            is_active: false,
+            raw_payload: {},
+          };
+          auditWineById.set(
+            hiddenGlass.winerim_id,
+            applyHiddenGlassVariantForAgora(connection, cachedWine),
+          );
+        }
+        wines.splice(0, wines.length, ...auditWineById.values());
       }
 
       // Product names can be disambiguated by other products already present in
