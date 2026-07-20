@@ -24,6 +24,10 @@ Estado: `LIVE_PENDING_SALE_CANARY`.
 - Catalogo, altas y cambios automaticos activos.
 - Intradia, tickets abiertos y stock intradia activos.
 - Catalogo fresh: `113/113 MATCH`, `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`.
+- Las ocho familias Winerim estan visibles y conservan su orden `0-7`.
+- Distribucion: `35` tintos, `20` blancos, `8` rosados, `22` espumosos y
+  `28` magnum. `COPAS`, `DULCE` y `FORTIFICADOS` estan vacias porque Winerim
+  no tiene formatos elegibles para ellas.
 - Tracking: `113 VERIFIED`.
 - Mappings: `113 CONFIRMED`.
 - Cola activa: `0`.
@@ -31,22 +35,29 @@ Estado: `LIVE_PENDING_SALE_CANARY`.
 - Alertas abiertas: `0`; las alertas `sales_stale` anteriores estan resueltas.
 - Ultimo dia cerrado sincronizado: `2026-07-19`.
 
-### Pendiente
+### Venta y catalogo anterior
 
-- Entre el 16 y el 20 de julio se revisaron `860` eventos y `8.127` lineas:
+- Entre el 13 y el 20 de julio se revisaron `889` documentos y `8.471` lineas:
   no hay ninguna venta realizada con los `113` botones Winerim.
-- El 19 de julio se vendieron por familias legacy al menos `162` unidades
-  netas de vino: `CHAMPAGNE`, `GLASS WINE`, `ROSE WINE` y `WHITE WINE`.
+- En esa ventana se vendieron por las cinco familias anteriores `566`
+  unidades netas / `57.377 EUR`; ninguna linea esta mapeada a Winerim.
+- Se restauraron visibles `GLASS WINE`, `WHITE WINE`, `ROSE WINE`, `RED WINE`
+  y `CHAMPAGNE`: `164` productos, de los cuales `162` son vendibles. No se
+  oculto ni elimino ningun producto.
 - No existe ningun `stock_sync_log`, porque todavia no se ha producido una
   venta Winerim que deba registrarse o descontarse.
-- El legacy sigue visible, tal como se decidio al activar la conexion.
+- El ERP Winerim (`menu 756`) sigue vacio, coherente con la ausencia de ventas
+  realizadas con botones Winerim.
+- Winerim tiene `0` variantes activas con precio de copa, por lo que
+  `COPAS WINERIM` esta correctamente vacia.
 
 ### Cierre necesario
 
 1. Marcar una botella real desde una familia Winerim y no anularla.
-2. Marcar una copa real desde `COPAS WINERIM` y no anularla.
-3. Verificar ambas en el ERP Winerim, con hora real y variante correcta.
-4. Verificar stock activo o `sales/import` cuando el stock este inactivo.
+2. Verificarla en el ERP Winerim, con hora real y variante correcta.
+3. Verificar stock activo o `sales/import` cuando el stock este inactivo.
+4. Para probar una copa, poner primero precio de copa a un vino en Winerim y
+   comprobar su alta automatica antes de venderla.
 5. Decidir despues si se oculta legacy de forma reversible.
 
 ## Finca Eslava

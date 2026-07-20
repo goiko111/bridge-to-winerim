@@ -27,6 +27,7 @@ const SEARCH_ALIASES = new Map([
   ["PurOsushi", ["Puro Sushi", "PurOsushi"]],
   ["El Higuerón", ["El Higuerón", "El Higueron", "Higuerón"]],
   ["De la O", ["DeLaO", "De la O"]],
+  ["Ocean Club", ["Oceans", "Ocean Club"]],
 ]);
 
 function parseDotEnv(text) {

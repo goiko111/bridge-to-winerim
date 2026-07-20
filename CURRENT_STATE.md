@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-20 17:01 CEST_
+_Última actualización: 2026-07-20 17:38 CEST_
 
 ## Casa Esteban - staging bloqueado por túnel ConnectManager - 2026-07-17
 
@@ -5800,3 +5800,40 @@ _Última actualización: 2026-07-20 17:01 CEST_
   stock activo/inactivo e idempotencia durante dos ciclos.
 - Disenar con Winerim API una anulacion idempotente de historial para
   devoluciones de facturas definitivas.
+
+## 2026-07-20 - Ocean Club deja visibles Winerim y legacy para el canary
+
+### Hechos
+- Conexion sana, frecuencia cinco minutos, intradia/tickets abiertos activos,
+  catalogo fresh `113/113 MATCH`, cola vacia y cero alertas abiertas.
+- Las ocho familias Winerim estaban ocultas pese a que sus productos eran
+  correctos. Se cambiaron exclusivamente a `ShowInPos=true` y Agora verifico
+  las ocho escrituras; orden y atributos quedaron preservados.
+- Tambien estaban ocultas las cinco familias legacy con producto. Para cumplir
+  la decision de conservar la operativa anterior hasta el canary, se
+  restauraron visibles `GLASS WINE`, `WHITE WINE`, `ROSE WINE`, `RED WINE` y
+  `CHAMPAGNE`; Agora verifico las cinco escrituras.
+- El catalogo Winerim contiene `85` botellas y `28` magnum. No existe ninguna
+  variante activa con precio de copa, por lo que `COPAS WINERIM` esta vacia.
+- Del 13 al 20 de julio Agora entrego `889` documentos y `8.471` lineas. Las
+  familias anteriores netean `566` unidades / `57.377 EUR`, ninguna mapeada;
+  no hay ventas de IDs Winerim.
+- El auditor ya resuelve el alias administrativo `Oceans`, menu Winerim `756`,
+  y confirma que su ERP no contiene ventas.
+- Checklist y rollback:
+  `docs/operations/ocean-club-100-percent-checklist-2026-07-20.md`.
+
+### Decisiones
+- Mantener Ocean en `LIVE_PENDING_SALE_CANARY`; catalogo correcto no equivale
+  a una aceptacion de ventas firmada.
+- Mantener ambas estructuras visibles hasta validar una botella real y recibir
+  la decision del cliente.
+- No fabricar una copa de prueba: primero debe existir un precio de copa real
+  en Winerim y su alta automatica debe quedar verificada.
+
+### Tareas pendientes inmediatas
+- Pedir una botella real desde un boton Winerim, no anularla y comunicar hora.
+- Verificar ERP, hora, variante, stock activo/inactivo e idempotencia durante
+  dos ciclos de cinco minutos.
+- Poner precio de copa a una referencia real, comprobar su aparicion automatica
+  y ejecutar entonces el canary de copa.

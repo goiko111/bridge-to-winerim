@@ -1414,7 +1414,14 @@
 - [x] Auditar conectividad, catalogo fresh, tracking, mappings, cola, alertas y
   ventas por ID exacto.
 - [x] Confirmar Ocean `113/113` y Finca `123/123`, sin cola ni alertas abiertas.
+- [x] Ocean: hacer visibles y verificar fresh las ocho familias Winerim.
+- [x] Ocean: restaurar visibles las cinco familias legacy con producto, sin
+  ocultar ni modificar productos.
+- [x] Ocean: vincular el alias administrativo `Oceans` con el menu `756` en el
+  auditor y confirmar que el ERP no contiene ventas.
 - [ ] Ocean: canary real de botella y copa desde botones Winerim.
+- [ ] Ocean: para el canary de copa, poner antes precio de copa a una referencia
+  real y comprobar su alta automatica; actualmente hay `0` copas elegibles.
 - [x] Finca: comprobar ajustes posteriores y restaurar Emilio Moro de `82` a
   `83` mediante `No, solo ajuste`, sin crear otra venta.
 - [x] Finca: repetir catalogo fresh, conexion, tickets, cola, alertas e

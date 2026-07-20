@@ -2119,3 +2119,36 @@ y despues y la instruccion de rollback. La lectura posterior confirma stock
 tarjeta TPV sin un endpoint de anulacion idempotente. El historial conserva una
 diferencia conocida y Finca sigue pendiente de un canary real de botella y
 copa.
+
+## 2026-07-20 - Ocean Club debe mostrar Winerim y conservar legacy hasta el canary
+
+**Decision:** activar `ShowInPos` solo en las ocho familias Winerim y restaurar
+la visibilidad de las cinco familias legacy con producto, sin modificar
+productos, precios, orden, mappings ni ventas.
+
+**Razon:** el catalogo Winerim estaba `113/113 MATCH`, pero sus familias estaban
+ocultas; el personal solo habia vendido con botones anteriores. Ademas, la
+decision operativa era conservar legacy hasta validar ventas, y sus familias
+tambien aparecian ocultas pese a conservar `162` productos vendibles.
+
+**Riesgos controlados:** cada escritura reutilizo el XML completo de Agora y
+fue verificada con una lectura fresh. Se guardaron los trece IDs y el estado
+previo; catalogo, cola y alertas se comprobaron despues y siguen sanos.
+
+**Alternativa descartada:** ocultar productos legacy o firmar el 100 % solo por
+catalogo. Ocean aun no ha generado ninguna venta Winerim y no dispone de una
+variante de copa con precio para ejecutar ese canary.
+
+## 2026-07-20 - El auditor de Ocean usa el alias administrativo Oceans
+
+**Decision:** asociar `Ocean Club` con los alias `Oceans` y `Ocean Club` en el
+auditor read-only de historial.
+
+**Razon:** el nombre de la conexion no coincide con el registro administrativo;
+sin el alias el auditor devolvia una ambiguedad y no encontraba el menu `756`.
+
+**Riesgos controlados:** el cambio solo afecta busqueda y lectura del ERP; no
+escribe en Agora, Winerim ni Lovable Cloud.
+
+**Alternativa descartada:** mantener una comprobacion manual recurrente, que
+podria dejar pasar la ausencia de ventas en futuras auditorias.
