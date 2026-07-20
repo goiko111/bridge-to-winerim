@@ -2740,15 +2740,20 @@ async function restoreStaleOpenTicketStock(
     });
 
   const definitiveQtyByKey = new Map<string, number>();
-  for (let i = 0; i < definitiveEventIds.length; i += 500) {
-    const chunk = definitiveEventIds.slice(i, i + 500);
-    const { data: definitiveLines } = await supabase
+  for (let i = 0; i < definitiveEventIds.length; i += 100) {
+    const chunk = definitiveEventIds.slice(i, i + 100);
+    const { data: definitiveLines, error: definitiveLinesError } = await supabase
       .from("sales_line_items")
       .select("sales_event_id, quantity, winerim_product_id, format, is_wine_candidate")
       .eq("connection_id", connectionId)
       .eq("is_wine_candidate", true)
       .not("winerim_product_id", "is", null)
       .in("sales_event_id", chunk);
+    if (definitiveLinesError) {
+      result.failed++;
+      result.errors.push(`definitive sales_line_items lookup failed: ${definitiveLinesError.message}`);
+      return result;
+    }
 
     for (const line of (definitiveLines || []) as any[]) {
       const day = dayByDefinitiveEventId.get(line.sales_event_id);

@@ -87,6 +87,8 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("isOpenTicketStockDayAllowed(day, defaultDay, providerConfig)");
     expect(agoraProxySource).toContain('String(event.doc_type || "").toLowerCase() !== "openticket"');
     expect(agoraProxySource).toContain("definitiveEventIds.length > 0 ? definitiveEventIds : eligibleEventIds");
+    expect(agoraProxySource).toContain("i < definitiveEventIds.length; i += 100");
+    expect(agoraProxySource).toContain("definitive sales_line_items lookup failed");
     expect(agoraProxySource).toContain("const allDayEventIds = (dayEvents || []).map");
     expect(agoraProxySource).toContain("quantity: -restoreQty");
   });
