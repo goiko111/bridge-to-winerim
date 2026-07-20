@@ -413,7 +413,7 @@ async function main() {
   for (const eventBatch of chunks(closedEvents.map((event) => event.id), 100)) {
     closedLines.push(...await client.all(
       "sales_line_items",
-      "id,connection_id,sales_event_id,provider_product_id,quantity,winerim_product_id,format,mapped,is_wine_candidate",
+      "id,connection_id,sales_event_id,provider_product_id,name,quantity,unit_price,winerim_product_id,format,mapped,is_wine_candidate,provider_sold_at,provider_sold_at_source",
       { sales_event_id: `in.(${eventBatch.join(",")})`, order: "id.asc" },
     ));
   }

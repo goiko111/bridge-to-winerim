@@ -5678,3 +5678,44 @@ _Última actualización: 2026-07-20 14:11 CEST_
   de la regla NAT, corregirla y fijar una reserva DHCP o IP estatica.
 - Cuando responda: snapshot read-only, comparacion de legacy, formatos no
   estandar y activacion controlada con legacy visible.
+
+## 2026-07-20 - Casa Nene auditada; limpieza historica pendiente de autorizacion
+
+### Hechos
+- Conectividad y catalogo fresh correctos: `317/317 MATCH`, cero ausentes,
+  diferentes, sin ownership, tareas activas o alertas abiertas.
+- Las ocho familias Winerim estan visibles y contienen exactamente `317`
+  formatos vendibles. `COPAS WINERIM` esta vacia porque Winerim no expone
+  ninguna copa activa con precio.
+- Legacy de vino completamente oculto: seis familias y `148` productos no
+  vendibles. Los `30` formatos Winerim retirados tampoco son vendibles.
+- Se ejecuto `verify-products` sin escribir en Agora: `345/345` productos
+  comprobados, cero fallos. Tracking queda coherente en `317 VERIFIED` y
+  `30 HIDDEN`.
+- Automatizacion activa cada cinco minutos, cursor `2026-07-19`, intradia y
+  tickets abiertos habilitados, segundo ciclo sin claves idempotentes exactas
+  repetidas.
+- La conciliacion autentica detecto una incidencia antigua anterior al parche:
+  `16` tarjetas TPV duplicadas del 15/07 y `1` tarjeta provisional cancelada
+  de Bancales Olvidados el 17/07.
+- Agora demuestra una sola venta real de Pazo de Senorans, Silius Mimosa,
+  Raices das Bouzas y Veigamoura. Pepe Luis no falta: su linea se creo el
+  27/06 y la factura se cerro el 16/07.
+- Informe, IDs exactos, stocks previos y rollback:
+  `docs/operations/casa-nene-100-percent-checklist-2026-07-20.md`.
+- Se corrigio el auditor read-only para solicitar `name`, `unit_price`,
+  `provider_sold_at` y su fuente; antes intentaba comparar campos no leidos.
+
+### Decisiones
+- Mantener Casa Nene en `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`.
+- No anular tarjetas productivas sin autorizacion expresa. La limpieza solo
+  puede afectar los `17` IDs documentados.
+- No crear una copa ficticia: el formato es `NOT_APPLICABLE` mientras no haya
+  una copa activa y con precio en Winerim.
+
+### Tareas pendientes inmediatas
+- Tras autorizacion, anular las `17` tarjetas, verificar cada delta y devolver
+  Bancales de `23` a `22` mediante `No, solo ajuste`.
+- Repetir conciliacion y exigir delta cero; observar dos ciclos de cinco
+  minutos sin reaparicion.
+- Registrar una venta real de magnum solo si el cliente usa ese formato.

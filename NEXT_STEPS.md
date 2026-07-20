@@ -1459,3 +1459,24 @@
   devolvio tickets antiguos de los dias 15 y 17.
 - [ ] Confirmar con el cliente si se oculta legacy de forma reversible.
 - [ ] Firmar `100%_SIGNED_OFF` solo con conciliacion a cero.
+
+## Casa Nene - checklist tras El Higueron
+
+- [x] Confirmar conectividad, frecuencia cinco minutos y API HTTP fresh.
+- [x] Confirmar catalogo `317/317`, ocho familias Winerim, cola y alertas a
+  cero.
+- [x] Confirmar legacy de vino oculto y `148` productos legacy no vendibles.
+- [x] Confirmar `317` formatos elegibles y `30` retirados no vendibles; dejar
+  tracking en `317 VERIFIED / 30 HIDDEN`.
+- [x] Confirmar botella real, hora proveedor, stock activo e idempotencia del
+  runtime actual.
+- [x] Identificar y documentar `16` tarjetas duplicadas del 15/07 y la tarjeta
+  provisional cancelada `142290`, con snapshot y rollback.
+- [ ] Obtener autorizacion expresa para anular los `17` registros productivos.
+- [ ] Anular exclusivamente los IDs documentados y verificar incrementos
+  `+7`, `+3`, `+4`, `+2`; ajustar Bancales a `22` con `No, solo ajuste`.
+- [ ] Repetir auditoria y exigir cero diferencias, considerando la hora original
+  de Pepe Luis del 27/06 aunque su factura cerrara el 16/07.
+- [ ] Observar dos ciclos de cinco minutos sin reaparicion de tarjetas.
+- [ ] Registrar una venta real de magnum solo si Casa Nene utiliza ese formato.
+- [ ] Firmar `100%_SIGNED_OFF` solo despues de la limpieza y conciliacion final.

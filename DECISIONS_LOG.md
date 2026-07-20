@@ -2011,3 +2011,36 @@ reservada para evitar que el problema reaparezca.
 **Alternativa descartada:** continuar intercambiando tokens o hacer una llamada
 solo con Winerim y el SAT de Agora. Ninguna de esas acciones modifica la regla
 NAT si no participa quien administra el router.
+
+## 2026-07-20 - Casa Nene: separar automatizacion sana de duplicados historicos
+
+**Decision:** mantener activos los automatismos actuales de Casa Nene y tratar
+las `17` tarjetas incorrectas como una limpieza historica acotada, sin pausar
+catalogo, intradia ni cierre diario.
+
+**Razon:** el catalogo fresh esta `317/317`, el tracking queda `317 VERIFIED / 30
+HIDDEN`, la cola y las alertas estan vacias y el patron duplicado no reaparece
+desde el parche que preserva claims de stock. Los duplicados se concentran en
+el piloto antiguo del 15/07 y una venta provisional cancelada del 17/07.
+
+**Riesgos controlados:** antes de cualquier anulacion se guardaron IDs, horas,
+facturas, stocks y deltas esperados. Bancales exige `No, solo ajuste` tras la
+anulacion porque el middleware ya habia restaurado su unidad.
+
+**Alternativa descartada:** reprocesar dias completos, sobrescribir stocks con
+valores absolutos o pausar una integracion actualmente sana. Cualquiera de esas
+acciones ampliaria el impacto y podria duplicar ventas nuevas.
+
+## 2026-07-20 - El auditor debe leer los campos que compara
+
+**Decision:** ampliar la consulta de `sales_line_items` del auditor intradia
+para incluir nombre, precio unitario y timestamp proveedor con su fuente.
+
+**Razon:** el informe usaba esos campos despues de seleccionar solo IDs,
+cantidad, mapping y formato, por lo que podia mostrar ceros o nulos engañosos.
+
+**Riesgos controlados:** es un cambio estrictamente read-only; no modifica
+ventas, stock, catalogo ni el runtime de las Edge Functions.
+
+**Alternativa descartada:** seguir interpretando los nulos como ausencia de
+datos reales, porque podia generar correcciones operativas innecesarias.
