@@ -1993,3 +1993,21 @@ legacy sin poder verificar el resultado o ejecutar un rollback preciso.
 **Alternativa descartada:** activar la conexion confiando en el catalogo
 Winerim o en el DDNS resuelto. Resolver DNS no demuestra que Agora escuche ni
 que el puerto externo sea alcanzable.
+
+## 2026-07-20 - Escalado de red de Tintorera al operador del router
+
+**Decision:** coordinar la siguiente comprobacion con el cliente u operador
+que tenga acceso al router, manteniendo al SAT de Agora en la validacion local.
+
+**Razon:** Diser Tic confirma que modulo, API HTTP e importacion estan activos,
+pero no administra el router y considera probable que el servidor haya
+cambiado de IP local. El timeout externo es compatible con una regla NAT que
+apunta a la direccion anterior.
+
+**Riesgos controlados:** se exige primero validar Agora en la LAN y despues
+probar el mismo puerto desde una red externa. La IP final debe quedar fija o
+reservada para evitar que el problema reaparezca.
+
+**Alternativa descartada:** continuar intercambiando tokens o hacer una llamada
+solo con Winerim y el SAT de Agora. Ninguna de esas acciones modifica la regla
+NAT si no participa quien administra el router.

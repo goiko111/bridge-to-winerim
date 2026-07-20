@@ -5651,12 +5651,20 @@ _Última actualización: 2026-07-20 14:11 CEST_
 - No hay tareas activas ni alertas abiertas. El legacy nunca se modifico.
 - La ultima validacion del token Winerim, el 14/07, mostro 302 vinos activos
   con algun precio; no se ha publicado ninguno en Agora.
+- Diser Tic confirma por escrito que el Modulo de Servicios de Integracion,
+  la API HTTP y `/api/import/` estan activos en Agora.
+- El SAT indica como causa probable que el router haya asignado otra IP local
+  al servidor y la redireccion siga apuntando a la IP anterior. Tambien
+  confirma que no administra el router, que depende del operador.
 
 ### Decisiones
 - Mantener Tintorera desactivada y sin escrituras hasta recuperar una lectura
   fresh completa de Agora.
 - No confundir este estado con una integracion caida: el onboarding no llego a
   superar la fase de conectividad.
+- Escalar la siguiente accion al cliente/operador que tenga acceso al router,
+  con el SAT de Agora presente para validar la IP local y la escucha del
+  servicio. Una llamada sin acceso al router no puede resolver el NAT.
 
 ### Hipotesis
 - El servidor Agora puede estar apagado o el servicio/API detenido; tambien
@@ -5666,5 +5674,7 @@ _Última actualización: 2026-07-20 14:11 CEST_
 ### Tareas pendientes inmediatas
 - SAT debe verificar servidor, API HTTP, escucha local en 8984, IP local fija,
   NAT TCP, firewall y acceso desde una red externa.
+- Cliente/operador: comparar la IPv4 local actual del servidor con el destino
+  de la regla NAT, corregirla y fijar una reserva DHCP o IP estatica.
 - Cuando responda: snapshot read-only, comparacion de legacy, formatos no
   estandar y activacion controlada con legacy visible.

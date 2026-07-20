@@ -187,7 +187,12 @@
   segundos desde Lovable Cloud y auditoria `NO_MASTER_DATA`.
 - [x] Documentar diagnostico, checklist SAT, activacion y rollback en `docs/integrations/TINTORERA_AGORA_READINESS_2026-07-14.md`.
 - [ ] SAT: confirmar servidor Agora encendido, modulo/API HTTP activos y servicio escuchando en `8984`.
-- [ ] SAT: revisar IP local fija/reserva DHCP, NAT TCP `8984`, firewall y DDNS.
+- [x] SAT: confirmar Modulo de Servicios de Integracion, API HTTP y
+  `/api/import/` activos.
+- [ ] SAT: confirmar la IPv4 local actual y que Agora responde en
+  `http://IP_LOCAL:8984/api/` dentro de la red del restaurante.
+- [ ] Cliente/operador del router: corregir NAT TCP `8984`, firewall y DDNS;
+  fijar la IP del servidor mediante reserva DHCP o configuracion estatica.
 - [ ] Cuando responda: leer `/api/`, Families, Products, IVA, listas, preparacion, almacenes, centros e Invoices.
 - [ ] Guardar snapshot y clasificar familias/productos legacy antes de cualquier escritura.
 - [ ] Comparar los 302 vinos Winerim con Agora y revisar coincidencias/duplicados.
