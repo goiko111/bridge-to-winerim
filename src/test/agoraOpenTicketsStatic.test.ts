@@ -37,6 +37,17 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     );
   });
 
+  it("advances the closed-day cursor across successfully scanned days without invoices", () => {
+    const autoSyncStart = agoraProxySource.indexOf('if (action === "auto-sync-sales")');
+    const autoSyncEnd = agoraProxySource.indexOf('// ── RESOLVE EXISTING SALES LINES', autoSyncStart);
+    const autoSyncSource = agoraProxySource.slice(autoSyncStart, autoSyncEnd);
+
+    expect(autoSyncSource).toContain("lastSuccessfullyScannedDay = dayStr");
+    expect(autoSyncSource).toContain("last_business_day_synced: cursorAdvancedTo");
+    expect(autoSyncSource).toContain('reason: "closed_day_scan_failed"');
+    expect(autoSyncSource).not.toContain("catch (err) { /* skip */ }");
+  });
+
   it("does not require the legacy serve_by_glass flag when Winerim has a glass price", () => {
     expect(agoraProxySource).toContain("serve_by_glass_not_enabled_but_glass_price_present");
     expect(agoraProxySource).not.toContain('reason: "glass_skipped:serve_by_glass_not_enabled"');

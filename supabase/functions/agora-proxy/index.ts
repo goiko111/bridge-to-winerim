@@ -5497,6 +5497,8 @@ serve(async (req) => {
       const pendingDays: string[] = [];
       const current = new Date(startDate);
       let scanAborted = false;
+      let scanBlockedDay: string | null = null;
+      let lastSuccessfullyScannedDay: string | null = null;
       while (current <= yesterday && pendingDays.length < 30) {
         if (Date.now() - actionStart > ACTION_DEADLINE_MS) { scanAborted = true; break; }
         const dayStr = current.toISOString().split("T")[0];
@@ -5507,16 +5509,33 @@ serve(async (req) => {
             const rawData = await res.json();
             const invoices = parseInvoices(rawData);
             if (invoices.length > 0) pendingDays.push(dayStr);
+            lastSuccessfullyScannedDay = dayStr;
           } else {
             await res.text();
+            scanBlockedDay = dayStr;
+            break;
           }
-        } catch (err) { /* skip */ }
+        } catch (err) {
+          scanBlockedDay = dayStr;
+          break;
+        }
         current.setDate(current.getDate() + 1);
       }
       if (scanAborted) {
         return new Response(
           JSON.stringify({ success: false, aborted: true, reason: "scan_deadline_exceeded", message: "Agora server unresponsive; aborted before timeout. Will retry next cron." }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (scanBlockedDay && pendingDays.length === 0) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            reason: "closed_day_scan_failed",
+            blockedDay: scanBlockedDay,
+            message: `Agora sales scan failed for ${scanBlockedDay}. Cursor was not advanced and cron will retry.`,
+          }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -5535,8 +5554,14 @@ serve(async (req) => {
           }
         }
 
+        const now = new Date().toISOString();
+        const cursorAdvancedTo = lastSuccessfullyScannedDay && (!lastSynced || lastSuccessfullyScannedDay > lastSynced)
+          ? lastSuccessfullyScannedDay
+          : null;
         await supabase.from("pos_connections")
-          .update({ last_sync_at: new Date().toISOString() })
+          .update(cursorAdvancedTo
+            ? { last_business_day_synced: cursorAdvancedTo, last_sync_at: now }
+            : { last_sync_at: now })
           .eq("id", connectionId);
 
         return new Response(
@@ -5548,6 +5573,7 @@ serve(async (req) => {
             resolvedLines: 0,
             unresolvedLines: 0,
             stockSync: stockSyncResult,
+            cursorAdvancedTo,
             message: stockSyncResult?.checkedDays
               ? "No pending sales days; checked saved days for stock catch-up"
               : "No pending days to sync",
@@ -5721,10 +5747,20 @@ serve(async (req) => {
       }
 
       const stockSyncResult = stockSyncTotals.checkedDays > 0 || stockSyncTotals.failed > 0 ? stockSyncTotals : null;
+      let cursorAdvancedTo: string | null = null;
+      if (!processingAborted && !stockBlockedDay && !saveBlockedDay && lastSuccessfullyScannedDay) {
+        const latestProcessedDay = syncedDays.at(-1) || lastSynced;
+        if (!latestProcessedDay || lastSuccessfullyScannedDay > latestProcessedDay) {
+          cursorAdvancedTo = lastSuccessfullyScannedDay;
+          await supabase.from("pos_connections")
+            .update({ last_business_day_synced: cursorAdvancedTo, last_sync_at: new Date().toISOString() })
+            .eq("id", connectionId);
+        }
+      }
 
       return new Response(
         JSON.stringify({
-          success: !processingAborted && !stockBlockedDay && !saveBlockedDay,
+          success: !processingAborted && !scanBlockedDay && !stockBlockedDay && !saveBlockedDay,
           daysSynced: syncedDays.length,
           pendingDaysFound: pendingDays.length,
           syncedDays,
@@ -5733,6 +5769,8 @@ serve(async (req) => {
           resolvedLines,
           unresolvedLines,
           stockSync: stockSyncResult,
+          cursorAdvancedTo,
+          blockedByScanFailure: scanBlockedDay,
           blockedByStockFailure: stockBlockedDay,
           blockedBySaveFailure: saveBlockedDay,
           aborted: processingAborted,
@@ -5740,6 +5778,8 @@ serve(async (req) => {
             ? `Stock sync failed for ${stockBlockedDay}. Cursor was not advanced and cron will retry.`
             : saveBlockedDay
               ? `Sales save failed for ${saveBlockedDay}. Cursor was not advanced and cron will retry.`
+              : scanBlockedDay
+                ? `Agora sales scan failed for ${scanBlockedDay}. Cursor was advanced only through successfully checked days.`
               : processingAborted
                 ? "Processing deadline reached. Cursor was advanced only through completed days."
                 : undefined,
