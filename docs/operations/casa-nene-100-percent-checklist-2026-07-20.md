@@ -18,7 +18,7 @@ Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
 | Familias Winerim | PASS | Ocho familias creadas y visibles; contienen exactamente los `317` formatos elegibles. |
 | Legacy | PASS | `VINO`, `VINO FUERA DE CARTA`, `ESPUMOSO`, `BLANCO`, `TINTO` y `DULCES` estan ocultas. Sus `148` productos no son vendibles. |
 | Retirados | PASS | `30` formatos Winerim inactivos o sin precio siguen presentes como trazabilidad, pero no son vendibles. Tracking corregido a `30 HIDDEN`. |
-| Copas | NOT_APPLICABLE | Winerim no expone ninguna copa activa con precio. `COPAS WINERIM` existe y esta vacia. |
+| Copas | PENDING_DEPLOYMENT | Casa Nene ha solicitado mantener 31 copas ocultas en la carta publica pero vendibles en Agora. La politica por conexion y los 31 precios estan configurados; falta redesplegar `agora-proxy`, publicar y verificar. |
 | Captura intradia | PASS | Invoices y tickets se consultan cada `5 min`; edad minima de linea `2 min`. Ultimo ciclo correcto del `20/07`. |
 | Cierre diario | PASS | Cursor en `2026-07-19`; el dia en curso se consulta sin avanzar el cursor. |
 | Hora de venta | PASS | Las tarjetas TPV recientes conservan la hora de la linea Agora. |
@@ -39,7 +39,7 @@ Estado: `LIVE_AUTOMATIC / PENDING_HISTORY_CLEANUP_APPROVAL`
 | FORTIFICADOS WINERIM | 1 | 1 | 0 |
 | DULCE WINERIM | 3 | 3 | 0 |
 | MAGNUM WINERIM | 15 | 14 | 1 |
-| COPAS WINERIM | 0 | 0 | 0 |
+| COPAS WINERIM | 0 antes del despliegue | 0 antes del despliegue | 31 excepciones configuradas |
 
 ## Conciliacion de la incidencia antigua
 
@@ -101,3 +101,15 @@ Tras autorizacion:
    tarjeta.
 5. Mantener `LIVE_AUTOMATIC`; firmar `100%_SIGNED_OFF` solo con la limpieza y
    una venta real de magnum si el cliente utiliza ese formato.
+
+## Excepcion de copas internas solicitada el 20/07
+
+Casa Nene confirma que necesita 31 botones de copa en Agora para el equipo,
+pero no quiere mostrar esas copas al cliente en la carta publica de Winerim.
+La lista, precios, guardas y rollback estan en
+`docs/operations/casa-nene-hidden-glass-policy-2026-07-20.md`.
+
+La configuracion ya contiene las 31 excepciones. No se ha escrito en Agora
+porque la sonda posterior al commit `e10e1ac` confirmo que Lovable Cloud sigue
+ejecutando el proxy anterior. Tras el redeploy se publicaran solo las variantes
+`GLASS`; botella y magnum inactivos continuaran ocultos.

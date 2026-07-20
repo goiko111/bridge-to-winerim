@@ -2044,3 +2044,39 @@ ventas, stock, catalogo ni el runtime de las Edge Functions.
 
 **Alternativa descartada:** seguir interpretando los nulos como ausencia de
 datos reales, porque podia generar correcciones operativas innecesarias.
+
+## 2026-07-20 - Casa Nene separa visibilidad publica y venta interna por copa
+
+**Decision:** permitir exclusivamente en Casa Nene que una variante `GLASS`
+configurada siga vendible en Agora aunque la ficha este inactiva en la carta
+publica de Winerim.
+
+**Razon:** el restaurante necesita consultar y vender las copas desde el TPV,
+pero no quiere ofrecerlas al cliente en la carta publica. Son dos superficies
+con objetivos distintos y no deben compartir obligatoriamente el mismo flag.
+
+**Riesgos controlados:** la excepcion exige flag por conexion, lista explicita
+y precio positivo; no habilita botella ni magnum, no cambia Winerim y esta
+cubierta en generacion XML, cola, verificacion, auditoria y reconciliacion. La
+lista de 31 precios y el rollback quedan documentados.
+
+**Alternativa descartada:** activar las 31 fichas publicas o relajar globalmente
+el bloqueo de vinos inactivos. La primera contradice la operativa comercial de
+Casa Nene y la segunda podria volver vendibles productos retirados de otros
+restaurantes.
+
+## 2026-07-20 - No publicar copas con un runtime anterior
+
+**Decision:** no encolar las 31 copas hasta que Lovable Cloud ejecute el commit
+`e10e1ac` y una sonda dry-run reconozca la excepcion.
+
+**Razon:** tras guardar la configuracion, el runtime devolvio `no wines found`
+para una referencia ausente del cache, demostrando que seguia desplegada la
+version anterior.
+
+**Riesgos controlados:** la configuracion nueva es inerte para el runtime
+anterior; Agora no cambia y no se crean tareas que puedan procesarse con una
+logica incompleta.
+
+**Alternativa descartada:** encolar primero y confiar en que el despliegue se
+produzca antes del dispatcher. Ese orden introduce una carrera evitable.

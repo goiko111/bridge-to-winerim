@@ -1480,3 +1480,25 @@
 - [ ] Observar dos ciclos de cinco minutos sin reaparicion de tarjetas.
 - [ ] Registrar una venta real de magnum solo si Casa Nene utiliza ese formato.
 - [ ] Firmar `100%_SIGNED_OFF` solo despues de la limpieza y conciliacion final.
+
+## Casa Nene - 31 copas internas ocultas en Winerim
+
+- [x] Inventariar las `31` fichas ocultas y capturar nombre, tipo y precio de
+  copa desde el editor de Casa Nene.
+- [x] Implementar la excepcion por conexion y solo para `GLASS` en generacion,
+  cola, auto-push, auditoria, verificacion y reconciliacion.
+- [x] Ejecutar TypeScript, bundle, build y suite completa (`104/104`).
+- [x] Publicar commit `e10e1ac` y activar la lista de 31 variantes en la
+  configuracion de Casa Nene, preservando todas las claves anteriores.
+- [x] Verificar que no se ha encolado ni escrito nada con el runtime anterior.
+- [ ] Redesplegar unicamente `agora-proxy` desde `e10e1ac`.
+- [ ] Repetir dry-run con `270679` y exigir `would_queue:GLASS`.
+- [ ] Ejecutar auditoria fresh y revisar las 31 diferencias antes de escribir.
+- [ ] Publicar solo las 31 variantes `GLASS` en lotes pequenos y verificar cada
+  lote; exigir familia `901954`, precio exacto y vendibilidad.
+- [ ] Exigir `31 MATCH`, `31 VERIFIED`, cero tareas activas/fallidas y carta
+  publica Winerim todavia en `0/31`.
+- [ ] Pedir una venta real de copa y comprobar historial `TPV`, hora, variante,
+  idempotencia y stock segun configuracion.
+- [ ] Abrir mejora de Winerim API v2 para exponer variantes ocultas a la
+  integracion sin hacerlas visibles al cliente final.

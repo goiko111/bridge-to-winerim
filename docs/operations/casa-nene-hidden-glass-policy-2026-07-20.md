@@ -4,6 +4,8 @@ Fecha: `2026-07-20`
 
 Conexion: `e3cb6dbb-3474-4926-b740-706fbd0ef7e0`
 
+Estado: `READY_FOR_RUNTIME_DEPLOY / NO_CATALOG_WRITES_YET`
+
 ## Objetivo
 
 Casa Nene quiere mantener estas copas ocultas en la carta publica de Winerim,
@@ -79,6 +81,13 @@ La conexion utiliza:
 
 El verificador no debe reclasificar estas copas como retiradas. Cualquier otro
 formato inactivo sigue quedando oculto.
+
+Codigo publicado en `main`: commit `e10e1ac`.
+
+La configuracion de conexion se activo a `2026-07-20T14:02:48.734Z` con 31
+variantes. La sonda segura posterior devolvio `no wines found`, evidencia de
+que Lovable Cloud seguia ejecutando el proxy anterior. No se encolo ningun
+producto y Agora permanece sin cambios hasta redesplegar `agora-proxy`.
 
 ## Verificacion exigida
 
