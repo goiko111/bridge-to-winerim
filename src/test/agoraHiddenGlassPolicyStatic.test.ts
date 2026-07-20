@@ -31,6 +31,13 @@ describe("Agora hidden public-menu glass policy", () => {
     expect(proxySource).toContain("const configuredHiddenGlass =");
     expect(proxySource).toContain("const hiddenGlassConfig = configuredHiddenGlassVariants(connection)");
     expect(proxySource).toContain("!configuredHiddenGlass && (");
+    expect(proxySource).toContain("const allowOnlyConfiguredGlass = wine.is_active === false &&");
+    expect(proxySource).toContain(
+      "!allowOnlyConfiguredGlass && Number(extractBottleSalePrice(wine) || 0) > 0",
+    );
+    expect(proxySource).toContain(
+      "!allowOnlyConfiguredGlass && Number(wine.magnum_sale_price || 0) > 0",
+    );
   });
 
   it("keeps controlled reconciliation aligned with the same exception", () => {

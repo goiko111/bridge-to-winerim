@@ -11013,13 +11013,15 @@ ${costPricesXml}
           expectedOwnershipByProductId.set(productId, owners);
         }
         const winerimWineId = String(wine.winerim_id || wine.id || "");
-        if (Number(extractBottleSalePrice(wine) || 0) > 0) {
+        const allowOnlyConfiguredGlass = wine.is_active === false &&
+          wine._agora_allow_inactive_glass === true;
+        if (!allowOnlyConfiguredGlass && Number(extractBottleSalePrice(wine) || 0) > 0) {
           expectedAuditValidationKeys.add(`${winerimWineId}:BOTTLE`);
         }
         if (Number(extractGlassSalePrice(wine) || 0) > 0) {
           expectedAuditValidationKeys.add(`${winerimWineId}:GLASS`);
         }
-        if (Number(wine.magnum_sale_price || 0) > 0) {
+        if (!allowOnlyConfiguredGlass && Number(wine.magnum_sale_price || 0) > 0) {
           expectedAuditValidationKeys.add(`${winerimWineId}:MAGNUM`);
         }
       }
