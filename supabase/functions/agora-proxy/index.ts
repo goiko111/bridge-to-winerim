@@ -2682,19 +2682,29 @@ async function restoreStaleOpenTicketStock(
   }
   const staleEventIds = Array.from(eventById.keys());
 
-  const { data: stockRows } = await supabase
-    .from("stock_sync_log")
-    .select("id, sales_event_id, sales_line_item_id, provider_product_id, winerim_product_id, product_name, quantity, variant, stock_id")
-    .eq("connection_id", connectionId)
-    .eq("status", "SUCCESS")
-    .in("sales_event_id", staleEventIds);
+  const stockRows: any[] = [];
+  for (let i = 0; i < staleEventIds.length; i += 100) {
+    const eventChunk = staleEventIds.slice(i, i + 100);
+    const { data: chunkRows, error: chunkError } = await supabase
+      .from("stock_sync_log")
+      .select("id, sales_event_id, sales_line_item_id, provider_product_id, winerim_product_id, product_name, quantity, variant, stock_id")
+      .eq("connection_id", connectionId)
+      .eq("status", "SUCCESS")
+      .in("sales_event_id", eventChunk);
+    if (chunkError) {
+      result.failed++;
+      result.errors.push(`stock_sync_log lookup failed: ${chunkError.message}`);
+      return result;
+    }
+    stockRows.push(...(chunkRows || []));
+  }
 
   const positiveRows: any[] = [];
   const provisionalNetByKey = new Map<string, number>();
   const eventKeys = new Map<string, Set<string>>();
   const eventPositiveQty = new Map<string, number>();
 
-  for (const row of (stockRows || []) as any[]) {
+  for (const row of stockRows) {
     const wineId = String(row.winerim_product_id || "");
     const event = eventById.get(String(row.sales_event_id || ""));
     const variant = normalizeWinerimVariant(row.variant);

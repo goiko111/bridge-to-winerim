@@ -18,4 +18,10 @@ describe("Agora mapped sales precedence", () => {
     expect(source.match(/is_wine_candidate: effectiveWineCandidate/g)).toHaveLength(4);
     expect(source).not.toMatch(/is_wine_candidate:\s*wr\.candidate/);
   });
+
+  it("chunks stale open-ticket stock lookups and surfaces lookup failures", () => {
+    expect(source).toContain("for (let i = 0; i < staleEventIds.length; i += 100)");
+    expect(source).toContain("stock_sync_log lookup failed:");
+    expect(source).not.toContain('.in("sales_event_id", staleEventIds)');
+  });
 });
