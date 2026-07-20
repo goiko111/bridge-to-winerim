@@ -767,6 +767,10 @@ function agoraNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isResolvedWineCandidate(winerimProductId: unknown, heuristicCandidate: boolean): boolean {
+  return Boolean(String(winerimProductId || "").trim()) || heuristicCandidate;
+}
+
 function buildAgoraOpenTicketDocId(ticket: Record<string, unknown>, day: string, ticketIndex: number): string {
   const candidates = [
     ticket.GlobalId,
@@ -4684,21 +4688,22 @@ serve(async (req) => {
           const resolution = resolutionMap.get(productId);
           const winerimProductId = resolution?.winerim_wine_id || null;
           const isResolved = !!winerimProductId;
+          const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
           const oldEnoughForStock = !stockSyncEnabled || isAgoraTimestampOldEnough(
             line.CreationDate,
             minLineAgeMinutes,
             timeZone,
           );
-          const stockCandidate = wr.candidate && oldEnoughForStock && stockDayAllowed;
+          const stockCandidate = effectiveWineCandidate && oldEnoughForStock && stockDayAllowed;
           if (isResolved) {
             resolvedLines++;
           } else if (wr.candidate) {
             unresolvedLines++;
           }
-          if (isResolved && wr.candidate && !oldEnoughForStock) {
+          if (isResolved && effectiveWineCandidate && !oldEnoughForStock) {
             stockDeferredLines++;
           }
-          if (isResolved && wr.candidate && oldEnoughForStock && !stockDayAllowed) {
+          if (isResolved && effectiveWineCandidate && oldEnoughForStock && !stockDayAllowed) {
             staleDayStockSkippedLines++;
           }
 
@@ -5028,6 +5033,7 @@ serve(async (req) => {
               const resolution = resolutionMap.get(productId);
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
+              const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
               if (isResolved) {
                 resolvedLines++;
                 dayResolvedLines++;
@@ -5047,7 +5053,7 @@ serve(async (req) => {
                 vat_rate: Number(line.VatRate || 0),
                 provider_sold_at: providerSoldAt.value,
                 provider_sold_at_source: providerSoldAt.source,
-                is_wine_candidate: wr.candidate,
+                is_wine_candidate: effectiveWineCandidate,
                 winerim_product_id: winerimProductId,
                 mapped: isResolved,
               });
@@ -5203,6 +5209,7 @@ serve(async (req) => {
             const resolution = resolutionMap.get(productId);
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
+            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
             if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
 
             lineData.push({
@@ -5211,7 +5218,7 @@ serve(async (req) => {
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               provider_sold_at: providerSoldAt.value,
               provider_sold_at_source: providerSoldAt.source,
-              vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
+              vat_rate: Number(line.VatRate || 0), is_wine_candidate: effectiveWineCandidate,
               winerim_product_id: winerimProductId,
               mapped: isResolved,
             });
@@ -5363,6 +5370,7 @@ serve(async (req) => {
             const resolution = resolutionMap.get(productId);
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
+            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
             if (isResolved) {
               resolvedLines++;
             } else if (wr.candidate) {
@@ -5380,7 +5388,7 @@ serve(async (req) => {
               vat_rate: Number(line.VatRate || 0),
               provider_sold_at: providerSoldAt.value,
               provider_sold_at_source: providerSoldAt.source,
-              is_wine_candidate: wr.candidate,
+              is_wine_candidate: effectiveWineCandidate,
               winerim_product_id: winerimProductId,
               mapped: isResolved,
             });
@@ -5655,6 +5663,7 @@ serve(async (req) => {
               const resolution = resolutionMap.get(productId);
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
+              const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
               if (isResolved) {
                 resolvedLines++;
                 dayResolvedLines++;
@@ -5668,7 +5677,7 @@ serve(async (req) => {
                 quantity: qty, unit_price: uP, total_amount: lineTotal,
                 provider_sold_at: providerSoldAt.value,
                 provider_sold_at_source: providerSoldAt.source,
-                vat_rate: Number(line.VatRate || 0), is_wine_candidate: wr.candidate,
+                vat_rate: Number(line.VatRate || 0), is_wine_candidate: effectiveWineCandidate,
                 winerim_product_id: winerimProductId,
                 mapped: isResolved,
               });
