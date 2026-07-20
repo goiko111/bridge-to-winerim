@@ -51,6 +51,12 @@ crear estos mappings.
 4. El guard expira a los `30 min` por defecto y puede configurarse mediante
    `open_tickets_active_cursor_guard_minutes`.
 
+El commit `acaa361` esta publicado en `main`. Una sonda posterior al push
+devolvio `200`, siete tickets y 72 lineas, pero no incluyo `businessDays`; esto
+demuestra que el runtime sigue en la version anterior. El CLI local no dispone
+de token de despliegue y no habia navegador autenticado disponible, por lo que
+no se declara el redeploy como realizado.
+
 ## Incidencia Winerim API
 
 La llamada historica uso los stockIds de copa `232231`, `232130`, `232129`,

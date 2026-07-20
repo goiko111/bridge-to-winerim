@@ -5852,6 +5852,9 @@ _Última actualización: 2026-07-20 17:38 CEST_
 - Se preparo un parche para priorizar tickets abiertos sobre los procesos
   pesados y para impedir que el cursor diario salte un ticket que cierre tarde.
   Pasan `22` tests dirigidos, TypeScript y build.
+- El parche esta publicado en `main` como `acaa361`, pero una sonda viva sigue
+  sin devolver `businessDays`; produccion aun ejecuta el runtime anterior. El
+  CLI local no tiene token de despliegue y no habia sesion web autenticada.
 - Se recuperaron historicamente `9` lineas / `16` copas con segunda pasada
   idempotente y cero cambios de stock.
 - Winerim `/sales/import` acepto los stockIds de copa, pero el ERP representa
