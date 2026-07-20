@@ -1415,8 +1415,10 @@
   ventas por ID exacto.
 - [x] Confirmar Ocean `113/113` y Finca `123/123`, sin cola ni alertas abiertas.
 - [ ] Ocean: canary real de botella y copa desde botones Winerim.
-- [ ] Finca: comprobar ajustes posteriores y restaurar la botella de Emilio
-  Moro descontada por la venta anulada.
+- [x] Finca: comprobar ajustes posteriores y restaurar Emilio Moro de `82` a
+  `83` mediante `No, solo ajuste`, sin crear otra venta.
+- [x] Finca: repetir catalogo fresh, conexion, tickets, cola, alertas e
+  idempotencia despues de la correccion.
 - [ ] Finca: cerrar soporte de anulacion definitiva y repetir canary real de
   botella y copa sin cancelacion.
 - [ ] Verificar ambos canaries en ERP Winerim con hora, variante, stock e

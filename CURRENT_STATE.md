@@ -5765,3 +5765,38 @@ _Última actualización: 2026-07-20 17:01 CEST_
   stock e idempotencia durante dos ciclos.
 - Solicitar a Winerim API una vista de integracion para variantes ocultas, de
   modo que futuros cambios de precio no dependan de una captura manual.
+
+## 2026-07-20 - Finca Eslava queda tecnicamente sana y pendiente de canary real
+
+### Hechos
+- Conexion Agora y tickets abiertos responden HTTP 200; breaker cerrado,
+  frecuencia cinco minutos, intradia y stock intradia activos.
+- Catalogo fresh `123/123 MATCH`, `123 VERIFIED`, `123` mappings confirmados,
+  cero tareas activas/fallidas y cero alertas abiertas.
+- La auditoria de siete dias no detecta claves idempotentes exactas repetidas.
+- La factura `T-27681` de Emilio Moro (+1) fue anulada por `TD-930` (-1), por
+  lo que Agora netea cero. El middleware habia dejado el stock en `82`.
+- Tras excluir ventas o ajustes posteriores del mismo vino, se restauro
+  `stockId 328484` de `82` a `83` mediante `No, solo ajuste`; la API confirma
+  `83` y no se creo una venta nueva.
+- El historial Winerim conserva la tarjeta TPV positiva. La conciliacion sigue
+  en `WARN` porque el runtime no dispone de una anulacion idempotente de una
+  venta definitiva ya registrada.
+- Checklist y rollback:
+  `docs/operations/finca-eslava-100-percent-checklist-2026-07-20.md`.
+
+### Decisiones
+- Mantener Finca Eslava en `LIVE_PENDING_SALE_CANARY`, sin firmar el 100 % por
+  catalogo sano solamente.
+- No compensar devoluciones definitivas mediante `PUT /stock`; cualquier
+  correccion manual debe usar `No, solo ajuste` y quedar trazada.
+- Mantener legacy visible hasta validar una botella y una copa reales y recibir
+  la decision del cliente.
+
+### Tareas pendientes inmediatas
+- Pedir una venta real no anulada de botella y otra de copa desde botones
+  Winerim.
+- Verificar ambas en el ERP en menos de cinco minutos, con hora, variante,
+  stock activo/inactivo e idempotencia durante dos ciclos.
+- Disenar con Winerim API una anulacion idempotente de historial para
+  devoluciones de facturas definitivas.

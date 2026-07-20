@@ -2100,3 +2100,22 @@ productos `GLASS`.
 **Alternativa descartada:** una importacion masiva sin verificaciones
 intermedias o reactivar las fichas en la carta publica. Ambas opciones amplian
 el impacto y la segunda contradice la peticion comercial del cliente.
+
+## 2026-07-20 - Finca Eslava: corregir inventario sin inventar una venta
+
+**Decision:** restaurar Emilio Moro de `82` a `83` mediante el ajuste manual
+`No, solo ajuste`, despues de confirmar que la factura y su devolucion netean
+cero y que no hubo otra venta posterior del producto.
+
+**Razon:** la venta positiva ya habia creado una tarjeta TPV y descontado una
+unidad; compensarla mediante `PUT /stock` habria creado otra venta y falseado
+el historial. El ajuste sin venta repara exclusivamente el inventario.
+
+**Riesgos controlados:** se guardaron factura, devolucion, stockId, stock antes
+y despues y la instruccion de rollback. La lectura posterior confirma stock
+`83`, catalogo `123/123 MATCH`, cola vacia e idempotencia sin duplicados.
+
+**Alternativa descartada:** considerar la integracion al 100 % o borrar la
+tarjeta TPV sin un endpoint de anulacion idempotente. El historial conserva una
+diferencia conocida y Finca sigue pendiente de un canary real de botella y
+copa.
