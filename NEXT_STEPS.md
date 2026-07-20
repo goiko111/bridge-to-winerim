@@ -1297,3 +1297,158 @@
 - [ ] Revisar los ocho candidatos de huella ERP idéntica antes de cualquier anulación: Bejeque `1`, Cienvinos `3`, Sa Pedrera `3`, Taberna de Elia `1`.
 - [ ] Mejorar mapping de tickets abiertos donde la sonda sigue dejando muchas líneas sin resolver; un flag activo no basta para garantizar cobertura intradía.
 - [ ] Añadir la ejecución del auditor a la checklist posterior a despliegues de `agora-proxy` y migraciones que afecten `sales_line_items` o `stock_sync_log`.
+
+## P0 - Hallazgos auditoria fresh 2026-07-17
+
+- [ ] PurOsushi: actualizar solo las listas `8` y `14` de `709944 / B Boissonneuse`; conservar snapshot y exigir `351/351` fresh.
+- [ ] Qtomas: ejecutar un canary de una sola referencia; no repetir la evaluacion completa de `1430` productos. Activar flags solo tras PASS.
+- [ ] Sa Vida: observar una alta o cambio real automatico durante dos ciclos y medir propagacion antes de activar `auto_push_verified_ready`.
+- [ ] De la O: confirmar que no reaparece `No route to host`; no reencolar porque el catalogo actual ya esta `87/87`.
+- [ ] Luruna: conservar evidencia y cerrar las cuatro tareas `BLOCKED` redundantes sin reimportar los productos ya exactos.
+- [ ] Mantener la auditoria programada en `READ_ONLY`; cualquier correccion debe ejecutarse como operacion separada con snapshot y verificacion fresh.
+
+## P0 - Hallazgos auditoria fresh 2026-07-18
+
+- [ ] PurOsushi: corregir solo `PRICE_LIST_8` y `PRICE_LIST_14` de
+  `709944 / B Boissonneuse` y `709986 / B Keller Kirchspiel Riesling GG`;
+  conservar snapshot y exigir `357/357` fresh.
+- [ ] Sa Vida: corregir diferencialmente `773705`, `848737`, `649038` y
+  `849196`; no lanzar reconciliacion masiva.
+- [ ] Sa Vida: ocultar las copas `925044 / Kir Yianni Paranga White` y
+  `925054 / Microbio Circustancial`, ya sin precio de copa, y verificar que
+  no quedan retirados vendibles.
+- [ ] Sa Vida: ejecutar un canary automatico antes de valorar
+  `auto_push_verified_ready=true`.
+- [ ] Qtomas: probar alta/cambio de una sola referencia y activar los cuatro
+  flags de catalogo solo tras propagacion, idempotencia y lectura fresh.
+- [ ] Chiquilla: observar si reaparece `POS_DOWN`; no reencolar porque queda
+  `77/77` exacto.
+- [ ] De la O: observar si reaparece `No route to host`; no reencolar porque
+  queda `86/86` exacto y 261569 ya esta verificado.
+- [x] Confirmar las `22` colas activas en `QUEUED/RUNNING=0` y que no hay
+  cambios legitimamente dentro de la ventana de cinco minutos.
+- [x] Auditar retirados con elegibilidad actual, master fresh y ownership
+  demostrado; no usar tracking `NOT_PUSHED` para ocultar productos.
+
+## P0 - Hallazgos auditoria fresh 2026-07-20
+
+- [ ] De la O: recuperar ruta externa, obtener master fresh y reconciliar la
+  unica tarea activa; no procesarla a ciegas.
+- [ ] Jardi: recuperar TPV/DDNS/NAT/puerto, obtener master fresh y reconciliar
+  los `10` upserts con unas `31,8 h` de antiguedad.
+- [ ] PurOsushi: corregir exclusivamente listas `8` y `14` de `709944` y
+  `709986`; conservar snapshot y exigir `357/357` fresh.
+- [ ] Qtomas: ejecutar canary de una referencia y activar catalog/create/update/
+  verified-ready solo despues de propagacion, idempotencia y cola cero.
+- [ ] Sa Vida: guardar snapshot e investigar por que `23` productos con
+  tracking `HIDDEN` volvieron a estar vendibles.
+- [ ] Sa Vida: corregir `649227`, `773705`, `848737`, `649038` y `849196`, y
+  ocultar diferencialmente los `25` formatos retirados demostrados.
+- [ ] Sa Vida: exigir `1540/1540`, cero retirados vendibles y canary automatico
+  antes de activar `auto_push_verified_ready`.
+- [ ] Chiquilla: observar recurrencia de abortos; no reencolar porque queda
+  `75/75`, cola cero y `34` formatos verificados.
+- [x] Confirmar que no hubo altas reales ni tareas de menos de cinco minutos;
+  no declarar una reverificacion como tiempo de propagacion.
+
+## Katsu Izakaya - cierre 100% tecnico 2026-07-20
+
+- [x] Catalogo fresh `157/157`, tracking `157 VERIFIED / 35 HIDDEN`, cola y
+  fallos recientes a cero.
+- [x] Confirmar estructura `VINOS` / `COPAS DE VINOS`, ocho familias Winerim y
+  cero productos directos legacy vendibles.
+- [x] Confirmar retirados: `35 HIDDEN`, ninguno vendible; los `18 REJECTED`
+  antiguos pertenecen a vinos inactivos y ocultos.
+- [x] Conciliar siete dias contra el ERP Winerim: cero diferencias, duplicados
+  o stockIds ausentes.
+- [x] Validar botella, copa, stock activo y `sales_only_stock_inactive` con
+  ventas reales.
+- [x] Corregir el scope de `providerConfig`, recuperar la venta del 17/07 y
+  demostrar segunda ejecucion no-op.
+- [x] Avanzar el cursor sobre dias vacios comprobados, dejarlo en 19/07 y cerrar
+  automaticamente `sales_stale`.
+- [ ] Obtener confirmacion visual del cliente tras refrescar la comandera.
+- [ ] Registrar una venta real de magnum solo si Katsu usa ese formato.
+- [ ] Usar este checklist como plantilla para la siguiente conexion, sin
+  reutilizar IDs, familias ni supuestos propios de Katsu.
+- [x] Conciliar sabado 18 y domingo 19 contra facturas fresh y ERP: `3/3`
+  ventas el sabado, `0/0` el domingo y cero ventas legacy.
+- [ ] Confirmar visualmente en una comandera que un producto legacy conocido
+  no aparece como seleccionable en el buscador de venta.
+
+## Configuracion Codex del middleware 2026-07-20
+
+- [x] Fijar Sol `high` + Fast mode para el orquestador del repositorio.
+- [x] Crear roles `agora-operator`, `agora-auditor` y `agora-comms` con modelos
+  acordes al riesgo.
+- [x] Limitar concurrencia a seis agentes directos y desactivar fan-out
+  recursivo mediante `max_depth=1`.
+- [x] Validar sintaxis con `--strict-config` y confirmar features activas.
+- [ ] Confirmar carga visual de modelo y roles al abrir una nueva tarea desde
+  la raiz `bridge-to-winerim-release`.
+- [ ] Medir la primera auditoria Terra y comparar latencia con el flujo previo.
+
+## Katsu Izakaya - sake 17 y 18 de julio
+
+- [x] Leer facturas frescas de Agora de ambos dias.
+- [x] Netear unidades por producto y revisar anulaciones o lineas negativas.
+- [x] Documentar `3` unidades / `67,00 EUR` el viernes y `2` unidades /
+  `28,00 EUR` el sabado.
+
+## Katsu Izakaya - comida 17 y 18 de julio
+
+- [x] Leer la familia `CARTA` en las facturas frescas de ambos dias.
+- [x] Separar bebidas, vinos, sake y cafes.
+- [x] Aplicar la devolucion del sabado: `-4` unidades / `-43,75 EUR`.
+- [x] Documentar el desglose completo por producto y los totales netos.
+
+## Ocean Club y Finca Eslava - cierre live
+
+- [x] Auditar conectividad, catalogo fresh, tracking, mappings, cola, alertas y
+  ventas por ID exacto.
+- [x] Confirmar Ocean `113/113` y Finca `123/123`, sin cola ni alertas abiertas.
+- [ ] Ocean: canary real de botella y copa desde botones Winerim.
+- [ ] Finca: comprobar ajustes posteriores y restaurar la botella de Emilio
+  Moro descontada por la venta anulada.
+- [ ] Finca: cerrar soporte de anulacion definitiva y repetir canary real de
+  botella y copa sin cancelacion.
+- [ ] Verificar ambos canaries en ERP Winerim con hora, variante, stock e
+  idempotencia antes de firmar el 100 %.
+
+## Ocean Club - historico sin stock 2026-04-16 a 2026-07-15
+
+- [x] Ejecutar dry-run de los `91` dias: `9.237` facturas, `81.798` lineas y
+  cero errores.
+- [x] Confirmar que el flujo previsto usa solo `sales/import`, IDs
+  deterministas y no modifica stock.
+- [ ] Validar los diez productos de nombre exacto (`231` filas / `238`
+  unidades) y su variante botella.
+- [ ] Crear y revisar aliases para coincidencias legacy, incluidos los tamanos
+  grandes; no usar fuzzy para escribir.
+- [ ] Obtener del cliente la referencia concreta asociada a cada tecla
+  generica `GLS ...`, o excluirla expresamente.
+- [ ] Guardar snapshot de stock y ejecutar un primer lote pequeno.
+- [ ] Verificar ERP, hora, cantidad y stock inalterado; repetir el lote y
+  exigir idempotencia antes de ampliar el backfill.
+
+## El Higueron - siguiente checklist tras Katsu
+
+- [x] Confirmar conectividad y API HTTP (`test` y tickets abiertos HTTP 200).
+- [x] Confirmar catalogo fresh `292/292`, ocho familias, cola y alertas a cero.
+- [x] Confirmar alta/cambio automatico con canary real en `61` segundos.
+- [x] Confirmar flags intradia e idempotencia sin claves exactas repetidas.
+- [x] Recuperar exactamente una vez la factura `14401` de `Domaine Vacheron
+  Sancerre Blanc`, conservando la hora real y stock final `6`.
+- [x] Reconciliar `La Vieille Ferme Rose Recolte`: retirar la venta provisional
+  cancelada y dejar stock `22` mediante `No, solo ajuste`.
+- [x] Endurecer `restore_stale_previous_days`: consultas en bloques de 100,
+  fallo cerrado y correccion trazada de Belondrade y Finca Rodma.
+- [x] Exigir delta cero entre cinco lineas cerradas y cinco tarjetas ERP,
+  sin duplicados, cola ni alertas abiertas.
+- [ ] Ejecutar una venta real de copa Winerim y comprobar ERP, hora local,
+  variante, stock e idempotencia durante dos ciclos.
+- [ ] Ejecutar un canary de stock inactivo si existe una referencia adecuada.
+- [ ] Observar tickets durante un servicio actual; la ultima sonda solo
+  devolvio tickets antiguos de los dias 15 y 17.
+- [ ] Confirmar con el cliente si se oculta legacy de forma reversible.
+- [ ] Firmar `100%_SIGNED_OFF` solo con conciliacion a cero.

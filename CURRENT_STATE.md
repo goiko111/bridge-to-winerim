@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-17 18:58 CEST_
+_Última actualización: 2026-07-20 10:55 CEST_
 
 ## Casa Esteban - staging bloqueado por túnel ConnectManager - 2026-07-17
 
@@ -5200,3 +5200,439 @@ _Última actualización: 2026-07-17 18:58 CEST_
 - Solicitar soporte Winerim para histórico de variantes inactivas si se desea
   completar las `118` unidades pendientes.
 - Mantener Hunters Sauvignon Blanc y Garnacha Tintorera en revisión manual.
+
+## 2026-07-17 - Auditoria diaria fresh de cambios Agora
+
+### Hechos
+- Se auditaron en modo estrictamente `READ_ONLY` las `30` conexiones Agora:
+  `22` activas y `8` `NOT_ACTIVE`.
+- Resultado activo: `17 PASS`, `3 WARN` y `2 FAIL`; todas las colas activas
+  quedaron en `0`.
+- `21/22` catalogos activos estan exactos. PurOsushi queda `350/351` por los
+  precios de `B Boissonneuse` en las listas `8` y `14`.
+- Qtomas esta fresh y exacto `1430/1430`, pero mantiene apagados los cuatro
+  flags de automatizacion de catalogo tras el staging que agoto recursos.
+- Altas reales verificadas en `50..82` segundos: Casa Nene, Higueron, Kava,
+  Cienvinos y PurOsushi.
+- Sa Vida esta exacta `1538/1538`, pero sus dos altas tardaron unas `5 h` y
+  `auto_push_verified_ready` permanece desactivado.
+- De la O recupero catalogo exacto despues de tres fallos transitorios
+  `No route to host`; Luruna esta exacta aunque conserva cuatro tareas
+  bloqueadas redundantes por nombre duplicado.
+- Las transiciones retiradas recientes quedaron `HIDDEN`: Sa Pedrera `4`,
+  Sa Vida `19` y Taberna de Elia `6`.
+- Informe: `docs/operations/agora-catalog-change-audit-2026-07-17.md`.
+
+### Decisiones
+- No aplicar reparaciones desde la auditoria programada: una discrepancia
+  fresh, un flag apagado o una tarea bloqueada requieren una operacion
+  controlada separada.
+- No usar `winerim_wines.updated_at` ni una supuesta ventana de cinco minutos
+  sin una creacion o tarea explicita reciente.
+
+### Hipotesis
+- La demora de Sa Vida corresponde al flujo de reconciliacion/verificacion
+  por lotes y no a una propagacion automatica normal.
+- Las tareas bloqueadas de Luruna son residuos de intentos ya satisfechos por
+  el estado actual del catalogo.
+
+### Tareas pendientes inmediatas
+- Corregir diferencialmente `B Boissonneuse` en PurOsushi y verificar fresh.
+- Preparar canary acotado de Qtomas antes de reactivar sus flags.
+- Medir un canary automatico de Sa Vida durante dos ciclos.
+- Vigilar conectividad de De la O y cerrar de forma auditada los cuatro
+  bloqueos redundantes de Luruna.
+
+## 2026-07-18 - Auditoria diaria fresh de cambios Agora
+
+### Hechos
+- Se auditaron en modo estrictamente `READ_ONLY` las `30` conexiones Agora:
+  `22` activas y `8` `NOT_ACTIVE`.
+- Resultado activo: `17 PASS`, `2 WARN` y `3 FAIL`; las `22` colas activas
+  quedaron en `QUEUED/RUNNING=0`.
+- PurOsushi queda `355/357`: `B Boissonneuse` y
+  `B Keller Kirchspiel Riesling GG` difieren solo en listas `8` y `14`.
+- Sa Vida queda `1536/1540`: cuatro productos elegibles difieren y dos copas
+  sin precio siguen vendibles. `auto_push_verified_ready` continua apagado.
+- Qtomas esta fresh y exacto `1430/1430`, pero conserva apagados los cuatro
+  flags de automatizacion de catalogo.
+- Chiquilla y De la O recuperaron catalogo exacto tras fallos transitorios
+  `POS_DOWN` / `No route to host`; no necesitan replay.
+- Se comprobaron altas reales: cinco de PurOsushi en `30..70` segundos, una
+  de Sa Pedrera en `66` segundos y una de Taberna de Elia en `99` segundos.
+- Fuera de Sa Vida, no se encontraron productos Winerim propios actualmente
+  inactivos o sin precio que continuen vendibles.
+- No queda ningun caso justificable por una ventana real de cinco minutos.
+- Informe: `docs/operations/agora-catalog-change-audit-2026-07-18.md`.
+
+### Decisiones
+- Mantener la auditoria diaria sin efectos secundarios; los tres `FAIL` se
+  repararan en operaciones separadas, diferenciales y verificadas fresh.
+- Clasificar como `FAIL` una conexion con catalogo exacto pero automatizacion
+  apagada, porque no garantiza la propagacion del siguiente cambio.
+- Comprobar retirados mediante elegibilidad Winerim actual y flags vendibles
+  del master fresh; `NOT_PUSHED` no demuestra ownership.
+
+### Hipotesis
+- Los fallos de Chiquilla y De la O son transitorios porque el estado fresh
+  posterior es exacto y las tareas necesarias acabaron verificadas.
+- La deriva de Sa Vida combina una reconciliacion incompleta de listas/flags
+  con la falta de procesamiento automatico de formatos ya verificados.
+
+### Tareas pendientes inmediatas
+- PurOsushi: corregir solo listas `8` y `14` de `709944` y `709986` y exigir
+  `357/357` fresh.
+- Sa Vida: corregir cuatro productos, ocultar copas `925044` y `925054`, y
+  exigir `1540/1540` mas cero retirados vendibles.
+- Qtomas: ejecutar canary de una referencia antes de activar sus cuatro flags.
+- Chiquilla y De la O: vigilar recurrencia sin reencolar productos ya exactos.
+
+## 2026-07-20 - Auditoria diaria fresh de cambios Agora
+
+### Hechos
+- El heartbeat previsto para el 19/07 se ejecuto de forma diferida el 20/07,
+  sobre la ventana real `2026-07-19T06:35Z..2026-07-20T06:35Z`.
+- Se auditaron en `READ_ONLY` las `30` conexiones Agora: `22` activas y `8`
+  `NOT_ACTIVE`. Resultado activo: `16 PASS`, `1 WARN` y `5 FAIL`.
+- De la O y Jardi no tienen ruta desde el backend; conservan respectivamente
+  `1` y `10` tareas activas antiguas que no se procesaron.
+- PurOsushi queda `355/357` por listas `8/14` de `709944` y `709986`.
+- Qtomas queda exacto `1430/1430`, pero mantiene apagados los cuatro flags de
+  automatizacion de catalogo.
+- Sa Vida queda `1535/1540` y tiene `25` formatos retirados aun vendibles:
+  `23` botellas con tracking `HIDDEN` y `2` copas `VERIFIED`.
+- Chiquilla se recupero: `75/75`, cola cero y `34` formatos verificados tras
+  `10` abortos. No requiere replay.
+- No hubo altas reales de vino en la ventana; no se atribuyo tiempo de
+  propagacion a reverificaciones de tracking.
+- Informe: `docs/operations/agora-catalog-change-audit-2026-07-20.md`.
+
+### Decisiones
+- Un breaker expirado no demuestra recuperacion; se exige reachability fresh y
+  reconciliacion de cola antes de cualquier replay.
+- Un tracking `HIDDEN` no demuestra que el producto siga oculto; la
+  saleability del master fresh prevalece en la auditoria.
+- Mantener la auditoria sin efectos secundarios. Los cinco `FAIL` se corrigen
+  en operaciones separadas y diferenciales.
+
+### Hipotesis
+- Sa Vida sufrio una reactivacion local, rollback o deriva de flags que volvio
+  vendibles `23` botellas previamente ocultas; falta identificar la causa.
+- Los abortos de Chiquilla fueron transitorios porque el resultado fresh ya es
+  exacto y las tareas necesarias acabaron verificadas.
+
+### Tareas pendientes inmediatas
+- Recuperar conectividad de De la O y Jardi y reconciliar sus tareas contra un
+  master fresh antes de procesarlas.
+- Reparar solo las listas afectadas de PurOsushi y exigir `357/357`.
+- Ejecutar canary unitario de Qtomas antes de valorar sus flags.
+- Sa Vida: snapshot, investigacion de reexposicion, correccion de cinco activos
+  y ocultacion diferencial de los `25` retirados demostrados.
+- Vigilar Chiquilla sin replay.
+
+## 2026-07-20 - Katsu Izakaya checklist 100% tecnico
+
+### Hechos
+- Katsu queda `100% TECHNICAL PASS / LIVE_AUTOMATIC` tras una auditoria fresh
+  de catalogo, estructura, legacy, ventas, ERP, stock, colas y alertas.
+- Catalogo exacto `157/157`: `0 MISSING`, `0 DIFFERENT`, `0 UNOWNED`; tracking
+  `157 VERIFIED` y `35 HIDDEN`, sin formatos retirados vendibles.
+- Estructura fresh: raiz `VINOS` con siete familias Winerim y raiz
+  `COPAS DE VINOS` con `COPAS WINERIM`. Los productos directos legacy de ambas
+  raices son `105 + 92`, todos no vendibles.
+- Del snapshot de `198` productos legacy, `197` siguen ocultos y uno fue
+  reutilizado con ownership confirmado como botella Winerim `772846`.
+- Auditoria ERP de siete dias: `PASS`, cero diferencias, cero duplicados y
+  cero stockIds ausentes. Hay evidencia real de botella y copa.
+- Desde el 13/07 hay `4` filas botella y `23` copa, todas `SUCCESS`; `17`
+  filas / `47` unidades usaron `sales_only_stock_inactive` sin tocar stock.
+- Se corrigio `auto-sync-sales`: primero el scope de `providerConfig`
+  (`344ac35`) y despues el avance seguro por dias vacios (`f943bcb`).
+- El cursor avanzo a `2026-07-19`, la alerta `sales_stale` se resolvio y el
+  ultimo health check quedo `OK` sin notificaciones.
+- Informe completo:
+  `docs/operations/katsu-100-percent-checklist-2026-07-20.md`.
+
+### Decisiones
+- Certificar Katsu como `100% tecnico`; la confirmacion visual de la comandera
+  y una venta real de magnum se registran como validaciones externas, no como
+  fallos del flujo automatico ya demostrado para botella y copa.
+- El cursor cerrado representa el ultimo dia leido correctamente, aunque no
+  tenga facturas. Nunca avanza si la lectura Agora falla.
+- Conservar legacy y retirados como trazabilidad no vendible; no borrarlos.
+
+### Hipotesis
+- Ninguna hipotesis operativa abierta en Katsu. La ausencia de ventas del 19/07
+  fue confirmada por una lectura correcta, no inferida por falta de logs.
+
+### Tareas pendientes inmediatas
+- Pedir confirmacion visual cuando el cliente refresque el terminal.
+- Registrar una venta real de magnum si Katsu utiliza ese formato.
+- Mantener health monitor, sync de cinco minutos y auditoria diaria; no hacer
+  canaries destructivos para demostrar un estado que ya es exacto.
+
+## 2026-07-20 - Katsu, conciliacion del fin de semana y legacy
+
+### Hechos
+- El sabado `2026-07-18` Agora devolvio `30` facturas y `269` lineas totales,
+  pero solo `3` lineas pertenecian a vinos Winerim: Baladina Sobre Lias copa,
+  Rafa Canizares Mistela y Biu Blanc copa. Total: `3` unidades / `31,46 EUR`.
+- Las tres ventas aparecen en el ERP Winerim con las mismas cantidades,
+  importes y horas (`14:30`, `16:11` y `22:48`). La conciliacion queda `PASS`
+  sin duplicados ni diferencias diarias o de ventana.
+- El domingo `2026-07-19` Agora devolvio `0` facturas y el ERP `0` ventas TPV.
+- Se contrastaron IDs de venta contra `174` mappings confirmados, `157`
+  trackings verificados y el snapshot de `198` productos legacy. No hubo
+  ninguna venta legacy ni referencia de vino sin ownership en ambos dias.
+- Los `198` IDs legacy siguen en catalogo para rollback: `197` no son
+  vendibles y `772846` fue reutilizado como botella Winerim confirmada.
+- Informe: `docs/operations/katsu-weekend-sales-audit-2026-07-20.md`.
+
+### Decisiones
+- Mantener Katsu en `100% TECHNICAL PASS`; no ejecutar backfill, replay ni
+  correccion de stock porque Agora y Winerim coinciden exactamente.
+- Distinguir buscador de venta y catalogo administrativo: legacy no es
+  seleccionable para vender, aunque siga localizable en administracion.
+
+### Hipotesis
+- El volumen bajo observado en Winerim corresponde al volumen real de vino del
+  fin de semana; no hay evidencia de ventas perdidas o realizadas por legacy.
+
+### Tareas pendientes inmediatas
+- Como aceptacion visual, buscar en una comandera un nombre legacy conocido y
+  confirmar que no aparece como producto seleccionable.
+
+## 2026-07-20 - Configuracion Codex por carga de trabajo
+
+### Hechos
+- Se creo configuracion local en `.codex/config.toml`; no se modifico la
+  configuracion global de otros repositorios.
+- El agente raiz y `agora-operator` usan `gpt-5.6-sol` con razonamiento `high`.
+- `agora-auditor` usa `gpt-5.6-terra` `high` para auditorias read-heavy de una
+  conexion; `agora-comms` usa `gpt-5.6-luna` `medium` para comunicaciones.
+- Fast mode y multi-agent estan activos; maximo seis agentes directos,
+  `max_depth=1` y timeout de worker de `1800 s`.
+- `AGENTS.md` fija el routing, la definicion de terminado y las reglas de
+  seguridad. Codex `0.145.0-alpha.18` acepta la configuracion con
+  `--strict-config`; `fast_mode` y `multi_agent` aparecen activos.
+
+### Decisiones
+- Reservar Sol para orquestacion y cualquier escritura en produccion; usar
+  Terra para comprobaciones independientes y Luna solo cuando los hechos ya
+  estan establecidos.
+- Mantener la configuracion en el repositorio para no alterar otros proyectos
+  del usuario.
+- No permitir fan-out recursivo ni escrituras paralelas sobre Edge Functions,
+  migraciones, dispatchers o automatizacion compartida.
+
+### Hipotesis
+- Bajar de `gpt-5.5 xhigh` global a Sol `high` con Fast mode debe reducir
+  latencia de razonamiento, pero no elimina esperas de red, rate limits, ERP,
+  TPV ni verificaciones fresh.
+
+### Tareas pendientes inmediatas
+- Abrir la proxima tarea desde la raiz de este repositorio y confirmar en la
+  interfaz que carga Sol/High/Fast y los tres roles personalizados.
+- Medir una auditoria de restaurante con Terra y comparar tiempo total sin
+  reducir las evidencias exigidas.
+
+## 2026-07-20 - Katsu, ventas de sake del viernes y sabado
+
+### Hechos
+- La lectura fresca de Agora devolvio `22` facturas el viernes `17/07` y `30`
+  el sabado `18/07`.
+- El viernes hubo `3` ventas de sake por `67,00 EUR`: Shirayuki Traditional
+  55, Masumi kaya e Ine Mankai, una unidad de cada producto.
+- El sabado hubo `2` ventas de Masumi kaya por `28,00 EUR`, en las facturas
+  `1538` y `1549`.
+- Total de ambos dias: `5` unidades / `95,00 EUR`. No hubo lineas negativas,
+  abonos ni anulaciones de sake.
+- Informe: `docs/operations/katsu-sake-sales-2026-07-17-18.md`.
+
+### Decisiones
+- Auditar sake a partir de la familia explicita `SAKE BAR` y usar nombre o
+  formato como contraste; no reutilizar la heuristica generica de vinos.
+
+### Hipotesis
+- Ninguna. Los resultados proceden de facturas Agora leidas correctamente.
+
+### Tareas pendientes inmediatas
+- Ninguna para esta consulta. Solo mapear o importar sake en Winerim si se
+  define expresamente ese alcance de producto.
+
+## 2026-07-20 - Katsu, ventas de comida del viernes y sabado
+
+### Hechos
+- La familia Agora `CARTA` registro el viernes `174` unidades netas por
+  `1.721,90 EUR`; no hubo anulaciones ni lineas a cero.
+- El sabado registro `225` unidades positivas por `2.039,51 EUR` y una
+  devolucion de `4` unidades / `43,75 EUR`. Resultado neto: `221` unidades /
+  `1.995,76 EUR`.
+- Total de los dos dias: `395` unidades netas / `3.717,66 EUR` en `52`
+  facturas.
+- La devolucion del sabado afecto a Tartar de atun, Korokke suquet, Pepito Char
+  Siu y Katsu sando, una unidad de cada uno.
+- Informe completo: `docs/operations/katsu-food-sales-2026-07-17-18.md`.
+
+### Decisiones
+- Para este informe, comida significa la familia Agora `CARTA`; se excluyen
+  liquidos, sake, vinos, copas y cafes.
+- Informar cantidades e importes netos, dejando visibles por separado las
+  devoluciones y los marcadores operativos incluidos por Agora en `CARTA`.
+
+### Hipotesis
+- Ninguna. Los dos dias respondieron HTTP `200` y las cifras proceden de una
+  lectura fresca de facturas cerradas.
+
+### Tareas pendientes inmediatas
+- Ninguna para la consulta. Si se necesita contabilidad estricta de platos,
+  acordar si `VARIOS`, extras, `Para llevar`, `ALERGICO` y menus con maridaje
+  deben excluirse de futuros informes.
+
+## 2026-07-20 - Ocean Club y Finca Eslava, estado live
+
+### Hechos
+- Ocean Club responde HTTP `200`, tiene flags de catalogo e intradia activos,
+  cola y alertas abiertas a cero y catalogo fresh `113/113`.
+- Entre el 16 y el 20 de julio Ocean acumula `860` eventos y `8.127` lineas,
+  pero ninguna venta usa un ID Winerim. El 19 se vendieron al menos `162`
+  unidades netas mediante familias legacy de vino.
+- Finca Eslava responde HTTP `200`, tiene flags de catalogo e intradia activos,
+  cola y alertas abiertas a cero y catalogo fresh `123/123`.
+- La unica prueba Winerim de Finca fue `B Emilio Moro` el 17/07: venta de una
+  botella y devolucion un minuto despues. El neto Agora es cero.
+- Winerim proceso solo la venta positiva y redujo el stock de `83` a `82`; no
+  existe compensacion por la devolucion y el stock live sigue en `82`.
+- El 19/07 Finca continuo usando copas legacy genericas: `13` unidades netas /
+  `46,50 EUR`.
+- Informe: `docs/operations/ocean-finca-live-status-2026-07-20.md`.
+
+### Decisiones
+- Mantener ambas como `LIVE_PENDING_SALE_CANARY`; catalogo exacto no equivale
+  a aceptacion end-to-end de ventas.
+- No aceptar una venta seguida de devolucion como canary superado.
+- No restaurar automaticamente Emilio Moro sin contrastar antes cualquier
+  ajuste manual posterior en Winerim.
+
+### Hipotesis
+- Ocean no tiene fallos de importacion demostrados: la evidencia indica que el
+  personal sigue utilizando exclusivamente los botones legacy.
+- Finca tampoco tiene una venta Winerim neta perdida; tiene una anulacion
+  definitiva cuyo efecto de stock no fue compensado por el flujo actual.
+
+### Tareas pendientes inmediatas
+- Finca: corregir de forma controlada `Emilio Moro` de `82` a `83` si no hubo
+  ajustes manuales posteriores y cubrir la anulacion definitiva.
+- Finca y Ocean: realizar canary real de botella y copa desde botones Winerim,
+  sin anular, y verificar ERP, hora, variante, stock e idempotencia.
+- Mantener legacy visible hasta completar y firmar esas pruebas.
+
+## 2026-07-20 - Ocean Club, historico de tres meses sin stock
+
+### Hechos
+- Se ejecuto un dry-run de Ocean entre `2026-04-16` y `2026-07-15`: `91`
+  dias, `9.237` facturas, `81.798` lineas y cero errores de lectura.
+- No se escribio nada en Winerim ni en Agora y el stock no se modifico.
+- El motor resolvio por nombre exacto unico `231` filas / `238` unidades de
+  diez productos Winerim.
+- Quedan `20` productos de vino en revision (`360` unidades) y `96` productos
+  no resueltos dentro de familias de vino (`6.348` unidades).
+- Ocean usa copas legacy genericas (`GLS ROSE`, `GLS CHAMPAGNE`, etc.) que no
+  identifican una referencia Winerim concreta.
+- Informe:
+  `docs/operations/ocean-club-history-dry-run-2026-07-20.md`.
+
+### Decisiones
+- Reservar la ventana anterior a la automatizacion viva y usar exclusivamente
+  `POST /api/v2/sales/import` con `orderId` determinista.
+- No aplicar el historico hasta aprobar aliases y variantes; fuzzy solo sirve
+  para revision y las copas genericas quedan excluidas sin regla explicita.
+
+### Hipotesis
+- Parte de las teclas genericas de copa podria corresponder a una referencia
+  fija por periodo, pero esa relacion no se puede inferir del catalogo Agora.
+
+### Tareas pendientes inmediatas
+- Validar los diez matches exactos y construir aliases auditados para las
+  coincidencias legacy confirmadas.
+- Importar en lotes pequenos, verificar stock inalterado y repetir cada lote
+  para demostrar idempotencia.
+
+## 2026-07-20 - Siguiente cierre tras Katsu: El Higueron
+
+### Hechos
+- La comparacion fresh de las conexiones mas cercanas al cierre situa a El
+  Higueron como siguiente candidato: dos discrepancias canonicas, frente a
+  seis en Casa Nene, ocho en Taberna de Elia y mas de veinte en Sa Pedrera.
+- Agora responde HTTP `200` tanto al test general como a tickets abiertos.
+- La auditoria fresh de catalogo devuelve `292/292` formatos, `0` ausentes,
+  `0` diferentes y `0` sin ownership; no hay tareas activas ni alertas abiertas.
+- La publicacion automatica ya tiene un canary real: `Pago de Carraovejas El
+  Anejon` se verifico en Agora en `61` segundos.
+- El ledger no contiene claves idempotentes exactas repetidas. El ERP muestra
+  cinco tarjetas TPV y seis botellas en la ventana auditada.
+- Quedan dos diferencias identificadas por producto/documento:
+  - `Domaine Vacheron Sancerre Blanc`, factura cerrada Agora `14401`, una
+    botella por 79 EUR, no aparece en ERP ni tiene `SUCCESS`.
+  - `La Vieille Ferme Rose Recolte`, una botella por 23 EUR, aparece en ERP
+    desde un ticket abierto que ya no existe y no tiene factura cerrada
+    equivalente.
+- No existe una venta real reciente de copa Winerim que permita firmar ese
+  formato. Informe completo:
+  `docs/operations/el-higueron-100-percent-checklist-2026-07-20.md`.
+
+### Decisiones
+- El Higueron sera la siguiente conexion del checklist, antes de Finca Eslava
+  y Ocean Club, porque ya tiene botella, catalogo y automatizacion probados.
+- No recuperar ni revertir las dos ventas mediante ajustes directos de stock;
+  se conciliaran por identidad documental e idempotente.
+- Mantener legacy visible hasta la firma funcional y la aceptacion del cliente.
+
+### Hipotesis
+- `La Vieille Ferme Rose Recolte` puede ser una venta provisional cancelada o
+  cerrada bajo otra identidad. `restore_stale_previous_days=false` puede haber
+  impedido su restauracion al desaparecer el ticket.
+
+### Tareas pendientes inmediatas
+- Resolver individualmente las dos discrepancias y exigir delta cero.
+- Ejecutar una copa real Winerim y un canary con stock inactivo si existe una
+  referencia adecuada; verificar ERP, hora, variante, stock e idempotencia.
+- Confirmar la politica final de legacy y firmar `100%_SIGNED_OFF` solo despues
+  de dos ciclos sin repeticion.
+
+## 2026-07-20 - El Higueron reconciliado tecnicamente
+
+### Hechos
+- La auditoria final queda en `PASS`: catalogo fresh `292/292`, cero ausentes,
+  diferentes o sin ownership, cero tareas activas, cero alertas abiertas y
+  cero claves idempotentes exactas repetidas.
+- Las cinco lineas de factura cerrada del periodo auditado coinciden con cinco
+  tarjetas TPV cerradas en el ERP; no quedan diferencias agregadas ni por
+  ventana temporal.
+- `Domaine Vacheron Sancerre Blanc`, factura Agora `14401`, se recupero una
+  sola vez con su hora real del 18/07 a las 17:58 y stock final `6`.
+- La venta provisional cancelada de `La Vieille Ferme Rose Recolte` se retiro
+  del ERP y el inventario quedo en `22` mediante `No, solo ajuste`.
+- Dos restauraciones indebidas detectadas durante la prueba, Belondrade y
+  Finca Rodma, se corrigieron sin nuevas ventas; stocks finales `30` y `5`.
+- `agora-proxy` desplegada desde `c20553e`: mappings explicitos autoritativos,
+  consultas stale y definitivas en bloques de 100 y fallo cerrado ante error.
+- Verificacion local: `16/16` tests y TypeScript sin errores.
+
+### Decisiones
+- Mantener el estado conservador `LIVE_PENDING_SALE_CANARY` hasta observar una
+  copa real Winerim; no crear ventas ficticias para firmar el checklist.
+- Mantener legacy visible y reversible hasta la aceptacion del cliente.
+- Conservar todos los logs correctivos; ningun registro operativo se borra.
+
+### Hipotesis
+- La ausencia de tickets actuales en la sonda puede depender de la operativa
+  local de Agora: el endpoint responde, pero solo devolvio tickets de 15 y 17
+  de julio durante la prueba.
+
+### Tareas pendientes inmediatas
+- Canary real de copa Winerim y, si existe una referencia adecuada, de stock
+  inactivo; comprobar ERP, hora, variante, stock y segundo ciclo no-op.
+- Observar un servicio actual para confirmar frescura de tickets abiertos.
+- Confirmar con el cliente la politica final de legacy y firmar entonces
+  `100%_SIGNED_OFF`.

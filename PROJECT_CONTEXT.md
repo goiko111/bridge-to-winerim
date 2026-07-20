@@ -16,6 +16,10 @@ Flujo principal:
 - **Backend**: Lovable Cloud (Supabase) — Postgres, Auth, Storage, Edge Functions (Deno/SWC).
 - **Cron**: `pg_cron` + `pg_net` invocando dispatchers HTTP.
 - **AI**: Lovable AI Gateway cuando aplique.
+- **Codex del repositorio**: `.codex/config.toml` fija GPT-5.6 Sol `high` y
+  Fast mode para el orquestador, con hasta seis agentes directos. Los roles
+  `agora-operator`, `agora-auditor` y `agora-comms` separan escrituras de
+  produccion, auditorias Terra y comunicaciones Luna.
 
 ## 3. Arquitectura clave
 - Cada POS tiene su `*-proxy` edge function + hook `use*Connection.ts`.
@@ -31,6 +35,13 @@ Flujo principal:
 - Los históricos anteriores a la activación se importan exclusivamente por `POST /api/v2/sales/import`, con `orderId` determinista, sin tocar stock y solo mediante mapping confirmado, nombre exacto único o alias manual auditado. El fuzzy matching solo propone revisión; nunca escribe.
 - Un histórico Agora debe netear líneas firmadas del mismo ciclo físico: ticket, anulación/abono y factura definitiva. No se pueden descartar cantidades negativas antes de formar el neto. Los aliases manuales deben conservar la variante explícita y tienen prioridad sobre la inferencia automática.
 - En Agora, `product_mappings.REJECTED` es un bloqueo explícito de resolución: tiene prioridad sobre `winerim_push_tracking` histórico para evitar que productos antiguos sigan descontando stock contra vinos/variantes inaccesibles.
+- En ventas Agora, un `product_mapping` confirmado es autoritativo y tiene
+  prioridad sobre la heuristica `is_wine_candidate`; esta ultima solo actua
+  cuando no existe una decision explicita para la conexion.
+- La restauracion de stock de tickets abiertos stale consulta tanto tickets
+  como ventas definitivas en bloques de maximo 100 IDs y falla de forma
+  cerrada ante cualquier error. Nunca interpreta un fallo de lectura como
+  ausencia de venta definitiva.
 - En Agora, los productos Winerim vendibles deben ir como `UseAsDirectSale=false` + `SaleableAsMain=true`: no salen como botones raíz, pero sí se venden dentro de su familia. `PreparationTypeId` y `PreparationOrderId` deben ir ambos vacíos o ambos informados.
 - Algunas conexiones Agora pueden conservar una estructura visual legacy con reglas en `pos_connections.provider_config.agora_family_routing_rules` para enrutar por formato/tipo/región a familias existentes del TPV.
 - La base tSpoonLab/Holded comienza en modo `read_only`: no se habilitan escrituras hasta persistir claves idempotentes, completar un `dry-run` y validar un canary con reversión.

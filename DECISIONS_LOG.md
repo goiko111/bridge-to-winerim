@@ -1682,3 +1682,298 @@ Garnacha Tintorera a una referencia parecida.
 **Riesgos controlados:** `enabled=false`, `PULL_ONLY`, `write_mode=NONE`, catálogo y auto-push apagados. El token Winerim se valida de forma independiente sin enviar nada al TPV.
 
 **Alternativa descartada:** preparar importaciones u ocultar por datos cacheados/inferidos. Podría dejar al restaurante sin botones de vino o escribir precios en centros/listas equivocados.
+
+## 2026-07-17 - La auditoria diaria de Agora nunca repara por efecto secundario
+
+**Decision:** mantener la auditoria de las 19:00 estrictamente en lectura y
+separar sus hallazgos de cualquier actualizacion, reactivacion de flags,
+procesamiento de colas u ocultacion.
+
+**Razon:** una diferencia fresh demuestra una deuda concreta, pero no autoriza
+por si sola una escritura; Qtomas y Sa Vida muestran que el contexto de
+recursos y flags importa incluso cuando el catalogo actual parece exacto.
+
+**Riesgos controlados:** cada reparacion posterior exige alcance reducido,
+snapshot, cola vacia y lectura fresh posterior. `updated_at` del cache Winerim
+no se acepta como evidencia de un cambio comercial real.
+
+**Alternativa descartada:** corregir automaticamente todo FAIL o reintentar
+tareas bloqueadas desde el monitor. Podria repetir productos ya exactos,
+reactivar una flota pausada o saturar el Agora del cliente.
+
+## 2026-07-18 - Catalogo exacto no equivale a automatizacion operativa
+
+**Decision:** clasificar como `FAIL` una conexion activa cuyo catalogo fresh
+sea exacto si los flags que publican altas y cambios permanecen apagados.
+
+**Razon:** Qtomas esta `1430/1430` hoy, pero no existe garantia de que el
+siguiente cambio de Winerim llegue a Agora mientras catalog sync, create,
+update y verified-ready sigan desactivados.
+
+**Riesgos controlados:** la reactivacion no se hace desde el auditor; exige un
+canary de una sola referencia, cola vacia, comprobacion de idempotencia y
+lectura fresh posterior.
+
+**Alternativa descartada:** marcar `PASS` solo por igualdad puntual. Ocultaria
+una averia funcional hasta que el siguiente alta o cambio de precio quedase
+sin publicar.
+
+## 2026-07-18 - Retirados se validan por estado actual y ownership demostrado
+
+**Decision:** detectar formatos retirados vendibles comparando elegibilidad
+Winerim actual con flags vendibles del master fresh, y limitar ownership a
+tracking `VERIFIED`, `HIDDEN` o `FAILED`.
+
+**Razon:** `NOT_PUSHED` no demuestra que el middleware creara o controle el
+producto; usarlo podria ocultar legacy ajeno. Sa Vida demuestra el caso
+contrario: dos copas verificadas ya no tienen precio y siguen vendibles.
+
+**Riesgos controlados:** la auditoria solo informa; cualquier ocultacion se
+ejecuta de forma diferencial con snapshot y verificacion fresh.
+
+**Alternativa descartada:** inferir ownership por nombre o por presencia en
+una familia Winerim. Ambas senales pueden coincidir con productos legacy.
+
+## 2026-07-20 - Un estado de tracking no sustituye al master fresh
+
+**Decision:** para clasificar visibilidad, la saleability observada en el
+master fresh prevalece sobre `winerim_push_tracking`. Un estado `HIDDEN` es
+evidencia de intencion o de una verificacion pasada, no del estado actual.
+
+**Razon:** Sa Vida conserva `23` botellas con tracking `HIDDEN` que el master
+actual devuelve vendibles. Marcar el caso como correcto por el tracking
+ocultaria una regresion real en el terminal.
+
+**Riesgos controlados:** la auditoria solo informa. La correccion exige
+snapshot, ownership demostrado, escritura diferencial y lectura fresh final.
+
+**Alternativa descartada:** confiar en el ultimo estado almacenado sin releer
+Agora. No detecta reactivaciones locales, rollbacks ni deriva de flags.
+
+## 2026-07-20 - Un breaker expirado no demuestra recuperacion
+
+**Decision:** no reanudar ni procesar colas por el mero vencimiento de
+`circuit_breaker_paused_until`; se exige una sonda fresh satisfactoria y una
+reconciliacion de cada tarea con el catalogo actual.
+
+**Razon:** De la O y Jardi tienen breakers vencidos, pero ambos endpoints
+siguen devolviendo `No route to host` y mantienen tareas antiguas en cola.
+
+**Riesgos controlados:** al recuperar la ruta se relee el master y solo se
+ejecutan diferencias que sigan vivas, evitando duplicados y carga innecesaria.
+
+**Alternativa descartada:** replay automatico al expirar el breaker. Puede
+golpear un POS aun caido o repetir cambios ya aplicados localmente.
+
+## 2026-07-20 - Los dias Agora sin facturas tambien avanzan el cursor
+
+**Decision:** `auto-sync-sales` avanza `last_business_day_synced` hasta el
+ultimo dia cerrado leido correctamente aunque no contenga facturas. Si una
+lectura falla, detiene el escaneo y deja el cursor antes del fallo.
+
+**Razon:** Katsu no tuvo facturas el 19/07. El middleware lo comprobaba cada
+ciclo, pero dejaba el cursor en el 18 y el monitor abria una alerta falsa de
+ventas estancadas.
+
+**Riesgos controlados:** el avance exige HTTP satisfactorio y parseo valido;
+no crea `sales_events`, no llama a Winerim y no toca stock. Los fallos devuelven
+`closed_day_scan_failed` para reintento. Cobertura: `97/97` tests, build y
+bundle de la funcion.
+
+**Alternativa descartada:** silenciar `sales_stale` por actividad intradia
+reciente. Habria ocultado un atasco real de cierre como el fallo de scope que
+dejo pendiente la venta de Sarmentero del 17/07.
+
+## 2026-07-20 - Katsu se certifica por evidencia fresh y ERP
+
+**Decision:** declarar Katsu `100% TECHNICAL PASS / LIVE_AUTOMATIC` al cumplir
+catalogo exacto, estructura, legacy no vendible, retirados ocultos, cola cero,
+ventas ERP conciliadas, stock activo/inactivo, idempotencia y alertas cero.
+
+**Razon:** la auditoria final aporta evidencia directa de Agora, Lovable Cloud
+y el ERP Winerim; no depende solo de flags o tracking almacenado.
+
+**Riesgos controlados:** la aceptacion visual del terminal y una venta real de
+magnum quedan explicitamente fuera de la certificacion tecnica hasta que exista
+evidencia externa. No se creo un vino, no se cambio un precio y no se invento
+una venta para cerrar el checklist.
+
+**Alternativa descartada:** exigir un canary destructivo sobre catalogo ya
+exacto o declarar un `100%` absoluto sin separar lo observable remotamente de
+la pantalla fisica del local.
+
+## 2026-07-20 - Las ventas de vino se clasifican por ownership, no por score generico
+
+**Decision:** para conciliar ventas Agora se contabilizan como vino las lineas
+con mapping o tracking confirmado, los IDs legacy del snapshot y las familias
+de vino explicitas. `is_wine_candidate` no se usa como cifra comercial final.
+
+**Razon:** su heuristica por rango de precio marco como candidatos platos,
+cervezas y sake de Katsu. El sabado habia `150` candidatos heuristicos, pero
+solo `3` ventas reales de vino con ownership demostrado.
+
+**Riesgos controlados:** se anade una busqueda secundaria por familia y
+prefijos `B` / `C` para detectar vinos sin mapping, y el snapshot legacy se
+contrasta por ID exacto.
+
+**Alternativa descartada:** sumar todas las lineas `is_wine_candidate=true`.
+Habria informado `158` unidades falsas frente a las `3` ventas reales.
+
+## 2026-07-20 - Routing de modelos por riesgo y tipo de trabajo
+
+**Decision:** usar GPT-5.6 Sol `high` como orquestador y operador de produccion,
+GPT-5.6 Terra `high` para auditorias independientes y GPT-5.6 Luna `medium`
+para comunicaciones. Activar Fast mode en este repositorio.
+
+**Razon:** la configuracion global era GPT-5.5 `xhigh`, que aplica profundidad
+costosa tambien a tareas repetitivas. El middleware necesita maxima capacidad
+en mutaciones, pero una gran parte del trabajo es lectura estructurada o
+redaccion sobre hechos ya demostrados.
+
+**Riesgos controlados:** Sol conserva todas las escrituras y el sign-off; los
+auditores son read-only por instruccion, los agentes de comunicaciones no
+tocan sistemas y el orquestador revisa resultados. Se limita a seis hijos y
+una sola profundidad.
+
+**Alternativa descartada:** cambiar el modelo global o usar Luna/Spark para
+todo. Lo primero afectaria repositorios ajenos y lo segundo reduciria garantias
+en operaciones de produccion.
+
+## 2026-07-20 - Clasificacion de sake por familia explicita
+
+**Decision:** en las auditorias de Katsu, identificar el sake principalmente
+por la familia Agora `SAKE BAR` y contrastar tambien nombre y formato. No usar
+la heuristica generica de candidatos a vino.
+
+**Razon:** `Jarra grande Shirayuki Traditional 55` es sake aunque su nombre no
+contenga esa palabra; la familia aporta la evidencia de catalogo correcta.
+
+**Riesgos controlados:** el contraste secundario permite detectar productos
+mal clasificados, pero no convierte automaticamente platos que mencionen sake
+en bebidas vendidas como sake.
+
+**Alternativa descartada:** filtrar solo por texto `sake` o por
+`is_wine_candidate`, porque ambos criterios pueden omitir o incluir productos
+incorrectos.
+
+## 2026-07-20 - Ventas de comida de Katsu por familia CARTA
+
+**Decision:** considerar comida lo registrado en la familia Agora `CARTA`,
+excluyendo las familias de liquidos, sake, vinos, copas y cafes, y presentar el
+resultado neto despues de devoluciones.
+
+**Razon:** la estructura real de Katsu separa explicitamente esas familias y
+permite una cifra reproducible sin inferir por nombre o precio.
+
+**Riesgos controlados:** el informe identifica que `CARTA` tambien contiene
+extras, conceptos `VARIOS`, `Para llevar`, `ALERGICO` y menus con maridaje; no
+los oculta silenciosamente.
+
+**Alternativa descartada:** clasificar cada producto por palabras del nombre o
+sumar solo lineas positivas, lo que ignoraria la devolucion real del sabado y
+sobrestimaria `4` unidades / `43,75 EUR`.
+
+## 2026-07-20 - Un catalogo exacto no cierra el canary de ventas
+
+**Decision:** mantener Ocean Club y Finca Eslava en
+`LIVE_PENDING_SALE_CANARY` aunque sus catalogos sean respectivamente
+`113/113` y `123/123`.
+
+**Razon:** Ocean no registra ninguna venta por botones Winerim y Finca solo
+registra una venta inmediatamente anulada. Ninguna demuestra el ciclo completo
+de venta neta, historial ERP, stock y repeticion idempotente.
+
+**Riesgos controlados:** no se oculta legacy ni se corrige stock sin comprobar
+la operativa real. La botella de Emilio Moro descontada por una venta anulada
+queda identificada como residuo pendiente, no como canary valido.
+
+**Alternativa descartada:** declarar ambas al 100 % a partir de flags, tracking
+y catalogo exacto, o considerar la factura anulada de Finca como prueba real.
+
+## 2026-07-20 - Historico Ocean Club separado del stock vivo
+
+**Decision:** fijar el historico inicial de Ocean Club en
+`2026-04-16..2026-07-15` e importarlo, cuando el mapping este aprobado,
+exclusivamente mediante `POST /api/v2/sales/import` con IDs deterministas.
+
+**Razon:** el dry-run confirma disponibilidad completa de `91` dias y cero
+errores, mientras la automatizacion viva comienza el `16/07`. El endpoint de
+importacion registra historial sin tocar stock.
+
+**Riesgos controlados:** no se aplica ningun resultado fuzzy, los formatos
+grandes requieren variante explicita y las teclas genericas de copa quedan
+fuera hasta identificar el vino real. Antes y despues de cada lote se compara
+el stock y se repite la importacion para verificar idempotencia.
+
+**Alternativa descartada:** importar todas las lineas de familias de vino por
+parecido de nombre o tratar cualquier `GLS ...` como una copa Winerim. Podria
+crear historiales irreversibles sobre referencias o variantes equivocadas.
+
+## 2026-07-20 - El Higueron es el siguiente cierre despues de Katsu
+
+**Decision:** priorizar El Higueron como siguiente conexion para completar el
+checklist al 100 %, antes de Finca Eslava, Ocean Club, Casa Nene, Taberna de
+Elia y Sa Pedrera.
+
+**Razon:** tiene catalogo fresh `292/292`, publicacion real medida en `61`
+segundos, ocho familias, botella real, cola limpia y cero duplicados exactos.
+Solo quedan dos discrepancias de venta identificadas y una prueba de copa.
+
+**Riesgos controlados:** las discrepancias se corregiran por documento e
+identidad idempotente; no se haran compensaciones con PUT de stock ni
+reprocesados diarios completos. Legacy permanece reversible hasta la firma.
+
+**Alternativa descartada:** elegir Finca u Ocean solo porque su catalogo es
+exacto. Ambas carecen todavia de canaries completos de botella/copa y Finca
+tiene pendiente una cancelacion con stock no restaurado.
+
+## 2026-07-20 - Mapping explicito autoritativo en ventas Agora
+
+**Decision:** cuando una linea Agora tiene un `product_mapping` confirmado, el
+mapping determina su elegibilidad como vino y no puede ser anulado por la
+heuristica generica `is_wine_candidate`.
+
+**Razon:** la factura `14401` de El Higueron estaba correctamente mapeada a
+`Domaine Vacheron Sancerre Blanc`, pero la heuristica la excluia y omitia una
+venta real.
+
+**Riesgos controlados:** los mappings `REJECTED` siguen siendo bloqueos
+explicitos y el aislamiento por `connection_id` no cambia. Se cubrio la
+precedencia con pruebas estaticas y una segunda ejecucion idempotente.
+
+**Alternativa descartada:** ampliar palabras clave de la heuristica. No
+resolveria de forma determinista productos renombrados y podria clasificar
+falsos positivos.
+
+## 2026-07-20 - Restauracion stale troceada y fail-closed
+
+**Decision:** consultar tickets y ventas definitivas en bloques de como maximo
+100 IDs y abortar la restauracion si cualquier consulta devuelve error.
+
+**Razon:** una consulta de cientos de IDs desbordo el header de PostgREST y el
+error se interpreto como conjunto vacio, restaurando dos ventas definitivas.
+
+**Riesgos controlados:** el fallo cerrado puede retrasar una restauracion, pero
+nunca debe modificar stock con evidencia incompleta. Los dos ajustes erroneos
+se revirtieron mediante `No, solo ajuste` y sus logs se conservaron como
+`SKIPPED` correctivo.
+
+**Alternativa descartada:** ignorar el error y continuar con los resultados
+parciales. Podria volver a aumentar stock de ventas validas.
+
+## 2026-07-20 - Cierre tecnico de El Higueron sin venta ficticia
+
+**Decision:** considerar reconciliada la parte tecnica de El Higueron, pero
+mantener `LIVE_PENDING_SALE_CANARY` hasta observar una copa real y confirmar la
+frescura de tickets durante un servicio actual.
+
+**Razon:** catalogo, ventas cerradas, ERP, stock, cola, alertas e idempotencia
+estan a cero diferencias, pero no existe una copa Winerim reciente y la sonda
+solo devolvio tickets antiguos.
+
+**Riesgos controlados:** no se declara `100%_SIGNED_OFF` por ausencia de
+evidencia ni se crea una venta de prueba que contamine la operativa del
+cliente. Legacy permanece visible y reversible.
+
+**Alternativa descartada:** cerrar al 100 % usando solo una botella y flags de
+configuracion como prueba suficiente.
