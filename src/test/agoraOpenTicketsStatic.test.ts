@@ -23,6 +23,20 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection)");
   });
 
+  it("loads provider config inside auto-sync-sales before applying day guards", () => {
+    const autoSyncStart = agoraProxySource.indexOf('if (action === "auto-sync-sales")');
+    const autoSyncEnd = agoraProxySource.indexOf('// ── RESOLVE EXISTING SALES LINES', autoSyncStart);
+    const autoSyncSource = agoraProxySource.slice(autoSyncStart, autoSyncEnd);
+
+    expect(autoSyncStart).toBeGreaterThan(-1);
+    expect(autoSyncSource).toContain(
+      "const providerConfig = ((connection.provider_config || {}) as Record<string, unknown>);",
+    );
+    expect(autoSyncSource.indexOf("const providerConfig")).toBeLessThan(
+      autoSyncSource.indexOf("isStockSyncDayAllowed(day, providerConfig)"),
+    );
+  });
+
   it("does not require the legacy serve_by_glass flag when Winerim has a glass price", () => {
     expect(agoraProxySource).toContain("serve_by_glass_not_enabled_but_glass_price_present");
     expect(agoraProxySource).not.toContain('reason: "glass_skipped:serve_by_glass_not_enabled"');

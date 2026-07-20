@@ -5478,6 +5478,7 @@ serve(async (req) => {
 
     // ── AUTO-SYNC SALES (find pending days and save them) ──
     if (action === "auto-sync-sales") {
+      const providerConfig = ((connection.provider_config || {}) as Record<string, unknown>);
       // Open-ticket sync may pre-discount the current business day. Closed invoices
       // must reconcile by daily total so the same sale is not discounted twice.
       const useIncrementalStockSync = isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection);
