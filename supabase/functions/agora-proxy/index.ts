@@ -860,6 +860,26 @@ function addUtcDays(day: string, delta: number): string {
   return formatBusinessDay(date);
 }
 
+function recentOpenTicketBusinessDays(providerConfig: unknown): string[] {
+  const config = (providerConfig && typeof providerConfig === "object" ? providerConfig : {}) as Record<string, unknown>;
+  const lastSync = (config.last_open_tickets_sync && typeof config.last_open_tickets_sync === "object"
+    ? config.last_open_tickets_sync
+    : {}) as Record<string, unknown>;
+  const maxAgeMinutes = Math.max(10, Number(config.open_tickets_active_cursor_guard_minutes ?? 30));
+  const syncedAt = String(lastSync.at || "").trim();
+  const syncAgeMs = syncedAt && Number.isFinite(Date.parse(syncedAt))
+    ? Date.now() - Date.parse(syncedAt)
+    : Number.POSITIVE_INFINITY;
+  if (lastSync.success !== true || Number(lastSync.ticketCount || 0) <= 0 || syncAgeMs > maxAgeMinutes * 60_000) {
+    return [];
+  }
+  return Array.from(new Set(
+    (Array.isArray(lastSync.businessDays) ? lastSync.businessDays : [])
+      .map((day) => String(day || ""))
+      .filter(isBusinessDay),
+  )).sort();
+}
+
 function buildBusinessDayRange(fromDay: string, toDay: string, maxDays: number): string[] {
   if (!isBusinessDay(fromDay) || !isBusinessDay(toDay)) {
     throw new Error("fromBusinessDay/toBusinessDay must use YYYY-MM-DD");
@@ -4902,6 +4922,7 @@ serve(async (req) => {
         last_open_tickets_sync: {
           at: now,
           success: (stockSyncResult?.failed || 0) === 0,
+          businessDays: daysWithSavedTickets.slice().sort(),
           ticketCount: tickets.length,
           savedEvents,
           savedLines,
@@ -4921,6 +4942,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         success: (stockSyncResult?.failed || 0) === 0 && (staleOpenTicketRestore?.failed || 0) === 0,
         source: "open_tickets",
+        businessDays: daysWithSavedTickets.slice().sort(),
         ticketCount: tickets.length,
         savedEvents,
         savedLines,
@@ -5592,8 +5614,21 @@ serve(async (req) => {
       // Open-ticket sync may pre-discount the current business day. Closed invoices
       // must reconcile by daily total so the same sale is not discounted twice.
       const useIncrementalStockSync = isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection);
-      // Find last synced day
-      const lastSynced = connection.last_business_day_synced;
+      // Do not advance beyond a business day that still has live open tickets.
+      // Agora installations can keep a table open across midnight; without this
+      // overlap, a later invoice close would fall behind the closed-day cursor.
+      const persistedLastSynced = connection.last_business_day_synced;
+      const activeOpenTicketDays = recentOpenTicketBusinessDays(providerConfig);
+      const openTicketCursorCeiling = activeOpenTicketDays[0]
+        ? addUtcDays(activeOpenTicketDays[0], -1)
+        : null;
+      const capClosedDayCursor = (day: string | null): string | null => {
+        if (!day) return null;
+        return openTicketCursorCeiling && day > openTicketCursorCeiling
+          ? openTicketCursorCeiling
+          : day;
+      };
+      const lastSynced = capClosedDayCursor(persistedLastSynced);
       const startDate = lastSynced
         ? new Date(new Date(lastSynced).getTime() + 86400000)
         : new Date(Date.now() - 30 * 86400000);
@@ -5665,8 +5700,9 @@ serve(async (req) => {
         }
 
         const now = new Date().toISOString();
-        const cursorAdvancedTo = lastSuccessfullyScannedDay && (!lastSynced || lastSuccessfullyScannedDay > lastSynced)
-          ? lastSuccessfullyScannedDay
+        const scannedCursor = capClosedDayCursor(lastSuccessfullyScannedDay);
+        const cursorAdvancedTo = scannedCursor && scannedCursor !== persistedLastSynced
+          ? scannedCursor
           : null;
         await supabase.from("pos_connections")
           .update(cursorAdvancedTo
@@ -5684,6 +5720,8 @@ serve(async (req) => {
             unresolvedLines: 0,
             stockSync: stockSyncResult,
             cursorAdvancedTo,
+            activeOpenTicketDays,
+            openTicketCursorCeiling,
             message: stockSyncResult?.checkedDays
               ? "No pending sales days; checked saved days for stock catch-up"
               : "No pending days to sync",
@@ -5839,8 +5877,9 @@ serve(async (req) => {
           break;
         }
 
+        const completedDayCursor = capClosedDayCursor(day);
         await supabase.from("pos_connections")
-          .update({ last_business_day_synced: day, last_sync_at: new Date().toISOString() })
+          .update({ last_business_day_synced: completedDayCursor, last_sync_at: new Date().toISOString() })
           .eq("id", connectionId);
         syncedDays.push(day);
       }
@@ -5860,9 +5899,10 @@ serve(async (req) => {
       const stockSyncResult = stockSyncTotals.checkedDays > 0 || stockSyncTotals.failed > 0 ? stockSyncTotals : null;
       let cursorAdvancedTo: string | null = null;
       if (!processingAborted && !stockBlockedDay && !saveBlockedDay && lastSuccessfullyScannedDay) {
-        const latestProcessedDay = syncedDays.at(-1) || lastSynced;
-        if (!latestProcessedDay || lastSuccessfullyScannedDay > latestProcessedDay) {
-          cursorAdvancedTo = lastSuccessfullyScannedDay;
+        const latestProcessedDay = capClosedDayCursor(syncedDays.at(-1) || lastSynced);
+        const scannedCursor = capClosedDayCursor(lastSuccessfullyScannedDay);
+        if (scannedCursor && (!latestProcessedDay || scannedCursor > latestProcessedDay)) {
+          cursorAdvancedTo = scannedCursor;
           await supabase.from("pos_connections")
             .update({ last_business_day_synced: cursorAdvancedTo, last_sync_at: new Date().toISOString() })
             .eq("id", connectionId);
@@ -5881,6 +5921,8 @@ serve(async (req) => {
           unresolvedLines,
           stockSync: stockSyncResult,
           cursorAdvancedTo,
+          activeOpenTicketDays,
+          openTicketCursorCeiling,
           blockedByScanFailure: scanBlockedDay,
           blockedByStockFailure: stockBlockedDay,
           blockedBySaveFailure: saveBlockedDay,

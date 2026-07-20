@@ -112,17 +112,10 @@ Deno.serve(async (req: Request) => {
       if (job === "outbound-queue") {
         return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
       }
-      const requests: DispatchRequest[] = [
-        { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "auto-sync-sales", connectionId: connection.id } },
-      ];
-      if (connection.provider_config?.intraday_sales_sync_enabled === true) {
-        requests.push({
-          connection_id: connection.id,
-          name: connection.location_name,
-          functionName: "agora-proxy",
-          body: { action: "sync-intraday-sales", connectionId: connection.id },
-        });
-      }
+      // Prioritize the latency-sensitive paths. Closed-day catch-up can scan a
+      // wider date range and must not prevent open tickets from reaching
+      // Winerim when the dispatcher approaches its runtime limit.
+      const requests: DispatchRequest[] = [];
       if (connection.provider_config?.open_tickets_sync_enabled === true) {
         requests.push({
           connection_id: connection.id,
@@ -131,6 +124,20 @@ Deno.serve(async (req: Request) => {
           body: { action: "sync-open-tickets", connectionId: connection.id },
         });
       }
+      if (connection.provider_config?.intraday_sales_sync_enabled === true) {
+        requests.push({
+          connection_id: connection.id,
+          name: connection.location_name,
+          functionName: "agora-proxy",
+          body: { action: "sync-intraday-sales", connectionId: connection.id },
+        });
+      }
+      requests.push({
+        connection_id: connection.id,
+        name: connection.location_name,
+        functionName: "agora-proxy",
+        body: { action: "auto-sync-sales", connectionId: connection.id },
+      });
       return requests;
     };
 

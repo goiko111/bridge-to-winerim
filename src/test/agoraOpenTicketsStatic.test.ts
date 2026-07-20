@@ -23,6 +23,25 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(agoraProxySource).toContain("isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection)");
   });
 
+  it("dispatches open tickets before slower closed-day reconciliation", () => {
+    const salesRequestsStart = dispatcherSource.indexOf(
+      "// Prioritize the latency-sensitive paths.",
+    );
+    const salesRequestsEnd = dispatcherSource.indexOf(
+      "return requests;",
+      salesRequestsStart,
+    );
+    const salesRequests = dispatcherSource.slice(salesRequestsStart, salesRequestsEnd);
+
+    expect(salesRequestsStart).toBeGreaterThan(-1);
+    expect(salesRequests.indexOf('action: "sync-open-tickets"')).toBeLessThan(
+      salesRequests.indexOf('action: "sync-intraday-sales"'),
+    );
+    expect(salesRequests.indexOf('action: "sync-intraday-sales"')).toBeLessThan(
+      salesRequests.indexOf('action: "auto-sync-sales"'),
+    );
+  });
+
   it("loads provider config inside auto-sync-sales before applying day guards", () => {
     const autoSyncStart = agoraProxySource.indexOf('if (action === "auto-sync-sales")');
     const autoSyncEnd = agoraProxySource.indexOf('// ── RESOLVE EXISTING SALES LINES', autoSyncStart);
@@ -46,6 +65,15 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     expect(autoSyncSource).toContain("last_business_day_synced: cursorAdvancedTo");
     expect(autoSyncSource).toContain('reason: "closed_day_scan_failed"');
     expect(autoSyncSource).not.toContain("catch (err) { /* skip */ }");
+  });
+
+  it("keeps late-closing open tickets ahead of the closed-day cursor", () => {
+    expect(agoraProxySource).toContain("function recentOpenTicketBusinessDays");
+    expect(agoraProxySource).toContain("open_tickets_active_cursor_guard_minutes");
+    expect(agoraProxySource).toContain("businessDays: daysWithSavedTickets.slice().sort()");
+    expect(agoraProxySource).toContain("const activeOpenTicketDays = recentOpenTicketBusinessDays(providerConfig)");
+    expect(agoraProxySource).toContain("const openTicketCursorCeiling = activeOpenTicketDays[0]");
+    expect(agoraProxySource).toContain("const completedDayCursor = capClosedDayCursor(day)");
   });
 
   it("does not require the legacy serve_by_glass flag when Winerim has a glass price", () => {

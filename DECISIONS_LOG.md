@@ -2152,3 +2152,53 @@ escribe en Agora, Winerim ni Lovable Cloud.
 
 **Alternativa descartada:** mantener una comprobacion manual recurrente, que
 podria dejar pasar la ausencia de ventas en futuras auditorias.
+
+## 2026-07-20 - Los tickets abiertos tienen prioridad sobre el cierre diario
+
+**Decision:** despachar para Agora primero tickets abiertos, despues intradia y
+por ultimo cierre diario; mientras exista un dia abierto reciente, el cursor de
+cerrados no puede avanzar por encima del dia anterior.
+
+**Razon:** Vinatea mantenia tickets del 19/07 despues de que el cursor hubiera
+avanzado a ese mismo dia. Si el ticket se factura mas tarde, el proceso diario
+podria empezar en el 20/07 y no volver a leer la factura tardia.
+
+**Riesgos controlados:** el solapamiento conserva la idempotencia existente y
+solo retrocede el cursor al ultimo dia cerrado seguro. El guard exige una sonda
+reciente y satisfactoria de tickets, y expira por defecto a los 30 minutos.
+
+**Alternativa descartada:** ampliar siempre el lookback varios dias. Aumenta la
+carga sobre Agora y no distingue una mesa realmente abierta de un replay
+historico.
+
+## 2026-07-20 - Vinatea mapea legacy exacto mientras siga visible
+
+**Decision:** crear `110` mappings legacy confirmados con metodo
+`LEGACY_EXACT_20260720`, sin modificar productos ni familias.
+
+**Razon:** Vinatea conserva botones anteriores vendibles y sus ventas no podian
+resolverse. Las coincidencias son `105` nombres unicos de botella y cinco copas
+revisadas individualmente.
+
+**Riesgos controlados:** rollback por `connection_id + match_method`; no se
+oculta legacy, no se cambia catalogo y los mappings Winerim existentes quedan
+fuera del alcance.
+
+**Alternativa descartada:** ocultar legacy sin validacion del cliente o usar
+matching fuzzy para escribir. Ambas opciones pueden romper su operativa.
+
+## 2026-07-20 - Pausar historicos de variantes ante inconsistencia de Winerim
+
+**Decision:** no ejecutar mas importaciones historicas de copa/magnum ni
+cancelar las nueve tarjetas de Vinatea hasta corregir `/api/v2/sales/import`.
+
+**Razon:** el endpoint acepto `9` lineas / `16` copas y no altero stock, pero el
+ERP las muestra como nueve botellas de cantidad uno. Los cinco stockIds se
+confirmaron como `copa` con stock desactivado.
+
+**Riesgos controlados:** la segunda pasada demostro idempotencia; se conserva
+el snapshot sin stock cambiado y no se intentan compensaciones manuales.
+
+**Alternativa descartada:** reenviar una fila por unidad o cancelar a ciegas.
+La primera multiplicaria tarjetas con variante incorrecta y la segunda podria
+modificar inventario.

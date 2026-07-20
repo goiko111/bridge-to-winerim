@@ -5837,3 +5837,45 @@ _Última actualización: 2026-07-20 17:38 CEST_
   dos ciclos de cinco minutos.
 - Poner precio de copa a una referencia real, comprobar su aparicion automatica
   y ejecutar entonces el canary de copa.
+
+## 2026-07-20 - Vinatea: catalogo exacto, legacy mapeado y bloqueo en sales/import
+
+### Hechos
+- La conexion `e465872a-bff5-43de-8e4c-fe4986f0fd4f` queda habilitada en modo
+  bidireccional y frecuencia de cinco minutos.
+- El catalogo fresh esta `132/132 MATCH`, sin ausentes, diferencias, ownership
+  pendiente ni tareas activas.
+- Se anadieron `110` mappings legacy exactos y reversibles, incluidos cinco
+  botones de copa; no se modifico visibilidad, precio ni estructura de Agora.
+- Tras resolver de nuevo ventas, dos lineas legacy que siguen abiertas ya se
+  identifican correctamente: Las Pizarras y Rebels de Batea.
+- Se preparo un parche para priorizar tickets abiertos sobre los procesos
+  pesados y para impedir que el cursor diario salte un ticket que cierre tarde.
+  Pasan `22` tests dirigidos, TypeScript y build.
+- Se recuperaron historicamente `9` lineas / `16` copas con segunda pasada
+  idempotente y cero cambios de stock.
+- Winerim `/sales/import` acepto los stockIds de copa, pero el ERP representa
+  esas lineas como nueve botellas de cantidad uno. Los IDs enviados siguen
+  confirmados como variantes `copa` con stock desactivado.
+- Checklist y rollback:
+  `docs/operations/vinatea-100-percent-checklist-2026-07-20.md`.
+
+### Decisiones
+- Mantener Vinatea en
+  `LIVE_AUTOMATIC / WARN_WINERIM_SALES_IMPORT / PENDING_RUNTIME_DEPLOY`.
+- No importar mas historico de variantes ni cancelar las nueve tarjetas hasta
+  conocer el efecto de la correccion en Winerim.
+- Mantener visibles las familias legacy que ya estaban visibles antes del
+  onboarding; no restaurar automaticamente las familias 50-55.
+
+### Hipotesis
+- La inconsistencia de las tarjetas historicas esta en la persistencia o el
+  renderizado de Winerim, no en el mapping: stockId, variante y snapshots
+  enviados son correctos y el inventario no cambio.
+
+### Tareas pendientes inmediatas
+- Publicar solo `agora-proxy` y `agora-cron-dispatcher` y validar cursor/orden
+  en runtime.
+- Corregir `/sales/import` en Winerim y reparar las nueve tarjetas sin alterar
+  inventario.
+- Ejecutar canary real de copa, alta/cambio de precio y decision de legacy.

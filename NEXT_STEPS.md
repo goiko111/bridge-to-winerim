@@ -1511,3 +1511,26 @@
   idempotencia y stock segun configuracion.
 - [ ] Abrir mejora de Winerim API v2 para exponer variantes ocultas a la
   integracion sin hacerlas visibles al cliente final.
+
+## Vinatea - cierre tecnico
+
+- [x] Confirmar catalogo fresh `132/132 MATCH`, cola cero y mappings Winerim
+  verificados.
+- [x] Crear `110` mappings legacy exactos y reversibles sin tocar Agora.
+- [x] Resolver de nuevo lineas legacy y confirmar copas abiertas mapeadas.
+- [x] Preparar prioridad tickets -> intradia -> cierre diario.
+- [x] Preparar guard de cursor para dias con tickets que cierran tarde.
+- [x] Pasar `22` tests dirigidos, TypeScript y build.
+- [x] Importar de forma idempotente `9` lineas / `16` copas sin modificar
+  stock y detectar la representacion incorrecta en el ERP Winerim.
+- [ ] Redesplegar solo `agora-proxy` y `agora-cron-dispatcher` cuando exista
+  una sesion CLI o de Cloud autenticada.
+- [ ] Verificar que el cursor queda detras del 19/07 mientras siga abierto y
+  que procesa su factura una sola vez al cerrar.
+- [ ] Corregir Winerim `/sales/import`: debe conservar stockId/variante, qty y
+  soldAt; reparar las nueve tarjetas de Vinatea sin tocar stock.
+- [ ] Ejecutar venta real de copa legacy y copa Winerim, con ERP, hora,
+  variante, cantidad, stock e idempotencia.
+- [ ] Ejecutar alta o cambio de precio real y medir propagacion menor o igual
+  a cinco minutos.
+- [ ] Acordar con el cliente la ocultacion reversible de `CAVAS` y `BODEGA`.
