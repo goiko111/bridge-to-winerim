@@ -1977,3 +1977,19 @@ cliente. Legacy permanece visible y reversible.
 
 **Alternativa descartada:** cerrar al 100 % usando solo una botella y flags de
 configuracion como prueba suficiente.
+
+## 2026-07-20 - Tintorera permanece NOT_ACTIVE
+
+**Decision:** mantener Tintorera desactivada, sin escritura ni automatismos,
+hasta que `/api/` y el master de Agora respondan fresh desde Lovable Cloud.
+
+**Razon:** el 20/07 el acceso directo volvio a terminar en timeout y la sonda
+del backend no respondio en 120 segundos. La conexion no tiene master, ventas,
+mappings, tracking ni sincronizaciones anteriores.
+
+**Riesgos controlados:** no se encolan los 302 vinos Winerim ni se toca el
+legacy sin poder verificar el resultado o ejecutar un rollback preciso.
+
+**Alternativa descartada:** activar la conexion confiando en el catalogo
+Winerim o en el DDNS resuelto. Resolver DNS no demuestra que Agora escuche ni
+que el puerto externo sea alcanzable.

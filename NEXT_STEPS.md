@@ -183,6 +183,8 @@
 - [x] Confirmar que la conexion existe en Lovable Cloud en modo seguro y sin escrituras.
 - [x] Validar token/catalogo Winerim: 302 vinos activos con precio.
 - [x] Repetir sonda local y desde Lovable Cloud/backend: `tintorera.dyndns.org:8984` termina en timeout.
+- [x] Repetir comprobacion fresh el 20/07: timeout directo, timeout de 120
+  segundos desde Lovable Cloud y auditoria `NO_MASTER_DATA`.
 - [x] Documentar diagnostico, checklist SAT, activacion y rollback en `docs/integrations/TINTORERA_AGORA_READINESS_2026-07-14.md`.
 - [ ] SAT: confirmar servidor Agora encendido, modulo/API HTTP activos y servicio escuchando en `8984`.
 - [ ] SAT: revisar IP local fija/reserva DHCP, NAT TCP `8984`, firewall y DDNS.

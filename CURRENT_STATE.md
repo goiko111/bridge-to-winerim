@@ -2,7 +2,7 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-20 10:55 CEST_
+_Última actualización: 2026-07-20 14:11 CEST_
 
 ## Casa Esteban - staging bloqueado por túnel ConnectManager - 2026-07-17
 
@@ -5636,3 +5636,35 @@ _Última actualización: 2026-07-20 10:55 CEST_
 - Observar un servicio actual para confirmar frescura de tickets abiertos.
 - Confirmar con el cliente la politica final de legacy y firmar entonces
   `100%_SIGNED_OFF`.
+
+## 2026-07-20 - Tintorera continua bloqueada por conectividad externa
+
+### Hechos
+- La conexion `1efe95c0-5fb7-404f-9947-416eed598a46` sigue desactivada,
+  `PULL_ONLY`, `write_mode=NONE`, frecuencia prevista de 5 minutos y todos los
+  automatismos de alta, cambio y ventas apagados.
+- `tintorera.dyndns.org` continua resolviendo a `88.17.22.193`.
+- La sonda directa a `/api/` agoto 10 segundos y la sonda desde Lovable Cloud
+  no devolvio respuesta en 120 segundos.
+- La auditoria read-only devuelve `NO_MASTER_DATA`: no existe snapshot Agora,
+  mappings, tracking, ventas, stock sync ni sincronizacion previa.
+- No hay tareas activas ni alertas abiertas. El legacy nunca se modifico.
+- La ultima validacion del token Winerim, el 14/07, mostro 302 vinos activos
+  con algun precio; no se ha publicado ninguno en Agora.
+
+### Decisiones
+- Mantener Tintorera desactivada y sin escrituras hasta recuperar una lectura
+  fresh completa de Agora.
+- No confundir este estado con una integracion caida: el onboarding no llego a
+  superar la fase de conectividad.
+
+### Hipotesis
+- El servidor Agora puede estar apagado o el servicio/API detenido; tambien
+  son compatibles una regla NAT ausente, firewall, puerto 8984 no expuesto o
+  DDNS apuntando a una IP publica que ya no corresponde.
+
+### Tareas pendientes inmediatas
+- SAT debe verificar servidor, API HTTP, escucha local en 8984, IP local fija,
+  NAT TCP, firewall y acceso desde una red externa.
+- Cuando responda: snapshot read-only, comparacion de legacy, formatos no
+  estandar y activacion controlada con legacy visible.
