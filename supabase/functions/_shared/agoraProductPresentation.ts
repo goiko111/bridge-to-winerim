@@ -35,7 +35,7 @@ export function agoraProductButtonText(connection: unknown, technicalName: unkno
   const visibleName = agoraProductButtonTextMode(connection) === AGORA_BUTTON_TEXT_WINE_NAME_ONLY
     ? stripAgoraFormatPrefix(normalized)
     : normalized;
-  return visibleName.length <= maxLength ? visibleName : visibleName.slice(0, maxLength);
+  return (visibleName.length <= maxLength ? visibleName : visibleName.slice(0, maxLength)).trim();
 }
 
 export type AgoraButtonTextCandidate = {

@@ -30,6 +30,7 @@ describe("Agora product presentation", () => {
     expect(agoraProductButtonText(higueron, "C Albenc", 20)).toBe("Albenc");
     expect(agoraProductButtonText(higueron, "B Prado Enea Gran Reserva", 20)).toBe("Prado Enea Gran Rese");
     expect(stripAgoraFormatPrefix("MAGNUM 200 Monges")).toBe("200 Monges");
+    expect(agoraProductButtonText(higueron, "B Albet I Noya Efecte 2017", 20)).toBe("Albet I Noya Efecte");
   });
 
   it("sorts by the prefixless wine name", () => {
