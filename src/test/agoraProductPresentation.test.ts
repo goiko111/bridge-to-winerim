@@ -39,10 +39,15 @@ describe("Agora product presentation", () => {
   });
 
   it("keeps existing unique abbreviations when truncated labels collide", () => {
-    expect(buildUniqueAgoraButtonTexts(higueron, [
+    const firstPass = buildUniqueAgoraButtonTexts(higueron, [
       { key: "1", technicalName: "B Conde de San Cristobal Crz", existingButtonText: "B C de San Crist crz" },
       { key: "2", technicalName: "B Conde de San Cristóbal Reserva Especial", existingButtonText: "B C San Cristobal Rsv" },
-    ])).toEqual({ "1": "C de San Crist crz", "2": "C San Cristobal Rsv" });
+    ]);
+    expect(firstPass).toEqual({ "1": "C de San Crist crz", "2": "C San Cristobal Rsv" });
+    expect(buildUniqueAgoraButtonTexts(higueron, [
+      { key: "1", technicalName: "B Conde de San Cristobal Crz", existingButtonText: firstPass["1"] },
+      { key: "2", technicalName: "B Conde de San Cristóbal Reserva Especial", existingButtonText: firstPass["2"] },
+    ])).toEqual(firstPass);
   });
 
   it("preserves a distinguishing suffix when existing labels also collide", () => {

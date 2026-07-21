@@ -67,6 +67,21 @@ function suffixAwareButtonText(technicalName: unknown, maxLength: number): strin
   return `${prefix} ${suffix}`.slice(0, maxLength).trim();
 }
 
+function stripMatchingFormatPrefix(value: unknown, technicalName: unknown): string {
+  const label = String(value ?? "").replace(/\s+/g, " ").trim();
+  const technical = String(technicalName ?? "").replace(/\s+/g, " ").trim();
+  if (/^(?:B|BOT(?:ELLA)?)\s+/i.test(technical)) {
+    return label.replace(/^(?:B|BOT(?:ELLA)?)\s+/i, "").trim();
+  }
+  if (/^(?:C|COPA)\s+/i.test(technical)) {
+    return label.replace(/^(?:C|COPA)\s+/i, "").trim();
+  }
+  if (/^(?:M|MAG(?:NUM)?)\s+/i.test(technical)) {
+    return label.replace(/^(?:M|MAG(?:NUM)?)\s+/i, "").trim();
+  }
+  return label;
+}
+
 function numberedButtonText(label: string, index: number, maxLength: number): string {
   const suffix = ` ${index}`;
   return `${label.slice(0, Math.max(1, maxLength - suffix.length)).trim()}${suffix}`;
@@ -95,7 +110,10 @@ export function buildUniqueAgoraButtonTexts(
   for (const keys of groups.values()) {
     if (keys.length < 2) continue;
     const existingLabels = keys.map((key) => {
-      const existing = stripAgoraFormatPrefix(candidateByKey.get(key)?.existingButtonText).slice(0, maxLength).trim();
+      const candidate = candidateByKey.get(key);
+      const existing = stripMatchingFormatPrefix(candidate?.existingButtonText, candidate?.technicalName)
+        .slice(0, maxLength)
+        .trim();
       return existing;
     });
     const existingKeys = existingLabels.map(normalizeVisibleLabel);
