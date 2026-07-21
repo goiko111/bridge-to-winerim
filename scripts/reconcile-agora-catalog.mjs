@@ -135,12 +135,15 @@ function configuredHiddenGlassVariants(connection) {
     const winerimId = String(item?.winerim_id || item?.winerimWineId || "").trim();
     const name = String(item?.name || "").trim();
     const glassSalePrice = Number(item?.glass_sale_price ?? item?.price ?? 0);
+    const bottleSalePrice = Number(item?.bottle_sale_price ?? 0);
     if (!winerimId || !name || !positive(glassSalePrice) || item?.enabled === false) return [];
     return [{
       winerim_id: winerimId,
       name,
       wine_type: item?.wine_type ? String(item.wine_type).toLowerCase() : null,
       glass_sale_price: glassSalePrice,
+      bottle_sale_price: positive(bottleSalePrice) ? bottleSalePrice : undefined,
+      publish_bottle: item?.publish_bottle === true,
     }];
   });
 }
@@ -149,6 +152,8 @@ function mergeConfiguredHiddenGlassVariants(connection, wineRows) {
   const byId = new Map(wineRows.map((wine) => [String(wine.winerim_id), { ...wine }]));
   for (const configured of configuredHiddenGlassVariants(connection)) {
     const existing = byId.get(configured.winerim_id) || {};
+    const bottleSalePrice = configured.bottle_sale_price;
+    const allowInactiveBottle = configured.publish_bottle === true && positive(bottleSalePrice);
     byId.set(configured.winerim_id, {
       ...existing,
       winerim_id: configured.winerim_id,
@@ -156,24 +161,32 @@ function mergeConfiguredHiddenGlassVariants(connection, wineRows) {
       wine_type: configured.wine_type || existing.wine_type || null,
       is_active: existing.is_active ?? false,
       glass_sale_price: configured.glass_sale_price,
+      bottle_sale_price: allowInactiveBottle ? bottleSalePrice : existing.bottle_sale_price ?? null,
       _agora_allow_inactive_glass: true,
+      _agora_allow_inactive_bottle: allowInactiveBottle,
     });
   }
   return [...byId.values()];
 }
 
 function expectedFormats(wine) {
-  if (wine.is_active === false && wine._agora_allow_inactive_glass !== true) return [];
   const formats = [];
-  if (wine.is_active !== false && positive(wine.bottle_sale_price)) formats.push("BOTTLE");
-  if (positive(wine.glass_sale_price)) formats.push("GLASS");
+  if ((wine.is_active !== false || wine._agora_allow_inactive_bottle === true) && positive(wine.bottle_sale_price)) {
+    formats.push("BOTTLE");
+  }
+  if ((wine.is_active !== false || wine._agora_allow_inactive_glass === true) && positive(wine.glass_sale_price)) {
+    formats.push("GLASS");
+  }
   if (wine.is_active !== false && positive(wine.magnum_sale_price)) formats.push("MAGNUM");
   return formats;
 }
 
 function formatIsUnavailable(wine, format) {
   if (!wine) return true;
-  if (wine.is_active === false && !(format === "GLASS" && wine._agora_allow_inactive_glass === true)) return true;
+  if (wine.is_active === false && !(
+    (format === "GLASS" && wine._agora_allow_inactive_glass === true) ||
+    (format === "BOTTLE" && wine._agora_allow_inactive_bottle === true)
+  )) return true;
   if (format === "BOTTLE") return !positive(wine.bottle_sale_price);
   if (format === "GLASS") return !positive(wine.glass_sale_price);
   if (format === "MAGNUM") return !positive(wine.magnum_sale_price);
