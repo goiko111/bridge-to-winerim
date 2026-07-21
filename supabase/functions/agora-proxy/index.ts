@@ -10737,6 +10737,8 @@ ${costPricesXml}
       let updateDiffCurrentXml: string | null = null;
       let updateDiffError: string | null = null;
       let updateDiffCustomMappings: Record<string, { id: string; name: string }> | undefined = undefined;
+      let updateDiffExistingProducts: { Id: string; Name: string }[] = [];
+      let updateDiffActiveWines: any[] = [];
       const updateDiffScopedPriceListIds: string[] = Array.isArray((autoPushScopePayload as any)._effective_price_list_ids)
         ? ((autoPushScopePayload as any)._effective_price_list_ids as string[])
         : [];
@@ -10747,6 +10749,12 @@ ${costPricesXml}
           const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
           if (cachedForDiff && cachedForDiff.ok && cachedForDiff.xml && cachedForDiff.xml.includes("<Product")) {
             updateDiffCurrentXml = cachedForDiff.xml;
+            updateDiffExistingProducts = extractXmlElementsWithAttrs(cachedForDiff.xml, "Product")
+              .map((product) => ({
+                Id: String(product.attrs.Id || ""),
+                Name: decodeXmlAttribute(product.attrs.Name || ""),
+              }))
+              .filter((product) => Boolean(product.Id && product.Name));
           } else {
             updateDiffError = `cache_status_${cachedForDiff?.status ?? "unknown"}`;
           }
@@ -10757,6 +10765,18 @@ ${costPricesXml}
           updateDiffCustomMappings = await loadCustomFamilyMappings(connectionId);
         } catch (_e) {
           // Non-fatal — expected XML generation will use master data defaults.
+        }
+        try {
+          const { data: activeWinesForDiff, error: activeWinesForDiffError } = await supabase
+            .from("winerim_wines")
+            .select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active")
+            .eq("connection_id", connectionId)
+            .eq("is_active", true);
+          if (activeWinesForDiffError) throw activeWinesForDiffError;
+          updateDiffActiveWines = activeWinesForDiff || [];
+        } catch (e) {
+          updateDiffCurrentXml = null;
+          updateDiffError = `naming_context_error:${(e as Error).message?.slice(0, 80) || "unknown"}`;
         }
       }
 
@@ -10958,6 +10978,17 @@ ${costPricesXml}
         }
 
         if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate && !dryRun) {
+          const normalizedUpdateWineName = normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase("es");
+          const updateHomonymousWines = updateDiffActiveWines.filter((candidate) =>
+            normalizeAgoraTextAttribute(candidate.name).toLocaleLowerCase("es") === normalizedUpdateWineName
+          );
+          const expectedUpdateNameOverrides = buildQueuedProductNameOverrides(
+            connection,
+            wine,
+            updateHomonymousWines,
+            formatTypes,
+            updateDiffExistingProducts,
+          );
           const { xml: expectedUpdateXml } = generateImportXml(
             [wine],
             masterData,
@@ -10968,6 +10999,7 @@ ${costPricesXml}
             updateDiffIsGeoMode ? updateDiffGeoConfig : undefined,
             updateDiffIsGeoMode ? [wine] : undefined,
             updateDiffScopedPriceListIds,
+            expectedUpdateNameOverrides,
           );
           const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
           const allExpectedProductsMatch = expectedProducts.length > 0 && expectedProducts.every((expectedProduct) => {

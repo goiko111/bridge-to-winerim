@@ -23,6 +23,19 @@ describe("Agora queued product naming", () => {
     expect(source).toContain("queuedProductNameOverrides,");
   });
 
+  it("uses the same homonym-aware names in the automatic update diff", () => {
+    const updateDiffStart = source.indexOf("// ── UPDATE differential guard precompute ──");
+    const updateDiffEnd = source.indexOf("// Strict idempotency", updateDiffStart);
+    const updateDiffSource = source.slice(updateDiffStart, updateDiffEnd);
+
+    expect(updateDiffStart).toBeGreaterThan(-1);
+    expect(updateDiffEnd).toBeGreaterThan(updateDiffStart);
+    expect(updateDiffSource).toContain("updateDiffExistingProducts");
+    expect(updateDiffSource).toContain("updateDiffActiveWines");
+    expect(updateDiffSource).toContain("const expectedUpdateNameOverrides = buildQueuedProductNameOverrides");
+    expect(updateDiffSource).toContain("expectedUpdateNameOverrides,");
+  });
+
   it("normalizes whitespace before applying bottle, glass, or magnum prefixes", () => {
     expect(source).toContain('String(wineName || "").replace(/\\s+/g, " ").trim()');
   });
