@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+import {
+  AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
+  AGORA_SORT_ALPHABETICAL_WINE_NAME,
+  agoraProductButtonText,
+  compareAgoraWineNames,
+  shouldSortAgoraProductsAlphabetically,
+  stripAgoraFormatPrefix,
+} from "../../supabase/functions/_shared/agoraProductPresentation";
+
+const higueron = {
+  provider_config: {
+    agora_product_sort_mode: AGORA_SORT_ALPHABETICAL_WINE_NAME,
+    agora_product_button_text_mode: AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
+  },
+};
+
+describe("Agora product presentation", () => {
+  it("only enables alphabetical mode when explicitly configured", () => {
+    expect(shouldSortAgoraProductsAlphabetically(higueron)).toBe(true);
+    expect(shouldSortAgoraProductsAlphabetically({ provider_config: {} })).toBe(false);
+  });
+
+  it("preserves technical names by default", () => {
+    expect(agoraProductButtonText({ provider_config: {} }, "B Prado Enea", 20)).toBe("B Prado Enea");
+  });
+
+  it("removes only the format prefix from the visible label", () => {
+    expect(agoraProductButtonText(higueron, "C Albenc", 20)).toBe("Albenc");
+    expect(agoraProductButtonText(higueron, "B Prado Enea Gran Reserva", 20)).toBe("Prado Enea Gran Rese");
+    expect(stripAgoraFormatPrefix("MAGNUM 200 Monges")).toBe("200 Monges");
+  });
+
+  it("sorts by the prefixless wine name", () => {
+    const names = ["B Zuccardi", "C Albenc", "M Prado Enea"];
+    expect(names.sort(compareAgoraWineNames)).toEqual(["C Albenc", "M Prado Enea", "B Zuccardi"]);
+  });
+});

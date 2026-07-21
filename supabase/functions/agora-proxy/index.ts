@@ -1,6 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import {
+  AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
+  AGORA_SORT_ALPHABETICAL_WINE_NAME,
+  agoraProductButtonText,
+  agoraProductButtonTextMode,
+  agoraProductSortMode,
+  compareAgoraWineNames,
+  shouldSortAgoraProductsAlphabetically,
+} from "../_shared/agoraProductPresentation.ts";
 import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
 import {
   agoraDocumentType,
@@ -450,11 +459,6 @@ function commercialGenericCode(wineName: string | null | undefined): { prefix: s
 type CommercialCode = { prefix: string; number: number; suffix?: string };
 
 const DEFAULT_COMMERCIAL_CODE_PREFIX_ORDER = ["T", "B", "R", "E", "D", "G", "MAGNUM"];
-
-function agoraProductSortMode(connection: any): string {
-  const config = (connection?.provider_config || {}) as Record<string, unknown>;
-  return String(config.agora_product_sort_mode || config.product_sort_mode || "").toUpperCase();
-}
 
 function shouldSortAgoraProductsByCommercialCode(connection: any): boolean {
   return agoraProductSortMode(connection) === "COMMERCIAL_CODE_NUMERIC";
@@ -4205,6 +4209,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const newFamilies: { id: string; name: string }[] = [];
   const newFamilyHierarchy: { id: string; name: string; parentId: string }[] = [];
   const useCommercialCodeSort = shouldSortAgoraProductsByCommercialCode(connection);
+  const useAlphabeticalWineNameSort = shouldSortAgoraProductsAlphabetically(connection);
   const codePrefixOrder = commercialCodePrefixOrder(connection);
   const productEntries: {
     wineName: string;
@@ -4304,7 +4309,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         winerimId: String(winerimId),
         nameDisambiguators: [formatWine.vintage || formatWine.raw_payload?.vintage].filter(Boolean),
         renderXml: (finalProductName: string) => {
-          const buttonText = truncate(finalProductName, 20);
+          const buttonText = agoraProductButtonText(connection, finalProductName, 20);
           return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
@@ -4341,6 +4346,13 @@ ${costPricesXml}
       a.formatOrder - b.formatOrder ||
       a.wineName.localeCompare(b.wineName, "es")
     );
+  } else if (useAlphabeticalWineNameSort) {
+    productEntries.sort((a, b) =>
+      a.familyId.localeCompare(b.familyId, "es") ||
+      compareAgoraWineNames(a.wineName, b.wineName) ||
+      a.formatOrder - b.formatOrder ||
+      Number(a.productId) - Number(b.productId)
+    );
   } else {
     // Sort by wine name (alphabetical), then by format (BOT, COPA, MAG)
     productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
@@ -4356,10 +4368,15 @@ ${costPricesXml}
     existingProducts,
   );
 
-  // Inject Order attribute into each <Product> based on sorted position
+  const nextOrderByFamily = new Map<string, number>();
+  // El Higuerón numbers each configured family independently.
   const productXmls = productEntries.map((entry, idx) => {
     const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductNames[entry.productId] || entry.productName;
-    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product Order="${idx + 1}" Id=`);
+    const nextOrder = useAlphabeticalWineNameSort
+      ? (nextOrderByFamily.get(entry.familyId) || 0) + 1
+      : idx + 1;
+    if (useAlphabeticalWineNameSort) nextOrderByFamily.set(entry.familyId, nextOrder);
+    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product Order="${nextOrder}" Id=`);
   });
 
   if (productXmls.length > 0) {
@@ -7576,13 +7593,29 @@ serve(async (req) => {
       }
     }
 
-    // ── REORDER EXISTING FAMILY PRODUCTS BY COMMERCIAL CODE ──
-    // Safe operation: preserves the full Agora <Product> XML and only rewrites Order.
-    // It is enabled per connection via provider_config.agora_product_sort_mode but can be
-    // run explicitly for a dry-run/audit on any Agora connection.
-    if (action === "reorder-products-by-commercial-code") {
+    // ── NORMALIZE EXISTING WINERIM FAMILY PRODUCT PRESENTATION ──
+    // Safe operation: preserves the full Agora <Product> XML and only rewrites
+    // Order plus ButtonText when explicitly requested by the connection policy.
+    if (action === "reorder-products-by-commercial-code" || action === "reorder-winerim-family-products") {
       const dryRun = payload.dryRun !== false;
       const providerConfig = ((connection as any).provider_config || {}) as Record<string, unknown>;
+      const requestedSortMode = String(payload.sortMode || "").trim().toUpperCase();
+      const sortMode = action === "reorder-products-by-commercial-code"
+        ? "COMMERCIAL_CODE_NUMERIC"
+        : requestedSortMode || agoraProductSortMode(connection);
+      const requestedButtonTextMode = String(payload.buttonTextMode || "").trim().toUpperCase();
+      const buttonTextMode = action === "reorder-products-by-commercial-code"
+        ? ""
+        : requestedButtonTextMode || agoraProductButtonTextMode(connection);
+      const useCommercialSort = sortMode === "COMMERCIAL_CODE_NUMERIC";
+      const useAlphabeticalSort = sortMode === AGORA_SORT_ALPHABETICAL_WINE_NAME;
+      const rewriteButtonText = buttonTextMode === AGORA_BUTTON_TEXT_WINE_NAME_ONLY;
+      if (!useCommercialSort && !useAlphabeticalSort) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Modo de orden no soportado: ${sortMode || "(vacío)"}`,
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const configuredFamilyIds = Array.isArray(providerConfig.agora_product_sort_family_ids)
         ? providerConfig.agora_product_sort_family_ids.map((id) => String(id)).filter(Boolean)
         : [];
@@ -7649,12 +7682,15 @@ serve(async (req) => {
         productId: string;
         name: string;
         buttonText: string;
+        nextButtonText: string;
         familyId: string;
         familyName: string;
         code: CommercialCode | null;
         formatOrder: number;
         previousOrder: number | null;
         nextOrder: number;
+        orderChanged: boolean;
+        buttonTextChanged: boolean;
         changed: boolean;
         xmlBefore: string;
         xmlAfter: string;
@@ -7668,6 +7704,8 @@ serve(async (req) => {
         if (!productId) continue;
         const name = String(product.attrs.Name || "");
         const buttonText = String(product.attrs.ButtonText || "");
+        const decodedName = normalizeAgoraTextAttribute(decodeXmlAttribute(name));
+        const decodedButtonText = normalizeAgoraTextAttribute(decodeXmlAttribute(buttonText));
         const code = commercialGenericCode(name) || commercialGenericCode(buttonText);
         const previousOrderRaw = product.attrs.Order;
         const previousOrder = previousOrderRaw && /^\d+$/.test(previousOrderRaw)
@@ -7676,14 +7714,19 @@ serve(async (req) => {
         const familyName = familyById.get(familyId)?.name || familyId;
         const entry: ProductSortPlan = {
           productId,
-          name,
-          buttonText,
+          name: decodedName,
+          buttonText: decodedButtonText,
+          nextButtonText: rewriteButtonText
+            ? agoraProductButtonText({ provider_config: { agora_product_button_text_mode: buttonTextMode } }, decodedName, 20)
+            : decodedButtonText,
           familyId,
           familyName,
           code,
           formatOrder: inferAgoraFormatOrderFromName(name),
           previousOrder,
           nextOrder: 0,
+          orderChanged: false,
+          buttonTextChanged: false,
           changed: false,
           xmlBefore: product.xml,
           xmlAfter: product.xml,
@@ -7721,17 +7764,27 @@ serve(async (req) => {
       for (const [familyId, products] of byFamily.entries()) {
         const familyNameForSort = products[0]?.familyName || familyById.get(familyId)?.name || familyId;
         const familyPrefixOrder = commercialCodePrefixOrderForFamily(connection, familyId, familyNameForSort, prefixOrder);
-        products.sort((a, b) =>
-          compareCommercialCodes(a.code, b.code, familyPrefixOrder) ||
-          a.formatOrder - b.formatOrder ||
-          a.name.localeCompare(b.name, "es") ||
-          Number(a.productId) - Number(b.productId)
-        );
+        products.sort((a, b) => {
+          if (useAlphabeticalSort) {
+            return compareAgoraWineNames(a.name, b.name) ||
+              a.formatOrder - b.formatOrder ||
+              Number(a.productId) - Number(b.productId);
+          }
+          return compareCommercialCodes(a.code, b.code, familyPrefixOrder) ||
+            a.formatOrder - b.formatOrder ||
+            a.name.localeCompare(b.name, "es") ||
+            Number(a.productId) - Number(b.productId);
+        });
 
         products.forEach((p, idx) => {
           p.nextOrder = idx + 1;
-          p.changed = p.previousOrder !== p.nextOrder;
+          p.orderChanged = p.previousOrder !== p.nextOrder;
+          p.buttonTextChanged = rewriteButtonText && p.buttonText !== p.nextButtonText;
+          p.changed = p.orderChanged || p.buttonTextChanged;
           p.xmlAfter = setXmlAttrValue(p.xmlBefore, "Order", String(p.nextOrder));
+          if (rewriteButtonText) {
+            p.xmlAfter = setXmlAttrValue(p.xmlAfter, "ButtonText", p.nextButtonText);
+          }
           if (p.changed) changedPlans.push(p);
         });
 
@@ -7745,17 +7798,39 @@ serve(async (req) => {
           changed: products.filter((p) => p.changed).length,
           first: products.slice(0, 8).map((p) => ({
             productId: p.productId,
-            name: p.name,
+            name: rewriteButtonText ? p.nextButtonText : p.name,
             code: codeLabel(p.code),
             sortOrder: p.nextOrder,
           })),
           last: products.slice(-8).map((p) => ({
             productId: p.productId,
-            name: p.name,
+            name: rewriteButtonText ? p.nextButtonText : p.name,
             code: codeLabel(p.code),
             sortOrder: p.nextOrder,
           })),
         });
+      }
+
+      const duplicateVisibleLabels: Array<{ familyId: string; familyName: string; buttonText: string; productIds: string[] }> = [];
+      if (rewriteButtonText) {
+        for (const [familyId, products] of byFamily.entries()) {
+          const byLabel = new Map<string, ProductSortPlan[]>();
+          for (const product of products) {
+            const key = normalizeRoutingText(product.nextButtonText);
+            const sameLabel = byLabel.get(key) || [];
+            sameLabel.push(product);
+            byLabel.set(key, sameLabel);
+          }
+          for (const [label, productsWithLabel] of byLabel.entries()) {
+            if (!label || productsWithLabel.length < 2) continue;
+            duplicateVisibleLabels.push({
+              familyId,
+              familyName: productsWithLabel[0]?.familyName || familyId,
+              buttonText: productsWithLabel[0]?.nextButtonText || label,
+              productIds: productsWithLabel.map((product) => product.productId),
+            });
+          }
+        }
       }
 
       const productXml = Array.from(byFamily.values())
@@ -7769,11 +7844,13 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           dryRun: true,
-          sortMode: "COMMERCIAL_CODE_NUMERIC",
-          prefixOrder,
+          sortMode,
+          buttonTextMode: buttonTextMode || null,
+          prefixOrder: useCommercialSort ? prefixOrder : undefined,
           targetFamilyIds: Array.from(targetFamilyIds),
           families: familyPlans,
           changed: changedPlans.length,
+          duplicateVisibleLabels,
           changedPreview: changedPlans.slice(0, 50).map((p) => ({
             familyId: p.familyId,
             familyName: p.familyName,
@@ -7782,10 +7859,25 @@ serve(async (req) => {
             code: codeLabel(p.code),
             previousOrder: p.previousOrder,
             nextOrder: p.nextOrder,
+            previousButtonText: p.buttonText,
+            nextButtonText: p.nextButtonText,
+            orderChanged: p.orderChanged,
+            buttonTextChanged: p.buttonTextChanged,
           })),
           xml: payload.includeXml === true ? xml : undefined,
           rollbackXml: payload.includeXml === true ? rollbackXml : undefined,
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (duplicateVisibleLabels.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          dryRun: false,
+          sortMode,
+          buttonTextMode: buttonTextMode || null,
+          error: "La etiqueta visible sin prefijo produciría duplicados dentro de una familia.",
+          duplicateVisibleLabels,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const importUrl = `${baseUrlClean}/api/import/`;
@@ -7801,8 +7893,9 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           success: false,
           dryRun: false,
-          sortMode: "COMMERCIAL_CODE_NUMERIC",
-          prefixOrder,
+          sortMode,
+          buttonTextMode: buttonTextMode || null,
+          prefixOrder: useCommercialSort ? prefixOrder : undefined,
           targetFamilyIds: Array.from(targetFamilyIds),
           families: familyPlans,
           changed: changedPlans.length,
@@ -7824,19 +7917,28 @@ serve(async (req) => {
       const verification = changedPlans.map((p) => {
         const live = verifyProducts.get(p.productId) || "";
         const sortOrder = live ? extractXmlAttrValue(live, "Order") : null;
+        const liveButtonTextRaw = live ? extractXmlAttrValue(live, "ButtonText") : null;
+        const liveButtonText = liveButtonTextRaw === null
+          ? null
+          : normalizeAgoraTextAttribute(decodeXmlAttribute(liveButtonTextRaw));
+        const orderOk = sortOrder === String(p.nextOrder);
+        const buttonTextOk = !rewriteButtonText || liveButtonText === p.nextButtonText;
         return {
           productId: p.productId,
           expectedOrder: String(p.nextOrder),
           actualOrder: sortOrder,
-          ok: sortOrder === String(p.nextOrder),
+          expectedButtonText: rewriteButtonText ? p.nextButtonText : undefined,
+          actualButtonText: rewriteButtonText ? liveButtonText : undefined,
+          ok: orderOk && buttonTextOk,
         };
       });
 
       return new Response(JSON.stringify({
         success: true,
         dryRun: false,
-        sortMode: "COMMERCIAL_CODE_NUMERIC",
-        prefixOrder,
+        sortMode,
+        buttonTextMode: buttonTextMode || null,
+        prefixOrder: useCommercialSort ? prefixOrder : undefined,
         targetFamilyIds: Array.from(targetFamilyIds),
         families: familyPlans,
         changed: changedPlans.length,
@@ -9404,7 +9506,9 @@ ${costPricesXml}
       const MIN_TIME_FOR_CLAIM_MS = 3_000;
       const startTime = Date.now();
       let processed = 0, succeeded = 0, failed = 0;
-      const shouldReorderAfterSuccess = shouldSortAgoraProductsByCommercialCode(connection);
+      const useCommercialCodePresentation = shouldSortAgoraProductsByCommercialCode(connection);
+      const useAlphabeticalPresentation = shouldSortAgoraProductsAlphabetically(connection);
+      const shouldReorderAfterSuccess = useCommercialCodePresentation || useAlphabeticalPresentation;
       const familiesToReorderAfterSuccess = new Set<string>();
 
       // ── CIRCUIT BREAKER CHECK ──
@@ -9699,18 +9803,20 @@ ${costPricesXml}
       const remainingCount = remaining || 0;
       const breakerTripped = runConsecutiveFailures >= 10;
       const isDone = remainingCount === 0 || breakerTripped;
-      let commercialCodeSortResult: unknown = null;
+      let productPresentationResult: unknown = null;
 
       if (shouldReorderAfterSuccess && familiesToReorderAfterSuccess.size > 0 && !breakerTripped) {
         const { data: reorderData, error: reorderError } = await supabase.functions.invoke("agora-proxy", {
           body: {
-            action: "reorder-products-by-commercial-code",
+            action: useCommercialCodePresentation
+              ? "reorder-products-by-commercial-code"
+              : "reorder-winerim-family-products",
             connectionId,
             familyIds: Array.from(familiesToReorderAfterSuccess),
             dryRun: false,
           },
         });
-        commercialCodeSortResult = reorderError
+        productPresentationResult = reorderError
           ? { success: false, error: reorderError.message, familyIds: Array.from(familiesToReorderAfterSuccess) }
           : reorderData;
       }
@@ -9729,7 +9835,8 @@ ${costPricesXml}
       return new Response(JSON.stringify({
         success: true, processed, succeeded, failed,
         remaining: remainingCount, done: isDone, serverLoop, breakerTripped,
-        commercialCodeSort: commercialCodeSortResult,
+        productPresentation: productPresentationResult,
+        commercialCodeSort: useCommercialCodePresentation ? productPresentationResult : null,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
