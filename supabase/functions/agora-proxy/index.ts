@@ -7,6 +7,7 @@ import {
   agoraProductButtonText,
   agoraProductButtonTextMode,
   agoraProductSortMode,
+  buildUniqueAgoraButtonTexts,
   compareAgoraWineNames,
   shouldSortAgoraProductsAlphabetically,
 } from "../_shared/agoraProductPresentation.ts";
@@ -7775,6 +7776,21 @@ serve(async (req) => {
             a.name.localeCompare(b.name, "es") ||
             Number(a.productId) - Number(b.productId);
         });
+
+        if (rewriteButtonText) {
+          const uniqueButtonTexts = buildUniqueAgoraButtonTexts(
+            { provider_config: { agora_product_button_text_mode: buttonTextMode } },
+            products.map((product) => ({
+              key: product.productId,
+              technicalName: product.name,
+              existingButtonText: product.buttonText,
+            })),
+            20,
+          );
+          for (const product of products) {
+            product.nextButtonText = uniqueButtonTexts[product.productId] || product.nextButtonText;
+          }
+        }
 
         products.forEach((p, idx) => {
           p.nextOrder = idx + 1;

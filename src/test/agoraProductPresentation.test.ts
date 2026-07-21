@@ -3,6 +3,7 @@ import {
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
   AGORA_SORT_ALPHABETICAL_WINE_NAME,
   agoraProductButtonText,
+  buildUniqueAgoraButtonTexts,
   compareAgoraWineNames,
   shouldSortAgoraProductsAlphabetically,
   stripAgoraFormatPrefix,
@@ -34,5 +35,19 @@ describe("Agora product presentation", () => {
   it("sorts by the prefixless wine name", () => {
     const names = ["B Zuccardi", "C Albenc", "M Prado Enea"];
     expect(names.sort(compareAgoraWineNames)).toEqual(["C Albenc", "M Prado Enea", "B Zuccardi"]);
+  });
+
+  it("keeps existing unique abbreviations when truncated labels collide", () => {
+    expect(buildUniqueAgoraButtonTexts(higueron, [
+      { key: "1", technicalName: "B Conde de San Cristobal Crz", existingButtonText: "B C de San Crist crz" },
+      { key: "2", technicalName: "B Conde de San Cristóbal Reserva Especial", existingButtonText: "B C San Cristobal Rsv" },
+    ])).toEqual({ "1": "C de San Crist crz", "2": "C San Cristobal Rsv" });
+  });
+
+  it("preserves a distinguishing suffix when existing labels also collide", () => {
+    expect(buildUniqueAgoraButtonTexts(higueron, [
+      { key: "1", technicalName: "B Juvé & Camps Milesimé", existingButtonText: "B Juvé & Camps Miles" },
+      { key: "2", technicalName: "B Juvé & Camps Milesimé Rosé", existingButtonText: "B Juvé & Camps Miles" },
+    ])).toEqual({ "1": "Juvé Camps Milesimé", "2": "Juvé Camps Mile Rosé" });
   });
 });
