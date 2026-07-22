@@ -46,6 +46,94 @@ const severityRank: Record<Severity, number> = {
   critical: 3,
 };
 
+const EXPECTED_CATALOG_BLOCK_REASONS = new Set([
+  "READINESS_ROLLBACK",
+]);
+
+const EXPECTED_CATALOG_VALIDATION_REASONS = new Set([
+  "wine_inactive",
+  "missing_bottle_sale_price",
+  "missing_glass_sale_price",
+  "missing_magnum_sale_price",
+]);
+
+function isExpectedCatalogBlockReason(reason: string | null | undefined): boolean {
+  const normalized = reason?.trim();
+  if (!normalized) return false;
+  if (EXPECTED_CATALOG_BLOCK_REASONS.has(normalized)) return true;
+
+  const validationPrefix = "Validation failed:";
+  if (!normalized.startsWith(validationPrefix)) return false;
+
+  const validationReasons = normalized
+    .slice(validationPrefix.length)
+    .split(/[;,]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return validationReasons.length > 0 &&
+    validationReasons.every((part) => EXPECTED_CATALOG_VALIDATION_REASONS.has(part));
+}
+
+function parseTimestampMs(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function latestOperationalSyncEvidence(connection: any): { at: string | null; source: string | null } {
+  const providerConfig = connection.provider_config && typeof connection.provider_config === "object"
+    ? connection.provider_config
+    : {};
+  const candidates = [
+    { at: connection.last_sync_at, source: "pos_connections.last_sync_at" },
+    { at: providerConfig.last_intraday_sales_sync?.at, source: "provider_config.last_intraday_sales_sync.at" },
+    { at: providerConfig.last_open_tickets_sync?.at, source: "provider_config.last_open_tickets_sync.at" },
+  ];
+
+  let latest: { at: string | null; source: string | null; timestampMs: number } | null = null;
+  for (const candidate of candidates) {
+    const timestampMs = parseTimestampMs(candidate.at);
+    if (timestampMs === null || (latest && timestampMs <= latest.timestampMs)) continue;
+    latest = { at: candidate.at, source: candidate.source, timestampMs };
+  }
+
+  return latest
+    ? { at: latest.at, source: latest.source }
+    : { at: null, source: null };
+}
+
+function minutesSinceTimestamp(value: unknown, nowMs: number): number | null {
+  const timestampMs = parseTimestampMs(value);
+  if (timestampMs === null) return null;
+  return Math.max(0, Math.floor((nowMs - timestampMs) / 60_000));
+}
+
+function evaluateOperationalSyncStaleness(
+  connection: any,
+  nowMs: number,
+  staleAfterMinutes: number,
+): {
+  at: string | null;
+  source: string | null;
+  ageMinutes: number | null;
+  stale: boolean;
+  neverObserved: boolean;
+} {
+  const evidence = latestOperationalSyncEvidence(connection);
+  const neverObserved = evidence.at === null;
+  const referenceAt = evidence.at || connection.created_at;
+  const ageMinutes = minutesSinceTimestamp(referenceAt, nowMs);
+  const insideInitialGrace = neverObserved && ageMinutes !== null && ageMinutes <= staleAfterMinutes;
+
+  return {
+    ...evidence,
+    ageMinutes,
+    stale: !insideInitialGrace && (ageMinutes === null || ageMinutes > staleAfterMinutes),
+    neverObserved,
+  };
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -184,6 +272,29 @@ async function probeAgoraConnection(connection: any): Promise<ProbeResult> {
   }
 }
 
+async function loadRecentBlockedTasks(
+  supabase: any,
+  connectionId: string,
+  since24h: string,
+): Promise<{ rows: { id: string; blocked_reason?: string | null }[]; error: string | null }> {
+  const rows: { id: string; blocked_reason?: string | null }[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("outbound_tasks")
+      .select("id, blocked_reason")
+      .eq("connection_id", connectionId)
+      .eq("status", "BLOCKED")
+      .gte("updated_at", since24h)
+      .range(from, from + pageSize - 1);
+    if (error) return { rows, error: error.message };
+    const page = (data || []) as { id: string; blocked_reason?: string | null }[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return { rows, error: null };
+}
+
 async function loadOperationalSignals(supabase: any, connectionId: string) {
   const now = Date.now();
   const since24h = new Date(now - 24 * 3600_000).toISOString();
@@ -209,12 +320,7 @@ async function loadOperationalSignals(supabase: any, connectionId: string) {
       .eq("connection_id", connectionId)
       .eq("status", "FAILED")
       .gte("updated_at", since24h),
-    supabase
-      .from("outbound_tasks")
-      .select("id", { count: "exact", head: true })
-      .eq("connection_id", connectionId)
-      .eq("status", "BLOCKED")
-      .gte("updated_at", since24h),
+    loadRecentBlockedTasks(supabase, connectionId, since24h),
     supabase
       .from("stock_sync_log")
       .select("id", { count: "exact", head: true })
@@ -223,11 +329,19 @@ async function loadOperationalSignals(supabase: any, connectionId: string) {
       .gte("created_at", since24h),
   ]);
 
+  const actionableBlockedRecent = blockedRecent.error
+    ? 1
+    : blockedRecent.rows.filter(
+    (task: { blocked_reason?: string | null }) =>
+      !isExpectedCatalogBlockReason(task.blocked_reason),
+  ).length;
+
   return {
     queuedOld: queuedOld.count || 0,
     runningOld: runningOld.count || 0,
     failedRecent: failedRecent.count || 0,
-    blockedRecent: blockedRecent.count || 0,
+    blockedRecent: actionableBlockedRecent,
+    blockedLookupError: blockedRecent.error,
     stockFailedRecent: stockFailedRecent.count || 0,
   };
 }
@@ -308,6 +422,101 @@ function buildProblems(connection: any, probe: ProbeResult, signals: any): Probl
   }
 
   const readOnly = connection.provider_config?.read_only_onboarding === true;
+  const openTicketsEnabled = connection.provider_config?.open_tickets_sync_enabled === true;
+  const provisionalOpenTicketStockEnabled =
+    connection.provider_config?.open_tickets_stock_sync_enabled === true;
+
+  if (
+    connection.enabled &&
+    !readOnly &&
+    openTicketsEnabled &&
+    provisionalOpenTicketStockEnabled
+  ) {
+    problems.push({
+      key: "open_ticket_stock_write_risk",
+      type: "sales_integrity",
+      severity: "error",
+      title: `${connection.location_name}: escritura provisional de tickets activa`,
+      message:
+        "Los tickets abiertos pueden restaurar stock al cancelarse, pero Winerim no permite retirar de forma idempotente la venta provisional. Mantener tickets para observabilidad y usar la factura cerrada como fuente definitiva.",
+      details: {
+        openTicketsSyncEnabled: true,
+        openTicketsStockSyncEnabled: true,
+      },
+    });
+  }
+
+  const syncFrequencyMinutes = Number(connection.sync_frequency_minutes);
+  if (
+    connection.enabled &&
+    !readOnly &&
+    (!Number.isFinite(syncFrequencyMinutes) || syncFrequencyMinutes <= 0 || syncFrequencyMinutes > 5)
+  ) {
+    problems.push({
+      key: "sync_frequency_configuration",
+      type: "configuration",
+      severity: "warning",
+      title: `${connection.location_name}: frecuencia configurada fuera del objetivo`,
+      message: `El metadato sync_frequency_minutes vale ${connection.sync_frequency_minutes ?? "?"}; el objetivo configurado es un maximo de 5 minutos. Este campo no demuestra por si solo que el dispatcher se ejecute con esa cadencia.`,
+      details: {
+        syncFrequencyMinutes: connection.sync_frequency_minutes ?? null,
+        objectiveMaxMinutes: 5,
+        configurationOnly: true,
+      },
+    });
+  }
+
+  const operationalStaleAfterMinutes = Math.max(
+    10,
+    envNumber("MONITOR_SYNC_STALE_AFTER_MINUTES", 20),
+  );
+  const operationalSync = evaluateOperationalSyncStaleness(
+    connection,
+    now,
+    operationalStaleAfterMinutes,
+  );
+  if (connection.enabled && !readOnly && operationalSync.stale) {
+    problems.push({
+      key: "sync_execution_stale",
+      type: "sync_stale",
+      severity: "warning",
+      title: `${connection.location_name}: sin ejecucion operativa reciente`,
+      message: operationalSync.neverObserved
+        ? `No hay evidencia de una ejecucion de ventas desde que se creo la conexion; el umbral operativo es ${operationalStaleAfterMinutes} minutos.`
+        : `La ultima ejecucion de ventas observada fue ${operationalSync.at} (${operationalSync.ageMinutes} minutos); supera el umbral operativo de ${operationalStaleAfterMinutes} minutos.`,
+      details: {
+        lastObservedAt: operationalSync.at,
+        evidenceSource: operationalSync.source,
+        ageMinutes: operationalSync.ageMinutes,
+        staleAfterMinutes: operationalStaleAfterMinutes,
+        neverObserved: operationalSync.neverObserved,
+      },
+    });
+  }
+
+  const catalogAutomationIncomplete =
+    connection.write_mode === "XML_IMPORT" &&
+    (
+      connection.auto_push_on_create !== true ||
+      connection.auto_push_on_update !== true ||
+      connection.auto_push_verified_ready !== true
+    );
+  if (connection.enabled && !readOnly && catalogAutomationIncomplete) {
+    problems.push({
+      key: "catalog_automation_incomplete",
+      type: "configuration",
+      severity: "warning",
+      title: `${connection.location_name}: automatizacion de catalogo incompleta`,
+      message:
+        "La conexion admite escritura XML, pero no estan activos y verificados todos los controles de alta y actualizacion automatica.",
+      details: {
+        autoPushOnCreate: connection.auto_push_on_create === true,
+        autoPushOnUpdate: connection.auto_push_on_update === true,
+        autoPushVerifiedReady: connection.auto_push_verified_ready === true,
+      },
+    });
+  }
+
   const salesLagDays = daysSinceBusinessDay(connection.last_business_day_synced);
   if (connection.enabled && !readOnly && salesLagDays !== null && salesLagDays >= 2) {
     problems.push({
@@ -353,7 +562,7 @@ function worstStatus(probe: ProbeResult, problems: Problem[]): { status: HealthS
   ), null);
   if (!worst) return { status: "OK", severity: "info" };
   return {
-    status: worst.type === "sales_stale" ? "STALE" : "WARN",
+    status: worst.type === "sales_stale" || worst.type === "sync_stale" ? "STALE" : "WARN",
     severity: worst.severity,
   };
 }
@@ -676,11 +885,11 @@ Deno.serve(async (req: Request) => {
     const dryRun = body.dryRun === true;
     const cronAuthorized = hasValidMonitorSecret(req);
 
-    if ((requestedSendEmails || requestedNotifyClients) && !cronAuthorized) {
+    if (!dryRun && !cronAuthorized) {
       return jsonResponse({
         ok: false,
         error: "MONITOR_SECRET_REQUIRED",
-        message: "Email notifications require X-Monitor-Secret and MONITOR_CRON_SECRET.",
+        message: "Any monitor run that writes checks or alerts requires X-Monitor-Secret and MONITOR_CRON_SECRET.",
       }, 403);
     }
 

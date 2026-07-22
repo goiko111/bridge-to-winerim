@@ -20,7 +20,6 @@ import {
 import {
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
-  decideSalesCursorAdvance,
   findStockForVariant,
   isTerminalStockSyncError,
   normalizeWinerimVariant,
@@ -852,7 +851,65 @@ function isIntradaySalesSyncEnabled(connection: { provider_config?: unknown }): 
 }
 
 function isBusinessDay(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+async function updateSalesCursorMonotonically(
+  supabase: any,
+  connectionId: string,
+  candidateDay: string | null,
+  syncedAt = new Date().toISOString(),
+): Promise<{ advanced: boolean; cursor: string | null; error: string | null }> {
+  if (!candidateDay) {
+    const { error } = await supabase
+      .from("pos_connections")
+      .update({ last_sync_at: syncedAt })
+      .eq("id", connectionId);
+    return { advanced: false, cursor: null, error: error?.message || null };
+  }
+  if (!isBusinessDay(candidateDay)) {
+    return { advanced: false, cursor: null, error: `Invalid cursor day: ${candidateDay}` };
+  }
+
+  // Postgres evaluates the predicate and UPDATE atomically. A concurrent run
+  // can advance the cursor, but an older run can never overwrite it.
+  const { data: advancedRow, error: advanceError } = await supabase
+    .from("pos_connections")
+    .update({ last_business_day_synced: candidateDay, last_sync_at: syncedAt })
+    .eq("id", connectionId)
+    .or(`last_business_day_synced.is.null,last_business_day_synced.lt.${candidateDay}`)
+    .select("last_business_day_synced")
+    .maybeSingle();
+  if (advanceError) {
+    return { advanced: false, cursor: null, error: advanceError.message };
+  }
+  if (advancedRow) {
+    return {
+      advanced: true,
+      cursor: String(advancedRow.last_business_day_synced || candidateDay),
+      error: null,
+    };
+  }
+
+  const { data: freshRow, error: freshError } = await supabase
+    .from("pos_connections")
+    .select("last_business_day_synced")
+    .eq("id", connectionId)
+    .single();
+  if (freshError) {
+    return { advanced: false, cursor: null, error: freshError.message };
+  }
+  const { error: touchError } = await supabase
+    .from("pos_connections")
+    .update({ last_sync_at: syncedAt })
+    .eq("id", connectionId);
+  return {
+    advanced: false,
+    cursor: String(freshRow?.last_business_day_synced || "") || null,
+    error: touchError?.message || null,
+  };
 }
 
 function formatBusinessDay(date: Date): string {
@@ -1157,11 +1214,14 @@ async function importWinerimSaleIfStockDidNotMove(input: {
 // INTEGER quantities (Winerim rejects decimals). No more fractional bottle conversion.
 // deno-lint-ignore no-explicit-any
 async function syncStockForDay(supabase: any, connectionId: string, day: string, winerimToken: string) {
-  const { data: connection } = await supabase
+  const { data: connection, error: connectionError } = await supabase
     .from("pos_connections")
     .select("provider_config")
     .eq("id", connectionId)
     .single();
+  if (connectionError) {
+    throw new Error(`Could not read stock sync configuration: ${connectionError.message}`);
+  }
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
@@ -1181,9 +1241,10 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     "Accept": "application/json",
   };
 
-  const { data: events } = await supabase
-    .from("sales_events").select("id, raw_json")
+  const { data: events, error: eventsError } = await supabase
+    .from("sales_events").select("id, raw_json, doc_type")
     .eq("connection_id", connectionId).eq("business_day", day);
+  if (eventsError) throw new Error(`sales_events lookup failed: ${eventsError.message}`);
 
   const eligibleEvents = (events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
 
@@ -1192,10 +1253,16 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   const eventIds = eligibleEvents.map((e: { id: string }) => e.id);
-  const { data: lines } = await supabase
+  const openTicketEventIds = new Set(
+    eligibleEvents
+      .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() === "openticket")
+      .map((event: { id: string }) => event.id),
+  );
+  const { data: lines, error: linesError } = await supabase
     .from("sales_line_items")
     .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", eventIds);
+  if (linesError) throw new Error(`sales_line_items lookup failed: ${linesError.message}`);
 
   if (!lines || lines.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
@@ -1203,7 +1270,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
   // deno-lint-ignore no-explicit-any
   const mappedLines = (lines as any[]).filter((l: any) =>
-    l.winerim_product_id && l.is_wine_candidate && providerSaleIsAfterStockStart(l.provider_sold_at, stockSyncStartAt)
+    l.winerim_product_id &&
+    (l.is_wine_candidate || !openTicketEventIds.has(l.sales_event_id)) &&
+    providerSaleIsAfterStockStart(l.provider_sold_at, stockSyncStartAt)
   );
 
   type Claim = {
@@ -1672,7 +1741,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
 
   const { data: events } = await supabase
     .from("sales_events")
-    .select("id, raw_json")
+    .select("id, raw_json, doc_type")
     .eq("connection_id", connectionId)
     .eq("business_day", day);
 
@@ -1682,6 +1751,11 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   }
 
   const eventIds = eligibleEvents.map((event: { id: string }) => event.id);
+  const openTicketEventIds = new Set(
+    eligibleEvents
+      .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() === "openticket")
+      .map((event: { id: string }) => event.id),
+  );
   const { data: lines } = await supabase
     .from("sales_line_items")
     .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
@@ -1722,7 +1796,8 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   const desiredGroups = new Map<string, DesiredGroup>();
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
-    if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    if (!line.winerim_product_id) continue;
+    if (openTicketEventIds.has(line.sales_event_id) && !line.is_wine_candidate) continue;
     if (!providerSaleIsAfterStockStart(line.provider_sold_at, stockSyncStartAt)) continue;
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
@@ -2167,11 +2242,14 @@ async function syncStockForDayIncrementalByDayTotal(
   winerimToken: string,
   desiredEventIdsOverride?: string[],
 ) {
-  const { data: connection } = await supabase
+  const { data: connection, error: connectionError } = await supabase
     .from("pos_connections")
     .select("provider_config")
     .eq("id", connectionId)
     .single();
+  if (connectionError) {
+    throw new Error(`Could not read stock sync configuration: ${connectionError.message}`);
+  }
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
@@ -2184,11 +2262,14 @@ async function syncStockForDayIncrementalByDayTotal(
     };
   }
 
-  const { data: dayEvents } = await supabase
+  const { data: dayEvents, error: dayEventsError } = await supabase
     .from("sales_events")
     .select("id, raw_json, doc_type")
     .eq("connection_id", connectionId)
     .eq("business_day", day);
+  if (dayEventsError) {
+    throw new Error(`Could not read sales events for ${day}: ${dayEventsError.message}`);
+  }
 
   const allDayEventIds = (dayEvents || []).map((event: { id: string }) => event.id);
   const eligibleEvents = (dayEvents || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
@@ -2212,10 +2293,13 @@ async function syncStockForDayIncrementalByDayTotal(
   const definitiveEventIdSet = new Set(definitiveEventIds);
   const desiredSource = desiredEventIds.some((id) => definitiveEventIdSet.has(id)) ? "definitive" : "open_ticket";
 
-  const { data: lines } = await supabase
+  const { data: lines, error: linesError } = await supabase
     .from("sales_line_items")
     .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", desiredEventIds);
+  if (linesError) {
+    throw new Error(`Could not read sales lines for ${day}: ${linesError.message}`);
+  }
 
   if (!lines || lines.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
@@ -2236,7 +2320,8 @@ async function syncStockForDayIncrementalByDayTotal(
   const desiredTotals = new Map<string, DesiredTotal>();
   let mappedLineCount = 0;
   for (const line of lines as any[]) {
-    if (!line.winerim_product_id || !line.is_wine_candidate) continue;
+    if (!line.winerim_product_id) continue;
+    if (desiredSource === "open_ticket" && !line.is_wine_candidate) continue;
     if (!providerSaleIsAfterStockStart(line.provider_sold_at, stockSyncStartAt)) continue;
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
@@ -2771,7 +2856,6 @@ async function restoreStaleOpenTicketStock(
       .from("sales_line_items")
       .select("sales_event_id, quantity, winerim_product_id, format, is_wine_candidate")
       .eq("connection_id", connectionId)
-      .eq("is_wine_candidate", true)
       .not("winerim_product_id", "is", null)
       .in("sales_event_id", chunk);
     if (definitiveLinesError) {
@@ -3041,7 +3125,6 @@ async function findSavedStockCandidateDays(supabase: any, connectionId: string, 
       .from("sales_line_items")
       .select("sales_event_id")
       .eq("connection_id", connectionId)
-      .eq("is_wine_candidate", true)
       .not("winerim_product_id", "is", null)
       .in("sales_event_id", chunk);
 
@@ -3632,10 +3715,6 @@ function isConfiguredHiddenFormatVariant(connection: any, wineOrId: any, formatT
 
   const bottleSalePrice = configured.bottle_sale_price;
   return Number.isFinite(Number(bottleSalePrice)) && Number(bottleSalePrice) > 0;
-}
-
-function isConfiguredHiddenGlassVariant(connection: any, wineOrId: any): boolean {
-  return isConfiguredHiddenFormatVariant(connection, wineOrId, "GLASS");
 }
 
 function inactiveFormatAllowedByConnection(wine: any, formatType: string): boolean {
@@ -4405,7 +4484,8 @@ ${costPricesXml}
   );
 
   const nextOrderByFamily = new Map<string, number>();
-  // El Higuerón numbers each configured family independently.
+  // The Higuerón policy numbers each family independently. Other modes retain
+  // their current XML ordering semantics and are normalized post-write when needed.
   const productXmls = productEntries.map((entry, idx) => {
     const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductNames[entry.productId] || entry.productName;
     const nextOrder = useAlphabeticalWineNameSort
@@ -4577,9 +4657,9 @@ serve(async (req) => {
       const today = new Date().toISOString().split("T")[0];
       const url = `${baseUrlClean}/api/export/?business-day=${today}&filter=Invoices`;
       try {
-        let res = await fetch(url, { headers });
+        let res = await fetchWithRetry(url, { headers }, 10_000);
         if (!res.ok) {
-          res = await fetch(`${baseUrlClean}/api/export/tickets/`, { headers });
+          res = await fetchWithRetry(`${baseUrlClean}/api/export/tickets/`, { headers }, 10_000);
         }
         if (!res.ok) {
           return new Response(
@@ -4635,7 +4715,7 @@ serve(async (req) => {
         totalScanned++;
         try {
           const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-          const res = await fetch(url, { headers });
+          const res = await fetchWithRetry(url, { headers }, 10_000);
           if (res.ok) {
             const body = await res.text();
             const trimmed = body.trim();
@@ -4679,7 +4759,7 @@ serve(async (req) => {
       for (const f of filters) {
         const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=${f}`;
         try {
-          const r = await fetch(url, { headers });
+          const r = await fetchWithRetry(url, { headers }, 10_000);
           const ct = r.headers.get("content-type") || "";
           let count = 0;
           let sampleKeys: string[] = [];
@@ -5019,7 +5099,7 @@ serve(async (req) => {
       }
 
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers }, 10_000);
       if (!res.ok) {
         return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -5318,13 +5398,13 @@ serve(async (req) => {
     // ── SAVE SALES TO DB (with Winerim resolution) ──
     if (action === "save-sales") {
       const day = businessDay;
-      if (!day) {
-        return new Response(JSON.stringify({ error: "businessDay required" }),
+      if (!isBusinessDay(day)) {
+        return new Response(JSON.stringify({ error: "businessDay must use YYYY-MM-DD" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers }, 10_000);
       if (!res.ok) {
         return new Response(JSON.stringify({ error: `Agora responded ${res.status}` }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -5359,6 +5439,7 @@ serve(async (req) => {
       let resolvedLines = 0;
       let unresolvedLines = 0;
       const savedEventIds: string[] = [];
+      let ingestionError: string | null = null;
 
       for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
         const inv = invoices[invIdx];
@@ -5366,6 +5447,8 @@ serve(async (req) => {
         const items = inv.InvoiceItems || [];
         let docTotal = 0;
         const lineData: Record<string, unknown>[] = [];
+        let invoiceResolvedLines = 0;
+        let invoiceUnresolvedLines = 0;
 
         for (const item of items) {
           for (const line of (item.Lines || [])) {
@@ -5387,7 +5470,8 @@ serve(async (req) => {
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
             const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
-            if (isResolved) resolvedLines++; else if (wr.candidate) unresolvedLines++;
+            if (isResolved) invoiceResolvedLines++;
+            else if (wr.candidate) invoiceUnresolvedLines++;
 
             lineData.push({
               provider_product_id: productId,
@@ -5414,17 +5498,44 @@ serve(async (req) => {
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
-        if (eventErr || !eventRow) continue;
+        if (eventErr || !eventRow) {
+          ingestionError = `Could not save invoice ${docId}: ${eventErr?.message || "missing sales event row"}`;
+          break;
+        }
         const replacement = await replaceSalesEventLinesPreservingStockClaims(
           supabase,
           connectionId,
           eventRow.id,
           lineData,
         );
-        if (!replacement.ok) continue;
+        if (!replacement.ok) {
+          ingestionError = `Could not replace lines for invoice ${docId}: ${replacement.error || "unknown line replacement error"}`;
+          break;
+        }
         savedEvents++;
         savedLines += replacement.inserted;
+        resolvedLines += invoiceResolvedLines;
+        unresolvedLines += invoiceUnresolvedLines;
         savedEventIds.push(eventRow.id);
+      }
+
+      if (ingestionError) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: ingestionError,
+            savedEvents,
+            savedLines,
+            resolvedLines,
+            unresolvedLines,
+            businessDay: day,
+            stockSync: null,
+            cursorAdvanced: false,
+            cursorBefore: String(connection.last_business_day_synced || "").trim() || null,
+            cursorAfter: String(connection.last_business_day_synced || "").trim() || null,
+          }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       let stockSyncResult: StockSyncTotals | null = null;
@@ -5437,25 +5548,25 @@ serve(async (req) => {
         stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken);
       }
 
-      const cursorDecision = decideSalesCursorAdvance({
-        resolvedLines,
-        skipStockSync,
-        hasWinerimToken: Boolean(winerimToken),
-        stockFailed: stockSyncResult?.failed || 0,
-      });
-      const cursorAdvanced = cursorDecision.advance;
-      if (cursorDecision.reason === "missing_winerim_token") {
+      const cursorBefore = String(connection.last_business_day_synced || "").trim();
+      const cursorAfter = cursorBefore || null;
+      const cursorAdvanced = false;
+      if (shouldSyncStock && !winerimToken) {
         warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
-      } else if (cursorDecision.reason === "stock_failed") {
-        warning = "Sales saved but Winerim stock sync had failures. Cursor was not advanced, so cron will retry.";
+      } else if ((stockSyncResult?.failed || 0) > 0) {
+        warning = "Sales saved but Winerim stock sync had failures. The automatic sync will retry.";
       }
 
-      const connectionUpdate = cursorAdvanced
-        ? { last_business_day_synced: day, last_sync_at: new Date().toISOString() }
-        : { last_sync_at: new Date().toISOString() };
-      await supabase.from("pos_connections")
-        .update(connectionUpdate)
-        .eq("id", connectionId);
+      const syncedAt = new Date().toISOString();
+      const cursorResult = await updateSalesCursorMonotonically(
+        supabase,
+        connectionId,
+        null,
+        syncedAt,
+      );
+      if (cursorResult.error) {
+        warning = `Sales saved but the sync timestamp could not be updated: ${cursorResult.error}`;
+      }
 
       return new Response(
         JSON.stringify({
@@ -5467,6 +5578,8 @@ serve(async (req) => {
           businessDay: day,
           stockSync: stockSyncResult,
           cursorAdvanced,
+          cursorBefore: cursorBefore || null,
+          cursorAfter,
           warning,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -5752,16 +5865,24 @@ serve(async (req) => {
           }
         }
 
-        const now = new Date().toISOString();
         const scannedCursor = capClosedDayCursor(lastSuccessfullyScannedDay);
-        const cursorAdvancedTo = scannedCursor && scannedCursor !== persistedLastSynced
-          ? scannedCursor
-          : null;
-        await supabase.from("pos_connections")
-          .update(cursorAdvancedTo
-            ? { last_business_day_synced: cursorAdvancedTo, last_sync_at: now }
-            : { last_sync_at: now })
-          .eq("id", connectionId);
+        const cursorResult = await updateSalesCursorMonotonically(
+          supabase,
+          connectionId,
+          scannedCursor,
+        );
+        if (cursorResult.error) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              reason: "cursor_update_failed",
+              error: cursorResult.error,
+              message: "Sales were checked, but the live cursor could not be persisted safely.",
+            }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const cursorAdvancedTo = cursorResult.advanced ? cursorResult.cursor : null;
 
         return new Response(
           JSON.stringify({
@@ -5807,6 +5928,7 @@ serve(async (req) => {
       const stockDaysAttempted = new Set<string>();
       let stockBlockedDay: string | null = null;
       let saveBlockedDay: string | null = null;
+      let saveBlockedReason: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
       const stockSyncTotals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
 
@@ -5824,8 +5946,17 @@ serve(async (req) => {
         const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
         let res: Response;
         try { res = await fetchWithRetry(url, { headers }, 10_000); }
-        catch { saveBlockedDay = day; break; }
-        if (!res.ok) { await res.text(); saveBlockedDay = day; break; }
+        catch {
+          saveBlockedDay = day;
+          saveBlockedReason = "invoice_fetch_failed";
+          break;
+        }
+        if (!res.ok) {
+          await res.text();
+          saveBlockedDay = day;
+          saveBlockedReason = `invoice_fetch_http_${res.status}`;
+          break;
+        }
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
         let dayEvents = 0;
@@ -5837,6 +5968,8 @@ serve(async (req) => {
           const items = inv.InvoiceItems || [];
           let docTotal = 0;
           const lineData: Record<string, unknown>[] = [];
+          let invoiceResolvedLines = 0;
+          let invoiceUnresolvedLines = 0;
 
           for (const item of items) {
             for (const line of (item.Lines || [])) {
@@ -5858,10 +5991,9 @@ serve(async (req) => {
               const isResolved = !!winerimProductId;
               const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
               if (isResolved) {
-                resolvedLines++;
-                dayResolvedLines++;
+                invoiceResolvedLines++;
               } else if (wr.candidate) {
-                unresolvedLines++;
+                invoiceUnresolvedLines++;
               }
 
               lineData.push({
@@ -5889,7 +6021,11 @@ serve(async (req) => {
             }, { onConflict: "connection_id,provider_doc_id" })
             .select("id").single();
 
-          if (eventErr || !eventRow) continue;
+          if (eventErr || !eventRow) {
+            saveBlockedDay = day;
+            saveBlockedReason = `event_upsert_failed:${eventErr?.message || "missing sales event row"}`;
+            break;
+          }
           const replacement = await replaceSalesEventLinesPreservingStockClaims(
             supabase,
             connectionId,
@@ -5898,16 +6034,21 @@ serve(async (req) => {
           );
           if (!replacement.ok) {
             saveBlockedDay = day;
+            saveBlockedReason = `line_replace_failed:${replacement.error || "unknown error"}`;
             break;
           }
           totalEvents++;
           dayEvents++;
           totalLines += replacement.inserted;
+          resolvedLines += invoiceResolvedLines;
+          unresolvedLines += invoiceUnresolvedLines;
+          dayResolvedLines += invoiceResolvedLines;
         }
 
         if (saveBlockedDay) break;
         if (invoices.length > 0 && dayEvents === 0) {
           saveBlockedDay = day;
+          saveBlockedReason = "no_invoice_persisted";
           break;
         }
 
@@ -5931,9 +6072,16 @@ serve(async (req) => {
         }
 
         const completedDayCursor = capClosedDayCursor(day);
-        await supabase.from("pos_connections")
-          .update({ last_business_day_synced: completedDayCursor, last_sync_at: new Date().toISOString() })
-          .eq("id", connectionId);
+        const cursorResult = await updateSalesCursorMonotonically(
+          supabase,
+          connectionId,
+          completedDayCursor,
+        );
+        if (cursorResult.error) {
+          saveBlockedDay = day;
+          saveBlockedReason = `cursor_update_failed:${cursorResult.error}`;
+          break;
+        }
         syncedDays.push(day);
       }
 
@@ -5955,10 +6103,17 @@ serve(async (req) => {
         const latestProcessedDay = capClosedDayCursor(syncedDays.at(-1) || lastSynced);
         const scannedCursor = capClosedDayCursor(lastSuccessfullyScannedDay);
         if (scannedCursor && (!latestProcessedDay || scannedCursor > latestProcessedDay)) {
-          cursorAdvancedTo = scannedCursor;
-          await supabase.from("pos_connections")
-            .update({ last_business_day_synced: cursorAdvancedTo, last_sync_at: new Date().toISOString() })
-            .eq("id", connectionId);
+          const cursorResult = await updateSalesCursorMonotonically(
+            supabase,
+            connectionId,
+            scannedCursor,
+          );
+          if (cursorResult.error) {
+            saveBlockedDay = scannedCursor;
+            saveBlockedReason = `cursor_update_failed:${cursorResult.error}`;
+          } else if (cursorResult.advanced) {
+            cursorAdvancedTo = cursorResult.cursor;
+          }
         }
       }
 
@@ -5979,11 +6134,14 @@ serve(async (req) => {
           blockedByScanFailure: scanBlockedDay,
           blockedByStockFailure: stockBlockedDay,
           blockedBySaveFailure: saveBlockedDay,
+          blockedBySaveFailureReason: saveBlockedReason,
           aborted: processingAborted,
           message: stockBlockedDay
             ? `Stock sync failed for ${stockBlockedDay}. Cursor was not advanced and cron will retry.`
             : saveBlockedDay
-              ? `Sales save failed for ${saveBlockedDay}. Cursor was not advanced and cron will retry.`
+              ? saveBlockedReason?.startsWith("cursor_update_failed")
+                ? `Cursor update failed for ${saveBlockedDay}. The cursor was left unchanged and cron will retry.`
+                : `Sales ingestion failed for ${saveBlockedDay}. Cursor was not advanced and cron will retry.`
               : scanBlockedDay
                 ? `Agora sales scan failed for ${scanBlockedDay}. Cursor was advanced only through successfully checked days.`
               : processingAborted
@@ -6189,7 +6347,7 @@ serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers }, 10_000);
       const ct = res.headers.get("content-type") || "";
       if (!res.ok) {
         return new Response(JSON.stringify({ success: false, status: res.status, contentType: ct }),
@@ -6235,7 +6393,7 @@ serve(async (req) => {
           daysScanned++;
           try {
             const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-            const res = await fetch(url, { headers });
+            const res = await fetchWithRetry(url, { headers }, 10_000);
             if (!res.ok) continue;
             const body = await res.text();
             if (!body.trim() || body.trim() === "{}" || body.trim() === "[]") continue;
@@ -6301,7 +6459,7 @@ serve(async (req) => {
 
       const config = await loadConfig(supabase, connectionId);
       const url = `${baseUrlClean}/api/export/?filter=${endpoint}`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers }, 10_000);
       if (!res.ok) {
         const errorBody = await res.text().catch(() => "");
         return new Response(JSON.stringify({
@@ -6375,7 +6533,7 @@ serve(async (req) => {
         daysScanned++;
         try {
           const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-          const res = await fetch(url, { headers });
+          const res = await fetchWithRetry(url, { headers }, 10_000);
           if (!res.ok) continue;
           const body = await res.text();
           if (!body.trim() || body.trim() === "{}" || body.trim() === "[]") continue;
@@ -7629,9 +7787,9 @@ serve(async (req) => {
       }
     }
 
-    // ── NORMALIZE EXISTING WINERIM FAMILY PRODUCT PRESENTATION ──
+    // ── NORMALIZE EXISTING WINERIM FAMILY PRESENTATION ──
     // Safe operation: preserves the full Agora <Product> XML and only rewrites
-    // Order plus ButtonText when explicitly requested by the connection policy.
+    // Order plus the explicitly configured visible ButtonText policy.
     if (action === "reorder-products-by-commercial-code" || action === "reorder-winerim-family-products") {
       const dryRun = payload.dryRun !== false;
       const providerConfig = ((connection as any).provider_config || {}) as Record<string, unknown>;
@@ -10643,7 +10801,7 @@ ${costPricesXml}
     if (action === "diagnose" || action === "export") {
       const day = businessDay || new Date().toISOString().split("T")[0];
       const url = `${baseUrlClean}/api/export/?business-day=${day}&filter=Invoices`;
-      const res = await fetch(url, { headers });
+      const res = await fetchWithRetry(url, { headers }, 10_000);
       const data = await res.json();
       return new Response(JSON.stringify({ data, status: res.status }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });

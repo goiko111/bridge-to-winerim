@@ -132,8 +132,10 @@ export function decideSalesCursorAdvance(input: {
   hasWinerimToken: boolean;
   stockFailed?: number;
 }): { advance: boolean; reason: SalesCursorDecisionReason } {
+  // A no-stock import is a historical/backfill operation. It must never move
+  // the live sales cursor, otherwise an old import can make cron replay days.
+  if (input.skipStockSync) return { advance: false, reason: "stock_sync_skipped" };
   if (input.resolvedLines <= 0) return { advance: true, reason: "stock_not_required" };
-  if (input.skipStockSync) return { advance: true, reason: "stock_sync_skipped" };
   if (!input.hasWinerimToken) return { advance: false, reason: "missing_winerim_token" };
   if ((input.stockFailed || 0) > 0) return { advance: false, reason: "stock_failed" };
   return { advance: true, reason: "stock_ok" };

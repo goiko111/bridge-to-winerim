@@ -111,6 +111,20 @@ describe("stock sync utils", () => {
       hasWinerimToken: false,
       stockFailed: 0,
     })).toEqual({ advance: true, reason: "stock_not_required" });
+
+    expect(decideSalesCursorAdvance({
+      resolvedLines: 3,
+      skipStockSync: true,
+      hasWinerimToken: true,
+      stockFailed: 0,
+    })).toEqual({ advance: false, reason: "stock_sync_skipped" });
+
+    expect(decideSalesCursorAdvance({
+      resolvedLines: 0,
+      skipStockSync: true,
+      hasWinerimToken: false,
+      stockFailed: 0,
+    })).toEqual({ advance: false, reason: "stock_sync_skipped" });
   });
 
   it("classifies terminal stock failures that should not be logged repeatedly", () => {
@@ -119,7 +133,7 @@ describe("stock sync utils", () => {
     expect(isTerminalStockSyncError("timeout connecting to Winerim")).toBe(false);
   });
 
-  it("imports sales history only when stock did not move", () => {
+  it("imports the sale only when an absolute stock write cannot move stock", () => {
     expect(salesImportQtyWhenStockDidNotMove({
       soldQty: 3,
       previousStock: 0,
@@ -130,6 +144,18 @@ describe("stock sync utils", () => {
       soldQty: 3,
       previousStock: 10,
       newStock: 7,
+    })).toBe(0);
+
+    expect(salesImportQtyWhenStockDidNotMove({
+      soldQty: 3,
+      previousStock: 1,
+      newStock: 0,
+    })).toBe(0);
+
+    expect(salesImportQtyWhenStockDidNotMove({
+      soldQty: 1,
+      previousStock: 1,
+      newStock: 0,
     })).toBe(0);
 
     expect(salesImportQtyWhenStockDidNotMove({
