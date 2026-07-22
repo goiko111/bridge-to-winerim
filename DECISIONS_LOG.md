@@ -4,6 +4,110 @@
 
 ---
 
+## 2026-07-21 - Ampliar la evidencia SLA sin confundirla con cierre al 100%
+- **Decision**: registrar como verificadas en ambos sentidos dentro de siete
+  minutos a Casa Nene, El Higueron, Kava, PurOsushi, Cienvinos Ecija, Sa
+  Pedrera y Taberna de Elia; registrar otras diez conexiones solo en el
+  sentido Agora a Winerim. Ninguna promociona automaticamente a
+  `100%_SIGNED_OFF`.
+- **Razon**: el segundo corte correlaciono timestamps reales de venta y de
+  altas/cambios de catalogo que no estaban incluidos en el primer resumen del
+  dia. La evidencia amplía el conjunto probado, pero no elimina deuda de
+  legacy, cancelaciones, conciliacion, stock o estabilidad de 24 horas.
+- **Alternativa descartada**: conservar el recuento preliminar de solo dos
+  conexiones bidireccionales o convertir una latencia correcta en
+  certificacion integral. Ambas lecturas contradicen la evidencia disponible.
+- **Rollback / mitigacion**: es una reclasificacion documental, sin escrituras
+  operativas. Cada canary conserva su timestamp y puede degradarse si una
+  auditoria posterior descubre duplicados o divergencia fresh.
+
+## 2026-07-21 - Casa Nene publica botella interna solo con opt-in y ownership confirmado
+- **Decision**: desplegar la extension opt-in de Casa Nene y publicar `24`
+  botellas internas con `publish_bottle=true` y precio explicito, manteniendo
+  las `31` copas internas. Excluir `Balbas Barrica 5` y `Antidoto` mientras
+  sus mappings sigan rechazados.
+- **Razon**: el dry-run demostro `BOTTLE+GLASS` sin escrituras y la
+  reconciliacion por cinco lotes termino en `372/372 MATCH`, con `24/24`
+  mappings de botella confirmados y cola cero. La ficha puede permanecer
+  fuera de la carta publica sin impedir la operativa interna de Agora.
+- **Alternativa descartada**: reactivar todas las botellas por nombre,
+  ignorar mappings rechazados o habilitar magnum. Eso transferiria ownership
+  sin prueba y ampliaria la excepcion mas alla del requisito del cliente.
+- **Rollback / mitigacion**: restaurar el snapshot
+  `outputs/CASA_NENE_HIDDEN_VARIANTS_ROLLBACK_2026-07-21.json`, retirar los dos
+  campos de las 24 entradas y ocultar diferencialmente solo esas botellas. Las
+  copas y el resto del catalogo no se modifican.
+
+## 2026-07-21 - Distinguir configuracion de evidencia del SLA de cinco minutos
+- **Decision**: clasificar por separado `VERIFIED`, `PARTIAL`,
+  `CONFIGURED_NOT_PROVEN` y `NOT_ACTIVE`. Solo se considera verificado el
+  sentido Agora a Winerim o Winerim a Agora cuando existe una operacion real,
+  timestamps correlacionables y lectura fresh dentro de siete minutos.
+- **Razon**: la auditoria de las 30 conexiones encontro muchos flags y crons
+  correctos, pero solo Casa Nene y Sa Pedrera tienen evidencia completa en
+  ambos sentidos. Declararlas equivalentes ocultaria fallos de cursor,
+  mapping, adopcion de botones o escritura intradia.
+- **Alternativa descartada**: usar frecuencia configurada, cola vacia,
+  `winerim_wines.updated_at` o la carga inicial como prueba de cinco minutos.
+  Ninguno demuestra una modificacion real propagada de extremo a extremo.
+- **Rollback / mitigacion**: no cambia datos ni runtime. Cada conexion puede
+  promocionarse al aportar los dos canaries reales y 24 horas sin regresion.
+
+## 2026-07-21 - Casa Nene exige autorizacion explicita por formato interno
+- **Decision**: mantener la excepcion actual de copa y preparar una ampliacion
+  que permita botella solo cuando la entrada de Casa Nene declare
+  `publish_bottle=true` y un `bottle_sale_price` positivo y explicito. No
+  desplegar ni cambiar produccion hasta revisar el patch.
+- **Razon**: las `31` copas estan correctas, pero `26` botellas con precio,
+  stock ID y producto Agora quedaron ocultas porque la ficha no aparece en la
+  carta publica. `24` tienen mapping confirmado y dos estan rechazadas. El
+  runtime equipara esa ausencia con `is_active=false` y la excepcion vigente
+  autoriza exclusivamente `GLASS`.
+- **Alternativa descartada**: reactivar botones manualmente, marcar las filas
+  de cache como activas o reutilizar silenciosamente un precio antiguo. El
+  siguiente ciclo desharia las dos primeras opciones y la tercera podria
+  publicar un precio obsoleto.
+- **Rollback / mitigacion**: snapshot completo, rollout en lotes de cinco y
+  retirada de los dos campos solo de los `24` IDs confirmados. Magnum, los dos
+  mappings rechazados y las cinco referencias sin botella recuperable
+  permanecen bloqueados.
+
+## 2026-07-21 - Ocultar legacy Agora exige flags de producto y sustituto confirmado
+- **Decision**: considerar legacy retirado solo cuando la familia objetivo no
+  sea visible y todos sus productos sustituidos tengan
+  `SaleableAsMain=false` y `UseAsDirectSale=false`. Las ocultaciones futuras
+  se haran por producto, con snapshot y sustituto Winerim confirmado.
+- **Razon**: la auditoria fresh de las 30 conexiones encontro numerosas
+  familias con `ShowInPos=false` cuyos productos siguen vendibles y, por
+  tanto, localizables mediante buscador. Tambien encontro familias visibles
+  reutilizadas como contenedores Winerim, como Katsu, donde el legacy interior
+  si esta correctamente desactivado.
+- **Alternativa descartada**: ocultar familias completas por nombre o asumir
+  que todo producto sin ownership es legacy. Ambas opciones pueden retirar
+  referencias sin sustituto, productos de comida/licores o productos Winerim
+  antiguos cuyo ownership necesita repararse.
+- **Rollback / mitigacion**: toda propuesta debe conservar XML/flags previos,
+  limitarse a IDs auditados y validar catalogo fresh y ventas recientes antes
+  de aplicar cambios.
+
+## 2026-07-21 - Unificar nombres homonimos en auditoria y cola Agora
+- **Decision**: Aplicar la misma desambiguacion por anada a la comparacion diferencial de `UPDATE` y a la generacion de tareas, y reprocesar como `UPDATE` los cinco bloqueos de Tintorera una vez verificado el catalogo fresh.
+- **Razon**: El segundo enriquecimiento amplio Tintorera de `259` a `313` formatos y encontro tres pares con el mismo nombre. La cola generaba nombres seguros con anada, pero el guard diferencial comparaba el nombre base y podia omitir la actualizacion previa necesaria. El hotfix `aff6e6f` dejo `313/313 MATCH`, ownership completo y `0` tareas activas o fallidas.
+- **Alternativa descartada**: Renombrar productos a mano en Agora, eliminar una anada, ignorar los bloqueos o forzar altas repetidas. Cualquiera rompe la fuente de verdad Winerim, pierde referencias o mantiene alertas falsas.
+- **Rollback / mitigacion**: El snapshot anterior a la activacion permanece intacto. El cambio de codigo puede revertirse por commit; las cinco tareas se ejecutaron como actualizaciones idempotentes y se valido de nuevo el catalogo completo antes de cerrar.
+
+## 2026-07-21 - Activar Tintorera con catalogo Winerim y legacy intacto
+- **Decision**: Activar Tintorera mediante el runbook reversible, publicar solo botella/copa/magnum con precio, conservar el legacy sin cambios y dejar el estado en `LIVE_PENDING_SALE_CANARY`.
+- **Razon**: El puerto externo volvio a responder y las lecturas fresh validaron API, `1027` productos legacy, centros, tarifa, IVA, almacen y preparacion. La carga quedo en `259/259 MATCH`, con mappings/tracking completos y cola cero, pero todavia no existe una venta real posterior a la activacion.
+- **Alternativa descartada**: declarar la conexion al 100 %, publicar los `54` vinos sin precio, convertir formatos no estandar silenciosamente u ocultar legacy durante el primer ciclo.
+- **Rollback / mitigacion**: usar el snapshot previo de `docs/operations/agora-live-ready-2026-07-21T13-50-29-684Z/`, deshabilitar la conexion y auto-push, y ocultar solo las ocho familias/productos creados por Winerim. Los productos legacy no requieren restauracion porque no se modificaron.
+
+## 2026-07-21 - Nuevas activaciones Agora no escriben desde tickets abiertos
+- **Decision**: El runbook de activacion habilita lectura de tickets abiertos e intradia, pero fija `open_tickets_stock_sync_enabled=false`; las facturas definitivas son la unica fuente de escritura de venta/stock.
+- **Razon**: La API Winerim disponible no permite anular de forma idempotente una venta provisional ya creada por `PUT /stock`; escribir el ticket y despues la factura puede dejar duplicados visibles aunque el stock termine neto.
+- **Alternativa descartada**: activar escritura provisional por defecto para aparentar tiempo real. Prioriza latencia sobre integridad del historial y no tiene rollback completo.
+- **Rollback / mitigacion**: el cambio solo afecta a futuras ejecuciones del runbook. La captura sigue disponible y el flag puede revisarse por conexion cuando exista una anulacion idempotente en Winerim.
+
 ## 2026-07-14 · Certificar Cienvinos con canaries reales, reversibles y aislados
 - **Decisión**: Validar altas/reactivaciones y cambios de precio desde el editor real de Winerim, usar una variación reversible de `0,01` euros sobre una referencia sin ventas recientes y simular la caída pausando únicamente el breaker de Cienvinos.
 - **Razón**: El objetivo era demostrar el flujo completo Winerim -> cola -> Agora y su recuperación sin crear ventas ficticias, sin tocar stock y sin arriesgar al resto de la flota. Las tareas terminaron una sola vez, la evaluación posterior detectó ausencia de cambios y todos los valores de control se restauraron.
@@ -2202,3 +2306,566 @@ el snapshot sin stock cambiado y no se intentan compensaciones manuales.
 **Alternativa descartada:** reenviar una fila por unidad o cancelar a ciegas.
 La primera multiplicaria tarjetas con variante incorrecta y la segunda podria
 modificar inventario.
+
+## 2026-07-21 - Don Quijote conserva el botón oficial y absorbe el duplicado manual
+
+**Decisión:** mantener como referencia operativa
+`932976 - C Arzuaga Crianza`, crear un mapping confirmado y reversible desde
+el producto manual `1153518` hacia el vino Winerim `232976 / GLASS`, recuperar
+solo sus ventas del `19` y `20` de julio y ocultar únicamente el duplicado.
+
+**Razón:** el precio de copa a `10 EUR` sí estaba publicado y el catálogo fresh
+era exacto. El historial faltaba porque el personal vendió desde un producto
+creado directamente en Agora, sin vínculo con Winerim.
+
+**Riesgos controlados:** el producto oficial no se modificó; el mapping manual
+no transfiere ownership; el stock estaba inactivo y permaneció en `0`; el
+replay se limitó a dos días y una segunda pasada confirmó idempotencia. El
+duplicado se ocultó mediante flags reversibles, sin borrarlo.
+
+**Alternativa descartada:** eliminar el duplicado, reemplazar el producto
+oficial o descontar stock manualmente. Cualquiera de esas opciones perdería
+trazabilidad o introduciría un movimiento de inventario que no corresponde.
+
+## 2026-07-21 - Ocean Club navega por categorías y conserva familias ocultas
+
+**Decisión:** mantener las ocho familias Winerim con `ShowInPos=false` y usar
+categorías como única capa visual de venta, después de que el SAT confirme el
+mecanismo oficial de creación/asociación y el alcance por grupo de TPV.
+
+**Razón:** Ocean Club necesita una navegación rápida y específica por zona. La
+familia es uno-a-uno y sirve para informes; la categoría admite jerarquía,
+varias pertenencias y restricción por grupo de TPV.
+
+**Riesgos controlados:** la revisión fue de solo lectura; el catálogo permanece
+`113/113 MATCH` y no se tocó ningún producto. La API estándar rechaza
+`Categories`, por lo que no se usarán endpoints internos ni XML no documentado.
+La primera categoría se validará como piloto reversible antes de ampliar.
+
+**Alternativa descartada:** volver a mostrar las familias Winerim o asignar
+manualmente cada alta nueva. La primera degrada la operativa de sala y la
+segunda rompe el objetivo de automatización.
+
+## 2026-07-21 - Finca Eslava no se firma mientras venda por botones genéricos
+
+**Decisión:** conservar Finca Eslava en `LIVE_PENDING_SALE_CANARY`, mantener el
+legacy visible hasta validar la operativa con el cliente y no mapear botones
+genéricos como `COPA TINTO`, `COPA BLANCO` o `COPA FRIZANTE` a un vino Winerim.
+
+**Razón:** la conexión, el catálogo `123/123`, la cola y la idempotencia están
+sanos, pero la única venta procedente de un botón Winerim fue anulada. Los días
+19 y 20 el restaurante siguió usando respectivamente 13 y 16 copas legacy sin
+identidad de referencia, que no permiten registrar ni descontar el vino real.
+
+**Riesgos controlados:** no se modifica catálogo ni inventario y no se oculta
+ningún botón que el equipo siga necesitando. La ocultación futura se limitará a
+productos con sustituto Winerim exacto y tendrá rollback.
+
+**Alternativa descartada:** asignar todas las copas genéricas a un vino por
+defecto. Esa regla produciría ventas y descuentos de stock falsos cuando el
+camarero sirviera otra referencia.
+## 2026-07-21 · Abadia Yuste permanece LIVE con legacy pendiente
+
+- **Hecho**: el catalogo Winerim esta `281/281` y tres ventas reales de botella
+  coinciden exactamente entre Agora, los logs duraderos y el ERP Winerim.
+- **Decision**: clasificar la conexion como `LIVE / WARN_LEGACY`, sin firmarla
+  al 100% hasta validar una copa Winerim, stock activo y propagacion de
+  catalogo observada.
+- **Razon**: entre el 17 y el 20 de julio se vendieron 28 unidades mediante
+  botones legacy sin mapping; cuatro son copas genericas que no identifican el
+  vino servido.
+- **Alternativa descartada**: mapear automaticamente `Copa Rioja`, `Copa
+  Ribera del Duero`, `Copa Vino extremeno` o `Copa semidulce`. Seria ambiguo y
+  podria descontar una referencia incorrecta.
+- **Rollback**: esta auditoria no ha escrito en Agora, Winerim ni Lovable
+  Cloud. Se conserva todo el legacy intacto.
+
+## 2026-07-21 - Las ventas que agotan stock importan solo el residual
+
+**Decision:** cuando una venta supera el stock activo disponible, descontar
+hasta cero mediante `PUT /stock/{id}` e importar por `sales/import` únicamente
+la cantidad no cubierta por ese movimiento.
+
+**Razon:** De la O vendio dos unidades de `Camarolos` con stock uno. El stock
+bajo correctamente `1 -> 0`, pero el historial solo reflejo una unidad porque
+el fallback anterior se ejecutaba unicamente cuando el stock no se movia.
+
+**Riesgos controlados:** el calculo es `venta - movimiento real`, nunca
+negativo; una venta normal totalmente cubierta no importa nada adicional, y
+stock cero o inactivo conserva el comportamiento sales-only. Se mantienen los
+order IDs deterministas y la idempotencia existente.
+
+**Alternativa descartada:** importar siempre la cantidad completa despues del
+PUT. Duplicaria en historial todas las unidades que Winerim ya registra al
+descontar stock.
+
+## 2026-07-21 - De la O no se firma con legacy activo
+
+**Decision:** mantener De la O como `LIVE / WARN_LEGACY_AND_HISTORY` y no
+ocultar ni mapear automaticamente sus botones antiguos durante la auditoria.
+
+**Razon:** el catalogo Winerim esta `112/112`, pero entre el 16 y el 18 de julio
+se vendieron al menos 56 unidades desde 14 botones legacy. Varios nombres son
+ambiguos o no tienen hoy precio de copa en Winerim.
+
+**Riesgos controlados:** se conserva la operativa actual y no se atribuye una
+venta a una referencia incorrecta. Las dos diferencias historicas quedan
+documentadas y no se compensan sin autorizacion.
+
+**Alternativa descartada:** usar matching fuzzy y ocultar todo el legacy en una
+sola pasada. Podria romper botones que el equipo sigue utilizando y descontar
+el vino equivocado.
+
+## 2026-07-21 - La factura definitiva prevalece sobre tickets abiertos
+
+**Decision:** considerar la escritura de stock desde tickets abiertos no
+reversible con la API actual y no firmar al 100 % una conexion que dependa de
+ella hasta desactivar el write provisional o disponer de anulacion idempotente.
+
+**Razon:** se localizaron 18 casos de riesgo en ocho conexiones. Restaurar
+stock no elimina la venta creada por el descenso inicial, y la factura
+definitiva puede crear una segunda tarjeta.
+
+**Riesgos controlados:** no se cambiaron flags ni historiales durante la
+auditoria. Se conserva la lectura de tickets y las facturas cerradas como
+reconciliacion autoritaria.
+
+**Alternativa descartada:** compensar con otro `PUT /stock` o enviar cantidad
+negativa a `/sales/import`. La primera fabrica historial tecnico y la segunda
+no esta admitida por la API.
+
+## 2026-07-21 - Un mapping definitivo prevalece sobre clasificacion historica
+
+**Decision:** en facturas definitivas, procesar toda linea con
+`winerim_product_id` resuelto aunque un snapshot antiguo conserve
+`is_wine_candidate=false`; para tickets abiertos se mantiene el gate de edad y
+candidato.
+
+**Razon:** Kava perdio tres copas de Pampaneando pese a tener mapping
+confirmado, stockId de copa y factura cerrada.
+
+**Riesgos controlados:** el cambio local no esta desplegado; compila con
+esbuild y las aserciones estaticas pasan. No se reproceso ningun dia.
+
+**Alternativa descartada:** corregir manualmente solo las tres filas. Dejaria
+el mismo defecto latente en el resto de conexiones.
+
+## 2026-07-21 - El estado de flota se firma con evidencia, no con salud tecnica
+
+**Decision:** usar `docs/operations/agora-fleet-checklist-2026-07-21.md` como
+corte operativo de las 30 conexiones y mantener `0` conexiones en
+`100%_SIGNED_OFF` hasta completar todos los criterios aplicables.
+
+**Razon:** varias instalaciones tienen catalogo fresh exacto, cola vacia y
+breaker cerrado, pero venden por legacy, no tienen conciliacion ERP reciente o
+conservan escritura provisional que puede dejar una tarjeta positiva tras una
+cancelacion. Esos estados no son equivalentes a una integracion completa.
+
+**Riesgos controlados:** la auditoria fue conservadora y no reactivo las ocho
+conexiones deshabilitadas, no oculto legacy, no reasigno ownership ambiguo y no
+compenso historial a ciegas. Cada bloqueo conserva evidencia y rollback en su
+checklist individual.
+
+**Alternativa descartada:** declarar al 100 % las conexiones con catalogo
+exacto o sin cola activa. Ocultaria fallos de negocio que solo aparecen al
+comparar Agora con el ERP Winerim y al probar cancelaciones o recuperacion.
+
+## 2026-07-21 - Saddle permanece en solo lectura hasta modelar menus y armonias
+
+**Decision:** no activar Saddle ni publicar familias Winerim hasta disponer de
+catalogo/mappings Winerim y un snapshot versionado de la composicion de cada
+menu y armonia procedente de tSpoonLab.
+
+**Razon:** Agora entrega 129 facturas y 1.924 lineas en siete dias, pero las
+ventas de menu no describen de forma suficiente qué vinos y formatos deben
+consumirse. Solo una linea hija observada no permite inferir el resto.
+
+**Riesgos controlados:** se mantiene `enabled=false`, `PULL_ONLY` y
+`write_mode=NONE`; no se escribio en Agora ni Winerim. Las cancelaciones y
+referencias de devolucion quedan disponibles para una conciliacion futura.
+
+**Alternativa descartada:** descontar el menu como un producto unico o inferir
+la armonia por nombre. Ambas opciones producirian consumos de vino falsos y
+romperian la trazabilidad de variantes.
+
+## 2026-07-21 - El Higueron usa orden alfabetico sin alterar la identidad tecnica
+
+**Decision:** configurar exclusivamente El Higueron con orden alfabetico por
+nombre dentro de cada familia Winerim y retirar `B/C/M` solo del
+`ButtonText`. El `Name` interno conserva el prefijo tecnico.
+
+**Razon:** el cliente necesita una navegacion alfabetica limpia, pero el nombre
+tecnico distingue botella, copa y magnum y participa en matching, ventas y
+trazabilidad. Eliminarlo de ambos campos introduciria colisiones y regresiones.
+
+**Riesgos controlados:** el cambio queda detras de dos claves por conexion, usa
+ocho IDs de familia exactos, bloquea etiquetas visibles duplicadas, conserva el
+XML completo, verifica por lectura fresh y devuelve rollback. No se activo en
+produccion mientras el runtime vivo siga devolviendo `Unknown action`.
+
+**Alternativa descartada:** quitar globalmente los prefijos de `Name` o cambiar
+el orden de toda la flota. Romperia el comportamiento ya validado de otras
+instalaciones y podria volver ambiguas las variantes.
+
+## 2026-07-21 - El Higueron resuelve colisiones visibles sin perder formato
+
+**Decision:** aplicar la presentacion alfabetica a los `292` productos de las
+ocho familias Winerim de El Higueron, manteniendo el prefijo tecnico en
+`Product.Name` y usando abreviatura existente o sufijo distintivo cuando dos
+`ButtonText` coinciden tras truncar a 20 caracteres.
+
+**Razon:** el primer dry-run detecto dos colisiones reales: Juvé & Camps
+Milesime/Milesime Rose y Conde de San Cristobal. Quitar B/C/M sin
+desambiguacion habria dejado botones visualmente identicos. Ademas, Agora
+recorta espacios finales y la verificacion debe normalizarlos igual.
+
+**Riesgos controlados:** la operacion se ejecuto con snapshot XML, rollback
+automatico y verificacion fresh. Dos intentos no idempotentes se revirtieron
+antes de activar la configuracion definitiva. La aplicacion final verifico
+`292/292`, y la segunda pasada devolvio `changed=0` y cero colisiones. Las tres
+claves viven solo en `provider_config` de El Higueron.
+
+**Alternativa descartada:** numerar siempre los botones repetidos o eliminar
+el prefijo tambien de `Product.Name`. La primera opcion empeora la operativa y
+la segunda rompe identidad de variante, matching y trazabilidad.
+
+## 2026-07-21 - Kava conserva Pampaneando Winerim y no reactiva el boton legacy
+
+**Decision:** mantener como productos operativos `747191 B Pampaneando` y
+`947191 C Pampaneando`, y conservar oculto `83889 C. PAMPANEANDO TINTO` junto
+con el resto de productos legacy sustituidos.
+
+**Razon:** la lectura fresh confirma que botella y copa Winerim existen, son
+vendibles y estan en familias visibles. El texto `Tinto` no aparece porque la
+ficha canonica Winerim se llama `Pampaneando`; el boton que si lo incluia era
+el legacy retirado.
+
+**Riesgos controlados:** no se escribio en Agora, no se cambiaron precios,
+stock, mappings ni flags. Cualquier cambio de etiqueta debe comenzar en
+Winerim para que la automatizacion siga siendo la fuente de verdad.
+
+**Alternativa descartada:** reactivar el boton legacy o renombrar solo en
+Agora. Ambas opciones crearian dos rutas de venta o una diferencia que la
+siguiente sincronizacion automatica podria revertir.
+
+## 2026-07-21 - La retirada de legacy Agora se valida por producto y ownership
+
+**Decision:** considerar legacy completamente oculto solo cuando la familia no
+sea visible y cada producto sustituido tenga `SaleableAsMain=false` y
+`UseAsDirectSale=false`. Antes de ocultar se exige cobertura Winerim fresh,
+ownership o mapping confirmado, snapshot reversible y canary de venta.
+
+**Razon:** `ShowInPos=false` oculta la familia de la navegacion, pero no impide
+que sus productos sigan vendibles o aparezcan en el buscador. Ademas, las
+familias mixtas y los productos `SIN_OWNERSHIP` no pueden clasificarse como
+legacy solo por su nombre o ubicacion.
+
+**Riesgos controlados:** la auditoria fue estrictamente de solo lectura y
+separa legacy visible, producto buscable bajo familia oculta, ocultacion
+completa, preservacion expresa y conexiones no auditables. Cualquier limpieza
+futura sera diferencial y reversible; no se permite ocultacion masiva cuando
+haya piloto, estructura especial, matching incompleto o uso legacy reciente.
+
+**Alternativa descartada:** ocultar familias completas o todo producto sin
+ownership. Podria retirar botones aun usados, productos de terceros o
+referencias Winerim cuya trazabilidad todavia no esta normalizada.
+
+## 2026-07-21 - El PASS de catalogo exige comprobar tambien formatos retirados
+
+**Decision:** una conexion Agora solo puede clasificarse como catalogo `PASS`
+cuando el catalogo fresh coincide para todos los formatos elegibles y, ademas,
+ningun producto Winerim inactivo, sin precio o ya ausente sigue vendible.
+
+**Razon:** la auditoria de productos activos puede devolver `N/N MATCH` aunque
+queden botones antiguos accesibles por navegacion o buscador. Qtomas y
+Restaurante Triana demostraron este caso en el corte de las 19:01.
+
+**Riesgos controlados:** la auditoria programada no corrige ni procesa colas.
+Las retiradas se haran solo sobre ownership Winerim demostrado, con lectura
+fresh, snapshot, lotes pequenos, verificacion posterior y rollback.
+
+**Alternativa descartada:** considerar suficiente el conteo de productos
+activos o esconder solo la familia. Ambas opciones pueden dejar productos
+vendibles y ventas fuera de la trazabilidad esperada.
+
+## 2026-07-22 - El Bejeque escribe ventas solo desde facturas cerradas
+
+**Decision:** mantener la lectura de tickets abiertos exclusivamente para
+observabilidad, desactivar su escritura provisional de stock/ventas y usar las
+facturas cerradas como unica fuente definitiva hacia Winerim.
+
+**Razon:** una linea abierta ya generaba una tarjeta ERP; su cancelacion podia
+restaurar stock, pero no retirar esa tarjeta de forma idempotente. Al cerrar la
+factura se importaba otra tarjeta definitiva, produciendo seis duplicados
+funcionales exactos en el historico.
+
+**Riesgos controlados:** se repitieron dos lecturas de tickets y dos de facturas
+sin datos nuevos y no aparecieron nuevas escrituras. Se conserva la lectura de
+tickets para diagnostico, mientras el stock y el historial solo cambian con un
+documento cerrado.
+
+**Alternativa descartada:** seguir escribiendo provisionalmente y compensar
+despues con ventas negativas. La API disponible no ofrece anulacion segura de
+la tarjeta ERP y la compensacion podria restaurar stock dos veces.
+
+## 2026-07-22 - La jerarquia visual Agora se implementa con familias padre
+
+**Decision:** cuando un cliente necesite `VINOS > TINTOS WINERIM > producto`,
+usar `ParentFamilyId` sobre las familias Winerim. En De la O la raiz existente
+es `VINOS`, ID `4`; no se aplicara hasta validar la disposicion en terminal con
+el cliente.
+
+**Razon:** la Guia del Integrador documenta la jerarquia de familias y el
+codigo ya soporta `familyParentId`. La entidad independiente `Categories` no
+dispone de un flujo oficial de importacion/exportacion equivalente que el
+middleware pueda mantener automaticamente.
+
+**Riesgos controlados:** Agora admite solo dos niveles de familia. La familia
+Winerim es la hija y el producto el destino; no se creara otra subfamilia bajo
+ella. El cambio futuro sera por conexion, con snapshot y comprobacion visual.
+
+**Alternativa descartada:** escribir categorias mediante endpoints no
+documentados o asumir tres niveles de familias. Ambas opciones comprometen la
+compatibilidad y la automatizacion futura.
+
+## 2026-07-22 - Un timeout de la API Agora no autoriza reencolado ciego
+
+**Decision:** si la portada del servidor responde pero `/api/export/` y
+`/api/export-master/` agotan timeout, detener la reconciliacion y no reencolar
+masivamente tareas fallidas. Tras recuperar la API se repetira una lectura
+fresh y solo se republicaran diferencias reales.
+
+**Razon:** en Chiquilla la cola estaba vacia y diez de once vinos con fallos
+anteriores ya tenian un `SUCCESS` posterior. Reintentar todo mientras el
+servicio de integracion no responde aumentaria carga sin aportar certeza.
+
+**Riesgos controlados:** el fallo nuevo queda identificado por conexion, vino y
+tarea; no se altera tracking, catalogo ni stock. La recuperacion se valida
+antes de escribir.
+
+**Alternativa descartada:** resetear todos los `FAILED` o forzar una
+sincronizacion completa. Podria repetir escrituras ya verificadas y volver a
+saturar el servidor Agora.
+
+## 2026-07-22 - La firma Agora se concede por diez bloques y evidencia real
+
+**Decision:** certificar una conexion como `100%_SIGNED_OFF` solo cuando pasan
+con evidencia vigente conectividad, configuracion, catalogo, cambios
+automaticos, estructura/legacy, ventas, stock, resiliencia, monitorizacion y
+aceptacion final. Una ausencia de prueba es `WARN`, una discrepancia comprobada
+es `FAIL` y una conexion deshabilitada es `NOT_ACTIVE`.
+
+**Razon:** la auditoria de las 30 conexiones demostro que un catalogo exacto,
+una cola vacia o un health HTTP verde pueden coexistir con ventas omitidas,
+duplicados funcionales, legacy usado sin mapping, cursores bloqueados o stock
+no conciliado. Solo una evaluacion completa representa el comportamiento que
+ve el restaurante y el historial que recibe Winerim.
+
+**Riesgos controlados:** la auditoria fue de solo lectura, las conexiones
+deshabilitadas no se sondearon y los fallos se documentaron por documento,
+variante o producto cuando existia evidencia. Las correcciones futuras seran
+diferenciales, con snapshot, idempotencia, rollback y observacion posterior.
+
+**Alternativa descartada:** considerar `N/N MATCH`, `READY`, breaker cerrado o
+cero tareas pendientes como equivalente a una integracion completa. Esos
+indicadores no detectan la integridad semantica de ventas, cancelaciones y
+stock.
+
+## 2026-07-22 - La conciliacion definitiva prevalece sobre la escritura provisional
+
+**Decision:** priorizar factura/documento definitivo como fuente de escritura
+de historial mientras Winerim no disponga de anulacion remota idempotente de
+una venta provisional. Los tickets abiertos pueden usarse para observabilidad,
+pero no deben crear una segunda tarjeta funcional sin una reversión completa.
+
+**Razon:** Kava, PurOsushi, Qtomas, Taberna de Elia y Sa Vida muestran ciclos
+provisional, restauracion y definitivo con claves distintas. La idempotencia
+tecnica pasa, pero el historial ERP puede conservar dos tarjetas positivas.
+
+**Riesgos controlados:** el cambio se aplicara por conexion despues de
+conciliar su fuente real, sin borrar historial ni compensar por nombre. Se
+validaran cancelacion, stock neto, tarjeta ERP unica y recuperacion antes de
+extenderlo a la flota.
+
+**Alternativa descartada:** mantener ambas fuentes escribiendo y confiar solo
+en claves idempotentes exactas. No evita duplicados semanticos con IDs o fases
+de documento diferentes.
+
+## 2026-07-22 - Los artefactos superseded se cierran sin replay
+
+**Decision:** normalizar una tarea terminal como objetivo satisfecho solo si el
+catalogo fresh demuestra coincidencia exacta y ownership, no existe cola activa
+y la tarea no necesita volver a ejecutarse. Los fallos de stock de referencias
+retiradas se clasifican `SKIPPED`, no `SUCCESS`.
+
+**Razon:** Chiquilla tenia una tarea `FAILED` cuyo producto ya estaba exacto;
+Sa Vida conservaba 24 bloqueos de un rollback de canary aunque el catalogo
+posterior era `1542/1542`; Sa Pedrera conservaba un 404 reciente de Albenc, ya
+inactivo, rechazado y oculto. Reintentar cualquiera de ellos habria creado
+riesgo sin cambiar el estado deseado.
+
+**Riesgos controlados:** cada escritura se hizo por ID y estado esperado, con
+snapshot `0600`, evidencia fresh, rollback automatico y verificacion posterior.
+El estado y error originales quedaron dentro de los metadatos de resolucion.
+No se tocaron productos, ventas, stock, mappings ni funciones compartidas.
+
+**Alternativa descartada:** borrar registros, reencolar tareas o marcar Albenc
+como descuento correcto. Las tres opciones falsearian trazabilidad o podrian
+duplicar una operacion ya satisfecha o imposible.
+
+## 2026-07-22 - Un ticket abierto huerfano no autoriza saltar ventas definitivas
+
+**Decision:** mantener sin cambios los cursores de Abadia Yuste, El Higueron y
+Finca Eslava mientras el primer dia definitivo pendiente contenga vinos legacy
+sin mapping. No se desactiva el techo de tickets abiertos hasta que ese backlog
+pueda procesarse cronologicamente y completo.
+
+**Razon:** Agora devuelve facturas cerradas, pero tambien tickets abiertos de
+dias antiguos. En Higueron y Finca el ticket mas antiguo fija exactamente el
+techo actual; en Abadia aparecen tickets desde 2025. Retirar el guard permitiria
+al cron avanzar sobre ventas legacy no resueltas y perder su descuento o
+historial.
+
+**Riesgos controlados:** se tomo snapshot fresh, se reprodujo la precedencia de
+mappings de produccion y no se ejecuto `save-sales`, stock, cola, SQL ni cambio
+de configuracion. Las tres conexiones conservan escritura provisional
+desactivada y facturas cerradas accesibles.
+
+**Alternativa descartada:** adelantar el cursor por SQL, importar solo las
+lineas Winerim de una factura o mapear copas genericas por similitud. Las tres
+opciones rompen integridad, idempotencia o trazabilidad.
+
+## 2026-07-22 - Abadia solo escribe mappings legacy exactos y univocos
+
+**Decision:** crear mappings de ventas legacy en Abadia unicamente cuando un
+codigo/SKU exacto o el nombre normalizado mas variante resuelven una sola ficha
+Winerim activa compatible. En el primer lote se aceptaron 16 mappings de
+botella y se rechazaron 30 IDs sin igualdad exacta.
+
+**Razon:** el cursor esta detenido por un backlog legacy real. Confirmar los
+productos nominales exactos reduce el bloqueo sin inventar equivalencias; los
+botones genericos de copa y los nombres ausentes o distintos necesitan una
+decision humana.
+
+**Riesgos controlados:** se fijo la conexion por ID y nombre, se reviso un hash
+estable del dry-run, se guardo snapshot `0600` antes de la primera escritura y
+se verificaron despues las 16 filas, el catalogo `281/281`, la cola vacia y el
+breaker cerrado. No se tocaron ventas, stock, cursor, flags, tracking, alertas,
+catalogo o legacy.
+
+**Alternativa descartada:** fuzzy matching, mapear una copa generica a una
+referencia concreta o procesar parcialmente las facturas. Cualquiera puede
+atribuir ventas al vino equivocado o avanzar el cursor dejando lineas fuera.
+
+## 2026-07-22 - Finca Eslava no recibe mappings sin identidad exacta
+
+**Decision:** no crear ningun `product_mapping` para las ventas legacy de
+Finca Eslava del 19 al 21 de julio porque la lectura fresh y el dry-run no
+encontraron codigo/SKU exacto ni nombre+variante unica.
+
+**Razon:** cuatro botones son genericos y las copas nominales `Málaga Virgen`,
+`Tío Pepe` y `NPU` no existen como referencias exactas demostrables en el
+catalogo Winerim actual. Una coincidencia aproximada atribuiria cantidades y
+stock a un vino potencialmente incorrecto.
+
+**Riesgos controlados:** snapshot `0600`, segunda auditoria fresh, catalogo
+`123/123`, cola cero y breaker cerrado. No se escribieron mappings, ventas,
+stock, cursor, flags, catalogo ni legacy; la alerta stale se mantuvo abierta.
+
+**Alternativa descartada:** mapear por tipo de vino, familia, color o parecido
+de nombre para desbloquear el cursor. Ganaria avance aparente a costa de perder
+integridad de ventas e inventario.
+
+## 2026-07-22 - Un mapping confirmado requiere aislamiento del procesador de ventas
+
+**Decisión:** no insertar ni mantener mappings `CONFIRMED` en una conexión
+activa cuando el alcance prohíbe procesar ventas, stock o cursor, salvo que
+exista un bloqueo de mantenimiento por conexión comprobado y fail-closed. En El
+Higuerón se revirtieron los 24 mappings exactos al detectar que el cron los
+consumía automáticamente.
+
+**Razón:** un write aislado en `product_mappings` no es operacionalmente
+aislado. El dispatcher definitivo observa el nuevo mapping tras el commit y
+puede empezar a procesar backlog antes de terminar la verificación. En esta
+operación alcanzó 19 grupos de ventas cerradas de los días 16 y 17 de julio,
+aunque no hubo una invocación manual de ventas ni stock.
+
+**Riesgos controlados:** el rollback usó conexión, provider product, Winerim
+ID, variante y `match_method` exactos; mappings y tracking volvieron a
+`292/292`, el cursor permaneció en `2026-07-14` y la cola en cero. Se
+conservaron logs e idempotency keys y no se intentó compensar stock o historial
+sin conciliación por factura.
+
+**Alternativa descartada:** dejar los mappings aplicados porque eran exactos o
+restaurar stock globalmente. La primera opción incumplía el alcance y permitía
+más procesamiento; la segunda podía duplicar o falsear ventas reales.
+
+## 2026-07-22 - El cursor vivo pertenece solo al flujo automático completo
+
+**Decisión:** `last_business_day_synced` solo puede avanzar desde la
+sincronización automática después de persistir completamente evento, líneas y
+stock/venta. Los guardados manuales y los históricos no lo modifican; todos los
+writes son atómicos y monotónicos.
+
+**Razón:** un guardado parcial o concurrente podía adelantar o retroceder el
+cursor y hacer que el cron omitiera ventas o reabriera días ya procesados.
+
+**Riesgos controlados:** el runtime aborta el día ante cualquier error de
+persistencia y conserva el cursor para reintento idempotente. La validación
+incluye `25/25` tests, bundle y comprobación TypeScript.
+
+**Alternativa descartada:** permitir que cada acción mantenga el cursor por su
+cuenta. Duplica ownership y hace imposible razonar sobre concurrencia y
+recuperación.
+
+## 2026-07-22 - El monitor con efectos requiere secreto; el botón es dry-run
+
+**Decisión:** cualquier ejecución del monitor que persista estado o envíe
+notificaciones exige `MONITOR_CRON_SECRET`. La interfaz solo puede lanzar
+`dryRun=true` y nunca recibe el secreto.
+
+**Razón:** una invocación pública con permisos internos permitiría generar o
+resolver alertas y enviar correo sin autorización.
+
+**Riesgos controlados:** el cron existente usa el helper seguro y el dry-run
+postdespliegue comprobó `23` conexiones sin escrituras ni notificaciones.
+
+**Alternativa descartada:** confiar en parámetros como `sendEmails=false` para
+considerar inocua una ejecución sin autenticar; todavía podría modificar otros
+estados internos.
+
+## 2026-07-22 - El cierre RLS se hará por fases y no con un revoke inmediato
+
+**Decisión:** mantener abiertos los cinco hallazgos críticos de RLS/Storage
+hasta migrar primero las lecturas y mutaciones del frontend a una capa BFF/Edge
+Function autenticada, y endurecer después las policies tabla por tabla con
+tests y rollback.
+
+**Razón:** los findings son reales y preexistentes, pero la interfaz actual
+depende de acceso directo. Cortarlo de una vez puede dejar inoperativo el
+middleware antes de disponer de una ruta segura equivalente.
+
+**Riesgos controlados:** no se fuerza la publicación del frontend, no se
+ignoran findings y no se aplican policies sin inventario de consumidores.
+
+**Alternativa descartada:** publicar ignorando la deuda o revocar `anon` en
+producción sin staging. La primera perpetúa exposición; la segunda puede romper
+flujos activos sin recuperación inmediata.
+
+## 2026-07-22 - El lease del dispatcher es el bloqueo de mantenimiento operativo
+
+**Decisión:** reutilizar el lease `sales-stock` por conexión para aislar
+operaciones de mapping en producción. La escritura debe comprobar ownership en
+la misma operación, mantener invariantes bajo lock y liberar explícitamente.
+
+**Razón:** la reaplicación de los 24 mappings de El Higuerón bajo ese protocolo
+no generó ventas, stock, eventos, cola ni movimiento de cursor durante el lock
+ni en el ciclo observado después de liberarlo.
+
+**Riesgos controlados:** baseline y rebaseline idénticos, insert atómico,
+verificación doble, release confirmado, `0` idempotency keys duplicadas y
+ninguna compensación de los efectos anteriores.
+
+**Alternativa descartada:** desactivar toda la conexión o insertar mappings sin
+lease. La primera afecta catálogo y observabilidad innecesariamente; la segunda
+ya demostró una carrera real con el cron.

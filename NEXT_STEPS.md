@@ -2,6 +2,276 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Corte operativo al cerrar 2026-07-22
+
+- [x] Publicar en `main` el hardening de ventas/cursor/monitor:
+  `7001cfed3f6ef93812051c935faf42639ec5469e`.
+- [x] Redesplegar en Lovable Cloud `agora-proxy` y
+  `connection-health-monitor` desde ese hash, sin tocar configuración ni
+  procesar colas.
+- [x] Ejecutar monitor manual postdeploy en `dryRun=true`: `23` conexiones
+  activas comprobadas, sin escrituras ni notificaciones.
+- [ ] Observar un ciclo cron real posterior al deploy y comprobar ausencia de
+  regresiones de cursor, cola y alertas falsas.
+- [ ] Publicar el frontend con `dryRun=true` solo después de definir la ruta de
+  cierre de los cinco findings críticos preexistentes de RLS/Storage.
+- [ ] Migrar por fases el acceso directo del frontend a Edge Functions/BFF,
+  activar autenticación y cerrar policies públicas con prueba y rollback por
+  tabla siguiendo
+  `docs/operations/security-rls-publish-gate-2026-07-22.md`. No ejecutar un
+  `REVOKE` masivo en producción.
+- [ ] Mantener abiertas las alertas de Abadía, Finca e Higuerón hasta resolver
+  el backlog legacy real; no cerrarlas manualmente por apariencia.
+
+## P0 - Desbloquear cursores definitivos sin perder legacy
+
+- [x] Tomar snapshot fresh de Abadia Yuste, El Higueron y Finca Eslava.
+- [x] Confirmar que Agora devuelve facturas cerradas y que no hay escritura
+  provisional, breaker ni cola activa causante del bloqueo.
+- [x] Demostrar que el primer dia pendiente de las tres contiene vino legacy
+  sin mapping y que tickets huerfanos fijan el techo.
+- [x] Abadia: crear 16 mappings exactos/univocos de botella con snapshot
+  `0600`, hash revisado y verificacion fresh; no procesar ventas.
+- [ ] Abadia: resolver los 30 IDs restantes solo con confirmacion humana,
+  fijar fecha de go-live o escanear `2025-03-17..2026-06-06`, y resolver el
+  fallo Winerim `142911`.
+- [x] Higueron: revisar los IDs legacy vendidos desde `2026-07-15`; identificar
+  `24` matches exactos/univocos y rechazar genéricos, licores y falsos
+  positivos. Los mappings se revirtieron al detectar consumo automático del
+  cron; evidencia en
+  `docs/operations/agora-higueron-exact-mapping-2026-07-22.md`.
+- [ ] Higueron: conciliar en ERP los `19` efectos automáticos previos al
+  rollback (`15` grupos con stock activo y `4` sales-only); no compensar por
+  nombre ni restaurar stock globalmente.
+- [x] Completar y documentar la prueba del maintenance lock fail-closed por
+  conexión usando el lease `sales-stock`: ownership, insert atómico, doble
+  verificación, release explícito y observación posterior sin nuevos writes.
+- [x] Higuerón: reaplicar bajo lease los `24` matches exactos; estado final
+  `316` mappings, lote `24`, cursor `2026-07-14`, cola `0` y cero claves
+  idempotentes duplicadas. `C. CANECO` copa sigue sin aplicarse.
+- [ ] Higuerón: resolver las líneas legacy ambiguas restantes y conciliar los
+  `19` efectos de la carrera inicial antes de procesar el primer día completo.
+- [ ] Finca: obtener equivalencia humana de `COPA TINTO`, `COPA BLANCO`,
+  `COPA FRIZANTE`, `COPA MALAGA VIRGEN`, `COPA NPU`, `COPA ROSADO` y `COPA
+  TIO PEPE`; no mapear genericos por fuzzy.
+- [x] Finca: ejecutar lectura fresh y dry-run de codigo/SKU o nombre+variante
+  exactos para `2026-07-19..2026-07-21`; resultado `0` mappings autorizables,
+  catalogo `123/123`, cola cero y breaker cerrado.
+- [ ] Cuando el primer dia quede completo: snapshot nuevo, desactivar la
+  observacion de tickets huerfanos, procesar dia a dia y verificar Winerim tras
+  cada factura antes de avanzar.
+- [ ] Resolver alertas solo cuando los cursores hayan avanzado de verdad.
+- [ ] Usar `docs/operations/agora-remediation-cursors-2026-07-22.md` como
+  evidencia y runbook.
+- [ ] Para Abadia, continuar desde
+  `docs/operations/agora-abadia-exact-mapping-2026-07-22.md`; no repetir los 16
+  mappings ya confirmados ni usar fuzzy para los 30 descartados.
+
+## P0 - Casa Nene · restaurar botellas internas sin publicar la carta
+
+- [x] Confirmar fresh que las `31/31` copas estan vendibles y que las `26`
+  botellas asociadas estan `HIDDEN`.
+- [x] Separar `24` botellas con mapping confirmado, `2` mappings rechazados,
+  `Valdamor` sin precio de botella y cuatro fichas sin datos recuperables.
+- [x] Preparar patch opt-in por referencia en
+  `codex/casa-nene-hidden-pos-variants`.
+- [x] Validar parse TypeScript, `node --check`, `git diff --check` y `11/11`
+  aserciones de politica.
+- [x] Revisar y desplegar unicamente `agora-proxy` desde
+  `079ba700ea18b071df27141cb40e79fc68a54d32`.
+- [x] Guardar snapshot y anadir `publish_bottle=true` + precio explicito solo
+  a las `24` referencias con mapping confirmado.
+- [x] Ejecutar dry-run, publicar en lotes de cinco y exigir auditoria fresh,
+  mappings/tracking y cola limpios.
+- [ ] Cliente: probar una botella y una copa y verificar historial `TPV`, hora,
+  variante, stock e idempotencia.
+- [ ] Validar aparte `Balbas Barrica 5` y `Antidoto`; no incluirlos en el
+  rollout mientras sus mappings sigan rechazados.
+
+## P0 - Demostrar SLA de cinco minutos por conexion
+
+- [x] Separar evidencia de configuracion en las `30` conexiones.
+- [x] Confirmar ambos sentidos en Casa Nene, El Higueron, Kava, PurOsushi,
+  Cienvinos Ecija, Sa Pedrera y Taberna de Elia.
+- [x] Confirmar solo ventas en Chiquilla, De la O, Don Quijote Marbella, El
+  Porton de Sorni, Finca Eslava, Katsu Izakaya, Jardi, Qtomas, Sa Vida y
+  Vinatea.
+- [ ] Ejecutar por cada conexion activa una venta real y un alta o cambio de
+  precio real, con timestamps y lectura fresh dentro de siete minutos.
+- [ ] Observar 24 horas sin duplicados, errores de cursor ni colas bloqueadas
+  antes de promover a `100%_SIGNED_OFF`.
+
+## P0 - Legacy Agora · retirar solo sustitutos confirmados
+
+- [x] Auditar las `30` conexiones sin escrituras y separar `23` activas de
+  `7` desactivadas.
+- [x] Cruzar master data actual, ownership Winerim y catalogo fresh de las
+  conexiones activas.
+- [x] Documentar la diferencia entre familia oculta, producto buscable,
+  legacy completamente oculto, contenedor reutilizado y politica de
+  preservacion en `docs/operations/agora-legacy-audit-2026-07-21.md`.
+- [ ] El Porton de Sorni: confirmar sustituto de los `18` legacy vendibles,
+  ejecutar canary y preparar dry-run reversible.
+- [ ] Don Quijote Marbella: ocultar solo duplicados con mapping exacto tras el
+  canary del boton oficial.
+- [ ] Finca Eslava: separar copas nominales de copas genericas; no ocultar las
+  genericas por inferencia.
+- [ ] Vinatea: usar los `110` mappings exactos para un dry-run, pero no aplicar
+  hasta resolver `sales/import` y completar la venta real.
+- [ ] Abadia Yuste y De la O: validar con el cliente los subconjuntos nominales
+  antes de cualquier ocultacion.
+- [ ] El Higueron: corregir las `10` diferencias fresh antes de plantear la
+  retirada de productos legacy buscables.
+- [ ] Luruna: completar matching dentro de la familia mixta `BEBIDAS`; no
+  ocultar por familia.
+- [ ] Alinear `legacy_policy` de El Bejeque con el estado fresh ya oculto, sin
+  cambiar flags operativos.
+- [ ] Clasificar residuos sin ownership de Kava, Cienvinos y Jardi.
+
+## P0 - Kava · confirmar Pampaneando en comandera
+
+- [x] Auditar catalogo fresh y confirmar `228/228 MATCH`, sin cola ni
+  diferencias.
+- [x] Localizar botella `747191 B Pampaneando` en `TINTOS WINERIM` y copa
+  `947191 C Pampaneando` en `COPAS WINERIM`, ambas vendibles.
+- [x] Confirmar que `C. PAMPANEANDO TINTO` es el boton legacy oculto y que no
+  debe reactivarse.
+- [ ] Cliente: refrescar la comandera y buscar `Pampaneando`, sin exigir la
+  palabra `Tinto` que no forma parte del nombre canonico Winerim.
+- [ ] Si el cliente quiere la palabra `Tinto`, renombrar primero en Winerim y
+  medir la propagacion automatica; no editar el producto Agora a mano.
+
+## P0 - Cerrar la auditoria de flota Agora del 21/07
+
+- [x] Revisar las `30` conexiones y separar `23` habilitadas de `7` no activas.
+- [x] Publicar el corte conservador en
+  `docs/operations/agora-fleet-checklist-2026-07-21.md`.
+- [x] Evitar falsos positivos: ninguna conexion se marca
+  `100%_SIGNED_OFF` solo por catalogo exacto, cola cero o breaker cerrado.
+- [x] Desplegar de forma controlada el hardening de `agora-proxy` desde
+  `7001cfed`; la verificación fresh posterior conserva catálogo y cola limpios
+  sin replay operativo.
+- [x] Desactivar la escritura provisional de tickets abiertos en las `23`
+  conexiones activas, conservando su lectura para observabilidad.
+- [x] Clasificar Sa Pedrera (`Albenc 296315 / 404`) como referencia retirada:
+  mapping rechazado, tracking oculto, producto no vendible y log reciente
+  `SKIPPED`, sin fingir un descuento correcto.
+- [ ] Resolver Cienvinos (venta `503`, alerta de stock y cursor) antes de
+  reprocesar.
+- [ ] Resolver la adopcion/mapping de Luruna: actualmente `0/2850` lineas
+  recientes llegan mapeadas.
+- [ ] Corregir solo las diferencias fresh documentadas de PurOsushi,
+  El Higueron y Sa Vida, con relectura exacta y sin sincronizacion masiva.
+- [ ] Reconciliar en ERP los ciclos provisional/definitivo detectados antes de
+  corregir tarjetas o stock históricos.
+- [ ] Completar canaries reales por conexion y observar 24 horas antes de
+  promoverla a `100%_SIGNED_OFF`.
+
+## P1 - Onboarding de conexiones Agora no activas
+
+- [ ] Casa Esteban: cargar catalogo Winerim, master data y mappings antes del
+  primer piloto.
+- [ ] Don Bernardo Ponzano y Santander: refrescar caches, decidir estructura y
+  preparar mappings; no confundir histórico analítico con operación activa.
+- [ ] O Bistro: obtener URL externa/VPN alcanzable; la IP privada no sirve
+  desde Lovable Cloud.
+- [x] Tintorera: piloto reversible completado sobre `313` formatos estandar;
+  catalogo exacto, ownership completo, cola limpia y legacy intacto.
+- [ ] Saddle: integrar primero tSpoonLab y versionar composición de
+  menús/armonías.
+- [ ] Baco Getafe y La Candela de Triana: conservar rollback/desactivación hasta
+  una instrucción explícita del cliente.
+
+## P0 - Tickets abiertos e historial Winerim
+
+- [x] Medir alcance durable: `18` casos de riesgo en `8` conexiones desde el
+  `10/07`.
+- [x] Confirmar que la API v2 documentada no ofrece anulacion de venta y que
+  `/sales/import` solo acepta cantidades positivas.
+- [ ] Decidir y ejecutar una desactivacion controlada de escritura provisional
+  (`open_tickets_stock_sync_enabled`) manteniendo lectura de tickets.
+- [ ] Pedir a Winerim un endpoint idempotente de anulacion de venta o ajuste de
+  stock sin historial.
+- [ ] Auditar y corregir por snapshot los duplicados funcionales confirmados;
+  nunca compensarlos con otro `PUT /stock`.
+- [ ] Validar ticket cerrado, reducido y cancelado antes de reactivar writes.
+
+## P0 - Kava · cerrar diferencias de historial
+
+- [x] Confirmar catalogo `228/228 MATCH`, cola `0` y breaker cerrado.
+- [x] Identificar tres copas definitivas de Pampaneando omitidas por metadata
+  antigua de candidato.
+- [x] Preparar localmente precedencia del mapping definitivo y validar bundle.
+- [ ] Desplegar solo `agora-proxy`.
+- [ ] Reprocesar `17/07` y `18/07` y comprobar exactamente tres copas nuevas.
+- [ ] Corregir Chavost Paradoxe solo despues de snapshot y definir anulaciones.
+- [ ] Observar 24 horas sin nuevas diferencias.
+
+## P0 - Finca Eslava · abandonar botones legacy ambiguos y cerrar canaries
+
+- [x] Confirmar conexión, breaker y ciclo de cinco minutos sanos.
+- [x] Revalidar catálogo fresh `123/123 MATCH` y cola activa cero.
+- [x] Comparar Agora con `/erp/1108/sales` y confirmar idempotencia.
+- [x] Corregir el stock de la venta anulada de Emilio Moro mediante `No, solo
+  ajuste`, sin fabricar otra venta.
+- [x] Detectar uso vivo de copas legacy genéricas: `13` el `19/07` y `16` el
+  `20/07`, además de `2` botellas legacy de `JUAN GIL 12 MESES` el `20/07`.
+- [ ] Cliente: marcar una botella y una copa desde botones Winerim y no
+  anularlas.
+- [ ] Verificar ambas en ERP en menos de cinco minutos, con hora, variante,
+  stock activo/inactivo e idempotencia correctos.
+- [ ] Acordar sustitutos exactos de legacy; no mapear `COPA TINTO`, `COPA
+  BLANCO` o `COPA FRIZANTE` a una referencia concreta.
+- [ ] Ocultar de forma reversible solo el legacy con sustituto confirmado.
+- [ ] Mantener `LIVE_PENDING_SALE_CANARY` hasta completar botella y copa.
+
+## P0 - Ocean Club · sustituir navegación por familias por categorías
+
+- [x] Confirmar fresh que las ocho familias Winerim están
+  `ShowInPos=false`; no se necesita otra ocultación.
+- [x] Confirmar catálogo `113/113 MATCH`, cola cero y productos intactos.
+- [x] Identificar grupos activos `1 - BAR & LOUNGE` y
+  `3 - POOL & RESTAURANTE`; excluir `2 - Comanderas`, eliminado.
+- [x] Verificar que la API HTTP estándar rechaza la exportación de
+  `Categories` y que la guía no documenta su importación.
+- [ ] Cliente/SAT: confirmar qué categorías se muestran en cada grupo activo.
+- [ ] SAT: indicar el mecanismo oficial soportado para crear categorías y
+  asociarlas dinámicamente a familias o productos.
+- [ ] Crear un piloto reversible con categoría padre `VINOS` y una única hija.
+- [ ] Verificar visualmente la categoría en ambos grupos, orden y ausencia de
+  familias Winerim en la raíz.
+- [ ] Confirmar que un nuevo vino entra automáticamente en la categoría
+  adecuada; no aceptar una solución que requiera reasignación manual diaria.
+- [ ] Hacer una venta real desde categoría y verificar ERP, variante, hora,
+  stock/idempotencia antes de `100%_SIGNED_OFF`.
+- [ ] Usar `docs/operations/ocean-club-category-navigation-2026-07-21.md` como
+  evidencia y rollback.
+
+## P0 - Don Quijote Marbella · canary final con el botón oficial
+
+- [x] Confirmar catálogo fresh `114/114`, sin ausentes, diferencias, productos
+  sin ownership ni cola activa.
+- [x] Confirmar que Winerim publicó `C Arzuaga Crianza` a `10 EUR` en
+  `COPAS WINERIM`.
+- [x] Detectar que José vendió desde el duplicado manual
+  `COPA DE ARZUAGA CRIANZA`, que no tenía mapping.
+- [x] Mapear de forma exacta y reversible el duplicado manual a
+  `232976 / GLASS`, sin transferir ownership.
+- [x] Recuperar `4` copas del `2026-07-19` y `1` copa del `2026-07-20` como
+  ventas TPV sin modificar stock inactivo.
+- [x] Repetir el replay y confirmar `0` nuevas importaciones y `0` duplicados.
+- [x] Ocultar únicamente el duplicado manual; mantener visible el producto
+  oficial.
+- [ ] Cliente: refrescar Agora y vender una copa desde
+  `COPAS WINERIM > C Arzuaga Crianza`.
+- [ ] Confirmar en menos de cinco minutos la tarjeta TPV, la variante copa, la
+  hora del proveedor y la idempotencia.
+- [ ] Winerim: corregir o aclarar la cabecera `Botella` y la fecha de
+  importación que muestra el ERP para las ventas históricas de copa.
+- [ ] Promover a `LIVE` / `100%_SIGNED_OFF` solo después del canary oficial.
+- [ ] Usar `docs/operations/don-quijote-arzuaga-2026-07-21.md` para evidencia
+  y rollback.
+
 ## P0 - Casa Esteban · recuperar túnel y completar activación
 
 - [x] Validar token Winerim: `261` vinos accesibles.
@@ -115,7 +385,8 @@
 
 - [ ] `O Bistro`: obtener URL pública/DDNS o túnel; no sirve la IP privada desde el backend.
 - [ ] `Saddle`: SAT debe revisar NAT/firewall/DDNS y puerto `8984`.
-- [ ] `Tintorera`: SAT debe revisar NAT/firewall/DDNS y puerto `8984`; mantener desactivada.
+- [x] `Tintorera`: NAT/puerto recuperados; API y tickets responden HTTP `200`
+  desde Lovable Cloud y la conexion esta activa.
 
 ## P1 — Agora · siguientes altas
 
@@ -181,26 +452,35 @@
 ## P0 — Tintorera · recuperar acceso y activar sin ocultar legacy
 
 - [x] Confirmar que la conexion existe en Lovable Cloud en modo seguro y sin escrituras.
-- [x] Validar token/catalogo Winerim: 302 vinos activos con precio.
+- [x] Validar token y reconstruir catalogo Winerim: `300` vinos actuales y
+  `313` formatos estandar con precio tras el enriquecimiento completo.
 - [x] Repetir sonda local y desde Lovable Cloud/backend: `tintorera.dyndns.org:8984` termina en timeout.
 - [x] Repetir comprobacion fresh el 20/07: timeout directo, timeout de 120
   segundos desde Lovable Cloud y auditoria `NO_MASTER_DATA`.
 - [x] Documentar diagnostico, checklist SAT, activacion y rollback en `docs/integrations/TINTORERA_AGORA_READINESS_2026-07-14.md`.
-- [ ] SAT: confirmar servidor Agora encendido, modulo/API HTTP activos y servicio escuchando en `8984`.
+- [x] Confirmar acceso recuperado desde Lovable Cloud: API, maestros y tickets
+  abiertos HTTP `200`.
+- [x] SAT: confirmar servidor Agora encendido, modulo/API HTTP activos y servicio escuchando en `8984`.
 - [x] SAT: confirmar Modulo de Servicios de Integracion, API HTTP y
   `/api/import/` activos.
-- [ ] SAT: confirmar la IPv4 local actual y que Agora responde en
-  `http://IP_LOCAL:8984/api/` dentro de la red del restaurante.
-- [ ] Cliente/operador del router: corregir NAT TCP `8984`, firewall y DDNS;
-  fijar la IP del servidor mediante reserva DHCP o configuracion estatica.
-- [ ] Cuando responda: leer `/api/`, Families, Products, IVA, listas, preparacion, almacenes, centros e Invoices.
-- [ ] Guardar snapshot y clasificar familias/productos legacy antes de cualquier escritura.
-- [ ] Comparar los 302 vinos Winerim con Agora y revisar coincidencias/duplicados.
-- [ ] Crear familias/productos Winerim manteniendo visible el legacy.
+- [x] Leer `/api/`, Families, Products, IVA, listas, preparacion, almacenes,
+  centros, tickets e Invoices.
+- [x] Guardar snapshot previo y clasificar los `1027` productos legacy.
+- [x] Crear las ocho familias Winerim y publicar `313` formatos estandar,
+  manteniendo legacy intacto.
+- [x] Verificar fresh `313/313 MATCH`, mappings/tracking `313`, cola cero,
+  tarifa/centros correctos y breaker cerrado.
+- [x] Corregir la comparacion diferencial de vinos homonimos por anada
+  (`aff6e6f`) y reprocesar los cinco bloqueos como `5/5 SUCCESS`.
+- [x] Activar auto-push, catalogo, intradia y captura de tickets cada cinco
+  minutos; mantener escritura provisional de tickets apagada.
 - [ ] Acordar mapeo de botella pequena, media botella y botella tienda.
-- [ ] Probar botella y copa, con stock activo y stock inactivo.
+- [ ] Cliente: probar una botella y una copa desde botones Winerim.
+- [ ] Verificar en ERP ambas ventas, hora real, stock activo/inactivo e
+  idempotencia.
 - [ ] Probar alta, cambio de precio, sin precio e inactivacion con ventana maxima de 5 minutos.
-- [ ] Activar ventas y auto-push solo tras validacion; confirmar historial Winerim y cola `0`.
+- [ ] Observar red, ventas y alertas 24 horas antes de promover desde
+  `LIVE_PENDING_SALE_CANARY`.
 
 ## P0 — Piloto tSpoonLab + Holded
 
@@ -282,7 +562,8 @@
 - [ ] `Taberna de Elia`: decidir estructura destino antes de publicar Winerim (`familias Winerim` sin ocultar legacy vs matching sobre legacy).
 - [x] `El Higuerón`: credencial literal terminada en `ROn` validada; Agora responde HTTP `200` y la conexión está activa.
 - [ ] `O Bistro`: pedir URL pública/DDNS/túnel; la IP privada no responde desde Lovable Cloud/backend.
-- [ ] `Tintorera` y `Saddle`: revisar conectividad externa porque la sonda corta acaba en timeout.
+- [x] `Tintorera`: conectividad externa recuperada y validada desde Lovable Cloud.
+- [ ] `Saddle`: revisar conectividad externa porque la sonda corta acaba en timeout.
 - [x] `Restaurante Qtomas`: detener reintentos; `59` tareas quedaron `BLOCKED` y auto-push de catálogo pausado.
 - [ ] `Restaurante Qtomas`: revisar conectividad/DDNS/puerto antes de cualquier auditoría o reencolado.
 
@@ -1152,7 +1433,8 @@
 - [x] Don Quijote Marbella: conexión creada, catálogo `114/114`, flags automáticos y cola cero; pendiente canary real.
 - [ ] Saddle: backend aborta contra la IP aunque desde la máquina local responde; pedir DDNS/URL alternativa o revisión firewall/ruta desde Lovable Cloud/backend.
 - [x] El Higuerón: `Invoices`, `tickets`, `Families` y `Products` revalidados con HTTP `200` usando la credencial literal correcta.
-- [ ] Tintorera: `tintorera.dyndns.org:8984` no responde dentro de timeout; pedir revisión TPV encendido, DDNS, router/firewall y puerto.
+- [x] Tintorera: `tintorera.dyndns.org:8984` vuelve a responder; catalogo
+  activado y pendiente solo de canaries reales y observacion de 24 horas.
 - [ ] O Bistro: IP privada `192.168.1.22` no es accesible desde backend; pedir URL externa/DDNS/VPN.
 - [ ] Taberna de Elia: ya activa en lectura; preparar revisión de matching legacy vs Winerim antes de publicar catálogo o activar stock.
 - [x] El Bejeque: auditoría directa 2026-07-11 confirma `98/98` formatos Winerim activos/con precio presentes en Ágora, en familias Winerim y vendibles dentro de familia.
@@ -1534,3 +1816,215 @@
 - [ ] Ejecutar alta o cambio de precio real y medir propagacion menor o igual
   a cinco minutos.
 - [ ] Acordar con el cliente la ocultacion reversible de `CAVAS` y `BODEGA`.
+## P0 - Abadia Yuste · cerrar legacy y copa canary
+
+- [x] Confirmar catalogo fresh `281/281`, tracking/mappings completos y cola
+  activa cero.
+- [x] Conciliar tres botellas reales Agora contra `/erp/528/sales`, con hora,
+  importe, origen TPV e idempotencia exactos.
+- [x] Confirmar `sales/import` para las tres ventas con stock desactivado, sin
+  movimiento de inventario.
+- [x] Cuantificar legacy vendido: `28` unidades / `292 EUR` entre `17/07` y
+  `20/07`.
+- [ ] Cliente: vender una copa desde `COPAS WINERIM` y una referencia con stock
+  activo.
+- [ ] Probar un alta o cambio de precio Winerim y medir la propagacion menor o
+  igual a cinco minutos.
+- [ ] Validar los siete candidatos de matching legacy nominal y decidir entre
+  mapping temporal u ocultacion reversible.
+- [ ] Sustituir `Copa Rioja`, `Copa Ribera del Duero`, `Copa Vino extremeno` y
+  `Copa semidulce` por botones Winerim identificables; no mapearlos a ciegas.
+- [ ] Confirmar visualmente las ocho familias Winerim en todos los terminales.
+- [ ] Usar `docs/operations/abadia-yuste-100-percent-checklist-2026-07-21.md`
+  como evidencia y rollback.
+
+## P0 - De la O · residual de stock y migracion de legacy
+
+- [x] Confirmar catalogo fresh `112/112 MATCH`, cola activa cero y ciclos de
+  cinco minutos.
+- [x] Conciliar Agora, logs y `/erp/480/sales`; aislar `Vina Mein` y
+  `Camarolos` como las dos diferencias historicas.
+- [x] Implementar el calculo de cantidad no cubierta por movimiento de stock
+  en los tres flujos de sincronizacion y probar sus casos limite de forma
+  aislada.
+- [x] Cuantificar uso legacy: `56` unidades / `454,50 EUR` en `14` botones
+  entre el `16/07` y el `18/07`.
+- [ ] Publicar solo `agora-proxy`; la CLI local requiere una sesion de
+  despliegue.
+- [ ] Ejecutar una venta real con cantidad superior al stock y exigir historial
+  total correcto sin duplicar el movimiento de inventario.
+- [ ] Ejecutar una copa desde `COPAS WINERIM` y comprobar ERP en menos de cinco
+  minutos.
+- [ ] Validar con el cliente los matches legacy y los precios de copa; no
+  mapear `Cardiel`, `Fortuny`, `Munana1188`, `Fino Antique`, `Stars Rose`,
+  `Lagar Santa Magdalena` o `Delicado` sin confirmacion.
+- [ ] Corregir el monitor para no tratar `wine_inactive` o ausencia deliberada
+  de precio como un fallo outbound operativo.
+- [ ] Usar `docs/operations/de-la-o-100-percent-checklist-2026-07-21.md` como
+  evidencia y rollback.
+
+## P0 - El Higueron · orden alfabetico exclusivo por familia
+
+- [x] Identificar los ocho IDs exactos de las familias Winerim.
+- [x] Implementar `ALPHABETICAL_WINE_NAME` y `WINE_NAME_ONLY` por conexion.
+- [x] Conservar `Name` con `B/C/M` y omitirlo solo en `ButtonText`.
+- [x] Anadir dry-run, deteccion de duplicados, verificacion fresh y rollback.
+- [x] Integrar el normalizador en altas y actualizaciones futuras.
+- [x] Validar bundle, aserciones aisladas y `git diff --check`.
+- [x] Desplegar unicamente `agora-proxy` desde `5c4d727`.
+- [x] Ejecutar dry-run con los ocho IDs y resolver las dos colisiones
+  detectadas antes de escribir.
+- [x] Guardar snapshot fresh y activar solo en El Higueron las tres claves de
+  presentacion.
+- [x] Aplicar `292` cambios, verificar `292/292` fresh y repetir hasta obtener
+  `changed=0` y cero etiquetas duplicadas.
+- [x] Conservar evidencia/rollback en
+  `docs/operations/el-higueron-alphabetical-presentation-2026-07-21.md`.
+- [ ] Probar un alta o cambio de precio real y medir la propagacion; exigir
+  que la familia afectada siga alfabetica y sin prefijo visible.
+- [ ] Obtener confirmacion visual del cliente en todos sus terminales.
+
+## P0 - Corte fresh Agora 2026-07-21 19:01
+
+- [ ] Qtomas: preparar snapshot y ocultacion diferencial de los `267`
+  productos Winerim retirados que siguen vendibles; verificar buscador y
+  rollback antes de cerrar.
+- [ ] Sa Vida: reconciliar por lotes los `278` formatos retirados vendibles,
+  los `2` productos ausentes y los `5` diferentes; prohibida la sincronizacion
+  masiva directa.
+- [ ] Restaurante Triana: ocultar exclusivamente los magnum `1211359` Andre
+  Clouet Grande Reserve y `1211360` Picogallo, y repetir lectura fresh.
+- [ ] El Higueron: republicar diferencialmente los `10` productos distintos
+  preservando orden alfabetico, etiquetas sin prefijo y desambiguacion.
+- [ ] PurOsushi: corregir precios de Boissonneuse y Keller Kirchspiel Riesling
+  GG en listas `8` y `14` y verificar `357/357`.
+- [ ] Normalizar tracking de formatos que ya estan no vendibles en Chiquilla,
+  El Bejeque, El Porton, Luruna, Cienvinos, Jardi y Sa Pedrera sin escribir de
+  nuevo en Agora.
+- [ ] Investigar por que De la O acumulo tareas unas `10 h` y Jardi unas `56 h`;
+  confirmar que el siguiente cambio unitario completa en `<=5 min`.
+- [ ] Tintorera: repetir un cambio unitario real, porque el alta masiva tuvo
+  mediana `3 min` pero maximo `24 min`.
+
+## P0 - Cierre de las seis auditorias del 2026-07-22
+
+### El Higueron
+- [x] Reconciliar las `292` variantes preservando orden alfabetico y botones
+  sin prefijo visible.
+- [x] Ocultar reversiblemente siete familias y `396` productos legacy; cero
+  productos legacy vendibles por buscador.
+- [x] Medir propagacion real Winerim -> Agora en `61 s`.
+- [ ] Cliente: vender una copa Winerim y una referencia con stock desactivado.
+- [ ] Obtener confirmacion visual en todos los terminales.
+
+### Casa Nene
+- [x] Confirmar catalogo fresh `372/372`.
+- [x] Confirmar `31` copas internas, `24` botellas recuperadas y `148`
+  productos legacy no vendibles.
+- [x] Confirmar cola y fallos recientes a cero, stock `37/37` e idempotencia.
+- [ ] Cliente: ejecutar una copa real y medir de nuevo propagacion comercial
+  en `<=5 min`.
+
+### De la O
+- [x] Confirmar catalogo `119/119`, breaker cerrado y cola activa a cero.
+- [x] Medir altas reales en `32,4-53,1 s`.
+- [x] Validar que `VINOS > TINTOS WINERIM > producto` es viable con
+  `ParentFamilyId=4`.
+- [ ] Confirmar con el cliente y aplicar la jerarquia padre si la desea.
+- [ ] Decidir retirada reversible del legacy, que continua en uso.
+- [ ] Ejecutar canary real de cancelacion y cerrar conciliacion historica.
+
+### Restaurante Cienvinos Ecija
+- [x] Confirmar catalogo `519/519` y propagacion de `50-82 s`.
+- [x] Normalizar cinco formatos inactivos: resultado `519 VERIFIED + 12
+  HIDDEN`.
+- [ ] Conciliar facturas Agora, ledger y ERP sin compensaciones a ciegas.
+- [ ] Decidir con el cliente el tratamiento de `C MANZANILLA ZULETA`, aun
+  vendible y usado sin ownership Winerim.
+
+### El Bejeque
+- [x] Confirmar catalogo `94/94`, cola cero y legacy oculto en familia,
+  producto y buscador.
+- [x] Dejar tickets abiertos en observabilidad y facturas cerradas como unica
+  fuente definitiva de escritura.
+- [x] Repetir sincronizaciones sin datos nuevos y verificar cero duplicados.
+- [ ] Conciliar o aceptar formalmente seis duplicados historicos y una
+  diferencia fraccionaria de magnum.
+
+### Chiquilla
+- [x] Confirmar que no hay cola activa ni breaker.
+- [x] Comprobar que diez de once vinos con fallos historicos tienen un
+  `SUCCESS` posterior.
+- [x] Confirmar recuperacion de la API HTTP y catalogo fresh `73/73`.
+- [x] Normalizar sin replay la tarea superseded de Winerim `139811` y cerrar
+  su alerta outbound con evidencia fresh.
+- [ ] Identificar de forma inequivoca la venta cancelada que aun figura
+  positiva antes de cualquier reparacion de historial.
+
+## P0 - Remediacion de la auditoria universal Agora 2026-07-22
+
+### Integridad de ventas
+- [ ] Kava: recuperar exactamente tres copas de Pampaneando y corregir la
+  botella duplicada de Chavost sin volver a descontar stock.
+- [ ] PurOsushi, Qtomas, Taberna de Elia y Sa Vida: dejar una unica fuente de
+  escritura definitiva y reconciliar duplicados por ID externo/documento.
+- [ ] Luruna: resolver los cuatro productos legacy vendidos sin mapping y el
+  `404` de CAMPILLO antes de reanudar cualquier replay.
+- [ ] Restaurante Triana: mapear sustitutos Winerim y ejecutar primera venta
+  real integrada; actualmente todas las candidatas observadas son legacy.
+- [ ] Cienvinos, Sa Pedrera, Jardi y Vinatea: conciliar Agora, ledger y ERP por
+  documento, variante, cantidad y `sold_at`.
+
+### Catalogo y automatizacion
+- [x] Sa Vida: reconciliar por lotes, reparar tracking, activar verified-ready
+  tras canary y verificar catalogo fresh final `1542/1542`.
+- [ ] PurOsushi: corregir diferencialmente los dos productos con precios de
+  lista distintos y repetir `357/357`.
+- [x] Sa Pedrera: corregir `605908`, clasificar Albenc retirado sin replay,
+  avanzar cursor y verificar catalogo fresh `483/483`.
+- [ ] Jardi y Qtomas: normalizar tracking sin republicar productos ya exactos;
+  Qtomas requiere activar automatismos de forma escalonada.
+
+### Cierre de las conexiones mas proximas
+- [ ] Chiquilla: los nueve retirados y la alerta superseded ya estan cerrados;
+  queda resolver exclusivamente la cancelacion positiva con ID externo exacto.
+- [ ] Casa Nene: ejecutar canary real de copa y sales-only y reconciliar los
+  dos riesgos provisional/definitivo.
+- [ ] Katsu: repetir una copa en menos de cinco minutos y probar cancelacion
+  idempotente; magnum solo si el cliente lo usa.
+- [ ] Don Quijote Marbella y Ocean Club: ejecutar primera bateria completa de
+  canaries y decidir estrategia de legacy/categorias con el cliente.
+- [ ] Abadia Yuste: probar copa, magnum, stock activo, cancelacion y recovery;
+  clasificar el legacy todavia usado.
+
+### Monitorizacion y firma
+- [x] Normalizar alertas residuales de Chiquilla, Sa Pedrera y Sa Vida con
+  snapshot, rollback y monitor dry-run `OK`; evidencia en
+  `docs/operations/agora-remediation-alerts-2026-07-22.md`.
+- [ ] Confirmar en el siguiente ciclo programado que esas tres alertas no se
+  reabren.
+- [ ] Incorporar conciliacion automatica Agora/ledger/ERP y alertar por ventas
+  omitidas o duplicadas, no solo por HTTP, breaker y cola.
+- [ ] Corregir cursores `sales_stale` sin adelantarlos manualmente y observar
+  24/48 horas limpias antes de conceder `100%_SIGNED_OFF`.
+- [ ] Reactivar Baco, Casa Esteban, Don Bernardo Ponzano, Don Bernardo
+  Santander, La Candela, O Bistro y Saddle solo como onboardings controlados.
+
+## P0 - Bloqueo de despliegue de cambios compartidos revisados el 2026-07-22
+
+- [ ] Evitar que un fallo de `sales/import` despues de una deduccion parcial
+  aumente la cantidad importada al reintentar; persistir por separado la parte
+  ya descontada y la cantidad originalmente no cubierta.
+- [ ] Prohibir una seleccion parcial de lineas del mismo grupo
+  `evento + vino + variante`, o procesar siempre el grupo completo.
+- [ ] Rechazar con `400` selectores presentes pero vacios/invalidos y propagar
+  errores de consulta; nunca degradarlos a sincronizacion completa del dia.
+- [ ] Hacer atomico el avance del cursor en base de datos mediante
+  actualizacion condicional o `GREATEST()`.
+- [ ] Autorizar acciones de escritura por secreto interno o rol y
+  `connection_id`.
+- [ ] Conservar desambiguacion estable de `ButtonText` antes de desplegar los
+  cambios de presentacion.
+- [ ] No desplegar `agora-proxy`, `_shared/stockSyncUtils.ts` ni el monitor
+  modificado hasta cerrar estos puntos con pruebas de reintento, concurrencia y
+  seleccion parcial.
