@@ -3,6 +3,23 @@ function normalizedIdPart(value: unknown, fallback = "-"): string {
   return normalized || fallback;
 }
 
+export function normalizeAgoraLineFormat(productName: string, saleFormatName: string): string {
+  const product = (productName || "").toUpperCase().trim();
+  const saleFormat = (saleFormatName || "").toUpperCase().trim();
+
+  // Product names use both spaced and dotted short prefixes in legacy Agora
+  // installations: "C VINO" and "C. VINO" must resolve to the same variant.
+  if (/^(?:BOT\.?\s|B\.?\s)/.test(product)) return "BOT";
+  if (/^(?:COPA\.?\s|C\.?\s)/.test(product)) return "COPA";
+  if (/^(?:MAG\.?\s|MAGNUM(?:\s|$)|M\.?\s)/.test(product)) return "MAGNUM";
+
+  if (saleFormat.includes("COPA") || saleFormat.includes("GLASS") || saleFormat.includes("VERRE")) return "COPA";
+  if (saleFormat.includes("MAG") || saleFormat.includes("MAGNUM")) return "MAGNUM";
+  if (saleFormat.includes("BOT") || saleFormat.includes("BOTTLE") || saleFormat.includes("75CL") || saleFormat.includes("BOTELLA")) return "BOT";
+
+  return saleFormatName.trim();
+}
+
 export function agoraDocumentType(invoice: Record<string, unknown>): string {
   return String(invoice.DocumentType || invoice.Type || "BasicInvoice").trim() || "BasicInvoice";
 }

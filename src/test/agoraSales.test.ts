@@ -3,6 +3,7 @@ import {
   buildAgoraInvoiceDocId,
   isAgoraDocumentWithinBusinessDay,
   isAgoraRefundDocument,
+  normalizeAgoraLineFormat,
   withAgoraOperationalMetadata,
 } from "../../supabase/functions/_shared/agoraSales";
 
@@ -81,5 +82,12 @@ describe("Agora sales document identity and refunds", () => {
     const invoice = { InvoiceId: "INV-42", Number: 6525, DocumentType: "BasicInvoice" };
     expect(buildAgoraInvoiceDocId(invoice, "2026-07-14", 0)).toBe("INV-42");
     expect(buildAgoraInvoiceDocId({}, "2026-07-14", 3)).toBe("2026-07-14_inv_3");
+  });
+
+  it("normalizes dotted and spaced Agora variant prefixes identically", () => {
+    expect(normalizeAgoraLineFormat("C. SEIS+SEIS", "")).toBe("COPA");
+    expect(normalizeAgoraLineFormat("C SEIS+SEIS", "")).toBe("COPA");
+    expect(normalizeAgoraLineFormat("B. Emilio Moro", "")).toBe("BOT");
+    expect(normalizeAgoraLineFormat("M. Prado Enea", "")).toBe("MAGNUM");
   });
 });

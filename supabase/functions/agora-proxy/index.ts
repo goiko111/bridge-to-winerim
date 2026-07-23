@@ -18,6 +18,7 @@ import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
 import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
+  normalizeAgoraLineFormat,
   withAgoraOperationalMetadata,
 } from "../_shared/agoraSales.ts";
 import {
@@ -340,26 +341,6 @@ function suggestFamilyClassification(familyName: string): { suggestedWine: boole
     return { suggestedWine: false, confidence: "medium" };
   }
   return { suggestedWine: false, confidence: "low" };
-}
-
-// ── NORMALIZE FORMAT: detect BOT / COPA / MAGNUM from ProductName prefix or SaleFormatName ──
-function normalizeLineFormat(productName: string, saleFormatName: string): string {
-  const pn = (productName || "").toUpperCase().trim();
-  const sf = (saleFormatName || "").toUpperCase().trim();
-
-  // ProductName prefix takes priority (Agora convention: "BOT. …", "COPA …", "MAG. …", or new "B …", "C …", "M …")
-  if (pn.startsWith("BOT.") || pn.startsWith("BOT ") || pn.startsWith("B ")) return "BOT";
-  if (pn.startsWith("COPA ") || pn.startsWith("COPA.") || pn.startsWith("C ")) return "COPA";
-  if (pn.startsWith("MAG.") || pn.startsWith("MAG ") || pn.startsWith("MAGNUM") || pn.startsWith("M ")) return "MAGNUM";
-
-  // Fallback to SaleFormatName
-  if (sf.includes("COPA") || sf.includes("GLASS") || sf.includes("VERRE")) return "COPA";
-  if (sf.includes("MAG") || sf.includes("MAGNUM")) return "MAGNUM";
-  if (sf.includes("BOT") || sf.includes("BOTTLE") || sf.includes("75CL") || sf.includes("BOTELLA")) return "BOT";
-
-  // If SaleFormatName is non-empty, keep as-is normalized
-  if (saleFormatName.trim()) return saleFormatName.trim();
-  return "";
 }
 
 type AgoraProviderSoldAt = { value: string | null; source: string | null };
@@ -5105,7 +5086,7 @@ serve(async (req) => {
           const formatName = String(line.SaleFormatName || "");
           const family = String(line.FamilyName || "");
           const productId = String(line.ProductId || line.SaleFormatId || "");
-          const normalizedFmt = normalizeLineFormat(productName, formatName);
+          const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
           const providerSoldAt = extractAgoraProviderSoldAt(line, null, ticket, day);
           const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
           const resolution = resolutionMap.get(productId);
@@ -5305,7 +5286,7 @@ serve(async (req) => {
             docTotal += lineTotal;
             const productName = String(line.ProductName || "");
             const formatName = String(line.SaleFormatName || "");
-            const normalizedFormat = normalizeLineFormat(productName, formatName);
+            const normalizedFormat = normalizeAgoraLineFormat(productName, formatName);
             const wineResult = isWineCandidate(family, productName, formatName, uPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
             lines.push({
               provider_product_id: String(line.ProductId || ""),
@@ -5450,7 +5431,7 @@ serve(async (req) => {
               docTotal += lineTotal;
               const pName = String(line.ProductName || "");
               const fName = String(line.SaleFormatName || "");
-              const normalizedFmt = normalizeLineFormat(pName, fName);
+              const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
               const productId = String(line.ProductId || "");
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -5627,7 +5608,7 @@ serve(async (req) => {
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
-            const normalizedFmt = normalizeLineFormat(pName, fName);
+            const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -5820,7 +5801,7 @@ serve(async (req) => {
             docTotal += lineTotal;
             const pName = String(line.ProductName || "");
             const fName = String(line.SaleFormatName || "");
-            const normalizedFmt = normalizeLineFormat(pName, fName);
+            const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
             const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6148,7 +6129,7 @@ serve(async (req) => {
               docTotal += lineTotal;
               const pName = String(line.ProductName || "");
               const fName = String(line.SaleFormatName || "");
-              const normalizedFmt = normalizeLineFormat(pName, fName);
+              const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
               const productId = String(line.ProductId || "");
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
