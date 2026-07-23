@@ -240,8 +240,35 @@ function assertExactCatalog(context) {
   }
 }
 
+function assertTransitionCatalog(context) {
+  const audit = context.audit;
+  if (!audit || audit.success === false) throw new Error("Fresh catalog transition gate did not return success");
+  if (Number(audit.expected || 0) <= 0) throw new Error("Fresh catalog transition gate returned no expected products");
+  if (Number(audit.missing || 0) !== 0 || Number(audit.unownedExisting || 0) !== 0) {
+    throw new Error(
+      `Fresh catalog transition gate failed: expected=${audit.expected}, matched=${audit.matched}, ` +
+      `missing=${audit.missing}, different=${audit.different}, unowned=${audit.unownedExisting}`,
+    );
+  }
+  if (context.strictVerifiedCount !== Number(audit.expected || 0)) {
+    throw new Error(`Strict VERIFIED transition gate covers ${context.strictVerifiedCount}/${audit.expected} expected products`);
+  }
+  const unsupported = (audit.details || []).filter((item) =>
+    item.ownedByWinerim !== true || !["MATCH", "DIFFERENT"].includes(String(item.status || "").toUpperCase())
+  );
+  if (unsupported.length > 0) {
+    throw new Error(`Fresh catalog transition gate contains ${unsupported.length} unsupported audit result(s)`);
+  }
+}
+
 function assertStableWriteGates(context) {
   assertExactCatalog(context);
+  if (context.queueRows.length > 0) throw new Error(`Active queue is not empty: ${context.queueRows.length}`);
+  if (context.allowedProductIds.length === 0) throw new Error("No strictly verified product remains in the allowlist");
+}
+
+function assertTransitionWriteGates(context) {
+  assertTransitionCatalog(context);
   if (context.queueRows.length > 0) throw new Error(`Active queue is not empty: ${context.queueRows.length}`);
   if (context.allowedProductIds.length === 0) throw new Error("No strictly verified product remains in the allowlist");
 }
@@ -406,7 +433,7 @@ async function main() {
   };
 
   const runNormalizerDryRun = async (context, productIds) => {
-    assertStableWriteGates(context);
+    assertTransitionWriteGates(context);
     assertTargetConfig(context);
     const result = requireActionSuccess(
       "normalize-winerim-product-presentation",
@@ -501,7 +528,8 @@ async function main() {
   }
 
   const context = await loadContext();
-  assertExactCatalog(context);
+  if (context.configMatchesTarget) assertTransitionCatalog(context);
+  else assertExactCatalog(context);
 
   if (args.mode === "snapshot") {
     const report = baseReport(context);
@@ -585,7 +613,7 @@ async function main() {
 
   if (args.mode === "canary") {
     requireArtifactPath(args);
-    assertStableWriteGates(context);
+    assertTransitionWriteGates(context);
     assertTargetConfig(context);
     if (args.confirm !== NORMALIZE_CONFIRM) throw new Error(`Canary mode requires --confirm=${NORMALIZE_CONFIRM}`);
     if (!args.productId) throw new Error("Canary mode requires one explicit --product-id");
@@ -638,7 +666,7 @@ async function main() {
     }
 
     const postContext = await loadContext();
-    assertExactCatalog(postContext);
+    assertTransitionCatalog(postContext);
     const postDryRun = await runNormalizerDryRun(postContext, [args.productId]);
     const idempotent = Number(postDryRun.summary?.changedProducts || 0) === 0 &&
       Number(postDryRun.summary?.changedFamilies || 0) === 0;
@@ -667,7 +695,7 @@ async function main() {
 
   if (args.mode === "apply") {
     requireArtifactPath(args);
-    assertStableWriteGates(context);
+    assertTransitionWriteGates(context);
     assertTargetConfig(context);
     if (args.confirm !== NORMALIZE_CONFIRM) throw new Error(`Apply mode requires --confirm=${NORMALIZE_CONFIRM}`);
     if (!args.productId) throw new Error("Apply mode requires --product-id for the previously verified canary");

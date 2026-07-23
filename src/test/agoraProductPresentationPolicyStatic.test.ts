@@ -19,6 +19,10 @@ const restoreStart = agoraProxySource.indexOf(
   'if (action === "restore-winerim-product-presentation")',
 );
 const restoreSource = agoraProxySource.slice(restoreStart, normalizeEnd);
+const deLaOOrchestratorSource = readFileSync(
+  resolve(repoRoot, "scripts/de-la-o-agora-presentation-2026-07-23.mjs"),
+  "utf8",
+);
 
 describe("Agora owned-product presentation policy", () => {
   it("requires an explicit confirmation before changing presentation", () => {
@@ -98,6 +102,21 @@ describe("Agora owned-product presentation policy", () => {
     );
     expect(restoreSource).toContain(
       "fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true)",
+    );
+  });
+
+  it("allows only verified presentation differences during the staged rollout", () => {
+    expect(deLaOOrchestratorSource).toContain(
+      "function assertTransitionCatalog(context)",
+    );
+    expect(deLaOOrchestratorSource).toContain(
+      '!["MATCH", "DIFFERENT"].includes',
+    );
+    expect(deLaOOrchestratorSource).toContain(
+      "if (context.configMatchesTarget) assertTransitionCatalog(context)",
+    );
+    expect(deLaOOrchestratorSource).toContain(
+      "assertExactCatalog(postContext)",
     );
   });
 });
