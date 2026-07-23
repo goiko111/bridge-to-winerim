@@ -321,6 +321,19 @@ async function main() {
     return data;
   }
 
+  async function invokeAllowFailure(action, body) {
+    const { data } = await request(`${backendUrl}/functions/v1/agora-proxy`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ action, ...body }),
+      timeoutMs: 240_000,
+    });
+    if (!data || typeof data !== "object") {
+      throw new Error(`${action}: invalid response`);
+    }
+    return data;
+  }
+
   async function readConnection() {
     const rows = await restAll(`pos_connections?id=eq.${CONNECTION_ID}&select=*`);
     const connection = rows[0];
@@ -398,13 +411,28 @@ async function main() {
     }
     await assertNoActiveQueue("Rollback refused");
     let xmlResult = null;
+    let familyOrderOnlyRestore = false;
     if (snapshot.rollbackXml) {
-      xmlResult = await invoke("restore-winerim-product-presentation", {
+      xmlResult = await invokeAllowFailure("restore-winerim-product-presentation", {
         connectionId: CONNECTION_ID,
         rollbackXml: assertXml(snapshot.rollbackXml, "Rollback XML"),
         confirm: RESTORE_CONFIRM_VALUE,
       });
-      if (xmlResult?.success !== true) {
+      const productFailures = Array.isArray(xmlResult?.verification?.productFailures)
+        ? xmlResult.verification.productFailures
+        : [];
+      const familyFailures = Array.isArray(xmlResult?.verification?.familyFailures)
+        ? xmlResult.verification.familyFailures
+        : [];
+      familyOrderOnlyRestore = xmlResult?.success !== true &&
+        productFailures.length === 0 &&
+        familyFailures.length > 0 &&
+        familyFailures.every((failure) =>
+          Array.isArray(failure?.differences) &&
+          failure.differences.length === 1 &&
+          failure.differences[0] === "Order"
+        );
+      if (xmlResult?.success !== true && !familyOrderOnlyRestore) {
         throw new Error(`Rollback XML could not be verified: ${JSON.stringify(xmlResult)}`);
       }
     }
@@ -422,6 +450,7 @@ async function main() {
       configRestored: true,
       configAlreadyRestored,
       xmlRestored: Boolean(snapshot.rollbackXml),
+      familyOrderOnlyRestore,
       xmlResult,
       audit: {
         expected: audit.expected,

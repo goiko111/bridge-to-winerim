@@ -136,15 +136,21 @@ describe("Agora owned-product presentation policy", () => {
     );
   });
 
-  it("keeps El Porton family presentation deterministic", () => {
+  it("keeps El Porton routed families visible without chasing Agora family order", () => {
     expect(normalizeSource).toContain(
       'if (!mappingKey.startsWith("botella_")) continue',
     );
     expect(normalizeSource).toContain(
-      "const childrenByParent = new Map<string, PlannedFamily[]>()",
+      'xmlAfter = setXmlAttrValue(xmlAfter, "ShowInPos", "true")',
     );
     expect(normalizeSource).toContain(
-      'family.xmlAfter = setXmlAttrValue(family.xmlAfter, "Order", String(nextOrder))',
+      'String(live.attrs.ShowInPos || "").toLowerCase() !== "true"',
+    );
+    expect(normalizeSource).toContain(
+      'const comparableFamilyAttrs = ["ShowInPos", "ButtonText", "Color", "ParentFamilyId"]',
+    );
+    expect(normalizeSource).not.toContain(
+      'family.changed = family.changed || previousOrder !== nextOrder',
     );
   });
 
@@ -153,10 +159,10 @@ describe("Agora owned-product presentation policy", () => {
       "![targetConfigHash, previousConfigHash].includes(currentConfigHash)",
     );
     expect(elPortonOrchestratorSource).toContain(
-      'invoke("restore-winerim-product-presentation"',
+      'invokeAllowFailure("restore-winerim-product-presentation"',
     );
     expect(elPortonOrchestratorSource).toContain(
-      "if (xmlResult?.success !== true)",
+      "familyOrderOnlyRestore",
     );
     expect(elPortonOrchestratorSource).toContain(
       "configAlreadyRestored",

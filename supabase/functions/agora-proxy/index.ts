@@ -8475,10 +8475,12 @@ serve(async (req) => {
         const id = live?.id || params.id;
         const liveName = live?.name || params.name;
         let xmlAfter = live?.xml || `<Family Id="${escapeXmlAttribute(id)}" Name="${escapeXmlAttribute(liveName)}" ShowInPos="true" ButtonText="${escapeXmlAttribute(params.buttonText.slice(0, 20))}" Color="${params.color}" Order="100"${params.parentId ? ` ParentFamilyId="${escapeXmlAttribute(params.parentId)}"` : ""} />`;
+        xmlAfter = setXmlAttrValue(xmlAfter, "ShowInPos", "true");
         xmlAfter = setXmlAttrValue(xmlAfter, "Color", params.color);
         xmlAfter = setXmlAttrValue(xmlAfter, "ButtonText", params.buttonText.slice(0, 20));
         if (params.parentId) xmlAfter = setXmlAttrValue(xmlAfter, "ParentFamilyId", params.parentId);
         const changed = !live ||
+          String(live.attrs.ShowInPos || "").toLowerCase() !== "true" ||
           String(live.attrs.Color || "").toUpperCase() !== params.color.toUpperCase() ||
           normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || "")) !== params.buttonText.slice(0, 20) ||
           (params.parentId ? String(live.attrs.ParentFamilyId || "") !== params.parentId : false);
@@ -8629,29 +8631,6 @@ serve(async (req) => {
           xmlAfter: liveProduct.xml,
           changed: false,
         });
-      }
-
-      if (useDoCountryRouting) {
-        const childrenByParent = new Map<string, PlannedFamily[]>();
-        for (const family of plannedFamilies.values()) {
-          if (!family.parentId) continue;
-          const siblings = childrenByParent.get(family.parentId) || [];
-          siblings.push(family);
-          childrenByParent.set(family.parentId, siblings);
-        }
-        for (const siblings of childrenByParent.values()) {
-          siblings.sort((left, right) =>
-            compareAgoraWineNames(left.buttonText, right.buttonText) || Number(left.id) - Number(right.id)
-          );
-          siblings.forEach((family, index) => {
-            const nextOrder = index + 1;
-            const previousOrder = family.live && /^\d+$/.test(String(family.live.attrs.Order || ""))
-              ? Number(family.live.attrs.Order)
-              : null;
-            family.xmlAfter = setXmlAttrValue(family.xmlAfter, "Order", String(nextOrder));
-            family.changed = family.changed || previousOrder !== nextOrder;
-          });
-        }
       }
 
       const plansByFamily = new Map<string, PresentationPlan[]>();
@@ -8837,6 +8816,7 @@ serve(async (req) => {
         if (!live) return [{ familyId: plan.id, error: "missing_after_write" }];
         const actualButton = normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || ""));
         const ok = String(live.attrs.Color || "").toUpperCase() === plan.color.toUpperCase() &&
+          String(live.attrs.ShowInPos || "").toLowerCase() === "true" &&
           actualButton === plan.buttonText.slice(0, 20) &&
           (plan.parentId ? String(live.attrs.ParentFamilyId || "") === plan.parentId : true);
         return ok ? [] : [{ familyId: plan.id, expected: plan, actual: live.attrs }];
@@ -8914,7 +8894,6 @@ serve(async (req) => {
             const restored = Boolean(live) &&
               actualButton === expectedButton &&
               String(live?.attrs.Color || "").toUpperCase() === String(expected.Color || "").toUpperCase() &&
-              String(live?.attrs.Order || "") === String(expected.Order || "") &&
               String(live?.attrs.ShowInPos || "").toLowerCase() === String(expected.ShowInPos || "").toLowerCase() &&
               String(live?.attrs.ParentFamilyId || "") === String(expected.ParentFamilyId || "");
             if (!restored) {
@@ -9079,7 +9058,9 @@ serve(async (req) => {
           .map((family) => [String(family.attrs.Id || ""), family]),
       );
       const comparableAttrs = ["FamilyId", "ButtonText", "Color", "Order"];
-      const comparableFamilyAttrs = ["ShowInPos", "ButtonText", "Color", "Order", "ParentFamilyId"];
+      // Agora normalizes Family.Order internally on import, so it is not a
+      // stable rollback invariant. Product order remains strictly verified.
+      const comparableFamilyAttrs = ["ShowInPos", "ButtonText", "Color", "ParentFamilyId"];
       const productFailures = restoreProducts.flatMap<Record<string, unknown>>((expected) => {
         const id = String(expected.attrs.Id || "");
         const actual = restoredProductById.get(id);
