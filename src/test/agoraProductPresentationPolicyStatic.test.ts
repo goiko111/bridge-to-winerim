@@ -156,7 +156,7 @@ describe("Agora owned-product presentation policy", () => {
 
   it("makes El Porton rollback resumable and verifies the proxy restore", () => {
     expect(elPortonOrchestratorSource).toContain(
-      "![targetConfigHash, previousConfigHash].includes(currentConfigHash)",
+      "![targetPresentationHash, previousPresentationHash].includes(currentPresentationHash)",
     );
     expect(elPortonOrchestratorSource).toContain(
       'invokeAllowFailure("restore-winerim-product-presentation"',
@@ -166,6 +166,12 @@ describe("Agora owned-product presentation policy", () => {
     );
     expect(elPortonOrchestratorSource).toContain(
       "configAlreadyRestored",
+    );
+    expect(elPortonOrchestratorSource).toContain(
+      "operationalConfigSlice",
+    );
+    expect(elPortonOrchestratorSource).toContain(
+      "Rollback changed concurrent operational provider_config keys",
     );
   });
 });

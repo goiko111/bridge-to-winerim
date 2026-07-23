@@ -6,7 +6,8 @@
  * Default mode is strictly read-only. The production path delegates all
  * presentation planning and writes to agora-proxy action
  * normalize-winerim-product-presentation. It snapshots the exact previous
- * provider_config and rollback XML before the canary write.
+ * presentation config and rollback XML before the canary write. Operational
+ * provider_config keys are preserved if another process updates them.
  */
 
 import { createHash } from "node:crypto";
@@ -36,6 +37,7 @@ const TARGET_PRESENTATION = {
   },
   family_structure_mode: "WINE_TYPE_SPAIN_DO_FOREIGN_COUNTRY",
 };
+const PRESENTATION_KEYS = Object.keys(TARGET_PRESENTATION);
 
 const REQUIRED_FAMILY_MAPPINGS = [
   "botella_tinto",
@@ -102,7 +104,8 @@ function usage() {
 
 Default mode never changes provider_config or Agora. Apply performs, in order:
 exact config snapshot, target config, action dry-run, canary, full apply, fresh
-verification and idempotence. Rollback restores exact XML and provider_config.`;
+verification and idempotence. Rollback restores exact XML and the snapshotted
+presentation keys while preserving concurrent operational provider_config keys.`;
 }
 
 function parseDotEnv(text) {
@@ -177,6 +180,24 @@ function presentationSlice(config) {
     agora_product_color_by_wine_type: source.agora_product_color_by_wine_type ?? null,
     family_structure_mode: source.family_structure_mode ?? null,
   };
+}
+
+function configWithPresentation(baseConfig, presentationConfig) {
+  const merged = clone(baseConfig || {});
+  for (const key of PRESENTATION_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(presentationConfig || {}, key)) {
+      merged[key] = clone(presentationConfig[key]);
+    } else {
+      delete merged[key];
+    }
+  }
+  return merged;
+}
+
+function operationalConfigSlice(config) {
+  const operational = clone(config || {});
+  for (const key of PRESENTATION_KEYS) delete operational[key];
+  return operational;
 }
 
 function presentationDiff(previous, target) {
@@ -403,11 +424,11 @@ async function main() {
   async function restoreFromSnapshot(snapshot, { requireTargetConfig = true } = {}) {
     const current = await readConnection();
     const currentConfig = clone(current.provider_config || {});
-    const currentConfigHash = sha256(stableJson(currentConfig));
-    const targetConfigHash = snapshot.hashes.targetProviderConfig;
-    const previousConfigHash = snapshot.hashes.previousProviderConfig;
-    if (requireTargetConfig && ![targetConfigHash, previousConfigHash].includes(currentConfigHash)) {
-      throw new Error("Rollback refused: live provider_config differs from the snapshotted target config");
+    const currentPresentationHash = sha256(stableJson(presentationSlice(currentConfig)));
+    const targetPresentationHash = sha256(stableJson(presentationSlice(snapshot.targetProviderConfig)));
+    const previousPresentationHash = sha256(stableJson(presentationSlice(snapshot.previousProviderConfig)));
+    if (requireTargetConfig && ![targetPresentationHash, previousPresentationHash].includes(currentPresentationHash)) {
+      throw new Error("Rollback refused: live presentation config differs from both snapshotted states");
     }
     await assertNoActiveQueue("Rollback refused");
     let xmlResult = null;
@@ -436,11 +457,16 @@ async function main() {
         throw new Error(`Rollback XML could not be verified: ${JSON.stringify(xmlResult)}`);
       }
     }
-    const configAlreadyRestored = currentConfigHash === previousConfigHash;
+    const configAlreadyRestored = currentPresentationHash === previousPresentationHash;
     if (!configAlreadyRestored) {
-      const restored = await patchProviderConfig(snapshot.previousProviderConfig);
-      if (sha256(stableJson(restored.provider_config || {})) !== previousConfigHash) {
-        throw new Error("Exact provider_config restoration could not be verified");
+      const operationalBefore = operationalConfigSlice(currentConfig);
+      const rollbackConfig = configWithPresentation(currentConfig, snapshot.previousProviderConfig);
+      const restored = await patchProviderConfig(rollbackConfig);
+      if (sha256(stableJson(presentationSlice(restored.provider_config || {}))) !== previousPresentationHash) {
+        throw new Error("Exact presentation config restoration could not be verified");
+      }
+      if (stableJson(operationalConfigSlice(restored.provider_config || {})) !== stableJson(operationalBefore)) {
+        throw new Error("Rollback changed concurrent operational provider_config keys");
       }
     }
     const audit = await invoke("audit-winerim-products", { connectionId: CONNECTION_ID });
@@ -578,7 +604,18 @@ async function main() {
 
   let configWasStaged = false;
   try {
-    const staged = await patchProviderConfig(targetConfig);
+    const latestBeforeStage = await readConnection();
+    const latestPresentationHash = sha256(stableJson(presentationSlice(latestBeforeStage.provider_config || {})));
+    const previousPresentationHash = sha256(stableJson(presentationSlice(previousProviderConfig)));
+    const targetPresentationHash = sha256(stableJson(presentationSlice(targetConfig)));
+    if (![previousPresentationHash, targetPresentationHash].includes(latestPresentationHash)) {
+      throw new Error("Presentation config changed concurrently before staging");
+    }
+    const targetConfigForStage = targetProviderConfig(latestBeforeStage.provider_config || {});
+    snapshot.targetProviderConfig = targetConfigForStage;
+    snapshot.hashes.targetProviderConfig = sha256(stableJson(targetConfigForStage));
+    await persistSnapshot(snapshotPath, snapshot);
+    const staged = await patchProviderConfig(targetConfigForStage);
     configWasStaged = true;
     if (sha256(stableJson(staged.provider_config || {})) !== snapshot.hashes.targetProviderConfig) {
       throw new Error("Target provider_config could not be verified exactly");
@@ -700,8 +737,9 @@ async function main() {
     assertFreshAudit(finalAudit, preflight.productIds.length);
     assertIdempotent(idempotence, preflight.productIds.length, "Full presentation");
     if (finalQueue.length > 0) throw new Error(`Final verification found ${finalQueue.length} active task(s)`);
-    if (sha256(stableJson(finalConnection.provider_config || {})) !== snapshot.hashes.targetProviderConfig) {
-      throw new Error("Target provider_config drifted during the operation");
+    if (stableJson(presentationSlice(finalConnection.provider_config || {})) !==
+        stableJson(presentationSlice(snapshot.targetProviderConfig))) {
+      throw new Error("Target presentation config drifted during the operation");
     }
 
     snapshot.apply = { summary: applyResult.summary, verification: applyResult.verification };
