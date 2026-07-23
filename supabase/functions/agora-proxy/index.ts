@@ -2,12 +2,15 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import {
+  AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
   AGORA_SORT_ALPHABETICAL_WINE_NAME,
   agoraProductButtonText,
   agoraProductButtonTextMode,
+  agoraProductColor,
   agoraProductSortMode,
   buildUniqueAgoraButtonTexts,
+  canonicalAgoraWineType,
   compareAgoraWineNames,
   shouldSortAgoraProductsAlphabetically,
 } from "../_shared/agoraProductPresentation.ts";
@@ -3972,6 +3975,45 @@ interface GeographicFamilyConfig {
   hierarchy_mode?: "FLAT" | "HIERARCHICAL"; // FLAT = all families at root; HIERARCHICAL = Type+Country > Region (2 levels only, Agora limit)
 }
 
+const AGORA_STRUCTURE_WINE_TYPE_SPAIN_DO_FOREIGN_COUNTRY = "WINE_TYPE_SPAIN_DO_FOREIGN_COUNTRY";
+
+function agoraTypeRootMappingKey(wineType: unknown): string | null {
+  const canonicalType = canonicalAgoraWineType(wineType);
+  if (!canonicalType) return null;
+  return `botella_${canonicalType}`;
+}
+
+function cleanAgoraGeographicLabel(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isSpainCountry(value: unknown): boolean {
+  const normalized = normalizeRoutingText(value);
+  return ["es", "esp", "espana", "spain"].includes(normalized);
+}
+
+function agoraCountryLabel(value: unknown): string | null {
+  const raw = cleanAgoraGeographicLabel(value);
+  if (!raw) return null;
+  const normalized = normalizeRoutingText(raw);
+  if (["xx", "sin pais", "unknown", "desconocido", "n a"].includes(normalized)) return null;
+  const countryCode = raw.toUpperCase();
+  return GEO_COUNTRY_NAMES[countryCode] || raw;
+}
+
+function isFallbackGeographicRegion(value: unknown): boolean {
+  const normalized = normalizeRoutingText(value);
+  return !normalized || [
+    "sin region",
+    "sin denominacion",
+    "sin denominacion de origen",
+    "sin do",
+    "otras",
+    "otros",
+    "n a",
+  ].includes(normalized);
+}
+
 interface AgoraFamilyRoutingRule {
   enabled?: boolean;
   format?: string;
@@ -4140,7 +4182,83 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   }
 
   // deno-lint-ignore no-explicit-any
-  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string } {
+  function findFamilyId(wineType: string | null, formatType?: string, wine?: any): { id: string; needsCreate: boolean; familyName: string; parentId?: string; grandparentId?: string; color?: string; buttonText?: string } {
+    // Per-connection two-level layout used by El Porton de Sorni:
+    // wine type root > Spanish DO/region OR foreign country. Glasses and
+    // magnums keep their dedicated format families.
+    if (
+      String(providerConfig.family_structure_mode || "").trim().toUpperCase() ===
+        AGORA_STRUCTURE_WINE_TYPE_SPAIN_DO_FOREIGN_COUNTRY &&
+      formatType === "BOTTLE" &&
+      wine
+    ) {
+      const canonicalType = canonicalAgoraWineType(wineType || wine.wine_type);
+      const rootMappingKey = agoraTypeRootMappingKey(canonicalType);
+      const configuredRoot = rootMappingKey ? customFamilyMappings?.[rootMappingKey] : null;
+      const expectedRootName = configuredRoot?.name || geoTypeParentName(canonicalType || "otros");
+      const existingRoot = families.find((family) =>
+        (configuredRoot?.id && String(family.Id) === String(configuredRoot.id)) ||
+        normalizeRoutingText(family.Name) === normalizeRoutingText(expectedRootName)
+      );
+      const rootId = String(existingRoot?.Id || configuredRoot?.id || stableFamilyId(expectedRootName));
+      const rootName = existingRoot?.Name || expectedRootName;
+      const rootColor = agoraProductColor(connection, canonicalType);
+      if (!existingRoot && !newFamilies.some((family) => family.id === rootId)) {
+        newFamilies.push({ id: rootId, name: rootName, color: rootColor, buttonText: rootName });
+      }
+
+      const raw = wine.raw_payload || {};
+      const country = cleanAgoraGeographicLabel(raw.country || wine.country);
+      const region = cleanAgoraGeographicLabel(wine.region || raw.region);
+      const isSpanish = isSpainCountry(country);
+      const invalidRegion = isFallbackGeographicRegion(region);
+      const childLabel = isSpanish
+        ? (invalidRegion ? "OTRAS DO ESPAÑA" : region)
+        : (agoraCountryLabel(country) || "OTROS PAÍSES");
+      const childTechnicalName = `${rootName} - ${childLabel}`;
+      const existingChild = families.find((family) =>
+        normalizeRoutingText(family.Name) === normalizeRoutingText(childTechnicalName)
+      );
+      let childId = String(existingChild?.Id || "");
+      if (!childId) {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const candidate = stableFamilyId(attempt === 0 ? childTechnicalName : `${childTechnicalName}#${attempt}`);
+          const liveCollision = families.find((family) => String(family.Id) === candidate);
+          const plannedCollision = newFamilyHierarchy.find((family) => family.id === candidate);
+          if (!liveCollision && !plannedCollision) {
+            childId = candidate;
+            break;
+          }
+          const collisionName = liveCollision?.Name || plannedCollision?.name || "";
+          if (normalizeRoutingText(collisionName) === normalizeRoutingText(childTechnicalName)) {
+            childId = candidate;
+            break;
+          }
+        }
+      }
+      if (!childId) throw new Error(`Could not allocate a collision-free family ID for ${childTechnicalName}`);
+      const childName = existingChild?.Name || childTechnicalName;
+      if (!existingChild && !newFamilyHierarchy.some((family) => family.id === childId)) {
+        newFamilyHierarchy.push({
+          id: childId,
+          name: childName,
+          parentId: rootId,
+          color: rootColor,
+          buttonText: childLabel,
+        });
+      }
+      // The family is included in this same XML when it is new. Returning
+      // needsCreate=false avoids rendering the child a second time as a root.
+      return {
+        id: childId,
+        needsCreate: false,
+        familyName: childName,
+        parentId: rootId,
+        color: rootColor,
+        buttonText: childLabel,
+      };
+    }
+
     // PRIORITY 0: Geographic families mode
     if (geographicConfig && geographicConfig.family_naming_mode === "GEOGRAPHIC_FAMILIES" && wine) {
       const raw = wine.raw_payload || {};
@@ -4195,9 +4313,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     // PRIORITY 0B: Explicit per-connection routing rules.
     // Used for clients that already have a production family tree in Agora
     // (for example, type + region families) and must keep that visual layout.
-    const providerConfig = (connection?.provider_config || {}) as Record<string, unknown>;
-    const routingRules = Array.isArray(providerConfig.agora_family_routing_rules)
-      ? providerConfig.agora_family_routing_rules as AgoraFamilyRoutingRule[]
+    const routingProviderConfig = (connection?.provider_config || {}) as Record<string, unknown>;
+    const routingRules = Array.isArray(routingProviderConfig.agora_family_routing_rules)
+      ? routingProviderConfig.agora_family_routing_rules as AgoraFamilyRoutingRule[]
       : [];
     if (routingRules.length > 0 && wine) {
       const raw = wine.raw_payload || {};
@@ -4321,8 +4439,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     return s.length <= maxLen ? s : s.substring(0, maxLen);
   }
 
-  const newFamilies: { id: string; name: string }[] = [];
-  const newFamilyHierarchy: { id: string; name: string; parentId: string }[] = [];
+  const newFamilies: { id: string; name: string; color?: string; buttonText?: string }[] = [];
+  const newFamilyHierarchy: { id: string; name: string; parentId: string; color?: string; buttonText?: string }[] = [];
   const useCommercialCodeSort = shouldSortAgoraProductsByCommercialCode(connection);
   const useAlphabeticalWineNameSort = shouldSortAgoraProductsAlphabetically(connection);
   const codePrefixOrder = commercialCodePrefixOrder(connection);
@@ -4425,7 +4543,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         nameDisambiguators: [formatWine.vintage || formatWine.raw_payload?.vintage].filter(Boolean),
         renderXml: (finalProductName: string) => {
           const buttonText = agoraProductButtonText(connection, finalProductName, 20);
-          return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="#8B0000" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
+          const productColor = agoraProductColor(connection, wineType);
+          return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
       <Prices>
 ${pricesXml}
       </Prices>
@@ -4445,11 +4564,11 @@ ${costPricesXml}
     xml += `  <Families>\n`;
     // First: root families (no parent)
     for (const f of newFamilies) {
-      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.name, 15))}" Color="#8B0000" Order="100" />\n`;
+      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.buttonText || f.name, 20))}" Color="${f.color || "#8B0000"}" Order="100" />\n`;
     }
     // Then: hierarchical families (with parent)
     for (const f of newFamilyHierarchy) {
-      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.name, 15))}" Color="#8B0000" Order="100" ParentFamilyId="${f.parentId}" />\n`;
+      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.buttonText || f.name, 20))}" Color="${f.color || "#8B0000"}" Order="100" ParentFamilyId="${f.parentId}" />\n`;
     }
     xml += `  </Families>\n`;
   }
@@ -7803,7 +7922,10 @@ serve(async (req) => {
         : requestedButtonTextMode || agoraProductButtonTextMode(connection);
       const useCommercialSort = sortMode === "COMMERCIAL_CODE_NUMERIC";
       const useAlphabeticalSort = sortMode === AGORA_SORT_ALPHABETICAL_WINE_NAME;
-      const rewriteButtonText = buttonTextMode === AGORA_BUTTON_TEXT_WINE_NAME_ONLY;
+      const rewriteButtonText = [
+        AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
+        AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
+      ].includes(buttonTextMode);
       if (!useCommercialSort && !useAlphabeticalSort) {
         return new Response(JSON.stringify({
           success: false,
@@ -8159,6 +8281,740 @@ serve(async (req) => {
         },
         rollbackXml,
         importResponse: parsed,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── NORMALIZE WINERIM-OWNED PRODUCT PRESENTATION ──
+    // Preserves each live Agora product XML and only changes presentation
+    // attributes. Ownership is proven by winerim_push_tracking; legacy products
+    // are never selected even when they share a family with Winerim products.
+    if (action === "normalize-winerim-product-presentation") {
+      const dryRun = payload.dryRun !== false;
+      if (!dryRun && payload.confirm !== "NORMALIZE_WINERIM_PRESENTATION") {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Production normalization requires confirm=NORMALIZE_WINERIM_PRESENTATION",
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const presentationConfig = ((connection.provider_config || {}) as Record<string, unknown>);
+      if (presentationConfig.agora_product_presentation_enabled !== true) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "provider_config.agora_product_presentation_enabled must be true",
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      if (!shouldSortAgoraProductsAlphabetically(connection)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Unsupported presentation sort mode: ${agoraProductSortMode(connection) || "(empty)"}`,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const presentationButtonMode = agoraProductButtonTextMode(connection);
+      if (![AGORA_BUTTON_TEXT_WINE_NAME_ONLY, AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX].includes(presentationButtonMode)) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Unsupported presentation button mode: ${presentationButtonMode || "(empty)"}`,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const requestedProductIds = new Set(
+        Array.isArray(payload.productIds)
+          ? payload.productIds.map((value: unknown) => String(value || "").trim()).filter(Boolean)
+          : [],
+      );
+      const { data: trackingRows, error: trackingError } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id,winerim_wine_id,format,source,sync_status")
+        .eq("connection_id", connectionId)
+        .eq("source", "WINERIM")
+        .in("sync_status", ["VERIFIED", "PUSHED"]);
+      if (trackingError) {
+        return new Response(JSON.stringify({ success: false, error: trackingError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const ownedRowsByProductId = new Map<string, { productId: string; wineId: string; format: string }>();
+      for (const row of trackingRows || []) {
+        const productId = String(row.agora_product_id || "").trim();
+        const wineId = String(row.winerim_wine_id || "").trim();
+        const format = String(row.format || "").trim().toUpperCase();
+        if (!productId || !wineId || !["BOTTLE", "GLASS", "MAGNUM"].includes(format)) continue;
+        if (requestedProductIds.size > 0 && !requestedProductIds.has(productId)) continue;
+        ownedRowsByProductId.set(productId, { productId, wineId, format });
+      }
+      if (ownedRowsByProductId.size === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun,
+          changed: 0,
+          message: "No verified Winerim-owned products matched the request.",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const wineIds = [...new Set([...ownedRowsByProductId.values()].map((row) => row.wineId))];
+      const wineRows: any[] = [];
+      for (let index = 0; index < wineIds.length; index += 500) {
+        const { data: chunk, error: wineError } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id,name,wine_type,region,raw_payload,is_active,bottle_sale_price,glass_sale_price,magnum_sale_price")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", wineIds.slice(index, index + 500));
+        if (wineError) {
+          return new Response(JSON.stringify({ success: false, error: wineError.message }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        wineRows.push(...(chunk || []));
+      }
+      const wineById = new Map(wineRows.map((wine) => [String(wine.winerim_id), applyHiddenGlassVariantForAgora(connection, wine)]));
+
+      const familiesRes = await fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+        method: "GET",
+        headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+      }, 30000);
+      const familiesXml = await familiesRes.text().catch(() => "");
+      if (!familiesRes.ok || !familiesXml) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Could not read Agora families: HTTP ${familiesRes.status}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const freshProducts = await fetchAgoraProductsXmlCached(
+        connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+      );
+      if (!freshProducts.ok) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `Could not read Agora products: HTTP ${freshProducts.status}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      type LiveFamily = { id: string; name: string; xml: string; attrs: Record<string, string> };
+      const liveFamilies = extractXmlElementsWithAttrs(familiesXml, "Family").map((family) => ({
+        id: String(family.attrs.Id || ""),
+        name: normalizeAgoraTextAttribute(decodeXmlAttribute(family.attrs.Name || "")),
+        xml: family.xml,
+        attrs: family.attrs,
+      })).filter((family) => family.id);
+      const familyById = new Map(liveFamilies.map((family) => [family.id, family]));
+      const liveProducts = extractXmlElementsWithAttrs(freshProducts.xml, "Product");
+      const productById = new Map(liveProducts.map((product) => [String(product.attrs.Id || ""), product]));
+      const customMappings = (await loadCustomFamilyMappings(connectionId)) || {};
+      const routingMode = String(presentationConfig.family_structure_mode || "").trim().toUpperCase();
+      const useDoCountryRouting = routingMode === AGORA_STRUCTURE_WINE_TYPE_SPAIN_DO_FOREIGN_COUNTRY;
+
+      type PlannedFamily = {
+        id: string;
+        name: string;
+        buttonText: string;
+        color: string;
+        parentId: string | null;
+        live: LiveFamily | null;
+        xmlAfter: string;
+        changed: boolean;
+      };
+      const plannedFamilies = new Map<string, PlannedFamily>();
+
+      const planFamily = (params: { id: string; name: string; buttonText: string; color: string; parentId?: string | null }): PlannedFamily => {
+        const live = familyById.get(params.id) || liveFamilies.find((family) =>
+          normalizeRoutingText(family.name) === normalizeRoutingText(params.name)
+        ) || null;
+        const id = live?.id || params.id;
+        const liveName = live?.name || params.name;
+        let xmlAfter = live?.xml || `<Family Id="${escapeXmlAttribute(id)}" Name="${escapeXmlAttribute(liveName)}" ShowInPos="true" ButtonText="${escapeXmlAttribute(params.buttonText.slice(0, 20))}" Color="${params.color}" Order="100"${params.parentId ? ` ParentFamilyId="${escapeXmlAttribute(params.parentId)}"` : ""} />`;
+        xmlAfter = setXmlAttrValue(xmlAfter, "Color", params.color);
+        xmlAfter = setXmlAttrValue(xmlAfter, "ButtonText", params.buttonText.slice(0, 20));
+        if (params.parentId) xmlAfter = setXmlAttrValue(xmlAfter, "ParentFamilyId", params.parentId);
+        const changed = !live ||
+          String(live.attrs.Color || "").toUpperCase() !== params.color.toUpperCase() ||
+          normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || "")) !== params.buttonText.slice(0, 20) ||
+          (params.parentId ? String(live.attrs.ParentFamilyId || "") !== params.parentId : false);
+        const plan = { id, name: liveName, buttonText: params.buttonText, color: params.color, parentId: params.parentId || null, live, xmlAfter, changed };
+        plannedFamilies.set(id, plan);
+        return plan;
+      };
+
+      const targetFamilyFor = (wine: any, format: string, currentFamilyId: string): string => {
+        if (!useDoCountryRouting || format !== "BOTTLE") return currentFamilyId;
+        const wineType = canonicalAgoraWineType(extractWineType(wine));
+        const mappingKey = agoraTypeRootMappingKey(wineType);
+        const configuredRoot = mappingKey ? customMappings[mappingKey] : null;
+        const root = configuredRoot
+          ? (familyById.get(String(configuredRoot.id)) || liveFamilies.find((family) =>
+              normalizeRoutingText(family.name) === normalizeRoutingText(configuredRoot.name)
+            ))
+          : null;
+        if (!root) throw new Error(`Missing root family mapping ${mappingKey || "(unknown)"} for wine ${wine.winerim_id}`);
+        const color = agoraProductColor(connection, wineType);
+        planFamily({ id: root.id, name: root.name, buttonText: root.attrs.ButtonText ? normalizeAgoraTextAttribute(decodeXmlAttribute(root.attrs.ButtonText)) : root.name, color });
+
+        const raw = wine.raw_payload || {};
+        const country = cleanAgoraGeographicLabel(raw.country || wine.country);
+        const region = cleanAgoraGeographicLabel(wine.region || raw.region);
+        const invalidRegion = isFallbackGeographicRegion(region);
+        const childLabel = isSpainCountry(country)
+          ? (invalidRegion ? "OTRAS DO ESPAÑA" : region)
+          : (agoraCountryLabel(country) || "OTROS PAÍSES");
+        const childName = `${root.name} - ${childLabel}`;
+        const existingChild = liveFamilies.find((family) =>
+          normalizeRoutingText(family.name) === normalizeRoutingText(childName)
+        );
+        let childId = existingChild?.id || "";
+        if (!childId) {
+          for (let attempt = 0; attempt < 100; attempt++) {
+            const candidate = stableFamilyId(attempt === 0 ? childName : `${childName}#${attempt}`);
+            const liveCollision = familyById.get(candidate);
+            const plannedCollision = plannedFamilies.get(candidate);
+            if (!liveCollision && !plannedCollision) {
+              childId = candidate;
+              break;
+            }
+            const collisionName = liveCollision?.name || plannedCollision?.name || "";
+            if (normalizeRoutingText(collisionName) === normalizeRoutingText(childName)) {
+              childId = candidate;
+              break;
+            }
+          }
+        }
+        if (!childId) throw new Error(`Could not allocate a collision-free family ID for ${childName}`);
+        return planFamily({
+          id: childId,
+          name: existingChild?.name || childName,
+          buttonText: childLabel,
+          color,
+          parentId: root.id,
+        }).id;
+      };
+
+      type PresentationPlan = {
+        productId: string;
+        wineId: string;
+        format: string;
+        wineName: string;
+        wineType: string;
+        previousFamilyId: string;
+        nextFamilyId: string;
+        previousButtonText: string;
+        nextButtonText: string;
+        previousColor: string;
+        nextColor: string;
+        previousOrder: number | null;
+        nextOrder: number;
+        xmlBefore: string;
+        xmlAfter: string;
+        changed: boolean;
+      };
+      const plans: PresentationPlan[] = [];
+      const skipped: Array<{ productId: string; reason: string }> = [];
+
+      for (const ownership of ownedRowsByProductId.values()) {
+        const wine = wineById.get(ownership.wineId);
+        const liveProduct = productById.get(ownership.productId);
+        if (!wine) {
+          skipped.push({ productId: ownership.productId, reason: "wine_not_found" });
+          continue;
+        }
+        if (!liveProduct) {
+          skipped.push({ productId: ownership.productId, reason: "agora_product_not_found" });
+          continue;
+        }
+        const effectiveActive = wine.is_active !== false || inactiveFormatAllowedByConnection(wine, ownership.format);
+        if (!effectiveActive || isFormatUnavailableForAgora(wine, ownership.format)) {
+          skipped.push({ productId: ownership.productId, reason: "format_not_currently_eligible" });
+          continue;
+        }
+        const technicalName = normalizeAgoraTextAttribute(decodeXmlAttribute(liveProduct.attrs.Name || ""));
+        const currentFamilyId = String(liveProduct.attrs.FamilyId || "");
+        let targetFamilyId: string;
+        try {
+          targetFamilyId = targetFamilyFor(wine, ownership.format, currentFamilyId);
+        } catch (error) {
+          return new Response(JSON.stringify({ success: false, error: String(error) }), {
+            status: 409,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const previousButtonText = normalizeAgoraTextAttribute(decodeXmlAttribute(liveProduct.attrs.ButtonText || ""));
+        plans.push({
+          productId: ownership.productId,
+          wineId: ownership.wineId,
+          format: ownership.format,
+          wineName: String(wine.name || technicalName),
+          wineType: canonicalAgoraWineType(extractWineType(wine)),
+          previousFamilyId: currentFamilyId,
+          nextFamilyId: targetFamilyId,
+          previousButtonText,
+          nextButtonText: agoraProductButtonText(connection, technicalName, 20),
+          previousColor: String(liveProduct.attrs.Color || ""),
+          nextColor: agoraProductColor(connection, extractWineType(wine)),
+          previousOrder: /^\d+$/.test(String(liveProduct.attrs.Order || "")) ? Number(liveProduct.attrs.Order) : null,
+          nextOrder: 0,
+          xmlBefore: liveProduct.xml,
+          xmlAfter: liveProduct.xml,
+          changed: false,
+        });
+      }
+
+      const plansByFamily = new Map<string, PresentationPlan[]>();
+      for (const plan of plans) {
+        const familyPlans = plansByFamily.get(plan.nextFamilyId) || [];
+        familyPlans.push(plan);
+        plansByFamily.set(plan.nextFamilyId, familyPlans);
+      }
+      const targetProductIds = new Set(plans.map((plan) => plan.productId));
+      const presentationFormatOrder: Record<string, number> = { BOTTLE: 0, GLASS: 1, MAGNUM: 2 };
+      const duplicateVisibleLabels: Array<{ familyId: string; label: string; productIds: string[] }> = [];
+      for (const [familyId, familyPlans] of plansByFamily.entries()) {
+        familyPlans.sort((left, right) =>
+          compareAgoraWineNames(left.wineName, right.wineName) ||
+          (presentationFormatOrder[left.format] ?? 9) - (presentationFormatOrder[right.format] ?? 9) ||
+          Number(left.productId) - Number(right.productId)
+        );
+        const uniqueLabels = buildUniqueAgoraButtonTexts(
+          connection,
+          familyPlans.map((plan) => ({
+            key: plan.productId,
+            technicalName: normalizeAgoraTextAttribute(decodeXmlAttribute(productById.get(plan.productId)?.attrs.Name || "")),
+            existingButtonText: plan.previousButtonText,
+          })),
+          20,
+        );
+        const nonOwnedProducts = liveProducts.filter((product) =>
+          String(product.attrs.FamilyId || "") === familyId && !targetProductIds.has(String(product.attrs.Id || ""))
+        );
+        const occupiedLabels = new Set(nonOwnedProducts.map((product) =>
+          normalizeRoutingText(normalizeAgoraTextAttribute(decodeXmlAttribute(product.attrs.ButtonText || product.attrs.Name || "")))
+        ).filter(Boolean));
+        const legacyMaxOrder = nonOwnedProducts.reduce((max, product) => {
+          const order = /^\d+$/.test(String(product.attrs.Order || "")) ? Number(product.attrs.Order) : 0;
+          return Math.max(max, order);
+        }, 0);
+        const firstOrder = nonOwnedProducts.length > 0 ? legacyMaxOrder + 1 : 1;
+        familyPlans.forEach((plan, index) => {
+          plan.nextButtonText = uniqueLabels[plan.productId] || plan.nextButtonText;
+          const normalizedLabel = normalizeRoutingText(plan.nextButtonText);
+          if (occupiedLabels.has(normalizedLabel)) {
+            duplicateVisibleLabels.push({ familyId, label: plan.nextButtonText, productIds: [plan.productId] });
+          }
+          occupiedLabels.add(normalizedLabel);
+          plan.nextOrder = firstOrder + index;
+          plan.xmlAfter = setXmlAttrValue(plan.xmlBefore, "FamilyId", plan.nextFamilyId);
+          plan.xmlAfter = setXmlAttrValue(plan.xmlAfter, "ButtonText", plan.nextButtonText);
+          plan.xmlAfter = setXmlAttrValue(plan.xmlAfter, "Color", plan.nextColor);
+          plan.xmlAfter = setXmlAttrValue(plan.xmlAfter, "Order", String(plan.nextOrder));
+          plan.changed = plan.previousFamilyId !== plan.nextFamilyId ||
+            plan.previousButtonText !== plan.nextButtonText ||
+            plan.previousColor.toUpperCase() !== plan.nextColor.toUpperCase() ||
+            plan.previousOrder !== plan.nextOrder;
+        });
+      }
+
+      if (duplicateVisibleLabels.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          dryRun,
+          error: "Visible labels collide with non-Winerim products in a target family.",
+          duplicateVisibleLabels,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const changedProducts = plans.filter((plan) => plan.changed);
+      const changedFamilies = [...plannedFamilies.values()].filter((family) => family.changed);
+      const familyXml = changedFamilies.map((family) => `    ${family.xmlAfter}`).join("\n");
+      const productXml = changedProducts.map((plan) => `    ${plan.xmlAfter}`).join("\n");
+      let xml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n`;
+      if (familyXml) xml += `  <Families>\n${familyXml}\n  </Families>\n`;
+      if (productXml) xml += `  <Products>\n${productXml}\n  </Products>\n`;
+      xml += `</Import>`;
+
+      const rollbackFamilies = changedFamilies.map((family) => {
+        if (family.live) return `    ${family.live.xml}`;
+        let hidden = setXmlAttrValue(family.xmlAfter, "ShowInPos", "false");
+        hidden = setXmlAttrValue(hidden, "Order", "99999");
+        return `    ${hidden}`;
+      }).join("\n");
+      const rollbackProducts = changedProducts.map((plan) => `    ${plan.xmlBefore}`).join("\n");
+      let rollbackXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n`;
+      if (rollbackFamilies) rollbackXml += `  <Families>\n${rollbackFamilies}\n  </Families>\n`;
+      if (rollbackProducts) rollbackXml += `  <Products>\n${rollbackProducts}\n  </Products>\n`;
+      rollbackXml += `</Import>`;
+
+      const summary = {
+        owned: ownedRowsByProductId.size,
+        eligible: plans.length,
+        skipped,
+        changedProducts: changedProducts.length,
+        changedFamilies: changedFamilies.length,
+        movedProducts: changedProducts.filter((plan) => plan.previousFamilyId !== plan.nextFamilyId).length,
+        recoloredProducts: changedProducts.filter((plan) => plan.previousColor.toUpperCase() !== plan.nextColor.toUpperCase()).length,
+        relabeledProducts: changedProducts.filter((plan) => plan.previousButtonText !== plan.nextButtonText).length,
+        reorderedProducts: changedProducts.filter((plan) => plan.previousOrder !== plan.nextOrder).length,
+      };
+      const preview = changedProducts.slice(0, 100).map((plan) => ({
+        productId: plan.productId,
+        wineId: plan.wineId,
+        format: plan.format,
+        wineName: plan.wineName,
+        family: `${plan.previousFamilyId} -> ${plan.nextFamilyId}`,
+        buttonText: `${plan.previousButtonText} -> ${plan.nextButtonText}`,
+        color: `${plan.previousColor} -> ${plan.nextColor}`,
+        order: `${plan.previousOrder ?? "null"} -> ${plan.nextOrder}`,
+      }));
+
+      if (dryRun || (changedProducts.length === 0 && changedFamilies.length === 0)) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun,
+          summary,
+          families: [...plannedFamilies.values()].map((family) => ({
+            id: family.id,
+            name: family.name,
+            buttonText: family.buttonText,
+            color: family.color,
+            parentId: family.parentId,
+            exists: Boolean(family.live),
+            changed: family.changed,
+          })),
+          preview,
+          xml: payload.includeXml === true ? xml : undefined,
+          rollbackXml: payload.includeXml === true ? rollbackXml : undefined,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const importRes = await fetchWithRetry(`${baseUrlClean}/api/import/`, {
+        method: "POST",
+        headers: {
+          "Api-Token": apiTokenClean,
+          Accept: "application/xml",
+          "Content-Type": "application/xml; charset=utf-8",
+        },
+        body: xml,
+      }, 60000);
+      const responseBody = await importRes.text().catch(() => "");
+      const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+      if (!parsed.success) {
+        return new Response(JSON.stringify({
+          success: false,
+          dryRun: false,
+          summary,
+          error: parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 500)}`,
+          rollbackXml,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      const [verifyProductsFresh, verifyFamiliesRes] = await Promise.all([
+        fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true),
+        fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+          method: "GET",
+          headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+        }, 30000),
+      ]);
+      const verifyFamiliesXml = await verifyFamiliesRes.text().catch(() => "");
+      const verifyProductById = new Map(
+        (verifyProductsFresh.ok ? extractXmlElementsWithAttrs(verifyProductsFresh.xml, "Product") : [])
+          .map((product) => [String(product.attrs.Id || ""), product]),
+      );
+      const verifyFamilyById = new Map(
+        (verifyFamiliesRes.ok ? extractXmlElementsWithAttrs(verifyFamiliesXml, "Family") : [])
+          .map((family) => [String(family.attrs.Id || ""), family]),
+      );
+      const productFailures: Array<Record<string, unknown>> = changedProducts.flatMap<Record<string, unknown>>((plan) => {
+        const live = verifyProductById.get(plan.productId);
+        if (!live) return [{ productId: plan.productId, error: "missing_after_write" }];
+        const actualButton = normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || ""));
+        const ok = String(live.attrs.FamilyId || "") === plan.nextFamilyId &&
+          actualButton === plan.nextButtonText &&
+          String(live.attrs.Color || "").toUpperCase() === plan.nextColor.toUpperCase() &&
+          String(live.attrs.Order || "") === String(plan.nextOrder);
+        return ok ? [] : [{
+          productId: plan.productId,
+          expected: { familyId: plan.nextFamilyId, buttonText: plan.nextButtonText, color: plan.nextColor, order: String(plan.nextOrder) },
+          actual: { familyId: live.attrs.FamilyId, buttonText: actualButton, color: live.attrs.Color, order: live.attrs.Order },
+        }];
+      });
+      const familyFailures: Array<Record<string, unknown>> = changedFamilies.flatMap<Record<string, unknown>>((plan) => {
+        const live = verifyFamilyById.get(plan.id);
+        if (!live) return [{ familyId: plan.id, error: "missing_after_write" }];
+        const actualButton = normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || ""));
+        const ok = String(live.attrs.Color || "").toUpperCase() === plan.color.toUpperCase() &&
+          actualButton === plan.buttonText.slice(0, 20) &&
+          (plan.parentId ? String(live.attrs.ParentFamilyId || "") === plan.parentId : true);
+        return ok ? [] : [{ familyId: plan.id, expected: plan, actual: live.attrs }];
+      });
+
+      let automaticRollback: Record<string, unknown> | null = null;
+      if (productFailures.length > 0 || familyFailures.length > 0) {
+        const rollbackRes = await fetchWithRetry(`${baseUrlClean}/api/import/`, {
+          method: "POST",
+          headers: {
+            "Api-Token": apiTokenClean,
+            Accept: "application/xml",
+            "Content-Type": "application/xml; charset=utf-8",
+          },
+          body: rollbackXml,
+        }, 60000);
+        const rollbackBody = await rollbackRes.text().catch(() => "");
+        const rollbackParsed = parseAgoraImportResponse(rollbackRes.status, rollbackBody);
+        const rollbackProductFailures: Array<Record<string, unknown>> = [];
+        const rollbackFamilyFailures: Array<Record<string, unknown>> = [];
+
+        if (rollbackParsed.success) {
+          invalidateAgoraProductsCache(connectionId);
+          const [rollbackProductsFresh, rollbackFamiliesRes] = await Promise.all([
+            fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true),
+            fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+              method: "GET",
+              headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+            }, 30000),
+          ]);
+          const rollbackFamiliesXml = await rollbackFamiliesRes.text().catch(() => "");
+          const rollbackProductById = new Map(
+            (rollbackProductsFresh.ok ? extractXmlElementsWithAttrs(rollbackProductsFresh.xml, "Product") : [])
+              .map((product) => [String(product.attrs.Id || ""), product]),
+          );
+          const rollbackFamilyById = new Map(
+            (rollbackFamiliesRes.ok ? extractXmlElementsWithAttrs(rollbackFamiliesXml, "Family") : [])
+              .map((family) => [String(family.attrs.Id || ""), family]),
+          );
+
+          for (const plan of changedProducts) {
+            const live = rollbackProductById.get(plan.productId);
+            const actualButton = live
+              ? normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || ""))
+              : "";
+            const restored = Boolean(live) &&
+              String(live?.attrs.FamilyId || "") === plan.previousFamilyId &&
+              actualButton === plan.previousButtonText &&
+              String(live?.attrs.Color || "").toUpperCase() === plan.previousColor.toUpperCase() &&
+              String(live?.attrs.Order || "") === String(plan.previousOrder ?? "");
+            if (!restored) {
+              rollbackProductFailures.push({
+                productId: plan.productId,
+                expected: {
+                  familyId: plan.previousFamilyId,
+                  buttonText: plan.previousButtonText,
+                  color: plan.previousColor,
+                  order: plan.previousOrder,
+                },
+                actual: live?.attrs || null,
+              });
+            }
+          }
+
+          for (const plan of changedFamilies) {
+            const live = rollbackFamilyById.get(plan.id);
+            const expectedXml = plan.live
+              ? plan.live.xml
+              : setXmlAttrValue(setXmlAttrValue(plan.xmlAfter, "ShowInPos", "false"), "Order", "99999");
+            const expected = extractXmlElementsWithAttrs(expectedXml, "Family")[0]?.attrs || {};
+            const actualButton = live
+              ? normalizeAgoraTextAttribute(decodeXmlAttribute(live.attrs.ButtonText || ""))
+              : "";
+            const expectedButton = normalizeAgoraTextAttribute(decodeXmlAttribute(expected.ButtonText || ""));
+            const restored = Boolean(live) &&
+              actualButton === expectedButton &&
+              String(live?.attrs.Color || "").toUpperCase() === String(expected.Color || "").toUpperCase() &&
+              String(live?.attrs.Order || "") === String(expected.Order || "") &&
+              String(live?.attrs.ShowInPos || "").toLowerCase() === String(expected.ShowInPos || "").toLowerCase() &&
+              String(live?.attrs.ParentFamilyId || "") === String(expected.ParentFamilyId || "");
+            if (!restored) {
+              rollbackFamilyFailures.push({ familyId: plan.id, expected, actual: live?.attrs || null });
+            }
+          }
+        }
+
+        automaticRollback = {
+          attempted: true,
+          success: rollbackParsed.success && rollbackProductFailures.length === 0 && rollbackFamilyFailures.length === 0,
+          importResponse: rollbackParsed,
+          productFailures: rollbackProductFailures.slice(0, 50),
+          familyFailures: rollbackFamilyFailures.slice(0, 50),
+        };
+      }
+
+      return new Response(JSON.stringify({
+        success: productFailures.length === 0 && familyFailures.length === 0,
+        dryRun: false,
+        summary,
+        verification: {
+          productsCatalogFetched: verifyProductsFresh.ok,
+          familiesCatalogFetched: verifyFamiliesRes.ok,
+          checkedProducts: changedProducts.length,
+          checkedFamilies: changedFamilies.length,
+          productFailures: productFailures.slice(0, 50),
+          familyFailures: familyFailures.slice(0, 50),
+        },
+        rollbackXml,
+        automaticRollback,
+        importResponse: parsed,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── RESTORE A SNAPSHOTTED WINERIM PRESENTATION ──
+    // Accepts only products owned by this connection and only mapped wine
+    // families (or their direct children). This keeps emergency rollback on
+    // the same resilient Agora transport as every production write.
+    if (action === "restore-winerim-product-presentation") {
+      if (payload.confirm !== "RESTORE_WINERIM_PRESENTATION") {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Presentation restore requires confirm=RESTORE_WINERIM_PRESENTATION",
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const restoreXml = String(payload.rollbackXml || "").trim();
+      if (!restoreXml.startsWith("<?xml") || !/<Import\b/.test(restoreXml) || !/<\/Import>\s*$/.test(restoreXml)) {
+        return new Response(JSON.stringify({ success: false, error: "INVALID_PRESENTATION_ROLLBACK_XML" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (new TextEncoder().encode(restoreXml).byteLength > 5 * 1024 * 1024) {
+        return new Response(JSON.stringify({ success: false, error: "PRESENTATION_ROLLBACK_XML_TOO_LARGE" }), {
+          status: 413,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const restoreProducts = extractXmlElementsWithAttrs(restoreXml, "Product");
+      const restoreFamilies = extractXmlElementsWithAttrs(restoreXml, "Family");
+      const restoreProductIds = [...new Set(restoreProducts.map((product) => String(product.attrs.Id || "")).filter(Boolean))];
+      if (restoreProductIds.length !== restoreProducts.length || restoreProductIds.length === 0) {
+        return new Response(JSON.stringify({ success: false, error: "INVALID_PRESENTATION_ROLLBACK_PRODUCT_IDS" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data: restoreOwnership, error: restoreOwnershipError } = await supabase
+        .from("winerim_push_tracking")
+        .select("agora_product_id")
+        .eq("connection_id", connectionId)
+        .eq("source", "WINERIM")
+        .in("sync_status", ["VERIFIED", "PUSHED"])
+        .in("agora_product_id", restoreProductIds);
+      if (restoreOwnershipError) {
+        return new Response(JSON.stringify({ success: false, error: restoreOwnershipError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const ownedRestoreIds = new Set((restoreOwnership || []).map((row) => String(row.agora_product_id || "")));
+      const unownedRestoreIds = restoreProductIds.filter((productId) => !ownedRestoreIds.has(productId));
+      if (unownedRestoreIds.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "PRESENTATION_ROLLBACK_CONTAINS_UNOWNED_PRODUCTS",
+          productIds: unownedRestoreIds,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const customMappings = (await loadCustomFamilyMappings(connectionId)) || {};
+      const rootFamilyIds = new Set(
+        Object.values(customMappings).map((mapping) => String(mapping.id || "")).filter(Boolean),
+      );
+      const liveFamiliesRes = await fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+        method: "GET",
+        headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+      }, 30000);
+      const liveFamiliesXml = await liveFamiliesRes.text().catch(() => "");
+      if (!liveFamiliesRes.ok || !liveFamiliesXml) {
+        return new Response(JSON.stringify({ success: false, error: `Could not read Agora families: HTTP ${liveFamiliesRes.status}` }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const liveRestoreFamilies = extractXmlElementsWithAttrs(liveFamiliesXml, "Family");
+      const allowedFamilyIds = new Set(rootFamilyIds);
+      for (const family of liveRestoreFamilies) {
+        if (rootFamilyIds.has(String(family.attrs.ParentFamilyId || ""))) {
+          allowedFamilyIds.add(String(family.attrs.Id || ""));
+        }
+      }
+      const disallowedFamilyIds = restoreFamilies
+        .map((family) => String(family.attrs.Id || ""))
+        .filter((familyId) => !familyId || !allowedFamilyIds.has(familyId));
+      if (disallowedFamilyIds.length > 0) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "PRESENTATION_ROLLBACK_CONTAINS_UNSCOPED_FAMILIES",
+          familyIds: disallowedFamilyIds,
+        }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const restoreRes = await fetchWithRetry(`${baseUrlClean}/api/import/`, {
+        method: "POST",
+        headers: {
+          "Api-Token": apiTokenClean,
+          Accept: "application/xml",
+          "Content-Type": "application/xml; charset=utf-8",
+        },
+        body: restoreXml,
+      }, 60000);
+      const restoreBody = await restoreRes.text().catch(() => "");
+      const restoreParsed = parseAgoraImportResponse(restoreRes.status, restoreBody);
+      if (!restoreParsed.success) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: restoreParsed.errors.join("; ") || `HTTP ${restoreRes.status}`,
+          importResponse: restoreParsed,
+        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      const [restoredProductsFresh, restoredFamiliesRes] = await Promise.all([
+        fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true),
+        fetchWithRetry(`${baseUrlClean}/api/export-master/?filter=Families`, {
+          method: "GET",
+          headers: { "Api-Token": apiTokenClean, Accept: "application/xml" },
+        }, 30000),
+      ]);
+      const restoredFamiliesXml = await restoredFamiliesRes.text().catch(() => "");
+      const restoredProductById = new Map(
+        (restoredProductsFresh.ok ? extractXmlElementsWithAttrs(restoredProductsFresh.xml, "Product") : [])
+          .map((product) => [String(product.attrs.Id || ""), product]),
+      );
+      const restoredFamilyById = new Map(
+        (restoredFamiliesRes.ok ? extractXmlElementsWithAttrs(restoredFamiliesXml, "Family") : [])
+          .map((family) => [String(family.attrs.Id || ""), family]),
+      );
+      const comparableAttrs = ["FamilyId", "ButtonText", "Color", "Order"];
+      const comparableFamilyAttrs = ["ShowInPos", "ButtonText", "Color", "Order", "ParentFamilyId"];
+      const productFailures = restoreProducts.flatMap<Record<string, unknown>>((expected) => {
+        const id = String(expected.attrs.Id || "");
+        const actual = restoredProductById.get(id);
+        const differences = comparableAttrs.filter((attr) =>
+          normalizeAgoraTextAttribute(decodeXmlAttribute(actual?.attrs[attr] || "")) !==
+          normalizeAgoraTextAttribute(decodeXmlAttribute(expected.attrs[attr] || ""))
+        );
+        return actual && differences.length === 0 ? [] : [{ productId: id, differences, actual: actual?.attrs || null }];
+      });
+      const familyFailures = restoreFamilies.flatMap<Record<string, unknown>>((expected) => {
+        const id = String(expected.attrs.Id || "");
+        const actual = restoredFamilyById.get(id);
+        const differences = comparableFamilyAttrs.filter((attr) =>
+          normalizeAgoraTextAttribute(decodeXmlAttribute(actual?.attrs[attr] || "")) !==
+          normalizeAgoraTextAttribute(decodeXmlAttribute(expected.attrs[attr] || ""))
+        );
+        return actual && differences.length === 0 ? [] : [{ familyId: id, differences, actual: actual?.attrs || null }];
+      });
+
+      return new Response(JSON.stringify({
+        success: productFailures.length === 0 && familyFailures.length === 0,
+        restoredProducts: restoreProducts.length,
+        restoredFamilies: restoreFamilies.length,
+        verification: {
+          productsCatalogFetched: restoredProductsFresh.ok,
+          familiesCatalogFetched: restoredFamiliesRes.ok,
+          productFailures: productFailures.slice(0, 50),
+          familyFailures: familyFailures.slice(0, 50),
+        },
+        importResponse: restoreParsed,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
@@ -9720,6 +10576,8 @@ ${costPricesXml}
       const useCommercialCodePresentation = shouldSortAgoraProductsByCommercialCode(connection);
       const useAlphabeticalPresentation = shouldSortAgoraProductsAlphabetically(connection);
       const shouldReorderAfterSuccess = useCommercialCodePresentation || useAlphabeticalPresentation;
+      const useOwnedPresentationNormalizer =
+        ((connection.provider_config || {}) as Record<string, unknown>).agora_product_presentation_enabled === true;
       const familiesToReorderAfterSuccess = new Set<string>();
 
       // ── CIRCUIT BREAKER CHECK ──
@@ -10019,12 +10877,15 @@ ${costPricesXml}
       if (shouldReorderAfterSuccess && familiesToReorderAfterSuccess.size > 0 && !breakerTripped) {
         const { data: reorderData, error: reorderError } = await supabase.functions.invoke("agora-proxy", {
           body: {
-            action: useCommercialCodePresentation
-              ? "reorder-products-by-commercial-code"
-              : "reorder-winerim-family-products",
+            action: useOwnedPresentationNormalizer
+              ? "normalize-winerim-product-presentation"
+              : useCommercialCodePresentation
+                ? "reorder-products-by-commercial-code"
+                : "reorder-winerim-family-products",
             connectionId,
             familyIds: Array.from(familiesToReorderAfterSuccess),
             dryRun: false,
+            ...(useOwnedPresentationNormalizer ? { confirm: "NORMALIZE_WINERIM_PRESENTATION" } : {}),
           },
         });
         productPresentationResult = reorderError

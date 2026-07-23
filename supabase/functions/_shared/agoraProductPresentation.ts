@@ -1,5 +1,8 @@
 export const AGORA_SORT_ALPHABETICAL_WINE_NAME = "ALPHABETICAL_WINE_NAME";
 export const AGORA_BUTTON_TEXT_WINE_NAME_ONLY = "WINE_NAME_ONLY";
+export const AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX = "WINE_NAME_WITH_FORMAT_SUFFIX";
+
+const AGORA_HEX_COLOR = /^#[0-9A-F]{6}$/i;
 
 function providerConfig(connection: unknown): Record<string, unknown> {
   if (!connection || typeof connection !== "object") return {};
@@ -30,12 +33,57 @@ export function stripAgoraFormatPrefix(value: unknown): string {
     .trim();
 }
 
+export function agoraFormatSuffix(value: unknown): "B" | "C" | "M" | null {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (/^(?:B|BOT(?:ELLA)?)\s+/i.test(normalized)) return "B";
+  if (/^(?:C|COPA)\s+/i.test(normalized)) return "C";
+  if (/^(?:M|MAG(?:NUM)?)\s+/i.test(normalized)) return "M";
+  return null;
+}
+
+function labelWithFormatSuffix(technicalName: unknown, maxLength: number): string {
+  const suffix = agoraFormatSuffix(technicalName);
+  const wineName = stripAgoraFormatPrefix(technicalName);
+  if (!suffix) return wineName.slice(0, maxLength).trim();
+  const marker = ` [${suffix}]`;
+  const nameBudget = Math.max(1, maxLength - marker.length);
+  return `${wineName.slice(0, nameBudget).trim()}${marker}`.slice(0, maxLength).trim();
+}
+
 export function agoraProductButtonText(connection: unknown, technicalName: unknown, maxLength = 20): string {
   const normalized = String(technicalName ?? "").replace(/\s+/g, " ").trim();
-  const visibleName = agoraProductButtonTextMode(connection) === AGORA_BUTTON_TEXT_WINE_NAME_ONLY
-    ? stripAgoraFormatPrefix(normalized)
-    : normalized;
+  const mode = agoraProductButtonTextMode(connection);
+  if (mode === AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX) {
+    return labelWithFormatSuffix(normalized, maxLength);
+  }
+  const visibleName = mode === AGORA_BUTTON_TEXT_WINE_NAME_ONLY ? stripAgoraFormatPrefix(normalized) : normalized;
   return (visibleName.length <= maxLength ? visibleName : visibleName.slice(0, maxLength)).trim();
+}
+
+export function canonicalAgoraWineType(value: unknown): string {
+  const normalized = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+  if (["red", "tinto"].includes(normalized)) return "tinto";
+  if (["white", "blanco"].includes(normalized)) return "blanco";
+  if (["rose", "rosado"].includes(normalized)) return "rosado";
+  if (["sparkling", "cava", "champagne", "espumoso"].includes(normalized)) return "espumoso";
+  if (["sweet", "dessert", "postre", "dulce"].includes(normalized)) return "dulce";
+  if (["generoso", "fortificado", "fortified"].includes(normalized)) return "fortificado";
+  return normalized;
+}
+
+export function agoraProductColor(connection: unknown, wineType: unknown, fallback = "#8B0000"): string {
+  const config = providerConfig(connection);
+  const configured = config.agora_product_color_by_wine_type;
+  const colors = configured && typeof configured === "object"
+    ? configured as Record<string, unknown>
+    : {};
+  const canonicalType = canonicalAgoraWineType(wineType);
+  const candidate = String(colors[canonicalType] ?? "").trim().toUpperCase();
+  return AGORA_HEX_COLOR.test(candidate) ? candidate : fallback;
 }
 
 export type AgoraButtonTextCandidate = {
@@ -87,6 +135,16 @@ function numberedButtonText(label: string, index: number, maxLength: number): st
   return `${label.slice(0, Math.max(1, maxLength - suffix.length)).trim()}${suffix}`;
 }
 
+function numberedFormatSuffixButtonText(label: string, index: number, maxLength: number): string {
+  const match = /\s(\[[BCM]\])$/i.exec(label);
+  if (!match) return numberedButtonText(label, index, maxLength);
+  const marker = ` ${match[1].toUpperCase()}`;
+  const ordinal = ` ${index}`;
+  const plain = label.slice(0, match.index).trim();
+  const nameBudget = Math.max(1, maxLength - marker.length - ordinal.length);
+  return `${plain.slice(0, nameBudget).trim()}${ordinal}${marker}`;
+}
+
 export function buildUniqueAgoraButtonTexts(
   connection: unknown,
   candidates: AgoraButtonTextCandidate[],
@@ -94,6 +152,8 @@ export function buildUniqueAgoraButtonTexts(
 ): Record<string, string> {
   const result: Record<string, string> = {};
   const candidateByKey = new Map(candidates.map((candidate) => [candidate.key, candidate]));
+  const preserveFormatSuffix = agoraProductButtonTextMode(connection) ===
+    AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX;
 
   for (const candidate of candidates) {
     result[candidate.key] = agoraProductButtonText(connection, candidate.technicalName, maxLength);
@@ -109,6 +169,12 @@ export function buildUniqueAgoraButtonTexts(
 
   for (const keys of groups.values()) {
     if (keys.length < 2) continue;
+    if (preserveFormatSuffix) {
+      keys.forEach((key, index) => {
+        result[key] = numberedFormatSuffixButtonText(result[key], index + 1, maxLength);
+      });
+      continue;
+    }
     const existingLabels = keys.map((key) => {
       const candidate = candidateByKey.get(key);
       const existing = stripMatchingFormatPrefix(candidate?.existingButtonText, candidate?.technicalName)
@@ -143,7 +209,9 @@ export function buildUniqueAgoraButtonTexts(
     let next = original;
     let occurrence = 2;
     while (used.has(normalizeVisibleLabel(next))) {
-      next = numberedButtonText(original, occurrence, maxLength);
+      next = preserveFormatSuffix
+        ? numberedFormatSuffixButtonText(original, occurrence, maxLength)
+        : numberedButtonText(original, occurrence, maxLength);
       occurrence++;
     }
     result[key] = next;
