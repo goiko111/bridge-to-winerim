@@ -4,8 +4,12 @@ Fecha: 2026-07-23
 
 ## Estado
 
-Runbook preparado. En esta sesion no se ha escrito en Agora, Winerim,
-Lovable Cloud, `provider_config` ni colas, y no se ha hecho ningun despliegue.
+`APPLIED / VERIFIED` en produccion el 2026-07-23.
+
+La operacion se ejecuto de forma reversible sobre los `120` productos Winerim
+verificados de De la O. Se hizo snapshot, configuracion, canary, apply completo
+y lectura fresh posterior. No se modificaron precios, IVA, preparacion,
+vendibilidad, mappings, ventas, stock, legacy ni otras conexiones.
 
 La operacion usa exclusivamente la accion compartida
 `normalize-winerim-product-presentation`. El script local nunca llama de forma
@@ -229,9 +233,9 @@ La operacion solo puede declararse completa cuando:
 - `680888` y todo el legacy conserven sus atributos;
 - el artefacto privado permita recuperar tanto configuracion como XML.
 
-Hasta recibir autorizacion posterior, solo se pueden ejecutar `snapshot`,
-`dry-run` y `verify`; `configure`, `canary`, `apply` y `rollback-config` quedan
-descritos y protegidos, pero no se ejecutan.
+Tras el cierre productivo, `snapshot`, `dry-run` y `verify` siguen siendo los
+modos ordinarios. `configure`, `canary`, `apply` y `rollback-config` solo deben
+repetirse con una nueva autorizacion expresa y un artefacto privado nuevo.
 
 ## Snapshot fresh de preparacion
 
@@ -262,8 +266,35 @@ Hashes de control, sin exponer el contenido completo de `provider_config`:
 | Previa | `2efd7a3719c5712af0972e1d7974adda9c34041fde492e2f8d465e820ff84bab` |
 | Objetivo fusionado | `5dee6f833eabde482b8631446da53116a19bc06ee791cbe2a672aff2f2f29987` |
 
-El normalizador no se invoco porque la accion exige que la configuracion
-objetivo ya este persistida. El resultado fue
-`TARGET_PROVIDER_CONFIG_NOT_STAGED`. Activarla requiere una autorizacion
-posterior y el modo `configure`; no se ha simulado mediante una escritura
-temporal.
+Ese snapshot fue la linea base anterior a la autorizacion. Despues se persistio
+la configuracion objetivo, se valido el canary `620749` y se aplico el lote
+completo.
+
+## Resultado productivo
+
+| Comprobacion | Resultado |
+|---|---:|
+| Auditoria fresh final | `120/120 MATCH` |
+| Missing / different / unowned | `0 / 0 / 0` |
+| Tracking estrictamente `VERIFIED` | `120/120` |
+| Producto excluido `680888` modificado | `No` |
+| Configuracion de presentacion | `Activa y exacta` |
+| Legacy modificado | `No` |
+
+La cola operativa ordinaria bajo de `29` a `10` tareas y finalmente a `0` sin
+intervencion, borrado ni reproceso manual. El snapshot final de las
+`13:28 UTC` confirmo `120/120 MATCH`, cola cero y un dry-run completamente
+idempotente: `0` productos y `0` familias por cambiar.
+
+El runtime de `agora-proxy` verificado corresponde al commit `9aabf26`. El
+codigo fuente final, con endurecimiento de los scripts de recuperacion y
+preservacion de configuracion concurrente, queda en `b8b0ee5`.
+
+## Validacion tecnica final
+
+- Tests especificos de presentacion Agora: `20/20`.
+- TypeScript: `npx tsc --noEmit`, superado.
+- Build: `npm run build`, superado.
+- Suite completa: `137/138`; el unico fallo es el test preexistente
+  `agoraOpenTicketsStatic.test.ts`, que espera un literal obsoleto y no esta
+  relacionado con esta operacion.

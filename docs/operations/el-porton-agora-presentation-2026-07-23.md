@@ -4,10 +4,12 @@ Fecha: 2026-07-23
 
 Conexion: `a3bc8cbe-baf0-4b4c-b460-1baafd8cdbc2`
 
-Estado: `PREPARED / READ_ONLY / NOT_APPLIED`
+Estado: `APPLIED / VERIFIED / IDEMPOTENT`
 
-No se ha escrito en Agora, no se ha modificado `provider_config` y no se ha
-desplegado ninguna funcion durante esta preparacion.
+La operacion productiva autorizada se completo el 2026-07-23. Se aplicaron la
+presentacion por tipo de vino y el enrutado geografico de botellas solo sobre
+los `173` productos Winerim verificados. Legacy, precios, IVA, preparacion,
+vendibilidad, mappings, ventas y stock quedaron intactos.
 
 ## Evidencia fresh actual
 
@@ -79,11 +81,9 @@ canonico que consume el runtime:
 Estas claves se fusionan sobre el `provider_config` anterior; el resto de la
 configuracion de El Porton se conserva byte a byte a nivel de valores JSON.
 
-El `provider_config` actual no contiene todavia ninguna de estas cinco claves.
-Por eso el modo de lectura informa `PENDING_TARGET_CONFIG`: la accion lee la
-configuracion viva y no admite override en el payload. Ejecutar ahora su
-dry-run exacto exigiria modificar temporalmente produccion, algo expresamente
-prohibido en esta sesion.
+El `provider_config` actual contiene estas claves y coincide con el objetivo.
+El script fusiona y compara exclusivamente las claves de presentacion, por lo
+que conserva cualquier cambio operativo concurrente del resto de la conexion.
 
 ## Resultado esperado
 
@@ -109,9 +109,9 @@ fresh y diferencia entre configuracion actual y objetivo. Si la configuracion
 objetivo ya estuviera aplicada, tambien ejecutaria la accion en dry-run con
 `includeXml=true`, sin escribir.
 
-## Aplicacion controlada futura
+## Aplicacion controlada
 
-Solo tras autorizacion expresa del orquestador:
+La aplicacion productiva autorizada se ejecuto con:
 
 ```bash
 node scripts/el-porton-agora-presentation-2026-07-23.mjs \
@@ -169,8 +169,10 @@ El snapshot registra cada estado: `SNAPSHOT_CREATED`,
 Si cualquier paso falla despues de activar la configuracion objetivo, el
 script intenta automaticamente:
 
-1. comprobar que el `provider_config` sigue siendo exactamente el objetivo;
-2. restaurar el `provider_config` anterior exacto;
+1. comprobar que las claves de presentacion siguen siendo exactamente el
+   objetivo;
+2. restaurar solo las claves de presentacion anteriores, preservando claves
+   operativas modificadas concurrentemente;
 3. importar el rollback XML capturado antes del canary;
 4. exigir de nuevo una auditoria fresh exacta;
 5. dejar el snapshot como `ROLLED_BACK_AFTER_FAILURE`.
@@ -192,9 +194,10 @@ El rollback manual:
 
 - valida version, conexion, perfil y hashes del snapshot;
 - exige cola cero;
-- exige que la configuracion viva siga coincidiendo con el objetivo del
-  snapshot, para no pisar cambios posteriores de otra persona;
-- restaura el `provider_config` anterior exacto;
+- exige que las claves de presentacion vivas sigan coincidiendo con el
+  objetivo del snapshot, para no pisar cambios posteriores de otra persona;
+- restaura solo las claves de presentacion anteriores y conserva el resto del
+  `provider_config` vivo;
 - importa el XML anterior de familias y productos;
 - ejecuta auditoria fresh;
 - actualiza el snapshot a `ROLLED_BACK`.
@@ -217,10 +220,47 @@ el script fuerza permisos `0600`.
 - El cierre tecnico no sustituye la comprobacion visual de navegacion,
   buscador, sufijos y colores por parte del cliente.
 
+## Particularidad confirmada de Agora
+
+Agora normaliza internamente `Family.Order` al importar familias. Por ello:
+
+- la verificacion de familias exige padre, nombre, color, `ButtonText` y
+  `ShowInPos`, pero no trata su `Order` interno como invariante;
+- el orden alfabetico de los productos sigue verificandose de forma estricta;
+- esta excepcion no relaja ningun atributo de producto.
+
+## Resultado productivo
+
+| Comprobacion | Resultado |
+|---|---:|
+| Auditoria fresh final | `173/173 MATCH` |
+| Missing / different / unowned | `0 / 0 / 0` |
+| Cola activa final | `0` |
+| Segundo dry-run | `0` productos / `0` familias |
+| Familias raiz botella | `6` |
+| Familias hijas DO/pais | `50` aprox., todas verificadas |
+| Legacy modificado | `No` |
+
+Las botellas quedaron en tipo de vino > DO/region espanola o pais extranjero.
+Copas y Magnum permanecen en sus familias de formato y reciben el color de su
+tipo. Los textos visibles usan `[B]`, `[C]` y `[M]`; `Name` conserva el prefijo
+tecnico. Los productos estan ordenados alfabeticamente dentro de cada familia.
+
+El cierre final del orquestador fue `COMPLETE_ALREADY_IDEMPOTENT`. El snapshot
+privado de recuperacion es
+`/private/tmp/el-porton-presentation-2026-07-23-final.json`, con permisos
+`0600`. No debe copiarse al repositorio ni compartirse porque contiene
+configuracion y XML de rollback.
+
+El runtime de `agora-proxy` verificado corresponde al commit `9aabf26`. El
+codigo fuente final queda en `b8b0ee5`.
+
 ## Verificaciones de esta sesion
 
-- `node --check`: superado.
-- Modo read-only: ejecutado, `173/173`, cola cero, breaker cerrado, ocho
-  mappings y `productionWrites=0`.
-- Produccion: no ejecutada.
-- Deploy: no ejecutado.
+- `node --check`: superado para el orquestador.
+- Canary, apply, lectura fresh y segundo dry-run: superados.
+- Tests especificos de presentacion Agora: `20/20`.
+- TypeScript: `npx tsc --noEmit`, superado.
+- Build: `npm run build`, superado.
+- Suite completa: `137/138`; el unico fallo es el test preexistente
+  `agoraOpenTicketsStatic.test.ts`, ajeno a esta operacion.
