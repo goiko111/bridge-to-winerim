@@ -589,6 +589,55 @@ function normalizeAgoraTextAttribute(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function applyUniqueExpectedAgoraButtonTexts(
+  connection: unknown,
+  expectedProducts: Array<{ xml: string; attrs: Record<string, string> }>,
+  actualProducts: Array<{ xml: string; attrs: Record<string, string> }>,
+): void {
+  const buttonTextMode = agoraProductButtonTextMode(connection);
+  if (![AGORA_BUTTON_TEXT_WINE_NAME_ONLY, AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX].includes(buttonTextMode)) {
+    return;
+  }
+
+  const actualById = new Map(
+    actualProducts.map((product) => [String(product.attrs.Id || ""), product]),
+  );
+  const expectedByFamily = new Map<string, Array<{ xml: string; attrs: Record<string, string> }>>();
+  for (const product of expectedProducts) {
+    const familyId = String(product.attrs.FamilyId || "");
+    const familyProducts = expectedByFamily.get(familyId) || [];
+    familyProducts.push(product);
+    expectedByFamily.set(familyId, familyProducts);
+  }
+
+  for (const familyProducts of expectedByFamily.values()) {
+    familyProducts.sort((left, right) =>
+      compareAgoraWineNames(
+        decodeXmlAttribute(left.attrs.Name || ""),
+        decodeXmlAttribute(right.attrs.Name || ""),
+      ) || Number(left.attrs.Id || 0) - Number(right.attrs.Id || 0)
+    );
+    const uniqueButtonTexts = buildUniqueAgoraButtonTexts(
+      connection,
+      familyProducts.map((product) => {
+        const productId = String(product.attrs.Id || "");
+        return {
+          key: productId,
+          technicalName: normalizeAgoraTextAttribute(decodeXmlAttribute(product.attrs.Name || "")),
+          existingButtonText: normalizeAgoraTextAttribute(
+            decodeXmlAttribute(actualById.get(productId)?.attrs.ButtonText || product.attrs.ButtonText || ""),
+          ),
+        };
+      }),
+      20,
+    );
+    for (const product of familyProducts) {
+      const expectedButtonText = uniqueButtonTexts[String(product.attrs.Id || "")];
+      if (expectedButtonText) product.attrs.ButtonText = escapeXmlAttribute(expectedButtonText);
+    }
+  }
+}
+
 function agoraProductDifferenceReasons(
   expected: { xml: string; attrs: Record<string, string> },
   actual: { xml: string; attrs: Record<string, string> },
@@ -8490,6 +8539,29 @@ serve(async (req) => {
         }).id;
       };
 
+      if (useDoCountryRouting) {
+        for (const [mappingKey, configuredRoot] of Object.entries(customMappings)) {
+          if (!mappingKey.startsWith("botella_")) continue;
+          const root = familyById.get(String(configuredRoot.id)) || liveFamilies.find((family) =>
+            normalizeRoutingText(family.name) === normalizeRoutingText(configuredRoot.name)
+          );
+          if (!root) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: `Missing configured root family ${mappingKey}`,
+            }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+          planFamily({
+            id: root.id,
+            name: root.name,
+            buttonText: root.attrs.ButtonText
+              ? normalizeAgoraTextAttribute(decodeXmlAttribute(root.attrs.ButtonText))
+              : root.name,
+            color: agoraProductColor(connection, mappingKey.slice("botella_".length)),
+          });
+        }
+      }
+
       type PresentationPlan = {
         productId: string;
         wineId: string;
@@ -8557,6 +8629,29 @@ serve(async (req) => {
           xmlAfter: liveProduct.xml,
           changed: false,
         });
+      }
+
+      if (useDoCountryRouting) {
+        const childrenByParent = new Map<string, PlannedFamily[]>();
+        for (const family of plannedFamilies.values()) {
+          if (!family.parentId) continue;
+          const siblings = childrenByParent.get(family.parentId) || [];
+          siblings.push(family);
+          childrenByParent.set(family.parentId, siblings);
+        }
+        for (const siblings of childrenByParent.values()) {
+          siblings.sort((left, right) =>
+            compareAgoraWineNames(left.buttonText, right.buttonText) || Number(left.id) - Number(right.id)
+          );
+          siblings.forEach((family, index) => {
+            const nextOrder = index + 1;
+            const previousOrder = family.live && /^\d+$/.test(String(family.live.attrs.Order || ""))
+              ? Number(family.live.attrs.Order)
+              : null;
+            family.xmlAfter = setXmlAttrValue(family.xmlAfter, "Order", String(nextOrder));
+            family.changed = family.changed || previousOrder !== nextOrder;
+          });
+        }
       }
 
       const plansByFamily = new Map<string, PresentationPlan[]>();
@@ -12320,6 +12415,7 @@ ${costPricesXml}
       }
 
       const expectedProducts = extractXmlElementsWithAttrs(expectedXml, "Product");
+      applyUniqueExpectedAgoraButtonTexts(connection, expectedProducts, actualCatalogProducts);
       const actualById = new Map(
         actualCatalogProducts.map((product) => [String(product.attrs.Id || ""), product]),
       );

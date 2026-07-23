@@ -23,6 +23,10 @@ const deLaOOrchestratorSource = readFileSync(
   resolve(repoRoot, "scripts/de-la-o-agora-presentation-2026-07-23.mjs"),
   "utf8",
 );
+const elPortonOrchestratorSource = readFileSync(
+  resolve(repoRoot, "scripts/el-porton-agora-presentation-2026-07-23.mjs"),
+  "utf8",
+);
 
 describe("Agora owned-product presentation policy", () => {
   it("requires an explicit confirmation before changing presentation", () => {
@@ -117,6 +121,45 @@ describe("Agora owned-product presentation policy", () => {
     );
     expect(deLaOOrchestratorSource).toContain(
       "assertExactCatalog(postContext)",
+    );
+  });
+
+  it("audits the same unique visible labels produced by the normalizer", () => {
+    expect(agoraProxySource).toContain(
+      "function applyUniqueExpectedAgoraButtonTexts(",
+    );
+    expect(agoraProxySource).toContain(
+      "applyUniqueExpectedAgoraButtonTexts(connection, expectedProducts, actualCatalogProducts)",
+    );
+    expect(agoraProxySource).toContain(
+      "existingButtonText: normalizeAgoraTextAttribute(",
+    );
+  });
+
+  it("keeps El Porton family presentation deterministic", () => {
+    expect(normalizeSource).toContain(
+      'if (!mappingKey.startsWith("botella_")) continue',
+    );
+    expect(normalizeSource).toContain(
+      "const childrenByParent = new Map<string, PlannedFamily[]>()",
+    );
+    expect(normalizeSource).toContain(
+      'family.xmlAfter = setXmlAttrValue(family.xmlAfter, "Order", String(nextOrder))',
+    );
+  });
+
+  it("makes El Porton rollback resumable and verifies the proxy restore", () => {
+    expect(elPortonOrchestratorSource).toContain(
+      "![targetConfigHash, previousConfigHash].includes(currentConfigHash)",
+    );
+    expect(elPortonOrchestratorSource).toContain(
+      'invoke("restore-winerim-product-presentation"',
+    );
+    expect(elPortonOrchestratorSource).toContain(
+      "if (xmlResult?.success !== true)",
+    );
+    expect(elPortonOrchestratorSource).toContain(
+      "configAlreadyRestored",
     );
   });
 });

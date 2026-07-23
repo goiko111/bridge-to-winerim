@@ -390,14 +390,13 @@ async function main() {
   async function restoreFromSnapshot(snapshot, { requireTargetConfig = true } = {}) {
     const current = await readConnection();
     const currentConfig = clone(current.provider_config || {});
-    if (requireTargetConfig && sha256(stableJson(currentConfig)) !== snapshot.hashes.targetProviderConfig) {
+    const currentConfigHash = sha256(stableJson(currentConfig));
+    const targetConfigHash = snapshot.hashes.targetProviderConfig;
+    const previousConfigHash = snapshot.hashes.previousProviderConfig;
+    if (requireTargetConfig && ![targetConfigHash, previousConfigHash].includes(currentConfigHash)) {
       throw new Error("Rollback refused: live provider_config differs from the snapshotted target config");
     }
     await assertNoActiveQueue("Rollback refused");
-    const restored = await patchProviderConfig(snapshot.previousProviderConfig);
-    if (sha256(stableJson(restored.provider_config || {})) !== snapshot.hashes.previousProviderConfig) {
-      throw new Error("Exact provider_config restoration could not be verified");
-    }
     let xmlResult = null;
     if (snapshot.rollbackXml) {
       xmlResult = await invoke("restore-winerim-product-presentation", {
@@ -405,11 +404,23 @@ async function main() {
         rollbackXml: assertXml(snapshot.rollbackXml, "Rollback XML"),
         confirm: RESTORE_CONFIRM_VALUE,
       });
+      if (xmlResult?.success !== true) {
+        throw new Error(`Rollback XML could not be verified: ${JSON.stringify(xmlResult)}`);
+      }
+    }
+    const configAlreadyRestored = currentConfigHash === previousConfigHash;
+    if (!configAlreadyRestored) {
+      const restored = await patchProviderConfig(snapshot.previousProviderConfig);
+      if (sha256(stableJson(restored.provider_config || {})) !== previousConfigHash) {
+        throw new Error("Exact provider_config restoration could not be verified");
+      }
     }
     const audit = await invoke("audit-winerim-products", { connectionId: CONNECTION_ID });
     assertFreshAudit(audit, Array.isArray(snapshot.verifiedProductIds) ? snapshot.verifiedProductIds.length : Number(audit.expected || 0));
     return {
+      success: true,
       configRestored: true,
+      configAlreadyRestored,
       xmlRestored: Boolean(snapshot.rollbackXml),
       xmlResult,
       audit: {
