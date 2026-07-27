@@ -1,4 +1,5 @@
 import {
+  assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
   decideSalesCursorAdvance,
@@ -9,9 +10,11 @@ import {
   normalizeWinerimVariant,
   parseWinerimStockRows,
   netSyncedQuantity,
+  retryableWinerimSalesImportSales,
   salesImportQtyWhenStockDidNotMove,
   signedWholeSaleQuantity,
   variantForAgoraFormat,
+  WINERIM_SALES_IMPORT_MAX_ATTEMPTS,
 } from "../../supabase/functions/_shared/stockSyncUtils";
 
 describe("stock sync utils", () => {
@@ -163,5 +166,80 @@ describe("stock sync utils", () => {
       previousStock: 0,
       newStock: 0,
     })).toBe(0);
+  });
+
+  it("accepts operational glass sales import only when live stock is applied", () => {
+    const sale = { stockId: 101, qty: 1, orderId: "agora:conn:2026-07-22:123:cop:abc", soldAt: "2026-07-22" };
+
+    expect(assessWinerimSalesImportResponse({
+      status: 200,
+      response: { imported: 1, sales: [{ orderId: sale.orderId, status: "imported", stockApplied: true }] },
+      sales: [sale],
+      variant: "copa",
+      live: true,
+      mode: "operational",
+    }).ok).toBe(true);
+
+    const missingLive = assessWinerimSalesImportResponse({
+      status: 200,
+      response: { imported: 1, sales: [{ orderId: sale.orderId, status: "imported", stockApplied: false }] },
+      sales: [sale],
+      variant: "copa",
+      live: false,
+      mode: "operational",
+    });
+    expect(missingLive.ok).toBe(false);
+    expect(missingLive.error).toContain("live=true");
+  });
+
+  it("accepts bottle sales import with stockApplied=false because bottle stock is handled by PUT stock", () => {
+    const sale = { stockId: 102, qty: 1, orderId: "agora:conn:2026-07-22:123:bot:def", soldAt: "2026-07-22" };
+
+    expect(assessWinerimSalesImportResponse({
+      status: 200,
+      response: { imported: 1, sales: [{ orderId: sale.orderId, status: "imported", stockApplied: false }] },
+      sales: [sale],
+      variant: "botella",
+      live: false,
+      mode: "operational",
+    }).ok).toBe(true);
+  });
+
+  it("keeps historical glass imports sales-only without requiring live stock application", () => {
+    const sale = { stockId: 101, qty: 1, orderId: "agora:conn:2026-06-01:123:cop:hist", soldAt: "2026-06-01" };
+
+    expect(assessWinerimSalesImportResponse({
+      status: 200,
+      response: { imported: 1, sales: [{ orderId: sale.orderId, status: "imported", stockApplied: false }] },
+      sales: [sale],
+      variant: "copa",
+      live: false,
+      mode: "historical",
+    }).ok).toBe(true);
+  });
+
+  it("marks 409 conflicts as retryable without accepting them as applied", () => {
+    const sale = { stockId: 101, qty: 1, orderId: "agora:conn:2026-07-22:123:cop:retry", soldAt: "2026-07-22" };
+
+    expect(WINERIM_SALES_IMPORT_MAX_ATTEMPTS).toBe(3);
+    expect(assessWinerimSalesImportResponse({
+      status: 409,
+      response: { error: "Conflict" },
+      sales: [sale],
+      variant: "copa",
+      live: true,
+      mode: "operational",
+    })).toMatchObject({ ok: false, retryable: true });
+  });
+
+  it("returns only retryable line errors for partial sales import retries", () => {
+    const retryable = { stockId: 101, qty: 1, orderId: "line-retry", soldAt: "2026-07-22" };
+    const imported = { stockId: 102, qty: 1, orderId: "line-ok", soldAt: "2026-07-22" };
+
+    expect(retryableWinerimSalesImportSales([retryable, imported], {
+      imported: 1,
+      sales: [{ orderId: "line-ok", status: "imported", stockApplied: true }],
+      errors: [{ orderId: "line-retry", retryable: true, error: "bottle busy" }],
+    })).toEqual([retryable]);
   });
 });

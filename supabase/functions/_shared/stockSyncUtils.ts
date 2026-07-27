@@ -1,5 +1,7 @@
 export type WinerimVariant = "copa" | "botella" | "magnum";
 
+export const WINERIM_SALES_IMPORT_MAX_ATTEMPTS = 3;
+
 export const WINERIM_VARIANT_ALIASES: Record<WinerimVariant, string[]> = {
   copa: ["copa", "glass"],
   botella: ["botella", "bottle", "botella-pequena", "media-botella"],
@@ -117,6 +119,163 @@ export function salesImportQtyWhenStockDidNotMove(input: {
   if (!Number.isFinite(previousStock) || !Number.isFinite(newStock)) return 0;
 
   return previousStock === newStock ? soldQty : 0;
+}
+
+export type WinerimSalesImportMode = "operational" | "historical";
+
+export type WinerimSalesImportSale = {
+  orderId: string;
+  stockId?: number;
+  qty?: number;
+  soldAt?: string;
+  [key: string]: unknown;
+};
+
+export type WinerimSalesImportLine = {
+  orderId?: string;
+  status?: string;
+  stockApplied?: boolean;
+  duplicate?: boolean;
+  retryable?: boolean;
+  error?: string;
+  [key: string]: unknown;
+};
+
+export function numberFromWinerimSalesImportResponse(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function extractWinerimSalesImportLines(response: unknown): WinerimSalesImportLine[] {
+  const payload = (response && typeof response === "object" ? response : {}) as Record<string, unknown>;
+  const lines: WinerimSalesImportLine[] = [];
+  for (const key of ["sales", "errors"]) {
+    const value = payload[key];
+    if (!Array.isArray(value)) continue;
+    for (const line of value) {
+      if (!line || typeof line !== "object") continue;
+      const raw = line as Record<string, unknown>;
+      lines.push({
+        ...raw,
+        orderId: raw.orderId === undefined ? undefined : String(raw.orderId),
+        status: raw.status === undefined ? undefined : String(raw.status),
+        stockApplied: raw.stockApplied === undefined ? undefined : raw.stockApplied === true,
+        duplicate: raw.duplicate === undefined ? undefined : raw.duplicate === true,
+        retryable: raw.retryable === undefined ? undefined : raw.retryable === true,
+        error: raw.error === undefined ? undefined : String(raw.error),
+      });
+    }
+  }
+  return lines;
+}
+
+export function retryableWinerimSalesImportOrderIds(response: unknown): Set<string> {
+  const ids = new Set<string>();
+  for (const line of extractWinerimSalesImportLines(response)) {
+    if (line.retryable && line.orderId) ids.add(line.orderId);
+  }
+  return ids;
+}
+
+export function retryableWinerimSalesImportSales(
+  sales: WinerimSalesImportSale[],
+  response: unknown,
+): WinerimSalesImportSale[] {
+  const retryableIds = retryableWinerimSalesImportOrderIds(response);
+  if (retryableIds.size === 0) return [];
+  return sales.filter((sale) => retryableIds.has(String(sale.orderId)));
+}
+
+export function shouldRequireWinerimSalesImportStockApplied(input: {
+  variant: WinerimVariant;
+  mode: WinerimSalesImportMode;
+}): boolean {
+  return input.mode === "operational" && input.variant === "copa";
+}
+
+export function assessWinerimSalesImportResponse(input: {
+  status: number;
+  response: unknown;
+  sales: WinerimSalesImportSale[];
+  variant: WinerimVariant;
+  live: boolean;
+  mode: WinerimSalesImportMode;
+}): {
+  ok: boolean;
+  imported: number;
+  skipped: number;
+  failed: number;
+  stockApplied: boolean;
+  retryable: boolean;
+  error?: string;
+} {
+  const responsePayload = (input.response && typeof input.response === "object" ? input.response : {}) as Record<string, unknown>;
+  const imported = numberFromWinerimSalesImportResponse(responsePayload.imported);
+  const skipped = numberFromWinerimSalesImportResponse(responsePayload.skipped);
+  const failed = numberFromWinerimSalesImportResponse(responsePayload.failed);
+  const lines = extractWinerimSalesImportLines(input.response);
+  const retryableSales = retryableWinerimSalesImportSales(input.sales, input.response);
+  const httpOk = input.status >= 200 && input.status < 300;
+  const retryable = input.status === 409 || retryableSales.length > 0;
+
+  if (!httpOk) {
+    return {
+      ok: false,
+      imported,
+      skipped,
+      failed,
+      stockApplied: false,
+      retryable,
+      error: `POST /sales/import failed (${input.status})`,
+    };
+  }
+
+  const requireStockApplied = shouldRequireWinerimSalesImportStockApplied(input);
+  if (requireStockApplied && !input.live) {
+    return {
+      ok: false,
+      imported,
+      skipped,
+      failed,
+      stockApplied: false,
+      retryable: false,
+      error: "POST /sales/import for operational glass sales requires live=true",
+    };
+  }
+
+  const lineByOrderId = new Map(lines.filter((line) => line.orderId).map((line) => [String(line.orderId), line]));
+  const targetLines = input.sales.map((sale) => lineByOrderId.get(String(sale.orderId))).filter(Boolean) as WinerimSalesImportLine[];
+  const stockApplied = targetLines.length > 0 && targetLines.every((line) => line.stockApplied === true || line.duplicate === true);
+
+  if (requireStockApplied && !stockApplied) {
+    return {
+      ok: false,
+      imported,
+      skipped,
+      failed,
+      stockApplied: false,
+      retryable,
+      error: "POST /sales/import live did not apply stock for every glass line",
+    };
+  }
+
+  const accepted = imported + skipped;
+  const hasSuccessLine = targetLines.some((line) =>
+    line.duplicate === true ||
+    String(line.status || "").toLowerCase() === "imported" ||
+    String(line.status || "").toLowerCase() === "duplicate"
+  );
+  const ok = failed === 0 && retryableSales.length === 0 && (accepted > 0 || hasSuccessLine || responsePayload.success === true);
+
+  return {
+    ok,
+    imported,
+    skipped,
+    failed,
+    stockApplied,
+    retryable,
+    error: ok ? undefined : "POST /sales/import response was not accepted",
+  };
 }
 
 export type SalesCursorDecisionReason =
