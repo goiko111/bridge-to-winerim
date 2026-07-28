@@ -2,12 +2,22 @@ export interface AgoraProductNameCandidate {
   productId: string | number;
   baseName: string;
   winerimId?: string | number | null;
-  disambiguators?: Array<string | number | null | undefined>;
+  vintage?: string | number | null;
 }
 
 export interface AgoraExistingProductName {
   Id?: string | number | null;
   Name?: string | null;
+}
+
+export interface AgoraProductLabel {
+  name: string;
+  buttonText: string;
+}
+
+export interface AgoraProductNamingPolicy {
+  vintageDisambiguationProductIds?: readonly (string | number)[];
+  preferVintageForDuplicateNames?: boolean;
 }
 
 export function normalizeAgoraProductNameKey(name: string): string {
@@ -19,15 +29,16 @@ export function normalizeAgoraProductNameKey(name: string): string {
     .toLowerCase();
 }
 
-function suffixCandidates(
-  disambiguators: Array<string | number | null | undefined> | undefined,
-  id: string | number | null | undefined,
-): string[] {
+export function truncateAgoraButtonText(text: string, maxLen = 20): string {
+  const value = String(text || "");
+  return value.length <= maxLen ? value : value.substring(0, maxLen);
+}
+
+function suffixCandidates(id: string | number | null | undefined): string[] {
   const raw = String(id ?? "").trim();
   const digits = raw.replace(/\D/g, "");
   const source = digits || raw;
   const candidates = [
-    ...(disambiguators || []).map((value) => String(value ?? "").trim()).filter(Boolean),
     source.length > 3 ? source.slice(-3) : source,
     source.length > 6 ? source.slice(-6) : source,
     source,
@@ -36,12 +47,36 @@ function suffixCandidates(
   return [...new Set(candidates)];
 }
 
-export function buildDuplicateSafeAgoraProductNames(
+function normalizeVintage(vintage: string | number | null | undefined): string {
+  const value = String(vintage ?? "").trim();
+  const year = value.match(/\b(18|19|20)\d{2}\b/);
+  return year ? year[0] : "";
+}
+
+export function buildAgoraButtonText(baseName: string, finalName: string, distinctiveSuffix?: string, maxLen = 20): string {
+  const suffix = String(distinctiveSuffix || "").trim();
+  if (!suffix) return truncateAgoraButtonText(finalName, maxLen);
+
+  const suffixText = ` ${suffix}`;
+  if (suffixText.length >= maxLen) return truncateAgoraButtonText(suffix, maxLen);
+
+  const headLen = maxLen - suffixText.length;
+  const head = String(baseName || "").substring(0, headLen).trimEnd();
+  return truncateAgoraButtonText(`${head || String(baseName || "").charAt(0)}${suffixText}`, maxLen);
+}
+
+export function buildDuplicateSafeAgoraProductLabels(
   candidates: AgoraProductNameCandidate[],
   existingProducts: AgoraExistingProductName[] = [],
-): Record<string, string> {
+  policy: AgoraProductNamingPolicy = {},
+): Record<string, AgoraProductLabel> {
   const existingNameOwners = new Map<string, Set<string>>();
-  const existingNamesByOwner = new Map<string, string[]>();
+  const preferVintageForDuplicateNames = policy.preferVintageForDuplicateNames !== false;
+  const vintageDisambiguationProductIds = new Set(
+    (policy.vintageDisambiguationProductIds || [])
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean),
+  );
 
   for (const product of existingProducts) {
     const id = String(product.Id ?? "").trim();
@@ -51,9 +86,6 @@ export function buildDuplicateSafeAgoraProductNames(
     const owners = existingNameOwners.get(key) ?? new Set<string>();
     owners.add(id);
     existingNameOwners.set(key, owners);
-    const names = existingNamesByOwner.get(id) ?? [];
-    names.push(name);
-    existingNamesByOwner.set(id, names);
   }
 
   const byBaseName = new Map<string, AgoraProductNameCandidate[]>();
@@ -68,25 +100,17 @@ export function buildDuplicateSafeAgoraProductNames(
   }
 
   const assignedKeys = new Set<string>();
-  const finalNames: Record<string, string> = {};
+  const finalLabels: Record<string, AgoraProductLabel> = {};
 
-  function hasExternalOwner(
-    name: string,
-    productId: string,
-    generatedIds: Set<string> = new Set<string>(),
-  ): boolean {
+  function hasExternalOwner(name: string, productId: string): boolean {
     const owners = existingNameOwners.get(normalizeAgoraProductNameKey(name));
     if (!owners) return false;
-    return [...owners].some((owner) => owner !== productId && !generatedIds.has(owner));
+    return [...owners].some((owner) => owner !== productId);
   }
 
-  function isAvailable(
-    name: string,
-    productId: string,
-    generatedIds: Set<string> = new Set<string>(),
-  ): boolean {
+  function isAvailable(name: string, productId: string): boolean {
     const key = normalizeAgoraProductNameKey(name);
-    return !assignedKeys.has(key) && !hasExternalOwner(name, productId, generatedIds);
+    return !assignedKeys.has(key) && !hasExternalOwner(name, productId);
   }
 
   for (const group of byBaseName.values()) {
@@ -96,58 +120,66 @@ export function buildDuplicateSafeAgoraProductNames(
       return aId.localeCompare(bId, "en", { numeric: true });
     });
 
-    const disambiguatorCounts = new Map<string, number>();
-    for (const entry of sorted) {
-      const entryValues = new Set((entry.disambiguators || [])
-        .map((value) => String(value ?? "").trim())
-        .filter(Boolean));
-      for (const value of entryValues) {
-        disambiguatorCounts.set(value, (disambiguatorCounts.get(value) || 0) + 1);
-      }
-    }
-
     const baseName = String(sorted[0]?.baseName || "").trim();
     const generatedIds = new Set(sorted.map((entry) => String(entry.productId)));
+    const duplicateGeneratedName = sorted.length > 1;
     const externalBaseCollision = [...(existingNameOwners.get(normalizeAgoraProductNameKey(baseName)) ?? new Set<string>())]
       .some((owner) => !generatedIds.has(owner));
 
     sorted.forEach((entry, index) => {
       const productId = String(entry.productId);
       let finalName = String(entry.baseName || "").trim();
+      let distinctiveSuffix = "";
+      let distinctiveSuffixIsVintage = false;
+      const vintage = normalizeVintage(entry.vintage);
+      const allowVintageDisambiguation = vintageDisambiguationProductIds.has(productId);
+      const shouldPreferVintage = Boolean(
+        vintage
+        && (duplicateGeneratedName || externalBaseCollision)
+        && (preferVintageForDuplicateNames || allowVintageDisambiguation),
+      );
+      const mustDisambiguate = index > 0 || externalBaseCollision || !isAvailable(finalName, productId);
 
-      if (index > 0 || externalBaseCollision || !isAvailable(finalName, productId, generatedIds)) {
-        const baseKey = normalizeAgoraProductNameKey(entry.baseName);
-        const existingOwnName = (existingNamesByOwner.get(productId) || []).find((name) => {
-          const key = normalizeAgoraProductNameKey(name);
-          return key.startsWith(`${baseKey} `) && isAvailable(name, productId, generatedIds);
-        });
-
-        if (existingOwnName) {
-          finalName = existingOwnName;
-        } else {
-          const uniqueDisambiguators = (entry.disambiguators || []).filter((value) => {
-            const normalized = String(value ?? "").trim();
-            return Boolean(normalized) && disambiguatorCounts.get(normalized) === 1;
-          });
-          const suffixes = suffixCandidates(uniqueDisambiguators, entry.winerimId ?? entry.productId);
-          finalName = "";
-          for (const suffix of suffixes) {
-            const candidateName = `${entry.baseName} ${suffix}`.trim();
-            if (isAvailable(candidateName, productId, generatedIds)) {
-              finalName = candidateName;
-              break;
-            }
+      if (shouldPreferVintage || mustDisambiguate) {
+        const suffixes = [
+          ...(shouldPreferVintage ? [{ value: vintage, isVintage: true }] : []),
+          ...suffixCandidates(entry.winerimId ?? entry.productId).map((value) => ({ value, isVintage: false })),
+        ];
+        finalName = "";
+        for (const suffix of suffixes) {
+          const candidateName = `${entry.baseName} ${suffix.value}`.trim();
+          if (isAvailable(candidateName, productId)) {
+            finalName = candidateName;
+            distinctiveSuffix = suffix.value;
+            distinctiveSuffixIsVintage = suffix.isVintage;
+            break;
           }
-          if (!finalName) {
-            finalName = `${entry.baseName} ${productId}`.trim();
-          }
+        }
+        if (!finalName) {
+          finalName = `${entry.baseName} ${productId}`.trim();
+          distinctiveSuffix = productId;
+          distinctiveSuffixIsVintage = false;
         }
       }
 
-      finalNames[productId] = finalName;
+      finalLabels[productId] = {
+        name: finalName,
+        buttonText: distinctiveSuffixIsVintage
+          ? buildAgoraButtonText(String(entry.baseName || "").trim(), finalName, distinctiveSuffix)
+          : truncateAgoraButtonText(finalName),
+      };
       assignedKeys.add(normalizeAgoraProductNameKey(finalName));
     });
   }
 
-  return finalNames;
+  return finalLabels;
+}
+
+export function buildDuplicateSafeAgoraProductNames(
+  candidates: AgoraProductNameCandidate[],
+  existingProducts: AgoraExistingProductName[] = [],
+  policy: AgoraProductNamingPolicy = {},
+): Record<string, string> {
+  const labels = buildDuplicateSafeAgoraProductLabels(candidates, existingProducts, policy);
+  return Object.fromEntries(Object.entries(labels).map(([productId, label]) => [productId, label.name]));
 }

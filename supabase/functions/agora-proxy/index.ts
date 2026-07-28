@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
@@ -3556,6 +3556,19 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+function agoraVintageDisambiguationProductIds(connection: any): string[] {
+  const config = (connection?.provider_config && typeof connection.provider_config === "object")
+    ? connection.provider_config as Record<string, unknown>
+    : {};
+  const namingConfig = (config.agora_product_naming && typeof config.agora_product_naming === "object")
+    ? config.agora_product_naming as Record<string, unknown>
+    : {};
+  return normalizeStringArray(
+    config.agora_vintage_disambiguation_product_ids ||
+    namingConfig.vintage_disambiguation_product_ids,
+  );
+}
+
 // ── PUSH TRACKING HELPER ──
 // deno-lint-ignore no-explicit-any
 async function upsertPushTracking(supabaseClient: any, connId: string, winerimWineId: string, format: string, updates: {
@@ -4412,7 +4425,7 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[] } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }> } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
@@ -4780,8 +4793,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     productId: string;
     productName: string;
     winerimId: string;
-    nameDisambiguators: Array<string | number>;
-    renderXml: (finalProductName: string) => string;
+    vintage: string | number | null;
+    renderXml: (finalProductName: string, finalButtonText: string) => string;
   }[] = [];
 
   for (const wine of wines) {
@@ -4868,9 +4881,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         productId: String(productId),
         productName,
         winerimId: String(winerimId),
-        nameDisambiguators: [formatWine.vintage || formatWine.raw_payload?.vintage].filter(Boolean),
-        renderXml: (finalProductName: string) => {
-          const buttonText = agoraProductButtonText(connection, finalProductName, 20);
+        vintage: formatWine.vintage ?? formatWine.raw_payload?.vintage ?? null,
+        renderXml: (finalProductName: string, finalButtonText: string) => {
+          const buttonText = String(finalButtonText || "").slice(0, 20);
           const productColor = agoraProductColor(connection, wineType);
           return `    <Product Id="${productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${preparationPair.typeId}" PreparationOrderId="${preparationPair.orderId}" CostPrice="${costPrice}">
       <Prices>
@@ -4920,26 +4933,36 @@ ${costPricesXml}
     productEntries.sort((a, b) => a.wineName.localeCompare(b.wineName, "es") || a.formatOrder - b.formatOrder);
   }
 
-  const duplicateSafeProductNames = buildDuplicateSafeAgoraProductNames(
+  const duplicateSafeProductLabels = buildDuplicateSafeAgoraProductLabels(
     productEntries.map((entry) => ({
       productId: entry.productId,
       baseName: entry.productName,
       winerimId: entry.winerimId,
-      disambiguators: entry.nameDisambiguators,
+      vintage: entry.vintage,
     })),
     existingProducts,
+    { vintageDisambiguationProductIds: agoraVintageDisambiguationProductIds(connection) },
   );
 
+  const productLabelsById: Record<string, { name: string; buttonText: string }> = {};
   const nextOrderByFamily = new Map<string, number>();
   // The Higuerón policy numbers each family independently. Other modes retain
   // their current XML ordering semantics and are normalized post-write when needed.
   const productXmls = productEntries.map((entry, idx) => {
-    const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductNames[entry.productId] || entry.productName;
+    const duplicateSafeProductLabel = duplicateSafeProductLabels[entry.productId] || {
+      name: entry.productName,
+      buttonText: agoraProductButtonText(connection, entry.productName, 20),
+    };
+    const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductLabel.name;
+    const finalButtonText = productNameOverrides?.[entry.productId]
+      ? agoraProductButtonText(connection, finalProductName, 20)
+      : duplicateSafeProductLabel.buttonText;
     const nextOrder = useAlphabeticalWineNameSort
       ? (nextOrderByFamily.get(entry.familyId) || 0) + 1
       : idx + 1;
     if (useAlphabeticalWineNameSort) nextOrderByFamily.set(entry.familyId, nextOrder);
-    return entry.renderXml(finalProductName).replace('<Product Id=', `<Product Order="${nextOrder}" Id=`);
+    productLabelsById[entry.productId] = { name: finalProductName, buttonText: finalButtonText };
+    return entry.renderXml(finalProductName, finalButtonText).replace('<Product Id=', `<Product Order="${nextOrder}" Id=`);
   });
 
   if (productXmls.length > 0) {
@@ -4949,7 +4972,7 @@ ${costPricesXml}
   }
   xml += `</Import>`;
 
-  return { xml, validationResults };
+  return { xml, validationResults, productLabelsById };
 }
 
 // ── PARSE AGORA IMPORT RESPONSE ──
@@ -9756,7 +9779,7 @@ ${costPricesXml}
 
       const geoConfigPreview = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
       const isGeoModePreview = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigPreview;
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModePreview ? geoConfigPreview : undefined, isGeoModePreview ? wines : undefined);
+      const { xml, validationResults, productLabelsById } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModePreview ? geoConfigPreview : undefined, isGeoModePreview ? wines : undefined);
 
       // PRIORITY 7: Include source data summary for preview transparency
       const sourceDataSummary = wines.map((w: any) => ({
@@ -9793,6 +9816,7 @@ ${costPricesXml}
           xml,
           xmlHash: previewXmlHash,
           priceListCountByProduct: previewPricesByProduct,
+          productLabelsById,
           wineCount: wines.length,
           validationResults,
           sourceDataSummary,
@@ -9833,11 +9857,11 @@ ${costPricesXml}
 
       const geoConfigBulk = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
       const isGeoModeBulk = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfigBulk;
-      const { xml, validationResults } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModeBulk ? geoConfigBulk : undefined, isGeoModeBulk ? wines : undefined);
+      const { xml, validationResults, productLabelsById } = generateImportXml(wines, masterData, connection, formatTypes, customFamilyMappings, false, isGeoModeBulk ? geoConfigBulk : undefined, isGeoModeBulk ? wines : undefined);
 
       if (dryRun) {
         return new Response(
-          JSON.stringify({ success: true, dryRun: true, xml, validationResults }),
+          JSON.stringify({ success: true, dryRun: true, xml, validationResults, productLabelsById }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -9895,7 +9919,7 @@ ${costPricesXml}
             : fmt === "GLASS" 
             ? String(700000 + Number(wine.winerim_id || 0))
             : String(500000 + Number(wine.winerim_id || 0));
-          const productName = formatProductName(fmt, wine.name);
+          const productName = productLabelsById[agoraProductId]?.name || formatProductName(fmt, wine.name);
 
           await supabase.from("product_mappings").upsert({
             connection_id: connectionId,

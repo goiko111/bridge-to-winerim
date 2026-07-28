@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAgoraButtonText,
+  buildDuplicateSafeAgoraProductLabels,
   buildDuplicateSafeAgoraProductNames,
   normalizeAgoraProductNameKey,
 } from "../../supabase/functions/_shared/agoraProductNaming";
@@ -27,6 +29,92 @@ describe("Agora product naming", () => {
     expect(names["739408"]).toBe("B Alion 408");
   });
 
+  it("prefers vintage suffixes for duplicated generated names", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels([
+      { productId: 710280, baseName: "B Chateau Violet-Lamothe", winerimId: 210280, vintage: 2022 },
+      { productId: 713744, baseName: "B Chateau Violet-Lamothe", winerimId: 213744, vintage: 2020 },
+    ]);
+
+    expect(labels["710280"].name).toBe("B Chateau Violet-Lamothe 2022");
+    expect(labels["713744"].name).toBe("B Chateau Violet-Lamothe 2020");
+    expect(labels["710280"].buttonText).toBe("B Chateau Viole 2022");
+    expect(labels["713744"].buttonText).toBe("B Chateau Viole 2020");
+    expect(labels["710280"].buttonText).toHaveLength(20);
+    expect(labels["713744"].buttonText).toHaveLength(20);
+  });
+
+  it("keeps vintage visible in ButtonText for long duplicated product names", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels([
+      { productId: 713873, baseName: "B Jacques Prieur Beaune Champs Pimont 1er Cru.", winerimId: 213873, vintage: 2017 },
+      { productId: 713874, baseName: "B Jacques Prieur Beaune Champs Pimont 1er Cru.", winerimId: 213874, vintage: 2018 },
+    ]);
+
+    expect(labels["713873"].name).toBe("B Jacques Prieur Beaune Champs Pimont 1er Cru. 2017");
+    expect(labels["713874"].name).toBe("B Jacques Prieur Beaune Champs Pimont 1er Cru. 2018");
+    expect(labels["713873"].buttonText).toBe("B Jacques Prieu 2017");
+    expect(labels["713874"].buttonText).toBe("B Jacques Prieu 2018");
+    expect(labels["713873"].buttonText).toHaveLength(20);
+    expect(labels["713874"].buttonText).toHaveLength(20);
+  });
+
+  it("keeps fallback technical names stable when vintage is absent", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels([
+      { productId: 710280, baseName: "B Very Long Duplicate Wine Name", winerimId: 210280 },
+      { productId: 713744, baseName: "B Very Long Duplicate Wine Name", winerimId: 213744 },
+    ]);
+
+    expect(labels["710280"].name).toBe("B Very Long Duplicate Wine Name");
+    expect(labels["713744"].name).toBe("B Very Long Duplicate Wine Name 744");
+    expect(labels["710280"].buttonText).toBe("B Very Long Duplicat");
+    expect(labels["713744"].buttonText).toBe("B Very Long Duplicat");
+    expect(labels["713744"].buttonText).toHaveLength(20);
+  });
+
+  it("uses visible vintage suffixes by default for duplicated vintages", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels([
+      { productId: 709860, baseName: "B Dom Perignon Brut Vintage", winerimId: 209860, vintage: 2015 },
+      { productId: 709872, baseName: "B Dom Perignon Brut Vintage", winerimId: 209872, vintage: 2012 },
+    ]);
+
+    expect(labels["709860"].name).toBe("B Dom Perignon Brut Vintage 2015");
+    expect(labels["709872"].name).toBe("B Dom Perignon Brut Vintage 2012");
+    expect(labels["709860"].buttonText).toBe("B Dom Perigno 2015");
+    expect(labels["709872"].buttonText).toBe("B Dom Perigno 2012");
+  });
+
+  it("can keep duplicated vintages on the legacy technical suffix path when configured", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels(
+      [
+        { productId: 709860, baseName: "B Dom Perignon Brut Vintage", winerimId: 209860, vintage: 2015 },
+        { productId: 709872, baseName: "B Dom Perignon Brut Vintage", winerimId: 209872, vintage: 2012 },
+      ],
+      [],
+      { preferVintageForDuplicateNames: false },
+    );
+
+    expect(labels["709860"].name).toBe("B Dom Perignon Brut Vintage");
+    expect(labels["709872"].name).toBe("B Dom Perignon Brut Vintage 872");
+    expect(labels["709860"].buttonText).toBe("B Dom Perignon Brut ");
+    expect(labels["709872"].buttonText).toBe("B Dom Perignon Brut ");
+  });
+
+  it("falls back to a technical suffix when duplicate vintages do not distinguish names", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels([
+      { productId: 710280, baseName: "B Same Vintage Wine", winerimId: 210280, vintage: 2022 },
+      { productId: 713744, baseName: "B Same Vintage Wine", winerimId: 213744, vintage: 2022 },
+    ]);
+
+    expect(labels["710280"].name).toBe("B Same Vintage Wine 2022");
+    expect(labels["713744"].name).toBe("B Same Vintage Wine 744");
+    expect(labels["710280"].buttonText).toContain("2022");
+    expect(labels["713744"].buttonText).toBe("B Same Vintage Wine ");
+  });
+
+  it("preserves format prefix and suffix when building short ButtonText", () => {
+    expect(buildAgoraButtonText("C Extremely Long Wine Name", "C Extremely Long Wine Name 2021", "2021")).toBe("C Extremely Lon 2021");
+    expect(buildAgoraButtonText("M Extremely Long Wine Name", "M Extremely Long Wine Name 999", "999")).toBe("M Extremely Long 999");
+  });
+
   it("suffixes a generated name when the same name belongs to another existing product", () => {
     const names = buildDuplicateSafeAgoraProductNames(
       [{ productId: 739276, baseName: "B Alion", winerimId: 239276 }],
@@ -36,51 +124,25 @@ describe("Agora product naming", () => {
     expect(names["739276"]).toBe("B Alion 276");
   });
 
-  it("prefers a human vintage before falling back to an id suffix", () => {
-    const names = buildDuplicateSafeAgoraProductNames(
-      [{ productId: 665408, baseName: "B Prado Enea Gran Reserva", winerimId: 165408, disambiguators: [1998] }],
-      [{ Id: 665407, Name: "B Prado Enea Gran Reserva" }],
+  it("prefers vintage over technical suffix when a product has an external base-name collision", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels(
+      [{ productId: 739276, baseName: "B Alion", winerimId: 239276, vintage: 2020 }],
+      [{ Id: 739259, Name: "B Alion" }],
     );
 
-    expect(names["665408"]).toBe("B Prado Enea Gran Reserva 1998");
+    expect(labels["739276"].name).toBe("B Alion 2020");
+    expect(labels["739276"].buttonText).toBe("B Alion 2020");
   });
 
-  it("preserves the suffix already stored for the same product id", () => {
-    const names = buildDuplicateSafeAgoraProductNames(
-      [{ productId: 665408, baseName: "B Prado Enea Gran Reserva", winerimId: 165408, disambiguators: [1998] }],
-      [
-        { Id: 665407, Name: "B Prado Enea Gran Reserva" },
-        { Id: 665408, Name: "B Prado Enea Gran Reserva 408" },
-      ],
+  it("uses the technical suffix for products with an external base-name collision when configured", () => {
+    const labels = buildDuplicateSafeAgoraProductLabels(
+      [{ productId: 739276, baseName: "B Alion", winerimId: 239276, vintage: 2020 }],
+      [{ Id: 739259, Name: "B Alion" }],
+      { preferVintageForDuplicateNames: false },
     );
 
-    expect(names["665408"]).toBe("B Prado Enea Gran Reserva 408");
-  });
-
-  it("reassigns the base name deterministically when a generated sibling currently owns it", () => {
-    const names = buildDuplicateSafeAgoraProductNames(
-      [
-        { productId: 656631, baseName: "B Ho·be", winerimId: 156631, disambiguators: [2019] },
-        { productId: 670910, baseName: "B Ho·be", winerimId: 170910, disambiguators: [2019] },
-      ],
-      [
-        { Id: 656631, Name: "B Ho·be 2019" },
-        { Id: 670910, Name: "B Ho·be" },
-      ],
-    );
-
-    expect(names["656631"]).toBe("B Ho·be");
-    expect(names["670910"]).toBe("B Ho·be 910");
-  });
-
-  it("uses a human vintage when it uniquely distinguishes generated siblings", () => {
-    const names = buildDuplicateSafeAgoraProductNames([
-      { productId: 656730, baseName: "B Remelluri Reserva", winerimId: 156730, disambiguators: [2016] },
-      { productId: 656738, baseName: "B Remelluri Reserva", winerimId: 156738, disambiguators: [2010] },
-    ]);
-
-    expect(names["656730"]).toBe("B Remelluri Reserva");
-    expect(names["656738"]).toBe("B Remelluri Reserva 2010");
+    expect(labels["739276"].name).toBe("B Alion 276");
+    expect(labels["739276"].buttonText).toBe("B Alion 276");
   });
 
   it("allows keeping the same name when updating the same existing product", () => {
@@ -90,15 +152,6 @@ describe("Agora product naming", () => {
     );
 
     expect(names["739259"]).toBe("B Alion");
-  });
-
-  it("removes an obsolete suffix when no other current product owns the base name", () => {
-    const names = buildDuplicateSafeAgoraProductNames(
-      [{ productId: 763514, baseName: "B Allende Blanco", winerimId: 263514 }],
-      [{ Id: 763514, Name: "B Allende Blanco 514" }],
-    );
-
-    expect(names["763514"]).toBe("B Allende Blanco");
   });
 
   it("normalizes spacing and case when checking collisions", () => {
