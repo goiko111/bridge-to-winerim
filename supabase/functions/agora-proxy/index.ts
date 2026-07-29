@@ -4257,7 +4257,7 @@ function buildQueuedProductNameOverrides(
     productId: string;
     baseName: string;
     winerimId: string;
-    disambiguators: Array<string | number | null | undefined>;
+    vintage: string | number | null | undefined;
   }>();
 
   for (const wine of winesById.values()) {
@@ -4272,7 +4272,7 @@ function buildQueuedProductNameOverrides(
         productId,
         baseName: formatProductName(format, String(wine.name || "")),
         winerimId: String(wine.winerim_id || wine.id || ""),
-        disambiguators: [wine.vintage || wine.raw_payload?.vintage],
+        vintage: wine.vintage || wine.raw_payload?.vintage,
       });
     }
   }

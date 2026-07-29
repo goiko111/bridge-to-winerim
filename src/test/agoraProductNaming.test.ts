@@ -78,8 +78,8 @@ describe("Agora product naming", () => {
 
     expect(labels["709860"].name).toBe("B Dom Perignon Brut Vintage 2015");
     expect(labels["709872"].name).toBe("B Dom Perignon Brut Vintage 2012");
-    expect(labels["709860"].buttonText).toBe("B Dom Perigno 2015");
-    expect(labels["709872"].buttonText).toBe("B Dom Perigno 2012");
+    expect(labels["709860"].buttonText).toBe("B Dom Perignon 2015");
+    expect(labels["709872"].buttonText).toBe("B Dom Perignon 2012");
   });
 
   it("can keep duplicated vintages on the legacy technical suffix path when configured", () => {
