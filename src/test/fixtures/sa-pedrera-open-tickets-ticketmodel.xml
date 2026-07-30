@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Export>
+  <Tickets>
+    <TicketModel GlobalId="fixture-ticket-1" BusinessDay="2026-07-29" Guests="4" Date="" VatIncluded="true">
+      <User Id="3" Name="[REDACTED]" />
+      <Table Id="24" Name="Terraza" />
+      <Totals GrossAmount="373.00" NetAmount="339.09" VatAmount="33.91" />
+      <Lines>
+        <Line Index="14" CreationDate="2026-07-29T20:14:05" Type="Standard" ParentIndex="" ProductId="547593" ProductName="B B349 - Soverribas Albariño" SaleFormatId="547593" SaleFormatName="B B349 - Soverribas Albariño" SaleFormatRatio="1.00" ProductPrice="67.00" VatId="3" ProductCostPrice="" MenuGroup="" PreparationTypeId="1" PreparationTypeName="Barra" PLU="" FamilyId="904241" FamilyName="BLANCOS WINERIM" PreparationOrderId="1" PreparationOrderName="Bebidas" Quantity="1.00" UnitCostPrice="" TotalCostPrice="" UserId="3" UnitPrice="67.00" DiscountRate="0.00" CashDiscount="0.00" OfferId="" OfferCode="" TotalAmount="67.00" PriceListId="1" />
+        <Line Index="15" CreationDate="2026-07-29T20:15:37" Type="Standard" ParentIndex="" ProductId="0" ProductName="copa Muga" SaleFormatId="0" SaleFormatName="copa Muga" SaleFormatRatio="1.00" ProductPrice="12.00" VatId="3" ProductCostPrice="" MenuGroup="" PreparationTypeId="1" PreparationTypeName="Barra" PLU="" FamilyId="" FamilyName="" PreparationOrderId="1" PreparationOrderName="Bebidas" Quantity="1.00" UnitCostPrice="" TotalCostPrice="" UserId="3" UnitPrice="12.00" DiscountRate="0.00" CashDiscount="0.00" OfferId="" OfferCode="" TotalAmount="12.00" PriceListId="1" />
+      </Lines>
+    </TicketModel>
+  </Tickets>
+</Export>

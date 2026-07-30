@@ -22,6 +22,10 @@ import {
   withAgoraOperationalMetadata,
 } from "../_shared/agoraSales.ts";
 import {
+  countXmlOpenTickets,
+  parseOpenTickets,
+} from "../_shared/agoraOpenTickets.ts";
+import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
@@ -786,18 +790,6 @@ function parseInvoices(raw: any): any[] {
   if (Array.isArray(raw)) return raw;
   if (raw.Invoices && Array.isArray(raw.Invoices)) return raw.Invoices;
   if (raw.Data?.Invoices && Array.isArray(raw.Data.Invoices)) return raw.Data.Invoices;
-  for (const key of Object.keys(raw)) {
-    if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
-  }
-  return [];
-}
-
-// deno-lint-ignore no-explicit-any
-function parseOpenTickets(raw: any): any[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (raw.Tickets && Array.isArray(raw.Tickets)) return raw.Tickets;
-  if (raw.Data?.Tickets && Array.isArray(raw.Data.Tickets)) return raw.Data.Tickets;
   for (const key of Object.keys(raw)) {
     if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
   }
@@ -5281,15 +5273,16 @@ serve(async (req) => {
               payloadKeys = Object.keys(parsed).slice(0, 12);
             }
           } catch (e) {
-            parseError = `json_parse_error:${String((e as Error).message || e).slice(0, 120)}`;
+            tickets = parseOpenTickets(text);
+            if (!tickets.length) {
+              parseError = `json_parse_error:${String((e as Error).message || e).slice(0, 120)}`;
+            }
           }
         }
 
         const sample = tickets[0] || null;
         const sampleLines = Array.isArray(sample?.Lines) ? sample.Lines.length : 0;
-        const xmlTicketCount = !tickets.length && text.includes("<Ticket")
-          ? (text.match(/<Ticket\b/g) || []).length
-          : 0;
+        const xmlTicketCount = text.includes("<Ticket") ? countXmlOpenTickets(text) : 0;
 
         return new Response(JSON.stringify({
           success: r.ok && !parseError,
@@ -5345,18 +5338,21 @@ serve(async (req) => {
       }
 
       let rawData: any;
+      let tickets: any[] = [];
       try {
         rawData = text.trim() ? JSON.parse(text) : [];
+        tickets = parseOpenTickets(rawData);
       } catch (e) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: "Agora open tickets did not return JSON",
-          details: String((e as Error).message || e),
-          bodyPreview: text.substring(0, 300),
-        }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        tickets = parseOpenTickets(text);
+        if (!tickets.length) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: "Agora open tickets did not return JSON or supported XML",
+            details: String((e as Error).message || e),
+            bodyPreview: text.substring(0, 300),
+          }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
       }
-
-      const tickets = parseOpenTickets(rawData);
 
       const { data: familyRules } = await supabase
         .from("wine_family_rules")
