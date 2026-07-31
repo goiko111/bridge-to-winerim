@@ -39,4 +39,15 @@ describe("catalog auto-push regressions", () => {
       ...stableDbOrder.slice(2, 4),
     ]).toEqual(stableDbOrder);
   });
+
+  it("uses bulk wine details before the individual fallback", () => {
+    expect(winerimSource).toContain("/wines/bulk");
+    expect(winerimSource).toContain("const bulkSize = 100");
+    expect(winerimSource).toContain("body: JSON.stringify({ ids: numericIds })");
+
+    const bulkCall = winerimSource.indexOf("/wines/bulk");
+    const individualFallback = winerimSource.indexOf("const fallbackIds = Array.from(unresolved)");
+    expect(bulkCall).toBeGreaterThan(-1);
+    expect(individualFallback).toBeGreaterThan(bulkCall);
+  });
 });

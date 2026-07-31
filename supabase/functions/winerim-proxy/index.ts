@@ -365,40 +365,89 @@ async function fetchWineDetails(
   const details = new Map<string, Record<string, unknown>>();
   const failures = new Map<string, string>();
   const attempted = wineIds.length;
-  let succeeded = 0;
-  let failed = 0;
+  const unresolved = new Set(wineIds.map(String));
+  const bulkSize = 100;
 
-  const totalBatches = Math.ceil(wineIds.length / concurrency);
+  for (let offset = 0; offset < wineIds.length; offset += bulkSize) {
+    const batch = wineIds.slice(offset, offset + bulkSize);
+    const numericIds = batch.map(Number).filter(Number.isFinite);
+    let bulkSucceeded = false;
 
-  for (let i = 0; i < wineIds.length; i += concurrency) {
-    const batch = wineIds.slice(i, i + concurrency);
-    await Promise.all(
-      batch.map(async (id) => {
-        const result = await fetchWineDetail(id, headers);
-        if (result.wine) {
-          details.set(id, result.wine);
-          succeeded++;
-        } else {
-          failures.set(id, result.failureReason || "unknown");
-          failed++;
+    if (numericIds.length === batch.length) {
+      for (let retry = 0; retry <= 3; retry++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort("timeout"), 20000);
+        try {
+          const response = await fetch(`${WINERIM_BASE_URL}/wines/bulk`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ ids: numericIds }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (response.status === 429 || response.status === 503) {
+            if (retry < 3) {
+              await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * (2 ** retry), 4000)));
+              continue;
+            }
+            break;
+          }
+
+          if (!response.ok) break;
+
+          const payload = await response.json();
+          const wines = Array.isArray(payload?.wines) ? payload.wines : [];
+          for (const wine of wines as Record<string, unknown>[]) {
+            const id = String(wine.id || "");
+            if (!id || !unresolved.has(id)) continue;
+            details.set(id, wine);
+            unresolved.delete(id);
+          }
+          bulkSucceeded = true;
+          break;
+        } catch (error) {
+          clearTimeout(timeout);
+          if (retry >= 3) {
+            console.error(`[winerim-proxy] bulk wine detail failed at offset ${offset}:`, error);
+          }
         }
-      }),
-    );
-
-    const processed = Math.min(i + concurrency, wineIds.length);
-    const batchNo = Math.floor(i / concurrency) + 1;
-    console.log(
-      `[winerim-proxy] detail progress batch ${batchNo}/${totalBatches} ` +
-      `processed=${processed}/${wineIds.length} succeeded=${succeeded} failed=${failed}`,
-    );
-
-    // Small delay between batches to avoid rate limiting
-    if (i + concurrency < wineIds.length) {
-      await new Promise((r) => setTimeout(r, 120));
+      }
     }
+
+    console.log(
+      `[winerim-proxy] bulk detail offset=${offset} requested=${batch.length} ` +
+      `resolved=${batch.filter((id) => details.has(String(id))).length} success=${bulkSucceeded}`,
+    );
   }
 
-  return { details, failures, attempted, succeeded, failed };
+  // Preserve the established endpoint probing as a narrow fallback for IDs
+  // omitted by a partial bulk response or while the bulk endpoint is degraded.
+  const fallbackIds = Array.from(unresolved);
+  for (let offset = 0; offset < fallbackIds.length; offset += concurrency) {
+    const batch = fallbackIds.slice(offset, offset + concurrency);
+    await Promise.all(batch.map(async (id) => {
+      const result = await fetchWineDetail(id, headers);
+      if (result.wine) {
+        details.set(id, result.wine);
+        unresolved.delete(id);
+      } else {
+        failures.set(id, result.failureReason || "unknown");
+      }
+    }));
+  }
+
+  for (const id of unresolved) {
+    if (!failures.has(id)) failures.set(id, "detail_fetch_failed");
+  }
+
+  return {
+    details,
+    failures,
+    attempted,
+    succeeded: details.size,
+    failed: failures.size,
+  };
 }
 
 serve(async (req) => {
