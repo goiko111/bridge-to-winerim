@@ -836,10 +836,14 @@ serve(async (req) => {
         );
       }
 
+      // Snapshot the cached values before the remote detail request. Catalog
+      // batches may overlap after pg_net chaining; loading the "previous" row
+      // after the network call lets another batch write the new price first and
+      // makes both batches miss the UPDATE candidate.
+      const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
       const detailsResult = batchWineIds.length > 0
         ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
         : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
-      const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
 
       console.log(
         `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +

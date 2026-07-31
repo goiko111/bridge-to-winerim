@@ -80,4 +80,11 @@ describe("catalog auto-push regressions", () => {
     expect(previousLookup).toBeGreaterThan(-1);
     expect(listUpsert).toBeGreaterThan(previousLookup);
   });
+
+  it("snapshots old catalog values before the remote detail request", () => {
+    const previousDetails = winerimSource.indexOf("const existingBeforeDetails = await loadExistingWineRows(batchWineIds)");
+    const remoteDetails = winerimSource.indexOf("await fetchWineDetails(batchWineIds, winerimHeaders, 5)");
+    expect(previousDetails).toBeGreaterThan(-1);
+    expect(remoteDetails).toBeGreaterThan(previousDetails);
+  });
 });
