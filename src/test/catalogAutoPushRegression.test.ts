@@ -57,4 +57,16 @@ describe("catalog auto-push regressions", () => {
     expect(winerimSource).toContain("runWithConcurrency(detailUpdates, 25");
     expect(winerimSource).toContain("runWithConcurrency(detailFailures, 25");
   });
+
+  it("fails loudly when the catalog dispatcher cannot invoke Agora", () => {
+    expect(winerimSource).toContain("async function invokeInternalFunctionJson");
+    expect(winerimSource).toContain("if (!response.ok)");
+    expect(winerimSource).toContain("returned HTTP ${response.status}");
+
+    const catalogStart = winerimSource.indexOf('if (action === "fetch-catalog")');
+    const catalogEnd = winerimSource.indexOf("// ── FETCH WINE DETAILS", catalogStart);
+    const catalogBlock = winerimSource.slice(catalogStart, catalogEnd);
+    expect(catalogBlock.match(/invokeInternalFunctionJson\(supabaseUrl, supabaseKey, "agora-proxy"/g) || [])
+      .toHaveLength(3);
+  });
 });

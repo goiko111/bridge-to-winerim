@@ -16,6 +16,35 @@ const corsHeaders = {
 
 const WINERIM_BASE_URL = "https://app.winerim.com/api/v2";
 
+async function invokeInternalFunctionJson(
+  supabaseUrl: string,
+  serviceKey: string,
+  functionName: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceKey}`,
+      apikey: serviceKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `${functionName} returned HTTP ${response.status}: ${responseText.slice(0, 300)}`,
+    );
+  }
+  if (!responseText.trim()) return {};
+  try {
+    return JSON.parse(responseText) as Record<string, unknown>;
+  } catch {
+    throw new Error(`${functionName} returned a non-JSON response`);
+  }
+}
+
 // ── Fuzzy matching helpers ──
 function normalize(s: string): string {
   return s.toLowerCase()
@@ -963,8 +992,11 @@ serve(async (req) => {
             let hidQueuedTotal = 0;
 
             if (autoCreateIds.length > 0 && conn?.auto_push_on_create === true) {
-              const { data: createData } = await supabase.functions.invoke("agora-proxy", {
-                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoCreateIds, eventType: "CREATE" },
+              const createData = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+                action: "evaluate-auto-push",
+                connectionId,
+                winerimWineIds: autoCreateIds,
+                eventType: "CREATE",
               });
               parts.push({ eventType: "CREATE", ids: autoCreateIds.length, result: createData });
               queuedTotal += Number(createData?.queued || 0);
@@ -972,8 +1004,11 @@ serve(async (req) => {
             }
 
             if (autoUpdateIds.length > 0 && conn?.auto_push_on_update === true) {
-              const { data: updateData } = await supabase.functions.invoke("agora-proxy", {
-                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoUpdateIds, eventType: "UPDATE" },
+              const updateData = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+                action: "evaluate-auto-push",
+                connectionId,
+                winerimWineIds: autoUpdateIds,
+                eventType: "UPDATE",
               });
               parts.push({ eventType: "UPDATE", ids: autoUpdateIds.length, result: updateData });
               queuedTotal += Number(updateData?.queued || 0);
@@ -990,8 +1025,10 @@ serve(async (req) => {
             console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
 
             if (queuedTotal > 0 || hidQueuedTotal > 0) {
-              await supabase.functions.invoke("agora-proxy", {
-                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
+              await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+                action: "process-xml-outbound-queue",
+                connectionId,
+                serverLoop: true,
               });
             }
           } else {
