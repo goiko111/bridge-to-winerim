@@ -684,10 +684,29 @@ serve(async (req) => {
           }
         }
 
-        batchWineIds = wines
-          .map((w) => String(w.id || ""))
-          .filter(Boolean)
-          .slice(detailOffset, detailOffset + detailBatchSize);
+        // Start and enrich must page over the same ordered relation. Previously,
+        // start used Winerim API order while enrich resumed at offset 100 in DB
+        // order, permanently skipping whichever wines occupied DB positions 0-99.
+        const { count, error: countError } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id", { count: "exact", head: true })
+          .eq("connection_id", connectionId);
+        if (countError) throw countError;
+        totalWines = count || 0;
+
+        const { data: batchRows, error: batchRowsError } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, raw_payload")
+          .eq("connection_id", connectionId)
+          .order("winerim_id")
+          .range(detailOffset, detailOffset + detailBatchSize - 1);
+        if (batchRowsError) throw batchRowsError;
+
+        const rows = batchRows || [];
+        batchWineIds = rows.map((row: any) => String(row.winerim_id)).filter(Boolean);
+        for (const row of rows) {
+          baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+        }
       } else {
         const { count } = await supabase
           .from("winerim_wines")
