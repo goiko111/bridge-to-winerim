@@ -1177,6 +1177,20 @@ serve(async (req) => {
         );
       }
 
+      const autoPushDryRun = body.dryRun === true;
+
+      // Snapshot the full comparable state before the remote read. This action
+      // is also used by the post-catalog self-healing pass, so it must detect
+      // READY -> READY price changes instead of only MISSING -> READY creates.
+      const { data: priorRows } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, wine_type, serve_by_glass, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price, pricing_status")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", targetIds);
+      const priorById = new Map<string, Record<string, unknown>>(
+        (priorRows || []).map((r: any) => [String(r.winerim_id), r])
+      );
+
       console.log(`Fetching details for ${targetIds.length} wines...`);
       const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5);
 
@@ -1184,16 +1198,15 @@ serve(async (req) => {
       const failureReasons: Record<string, number> = {};
       const fieldsDiscovered: string[] = [];
       const newlyReadyWineIds: string[] = []; // wines that just transitioned to READY
+      const changedReadyWineIds: string[] = [];
 
-      // Pre-fetch current pricing_status for the targets so we can detect transitions
-      const { data: priorRows } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, pricing_status")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", targetIds);
-      const priorStatus = new Map<string, string>(
-        (priorRows || []).map((r: any) => [String(r.winerim_id), String(r.pricing_status)])
-      );
+      const normalizedComparable = (value: unknown): string => {
+        if (value === null || value === undefined) return "__null__";
+        if (typeof value === "boolean") return value ? "true" : "false";
+        const numeric = Number(value);
+        if (value !== "" && Number.isFinite(numeric)) return numeric.toFixed(4);
+        return String(value).trim();
+      };
 
       // Process successful details
       for (const [winerimId, detail] of detailsResult.details) {
@@ -1239,6 +1252,7 @@ serve(async (req) => {
         const rawType = detail.type || detail.wine_type || detail.category || detail.style || detail.color;
         const updateData: Record<string, unknown> = {
           raw_payload: detail,
+          name: detail.name ? String(detail.name) : undefined,
           wine_type: rawType && typeof rawType === "string" ? String(rawType).toLowerCase() : undefined,
           bottle_sale_price: bottleSalePrice,
           bottle_purchase_price: toPositiveNumber(detail.bottle_purchase_price ?? detail.purchase_price ?? detail.cost_price ?? detail.cost),
@@ -1267,9 +1281,24 @@ serve(async (req) => {
         if (pricingStatus === "READY") {
           enriched++;
           // Track transition: was MISSING/FAILED/RETRYING/NOT_PUSHED → now READY
-          const prev = priorStatus.get(String(winerimId));
-          if (prev && prev !== "READY") {
+          const previous = priorById.get(String(winerimId));
+          const previousStatus = String(previous?.pricing_status || "");
+          if (previousStatus && previousStatus !== "READY") {
             newlyReadyWineIds.push(String(winerimId));
+          } else if (previousStatus === "READY") {
+            const changed = [
+              "name",
+              "wine_type",
+              "serve_by_glass",
+              "is_active",
+              "bottle_sale_price",
+              "glass_sale_price",
+              "magnum_sale_price",
+            ].some((field) =>
+              field in updateData &&
+              normalizedComparable(previous?.[field]) !== normalizedComparable(updateData[field])
+            );
+            if (changed) changedReadyWineIds.push(String(winerimId));
           }
         }
       }
@@ -1291,6 +1320,7 @@ serve(async (req) => {
       // without requiring manual intervention. Provider-agnostic: only queues for
       // providers whose proxy supports queue-xml-outbound (currently Agora).
       let autoQueued = 0;
+      let autoUpdated = 0;
       let autoQueueError: string | null = null;
       if (newlyReadyWineIds.length > 0) {
         try {
@@ -1300,21 +1330,49 @@ serve(async (req) => {
             .eq("id", connectionId).maybeSingle();
 
           if (conn?.provider === "agora") {
-            const { data: q, error: qErr } = await supabase.functions.invoke("agora-proxy", {
-              body: {
-                action: "evaluate-auto-push",
-                connectionId,
-                winerimWineIds: newlyReadyWineIds,
-                eventType: "CREATE",
-              },
+            const q = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+              action: "evaluate-auto-push",
+              connectionId,
+              winerimWineIds: newlyReadyWineIds,
+              eventType: "CREATE",
+              dryRun: autoPushDryRun,
             });
-            if (qErr) autoQueueError = qErr.message || String(qErr);
-            else autoQueued = q?.queued ?? newlyReadyWineIds.length;
+            autoQueued = Number(q?.queued || 0);
             console.log(`[fetch-wine-details] Auto-queued ${autoQueued} newly-READY wines for ${connectionId}`);
           }
         } catch (e) {
           autoQueueError = String(e);
           console.error(`[fetch-wine-details] auto-queue failed:`, e);
+        }
+      }
+
+      if (changedReadyWineIds.length > 0) {
+        try {
+          const { data: conn } = await supabase
+            .from("pos_connections")
+            .select("provider, auto_push_on_update")
+            .eq("id", connectionId).maybeSingle();
+          if (conn?.provider === "agora" && conn?.auto_push_on_update === true) {
+            const q = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+              action: "evaluate-auto-push",
+              connectionId,
+              winerimWineIds: changedReadyWineIds,
+              eventType: "UPDATE",
+              dryRun: autoPushDryRun,
+            });
+            autoUpdated = Number(autoPushDryRun ? q?.wouldQueue || 0 : q?.queued || 0);
+            if (!autoPushDryRun && Number(q?.queued || 0) > 0) {
+              await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
+                action: "process-xml-outbound-queue",
+                connectionId,
+                serverLoop: true,
+              });
+            }
+            console.log(`[fetch-wine-details] Auto-updated ${autoUpdated} changed READY wines for ${connectionId}`);
+          }
+        } catch (e) {
+          autoQueueError = String(e);
+          console.error(`[fetch-wine-details] auto-update failed:`, e);
         }
       }
 
@@ -1330,7 +1388,10 @@ serve(async (req) => {
           failureReasons,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
           newlyReadyWineIds,
+          changedReadyWineIds,
           autoQueued,
+          autoUpdated,
+          dryRun: autoPushDryRun,
           autoQueueError,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

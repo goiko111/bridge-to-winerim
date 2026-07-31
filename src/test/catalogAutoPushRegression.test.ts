@@ -87,4 +87,12 @@ describe("catalog auto-push regressions", () => {
     expect(previousDetails).toBeGreaterThan(-1);
     expect(remoteDetails).toBeGreaterThan(previousDetails);
   });
+
+  it("routes READY price changes through UPDATE, including self-healing", () => {
+    expect(winerimSource).toContain("const changedReadyWineIds: string[] = []");
+    expect(winerimSource).toContain("changedReadyWineIds.push(String(winerimId))");
+    expect(winerimSource).toContain('eventType: "UPDATE"');
+    expect(winerimSource).toContain("dryRun: autoPushDryRun");
+    expect(winerimSource).toContain("autoUpdated");
+  });
 });
