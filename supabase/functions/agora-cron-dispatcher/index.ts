@@ -106,6 +106,7 @@ Deno.serve(async (req: Request) => {
       if (job === "catalog") {
         return [
           { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "sync-master-data", connectionId: connection.id } },
+          { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-wine-details", connectionId: connection.id, trackedUpdatesOnly: true } },
           { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
         ];
       }

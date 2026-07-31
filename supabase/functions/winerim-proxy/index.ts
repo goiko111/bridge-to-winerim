@@ -1155,11 +1155,26 @@ serve(async (req) => {
     // ── FETCH WINE DETAILS (standalone, for enriching existing wines) ──
     if (action === "fetch-wine-details") {
       const { winerimWineIds } = body;
+      const trackedUpdatesOnly = body.trackedUpdatesOnly === true;
       
       // If specific IDs provided, use those. Otherwise fetch wines with non-READY pricing.
       let targetIds: string[] = winerimWineIds || [];
+
+      if (targetIds.length === 0 && trackedUpdatesOnly) {
+        const { data: trackedRows, error: trackedRowsError } = await supabase
+          .from("winerim_push_tracking")
+          .select("winerim_wine_id")
+          .eq("connection_id", connectionId)
+          .eq("source", "WINERIM")
+          .in("sync_status", ["VERIFIED", "PUSHED"])
+          .limit(1000);
+        if (trackedRowsError) throw trackedRowsError;
+        targetIds = Array.from(new Set(
+          (trackedRows || []).map((row: any) => String(row.winerim_wine_id || "")).filter(Boolean),
+        ));
+      }
       
-      if (targetIds.length === 0) {
+      if (targetIds.length === 0 && !trackedUpdatesOnly) {
         const { data: missingWines } = await supabase
           .from("winerim_wines")
           .select("winerim_id, pricing_status")
@@ -1392,6 +1407,7 @@ serve(async (req) => {
           autoQueued,
           autoUpdated,
           dryRun: autoPushDryRun,
+          trackedUpdatesOnly,
           autoQueueError,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

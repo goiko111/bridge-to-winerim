@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const repoRoot = process.cwd();
 const agoraSource = readFileSync(resolve(repoRoot, "supabase/functions/agora-proxy/index.ts"), "utf8");
 const winerimSource = readFileSync(resolve(repoRoot, "supabase/functions/winerim-proxy/index.ts"), "utf8");
+const dispatcherSource = readFileSync(resolve(repoRoot, "supabase/functions/agora-cron-dispatcher/index.ts"), "utf8");
 
 describe("catalog auto-push regressions", () => {
   it("keeps every evaluate-auto-push mutation behind one dry-run barrier", () => {
@@ -94,5 +95,16 @@ describe("catalog auto-push regressions", () => {
     expect(winerimSource).toContain('eventType: "UPDATE"');
     expect(winerimSource).toContain("dryRun: autoPushDryRun");
     expect(winerimSource).toContain("autoUpdated");
+  });
+
+  it("refreshes published wines before the long catalog walk", () => {
+    expect(winerimSource).toContain("const trackedUpdatesOnly = body.trackedUpdatesOnly === true");
+    expect(winerimSource).toContain('.from("winerim_push_tracking")');
+    expect(winerimSource).toContain('.in("sync_status", ["VERIFIED", "PUSHED"])');
+
+    const trackedRefresh = dispatcherSource.indexOf('action: "fetch-wine-details", connectionId: connection.id, trackedUpdatesOnly: true');
+    const fullCatalog = dispatcherSource.indexOf('action: "fetch-catalog", connectionId: connection.id');
+    expect(trackedRefresh).toBeGreaterThan(-1);
+    expect(fullCatalog).toBeGreaterThan(trackedRefresh);
   });
 });
