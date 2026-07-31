@@ -69,4 +69,15 @@ describe("catalog auto-push regressions", () => {
     expect(catalogBlock.match(/invokeInternalFunctionJson\(supabaseUrl, supabaseKey, "agora-proxy"/g) || [])
       .toHaveLength(3);
   });
+
+  it("does not turn an enriched wine into a false CREATE candidate", () => {
+    expect(winerimSource).toContain('previous?.pricing_status === "READY"');
+    expect(winerimSource).toContain('pricingStatus = "READY"');
+    expect(winerimSource).toContain("routes real price changes through the CREATE path");
+
+    const previousLookup = winerimSource.indexOf("const previous = existingBeforeList.get(winerimId)");
+    const listUpsert = winerimSource.indexOf("listUpserts.push(upsertPayload)", previousLookup);
+    expect(previousLookup).toBeGreaterThan(-1);
+    expect(listUpsert).toBeGreaterThan(previousLookup);
+  });
 });

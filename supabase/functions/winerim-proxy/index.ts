@@ -661,6 +661,7 @@ serve(async (req) => {
         for (const w of wines) {
           const winerimId = String(w.id || "");
           if (!winerimId) continue;
+          const previous = existingBeforeList.get(winerimId);
 
           baseWineMap.set(winerimId, w);
 
@@ -688,6 +689,15 @@ serve(async (req) => {
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
           } else if (Array.isArray(w.prices)) {
             pricingMissingReason = "prices_array_empty";
+          }
+
+          // The list endpoint commonly omits prices. Do not downgrade an
+          // already-enriched wine to MISSING while its detail page is waiting
+          // for a later batch: that false READY -> MISSING -> READY transition
+          // routes real price changes through the CREATE path and loses UPDATE.
+          if (pricingStatus !== "READY" && previous?.pricing_status === "READY") {
+            pricingStatus = "READY";
+            pricingMissingReason = null;
           }
 
           const upsertPayload: Record<string, unknown> = {
@@ -723,7 +733,6 @@ serve(async (req) => {
           if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
-          const previous = existingBeforeList.get(winerimId);
           if (!previous && pricingStatus === "READY") {
             autoCreateCandidateIds.add(winerimId);
           } else if (hasRelevantCatalogChange(previous, upsertPayload)) {
