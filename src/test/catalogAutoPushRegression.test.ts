@@ -50,4 +50,11 @@ describe("catalog auto-push regressions", () => {
     expect(bulkCall).toBeGreaterThan(-1);
     expect(individualFallback).toBeGreaterThan(bulkCall);
   });
+
+  it("does not serialize every catalog cache write", () => {
+    expect(winerimSource).toContain("async function runWithConcurrency");
+    expect(winerimSource).toContain("runWithConcurrency(listUpserts, 25");
+    expect(winerimSource).toContain("runWithConcurrency(detailUpdates, 25");
+    expect(winerimSource).toContain("runWithConcurrency(detailFailures, 25");
+  });
 });

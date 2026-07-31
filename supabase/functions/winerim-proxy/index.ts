@@ -356,6 +356,16 @@ interface FetchWineDetailsResult {
   failed: number;
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let offset = 0; offset < items.length; offset += concurrency) {
+    await Promise.all(items.slice(offset, offset + concurrency).map(worker));
+  }
+}
+
 // Batch fetch wine details with concurrency control + diagnostics
 async function fetchWineDetails(
   wineIds: string[],
@@ -607,6 +617,7 @@ serve(async (req) => {
       let totalWines = 0;
       let batchWineIds: string[] = [];
       const baseWineMap = new Map<string, Record<string, unknown>>();
+      const listUpserts: Record<string, unknown>[] = [];
 
       if (mode === "start") {
         const wines = await fetchAllWines(winerimHeaders);
@@ -690,12 +701,16 @@ serve(async (req) => {
             autoUpdateCandidateIds.add(winerimId);
           }
 
-          await supabase
-            .from("winerim_wines")
-            .upsert(upsertPayload, { onConflict: "connection_id,winerim_id" });
-
-          listWinesUpserted++;
+          listUpserts.push(upsertPayload);
         }
+
+        await runWithConcurrency(listUpserts, 25, async (payload) => {
+          const { error } = await supabase
+            .from("winerim_wines")
+            .upsert(payload, { onConflict: "connection_id,winerim_id" });
+          if (error) throw error;
+          listWinesUpserted++;
+        });
 
         // ── RECONCILIATION: detect wines deleted from Winerim ──
         // Any wine in our DB (still is_active=true) that no longer appears in /wines
@@ -796,6 +811,8 @@ serve(async (req) => {
       let detailsUpdated = 0;
       let winesUpdatedWithBottlePrice = 0;
       let winesUpdatedWithGlassPrice = 0;
+      const detailUpdates: { winerimId: string; updateData: Record<string, unknown> }[] = [];
+      const detailFailures: { winerimId: string; pricingStatus: string; failureReason: string }[] = [];
 
       for (const winerimId of batchWineIds) {
         const detail = detailsResult.details.get(winerimId);
@@ -803,11 +820,7 @@ serve(async (req) => {
           // Mark failed wines with pricing status
           const failureReason = detailsResult.failures.get(winerimId) || "detail_fetch_failed";
           const pricingStatus = failureReason === "503_from_winerim" ? "RETRYING" : "FAILED";
-          await supabase
-            .from("winerim_wines")
-            .update({ pricing_status: pricingStatus, pricing_missing_reason: failureReason })
-            .eq("connection_id", connectionId)
-            .eq("winerim_id", winerimId);
+          detailFailures.push({ winerimId, pricingStatus, failureReason });
           continue;
         }
 
@@ -879,14 +892,27 @@ serve(async (req) => {
           autoUpdateCandidateIds.add(winerimId);
         }
 
-        await supabase
+        detailUpdates.push({ winerimId, updateData });
+      }
+
+      await runWithConcurrency(detailFailures, 25, async ({ winerimId, pricingStatus, failureReason }) => {
+        const { error } = await supabase
+          .from("winerim_wines")
+          .update({ pricing_status: pricingStatus, pricing_missing_reason: failureReason })
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
+        if (error) throw error;
+      });
+
+      await runWithConcurrency(detailUpdates, 25, async ({ winerimId, updateData }) => {
+        const { error } = await supabase
           .from("winerim_wines")
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
-
+        if (error) throw error;
         detailsUpdated++;
-      }
+      });
 
       const processedDetails = Math.min(totalWines, detailOffset + batchWineIds.length);
       const remainingDetails = Math.max(totalWines - processedDetails, 0);
