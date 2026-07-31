@@ -84,7 +84,7 @@ describe("catalog auto-push regressions", () => {
 
   it("snapshots old catalog values before the remote detail request", () => {
     const previousDetails = winerimSource.indexOf("const existingBeforeDetails = await loadExistingWineRows(batchWineIds)");
-    const remoteDetails = winerimSource.indexOf("await fetchWineDetails(batchWineIds, winerimHeaders, 5)");
+    const remoteDetails = winerimSource.indexOf("await fetchWineDetails(batchWineIds, winerimHeaders, 5, baseWineMap)");
     expect(previousDetails).toBeGreaterThan(-1);
     expect(remoteDetails).toBeGreaterThan(previousDetails);
   });

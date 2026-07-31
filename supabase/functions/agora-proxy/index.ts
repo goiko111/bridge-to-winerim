@@ -1,6 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import {
+  buildDuplicateSafeAgoraProductLabels,
+  buildDuplicateSafeAgoraProductNames,
+  configuredAgoraProductNameOverride,
+} from "../_shared/agoraProductNaming.ts";
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
@@ -4945,8 +4949,9 @@ ${costPricesXml}
       name: entry.productName,
       buttonText: agoraProductButtonText(connection, entry.productName, 20),
     };
-    const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductLabel.name;
-    const finalButtonText = productNameOverrides?.[entry.productId]
+    const configuredNameOverride = configuredAgoraProductNameOverride(providerConfig, entry.productId);
+    const finalProductName = configuredNameOverride || productNameOverrides?.[entry.productId] || duplicateSafeProductLabel.name;
+    const finalButtonText = configuredNameOverride || productNameOverrides?.[entry.productId]
       ? agoraProductButtonText(connection, finalProductName, 20)
       : duplicateSafeProductLabel.buttonText;
     const nextOrder = useAlphabeticalWineNameSort

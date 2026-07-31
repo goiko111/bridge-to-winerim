@@ -3,6 +3,7 @@ import {
   buildAgoraButtonText,
   buildDuplicateSafeAgoraProductLabels,
   buildDuplicateSafeAgoraProductNames,
+  configuredAgoraProductNameOverride,
   normalizeAgoraProductNameKey,
 } from "../../supabase/functions/_shared/agoraProductNaming";
 
@@ -157,5 +158,18 @@ describe("Agora product naming", () => {
   it("normalizes spacing and case when checking collisions", () => {
     expect(normalizeAgoraProductNameKey("  B   Alion  ")).toBe(normalizeAgoraProductNameKey("b alion"));
     expect(normalizeAgoraProductNameKey("B Único")).toBe(normalizeAgoraProductNameKey("b unico"));
+  });
+
+  it("uses only explicit per-product name overrides", () => {
+    const config = {
+      agora_product_name_overrides: {
+        "680931": "B Emilio Moro 0,5L",
+        "680939": "B Emilio Moro 750ml",
+      },
+    };
+
+    expect(configuredAgoraProductNameOverride(config, 680931)).toBe("B Emilio Moro 0,5L");
+    expect(configuredAgoraProductNameOverride(config, "680939")).toBe("B Emilio Moro 750ml");
+    expect(configuredAgoraProductNameOverride(config, 722248)).toBeNull();
   });
 });

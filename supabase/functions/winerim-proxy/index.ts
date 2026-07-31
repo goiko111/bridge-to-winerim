@@ -8,6 +8,10 @@ import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
+import {
+  canUseWinerimListPayloadAsDetailFallback,
+  normalizeWinerimCatalogFields,
+} from "../_shared/winerimCatalogFallback.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -383,6 +387,7 @@ interface FetchWineDetailsResult {
   attempted: number;
   succeeded: number;
   failed: number;
+  fallbackUsed: number;
 }
 
 async function runWithConcurrency<T>(
@@ -400,6 +405,7 @@ async function fetchWineDetails(
   wineIds: string[],
   headers: Record<string, string>,
   concurrency = 5,
+  fallbackPayloads = new Map<string, Record<string, unknown>>(),
 ): Promise<FetchWineDetailsResult> {
   const details = new Map<string, Record<string, unknown>>();
   const failures = new Map<string, string>();
@@ -480,12 +486,24 @@ async function fetchWineDetails(
     if (!failures.has(id)) failures.set(id, "detail_fetch_failed");
   }
 
+  let fallbackUsed = 0;
+  for (const id of [...unresolved]) {
+    const failureReason = failures.get(id);
+    const fallbackPayload = fallbackPayloads.get(id);
+    if (!canUseWinerimListPayloadAsDetailFallback(fallbackPayload, failureReason)) continue;
+    details.set(id, fallbackPayload!);
+    failures.delete(id);
+    unresolved.delete(id);
+    fallbackUsed++;
+  }
+
   return {
     details,
     failures,
     attempted,
     succeeded: details.size,
     failed: failures.size,
+    fallbackUsed,
   };
 }
 
@@ -533,55 +551,6 @@ serve(async (req) => {
       const detailBatchSize = Math.min(200, Math.max(25, Number(body.detailBatchSize || 100)));
       const scheduleNextBatch = body.scheduleNextBatch !== false;
       const runSelfHealing = body.runSelfHealing !== false;
-
-      function toPositiveNumber(val: unknown): number | null {
-        if (val === null || val === undefined) return null;
-        const n = Number(val);
-        return n > 0 ? n : null;
-      }
-
-      function extractNormalizedFields(listWine: Record<string, unknown>, detail: Record<string, unknown> | null) {
-        const w = { ...listWine, ...(detail || {}) };
-
-        const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
-        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
-
-        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = findEntryForVariant(prices, "botella");
-        const glassEntry = findEntryForVariant(prices, "copa");
-        const magnumEntry = findEntryForVariant(prices, "magnum");
-
-        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
-        const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
-        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(w.glass_sale_price ?? w.glass_price);
-        const glassCostPrice = toPositiveNumber(w.glass_cost_price ?? w.glass_cost);
-        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(w.magnum_sale_price);
-        const magnumPurchasePrice = toPositiveNumber(w.magnum_purchase_price ?? w.magnum_cost);
-
-        const serveByGlass = !!glassEntry || w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
-        const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
-        const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
-
-        const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : null;
-        const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : null;
-        const magnumStockId = Number.isFinite(Number(magnumEntry?.erpStock?.id)) ? Number(magnumEntry!.erpStock!.id) : null;
-
-        return {
-          wineType,
-          bottleSalePrice,
-          bottlePurchasePrice,
-          glassSalePrice,
-          glassCostPrice,
-          magnumSalePrice,
-          magnumPurchasePrice,
-          serveByGlass,
-          isActive,
-          stockQuantity,
-          bottleStockId,
-          glassStockId,
-          magnumStockId,
-        };
-      }
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
@@ -671,7 +640,7 @@ serve(async (req) => {
             grapeVariety = grapes.map(g => g.name).join(", ");
           }
 
-          const nf = extractNormalizedFields(w, null);
+          const nf = normalizeWinerimCatalogFields(w);
 
           // Determine pricing status from list data
           let pricingStatus = "MISSING";
@@ -842,12 +811,12 @@ serve(async (req) => {
       // makes both batches miss the UPDATE candidate.
       const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
       const detailsResult = batchWineIds.length > 0
-        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
-        : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
+        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5, baseWineMap)
+        : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0, fallbackUsed: 0 };
 
       console.log(
         `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +
-        `succeeded=${detailsResult.succeeded} failed=${detailsResult.failed}`,
+        `succeeded=${detailsResult.succeeded} failed=${detailsResult.failed} fallback=${detailsResult.fallbackUsed}`,
       );
 
       let detailsUpdated = 0;
@@ -868,7 +837,7 @@ serve(async (req) => {
 
         const baseWine = baseWineMap.get(winerimId) || {};
         const mergedPayload = { ...baseWine, ...detail };
-        const nf = extractNormalizedFields(baseWine, detail);
+        const nf = normalizeWinerimCatalogFields(baseWine, detail);
 
         let grapeVariety: string | null = null;
         const grapes = (detail.grapes || (baseWine as any).grapes) as { name: string }[] | undefined;
@@ -1140,6 +1109,7 @@ serve(async (req) => {
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,
           detailRequestsFailed: detailsResult.failed,
+          detailFallbacksUsed: detailsResult.fallbackUsed,
           winesUpdatedWithBottlePrice,
           winesUpdatedWithGlassPrice,
           detailsUpdated,
@@ -1199,7 +1169,7 @@ serve(async (req) => {
       // READY -> READY price changes instead of only MISSING -> READY creates.
       const { data: priorRows } = await supabase
         .from("winerim_wines")
-        .select("winerim_id, name, wine_type, serve_by_glass, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price, pricing_status")
+        .select("winerim_id, name, wine_type, serve_by_glass, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price, pricing_status, raw_payload")
         .eq("connection_id", connectionId)
         .in("winerim_id", targetIds);
       const priorById = new Map<string, Record<string, unknown>>(
@@ -1207,7 +1177,13 @@ serve(async (req) => {
       );
 
       console.log(`Fetching details for ${targetIds.length} wines...`);
-      const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5);
+      const fallbackPayloads = new Map<string, Record<string, unknown>>(
+        (priorRows || []).map((row: any) => [
+          String(row.winerim_id),
+          (row.raw_payload as Record<string, unknown>) || {},
+        ]),
+      );
+      const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5, fallbackPayloads);
 
       let enriched = 0;
       const failureReasons: Record<string, number> = {};
@@ -1400,6 +1376,7 @@ serve(async (req) => {
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,
           detailRequestsFailed: detailsResult.failed,
+          detailFallbacksUsed: detailsResult.fallbackUsed,
           failureReasons,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
           newlyReadyWineIds,
