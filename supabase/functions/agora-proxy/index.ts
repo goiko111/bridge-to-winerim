@@ -25,6 +25,7 @@ import {
   normalizeAgoraLineFormat,
   withAgoraOperationalMetadata,
 } from "../_shared/agoraSales.ts";
+import { resolveForwardAgoraSalesLineIdentity } from "../_shared/agoraSalesLineIdentity.ts";
 import {
   countXmlOpenTickets,
   parseOpenTickets,
@@ -5407,14 +5408,25 @@ serve(async (req) => {
           const productName = String(line.ProductName || "");
           const formatName = String(line.SaleFormatName || "");
           const family = String(line.FamilyName || "");
-          const productId = String(line.ProductId || line.SaleFormatId || "");
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
           const providerSoldAt = extractAgoraProviderSoldAt(line, null, ticket, day);
           const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-          const resolution = resolutionMap.get(productId);
+          const identity = resolveForwardAgoraSalesLineIdentity({
+            connectionId,
+            providerProductId: line.ProductId,
+            saleFormatId: line.SaleFormatId,
+            productName,
+            normalizedFormat: normalizedFmt,
+            resolutionMap,
+          });
+          const productId = identity.providerProductId;
+          const resolution = identity.resolution;
           const winerimProductId = resolution?.winerim_wine_id || null;
           const isResolved = !!winerimProductId;
-          const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
+          const effectiveWineCandidate = isResolvedWineCandidate(
+            winerimProductId,
+            wr.candidate || identity.source === "sa_vida_guimaro_exact",
+          );
           const oldEnoughForStock = !stockSyncEnabled || isAgoraTimestampOldEnough(
             line.CreationDate,
             minLineAgeMinutes,
@@ -5423,7 +5435,7 @@ serve(async (req) => {
           const stockCandidate = effectiveWineCandidate && oldEnoughForStock && stockDayAllowed;
           if (isResolved) {
             resolvedLines++;
-          } else if (wr.candidate) {
+          } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
             unresolvedLines++;
           }
           if (isResolved && effectiveWineCandidate && !oldEnoughForStock) {
@@ -5932,17 +5944,28 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
-            const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
             // Resolve to winerim wine
-            const resolution = resolutionMap.get(productId);
+            const identity = resolveForwardAgoraSalesLineIdentity({
+              connectionId,
+              providerProductId: line.ProductId,
+              saleFormatId: line.SaleFormatId,
+              productName: pName,
+              normalizedFormat: normalizedFmt,
+              resolutionMap,
+            });
+            const productId = identity.providerProductId;
+            const resolution = identity.resolution;
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
-            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
+            const effectiveWineCandidate = isResolvedWineCandidate(
+              winerimProductId,
+              wr.candidate || identity.source === "sa_vida_guimaro_exact",
+            );
             if (isResolved) invoiceResolvedLines++;
-            else if (wr.candidate) invoiceUnresolvedLines++;
+            else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") invoiceUnresolvedLines++;
 
             lineData.push({
               provider_product_id: productId,
@@ -6125,16 +6148,27 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
-            const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-            const resolution = resolutionMap.get(productId);
+            const identity = resolveForwardAgoraSalesLineIdentity({
+              connectionId,
+              providerProductId: line.ProductId,
+              saleFormatId: line.SaleFormatId,
+              productName: pName,
+              normalizedFormat: normalizedFmt,
+              resolutionMap,
+            });
+            const productId = identity.providerProductId;
+            const resolution = identity.resolution;
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
-            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
+            const effectiveWineCandidate = isResolvedWineCandidate(
+              winerimProductId,
+              wr.candidate || identity.source === "sa_vida_guimaro_exact",
+            );
             if (isResolved) {
               resolvedLines++;
-            } else if (wr.candidate) {
+            } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
               unresolvedLines++;
             }
 
@@ -6453,17 +6487,28 @@ serve(async (req) => {
               const fName = String(line.SaleFormatName || "");
               const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
-              const productId = String(line.ProductId || "");
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
-              const resolution = resolutionMap.get(productId);
+              const identity = resolveForwardAgoraSalesLineIdentity({
+                connectionId,
+                providerProductId: line.ProductId,
+                saleFormatId: line.SaleFormatId,
+                productName: pName,
+                normalizedFormat: normalizedFmt,
+                resolutionMap,
+              });
+              const productId = identity.providerProductId;
+              const resolution = identity.resolution;
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
-              const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
+              const effectiveWineCandidate = isResolvedWineCandidate(
+                winerimProductId,
+                wr.candidate || identity.source === "sa_vida_guimaro_exact",
+              );
               if (isResolved) {
                 invoiceResolvedLines++;
-              } else if (wr.candidate) {
+              } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
                 invoiceUnresolvedLines++;
               }
 
