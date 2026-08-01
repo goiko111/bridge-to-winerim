@@ -8,10 +8,6 @@ import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
-import {
-  canUseWinerimListPayloadAsDetailFallback,
-  normalizeWinerimCatalogFields,
-} from "../_shared/winerimCatalogFallback.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,35 +15,6 @@ const corsHeaders = {
 };
 
 const WINERIM_BASE_URL = "https://app.winerim.com/api/v2";
-
-async function invokeInternalFunctionJson(
-  supabaseUrl: string,
-  serviceKey: string,
-  functionName: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      apikey: serviceKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const responseText = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      `${functionName} returned HTTP ${response.status}: ${responseText.slice(0, 300)}`,
-    );
-  }
-  if (!responseText.trim()) return {};
-  try {
-    return JSON.parse(responseText) as Record<string, unknown>;
-  } catch {
-    throw new Error(`${functionName} returned a non-JSON response`);
-  }
-}
 
 // ── Fuzzy matching helpers ──
 function normalize(s: string): string {
@@ -387,17 +354,6 @@ interface FetchWineDetailsResult {
   attempted: number;
   succeeded: number;
   failed: number;
-  fallbackUsed: number;
-}
-
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  for (let offset = 0; offset < items.length; offset += concurrency) {
-    await Promise.all(items.slice(offset, offset + concurrency).map(worker));
-  }
 }
 
 // Batch fetch wine details with concurrency control + diagnostics
@@ -405,106 +361,44 @@ async function fetchWineDetails(
   wineIds: string[],
   headers: Record<string, string>,
   concurrency = 5,
-  fallbackPayloads = new Map<string, Record<string, unknown>>(),
 ): Promise<FetchWineDetailsResult> {
   const details = new Map<string, Record<string, unknown>>();
   const failures = new Map<string, string>();
   const attempted = wineIds.length;
-  const unresolved = new Set(wineIds.map(String));
-  const bulkSize = 100;
+  let succeeded = 0;
+  let failed = 0;
 
-  for (let offset = 0; offset < wineIds.length; offset += bulkSize) {
-    const batch = wineIds.slice(offset, offset + bulkSize);
-    const numericIds = batch.map(Number).filter(Number.isFinite);
-    let bulkSucceeded = false;
+  const totalBatches = Math.ceil(wineIds.length / concurrency);
 
-    if (numericIds.length === batch.length) {
-      for (let retry = 0; retry <= 3; retry++) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort("timeout"), 20000);
-        try {
-          const response = await fetch(`${WINERIM_BASE_URL}/wines/bulk`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ ids: numericIds }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-
-          if (response.status === 429 || response.status === 503) {
-            if (retry < 3) {
-              await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * (2 ** retry), 4000)));
-              continue;
-            }
-            break;
-          }
-
-          if (!response.ok) break;
-
-          const payload = await response.json();
-          const wines = Array.isArray(payload?.wines) ? payload.wines : [];
-          for (const wine of wines as Record<string, unknown>[]) {
-            const id = String(wine.id || "");
-            if (!id || !unresolved.has(id)) continue;
-            details.set(id, wine);
-            unresolved.delete(id);
-          }
-          bulkSucceeded = true;
-          break;
-        } catch (error) {
-          clearTimeout(timeout);
-          if (retry >= 3) {
-            console.error(`[winerim-proxy] bulk wine detail failed at offset ${offset}:`, error);
-          }
+  for (let i = 0; i < wineIds.length; i += concurrency) {
+    const batch = wineIds.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (id) => {
+        const result = await fetchWineDetail(id, headers);
+        if (result.wine) {
+          details.set(id, result.wine);
+          succeeded++;
+        } else {
+          failures.set(id, result.failureReason || "unknown");
+          failed++;
         }
-      }
-    }
-
-    console.log(
-      `[winerim-proxy] bulk detail offset=${offset} requested=${batch.length} ` +
-      `resolved=${batch.filter((id) => details.has(String(id))).length} success=${bulkSucceeded}`,
+      }),
     );
+
+    const processed = Math.min(i + concurrency, wineIds.length);
+    const batchNo = Math.floor(i / concurrency) + 1;
+    console.log(
+      `[winerim-proxy] detail progress batch ${batchNo}/${totalBatches} ` +
+      `processed=${processed}/${wineIds.length} succeeded=${succeeded} failed=${failed}`,
+    );
+
+    // Small delay between batches to avoid rate limiting
+    if (i + concurrency < wineIds.length) {
+      await new Promise((r) => setTimeout(r, 120));
+    }
   }
 
-  // Preserve the established endpoint probing as a narrow fallback for IDs
-  // omitted by a partial bulk response or while the bulk endpoint is degraded.
-  const fallbackIds = Array.from(unresolved);
-  for (let offset = 0; offset < fallbackIds.length; offset += concurrency) {
-    const batch = fallbackIds.slice(offset, offset + concurrency);
-    await Promise.all(batch.map(async (id) => {
-      const result = await fetchWineDetail(id, headers);
-      if (result.wine) {
-        details.set(id, result.wine);
-        unresolved.delete(id);
-      } else {
-        failures.set(id, result.failureReason || "unknown");
-      }
-    }));
-  }
-
-  for (const id of unresolved) {
-    if (!failures.has(id)) failures.set(id, "detail_fetch_failed");
-  }
-
-  let fallbackUsed = 0;
-  for (const id of [...unresolved]) {
-    const failureReason = failures.get(id);
-    const fallbackPayload = fallbackPayloads.get(id);
-    if (!canUseWinerimListPayloadAsDetailFallback(fallbackPayload, failureReason)) continue;
-    details.set(id, fallbackPayload!);
-    failures.delete(id);
-    unresolved.delete(id);
-    fallbackUsed++;
-  }
-
-  return {
-    details,
-    failures,
-    attempted,
-    succeeded: details.size,
-    failed: failures.size,
-    fallbackUsed,
-  };
+  return { details, failures, attempted, succeeded, failed };
 }
 
 serve(async (req) => {
@@ -551,6 +445,55 @@ serve(async (req) => {
       const detailBatchSize = Math.min(200, Math.max(25, Number(body.detailBatchSize || 100)));
       const scheduleNextBatch = body.scheduleNextBatch !== false;
       const runSelfHealing = body.runSelfHealing !== false;
+
+      function toPositiveNumber(val: unknown): number | null {
+        if (val === null || val === undefined) return null;
+        const n = Number(val);
+        return n > 0 ? n : null;
+      }
+
+      function extractNormalizedFields(listWine: Record<string, unknown>, detail: Record<string, unknown> | null) {
+        const w = { ...listWine, ...(detail || {}) };
+
+        const rawType = w.type || w.wine_type || w.category || w.style || w.color || w.colour;
+        const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
+
+        const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
+        const bottleEntry = findEntryForVariant(prices, "botella");
+        const glassEntry = findEntryForVariant(prices, "copa");
+        const magnumEntry = findEntryForVariant(prices, "magnum");
+
+        const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
+        const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
+        const glassSalePrice = toPositiveNumber(glassEntry?.price) ?? toPositiveNumber(w.glass_sale_price ?? w.glass_price);
+        const glassCostPrice = toPositiveNumber(w.glass_cost_price ?? w.glass_cost);
+        const magnumSalePrice = toPositiveNumber(magnumEntry?.price) ?? toPositiveNumber(w.magnum_sale_price);
+        const magnumPurchasePrice = toPositiveNumber(w.magnum_purchase_price ?? w.magnum_cost);
+
+        const serveByGlass = !!glassEntry || w.serve_by_glass === true || w.by_glass === true || w.copa === true || false;
+        const isActive = w.active !== false && w.is_active !== false && w.status !== "inactive";
+        const stockQuantity = bottleEntry?.erpStock?.stock ?? null;
+
+        const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : null;
+        const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : null;
+        const magnumStockId = Number.isFinite(Number(magnumEntry?.erpStock?.id)) ? Number(magnumEntry!.erpStock!.id) : null;
+
+        return {
+          wineType,
+          bottleSalePrice,
+          bottlePurchasePrice,
+          glassSalePrice,
+          glassCostPrice,
+          magnumSalePrice,
+          magnumPurchasePrice,
+          serveByGlass,
+          isActive,
+          stockQuantity,
+          bottleStockId,
+          glassStockId,
+          magnumStockId,
+        };
+      }
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
@@ -615,7 +558,6 @@ serve(async (req) => {
       let totalWines = 0;
       let batchWineIds: string[] = [];
       const baseWineMap = new Map<string, Record<string, unknown>>();
-      const listUpserts: Record<string, unknown>[] = [];
 
       if (mode === "start") {
         const wines = await fetchAllWines(winerimHeaders);
@@ -630,7 +572,6 @@ serve(async (req) => {
         for (const w of wines) {
           const winerimId = String(w.id || "");
           if (!winerimId) continue;
-          const previous = existingBeforeList.get(winerimId);
 
           baseWineMap.set(winerimId, w);
 
@@ -640,7 +581,7 @@ serve(async (req) => {
             grapeVariety = grapes.map(g => g.name).join(", ");
           }
 
-          const nf = normalizeWinerimCatalogFields(w);
+          const nf = extractNormalizedFields(w, null);
 
           // Determine pricing status from list data
           let pricingStatus = "MISSING";
@@ -658,15 +599,6 @@ serve(async (req) => {
             pricingMissingReason = hasRecognized ? "sale_price_missing" : "format_not_recognized";
           } else if (Array.isArray(w.prices)) {
             pricingMissingReason = "prices_array_empty";
-          }
-
-          // The list endpoint commonly omits prices. Do not downgrade an
-          // already-enriched wine to MISSING while its detail page is waiting
-          // for a later batch: that false READY -> MISSING -> READY transition
-          // routes real price changes through the CREATE path and loses UPDATE.
-          if (pricingStatus !== "READY" && previous?.pricing_status === "READY") {
-            pricingStatus = "READY";
-            pricingMissingReason = null;
           }
 
           const upsertPayload: Record<string, unknown> = {
@@ -702,22 +634,19 @@ serve(async (req) => {
           if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
+          const previous = existingBeforeList.get(winerimId);
           if (!previous && pricingStatus === "READY") {
             autoCreateCandidateIds.add(winerimId);
           } else if (hasRelevantCatalogChange(previous, upsertPayload)) {
             autoUpdateCandidateIds.add(winerimId);
           }
 
-          listUpserts.push(upsertPayload);
-        }
-
-        await runWithConcurrency(listUpserts, 25, async (payload) => {
-          const { error } = await supabase
+          await supabase
             .from("winerim_wines")
-            .upsert(payload, { onConflict: "connection_id,winerim_id" });
-          if (error) throw error;
+            .upsert(upsertPayload, { onConflict: "connection_id,winerim_id" });
+
           listWinesUpserted++;
-        });
+        }
 
         // ── RECONCILIATION: detect wines deleted from Winerim ──
         // Any wine in our DB (still is_active=true) that no longer appears in /wines
@@ -755,29 +684,10 @@ serve(async (req) => {
           }
         }
 
-        // Start and enrich must page over the same ordered relation. Previously,
-        // start used Winerim API order while enrich resumed at offset 100 in DB
-        // order, permanently skipping whichever wines occupied DB positions 0-99.
-        const { count, error: countError } = await supabase
-          .from("winerim_wines")
-          .select("winerim_id", { count: "exact", head: true })
-          .eq("connection_id", connectionId);
-        if (countError) throw countError;
-        totalWines = count || 0;
-
-        const { data: batchRows, error: batchRowsError } = await supabase
-          .from("winerim_wines")
-          .select("winerim_id, raw_payload")
-          .eq("connection_id", connectionId)
-          .order("winerim_id")
-          .range(detailOffset, detailOffset + detailBatchSize - 1);
-        if (batchRowsError) throw batchRowsError;
-
-        const rows = batchRows || [];
-        batchWineIds = rows.map((row: any) => String(row.winerim_id)).filter(Boolean);
-        for (const row of rows) {
-          baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
-        }
+        batchWineIds = wines
+          .map((w) => String(w.id || ""))
+          .filter(Boolean)
+          .slice(detailOffset, detailOffset + detailBatchSize);
       } else {
         const { count } = await supabase
           .from("winerim_wines")
@@ -805,25 +715,19 @@ serve(async (req) => {
         );
       }
 
-      // Snapshot the cached values before the remote detail request. Catalog
-      // batches may overlap after pg_net chaining; loading the "previous" row
-      // after the network call lets another batch write the new price first and
-      // makes both batches miss the UPDATE candidate.
-      const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
       const detailsResult = batchWineIds.length > 0
-        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5, baseWineMap)
-        : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0, fallbackUsed: 0 };
+        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
+        : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
+      const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
 
       console.log(
         `[winerim-proxy] detail diagnostics: attempted=${detailsResult.attempted} ` +
-        `succeeded=${detailsResult.succeeded} failed=${detailsResult.failed} fallback=${detailsResult.fallbackUsed}`,
+        `succeeded=${detailsResult.succeeded} failed=${detailsResult.failed}`,
       );
 
       let detailsUpdated = 0;
       let winesUpdatedWithBottlePrice = 0;
       let winesUpdatedWithGlassPrice = 0;
-      const detailUpdates: { winerimId: string; updateData: Record<string, unknown> }[] = [];
-      const detailFailures: { winerimId: string; pricingStatus: string; failureReason: string }[] = [];
 
       for (const winerimId of batchWineIds) {
         const detail = detailsResult.details.get(winerimId);
@@ -831,13 +735,17 @@ serve(async (req) => {
           // Mark failed wines with pricing status
           const failureReason = detailsResult.failures.get(winerimId) || "detail_fetch_failed";
           const pricingStatus = failureReason === "503_from_winerim" ? "RETRYING" : "FAILED";
-          detailFailures.push({ winerimId, pricingStatus, failureReason });
+          await supabase
+            .from("winerim_wines")
+            .update({ pricing_status: pricingStatus, pricing_missing_reason: failureReason })
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", winerimId);
           continue;
         }
 
         const baseWine = baseWineMap.get(winerimId) || {};
         const mergedPayload = { ...baseWine, ...detail };
-        const nf = normalizeWinerimCatalogFields(baseWine, detail);
+        const nf = extractNormalizedFields(baseWine, detail);
 
         let grapeVariety: string | null = null;
         const grapes = (detail.grapes || (baseWine as any).grapes) as { name: string }[] | undefined;
@@ -903,27 +811,14 @@ serve(async (req) => {
           autoUpdateCandidateIds.add(winerimId);
         }
 
-        detailUpdates.push({ winerimId, updateData });
-      }
-
-      await runWithConcurrency(detailFailures, 25, async ({ winerimId, pricingStatus, failureReason }) => {
-        const { error } = await supabase
-          .from("winerim_wines")
-          .update({ pricing_status: pricingStatus, pricing_missing_reason: failureReason })
-          .eq("connection_id", connectionId)
-          .eq("winerim_id", winerimId);
-        if (error) throw error;
-      });
-
-      await runWithConcurrency(detailUpdates, 25, async ({ winerimId, updateData }) => {
-        const { error } = await supabase
+        await supabase
           .from("winerim_wines")
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
-        if (error) throw error;
+
         detailsUpdated++;
-      });
+      }
 
       const processedDetails = Math.min(totalWines, detailOffset + batchWineIds.length);
       const remainingDetails = Math.max(totalWines - processedDetails, 0);
@@ -974,11 +869,8 @@ serve(async (req) => {
             let hidQueuedTotal = 0;
 
             if (autoCreateIds.length > 0 && conn?.auto_push_on_create === true) {
-              const createData = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-                action: "evaluate-auto-push",
-                connectionId,
-                winerimWineIds: autoCreateIds,
-                eventType: "CREATE",
+              const { data: createData } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoCreateIds, eventType: "CREATE" },
               });
               parts.push({ eventType: "CREATE", ids: autoCreateIds.length, result: createData });
               queuedTotal += Number(createData?.queued || 0);
@@ -986,11 +878,8 @@ serve(async (req) => {
             }
 
             if (autoUpdateIds.length > 0 && conn?.auto_push_on_update === true) {
-              const updateData = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-                action: "evaluate-auto-push",
-                connectionId,
-                winerimWineIds: autoUpdateIds,
-                eventType: "UPDATE",
+              const { data: updateData } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoUpdateIds, eventType: "UPDATE" },
               });
               parts.push({ eventType: "UPDATE", ids: autoUpdateIds.length, result: updateData });
               queuedTotal += Number(updateData?.queued || 0);
@@ -1007,10 +896,8 @@ serve(async (req) => {
             console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
 
             if (queuedTotal > 0 || hidQueuedTotal > 0) {
-              await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-                action: "process-xml-outbound-queue",
-                connectionId,
-                serverLoop: true,
+              await supabase.functions.invoke("agora-proxy", {
+                body: { action: "process-xml-outbound-queue", connectionId, serverLoop: true },
               });
             }
           } else {
@@ -1109,7 +996,6 @@ serve(async (req) => {
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,
           detailRequestsFailed: detailsResult.failed,
-          detailFallbacksUsed: detailsResult.fallbackUsed,
           winesUpdatedWithBottlePrice,
           winesUpdatedWithGlassPrice,
           detailsUpdated,
@@ -1125,26 +1011,11 @@ serve(async (req) => {
     // ── FETCH WINE DETAILS (standalone, for enriching existing wines) ──
     if (action === "fetch-wine-details") {
       const { winerimWineIds } = body;
-      const trackedUpdatesOnly = body.trackedUpdatesOnly === true;
       
       // If specific IDs provided, use those. Otherwise fetch wines with non-READY pricing.
       let targetIds: string[] = winerimWineIds || [];
-
-      if (targetIds.length === 0 && trackedUpdatesOnly) {
-        const { data: trackedRows, error: trackedRowsError } = await supabase
-          .from("winerim_push_tracking")
-          .select("winerim_wine_id")
-          .eq("connection_id", connectionId)
-          .eq("source", "WINERIM")
-          .in("sync_status", ["VERIFIED", "PUSHED"])
-          .limit(1000);
-        if (trackedRowsError) throw trackedRowsError;
-        targetIds = Array.from(new Set(
-          (trackedRows || []).map((row: any) => String(row.winerim_wine_id || "")).filter(Boolean),
-        ));
-      }
       
-      if (targetIds.length === 0 && !trackedUpdatesOnly) {
+      if (targetIds.length === 0) {
         const { data: missingWines } = await supabase
           .from("winerim_wines")
           .select("winerim_id, pricing_status")
@@ -1162,42 +1033,23 @@ serve(async (req) => {
         );
       }
 
-      const autoPushDryRun = body.dryRun === true;
-
-      // Snapshot the full comparable state before the remote read. This action
-      // is also used by the post-catalog self-healing pass, so it must detect
-      // READY -> READY price changes instead of only MISSING -> READY creates.
-      const { data: priorRows } = await supabase
-        .from("winerim_wines")
-        .select("winerim_id, name, wine_type, serve_by_glass, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price, pricing_status, raw_payload")
-        .eq("connection_id", connectionId)
-        .in("winerim_id", targetIds);
-      const priorById = new Map<string, Record<string, unknown>>(
-        (priorRows || []).map((r: any) => [String(r.winerim_id), r])
-      );
-
       console.log(`Fetching details for ${targetIds.length} wines...`);
-      const fallbackPayloads = new Map<string, Record<string, unknown>>(
-        (priorRows || []).map((row: any) => [
-          String(row.winerim_id),
-          (row.raw_payload as Record<string, unknown>) || {},
-        ]),
-      );
-      const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5, fallbackPayloads);
+      const detailsResult = await fetchWineDetails(targetIds, winerimHeaders, 5);
 
       let enriched = 0;
       const failureReasons: Record<string, number> = {};
       const fieldsDiscovered: string[] = [];
       const newlyReadyWineIds: string[] = []; // wines that just transitioned to READY
-      const changedReadyWineIds: string[] = [];
 
-      const normalizedComparable = (value: unknown): string => {
-        if (value === null || value === undefined) return "__null__";
-        if (typeof value === "boolean") return value ? "true" : "false";
-        const numeric = Number(value);
-        if (value !== "" && Number.isFinite(numeric)) return numeric.toFixed(4);
-        return String(value).trim();
-      };
+      // Pre-fetch current pricing_status for the targets so we can detect transitions
+      const { data: priorRows } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, pricing_status")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", targetIds);
+      const priorStatus = new Map<string, string>(
+        (priorRows || []).map((r: any) => [String(r.winerim_id), String(r.pricing_status)])
+      );
 
       // Process successful details
       for (const [winerimId, detail] of detailsResult.details) {
@@ -1243,7 +1095,6 @@ serve(async (req) => {
         const rawType = detail.type || detail.wine_type || detail.category || detail.style || detail.color;
         const updateData: Record<string, unknown> = {
           raw_payload: detail,
-          name: detail.name ? String(detail.name) : undefined,
           wine_type: rawType && typeof rawType === "string" ? String(rawType).toLowerCase() : undefined,
           bottle_sale_price: bottleSalePrice,
           bottle_purchase_price: toPositiveNumber(detail.bottle_purchase_price ?? detail.purchase_price ?? detail.cost_price ?? detail.cost),
@@ -1272,24 +1123,9 @@ serve(async (req) => {
         if (pricingStatus === "READY") {
           enriched++;
           // Track transition: was MISSING/FAILED/RETRYING/NOT_PUSHED → now READY
-          const previous = priorById.get(String(winerimId));
-          const previousStatus = String(previous?.pricing_status || "");
-          if (previousStatus && previousStatus !== "READY") {
+          const prev = priorStatus.get(String(winerimId));
+          if (prev && prev !== "READY") {
             newlyReadyWineIds.push(String(winerimId));
-          } else if (previousStatus === "READY") {
-            const changed = [
-              "name",
-              "wine_type",
-              "serve_by_glass",
-              "is_active",
-              "bottle_sale_price",
-              "glass_sale_price",
-              "magnum_sale_price",
-            ].some((field) =>
-              field in updateData &&
-              normalizedComparable(previous?.[field]) !== normalizedComparable(updateData[field])
-            );
-            if (changed) changedReadyWineIds.push(String(winerimId));
           }
         }
       }
@@ -1311,7 +1147,6 @@ serve(async (req) => {
       // without requiring manual intervention. Provider-agnostic: only queues for
       // providers whose proxy supports queue-xml-outbound (currently Agora).
       let autoQueued = 0;
-      let autoUpdated = 0;
       let autoQueueError: string | null = null;
       if (newlyReadyWineIds.length > 0) {
         try {
@@ -1321,49 +1156,21 @@ serve(async (req) => {
             .eq("id", connectionId).maybeSingle();
 
           if (conn?.provider === "agora") {
-            const q = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-              action: "evaluate-auto-push",
-              connectionId,
-              winerimWineIds: newlyReadyWineIds,
-              eventType: "CREATE",
-              dryRun: autoPushDryRun,
+            const { data: q, error: qErr } = await supabase.functions.invoke("agora-proxy", {
+              body: {
+                action: "evaluate-auto-push",
+                connectionId,
+                winerimWineIds: newlyReadyWineIds,
+                eventType: "CREATE",
+              },
             });
-            autoQueued = Number(q?.queued || 0);
+            if (qErr) autoQueueError = qErr.message || String(qErr);
+            else autoQueued = q?.queued ?? newlyReadyWineIds.length;
             console.log(`[fetch-wine-details] Auto-queued ${autoQueued} newly-READY wines for ${connectionId}`);
           }
         } catch (e) {
           autoQueueError = String(e);
           console.error(`[fetch-wine-details] auto-queue failed:`, e);
-        }
-      }
-
-      if (changedReadyWineIds.length > 0) {
-        try {
-          const { data: conn } = await supabase
-            .from("pos_connections")
-            .select("provider, auto_push_on_update")
-            .eq("id", connectionId).maybeSingle();
-          if (conn?.provider === "agora" && conn?.auto_push_on_update === true) {
-            const q = await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-              action: "evaluate-auto-push",
-              connectionId,
-              winerimWineIds: changedReadyWineIds,
-              eventType: "UPDATE",
-              dryRun: autoPushDryRun,
-            });
-            autoUpdated = Number(autoPushDryRun ? q?.wouldQueue || 0 : q?.queued || 0);
-            if (!autoPushDryRun && Number(q?.queued || 0) > 0) {
-              await invokeInternalFunctionJson(supabaseUrl, supabaseKey, "agora-proxy", {
-                action: "process-xml-outbound-queue",
-                connectionId,
-                serverLoop: true,
-              });
-            }
-            console.log(`[fetch-wine-details] Auto-updated ${autoUpdated} changed READY wines for ${connectionId}`);
-          }
-        } catch (e) {
-          autoQueueError = String(e);
-          console.error(`[fetch-wine-details] auto-update failed:`, e);
         }
       }
 
@@ -1376,15 +1183,10 @@ serve(async (req) => {
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,
           detailRequestsFailed: detailsResult.failed,
-          detailFallbacksUsed: detailsResult.fallbackUsed,
           failureReasons,
           fieldsDiscovered: fieldsDiscovered.slice(0, 50),
           newlyReadyWineIds,
-          changedReadyWineIds,
           autoQueued,
-          autoUpdated,
-          dryRun: autoPushDryRun,
-          trackedUpdatesOnly,
           autoQueueError,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

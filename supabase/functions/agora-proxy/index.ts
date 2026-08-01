@@ -1,10 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import {
-  buildDuplicateSafeAgoraProductLabels,
-  buildDuplicateSafeAgoraProductNames,
-  configuredAgoraProductNameOverride,
-} from "../_shared/agoraProductNaming.ts";
+import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
@@ -25,7 +21,6 @@ import {
   normalizeAgoraLineFormat,
   withAgoraOperationalMetadata,
 } from "../_shared/agoraSales.ts";
-import { resolveForwardAgoraSalesLineIdentity } from "../_shared/agoraSalesLineIdentity.ts";
 import {
   countXmlOpenTickets,
   parseOpenTickets,
@@ -4950,9 +4945,8 @@ ${costPricesXml}
       name: entry.productName,
       buttonText: agoraProductButtonText(connection, entry.productName, 20),
     };
-    const configuredNameOverride = configuredAgoraProductNameOverride(providerConfig, entry.productId);
-    const finalProductName = configuredNameOverride || productNameOverrides?.[entry.productId] || duplicateSafeProductLabel.name;
-    const finalButtonText = configuredNameOverride || productNameOverrides?.[entry.productId]
+    const finalProductName = productNameOverrides?.[entry.productId] || duplicateSafeProductLabel.name;
+    const finalButtonText = productNameOverrides?.[entry.productId]
       ? agoraProductButtonText(connection, finalProductName, 20)
       : duplicateSafeProductLabel.buttonText;
     const nextOrder = useAlphabeticalWineNameSort
@@ -5408,25 +5402,14 @@ serve(async (req) => {
           const productName = String(line.ProductName || "");
           const formatName = String(line.SaleFormatName || "");
           const family = String(line.FamilyName || "");
+          const productId = String(line.ProductId || line.SaleFormatId || "");
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
           const providerSoldAt = extractAgoraProviderSoldAt(line, null, ticket, day);
           const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-          const identity = resolveForwardAgoraSalesLineIdentity({
-            connectionId,
-            providerProductId: line.ProductId,
-            saleFormatId: line.SaleFormatId,
-            productName,
-            normalizedFormat: normalizedFmt,
-            resolutionMap,
-          });
-          const productId = identity.providerProductId;
-          const resolution = identity.resolution;
+          const resolution = resolutionMap.get(productId);
           const winerimProductId = resolution?.winerim_wine_id || null;
           const isResolved = !!winerimProductId;
-          const effectiveWineCandidate = isResolvedWineCandidate(
-            winerimProductId,
-            wr.candidate || identity.source === "sa_vida_guimaro_exact",
-          );
+          const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
           const oldEnoughForStock = !stockSyncEnabled || isAgoraTimestampOldEnough(
             line.CreationDate,
             minLineAgeMinutes,
@@ -5435,7 +5418,7 @@ serve(async (req) => {
           const stockCandidate = effectiveWineCandidate && oldEnoughForStock && stockDayAllowed;
           if (isResolved) {
             resolvedLines++;
-          } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
+          } else if (wr.candidate) {
             unresolvedLines++;
           }
           if (isResolved && effectiveWineCandidate && !oldEnoughForStock) {
@@ -5944,28 +5927,17 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
+            const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
             // Resolve to winerim wine
-            const identity = resolveForwardAgoraSalesLineIdentity({
-              connectionId,
-              providerProductId: line.ProductId,
-              saleFormatId: line.SaleFormatId,
-              productName: pName,
-              normalizedFormat: normalizedFmt,
-              resolutionMap,
-            });
-            const productId = identity.providerProductId;
-            const resolution = identity.resolution;
+            const resolution = resolutionMap.get(productId);
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
-            const effectiveWineCandidate = isResolvedWineCandidate(
-              winerimProductId,
-              wr.candidate || identity.source === "sa_vida_guimaro_exact",
-            );
+            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
             if (isResolved) invoiceResolvedLines++;
-            else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") invoiceUnresolvedLines++;
+            else if (wr.candidate) invoiceUnresolvedLines++;
 
             lineData.push({
               provider_product_id: productId,
@@ -6148,27 +6120,16 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
+            const productId = String(line.ProductId || "");
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-            const identity = resolveForwardAgoraSalesLineIdentity({
-              connectionId,
-              providerProductId: line.ProductId,
-              saleFormatId: line.SaleFormatId,
-              productName: pName,
-              normalizedFormat: normalizedFmt,
-              resolutionMap,
-            });
-            const productId = identity.providerProductId;
-            const resolution = identity.resolution;
+            const resolution = resolutionMap.get(productId);
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
-            const effectiveWineCandidate = isResolvedWineCandidate(
-              winerimProductId,
-              wr.candidate || identity.source === "sa_vida_guimaro_exact",
-            );
+            const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
             if (isResolved) {
               resolvedLines++;
-            } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
+            } else if (wr.candidate) {
               unresolvedLines++;
             }
 
@@ -6487,28 +6448,17 @@ serve(async (req) => {
               const fName = String(line.SaleFormatName || "");
               const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
+              const productId = String(line.ProductId || "");
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
-              const identity = resolveForwardAgoraSalesLineIdentity({
-                connectionId,
-                providerProductId: line.ProductId,
-                saleFormatId: line.SaleFormatId,
-                productName: pName,
-                normalizedFormat: normalizedFmt,
-                resolutionMap,
-              });
-              const productId = identity.providerProductId;
-              const resolution = identity.resolution;
+              const resolution = resolutionMap.get(productId);
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
-              const effectiveWineCandidate = isResolvedWineCandidate(
-                winerimProductId,
-                wr.candidate || identity.source === "sa_vida_guimaro_exact",
-              );
+              const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
               if (isResolved) {
                 invoiceResolvedLines++;
-              } else if (wr.candidate || identity.source === "sa_vida_guimaro_exact") {
+              } else if (wr.candidate) {
                 invoiceUnresolvedLines++;
               }
 
@@ -12100,7 +12050,6 @@ ${costPricesXml}
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
       const dryRun = payload.dryRun === true;
-      const autoPushWritesEnabled = !forceEvaluate && !dryRun;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
@@ -12298,7 +12247,7 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPushesToHide.map(p => p.agora_product_id).filter(Boolean);
-              if (autoPushWritesEnabled) {
+              if (!forceEvaluate && !dryRun) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
                   task_type: "AGORA_HIDE_PRODUCT",
@@ -12353,7 +12302,7 @@ ${costPricesXml}
 
           if (!existingHide || existingHide.length === 0) {
             const productIds = formatsToHide.map((push: any) => push.agora_product_id).filter(Boolean);
-            if (autoPushWritesEnabled) {
+            if (!forceEvaluate) {
               await supabase.from("outbound_tasks").insert({
                 connection_id: connectionId,
                 task_type: "AGORA_HIDE_PRODUCT",
@@ -12472,7 +12421,7 @@ ${costPricesXml}
           }
         }
 
-        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate) {
+        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate && !dryRun) {
           const normalizedUpdateWineName = normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase("es");
           const updateHomonymousWines = updateDiffActiveWines.filter((candidate) =>
             normalizeAgoraTextAttribute(candidate.name).toLocaleLowerCase("es") === normalizedUpdateWineName
@@ -12514,7 +12463,7 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
             continue;
           }
-        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate) {
+        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate && !dryRun) {
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
@@ -12550,12 +12499,9 @@ ${costPricesXml}
           continue;
         }
 
-        if (!autoPushWritesEnabled) {
+        if (forceEvaluate) {
           wouldQueue++;
-          skippedReasons.push({
-            winerim_id: wine.winerim_id,
-            reason: `${dryRun ? "dry_run_would_queue" : "would_queue"}:${formatTypes.join("+")}`,
-          });
+          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
           continue;
         }
 
@@ -12579,7 +12525,7 @@ ${costPricesXml}
 
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType, forceEvaluate, dryRun,
+        totalWines: wines.length, eventType: evtType, forceEvaluate,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
