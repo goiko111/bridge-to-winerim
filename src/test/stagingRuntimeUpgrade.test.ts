@@ -41,6 +41,7 @@ describe("staging runtime schema upgrade gates", () => {
     const workflow = readFileSync(resolve(root, ".github/workflows/deploy-middleware-staging.yml"), "utf8");
     const upgrade = readFileSync(resolve(root, "infrastructure/postgres/upgrade-staging-runtime.sh"), "utf8");
     const rollback = readFileSync(resolve(root, "infrastructure/postgres/rollback-runtime-upgrade.sql"), "utf8");
+    const validate = readFileSync(resolve(root, "infrastructure/postgres/validate.sh"), "utf8");
     expect(workflow).toContain("upgrade-runtime-28-to-30");
     expect(workflow).toContain("--confirm-project-ref qpbmqvfnunkylvtvnyyx");
     expect(workflow).not.toContain("STAGING_DB_HOST");
@@ -51,6 +52,8 @@ describe("staging runtime schema upgrade gates", () => {
     expect(upgrade).toContain("pg_advisory_xact_lock");
     expect(upgrade).toContain("combined_migration");
     expect(rollback).toContain("runtime upgrade rollback requires empty canary and credential tables");
+    expect(validate).toContain('STAGING_VERIFIER="$SCRIPT_DIR/verify-staging.sh"');
+    expect(validate).toContain('&& "$STAGING_VERIFIER" "$DATABASE_URL"');
     expect(`${workflow}\n${upgrade}\n${rollback}`).not.toMatch(/production_database|prod-project/i);
   });
 });

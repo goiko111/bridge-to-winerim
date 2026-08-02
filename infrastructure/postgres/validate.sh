@@ -7,6 +7,7 @@ MIGRATIONS_DIR="$REPO_ROOT/supabase/migrations"
 MANIFEST="$SCRIPT_DIR/migration-manifest.tsv"
 EXPECTED="$SCRIPT_DIR/expected-schema.txt"
 READONLY_SQL="$SCRIPT_DIR/validate-readonly.sql"
+STAGING_VERIFIER="$SCRIPT_DIR/verify-staging.sh"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
@@ -38,6 +39,7 @@ for required_file in \
   "$MANIFEST" \
   "$EXPECTED" \
   "$READONLY_SQL" \
+  "$STAGING_VERIFIER" \
   "$PORTABLE_ADDENDUM" \
   "$RUNTIME_CREDENTIALS_ADDENDUM" \
   "$RUNTIME_CANARY_PRIVILEGES" \
@@ -196,7 +198,8 @@ if [ -n "${DATABASE_URL:-}" ]; then
     fail "DATABASE_URL is set but psql is not installed"
   else
     printf 'INFO: running catalog inspection inside a READ ONLY transaction\n'
-    if psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$READONLY_SQL"; then
+    if psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL" -f "$READONLY_SQL" \
+      && "$STAGING_VERIFIER" "$DATABASE_URL"; then
       ok "read-only catalog inspection completed"
     else
       fail "read-only catalog inspection failed"
