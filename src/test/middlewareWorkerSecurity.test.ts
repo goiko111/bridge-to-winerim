@@ -72,7 +72,7 @@ describe("middleware Worker security gates", () => {
     await expect(protectedResponse.json()).resolves.toMatchObject({ error: "UNAUTHORIZED" });
   });
 
-  it("keeps an application token behind Access for service automation", async () => {
+  it("requires both Access identity and an application token for service automation", async () => {
     const serviceEnv = { ...localEnv, REQUIRE_ACCESS_JWT: "true" };
     const denied = await worker.fetch(new Request("https://api.example.test/api/onboarding/test", {
       method: "POST",
@@ -89,8 +89,8 @@ describe("middleware Worker security gates", () => {
       },
       body: "{}",
     }), serviceEnv);
-    expect(allowed.status).toBe(400);
-    await expect(allowed.json()).resolves.toMatchObject({ error: "VALIDATION_FAILED" });
+    expect(allowed.status).toBe(401);
+    await expect(allowed.json()).resolves.toMatchObject({ error: "ACCESS_IDENTITY_REQUIRED" });
   });
 
   it("rejects a private POS destination before making an outbound request", async () => {
@@ -170,6 +170,7 @@ describe("middleware Worker security gates", () => {
       headers: {
         "Content-Type": "application/json",
         "CF-Access-Jwt-Assertion": access.token,
+        "X-Middleware-Token": localEnv.MIDDLEWARE_ADMIN_TOKEN,
       },
       body: "{}",
     });
@@ -189,6 +190,7 @@ describe("middleware Worker security gates", () => {
       headers: {
         "Content-Type": "application/json",
         Cookie: `CF_Authorization=${access.token}`,
+        "X-Middleware-Token": localEnv.MIDDLEWARE_ADMIN_TOKEN,
       },
       body: "{}",
     });

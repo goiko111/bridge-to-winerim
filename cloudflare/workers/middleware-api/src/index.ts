@@ -174,8 +174,13 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ val
 
 async function requireAdminAccess(request: Request, env: Env): Promise<Response | null> {
   if (env.REQUIRE_ACCESS_JWT === "true") {
-    if ((await verifyAccessJwt(request, env)).valid) return null;
-    if (env.MIDDLEWARE_ADMIN_TOKEN && bearerToken(request) === env.MIDDLEWARE_ADMIN_TOKEN) return null;
+    if (!(await verifyAccessJwt(request, env)).valid) {
+      return jsonResponse({ success: false, error: "ACCESS_IDENTITY_REQUIRED" }, env, { status: 401 });
+    }
+    if (!env.MIDDLEWARE_ADMIN_TOKEN) {
+      return jsonResponse({ success: false, error: "ADMIN_TOKEN_NOT_CONFIGURED" }, env, { status: 503 });
+    }
+    if (bearerToken(request) === env.MIDDLEWARE_ADMIN_TOKEN) return null;
     return jsonResponse({ success: false, error: "ACCESS_IDENTITY_REQUIRED" }, env, { status: 401 });
   }
   if (!env.MIDDLEWARE_ADMIN_TOKEN) {

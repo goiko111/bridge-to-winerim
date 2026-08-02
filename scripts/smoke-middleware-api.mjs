@@ -19,6 +19,10 @@ if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
   console.error("FAIL: both Cloudflare Access service-token values are required");
   process.exit(2);
 }
+if (accessConfigured && !adminToken) {
+  console.error("FAIL: MIDDLEWARE_ADMIN_TOKEN is required behind Cloudflare Access");
+  process.exit(2);
+}
 
 function assertSafeTarget(url) {
   if (url.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(url.hostname)) {

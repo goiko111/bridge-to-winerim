@@ -168,11 +168,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || (echo "Missing CLOUDFLARE_API_TOKEN" >&2; exit 1)
           test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" >&2; exit 1)
           test -n "$CF_ACCESS_CLIENT_ID" || (echo "Missing CF_ACCESS_CLIENT_ID" >&2; exit 1)
           test -n "$CF_ACCESS_CLIENT_SECRET" || (echo "Missing CF_ACCESS_CLIENT_SECRET" >&2; exit 1)
+          test -n "$MIDDLEWARE_ADMIN_TOKEN" || (echo "Missing MIDDLEWARE_ADMIN_TOKEN" >&2; exit 1)
           npx wrangler whoami >/dev/null
 
       - name: Capture current Worker rollback version
@@ -196,6 +198,7 @@ jobs:
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
         run: |
           public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
             https://api-staging.middleware.winerim.wine/ready)"
@@ -203,6 +206,7 @@ jobs:
           body="$(curl --fail --silent --show-error --max-time 10 \
             -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
             -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            -H "X-Middleware-Token: $MIDDLEWARE_ADMIN_TOKEN" \
             https://api-staging.middleware.winerim.wine/ready)"
           jq -e '.ok == true and .database == "staging"' <<<"$body" >/dev/null
 
