@@ -48,9 +48,17 @@ LINE_ID=33333333-3333-4333-8333-333333333333
 
 psql "$SOURCE_URL" -X -q -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO public.pos_connections
-  (id, location_name, provider, base_url, api_token, enabled)
+  (id, location_name, provider, base_url, api_token, winerim_api_token, catalog_endpoint, provider_config, restaurant_guid, enabled)
 VALUES
-  ('$CONNECTION_ID', 'Local source fixture', 'agora', 'https://fixture.invalid', 'fixture-not-a-secret', false);
+  ('$CONNECTION_ID', 'Local source fixture', 'agora', 'https://source.invalid?token=FAKE_SOURCE_URL_SECRET_P1', 'FAKE_SOURCE_API_SECRET_P1',
+   'FAKE_SOURCE_WINERIM_SECRET_P1', 'https://catalog.invalid?key=FAKE_SOURCE_CATALOG_SECRET_P1',
+   '{"password":"FAKE_SOURCE_CONFIG_SECRET_P1"}'::jsonb, 'FAKE_SOURCE_RESTAURANT_CREDENTIAL_P1', false);
+
+INSERT INTO public.provider_credentials
+  (connection_id, merchant_id, access_token_enc, refresh_token_enc, toast_client_secret, toast_access_token, toast_refresh_token)
+VALUES
+  ('$CONNECTION_ID', 'fixture-merchant', 'FAKE_PROVIDER_ACCESS_SECRET_P1', 'FAKE_PROVIDER_REFRESH_SECRET_P1',
+   'FAKE_TOAST_CLIENT_SECRET_P1', 'FAKE_TOAST_ACCESS_SECRET_P1', 'FAKE_TOAST_REFRESH_SECRET_P1');
 
 INSERT INTO public.sales_events
   (id, connection_id, provider_doc_id, business_day, doc_type, line_count)
@@ -67,7 +75,7 @@ psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO public.pos_connections
   (id, location_name, provider, base_url, api_token, enabled)
 VALUES
-  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Must be replaced', 'agora', 'https://old.invalid', 'old-fixture', false);
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Must be replaced', 'agora', 'https://old.invalid?token=FAKE_TARGET_URL_SECRET_P1', 'FAKE_TARGET_API_SECRET_P1', false);
 SQL
 
 SOURCE_ARTIFACT="$TMP_ROOT/source-artifact"
@@ -80,6 +88,11 @@ LOVABLE_DATABASE_URL="$SOURCE_URL" \
     --confirm-source lovable-production >/dev/null
 
 MANIFEST_SHA=$(node -e "const m=require(process.argv[1]); process.stdout.write(m.manifestSha256)" "$SOURCE_ARTIFACT/manifest.json")
+
+if grep -R -a -E 'FAKE_(SOURCE|PROVIDER|TOAST)_[A-Z_]+_P1' "$SOURCE_ARTIFACT" >/dev/null; then
+  printf 'FAIL: source artifact contains a credential marker\n' >&2
+  exit 1
+fi
 
 LOVABLE_DATABASE_URL="$SOURCE_URL" \
 STAGING_DATABASE_URL="$TARGET_URL" \
@@ -100,6 +113,11 @@ WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST=1 \
     --local-test \
     --read-live >/dev/null
 
+if grep -R -a -E 'FAKE_TARGET_[A-Z_]+_P1' "$TARGET_BACKUP/target-before" >/dev/null; then
+  printf 'FAIL: target backup contains a credential marker\n' >&2
+  exit 1
+fi
+
 source_connection=$(
   psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
     -c "SELECT count(*) FROM public.pos_connections WHERE id='$CONNECTION_ID'"
@@ -117,12 +135,22 @@ sentinel=$(
     -c "SELECT value FROM public.infrastructure_metadata WHERE key='environment'"
 )
 phase=$(node -e "const s=require(process.argv[1]); process.stdout.write(s.phase)" "$TARGET_BACKUP/import-state.json")
+sanitized_connection=$(
+  psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM public.pos_connections WHERE id='$CONNECTION_ID' AND api_token='' AND winerim_api_token IS NULL AND base_url='https://redacted.invalid' AND catalog_endpoint IS NULL AND provider_config='{}'::jsonb AND restaurant_guid IS NULL"
+)
+provider_credentials_count=$(
+  psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM public.provider_credentials"
+)
 
 test "$source_connection" = "1"
 test "$old_connection" = "0"
 test "$line_count" = "1"
 test "$sentinel" = "staging"
 test "$phase" = "RECONCILED"
+test "$sanitized_connection" = "1"
+test "$provider_credentials_count" = "0"
 
 # Re-running the same confirmed artifact is a read-only idempotent no-op.
 resume_result=$(
@@ -161,6 +189,13 @@ rolled_back_source=$(
 )
 test "$rolled_back_old" = "1"
 test "$rolled_back_source" = "0"
+rolled_back_sanitized=$(
+  psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM public.pos_connections WHERE id='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' AND api_token='' AND base_url='https://redacted.invalid'"
+)
+rolled_back_phase=$(node -e "const s=require(process.argv[1]); process.stdout.write(s.phase)" "$TARGET_BACKUP/import-state.json")
+test "$rolled_back_sanitized" = "1"
+test "$rolled_back_phase" = "ROLLED_BACK"
 
 # A reviewed resume from the rolled-back state reapplies the same immutable
 # source artifact and reaches the same reconciled target.
@@ -184,4 +219,24 @@ reapplied_phase=$(node -e "const s=require(process.argv[1]); process.stdout.writ
 test "$reapplied_source" = "1"
 test "$reapplied_phase" = "RECONCILED"
 
-printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK tables=25 sentinel=staging phase=RECONCILED idempotent=1 rollback=1 resume=1\n'
+# Required-empty tables are part of every post-import reconciliation result.
+psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO public.provider_credentials
+  (connection_id, merchant_id, access_token_enc)
+VALUES
+  ('$CONNECTION_ID', 'runtime-empty-gate', 'FAKE_RUNTIME_EMPTY_GATE_SECRET_P1');
+SQL
+if STAGING_DATABASE_URL="$TARGET_URL" \
+  WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST=1 \
+  node "$REPO_ROOT/scripts/lovable-export-reconcile.mjs" reconcile \
+    --artifact-dir "$SOURCE_ARTIFACT" \
+    --confirm-target-ref local-test \
+    --local-test \
+    --read-live >/dev/null; then
+  printf 'FAIL: reconciliation accepted a non-empty provider_credentials table\n' >&2
+  exit 1
+fi
+psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM public.provider_credentials WHERE merchant_id='runtime-empty-gate'"
+
+printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK tables=24 credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED idempotent=1 rollback=1 resume=1\n'

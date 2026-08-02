@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,22 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const SNAPSHOT = /^[0-9a-f]{8}-[0-9a-f]{8}-[0-9]+$/i;
 const PROJECT_REF = /^[a-z0-9]{20}$/;
 const SAFE_ERROR = /postgres(?:ql)?:\/\/[^\s]+/gi;
+const MANIFEST_SCHEMA_VERSION = 2;
+const CREDENTIAL_COLUMN = /(?:token|secret|password|credential|(?:^|_)key(?:_|$)|(?:^|_)url$|endpoint|provider_config|restaurant_guid)/i;
+const REQUIRED_POS_REDACTIONS = {
+  base_url: "redacted-url",
+  api_token: "empty-text",
+  winerim_api_token: "null-text",
+  catalog_endpoint: "null-text",
+  provider_config: "empty-json-object",
+  restaurant_guid: "null-text",
+};
+const REDACTION_SQL = {
+  "redacted-url": "'https://redacted.invalid'::text",
+  "empty-text": "''::text",
+  "null-text": "NULL::text",
+  "empty-json-object": "'{}'::jsonb",
+};
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_CONFIG_PATH = path.join(moduleDir, "config.json");
@@ -44,7 +60,7 @@ export async function loadTransferConfig(configPath = DEFAULT_CONFIG_PATH) {
 }
 
 export function validateTransferConfig(config) {
-  if (config?.schemaVersion !== 1 || !IDENTIFIER.test(config?.schema || "")) {
+  if (config?.schemaVersion !== 2 || !IDENTIFIER.test(config?.schema || "")) {
     throw new Error("Unsupported data-transfer config");
   }
   const source = config.sourceTables;
@@ -63,6 +79,43 @@ export function validateTransferConfig(config) {
   if (!PROJECT_REF.test(config.targetProjectRef || "")) {
     throw new Error("Target project ref is required");
   }
+  if (source.includes("provider_credentials")
+      || !stagingOnly.includes("provider_credentials")
+      || !config.runtimeMustRemainEmpty.includes("provider_credentials")) {
+    throw new Error("provider_credentials must be staging-only and required empty");
+  }
+  const projections = config.sanitizedProjections;
+  if (!projections || typeof projections !== "object" || Array.isArray(projections)) {
+    throw new Error("Sanitized projection config is required");
+  }
+  for (const [table, projection] of Object.entries(projections)) {
+    if (!source.includes(table) || !IDENTIFIER.test(table)) {
+      throw new Error(`Sanitized projection references a non-source table: ${table}`);
+    }
+    const columns = projection?.expectedColumns;
+    const redactions = projection?.redactions;
+    if (!Array.isArray(columns) || columns.length === 0
+        || new Set(columns).size !== columns.length
+        || columns.some((column) => !IDENTIFIER.test(column))) {
+      throw new Error(`Invalid sanitized projection columns for ${table}`);
+    }
+    if (!redactions || typeof redactions !== "object" || Array.isArray(redactions)
+        || Object.entries(redactions).some(([column, action]) => (
+          !columns.includes(column) || !Object.hasOwn(REDACTION_SQL, action)
+        ))) {
+      throw new Error(`Invalid sanitized projection redactions for ${table}`);
+    }
+    const unredactedCredentialColumns = columns.filter((column) => CREDENTIAL_COLUMN.test(column) && !redactions[column]);
+    if (unredactedCredentialColumns.length) {
+      throw new Error(`Credential-like projection columns must be explicitly redacted for ${table}: ${unredactedCredentialColumns.join(",")}`);
+    }
+  }
+  const posProjection = projections.pos_connections;
+  if (!posProjection || Object.entries(REQUIRED_POS_REDACTIONS).some(([column, action]) => (
+    posProjection.redactions[column] !== action
+  ))) {
+    throw new Error("pos_connections credential redactions are incomplete");
+  }
   return config;
 }
 
@@ -72,6 +125,48 @@ export function expectedTargetTables(config) {
 
 export function targetReplaceTables(config) {
   return [...config.sourceTables, ...config.runtimeMustRemainEmpty].sort();
+}
+
+export function tableTransferPolicy(config, table) {
+  if (config.runtimeMustRemainEmpty.includes(table)) return { mode: "empty" };
+  const projection = config.sanitizedProjections[table];
+  if (projection) return { mode: "sanitized-projection", ...projection };
+  return { mode: "full" };
+}
+
+export function transferPolicyDigest(config, tables) {
+  const descriptor = tables.map((table) => ({ table, ...tableTransferPolicy(config, table) }));
+  return sha256(canonicalJson(descriptor));
+}
+
+function tableColumns(descriptor, table) {
+  return descriptor.columns
+    .filter((column) => column.table === table)
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((column) => column.column);
+}
+
+function assertProjectionColumns(descriptor, table, policy) {
+  const actual = tableColumns(descriptor, table);
+  if (policy.mode === "sanitized-projection"
+      && canonicalJson(actual) !== canonicalJson(policy.expectedColumns)) {
+    throw new Error(`Sanitized projection schema mismatch for ${table}: expected=${policy.expectedColumns.join(",")}; actual=${actual.join(",")}`);
+  }
+  if (actual.length === 0) throw new Error(`No columns found for transfer table ${table}`);
+  return policy.mode === "sanitized-projection" ? policy.expectedColumns : actual;
+}
+
+export function buildProjectedSelectSql({ schema, table, columns, policy }) {
+  if (!columns.length || !["empty", "sanitized-projection"].includes(policy.mode)) {
+    throw new Error(`Table ${table} does not have a projected transfer policy`);
+  }
+  const expressions = columns.map((column) => {
+    const action = policy.mode === "sanitized-projection" ? policy.redactions[column] : null;
+    return action
+      ? `${REDACTION_SQL[action]} AS ${quoteIdentifier(column)}`
+      : quoteIdentifier(column);
+  });
+  return `SELECT\n  ${expressions.join(",\n  ")}\nFROM ${qualifiedTable(schema, table)}${policy.mode === "empty" ? "\nWHERE false" : ""}`;
 }
 
 export function assertTableInventory(actual, expected, { exact = true } = {}) {
@@ -85,7 +180,7 @@ export function assertTableInventory(actual, expected, { exact = true } = {}) {
   return { missing, unexpected };
 }
 
-export function buildPgDumpArgs({ outputDir, schema, tables, snapshotId }) {
+export function buildPgDumpArgs({ outputDir, schema, tables, snapshotId, excludedTableData = [] }) {
   if (!SNAPSHOT.test(snapshotId)) throw new Error("Invalid exported snapshot identifier");
   const args = [
     "--format=directory",
@@ -100,6 +195,7 @@ export function buildPgDumpArgs({ outputDir, schema, tables, snapshotId }) {
     `--file=${outputDir}`,
   ];
   for (const table of tables) args.push(`--table=${schema}.${table}`);
+  for (const table of excludedTableData) args.push(`--exclude-table-data=${schema}.${table}`);
   return args;
 }
 
@@ -107,7 +203,7 @@ function psqlIncludePath(filePath) {
   return `'${path.resolve(filePath).replaceAll("'", "''")}'`;
 }
 
-export function buildAtomicRestoreSql({ schema, replaceTables, restoreSqlPath }) {
+export function buildAtomicRestoreSql({ schema, replaceTables, restoreSqlPath, projectedCopies = [] }) {
   if (!replaceTables.length) throw new Error("Atomic restore needs at least one table");
   const tables = replaceTables.map((table) => qualifiedTable(schema, table)).join(",\n  ");
   return [
@@ -119,6 +215,9 @@ export function buildAtomicRestoreSql({ schema, replaceTables, restoreSqlPath })
     "SET LOCAL session_replication_role = replica;",
     `TRUNCATE TABLE\n  ${tables}\nRESTART IDENTITY;`,
     `\\ir ${psqlIncludePath(restoreSqlPath)}`,
+    ...projectedCopies.map(({ table, columns, filePath }) => (
+      `\\copy ${qualifiedTable(schema, table)} (${columns.map(quoteIdentifier).join(", ")}) FROM ${psqlIncludePath(filePath)} WITH (FORMAT binary)`
+    )),
     "SET LOCAL session_replication_role = origin;",
     "COMMIT;",
     "",
@@ -143,19 +242,28 @@ export function signManifest(manifest) {
   return { ...manifest, manifestSha256: manifestDigest(manifest) };
 }
 
-export function verifyManifest(manifest, expectedTables) {
-  if (manifest?.schemaVersion !== 1 || manifest?.manifestSha256 !== manifestDigest(manifest)) {
+export function verifyManifest(manifest, expectedTables, expectedPolicySha256) {
+  if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION || manifest?.manifestSha256 !== manifestDigest(manifest)) {
     throw new Error("Manifest signature mismatch");
   }
   if (!Array.isArray(manifest.tables)) throw new Error("Manifest table list missing");
   assertTableInventory(manifest.tables.map(({ table }) => table), expectedTables);
   for (const table of manifest.tables) {
-    if (!IDENTIFIER.test(table.table) || !Number.isSafeInteger(table.rowCount) || table.rowCount < 0 || !SHA256.test(table.sha256)) {
+    if (!IDENTIFIER.test(table.table) || !Number.isSafeInteger(table.rowCount) || table.rowCount < 0
+        || !SHA256.test(table.sha256) || !["full", "empty", "sanitized-projection"].includes(table.transferMode)) {
       throw new Error(`Invalid table manifest for ${String(table.table)}`);
     }
+    if (table.transferMode !== "full"
+        && (!Array.isArray(table.columns) || table.columns.length === 0 || table.columns.some((column) => !IDENTIFIER.test(column)))) {
+      throw new Error(`Projected table columns missing for ${String(table.table)}`);
+    }
   }
-  if (!SHA256.test(manifest.archiveSha256 || "") || !SHA256.test(manifest.schemaSha256 || "")) {
-    throw new Error("Manifest archive/schema digest missing");
+  if (!SHA256.test(manifest.archiveSha256 || "") || !SHA256.test(manifest.projectedDataSha256 || "")
+      || !SHA256.test(manifest.schemaSha256 || "") || !SHA256.test(manifest.transferPolicySha256 || "")) {
+    throw new Error("Manifest archive/projection/schema/policy digest missing");
+  }
+  if (!SHA256.test(expectedPolicySha256 || "") || manifest.transferPolicySha256 !== expectedPolicySha256) {
+    throw new Error("Manifest transfer policy mismatch");
   }
   return manifest;
 }
@@ -183,10 +291,22 @@ export function assertTargetGate(url, confirmation, config, sourceUrl = null, { 
   }
   const parsed = new URL(url);
   if (!/^postgres(?:ql)?:$/.test(parsed.protocol) || !parsed.hostname) throw new Error("Invalid target database URL");
+  const hostname = parsed.hostname.toLowerCase();
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  const username = decodeURIComponent(parsed.username);
   if (localTest) {
-    if (!/^(127\.0\.0\.1|localhost)$/.test(parsed.hostname)) throw new Error("Local-test gate only accepts localhost");
-  } else if (!decodeURIComponent(url).includes(config.targetProjectRef)) {
-    throw new Error("Target URL does not identify the configured staging project");
+    if (!/^(127\.0\.0\.1|localhost)$/.test(hostname)) throw new Error("Local-test gate only accepts localhost");
+  } else {
+    const ref = config.targetProjectRef;
+    const directIdentity = hostname === `db.${ref}.supabase.co` && username.length > 0;
+    const usernameParts = username.split(".");
+    const poolerIdentity = /^(?:[a-z0-9-]+\.)*pooler\.supabase\.com$/.test(hostname)
+      && usernameParts.length >= 2
+      && usernameParts.at(-1) === ref
+      && usernameParts.slice(0, -1).every((part) => IDENTIFIER.test(part));
+    if ((!directIdentity && !poolerIdentity) || database !== "postgres" || (parsed.port && parsed.port !== "5432")) {
+      throw new Error("Target URL components do not exactly identify the configured staging project");
+    }
   }
   if (sourceUrl && normalizedDatabaseIdentity(sourceUrl) === normalizedDatabaseIdentity(url)) {
     throw new Error("Source and target database identities must differ");
@@ -196,7 +316,8 @@ export function assertTargetGate(url, confirmation, config, sourceUrl = null, { 
 
 function normalizedDatabaseIdentity(url) {
   const parsed = new URL(url);
-  return `${parsed.hostname.toLowerCase()}:${parsed.port || "5432"}/${parsed.pathname.replace(/^\//, "")}`;
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
+  return canonicalJson({ hostname: parsed.hostname.toLowerCase(), port: parsed.port || "5432", database });
 }
 
 function processEnv(databaseUrl, extra = {}) {
@@ -239,13 +360,46 @@ async function runProcess(command, args, { databaseUrl, input = null, stdout = "
   });
 }
 
-async function streamCanonicalTable(databaseUrl, snapshotId, schema, table) {
+async function runProcessToFile(command, args, { databaseUrl, input, outputPath, env = {} }) {
+  const outputHandle = await open(outputPath, "wx", 0o600);
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(command, args, {
+        env: databaseUrl ? processEnv(databaseUrl, env) : { ...process.env, ...env },
+        stdio: ["pipe", outputHandle.fd, "pipe"],
+      });
+      const errors = [];
+      child.stderr.on("data", (chunk) => errors.push(chunk));
+      child.stdin.end(input);
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(`${command} failed (${code}); diagnosticSha256=${sha256(Buffer.concat(errors))}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+    await outputHandle.sync();
+  } catch (error) {
+    await rm(outputPath, { force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await outputHandle.close();
+  }
+}
+
+function fullTableSelectSql(schema, table) {
+  return `SELECT * FROM ${qualifiedTable(schema, table)}`;
+}
+
+async function streamCanonicalTable(databaseUrl, snapshotId, schema, table, selectSql = fullTableSelectSql(schema, table)) {
   const sql = [
     "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;",
     `SET TRANSACTION SNAPSHOT '${snapshotId}';`,
     "COPY (",
     "  SELECT row_value",
-    `  FROM (SELECT to_jsonb(row_data)::text AS row_value FROM ${qualifiedTable(schema, table)} AS row_data) canonical_rows`,
+    `  FROM (SELECT to_jsonb(row_data)::text AS row_value FROM (${selectSql}) AS row_data) canonical_rows`,
     "  ORDER BY row_value COLLATE \"C\"",
     ") TO STDOUT WITH (FORMAT text);",
     "ROLLBACK;",
@@ -271,6 +425,22 @@ async function streamCanonicalTable(databaseUrl, snapshotId, schema, table) {
       if (code !== 0) reject(new Error(`psql checksum failed for ${table}; diagnosticSha256=${sha256(Buffer.concat(errors))}`));
       else resolve({ table, rowCount, sha256: hash.digest("hex") });
     });
+  });
+}
+
+async function writeProjectedTableData({ databaseUrl, snapshotId, selectSql, outputPath }) {
+  const sql = [
+    "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;",
+    `SET TRANSACTION SNAPSHOT '${snapshotId}';`,
+    `COPY (${selectSql}) TO STDOUT WITH (FORMAT binary);`,
+    "ROLLBACK;",
+    "",
+  ].join("\n");
+  await runProcessToFile("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1"], {
+    databaseUrl,
+    input: sql,
+    outputPath,
+    env: { PGOPTIONS: "-c default_transaction_read_only=on -c statement_timeout=0" },
   });
 }
 
@@ -394,6 +564,7 @@ export async function createExportArtifact({
 }) {
   await mkdir(outputDir, { recursive: false, mode: 0o700 });
   const dumpDir = path.join(outputDir, "dump");
+  const projectedDir = path.join(outputDir, "projected");
   const manifestPath = path.join(outputDir, "manifest.json");
 
   try {
@@ -401,17 +572,59 @@ export async function createExportArtifact({
       const descriptor = await databaseDescriptor(client);
       assertTableInventory(descriptor.tables, exactInventory ? expectedTargetTables(config) : tables, { exact: exactInventory });
       const schemaDescriptor = scopedDescriptor(descriptor, tables);
-      const args = buildPgDumpArgs({ outputDir: dumpDir, schema: config.schema, tables, snapshotId: snapshot.snapshot_id });
+      const transferPlans = tables.map((table) => {
+        const policy = tableTransferPolicy(config, table);
+        return { table, policy, columns: assertProjectionColumns(descriptor, table, policy) };
+      });
+      const projectedPlans = transferPlans.filter(({ policy }) => policy.mode !== "full");
+      for (const { table, policy } of projectedPlans) {
+        if (policy.mode !== "empty") continue;
+        const result = await client.query(`SELECT count(*)::bigint AS count FROM ${qualifiedTable(config.schema, table)}`);
+        if (Number(result.rows[0].count) !== 0) {
+          throw new Error(`Required-empty table is not empty: ${table}`);
+        }
+      }
+      await mkdir(projectedDir, { mode: 0o700 });
+      const args = buildPgDumpArgs({
+        outputDir: dumpDir,
+        schema: config.schema,
+        tables,
+        snapshotId: snapshot.snapshot_id,
+        excludedTableData: projectedPlans.map(({ table }) => table),
+      });
       await runProcess("pg_dump", args, { databaseUrl });
 
       const tableManifests = [];
-      for (const table of tables) {
-        tableManifests.push(await streamCanonicalTable(databaseUrl, snapshot.snapshot_id, config.schema, table));
+      for (const { table, policy, columns } of transferPlans) {
+        const selectSql = policy.mode === "full"
+          ? fullTableSelectSql(config.schema, table)
+          : buildProjectedSelectSql({ schema: config.schema, table, columns, policy });
+        if (policy.mode !== "full") {
+          await writeProjectedTableData({
+            databaseUrl,
+            snapshotId: snapshot.snapshot_id,
+            selectSql,
+            outputPath: path.join(projectedDir, `${table}.copy`),
+          });
+        }
+        const tableManifest = await streamCanonicalTable(
+          databaseUrl,
+          snapshot.snapshot_id,
+          config.schema,
+          table,
+          selectSql,
+        );
+        tableManifests.push({
+          ...tableManifest,
+          transferMode: policy.mode,
+          ...(policy.mode === "full" ? {} : { columns }),
+        });
       }
       const toc = await runProcess("pg_restore", ["--list", dumpDir]);
       const archiveSha256 = await directoryDigest(dumpDir);
+      const projectedDataSha256 = await directoryDigest(projectedDir);
       const manifest = signManifest({
-        schemaVersion: 1,
+        schemaVersion: MANIFEST_SCHEMA_VERSION,
         kind,
         createdAt: new Date().toISOString(),
         snapshotAt: snapshot.snapshot_at,
@@ -424,6 +637,8 @@ export async function createExportArtifact({
         schema: config.schema,
         schemaSha256: sha256(canonicalJson(schemaDescriptor)),
         archiveSha256,
+        projectedDataSha256,
+        transferPolicySha256: transferPolicyDigest(config, tables),
         tocSha256: sha256(toc),
         tables: tableManifests,
       });
@@ -435,19 +650,60 @@ export async function createExportArtifact({
   }
 }
 
-export async function readAndVerifyArtifact(artifactDir, expectedTables) {
+export async function readAndVerifyArtifact(artifactDir, expectedTables, config) {
   const manifestPath = path.join(artifactDir, "manifest.json");
   const dumpDir = path.join(artifactDir, "dump");
-  const manifest = verifyManifest(JSON.parse(await readFile(manifestPath, "utf8")), expectedTables);
+  const projectedDir = path.join(artifactDir, "projected");
+  const expectedPolicySha256 = transferPolicyDigest(config, expectedTables);
+  const manifest = verifyManifest(
+    JSON.parse(await readFile(manifestPath, "utf8")),
+    expectedTables,
+    expectedPolicySha256,
+  );
+  if (manifest.schema !== config.schema) throw new Error("Manifest schema mismatch");
+  for (const table of manifest.tables) {
+    const policy = tableTransferPolicy(config, table.table);
+    if (table.transferMode !== policy.mode) {
+      throw new Error(`Manifest transfer mode mismatch for ${table.table}`);
+    }
+    if (policy.mode === "sanitized-projection"
+        && canonicalJson(table.columns) !== canonicalJson(policy.expectedColumns)) {
+      throw new Error(`Manifest projected columns mismatch for ${table.table}`);
+    }
+  }
   const archiveSha256 = await directoryDigest(dumpDir);
   if (archiveSha256 !== manifest.archiveSha256) throw new Error("Archive digest mismatch");
+  const projectedEntries = await readdir(projectedDir, { withFileTypes: true });
+  const projectedTables = manifest.tables.filter(({ transferMode }) => transferMode !== "full");
+  const expectedProjectedFiles = projectedTables.map(({ table }) => `${table}.copy`).sort();
+  const actualProjectedFiles = projectedEntries.map(({ name }) => name).sort();
+  if (canonicalJson(actualProjectedFiles) !== canonicalJson(expectedProjectedFiles)) {
+    throw new Error(`Projected data inventory mismatch: expected=${expectedProjectedFiles.join(",") || "none"}; actual=${actualProjectedFiles.join(",") || "none"}`);
+  }
+  for (const entry of projectedEntries) {
+    const filePath = path.join(projectedDir, entry.name);
+    const info = await lstat(filePath);
+    if (!entry.isFile() || !info.isFile() || info.isSymbolicLink()) {
+      throw new Error(`Projected data entry is not a regular file: ${entry.name}`);
+    }
+  }
+  const projectedDataSha256 = await directoryDigest(projectedDir);
+  if (projectedDataSha256 !== manifest.projectedDataSha256) throw new Error("Projected data digest mismatch");
   const toc = await runProcess("pg_restore", ["--list", dumpDir]);
   if (sha256(toc) !== manifest.tocSha256) throw new Error("Archive TOC digest mismatch");
   const tableData = [...toc.matchAll(/TABLE DATA\s+([^\s]+)\s+([^\s]+)\s+/g)]
     .map((match) => ({ schema: match[1], table: match[2] }));
-  if (tableData.some(({ schema }) => schema !== "public")) throw new Error("Archive contains table data outside public schema");
-  assertTableInventory(tableData.map(({ table }) => table), expectedTables);
-  return { manifest, manifestPath, dumpDir };
+  if (tableData.some(({ schema }) => schema !== config.schema)) throw new Error("Archive contains table data outside the configured schema");
+  assertTableInventory(
+    tableData.map(({ table }) => table),
+    manifest.tables.filter(({ transferMode }) => transferMode === "full").map(({ table }) => table),
+  );
+  const projectedCopies = projectedTables.map(({ table, columns }) => ({
+    table,
+    columns,
+    filePath: path.join(projectedDir, `${table}.copy`),
+  }));
+  return { manifest, manifestPath, dumpDir, projectedCopies };
 }
 
 async function targetSentinel(client, config) {
@@ -500,7 +756,7 @@ async function restoreSqlFromArchive(dumpDir, restoreSqlPath) {
 }
 
 export async function applyArtifactAtomically({ databaseUrl, artifactDir, config, manifestTables, replaceTables }) {
-  const { manifest, dumpDir } = await readAndVerifyArtifact(artifactDir, manifestTables);
+  const { manifest, dumpDir, projectedCopies } = await readAndVerifyArtifact(artifactDir, manifestTables, config);
   const workDir = path.join(artifactDir, ".restore-work");
   await mkdir(workDir, { recursive: true, mode: 0o700 });
   const restoreSqlPath = path.join(workDir, "restore-data.sql");
@@ -511,6 +767,7 @@ export async function applyArtifactAtomically({ databaseUrl, artifactDir, config
       schema: config.schema,
       replaceTables,
       restoreSqlPath,
+      projectedCopies,
     }), { mode: 0o600 });
     await runProcess("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "--file", atomicSqlPath], {
       databaseUrl,
@@ -526,30 +783,38 @@ function checksumMap(manifest) {
   return new Map(manifest.tables.map((table) => [table.table, table]));
 }
 
-export async function reconcileTarget({ databaseUrl, sourceManifest, config }) {
+export async function reconcileTarget({ databaseUrl, sourceManifest, config, tables = config.sourceTables }) {
   const inspection = await inspectTarget(databaseUrl, config);
-  const targetSchema = scopedDescriptor(inspection.descriptor, config.sourceTables);
+  assertTableInventory(sourceManifest.tables.map(({ table }) => table), tables);
+  const targetSchema = scopedDescriptor(inspection.descriptor, tables);
   const schemaSha256 = sha256(canonicalJson(targetSchema));
-  const tables = await withExportedSnapshot(databaseUrl, async ({ snapshot }) => {
+  const tableManifests = await withExportedSnapshot(databaseUrl, async ({ snapshot }) => {
     const rows = [];
-    for (const table of config.sourceTables) {
+    for (const table of tables) {
       rows.push(await streamCanonicalTable(databaseUrl, snapshot.snapshot_id, config.schema, table));
     }
     return rows;
   });
   const expected = checksumMap(sourceManifest);
-  const mismatches = tables.filter((table) => {
+  const mismatches = tableManifests.filter((table) => {
     const source = expected.get(table.table);
     return !source || source.rowCount !== table.rowCount || source.sha256 !== table.sha256;
   }).map((table) => ({ table: table.table, source: expected.get(table.table), target: table }));
   const foreignKeyViolations = await checkForeignKeys(databaseUrl, inspection.descriptor.foreignKeys, config);
+  const emptyTableViolations = Object.entries(inspection.runtimeCounts)
+    .filter(([, count]) => count !== 0)
+    .map(([table, count]) => ({ table, count }));
   return {
-    ok: mismatches.length === 0 && foreignKeyViolations.length === 0 && schemaSha256 === sourceManifest.schemaSha256,
+    ok: mismatches.length === 0
+      && foreignKeyViolations.length === 0
+      && emptyTableViolations.length === 0
+      && schemaSha256 === sourceManifest.schemaSha256,
     schemaSha256,
     expectedSchemaSha256: sourceManifest.schemaSha256,
-    tables,
+    tables: tableManifests,
     mismatches,
     foreignKeyViolations,
+    emptyTableViolations,
     runtimeCounts: inspection.runtimeCounts,
   };
 }
@@ -585,9 +850,29 @@ async function checkForeignKeys(databaseUrl, foreignKeys, config) {
 }
 
 export async function writeState(statePath, state) {
-  const signed = signManifest({ schemaVersion: 1, ...state, updatedAt: new Date().toISOString() });
-  await writeFile(statePath, `${JSON.stringify(signed, null, 2)}\n`, { mode: 0o600 });
-  return signed;
+  const { manifestSha256: _previousDigest, ...unsignedState } = state;
+  const signed = signManifest({ schemaVersion: 1, ...unsignedState, updatedAt: new Date().toISOString() });
+  const directory = path.dirname(statePath);
+  const tempPath = path.join(directory, `.${path.basename(statePath)}.${process.pid}.${randomUUID()}.tmp`);
+  let stateHandle;
+  try {
+    stateHandle = await open(tempPath, "wx", 0o600);
+    await stateHandle.writeFile(`${JSON.stringify(signed, null, 2)}\n`, "utf8");
+    await stateHandle.sync();
+    await stateHandle.close();
+    stateHandle = null;
+    await rename(tempPath, statePath);
+    const directoryHandle = await open(directory, "r");
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
+    return signed;
+  } finally {
+    await stateHandle?.close().catch(() => undefined);
+    await rm(tempPath, { force: true }).catch(() => undefined);
+  }
 }
 
 export async function readState(statePath) {
@@ -599,6 +884,13 @@ export async function readState(statePath) {
     if (error?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+export function assertRollbackReconciled(reconciliation) {
+  if (!reconciliation?.ok) {
+    throw new Error("Rollback target does not reconcile with the signed backup manifest");
+  }
+  return reconciliation;
 }
 
 export function buildSafePlan(config) {
@@ -613,11 +905,13 @@ export function buildSafePlan(config) {
       "source URL only through LOVABLE_DATABASE_URL",
       "target URL only through STAGING_DATABASE_URL",
       "exported repeatable-read snapshot with LSN/timestamp",
+      "provider_credentials staging-only and required empty",
+      "pos_connections exported through an exact signed credential-sanitizing projection",
       "target sentinel environment=staging and exact 29-table inventory",
       "runtime staging tables empty before import",
       "target backup before one-transaction replacement",
-      "row counts, streaming SHA-256 and FK reconciliation",
-      "automatic rollback on post-import mismatch",
+      "row counts, streaming SHA-256, FK and required-empty reconciliation",
+      "backup-manifest reconciliation before any ROLLED_BACK state",
     ],
   };
 }

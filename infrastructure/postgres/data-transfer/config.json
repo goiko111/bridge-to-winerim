@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "schema": "public",
   "sourceEnvironment": "lovable-production",
   "targetEnvironment": "staging",
@@ -24,7 +24,6 @@
     "pos_connections",
     "product_mappings",
     "provider_capabilities",
-    "provider_credentials",
     "provider_products",
     "sales_events",
     "sales_line_items",
@@ -38,13 +37,74 @@
   ],
   "stagingOnlyTables": [
     "infrastructure_metadata",
+    "provider_credentials",
     "runtime_connection_credentials",
     "runtime_execution_log",
     "runtime_idempotency"
   ],
   "runtimeMustRemainEmpty": [
+    "provider_credentials",
     "runtime_connection_credentials",
     "runtime_execution_log",
     "runtime_idempotency"
-  ]
+  ],
+  "sanitizedProjections": {
+    "pos_connections": {
+      "expectedColumns": [
+        "id",
+        "location_name",
+        "provider",
+        "base_url",
+        "api_token",
+        "sync_mode",
+        "sync_frequency_minutes",
+        "backfill_days",
+        "enabled",
+        "last_sync_at",
+        "created_at",
+        "updated_at",
+        "last_business_day_synced",
+        "winerim_api_token",
+        "catalog_endpoint",
+        "last_catalog_sync_at",
+        "catalog_product_count",
+        "catalog_wine_candidate_count",
+        "catalog_sync_enabled",
+        "default_wine_family_name",
+        "default_vat_rate",
+        "default_bottle_format_name",
+        "default_glass_format_name",
+        "write_mode",
+        "default_family_id",
+        "default_vat_id",
+        "default_preparation_type_id",
+        "default_preparation_order_id",
+        "default_warehouse_id",
+        "auto_create_families",
+        "write_bottle",
+        "write_glass",
+        "auto_push_on_create",
+        "auto_push_on_update",
+        "auto_push_bottle",
+        "auto_push_glass",
+        "require_manual_review_before_push",
+        "auto_push_verified_ready",
+        "estimated_glasses_per_bottle",
+        "selected_sale_center_ids",
+        "provider_config",
+        "restaurant_guid",
+        "circuit_breaker_paused_until",
+        "circuit_breaker_reason",
+        "consecutive_failures"
+      ],
+      "redactions": {
+        "base_url": "redacted-url",
+        "api_token": "empty-text",
+        "winerim_api_token": "null-text",
+        "catalog_endpoint": "null-text",
+        "provider_config": "empty-json-object",
+        "restaurant_guid": "null-text"
+      }
+    }
+  }
 }

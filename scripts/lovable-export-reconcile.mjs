@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   applyArtifactAtomically,
+  assertRollbackReconciled,
   assertSourceGate,
   assertTargetGate,
   buildSafePlan,
@@ -62,6 +63,43 @@ async function pathExists(filePath) {
   }
 }
 
+async function restoreAndReconcileBackup({ targetUrl, backupDir, backupManifest, config, state, reason }) {
+  const artifactDir = path.join(backupDir, "target-before");
+  await applyArtifactAtomically({
+    databaseUrl: targetUrl,
+    artifactDir,
+    config,
+    manifestTables: targetReplaceTables(config),
+    replaceTables: targetReplaceTables(config),
+  });
+  let reconciliation;
+  try {
+    reconciliation = await reconcileTarget({
+      databaseUrl: targetUrl,
+      sourceManifest: backupManifest,
+      config,
+      tables: targetReplaceTables(config),
+    });
+    assertRollbackReconciled(reconciliation);
+  } catch {
+    await writeState(path.join(backupDir, "import-state.json"), {
+      ...state,
+      phase: "ROLLBACK_FAILED",
+      reason,
+      rollbackFailureReason: "BACKUP_MANIFEST_RECONCILIATION_FAILED",
+      rollbackManifestSha256: backupManifest.manifestSha256,
+    });
+    throw new Error("Rollback restore was applied but did not reconcile with the signed backup manifest");
+  }
+  const rolledBackState = await writeState(path.join(backupDir, "import-state.json"), {
+    ...state,
+    phase: "ROLLED_BACK",
+    reason,
+    rollbackManifestSha256: backupManifest.manifestSha256,
+  });
+  return { reconciliation, state: rolledBackState };
+}
+
 async function exportCommand(config, options) {
   const artifactDir = path.resolve(requireOption(options, "artifact-dir"));
   if (!options.apply) {
@@ -83,7 +121,7 @@ async function exportCommand(config, options) {
 
 async function reconcileCommand(config, options) {
   const artifactDir = path.resolve(requireOption(options, "artifact-dir"));
-  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables);
+  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables, config);
   if (!options["read-live"]) {
     print({ result: "RECONCILE_OFFLINE_ARTIFACT_OK", manifestSha256: manifest.manifestSha256, tables: manifest.tables.length });
     return;
@@ -100,7 +138,7 @@ async function importCommand(config, options) {
   const artifactDir = path.resolve(requireOption(options, "artifact-dir"));
   const backupDir = path.resolve(requireOption(options, "backup-dir"));
   const statePath = path.join(backupDir, "import-state.json");
-  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables);
+  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables, config);
   if (options["confirm-manifest"] !== manifest.manifestSha256) throw new Error("Source manifest confirmation gate failed");
   if (!options.apply) {
     const existingState = await readState(statePath);
@@ -149,15 +187,15 @@ async function importCommand(config, options) {
       print({ result: "IMPORT_RESUMED_RECONCILED", manifestSha256: manifest.manifestSha256, reconciliation: existing });
       return;
     }
-    const previous = await readAndVerifyArtifact(path.join(backupDir, "target-before"), targetReplaceTables(config));
-    await applyArtifactAtomically({
-      databaseUrl: targetUrl,
-      artifactDir: path.join(backupDir, "target-before"),
+    const previous = await readAndVerifyArtifact(path.join(backupDir, "target-before"), targetReplaceTables(config), config);
+    await restoreAndReconcileBackup({
+      targetUrl,
+      backupDir,
+      backupManifest: previous.manifest,
       config,
-      manifestTables: targetReplaceTables(config),
-      replaceTables: targetReplaceTables(config),
+      state,
+      reason: "RESUME_RECONCILIATION_FAILED",
     });
-    await writeState(statePath, { ...state, phase: "ROLLED_BACK", reason: "RESUME_RECONCILIATION_FAILED", rollbackManifestSha256: previous.manifest.manifestSha256 });
     throw new Error("Interrupted import did not reconcile; staging target restored from its pre-import snapshot");
   }
 
@@ -196,7 +234,7 @@ async function importCommand(config, options) {
     if (!["TARGET_SNAPSHOT_READY", "ROLLED_BACK"].includes(state.phase)) {
       throw new Error(`Unsupported resume phase: ${state.phase}`);
     }
-    const verified = await readAndVerifyArtifact(path.join(backupDir, "target-before"), targetReplaceTables(config));
+    const verified = await readAndVerifyArtifact(path.join(backupDir, "target-before"), targetReplaceTables(config), config);
     backup = { manifest: verified.manifest };
     if (state.targetBackupManifestSha256 !== backup.manifest.manifestSha256) {
       throw new Error("Resume target backup manifest mismatch");
@@ -220,20 +258,13 @@ async function importCommand(config, options) {
 
   const reconciliation = await reconcileTarget({ databaseUrl: targetUrl, sourceManifest: manifest, config });
   if (!reconciliation.ok) {
-    await applyArtifactAtomically({
-      databaseUrl: targetUrl,
-      artifactDir: path.join(backupDir, "target-before"),
-      config,
-      manifestTables: targetReplaceTables(config),
-      replaceTables: targetReplaceTables(config),
-    });
-    await writeState(statePath, {
-      phase: "ROLLED_BACK",
-      reason: "POST_IMPORT_RECONCILIATION_FAILED",
-      sourceManifestSha256: manifest.manifestSha256,
-      targetBackupManifestSha256: backup.manifest.manifestSha256,
-      artifactDir,
+    await restoreAndReconcileBackup({
+      targetUrl,
       backupDir,
+      backupManifest: backup.manifest,
+      config,
+      state,
+      reason: "POST_IMPORT_RECONCILIATION_FAILED",
     });
     throw new Error("Post-import reconciliation failed; staging target restored from its pre-import snapshot");
   }
@@ -253,7 +284,10 @@ async function rollbackCommand(config, options) {
   const state = await readState(statePath);
   if (!state) throw new Error("Rollback state not found");
   const artifactDir = path.join(backupDir, "target-before");
-  const { manifest } = await readAndVerifyArtifact(artifactDir, targetReplaceTables(config));
+  const { manifest } = await readAndVerifyArtifact(artifactDir, targetReplaceTables(config), config);
+  if (state.targetBackupManifestSha256 && state.targetBackupManifestSha256 !== manifest.manifestSha256) {
+    throw new Error("Rollback state does not match the signed target backup manifest");
+  }
   if (options["confirm-manifest"] !== manifest.manifestSha256) throw new Error("Rollback manifest confirmation gate failed");
   if (!options.apply) {
     print({ result: "ROLLBACK_DRY_RUN", backupDir, manifestSha256: manifest.manifestSha256, writes: false });
@@ -263,15 +297,15 @@ async function rollbackCommand(config, options) {
   const localTest = options["local-test"] === true && process.env.WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST === "1";
   assertTargetGate(targetUrl, options["confirm-target-ref"], config, null, { localTest });
   await inspectTarget(targetUrl, config);
-  await applyArtifactAtomically({
-    databaseUrl: targetUrl,
-    artifactDir,
+  const rollback = await restoreAndReconcileBackup({
+    targetUrl,
+    backupDir,
+    backupManifest: manifest,
     config,
-    manifestTables: targetReplaceTables(config),
-    replaceTables: targetReplaceTables(config),
+    state,
+    reason: "MANUAL_ROLLBACK",
   });
-  await writeState(statePath, { ...state, phase: "ROLLED_BACK", rollbackManifestSha256: manifest.manifestSha256 });
-  print({ result: "ROLLBACK_APPLIED", manifestSha256: manifest.manifestSha256 });
+  print({ result: "ROLLBACK_APPLIED", manifestSha256: manifest.manifestSha256, reconciliation: rollback.reconciliation });
 }
 
 async function statusCommand(config, options) {

@@ -2,11 +2,12 @@
 
 `EXPORT_RESULT=TOOLING_READY_LOCAL_ONLY`
 
-This runbook transfers only the 25 middleware-owned data tables from Lovable
-Postgres into the independent Supabase staging database. It never copies the
-four staging-owned tables:
+This runbook transfers only the 24 approved middleware-owned data tables from
+Lovable Postgres into the independent Supabase staging database. It never
+copies rows from the five staging-owned tables:
 
 - `infrastructure_metadata`
+- `provider_credentials`
 - `runtime_connection_credentials`
 - `runtime_execution_log`
 - `runtime_idempotency`
@@ -22,18 +23,32 @@ must contain exactly the 29 reviewed public tables and the sentinel
 - Database URLs are accepted only through `LOVABLE_DATABASE_URL` and
   `STAGING_DATABASE_URL`; they are never command-line arguments or manifest
   fields.
+- `provider_credentials` is staging-owned and required empty before and after
+  import. Production rows from that table are never selected or archived.
+- `pos_connections` is excluded from raw `pg_dump` table data. A signed,
+  exact-column projection writes a binary copy with `api_token=''`, a fixed
+  non-routable `base_url`, and nullable token, endpoint, provider-config and
+  restaurant credential fields cleared. An unknown/reordered column fails the
+  export closed.
 - Export holds one `REPEATABLE READ READ ONLY` coordinator transaction,
   exports its snapshot, and uses that same snapshot for `pg_dump`, row counts
   and canonical row SHA-256 checksums.
 - The manifest records snapshot timestamp, WAL LSN and only the SHA-256 of the
   ephemeral snapshot identifier.
+- Import validates a direct or Session Pooler DSN by exact hostname, username
+  project-ref component, database and port. A project ref found only as a URL
+  substring is rejected.
 - Import refuses a target whose ref/sentinel/table inventory differs, or whose
-  runtime staging tables are non-empty.
+  required-empty staging tables are non-empty.
 - Before import, the tool creates a target backup. Replacement is one
   transaction, without `CASCADE`, and aborts on the first error.
-- Reconciliation compares schema fingerprint, exact row counts, streaming
-  canonical SHA-256 checksums and FK orphans. A mismatch automatically restores
-  the target backup.
+- Reconciliation compares schema and transfer-policy fingerprints, exact row
+  counts, streaming canonical SHA-256 checksums, FK orphans and required-empty
+  tables. A mismatch automatically restores and reconciles the target backup.
+- State transitions use a same-directory temporary file, file `fsync`, atomic
+  rename and directory `fsync`. Rollback records `ROLLED_BACK` only after the
+  restored target reconciles with the signed backup manifest; otherwise it
+  records `ROLLBACK_FAILED`.
 - Artifacts are sensitive data. Store them outside the repository on an
   encrypted volume, mode `0700`; manifests and state are mode `0600`.
 
@@ -46,7 +61,7 @@ Use PostgreSQL client tools matching or newer than the source server.
 These commands do not connect to Lovable or Supabase:
 
 ```sh
-cd /private/tmp/winerim-export-reconcile-agent
+cd /private/tmp/winerim-data-hardening-agent
 npm run data:transfer:plan
 npm run data:transfer:export -- --artifact-dir /private/tmp/winerim-transfer/source
 npm run data:transfer:test
@@ -54,8 +69,9 @@ npm run data:transfer:smoke:local
 npx tsc --noEmit --pretty false
 ```
 
-Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, tests green,
-`LOCAL_TRANSFER_ROUNDTRIP_OK` and typecheck green.
+Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, 15 focal tests green,
+`LOCAL_TRANSFER_ROUNDTRIP_OK tables=24 credentials=sanitized` and typecheck
+green.
 
 ## Gate 1: consistent source export
 
@@ -71,9 +87,12 @@ npm run data:transfer:export -- \
 unset LOVABLE_DATABASE_URL
 ```
 
-Record `manifestSha256`, `snapshotAt`, `snapshotLsn`, the 25 counts/checksums
+Record `manifestSha256`, `snapshotAt`, `snapshotLsn`, the 24 counts/checksums
 and the encrypted artifact location. Do not continue if any allowlisted table
 is absent or the source cannot export a repeatable read-only snapshot.
+
+Only manifest schema version 2 artifacts are accepted. Older artifacts did not
+prove the sanitizing projection and must not be imported.
 
 ## Gate 2: offline artifact verification
 
@@ -115,6 +134,8 @@ unset STAGING_DATABASE_URL
 
 Expected: `IMPORT_RECONCILED`. A failed post-import reconciliation triggers an
 automatic rollback and records `phase=ROLLED_BACK` in `import-state.json`.
+That phase is written only after backup-manifest reconciliation; inspect and
+escalate `phase=ROLLBACK_FAILED` rather than retrying import automatically.
 If the process is interrupted, rerun the exact command with `--resume`. The
 tool either proves the committed data already reconciles, resumes from the
 verified target snapshot, or restores that snapshot; it never guesses across
@@ -153,6 +174,12 @@ unset STAGING_DATABASE_URL
 After rollback, repeat the staging read-only infrastructure verification. Do
 not enable Cloudflare Queue consumers, Cron, runtime execution or production
 traffic as part of this data-transfer runbook.
+
+The target backup deliberately contains sanitized `pos_connections` rows and
+empty credential tables. It cannot recover tokens that were incorrectly stored
+in `pos_connections`. Provision staging-only credentials later through the
+separate runtime credential process, after this transfer reconciles; never put
+production credentials into either transfer artifact.
 
 ## Remaining live gates
 
