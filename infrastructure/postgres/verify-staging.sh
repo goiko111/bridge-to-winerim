@@ -2,6 +2,8 @@
 set -euo pipefail
 set +x
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 if [ "$#" -ne 1 ] || [ -z "$1" ]; then
   printf 'Usage: %s STAGING_DATABASE_URL\n' "$0" >&2
   exit 2
@@ -84,6 +86,17 @@ check_equals \
   'public_tables' \
   '30' \
   "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'"
+
+actual_tables=$(query_scalar \
+  'public_table_inventory' \
+  "SELECT string_agg(c.relname, E'\\n' ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'") || actual_tables=''
+expected_tables=$(cat "$SCRIPT_DIR/expected-tables-runtime-postupgrade.txt")
+if [ "$actual_tables" != "$expected_tables" ]; then
+  printf 'FAIL: public_table_inventory does not match the reviewed 30-table contract\n' >&2
+  FAILURES=$((FAILURES + 1))
+else
+  printf 'OK: public_table_inventory=exact\n'
+fi
 
 check_equals \
   'runtime_upgrade_tables' \

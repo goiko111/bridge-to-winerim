@@ -12,19 +12,13 @@ on:
         required: true
         type: string
       migration_mode:
-        description: "Database operation: none, empty bootstrap or reviewed 28-to-30 runtime upgrade"
+        description: "Database operation: none or empty bootstrap (existing staging upgrades run only from a durable operator host)"
         required: true
         default: none
         type: choice
         options:
           - none
           - bootstrap-empty
-          - upgrade-runtime-28-to-30
-      confirm_upgrade_plan_sha:
-        description: "Exact 64-character plan digest printed by upgrade-staging-runtime.sh (upgrade only)"
-        required: false
-        default: ""
-        type: string
       apply_migrations:
         description: "Apply the reviewed staging bootstrap/migrations"
         required: true
@@ -126,7 +120,8 @@ jobs:
             test "$identity" = "staging" || (echo "Existing database sentinel is not staging" >&2; exit 1)
             table_count="$(psql "$STAGING_DB_URL" -XAtqc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")"
             if [ "$table_count" = 28 ]; then
-              test "$MIGRATION_MODE" = upgrade-runtime-28-to-30 || (echo "28-table staging requires migration_mode=upgrade-runtime-28-to-30" >&2; exit 1)
+              echo "28-table staging must be upgraded manually from a durable encrypted operator host before this workflow may deploy" >&2
+              exit 1
             elif [ "$table_count" = 30 ]; then
               test "$MIGRATION_MODE" = none || (echo "30-table staging must use migration_mode=none" >&2; exit 1)
             else
@@ -146,23 +141,10 @@ jobs:
         env:
           STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
           MIGRATION_MODE: ${{ inputs.migration_mode }}
-          CONFIRM_UPGRADE_PLAN_SHA: ${{ inputs.confirm_upgrade_plan_sha }}
-          STAGING_ENCRYPTED_BACKUP_DIR: ${{ vars.STAGING_ENCRYPTED_BACKUP_DIR }}
-          WINERIM_ENCRYPTED_BACKUP_DIR_CONFIRMED: ${{ vars.STAGING_BACKUP_STORAGE_CONFIRMED }}
         run: |
           case "$MIGRATION_MODE" in
             bootstrap-empty)
               infrastructure/postgres/apply-staging.sh "$STAGING_DB_URL"
-              ;;
-            upgrade-runtime-28-to-30)
-              test "$CONFIRM_UPGRADE_PLAN_SHA" != "" || (echo "confirm_upgrade_plan_sha is required" >&2; exit 1)
-              infrastructure/postgres/upgrade-staging-runtime.sh \
-                --database-url "$STAGING_DB_URL" \
-                --backup-dir "$STAGING_ENCRYPTED_BACKUP_DIR" \
-                --apply \
-                --confirm-project-ref qpbmqvfnunkylvtvnyyx \
-                --confirm-upgrade runtime-0003-0005-only \
-                --confirm-plan-sha "$CONFIRM_UPGRADE_PLAN_SHA"
               ;;
             *) echo "apply_migrations requires a reviewed migration_mode" >&2; exit 1 ;;
           esac

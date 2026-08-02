@@ -31,9 +31,12 @@ directory is applied remotely by validation or replay.
   least-privilege, approved, expiring single-connection canary scope.
 - `upgrade-staging-runtime.sh`: plan-only by default, pins the immutable
   Supabase project, accepts only the reviewed 28-table prestate, takes a mode
-  `0600` logical backup in an explicitly confirmed encrypted directory, proves
-  that backup in disposable PostgreSQL, then applies only `0003..0005` after
-  exact confirmations.
+  `0600` logical backup in an operator-attested encrypted and durable directory,
+  proves that backup in disposable PostgreSQL, then applies only `0003..0005`
+  after exact confirmations. For a remote target it rejects GitHub-hosted
+  runners, relative paths, canonical temporary paths and symlinks resolving
+  into them; only the exact local disposable database identity may use test
+  storage. The workflow cannot perform this existing-database upgrade.
 - `rollback-runtime-upgrade.sql`: fail-closed inverse for an unused canary; it
   requires empty runtime credential/scope tables and restores the verified
   28-table prestate. `test-runtime-upgrade.sh` proves `28 -> 30 -> 28` locally.

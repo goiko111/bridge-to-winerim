@@ -234,6 +234,9 @@ async function readiness(
   return json({
     ok: ready,
     service: "winerim-middleware-runtime-executor",
+    connectionId: isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
+      ? String(env.RUNTIME_CANARY_CONNECTION_ID).trim()
+      : null,
     environment: env.ENVIRONMENT ?? null,
     release: env.RELEASE ?? null,
     stagingOnly: true,

@@ -50,13 +50,33 @@ CREATE TABLE public.infrastructure_metadata (
 INSERT INTO public.infrastructure_metadata (key, value)
 VALUES ('environment', 'staging');
 
-DO $tables$
-BEGIN
-  FOR number IN 1..27 LOOP
-    EXECUTE format('CREATE TABLE public.verify_table_%s (id bigint PRIMARY KEY)', number);
-  END LOOP;
-END
-$tables$;
+CREATE TABLE public.agora_dispatch_locks (id bigint PRIMARY KEY);
+CREATE TABLE public.agora_master_data (id bigint PRIMARY KEY);
+CREATE TABLE public.classification_config (id bigint PRIMARY KEY);
+CREATE TABLE public.connection_alerts (id bigint PRIMARY KEY);
+CREATE TABLE public.connection_health_checks (id bigint PRIMARY KEY);
+CREATE TABLE public.connection_notification_contacts (id bigint PRIMARY KEY);
+CREATE TABLE public.integration_onboarding_requests (id bigint PRIMARY KEY);
+CREATE TABLE public.middleware_incident_email_attempts (id bigint PRIMARY KEY);
+CREATE TABLE public.middleware_incident_events (id bigint PRIMARY KEY);
+CREATE TABLE public.middleware_incidents (id bigint PRIMARY KEY);
+CREATE TABLE public.outbound_tasks (id bigint PRIMARY KEY);
+CREATE TABLE public.pos_connections (id bigint PRIMARY KEY);
+CREATE TABLE public.product_mappings (id bigint PRIMARY KEY);
+CREATE TABLE public.provider_capabilities (id bigint PRIMARY KEY);
+CREATE TABLE public.provider_credentials (id bigint PRIMARY KEY);
+CREATE TABLE public.provider_products (id bigint PRIMARY KEY);
+CREATE TABLE public.runtime_execution_log (id bigint PRIMARY KEY);
+CREATE TABLE public.runtime_idempotency (id bigint PRIMARY KEY);
+CREATE TABLE public.sales_events (id bigint PRIMARY KEY);
+CREATE TABLE public.sales_line_items (id bigint PRIMARY KEY);
+CREATE TABLE public.stock_sync_log (id bigint PRIMARY KEY);
+CREATE TABLE public.user_roles (id bigint PRIMARY KEY);
+CREATE TABLE public.webhook_events (id bigint PRIMARY KEY);
+CREATE TABLE public.wine_family_rules (id bigint PRIMARY KEY);
+CREATE TABLE public.wine_type_family_mappings (id bigint PRIMARY KEY);
+CREATE TABLE public.winerim_push_tracking (id bigint PRIMARY KEY);
+CREATE TABLE public.winerim_wines (id bigint PRIMARY KEY);
 
 CREATE TABLE public.runtime_connection_credentials (id bigint PRIMARY KEY);
 CREATE TABLE public.runtime_canary_connections (
@@ -218,6 +238,21 @@ fi
 assert_dsn_hidden "$index_output" 'runtime index failure'
 if ! grep -q 'runtime_canary_unique_index expected=1 actual=0' <<<"$index_output"; then
   printf 'FAIL: runtime index failure was not specific\n%s\n' "$index_output" >&2
+  exit 1
+fi
+
+"$REAL_PSQL" -X -v ON_ERROR_STOP=1 -h "$SOCKET_DIR" -p "$PORT" -d "$DB_NAME" >/dev/null <<'SQL'
+CREATE UNIQUE INDEX runtime_canary_connections_single_active_idx
+  ON public.runtime_canary_connections ((active)) WHERE active = true;
+ALTER TABLE public.classification_config RENAME TO classification_config_drift;
+SQL
+if inventory_output=$(run_verify); then
+  printf 'FAIL: wrong 30-table inventory unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_dsn_hidden "$inventory_output" 'table inventory failure'
+if ! grep -q 'public_table_inventory does not match' <<<"$inventory_output"; then
+  printf 'FAIL: table inventory failure was not specific\n%s\n' "$inventory_output" >&2
   exit 1
 fi
 

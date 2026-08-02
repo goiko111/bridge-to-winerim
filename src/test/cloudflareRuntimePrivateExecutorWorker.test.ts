@@ -249,7 +249,12 @@ describe("private runtime executor Worker", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ ok: true, credentials: "ready", reason: null });
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      credentials: "ready",
+      connectionId: CONNECTION_ID,
+      reason: null,
+    });
     expect(vaultGet).toHaveBeenCalledTimes(2);
   });
 

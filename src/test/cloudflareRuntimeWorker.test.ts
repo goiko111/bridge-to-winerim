@@ -232,7 +232,16 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       RUNTIME_MODE: "canary-consumer",
       RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
       MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
-      RUNTIME_EXECUTOR: { fetch: vi.fn() },
+      RUNTIME_EXECUTOR: {
+        fetch: vi.fn(async () => new Response(JSON.stringify({
+          ok: true,
+          credentials: "ready",
+          connectionId: "11111111-1111-4111-8111-111111111111",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })),
+      },
     };
 
     const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
@@ -240,11 +249,80 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       env,
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({
       ok: true,
       canaryConsumer: true,
       missingBindings: [],
+      executorReadiness: "ready",
+    });
+  });
+
+  it("keeps canary readiness closed when the private executor cannot decrypt credentials", async () => {
+    const database = fakeDatabase(() => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
+    }]));
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      {
+        ENVIRONMENT: "staging",
+        RUNTIME_EXECUTION_ENABLED: "true",
+        RUNTIME_MODE: "canary-consumer",
+        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+        RUNTIME_EXECUTOR: {
+          fetch: vi.fn(async () => new Response(JSON.stringify({
+            ok: false,
+            credentials: "not_ready",
+          }), { status: 503, headers: { "content-type": "application/json" } })),
+        },
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      credentials: "ready",
+      executorReadiness: "not_ready",
+    });
+  });
+
+  it("keeps canary readiness closed when the private executor is scoped to another connection", async () => {
+    const database = fakeDatabase(() => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
+    }]));
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      {
+        ENVIRONMENT: "staging",
+        RUNTIME_EXECUTION_ENABLED: "true",
+        RUNTIME_MODE: "canary-consumer",
+        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+        RUNTIME_EXECUTOR: {
+          fetch: vi.fn(async () => new Response(JSON.stringify({
+            ok: true,
+            credentials: "ready",
+            connectionId: "22222222-2222-4222-8222-222222222222",
+          }), { status: 200, headers: { "content-type": "application/json" } })),
+        },
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      credentials: "ready",
+      executorReadiness: "not_ready",
     });
   });
 

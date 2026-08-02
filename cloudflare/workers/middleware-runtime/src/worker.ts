@@ -623,7 +623,35 @@ async function readiness(
       && row.runtime_execution_log_ready === true
       && row.runtime_canary_scope_ready === true
       && row.runtime_credentials_ready === true;
-    const ready = schemaReady && missingBindings.length === 0 && executionEnabled && executor !== null;
+    let executorReadinessReady = !canaryConsumer;
+    if (canaryConsumer && schemaReady && missingBindings.length === 0 && env.RUNTIME_EXECUTOR) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5_000);
+      try {
+        const executorResponse = await env.RUNTIME_EXECUTOR.fetch(new Request(
+          "https://runtime-executor.internal/ready",
+          { signal: controller.signal },
+        ));
+        const executorBody = await executorResponse.json() as {
+          ok?: unknown;
+          credentials?: unknown;
+          connectionId?: unknown;
+        };
+        executorReadinessReady = executorResponse.ok
+          && executorBody.ok === true
+          && executorBody.credentials === "ready"
+          && executorBody.connectionId === reviewedConnectionId;
+      } catch {
+        executorReadinessReady = false;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    const ready = schemaReady
+      && missingBindings.length === 0
+      && executionEnabled
+      && executor !== null
+      && executorReadinessReady;
     return json({
       ok: ready,
       environment: env.ENVIRONMENT ?? null,
@@ -635,6 +663,7 @@ async function readiness(
       missingBindings,
       canaryScope: row?.runtime_canary_scope_ready === true ? "ready" : "not_ready",
       credentials: row?.runtime_credentials_ready === true ? "ready" : "not_ready",
+      executorReadiness: executorReadinessReady ? "ready" : "not_ready",
       database: schemaReady ? "ready" : "schema_not_ready",
       reason: ready ? null : "RUNTIME_NOT_READY",
     }, ready ? 200 : 503);

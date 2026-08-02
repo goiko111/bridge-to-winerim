@@ -17,7 +17,11 @@
   a no-op.
 - `0003..0005` are stripped of their nested transaction wrappers and applied in
   one transaction under an advisory lock.
-- Before DDL, the upgrade requires an explicitly confirmed encrypted directory,
+- Before DDL, the upgrade requires an operator-attested encrypted and durable
+  directory with the project marker. For remote staging, GitHub-hosted runners,
+  relative paths and canonical temporary paths (including symlink targets) are
+  rejected; only the exact local disposable database identity may bypass that
+  storage policy,
   writes mode-`0600` schema/data/ACL/policy backup artifacts, role/membership
   inventory, TOC and SHA-256 digests, then restores them into disposable local
   PostgreSQL.
@@ -65,10 +69,13 @@
 ## Remaining risks and gates
 
 1. Remote schema upgrade is `NO-GO` until an operator records the plan digest,
-   configures a persistent encrypted backup directory and supplies the exact
-   protected confirmations. Plan-only remains the default.
+   runs it outside GitHub Actions from a persistent encrypted volume with the
+   required project marker, and supplies the exact protected confirmations.
+   Plan-only remains the default.
 2. Canary is `NO-GO` until staging is on 30 tables, one real connection scope is
    approved/unexpired, both encrypted credential rows exist and the Cloudflare
-   Secrets Store binding is provisioned.
+   Secrets Store binding is provisioned. Public readiness must also receive the
+   same canary connection id from the private executor after both credentials
+   decrypt successfully.
 3. Production/cutover remains `NO-GO`; this branch contains no production
    configuration or production approval.

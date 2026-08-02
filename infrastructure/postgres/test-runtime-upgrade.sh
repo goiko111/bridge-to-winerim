@@ -22,6 +22,8 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$SOCKET_DIR" "$BACKUP_DIR" "$BIN_DIR"
 chmod 700 "$BACKUP_DIR"
+printf '%s' 'winerim-staging-backup:qpbmqvfnunkylvtvnyyx' >"$BACKUP_DIR/.winerim-encrypted-durable-volume"
+chmod 600 "$BACKUP_DIR/.winerim-encrypted-durable-volume"
 REAL_PG_DUMP=$(command -v pg_dump)
 cat >"$BIN_DIR/pg_dump" <<'SH'
 #!/usr/bin/env bash

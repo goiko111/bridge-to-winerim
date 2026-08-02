@@ -33,6 +33,7 @@ test -n "$DATABASE_URL" || { printf 'STAGING_DATABASE_URL_REQUIRED\n' >&2; exit 
 
 target_json=$(STAGING_DATABASE_URL="$DATABASE_URL" node "$SCRIPT_DIR/staging-target.mjs")
 project_ref=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).projectRef)' "$target_json")
+target_mode=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).mode)' "$target_json")
 
 TMP_ROOT=$(mktemp -d /tmp/wru.XXXXXX)
 cleanup() { rm -rf "$TMP_ROOT"; }
@@ -93,10 +94,31 @@ test "${WINERIM_ENCRYPTED_BACKUP_DIR_CONFIRMED:-}" = YES_ENCRYPTED_VOLUME || {
   printf 'ENCRYPTED_BACKUP_DIR_CONFIRMATION_REQUIRED\n' >&2; exit 4;
 }
 test -n "$BACKUP_DIR" || { printf 'STAGING_ENCRYPTED_BACKUP_DIR_REQUIRED\n' >&2; exit 4; }
+if [ "$target_mode" != local-disposable ]; then
+  test "${GITHUB_ACTIONS:-false}" != true || {
+    printf 'DURABLE_BACKUP_HOST_REQUIRED_GITHUB_RUNNER_REJECTED\n' >&2; exit 4;
+  }
+  case "$BACKUP_DIR" in /*) ;; *) printf 'ABSOLUTE_BACKUP_DIRECTORY_REQUIRED\n' >&2; exit 4 ;; esac
+fi
 mkdir -p "$BACKUP_DIR"
+backup_dir_real=$(CDPATH= cd -- "$BACKUP_DIR" && pwd -P)
+if [ "$target_mode" != local-disposable ]; then
+  case "$backup_dir_real" in
+    /tmp|/tmp/*|/private/tmp|/private/tmp/*|/var/tmp|/var/tmp/*|/private/var/tmp|/private/var/tmp/*|/dev/shm|/dev/shm/*|/run|/run/*|/var/folders|/var/folders/*|/private/var/folders|/private/var/folders/*)
+      printf 'DURABLE_BACKUP_DIRECTORY_REQUIRED\n' >&2; exit 4 ;;
+  esac
+fi
 chmod 700 "$BACKUP_DIR"
 test "$(stat -c '%a' "$BACKUP_DIR" 2>/dev/null || stat -f '%Lp' "$BACKUP_DIR")" = 700 || {
   printf 'BACKUP_DIRECTORY_MODE_REJECTED\n' >&2; exit 4;
+}
+backup_volume_marker="$BACKUP_DIR/.winerim-encrypted-durable-volume"
+test -f "$backup_volume_marker" || { printf 'DURABLE_BACKUP_VOLUME_MARKER_REQUIRED\n' >&2; exit 4; }
+test "$(cat "$backup_volume_marker")" = "winerim-staging-backup:qpbmqvfnunkylvtvnyyx" || {
+  printf 'DURABLE_BACKUP_VOLUME_MARKER_REJECTED\n' >&2; exit 4;
+}
+test "$(stat -c '%a' "$backup_volume_marker" 2>/dev/null || stat -f '%Lp' "$backup_volume_marker")" = 600 || {
+  printf 'BACKUP_VOLUME_MARKER_MODE_REJECTED\n' >&2; exit 4;
 }
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
