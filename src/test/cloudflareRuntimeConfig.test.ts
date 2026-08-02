@@ -10,6 +10,11 @@ const executorConfig = readFileSync(
   resolve(root, "wrangler.middleware-runtime-executor.toml"),
   "utf8",
 );
+const canaryConfig = readFileSync(resolve(root, "wrangler.middleware-runtime-canary.toml"), "utf8");
+const executorCanaryConfig = readFileSync(
+  resolve(root, "wrangler.middleware-runtime-executor-canary.toml"),
+  "utf8",
+);
 const hyperdriveExample = readFileSync(
   resolve(root, "wrangler.middleware-runtime.hyperdrive.toml.example"),
   "utf8",
@@ -31,18 +36,13 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(config).toContain('crons = ["*/5 * * * *"]');
     expect(config).not.toContain("[env.production]");
     expect(config).not.toMatch(/\broutes\s*=/);
-    expect(config.match(/\[\[env\.staging\.queues\.consumers\]\]/g)).toHaveLength(1);
-    expect(config).toContain('queue = "winerim-staging-stock"');
-    expect(config).toContain('dead_letter_queue = "winerim-staging-dead-letter"');
-    expect(config).toContain("max_batch_size = 1");
-    expect(config).toContain("max_concurrency = 1");
+    expect(config).not.toContain("[[env.staging.queues.consumers]]");
     expect(config).toContain('binding = "RUNTIME_EXECUTOR"');
     expect(config).toContain('service = "winerim-middleware-runtime-executor-staging"');
   });
 
   it("binds producers only to the verified staging Queue names", () => {
-    const producerConfig = config.split("# Canary-only consumer")[0];
-    const queueNames = [...producerConfig.matchAll(/^queue\s*=\s*"([^"]+)"$/gm)].map((match) => match[1]);
+    const queueNames = [...config.matchAll(/^queue\s*=\s*"([^"]+)"$/gm)].map((match) => match[1]);
     expect(new Set(queueNames)).toEqual(new Set([
       "winerim-staging-catalog",
       "winerim-staging-sales",
@@ -51,6 +51,21 @@ describe("Cloudflare middleware runtime staging config", () => {
       "winerim-staging-maintenance",
     ]));
     expect(queueNames).toHaveLength(6);
+  });
+
+  it("isolates the reviewed canary in dedicated configs", () => {
+    expect(canaryConfig).toContain('RUNTIME_EXECUTION_ENABLED = "true"');
+    expect(canaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"');
+    expect(canaryConfig).not.toContain("[env.staging.triggers]");
+    expect(canaryConfig).not.toContain("[[env.staging.queues.producers]]");
+    expect(canaryConfig.match(/\[\[env\.staging\.queues\.consumers\]\]/g)).toHaveLength(1);
+    expect(canaryConfig).toContain('queue = "winerim-staging-stock"');
+    expect(canaryConfig).toContain('dead_letter_queue = "winerim-staging-dead-letter"');
+    expect(canaryConfig).toContain("max_batch_size = 1");
+    expect(canaryConfig).toContain("max_concurrency = 1");
+    expect(executorCanaryConfig).toContain('RUNTIME_EXECUTION_ENABLED = "true"');
+    expect(executorCanaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"');
+    expect(executorCanaryConfig).not.toContain("RUNTIME_VAULT_KEY =");
   });
 
   it("keeps the private executor staging-only, unrouted and without embedded vault material", () => {
@@ -85,10 +100,12 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(packageJson.scripts).toMatchObject({
       "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts",
       "cf:runtime:dry-run:staging": expect.stringContaining("--dry-run"),
+      "cf:runtime:dry-run:canary": expect.stringContaining("wrangler.middleware-runtime-canary.toml"),
       "cf:runtime:deploy:staging": expect.stringContaining("--strict"),
       "cf:runtime:deployments:staging": expect.stringContaining("deployments status"),
       "cf:runtime:rollback:staging": expect.stringContaining("wrangler rollback"),
       "cf:executor:dry-run:staging": expect.stringContaining("wrangler.middleware-runtime-executor.toml"),
+      "cf:executor:dry-run:canary": expect.stringContaining("wrangler.middleware-runtime-executor-canary.toml"),
     });
   });
 });

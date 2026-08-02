@@ -37,11 +37,10 @@ GRANT SELECT ON
   public.pos_connections,
   public.runtime_connection_credentials,
   public.runtime_idempotency,
-  public.runtime_execution_log,
-  public.stock_sync_log
+  public.runtime_execution_log
 TO middleware_runtime;
 GRANT INSERT, UPDATE ON public.runtime_idempotency TO middleware_runtime;
-GRANT INSERT ON public.runtime_execution_log, public.stock_sync_log TO middleware_runtime;
+GRANT INSERT ON public.runtime_execution_log TO middleware_runtime;
 GRANT USAGE, SELECT ON SEQUENCE public.runtime_execution_log_id_seq TO middleware_runtime;
 
 CREATE POLICY middleware_runtime_canary_select_metadata
@@ -65,11 +64,4 @@ CREATE POLICY middleware_runtime_canary_select_execution_log
 CREATE POLICY middleware_runtime_canary_insert_execution_log
   ON public.runtime_execution_log
   FOR INSERT TO middleware_runtime WITH CHECK (true);
-CREATE POLICY middleware_runtime_canary_select_stock_log
-  ON public.stock_sync_log
-  FOR SELECT TO middleware_runtime USING (true);
-CREATE POLICY middleware_runtime_canary_insert_stock_log
-  ON public.stock_sync_log
-  FOR INSERT TO middleware_runtime WITH CHECK (true);
-
 COMMIT;

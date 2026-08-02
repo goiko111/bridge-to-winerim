@@ -8,7 +8,8 @@ It is intentionally fail-closed:
 - `wrangler.middleware-runtime.toml` has no production environment or route;
 - `workers_dev=false` and `RUNTIME_EXECUTION_ENABLED=false`;
 - the cron and Queue producer bindings point only to existing staging assets;
-- there are no Queue consumers, Hyperdrive binding or runtime executor binding;
+- the inert config has no Queue consumer, while its Hyperdrive and private
+  executor bindings can serve readiness without consuming messages;
 - `/health` is liveness-only and `/ready` stays `503` until every staging gate
   is deliberately configured;
 - no Lovable REST, POS or Winerim call is used as a fallback.
@@ -43,14 +44,14 @@ cut they had zero producers and zero consumers.
 | `MIDDLEWARE_OUTBOUND_QUEUE` | `winerim-staging-outbound` |
 | `MIDDLEWARE_MAINTENANCE_QUEUE` | `winerim-staging-maintenance` |
 
-`winerim-staging-dead-letter` exists but is not bound yet because this config
-does not declare consumers. Add it only together with a reviewed consumer.
+`winerim-staging-dead-letter` exists but is not bound by the inert config.
+`wrangler.middleware-runtime-canary.toml` is the separate one-consumer config;
+it has no cron or producers and must be rendered with the one reviewed
+`RUNTIME_CANARY_CONNECTION_ID` before any deploy.
 
-The deployable TOML deliberately omits `MIDDLEWARE_DB`. The only Hyperdrive
-currently visible belongs to another system and must not be reused. The file
-`wrangler.middleware-runtime.hyperdrive.toml.example` contains the binding
-shape without a fabricated ID. It is documentation and must never be passed to
-Wrangler directly.
+Both reviewed configs use the middleware-owned staging Hyperdrive. The file
+`wrangler.middleware-runtime.hyperdrive.toml.example` remains documentation
+only and must never be passed to Wrangler directly.
 
 ## Local gates
 
@@ -59,11 +60,13 @@ Wrangler 4.118 requires Node 22 or newer.
 ```sh
 npm run cf:runtime:test
 npm run cf:runtime:dry-run:staging
+npm run cf:runtime:dry-run:canary
+npm run cf:executor:dry-run:canary
 ```
 
 The dry-run bundles the Worker and validates the Queue/cron configuration. It
-does not upload a Worker, create consumers or change remote resources. With no
-Hyperdrive and `RUNTIME_EXECUTION_ENABLED=false`, the scheduled handler exits
+does not upload a Worker, create consumers or change remote resources. With
+`RUNTIME_EXECUTION_ENABLED=false`, the scheduled handler exits
 before loading connections or publishing messages.
 
 ## Staging deploy runbook
@@ -98,8 +101,9 @@ Do not run this sequence until the diff and Cloudflare account are confirmed.
 
 No production environment is present in this configuration. Enabling runtime
 execution is a later gate that requires a middleware-owned staging Hyperdrive,
-the Postgres runtime tables, an injected `RUNTIME_EXECUTOR`, consumer/DLQ
-configuration and a canary plan.
+the Postgres runtime tables, an injected `RUNTIME_EXECUTOR`, an active row in
+`runtime_canary_connections`, matching code-level connection allowlists, the
+private vault binding and an approved live-glass canary plan.
 
 ## Rollback runbook
 

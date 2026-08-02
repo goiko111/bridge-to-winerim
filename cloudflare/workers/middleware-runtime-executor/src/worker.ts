@@ -24,14 +24,14 @@ import type { WinerimStockMutationInput, WinerimStockIdentity } from "../../midd
 const STAGING_ENVIRONMENT = "staging";
 const ENABLED_STOCK_JOBS = Object.freeze([
   "winerim.sales-import-live",
-  "winerim.sales-import-historical",
-  "winerim.stock-apply",
 ] as const satisfies readonly RuntimeJob[]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface MiddlewareRuntimeExecutorEnv {
   ENVIRONMENT?: string;
   RELEASE?: string;
   RUNTIME_EXECUTION_ENABLED?: string;
+  RUNTIME_CANARY_CONNECTION_ID?: string;
   RUNTIME_VAULT_KEY_VERSION?: string;
   WINERIM_API_BASE_URL?: string;
   WINERIM_ALLOWED_HOSTS?: string;
@@ -84,15 +84,18 @@ function stockIdentity(value: unknown): WinerimStockIdentity {
   };
 }
 
-function stockInput(envelope: RuntimeEnvelopeV1): WinerimStockMutationInput {
+export function parseLiveGlassCanaryInput(envelope: RuntimeEnvelopeV1): WinerimStockMutationInput {
   const payload = object(envelope.payload);
   if (!payload) throw new Error("RUNTIME_STOCK_INPUT_INVALID");
+  const soldStock = stockIdentity(payload.soldStock);
   return {
     mode: String(payload.mode ?? "") as WinerimStockMutationInput["mode"],
-    orderId: String(payload.orderId ?? ""),
+    // Queue identity is the remote order identity. Caller-provided order IDs
+    // are intentionally ignored so every retry sends the exact same value.
+    orderId: envelope.idempotencyKey,
     soldAt: String(payload.soldAt ?? ""),
     quantity: Number(payload.quantity),
-    soldStock: stockIdentity(payload.soldStock),
+    soldStock,
     ...(payload.stockSource ? { stockSource: stockIdentity(payload.stockSource) } : {}),
     ...(payload.currentSourceStock === undefined
       ? {}
@@ -147,7 +150,7 @@ function createStockPorts(
   return {
     stock: {
       prepare: async (envelope) => ({
-        input: stockInput(envelope),
+        input: parseLiveGlassCanaryInput(envelope),
         dryRun: object(envelope.payload)?.dryRun === true,
       }),
       transport: createWinerimMutationTransport({
@@ -195,6 +198,9 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
     !String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim() ? "RUNTIME_VAULT_KEY_VERSION" : null,
     !String(env.WINERIM_API_BASE_URL ?? "").trim() ? "WINERIM_API_BASE_URL" : null,
     !String(env.WINERIM_ALLOWED_HOSTS ?? "").trim() ? "WINERIM_ALLOWED_HOSTS" : null,
+    !UUID_PATTERN.test(String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim())
+      ? "RUNTIME_CANARY_CONNECTION_ID"
+      : null,
   ].filter((value): value is string => !!value);
   const ready = environment === STAGING_ENVIRONMENT && executionEnabled && missingBindings.length === 0;
   return json({
@@ -211,7 +217,8 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
 
 function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
   return String(env.ENVIRONMENT ?? "").trim().toLowerCase() === STAGING_ENVIRONMENT
-    && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true";
+    && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
+    && UUID_PATTERN.test(String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim());
 }
 
 export function createMiddlewareRuntimeExecutorWorker(
@@ -243,6 +250,7 @@ export function createMiddlewareRuntimeExecutorWorker(
       const options: RuntimeExecutorCompositionOptions = {
         environment: env.ENVIRONMENT,
         executionEnabled: env.RUNTIME_EXECUTION_ENABLED,
+        allowedConnectionId: String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim(),
         enabledJobs: ENABLED_STOCK_JOBS,
         connections: createPostgresRuntimeConnectionPort(database),
         credentials: createPostgresEncryptedCredentialPort(database, {

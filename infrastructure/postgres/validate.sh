@@ -10,6 +10,7 @@ READONLY_SQL="$SCRIPT_DIR/validate-readonly.sql"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
+RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
 RELEASE_VALIDATOR="$SCRIPT_DIR/validate-release-addendum.sh"
@@ -40,6 +41,7 @@ for required_file in \
   "$PORTABLE_ADDENDUM" \
   "$RUNTIME_CREDENTIALS_ADDENDUM" \
   "$RUNTIME_CANARY_PRIVILEGES" \
+  "$RUNTIME_CANARY_SCOPE" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
   "$RELEASE_VALIDATOR"
@@ -52,11 +54,25 @@ done
 for required_pattern in \
   'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM middleware_runtime' \
   'GRANT INSERT, UPDATE ON public.runtime_idempotency TO middleware_runtime' \
-  'GRANT INSERT ON public.runtime_execution_log, public.stock_sync_log TO middleware_runtime' \
+  'GRANT INSERT ON public.runtime_execution_log TO middleware_runtime' \
   'DROP POLICY middleware_runtime_all'
 do
   if ! rg -F "$required_pattern" "$RUNTIME_CANARY_PRIVILEGES" >/dev/null; then
     fail "runtime canary privilege addendum is missing: $required_pattern"
+  fi
+done
+
+for required_pattern in \
+  'CREATE TABLE IF NOT EXISTS public.runtime_canary_connections' \
+  'RUNTIME_CANARY_CONNECTION_REJECTED' \
+  'REVOKE ALL ON public.stock_sync_log FROM middleware_runtime'
+do
+  if [ "$required_pattern" = 'RUNTIME_CANARY_CONNECTION_REJECTED' ]; then
+    if ! rg -F "$required_pattern" "$REPO_ROOT/cloudflare/workers/middleware-runtime/src/executor/composition.ts" >/dev/null; then
+      fail "runtime canary code gate is missing: $required_pattern"
+    fi
+  elif ! rg -F "$required_pattern" "$RUNTIME_CANARY_SCOPE" >/dev/null; then
+    fail "runtime canary scope addendum is missing: $required_pattern"
   fi
 done
 

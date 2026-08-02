@@ -8,6 +8,7 @@ MIGRATIONS_DIR="$REPO_ROOT/supabase/migrations"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
+RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 
 {
@@ -43,6 +44,9 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN runtime canary least privilege\n'
   cat "$RUNTIME_CANARY_PRIVILEGES"
   printf '\n-- END runtime canary least privilege\n'
+  printf '\n-- BEGIN runtime canary connection scope\n'
+  cat "$RUNTIME_CANARY_SCOPE"
+  printf '\n-- END runtime canary connection scope\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"

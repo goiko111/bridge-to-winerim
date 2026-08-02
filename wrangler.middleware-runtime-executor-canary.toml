@@ -1,0 +1,24 @@
+name = "winerim-middleware-runtime-executor"
+main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[env.staging]
+name = "winerim-middleware-runtime-executor-staging"
+workers_dev = false
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging-live-glass-canary"
+RUNTIME_EXECUTION_ENABLED = "true"
+RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"
+RUNTIME_VAULT_KEY_VERSION = "v1"
+WINERIM_API_BASE_URL = "https://app.winerim.com"
+WINERIM_ALLOWED_HOSTS = "app.winerim.com"
+
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "0adae4108e4241f19cf5ba2709cbc69f"
+
+# RUNTIME_VAULT_KEY must be bound only at the reviewed canary gate.

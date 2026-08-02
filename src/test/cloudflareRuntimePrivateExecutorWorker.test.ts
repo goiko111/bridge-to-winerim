@@ -10,6 +10,7 @@ import type { RuntimeJob } from "../../cloudflare/workers/middleware-runtime/src
 import { createRuntimeEnvelope } from "../../cloudflare/workers/middleware-runtime/src/idempotency";
 import {
   createMiddlewareRuntimeExecutorWorker,
+  parseLiveGlassCanaryInput,
   type MiddlewareRuntimeExecutorEnv,
 } from "../../cloudflare/workers/middleware-runtime-executor/src/worker";
 
@@ -46,6 +47,7 @@ function enabledEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}): Midd
     ENVIRONMENT: "staging",
     RELEASE: "fixture",
     RUNTIME_EXECUTION_ENABLED: "true",
+    RUNTIME_CANARY_CONNECTION_ID: CONNECTION_ID,
     RUNTIME_VAULT_KEY_VERSION: "v1",
     WINERIM_API_BASE_URL: "https://app.winerim.com",
     WINERIM_ALLOWED_HOSTS: "app.winerim.com",
@@ -95,6 +97,7 @@ describe("private runtime executor Worker", () => {
         "MIDDLEWARE_DB",
         "RUNTIME_VAULT_KEY",
         "RUNTIME_VAULT_KEY_VERSION",
+        "RUNTIME_CANARY_CONNECTION_ID",
       ]),
     });
   });
@@ -111,6 +114,37 @@ describe("private runtime executor Worker", () => {
     await expect(response.json()).resolves.toEqual({
       ok: false,
       failure: { httpStatus: 503, message: "RUNTIME_JOB_NOT_ENABLED" },
+    });
+    expect(fake.query).not.toHaveBeenCalled();
+  });
+
+  it.each(["winerim.sales-import-historical", "winerim.stock-apply"] as const)(
+    "rejects non-live canary job %s before database access",
+    async (job) => {
+      const fake = fakeDatabase();
+      const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
+      const response = await worker.fetch(executeRequest(await envelope(job, { dryRun: true })), enabledEnv());
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        ok: false,
+        failure: { httpStatus: 503, message: "RUNTIME_JOB_NOT_ENABLED" },
+      });
+      expect(fake.query).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a different connection before database or vault access", async () => {
+    const fake = fakeDatabase();
+    const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
+    const runtimeEnvelope = await envelope("winerim.sales-import-live", { dryRun: true });
+    const response = await worker.fetch(executeRequest(runtimeEnvelope), enabledEnv({
+      RUNTIME_CANARY_CONNECTION_ID: "22222222-2222-4222-8222-222222222222",
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "RUNTIME_CANARY_CONNECTION_REJECTED" },
     });
     expect(fake.query).not.toHaveBeenCalled();
   });
@@ -146,6 +180,24 @@ describe("private runtime executor Worker", () => {
     expect(request).not.toHaveBeenCalled();
     expect(env.RUNTIME_VAULT_KEY?.get).not.toHaveBeenCalled();
     expect(fake.query).toHaveBeenCalledOnce();
+  });
+
+  it("derives the remote orderId from queue idempotency and ignores caller drift", async () => {
+    const runtimeEnvelope = await envelope("winerim.sales-import-live", {
+      mode: "operational",
+      orderId: "caller-controlled-order",
+      soldAt: "2026-08-02T12:00:00.000Z",
+      quantity: 1,
+      soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+      stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+    });
+
+    expect(parseLiveGlassCanaryInput(runtimeEnvelope)).toMatchObject({
+      orderId: runtimeEnvelope.idempotencyKey,
+      mode: "operational",
+      soldStock: { variant: "glass" },
+      stockSource: { variant: "bottle" },
+    });
   });
 
   it("rejects secret-bearing envelopes before database or vault access", async () => {

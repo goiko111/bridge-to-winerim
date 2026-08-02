@@ -42,7 +42,9 @@ function text(value: unknown): string {
 }
 
 function decodeBase64(value: unknown): Uint8Array {
-  const encoded = text(value);
+  // PostgreSQL encode(bytea, 'base64') wraps long values at 76 characters.
+  // Accept only ASCII base64 whitespace before applying the strict alphabet.
+  const encoded = text(value).replace(/[\t\n\r ]+/g, "");
   if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
     throw new Error("RUNTIME_VAULT_INVALID_CIPHERTEXT");
   }

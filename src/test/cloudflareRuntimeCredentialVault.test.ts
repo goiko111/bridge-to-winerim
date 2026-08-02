@@ -20,6 +20,10 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function postgresWrappedBase64(value: string): string {
+  return value.replace(/.{76}(?=.)/g, "$&\n");
+}
+
 function aad(kind: "agora" | "winerim"): Uint8Array {
   return new TextEncoder().encode([
     "winerim-runtime-credential",
@@ -96,6 +100,27 @@ describe("encrypted runtime credential vault", () => {
     expect(fake.statements[0].text).not.toMatch(/api_token|winerim_api_token|base_url/i);
     expect(JSON.stringify(fake.statements[0].values)).not.toContain("fixture-winerim-token");
     expect(JSON.stringify(fake.statements[0].values)).not.toContain(fixture.master);
+  });
+
+  it("accepts PostgreSQL-wrapped base64 for long encrypted credentials", async () => {
+    const plaintext = `fixture-${"x".repeat(180)}`;
+    const fixture = await encryptedRow(plaintext);
+    const fake = database([{
+      ...fixture.row,
+      ciphertext_base64: postgresWrappedBase64(fixture.row.ciphertext_base64),
+      nonce_base64: ` ${fixture.row.nonce_base64}\n`,
+    }]);
+    const port = createPostgresEncryptedCredentialPort(fake.adapter, {
+      masterKey: { get: async () => postgresWrappedBase64(fixture.master) },
+      keyVersion: KEY_VERSION,
+    });
+
+    const secret = await port.open({
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+      kind: "winerim",
+    });
+    expect(await secret?.read()).toBe(plaintext);
   });
 
   it("rejects row-scope mismatch without exposing or reading the key", async () => {

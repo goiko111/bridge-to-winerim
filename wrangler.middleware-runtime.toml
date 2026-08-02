@@ -48,12 +48,5 @@ queue = "winerim-staging-outbound"
 binding = "MIDDLEWARE_MAINTENANCE_QUEUE"
 queue = "winerim-staging-maintenance"
 
-# Canary-only consumer. Keep execution disabled until the private executor,
-# vault binding and one reviewed stock envelope have passed remote readiness.
-[[env.staging.queues.consumers]]
-queue = "winerim-staging-stock"
-max_batch_size = 1
-max_batch_timeout = 5
-max_retries = 3
-max_concurrency = 1
-dead_letter_queue = "winerim-staging-dead-letter"
+# Intentionally no Queue consumer. This file is safe for an inert readiness
+# deploy and cannot consume attempts or move messages to the DLQ.

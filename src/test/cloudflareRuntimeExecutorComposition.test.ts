@@ -61,6 +61,7 @@ function options(overrides: Partial<RuntimeExecutorCompositionOptions> = {}) {
   const base: RuntimeExecutorCompositionOptions = {
     environment: "staging",
     executionEnabled: true,
+    allowedConnectionId: CONNECTION_ID,
     enabledJobs: ALL_RUNTIME_JOBS,
     connections: {
       load: vi.fn(async (connectionId) => ({ connectionId, provider: "agora", enabled: true })),
@@ -107,6 +108,18 @@ describe("connection-scoped runtime executor composition", () => {
     )).resolves.toEqual({
       ok: false,
       failure: { httpStatus: 503, message: "RUNTIME_JOB_NOT_ENABLED" },
+    });
+    expect(fixture.value.connections.load).not.toHaveBeenCalled();
+    expect(fixture.open).not.toHaveBeenCalled();
+  });
+
+  it("rejects an envelope outside the single canary connection before database access", async () => {
+    const fixture = options({ allowedConnectionId: SECOND_CONNECTION_ID });
+    await expect(createConnectionScopedRuntimeExecutor(fixture.value).execute(
+      await envelope("winerim.sales-import-live", true),
+    )).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 422, message: "RUNTIME_CANARY_CONNECTION_REJECTED" },
     });
     expect(fixture.value.connections.load).not.toHaveBeenCalled();
     expect(fixture.open).not.toHaveBeenCalled();
