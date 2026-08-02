@@ -40,6 +40,8 @@ if ! pg_ctl -D "$DATA_DIR" -l "$TMP_ROOT/postgres.log" -o "-h 127.0.0.1 -k '$SOC
 fi
 SERVER_STARTED=1
 createdb -h 127.0.0.1 -p "$PORT" winerim_runtime_upgrade_test
+psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -d winerim_runtime_upgrade_test \
+  -c 'CREATE ROLE postgres NOLOGIN; CREATE ROLE supabase_admin NOLOGIN; CREATE ROLE anon NOLOGIN;' >/dev/null
 
 full_bootstrap="$TMP_ROOT/full.sql"
 pre_bootstrap="$TMP_ROOT/pre.sql"
@@ -47,6 +49,8 @@ pre_bootstrap="$TMP_ROOT/pre.sql"
 awk '/-- BEGIN runtime credential vault schema/{exit} {print}' "$full_bootstrap" >"$pre_bootstrap"
 psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -d winerim_runtime_upgrade_test \
   -v environment=staging -f "$pre_bootstrap" >/dev/null
+psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -d winerim_runtime_upgrade_test \
+  -c 'GRANT USAGE ON SCHEMA public TO postgres, anon; ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon;' >/dev/null
 
 database_url="postgresql://$(id -un)@127.0.0.1:$PORT/winerim_runtime_upgrade_test"
 plan=$(WINERIM_LOCAL_DISPOSABLE_UPGRADE_TEST=1 \
@@ -102,4 +106,6 @@ for suffix in dump manifest manifest.sha256 toc roles.tsv memberships.tsv data.t
   artifact_count=$(find "$BACKUP_DIR" -type f -name "*.$suffix" | wc -l | tr -d ' ')
   test "$artifact_count" = 1 || { printf 'LOCAL_UPGRADE_BACKUP_ARTIFACT_INVALID=%s\n' "$suffix" >&2; exit 1; }
 done
+latest_manifest=$(find "$BACKUP_DIR" -type f -name '*.manifest' -print -quit)
+(cd "$BACKUP_DIR" && sha256sum -c "$(basename "$latest_manifest").sha256") >/dev/null
 printf 'RESULT=LOCAL_RUNTIME_UPGRADE_RESTORE_ROLLBACK_OK pre_tables=28 post_tables=30 rollback_tables=28\n'

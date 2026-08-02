@@ -143,7 +143,7 @@ data_sha=$(sha256sum "$data_fingerprint" | awk '{print $1}')
 printf 'schema_version=1\nproject_ref=%s\nenvironment=staging\npre_tables=28\nplan_sha256=%s\nbackup_sha256=%s\ntoc_sha256=%s\nroles_sha256=%s\nmemberships_sha256=%s\ndata_sha256=%s\n' \
   "$project_ref" "$plan_sha" "$backup_sha" "$toc_sha" "$roles_sha" "$memberships_sha" "$data_sha" >"$manifest"
 chmod 600 "$manifest"
-sha256sum "$manifest" | awk '{print $1}' >"$manifest_digest"
+(cd "$BACKUP_DIR" && sha256sum "$(basename "$manifest")") >"$manifest_digest"
 chmod 600 "$manifest_digest"
 
 RESTORE_DATA="$TMP_ROOT/restore-data"
@@ -157,7 +157,7 @@ trap 'restore_cleanup; cleanup' EXIT INT TERM
 createdb -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" winerim_restore_test
 psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -f "$SCRIPT_DIR/bootstrap-prelude.sql" >/dev/null
 psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -c \
-  'CREATE ROLE middleware_api NOLOGIN; CREATE ROLE middleware_readonly NOLOGIN; CREATE ROLE middleware_runtime NOLOGIN; CREATE ROLE middleware_migrator NOLOGIN; CREATE ROLE middleware_api_login NOLOGIN; CREATE ROLE middleware_runtime_login NOLOGIN;' >/dev/null
+  'CREATE ROLE postgres NOLOGIN; CREATE ROLE supabase_admin NOLOGIN; CREATE ROLE anon NOLOGIN; CREATE ROLE middleware_api NOLOGIN; CREATE ROLE middleware_readonly NOLOGIN; CREATE ROLE middleware_runtime NOLOGIN; CREATE ROLE middleware_migrator NOLOGIN; CREATE ROLE middleware_api_login NOLOGIN; CREATE ROLE middleware_runtime_login NOLOGIN;' >/dev/null
 psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -c \
   'DROP SCHEMA public CASCADE;' >/dev/null
 pg_restore --exit-on-error --no-owner -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test "$backup" >/dev/null
