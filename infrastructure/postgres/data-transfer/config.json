@@ -38,10 +38,12 @@
   ],
   "stagingOnlyTables": [
     "infrastructure_metadata",
+    "runtime_connection_credentials",
     "runtime_execution_log",
     "runtime_idempotency"
   ],
   "runtimeMustRemainEmpty": [
+    "runtime_connection_credentials",
     "runtime_execution_log",
     "runtime_idempotency"
   ]

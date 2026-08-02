@@ -27,15 +27,16 @@ const root = process.cwd();
 const configPath = resolve(root, "infrastructure/postgres/data-transfer/config.json");
 
 describe("Lovable export/reconcile staging toolkit", () => {
-  it("has an explicit 25-table source allowlist and preserves the three staging-owned tables", async () => {
+  it("has an explicit 25-table source allowlist and preserves the four staging-owned tables", async () => {
     const config = await loadTransferConfig(configPath);
     expect(config.sourceTables).toHaveLength(25);
     expect(config.stagingOnlyTables).toEqual([
       "infrastructure_metadata",
+      "runtime_connection_credentials",
       "runtime_execution_log",
       "runtime_idempotency",
     ]);
-    expect(expectedTargetTables(config)).toHaveLength(28);
+    expect(expectedTargetTables(config)).toHaveLength(29);
     expect(targetReplaceTables(config)).not.toContain("infrastructure_metadata");
     expect(targetReplaceTables(config)).toContain("runtime_idempotency");
   });

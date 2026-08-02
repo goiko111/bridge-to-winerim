@@ -96,8 +96,8 @@ printf 'INFO: public_tables_without_rls=%s\n' "$rls_missing"
 printf 'INFO: security_definer_functions_executable_by_public=%s\n' "$security_definer_public"
 
 public_policies=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND ('public'=ANY(roles) OR 'authenticated'=ANY(roles) OR 'service_role'=ANY(roles))")
-runtime_lock_table=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT has_table_privilege('middleware_runtime', 'public.agora_dispatch_locks', 'SELECT,INSERT,UPDATE,DELETE')::int")
-runtime_lock_functions=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (has_function_privilege('middleware_runtime', 'public.acquire_agora_dispatch_lock(uuid,text,text,integer)', 'EXECUTE') AND has_function_privilege('middleware_runtime', 'public.release_agora_dispatch_lock(uuid,text,text)', 'EXECUTE'))::int")
+runtime_lock_table=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (NOT has_table_privilege('middleware_runtime', 'public.agora_dispatch_locks', 'SELECT,INSERT,UPDATE,DELETE'))::int")
+runtime_lock_functions=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (NOT has_function_privilege('middleware_runtime', 'public.acquire_agora_dispatch_lock(uuid,text,text,integer)', 'EXECUTE') AND NOT has_function_privilege('middleware_runtime', 'public.release_agora_dispatch_lock(uuid,text,text)', 'EXECUTE'))::int")
 runtime_vault_privileges=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (has_table_privilege('middleware_runtime', 'public.runtime_connection_credentials', 'SELECT') AND NOT has_table_privilege('middleware_runtime', 'public.runtime_connection_credentials', 'INSERT,UPDATE,DELETE') AND NOT has_table_privilege('middleware_api', 'public.runtime_connection_credentials', 'SELECT,INSERT,UPDATE,DELETE') AND NOT has_table_privilege('middleware_readonly', 'public.runtime_connection_credentials', 'SELECT,INSERT,UPDATE,DELETE'))::int")
 api_minimum_privileges=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (has_table_privilege('middleware_api', 'public.infrastructure_metadata', 'SELECT') AND has_table_privilege('middleware_api', 'public.pos_connections', 'SELECT') AND has_table_privilege('middleware_api', 'public.integration_onboarding_requests', 'SELECT,INSERT') AND NOT has_table_privilege('middleware_api', 'public.stock_sync_log', 'INSERT,UPDATE,DELETE') AND NOT has_table_privilege('middleware_api', 'public.outbound_tasks', 'INSERT,UPDATE,DELETE'))::int")
 legacy_lock_functions=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (has_function_privilege('service_role', 'public.acquire_agora_dispatch_lock(uuid,text,text,integer)', 'EXECUTE') OR has_function_privilege('service_role', 'public.release_agora_dispatch_lock(uuid,text,text)', 'EXECUTE'))::int")
@@ -111,8 +111,8 @@ if [ "$missing" -gt 0 ] || [ "$rls_missing" -gt 0 ] || [ "$security_definer_publ
 fi
 
 printf 'INFO: public_or_legacy_role_policies=%s\n' "$public_policies"
-printf 'INFO: runtime_lock_table_privileges=%s\n' "$runtime_lock_table"
-printf 'INFO: runtime_lock_function_privileges=%s\n' "$runtime_lock_functions"
+printf 'INFO: runtime_cannot_manage_lock_table=%s\n' "$runtime_lock_table"
+printf 'INFO: runtime_cannot_execute_lock_functions=%s\n' "$runtime_lock_functions"
 printf 'INFO: runtime_vault_minimum_privileges=%s\n' "$runtime_vault_privileges"
 printf 'INFO: api_minimum_privileges=%s\n' "$api_minimum_privileges"
 printf 'INFO: legacy_lock_function_privileges=%s\n' "$legacy_lock_functions"

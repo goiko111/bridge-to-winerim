@@ -613,7 +613,7 @@ export function buildSafePlan(config) {
       "source URL only through LOVABLE_DATABASE_URL",
       "target URL only through STAGING_DATABASE_URL",
       "exported repeatable-read snapshot with LSN/timestamp",
-      "target sentinel environment=staging and exact 28-table inventory",
+      "target sentinel environment=staging and exact 29-table inventory",
       "runtime staging tables empty before import",
       "target backup before one-transaction replacement",
       "row counts, streaming SHA-256 and FK reconciliation",

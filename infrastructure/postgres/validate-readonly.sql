@@ -140,17 +140,17 @@ SELECT
     'middleware_runtime',
     'public.agora_dispatch_locks',
     'SELECT,INSERT,UPDATE,DELETE'
-  ) AS runtime_can_manage_dispatch_locks,
-  has_function_privilege(
+  ) AS runtime_cannot_manage_dispatch_locks,
+  NOT has_function_privilege(
     'middleware_runtime',
     'public.acquire_agora_dispatch_lock(uuid,text,text,integer)',
     'EXECUTE'
-  ) AS runtime_can_acquire_dispatch_lock,
-  has_function_privilege(
+  ) AS runtime_cannot_acquire_dispatch_lock,
+  NOT has_function_privilege(
     'middleware_runtime',
     'public.release_agora_dispatch_lock(uuid,text,text)',
     'EXECUTE'
-  ) AS runtime_can_release_dispatch_lock;
+  ) AS runtime_cannot_release_dispatch_lock;
 
 SELECT
   has_table_privilege(
@@ -158,7 +158,7 @@ SELECT
     'public.runtime_connection_credentials',
     'SELECT'
   ) AS runtime_can_read_encrypted_credentials,
-  has_table_privilege(
+  NOT has_table_privilege(
     'middleware_runtime',
     'public.runtime_connection_credentials',
     'INSERT,UPDATE,DELETE'

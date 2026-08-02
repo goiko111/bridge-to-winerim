@@ -4,15 +4,16 @@
 
 This runbook transfers only the 25 middleware-owned data tables from Lovable
 Postgres into the independent Supabase staging database. It never copies the
-three staging-owned tables:
+four staging-owned tables:
 
 - `infrastructure_metadata`
+- `runtime_connection_credentials`
 - `runtime_execution_log`
 - `runtime_idempotency`
 
 The allowlist is versioned in `data-transfer/config.json`. A source database
 may contain additional platform tables, but they are never dumped. The target
-must contain exactly the 28 reviewed public tables and the sentinel
+must contain exactly the 29 reviewed public tables and the sentinel
 `public.infrastructure_metadata.environment=staging`.
 
 ## Safety contract

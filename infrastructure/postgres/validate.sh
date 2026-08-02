@@ -9,6 +9,7 @@ EXPECTED="$SCRIPT_DIR/expected-schema.txt"
 READONLY_SQL="$SCRIPT_DIR/validate-readonly.sql"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
+RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
 RELEASE_VALIDATOR="$SCRIPT_DIR/validate-release-addendum.sh"
@@ -38,12 +39,24 @@ for required_file in \
   "$READONLY_SQL" \
   "$PORTABLE_ADDENDUM" \
   "$RUNTIME_CREDENTIALS_ADDENDUM" \
+  "$RUNTIME_CANARY_PRIVILEGES" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
   "$RELEASE_VALIDATOR"
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'REVOKE ALL ON ALL TABLES IN SCHEMA public FROM middleware_runtime' \
+  'GRANT INSERT, UPDATE ON public.runtime_idempotency TO middleware_runtime' \
+  'GRANT INSERT ON public.runtime_execution_log, public.stock_sync_log TO middleware_runtime' \
+  'DROP POLICY middleware_runtime_all'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_CANARY_PRIVILEGES" >/dev/null; then
+    fail "runtime canary privilege addendum is missing: $required_pattern"
   fi
 done
 
