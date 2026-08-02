@@ -163,6 +163,18 @@ describe("middleware Worker security gates", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: "VALIDATION_FAILED" });
+    const cookieRequest = new Request("https://api.example.test/api/onboarding/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `CF_Authorization=${access.token}`,
+      },
+      body: "{}",
+    });
+    await expect(verifyAccessJwt(cookieRequest.clone(), accessEnv)).resolves.toEqual({ valid: true });
+    const cookieResponse = await worker.fetch(cookieRequest, accessEnv);
+    expect(cookieResponse.status).toBe(400);
+    await expect(cookieResponse.json()).resolves.toMatchObject({ error: "VALIDATION_FAILED" });
     expect(fetchSpy).toHaveBeenCalledWith(
       "https://security-test.cloudflareaccess.com/cdn-cgi/access/certs",
       expect.objectContaining({ redirect: "error" }),

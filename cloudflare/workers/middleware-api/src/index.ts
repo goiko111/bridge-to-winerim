@@ -82,6 +82,17 @@ interface AccessJwtPayload { aud?: string | string[]; email?: string; exp?: numb
 interface AccessCertsResponse { keys?: JsonWebKey[] }
 let accessCertsCache: { teamDomain: string; fetchedAt: number; keys: JsonWebKey[] } | undefined;
 
+function accessJwtFromRequest(request: Request): string {
+  const assertion = request.headers.get("CF-Access-Jwt-Assertion")?.trim();
+  if (assertion) return assertion;
+  const cookie = request.headers.get("Cookie") || "";
+  for (const part of cookie.split(";")) {
+    const [name, ...valueParts] = part.trim().split("=");
+    if (name === "CF_Authorization") return valueParts.join("=").trim();
+  }
+  return "";
+}
+
 function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
   const binary = atob(padded);
@@ -124,7 +135,7 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ val
   const expectedAudience = env.CF_ACCESS_AUD?.trim();
   const teamDomain = normalizedAccessTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
   if (!expectedAudience || !teamDomain) return { valid: false, reason: "ACCESS_CONFIG_INVALID" };
-  const token = request.headers.get("CF-Access-Jwt-Assertion")?.trim();
+  const token = accessJwtFromRequest(request);
   if (!token) return { valid: false, reason: "ACCESS_TOKEN_MISSING" };
   const parts = token.split(".");
   if (parts.length !== 3) return { valid: false, reason: "ACCESS_TOKEN_MALFORMED" };

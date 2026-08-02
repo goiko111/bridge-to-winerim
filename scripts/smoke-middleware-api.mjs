@@ -14,6 +14,7 @@ const parsedBaseUrl = new URL(baseUrl);
 assertSafeTarget(parsedBaseUrl);
 
 const accessConfigured = Boolean(accessClientId && accessClientSecret);
+let accessCookie = "";
 if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
   console.error("FAIL: both Cloudflare Access service-token values are required");
   process.exit(2);
@@ -39,6 +40,7 @@ function protectedHeaders() {
     return {
       "CF-Access-Client-Id": accessClientId,
       "CF-Access-Client-Secret": accessClientSecret,
+      ...(accessCookie ? { Cookie: accessCookie } : {}),
     };
   }
   if (adminToken) return { "X-Middleware-Token": adminToken };
@@ -59,6 +61,15 @@ async function request(path, init = {}, { protectedRequest = true } = {}) {
     });
   } catch (error) {
     return { status: 0, body: { error: "REQUEST_FAILED", detail: String(error) } };
+  }
+  if (accessConfigured && protectedRequest) {
+    const setCookies = typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : [res.headers.get("set-cookie") || ""];
+    for (const value of setCookies) {
+      const match = value.match(/(?:^|,\s*)CF_Authorization=([^;]+)/i);
+      if (match) accessCookie = `CF_Authorization=${match[1]}`;
+    }
   }
   const text = await res.text();
   let body;
