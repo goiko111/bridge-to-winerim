@@ -238,13 +238,13 @@ export function manifestDigest(manifest) {
   return sha256(canonicalJson(unsigned));
 }
 
-export function signManifest(manifest) {
+export function checksumManifest(manifest) {
   return { ...manifest, manifestSha256: manifestDigest(manifest) };
 }
 
 export function verifyManifest(manifest, expectedTables, expectedPolicySha256) {
   if (manifest?.schemaVersion !== MANIFEST_SCHEMA_VERSION || manifest?.manifestSha256 !== manifestDigest(manifest)) {
-    throw new Error("Manifest signature mismatch");
+    throw new Error("Manifest digest mismatch");
   }
   if (!Array.isArray(manifest.tables)) throw new Error("Manifest table list missing");
   assertTableInventory(manifest.tables.map(({ table }) => table), expectedTables);
@@ -623,7 +623,7 @@ export async function createExportArtifact({
       const toc = await runProcess("pg_restore", ["--list", dumpDir]);
       const archiveSha256 = await directoryDigest(dumpDir);
       const projectedDataSha256 = await directoryDigest(projectedDir);
-      const manifest = signManifest({
+      const manifest = checksumManifest({
         schemaVersion: MANIFEST_SCHEMA_VERSION,
         kind,
         createdAt: new Date().toISOString(),
@@ -851,13 +851,13 @@ async function checkForeignKeys(databaseUrl, foreignKeys, config) {
 
 export async function writeState(statePath, state) {
   const { manifestSha256: _previousDigest, ...unsignedState } = state;
-  const signed = signManifest({ schemaVersion: 1, ...unsignedState, updatedAt: new Date().toISOString() });
+  const checksummed = checksumManifest({ schemaVersion: 1, ...unsignedState, updatedAt: new Date().toISOString() });
   const directory = path.dirname(statePath);
   const tempPath = path.join(directory, `.${path.basename(statePath)}.${process.pid}.${randomUUID()}.tmp`);
   let stateHandle;
   try {
     stateHandle = await open(tempPath, "wx", 0o600);
-    await stateHandle.writeFile(`${JSON.stringify(signed, null, 2)}\n`, "utf8");
+    await stateHandle.writeFile(`${JSON.stringify(checksummed, null, 2)}\n`, "utf8");
     await stateHandle.sync();
     await stateHandle.close();
     stateHandle = null;
@@ -868,7 +868,7 @@ export async function writeState(statePath, state) {
     } finally {
       await directoryHandle.close();
     }
-    return signed;
+    return checksummed;
   } finally {
     await stateHandle?.close().catch(() => undefined);
     await rm(tempPath, { force: true }).catch(() => undefined);
@@ -878,7 +878,7 @@ export async function writeState(statePath, state) {
 export async function readState(statePath) {
   try {
     const state = JSON.parse(await readFile(statePath, "utf8"));
-    if (state.manifestSha256 !== manifestDigest(state)) throw new Error("State signature mismatch");
+    if (state.manifestSha256 !== manifestDigest(state)) throw new Error("State digest mismatch");
     return state;
   } catch (error) {
     if (error?.code === "ENOENT") return null;
@@ -888,7 +888,7 @@ export async function readState(statePath) {
 
 export function assertRollbackReconciled(reconciliation) {
   if (!reconciliation?.ok) {
-    throw new Error("Rollback target does not reconcile with the signed backup manifest");
+    throw new Error("Rollback target does not reconcile with the digest-verified backup manifest");
   }
   return reconciliation;
 }
@@ -906,7 +906,7 @@ export function buildSafePlan(config) {
       "target URL only through STAGING_DATABASE_URL",
       "exported repeatable-read snapshot with LSN/timestamp",
       "provider_credentials staging-only and required empty",
-      "pos_connections exported through an exact signed credential-sanitizing projection",
+      "pos_connections exported through an exact checksummed credential-sanitizing projection",
       "target sentinel environment=staging and exact 30-table inventory",
       "runtime staging tables empty before import",
       "target backup before one-transaction replacement",

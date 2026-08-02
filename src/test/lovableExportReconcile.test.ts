@@ -21,7 +21,7 @@ import {
   quoteIdentifier,
   readState,
   redactError,
-  signManifest,
+  checksumManifest,
   tableTransferPolicy,
   targetReplaceTables,
   transferPolicyDigest,
@@ -161,7 +161,7 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(assertTableInventory([...config.sourceTables, "platform_internal"], config.sourceTables, { exact: false })).toEqual({ missing: [], unexpected: [] });
   });
 
-  it("signs deterministic manifests and detects edits", async () => {
+  it("checksums deterministic manifests and detects edits", async () => {
     const config = await loadTransferConfig(configPath);
     const base = {
       schemaVersion: 2,
@@ -180,11 +180,11 @@ describe("Lovable export/reconcile staging toolkit", () => {
         };
       }),
     };
-    const signed = signManifest(base);
-    expect(signed.manifestSha256).toBe(manifestDigest(signed));
-    expect(verifyManifest(signed, config.sourceTables, transferPolicyDigest(config, config.sourceTables))).toBe(signed);
-    expect(() => verifyManifest({ ...signed, archiveSha256: "e".repeat(64) }, config.sourceTables, transferPolicyDigest(config, config.sourceTables))).toThrow(/signature/);
-    expect(() => verifyManifest(signed, config.sourceTables, "f".repeat(64))).toThrow(/policy/);
+    const checksummed = checksumManifest(base);
+    expect(checksummed.manifestSha256).toBe(manifestDigest(checksummed));
+    expect(verifyManifest(checksummed, config.sourceTables, transferPolicyDigest(config, config.sourceTables))).toBe(checksummed);
+    expect(() => verifyManifest({ ...checksummed, archiveSha256: "e".repeat(64) }, config.sourceTables, transferPolicyDigest(config, config.sourceTables))).toThrow(/digest/);
+    expect(() => verifyManifest(checksummed, config.sourceTables, "f".repeat(64))).toThrow(/policy/);
     expect(canonicalJson({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
   });
 
@@ -223,7 +223,7 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(() => assertTargetGate("postgres://u@localhost/source", "local-test", config, "postgres://u@localhost/source", { localTest: true })).toThrow(/must differ/);
   });
 
-  it("writes signed state atomically and leaves no temporary files under concurrent updates", async () => {
+  it("writes checksummed state atomically and leaves no temporary files under concurrent updates", async () => {
     const directory = await mkdtemp(join(tmpdir(), "winerim-transfer-state-"));
     const statePath = join(directory, "import-state.json");
     try {
@@ -242,8 +242,8 @@ describe("Lovable export/reconcile staging toolkit", () => {
 
   it("refuses to declare rollback success before backup reconciliation", () => {
     expect(assertRollbackReconciled({ ok: true })).toEqual({ ok: true });
-    expect(() => assertRollbackReconciled({ ok: false })).toThrow(/signed backup manifest/);
-    expect(() => assertRollbackReconciled(null)).toThrow(/signed backup manifest/);
+    expect(() => assertRollbackReconciled({ ok: false })).toThrow(/digest-verified backup manifest/);
+    expect(() => assertRollbackReconciled(null)).toThrow(/digest-verified backup manifest/);
   });
 
   it("redacts database URLs from failures", () => {

@@ -25,7 +25,7 @@ must contain exactly the 30 reviewed public tables and the sentinel
   fields.
 - `provider_credentials` is staging-owned and required empty before and after
   import. Production rows from that table are never selected or archived.
-- `pos_connections` is excluded from raw `pg_dump` table data. A signed,
+- `pos_connections` is excluded from raw `pg_dump` table data. A checksummed,
   exact-column projection writes a binary copy with `api_token=''`, a fixed
   non-routable `base_url`, and nullable token, endpoint, provider-config and
   restaurant credential fields cleared. An unknown/reordered column fails the
@@ -47,7 +47,7 @@ must contain exactly the 30 reviewed public tables and the sentinel
   tables. A mismatch automatically restores and reconciles the target backup.
 - State transitions use a same-directory temporary file, file `fsync`, atomic
   rename and directory `fsync`. Rollback records `ROLLED_BACK` only after the
-  restored target reconciles with the signed backup manifest; otherwise it
+  restored target reconciles with the digest-verified backup manifest; otherwise it
   records `ROLLBACK_FAILED`.
 - Artifacts are sensitive data. Store them outside the repository on an
   encrypted volume, mode `0700`; manifests and state are mode `0600`.

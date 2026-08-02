@@ -89,7 +89,7 @@ async function restoreAndReconcileBackup({ targetUrl, backupDir, backupManifest,
       rollbackFailureReason: "BACKUP_MANIFEST_RECONCILIATION_FAILED",
       rollbackManifestSha256: backupManifest.manifestSha256,
     });
-    throw new Error("Rollback restore was applied but did not reconcile with the signed backup manifest");
+    throw new Error("Rollback restore was applied but did not reconcile with the digest-verified backup manifest");
   }
   const rolledBackState = await writeState(path.join(backupDir, "import-state.json"), {
     ...state,
@@ -286,7 +286,7 @@ async function rollbackCommand(config, options) {
   const artifactDir = path.join(backupDir, "target-before");
   const { manifest } = await readAndVerifyArtifact(artifactDir, targetReplaceTables(config), config);
   if (state.targetBackupManifestSha256 && state.targetBackupManifestSha256 !== manifest.manifestSha256) {
-    throw new Error("Rollback state does not match the signed target backup manifest");
+    throw new Error("Rollback state does not match the digest-verified target backup manifest");
   }
   if (options["confirm-manifest"] !== manifest.manifestSha256) throw new Error("Rollback manifest confirmation gate failed");
   if (!options.apply) {
