@@ -106,7 +106,7 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(sql).toContain("''::text AS \"api_token\"");
     expect(sql).toContain("NULL::text AS \"winerim_api_token\"");
     expect(sql).toContain("'{}'::jsonb AS \"provider_config\"");
-    expect(sql).not.toMatch(/\n  "api_token",/);
+    expect(sql).not.toMatch(/\n {2}"api_token",/);
   });
 
   it("quotes only constrained SQL identifiers", () => {
