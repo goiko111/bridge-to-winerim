@@ -8,7 +8,11 @@ import {
   type PostgresClientFactory,
 } from "../../middleware-api/src/db";
 import { createWinerimMutationTransport, type SecretTextPort } from "../../middleware-runtime/src/adapters/http";
-import type { RuntimeEnvelopeV1, RuntimeJob } from "../../middleware-runtime/src/contracts";
+import {
+  isDeployableRuntimeCanaryConnectionId,
+  type RuntimeEnvelopeV1,
+  type RuntimeJob,
+} from "../../middleware-runtime/src/contracts";
 import {
   createConnectionScopedRuntimeExecutor,
   createPostgresEncryptedCredentialPort,
@@ -25,7 +29,6 @@ const STAGING_ENVIRONMENT = "staging";
 const ENABLED_STOCK_JOBS = Object.freeze([
   "winerim.sales-import-live",
 ] as const satisfies readonly RuntimeJob[]);
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface MiddlewareRuntimeExecutorEnv {
   ENVIRONMENT?: string;
@@ -194,11 +197,11 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
   const executionEnabled = String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true";
   const missingBindings = [
     !env.MIDDLEWARE_DB ? "MIDDLEWARE_DB" : null,
-    !env.RUNTIME_VAULT_KEY ? "RUNTIME_VAULT_KEY" : null,
+    typeof env.RUNTIME_VAULT_KEY?.get !== "function" ? "RUNTIME_VAULT_KEY" : null,
     !String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim() ? "RUNTIME_VAULT_KEY_VERSION" : null,
     !String(env.WINERIM_API_BASE_URL ?? "").trim() ? "WINERIM_API_BASE_URL" : null,
     !String(env.WINERIM_ALLOWED_HOSTS ?? "").trim() ? "WINERIM_ALLOWED_HOSTS" : null,
-    !UUID_PATTERN.test(String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim())
+    !isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
       ? "RUNTIME_CANARY_CONNECTION_ID"
       : null,
   ].filter((value): value is string => !!value);
@@ -218,7 +221,8 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
 function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
   return String(env.ENVIRONMENT ?? "").trim().toLowerCase() === STAGING_ENVIRONMENT
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
-    && UUID_PATTERN.test(String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim());
+    && isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
+    && typeof env.RUNTIME_VAULT_KEY?.get === "function";
 }
 
 export function createMiddlewareRuntimeExecutorWorker(
@@ -244,7 +248,7 @@ export function createMiddlewareRuntimeExecutorWorker(
       } catch {
         return json({ ok: false, failure: { httpStatus: 503, message: "RUNTIME_DATABASE_UNAVAILABLE" } }, 503);
       }
-      if (!env.RUNTIME_VAULT_KEY) {
+      if (typeof env.RUNTIME_VAULT_KEY?.get !== "function") {
         return json({ ok: false, failure: { httpStatus: 503, message: "RUNTIME_VAULT_UNAVAILABLE" } }, 503);
       }
       const options: RuntimeExecutorCompositionOptions = {

@@ -9,7 +9,12 @@ import {
   type HyperdriveBinding,
   type PostgresClientFactory,
 } from "../../middleware-api/src/db";
-import type { RuntimeEnvelopeV1, RuntimeLane } from "./contracts";
+import {
+  isDeployableRuntimeCanaryConnectionId,
+  isRuntimeEnvelope,
+  type RuntimeEnvelopeV1,
+  type RuntimeLane,
+} from "./contracts";
 import {
   consumeRuntimeQueueBatch,
   type CloudflareMessageBatchLike,
@@ -27,6 +32,9 @@ const EXECUTION_ENABLED = "true";
 const FAIL_CLOSED_RETRY_SECONDS = 300;
 const IDEMPOTENCY_LEASE_MINUTES = 2;
 const EXECUTOR_TIMEOUT_MS = 15_000;
+const CANARY_CONSUMER_MODE = "canary-consumer";
+const CANARY_RUNTIME_JOB = "winerim.sales-import-live";
+const CANARY_RUNTIME_LANE = "sales-import";
 
 export type RuntimeQueueSendMessage = {
   body: RuntimeEnvelopeV1;
@@ -49,6 +57,8 @@ export interface MiddlewareRuntimeEnv {
   ENVIRONMENT?: string;
   RELEASE?: string;
   RUNTIME_EXECUTION_ENABLED?: string;
+  RUNTIME_MODE?: string;
+  RUNTIME_CANARY_CONNECTION_ID?: string;
   MIDDLEWARE_DB?: HyperdriveBinding;
   RUNTIME_EXECUTOR?: RuntimeExecutorServiceBinding;
   MIDDLEWARE_CATALOG_QUEUE?: RuntimeQueueProducer;
@@ -98,6 +108,16 @@ interface RuntimeReadinessRow extends Record<string, unknown> {
   environment: string | null;
   runtime_idempotency_ready: boolean;
   runtime_execution_log_ready: boolean;
+  runtime_canary_scope_ready: boolean;
+}
+
+function isCanaryConsumer(env: MiddlewareRuntimeEnv): boolean {
+  return env.RUNTIME_MODE?.trim().toLowerCase() === CANARY_CONSUMER_MODE;
+}
+
+function canaryConnectionId(env: MiddlewareRuntimeEnv): string | null {
+  const value = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
+  return isDeployableRuntimeCanaryConnectionId(value) ? value : null;
 }
 
 const createPostgresClient: PostgresClientFactory = ({ connectionString, applicationName }) => {
@@ -221,11 +241,16 @@ function queueBindings(env: MiddlewareRuntimeEnv): Record<string, RuntimeQueuePr
 }
 
 function missingBindingNames(env: MiddlewareRuntimeEnv, executor?: RuntimeExecutor | null): string[] {
-  const missing = Object.entries(queueBindings(env))
-    .filter(([, binding]) => !binding)
-    .map(([name]) => name);
+  const missing = isCanaryConsumer(env)
+    ? []
+    : Object.entries(queueBindings(env))
+      .filter(([, binding]) => !binding)
+      .map(([name]) => name);
   if (!env.MIDDLEWARE_DB) missing.push("MIDDLEWARE_DB");
   if (!env.RUNTIME_EXECUTOR && !executor) missing.push("RUNTIME_EXECUTOR");
+  if (isCanaryConsumer(env) && !canaryConnectionId(env)) {
+    missing.push("RUNTIME_CANARY_CONNECTION_ID");
+  }
   return missing.sort();
 }
 
@@ -507,8 +532,34 @@ export async function runRuntimeQueue(
     retryBatchFailClosed(batch);
     return;
   }
+
+  let scopedBatch = batch;
+  if (isCanaryConsumer(env)) {
+    const allowedConnectionId = canaryConnectionId(env);
+    if (!allowedConnectionId) {
+      retryBatchFailClosed(batch);
+      return;
+    }
+    const acceptedMessages: CloudflareMessageBatchLike["messages"][number][] = [];
+    for (const message of batch.messages) {
+      if (isRuntimeEnvelope(message.body) && (
+        message.body.connectionId !== allowedConnectionId
+        || message.body.job !== CANARY_RUNTIME_JOB
+        || message.body.lane !== CANARY_RUNTIME_LANE
+      )) {
+        // This is a terminal canary-scope rejection. Acknowledge without
+        // opening Hyperdrive so an unrelated connection cannot create a
+        // reservation, retry loop or provider mutation.
+        message.ack();
+        continue;
+      }
+      acceptedMessages.push(message);
+    }
+    if (acceptedMessages.length === 0) return;
+    scopedBatch = { queue: batch.queue, messages: acceptedMessages };
+  }
   await consumeRuntimeQueueBatch(
-    batch,
+    scopedBatch,
     createPersistentRuntimeQueueHooks(dependencies.database(env), executor),
   );
 }
@@ -520,6 +571,7 @@ async function readiness(
   const executor = dependencies.executor(env);
   const missingBindings = missingBindingNames(env, executor);
   const executionEnabled = env.RUNTIME_EXECUTION_ENABLED?.trim().toLowerCase() === EXECUTION_ENABLED;
+  const canaryConsumer = isCanaryConsumer(env);
   if (!isStaging(env) || !env.MIDDLEWARE_DB) {
     return json({
       ok: false,
@@ -527,6 +579,7 @@ async function readiness(
       release: env.RELEASE ?? null,
       stagingOnly: true,
       executionEnabled,
+      canaryConsumer,
       executorBound: executor !== null,
       missingBindings,
       reason: !isStaging(env) ? "NOT_STAGING" : "DATABASE_BINDING_MISSING",
@@ -534,16 +587,27 @@ async function readiness(
   }
 
   try {
+    const reviewedConnectionId = canaryConnectionId(env);
     const result = await dependencies.database(env).query<RuntimeReadinessRow>(sql`
       SELECT
         (SELECT value FROM public.infrastructure_metadata WHERE key = 'environment') AS environment,
         to_regclass('public.runtime_idempotency') IS NOT NULL AS runtime_idempotency_ready,
-        to_regclass('public.runtime_execution_log') IS NOT NULL AS runtime_execution_log_ready
+        to_regclass('public.runtime_execution_log') IS NOT NULL AS runtime_execution_log_ready,
+        CASE
+          WHEN ${canaryConsumer} = false THEN true
+          WHEN ${reviewedConnectionId}::uuid IS NULL THEN false
+          ELSE (
+            SELECT count(*) = 1
+            FROM public.runtime_canary_connections scope
+            WHERE scope.connection_id = ${reviewedConnectionId}::uuid
+          )
+        END AS runtime_canary_scope_ready
     `);
     const row = result.rows[0];
     const schemaReady = row?.environment === STAGING_ENVIRONMENT
       && row.runtime_idempotency_ready === true
-      && row.runtime_execution_log_ready === true;
+      && row.runtime_execution_log_ready === true
+      && row.runtime_canary_scope_ready === true;
     const ready = schemaReady && missingBindings.length === 0 && executionEnabled && executor !== null;
     return json({
       ok: ready,
@@ -551,8 +615,10 @@ async function readiness(
       release: env.RELEASE ?? null,
       stagingOnly: true,
       executionEnabled,
+      canaryConsumer,
       executorBound: executor !== null,
       missingBindings,
+      canaryScope: row?.runtime_canary_scope_ready === true ? "ready" : "not_ready",
       database: schemaReady ? "ready" : "schema_not_ready",
       reason: ready ? null : "RUNTIME_NOT_READY",
     }, ready ? 200 : 503);
@@ -563,6 +629,7 @@ async function readiness(
       release: env.RELEASE ?? null,
       stagingOnly: true,
       executionEnabled,
+      canaryConsumer,
       executorBound: executor !== null,
       missingBindings,
       database: "unavailable",
@@ -595,6 +662,7 @@ export function createMiddlewareRuntimeWorker(dependencies: RuntimeWorkerDepende
           release: env.RELEASE ?? null,
           stagingOnly: true,
           executionEnabled,
+          canaryConsumer: isCanaryConsumer(env),
           externalWrites: executionEnabled,
         });
       }

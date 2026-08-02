@@ -1,18 +1,19 @@
-name = "winerim-middleware-runtime"
+name = "winerim-middleware-runtime-canary"
 main = "cloudflare/workers/middleware-runtime/src/worker.ts"
 compatibility_date = "2026-06-12"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
 
 [env.staging]
-name = "winerim-middleware-runtime-staging"
+name = "winerim-middleware-runtime-canary-staging"
 workers_dev = false
 
 [env.staging.vars]
 ENVIRONMENT = "staging"
 RELEASE = "staging-single-connection-canary"
 RUNTIME_EXECUTION_ENABLED = "true"
-RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"
+RUNTIME_MODE = "canary-consumer"
+RUNTIME_CANARY_CONNECTION_ID = "{{RUNTIME_CANARY_CONNECTION_ID}}"
 
 [[env.staging.hyperdrive]]
 binding = "MIDDLEWARE_DB"
@@ -20,11 +21,12 @@ id = "0adae4108e4241f19cf5ba2709cbc69f"
 
 [[env.staging.services]]
 binding = "RUNTIME_EXECUTOR"
-service = "winerim-middleware-runtime-executor-staging"
+service = "winerim-middleware-runtime-executor-canary-staging"
 
-# No cron and no producers: this file can consume exactly one reviewed lane.
+# No cron and no producers: this dedicated Worker can consume only the
+# sales-import lane used by winerim.sales-import-live.
 [[env.staging.queues.consumers]]
-queue = "winerim-staging-stock"
+queue = "winerim-staging-sales"
 max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3

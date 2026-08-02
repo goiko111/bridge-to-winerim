@@ -26,8 +26,11 @@ directory is applied remotely by validation or replay.
 - `0002_release_schema_addendum.sql`: reviewed portable materialization of that
   contract: health tables without legacy contacts or database HTTP, provider
   sale timestamps, runtime-owned dispatch locks and the durable stock-log FK.
-- `expected-schema.txt`: active middleware contract: 30 public tables, six
-  portable functions, two columns, one index and one SET NULL foreign key.
+- `0003_runtime_connection_credentials.sql` through
+  `0005_runtime_canary_connection_scope.sql`: encrypted credential schema and
+  least-privilege, approved, expiring single-connection canary scope.
+- `expected-schema.txt`: active middleware contract: 30 public tables, seven
+  portable functions, two columns, two indexes and one SET NULL foreign key.
 - `build-bootstrap.sh`: concatenates the reviewed historical schema, role
   hardening and portable release addendum into one generated SQL artifact.
 - `validate.sh`: static checksum/classification audit and optional read-only
@@ -186,10 +189,11 @@ Test the classified schema chain on an empty local Postgres installation:
 infrastructure/postgres/test-empty-replay.sh
 ```
 
-Current verified result: `EMPTY_REPLAY_HARDENED_OK` with 30 public tables, six
-public functions, RLS on every public table, no legacy/public role policies,
-no `PUBLIC` execution on security-definer functions and no database HTTP health
-helper.
+Current verified result: `EMPTY_REPLAY_HARDENED_OK` with 30 public tables,
+seven public functions, RLS on every public table, no legacy/public role
+policies, no `PUBLIC` execution on security-definer functions and no database
+HTTP health helper. The replay also proves that a second active canary scope,
+an unapproved scope and an expired scope cannot grant runtime access.
 
 The generated bootstrap creates temporary compatibility roles required by the
 historical SQL, then revokes their data/function access during hardening. The

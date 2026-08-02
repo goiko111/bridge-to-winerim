@@ -45,9 +45,15 @@ cut they had zero producers and zero consumers.
 | `MIDDLEWARE_MAINTENANCE_QUEUE` | `winerim-staging-maintenance` |
 
 `winerim-staging-dead-letter` exists but is not bound by the inert config.
-`wrangler.middleware-runtime-canary.toml` is the separate one-consumer config;
-it has no cron or producers and must be rendered with the one reviewed
-`RUNTIME_CANARY_CONNECTION_ID` before any deploy.
+The canary uses a dedicated Worker name and the non-deployable templates
+`wrangler.middleware-runtime-canary.toml.example` and
+`wrangler.middleware-runtime-executor-canary.toml.example`. They have no cron
+or producers and must be rendered with one reviewed connection plus the real
+Cloudflare Secrets Store coordinates before any dry-run or deploy.
+
+The canary consumer is bound to `winerim-staging-sales`, the producer Queue for
+the `sales-import` lane used by `winerim.sales-import-live`. It rejects another
+connection in memory and acknowledges it before opening Hyperdrive.
 
 Both reviewed configs use the middleware-owned staging Hyperdrive. The file
 `wrangler.middleware-runtime.hyperdrive.toml.example` remains documentation
@@ -59,10 +65,25 @@ Wrangler 4.118 requires Node 22 or newer.
 
 ```sh
 npm run cf:runtime:test
+npm run cf:runtime:canary:render
 npm run cf:runtime:dry-run:staging
 npm run cf:runtime:dry-run:canary
 npm run cf:executor:dry-run:canary
 ```
+
+Rendering requires these values in the invoking environment and writes only
+mode-`0600` temporary TOML files under `/tmp`:
+
+```sh
+RUNTIME_CANARY_CONNECTION_ID=<REVIEWED_UUID> \
+CLOUDFLARE_RUNTIME_VAULT_STORE_ID=<REAL_STORE_ID> \
+CLOUDFLARE_RUNTIME_VAULT_SECRET_NAME=<REAL_SECRET_NAME> \
+  npm run cf:runtime:canary:render
+```
+
+The executor template uses Cloudflare's Secrets Store binding
+`[[env.staging.secrets_store_secrets]]`; its runtime value must expose `.get()`.
+A normal Worker secret is a string and is intentionally rejected by readiness.
 
 The dry-run bundles the Worker and validates the Queue/cron configuration. It
 does not upload a Worker, create consumers or change remote resources. With
@@ -107,18 +128,32 @@ private vault binding and an approved live-glass canary plan.
 
 ## Rollback runbook
 
-Record the prior healthy Worker version before deployment. Roll back code and
-bindings with that exact version ID:
+Record the prior healthy inert Worker version before deployment. Code rollback
+uses that exact version ID:
 
 ```sh
 npm run cf:runtime:rollback:staging -- <VERSION_ID>
 npm run cf:runtime:deployments:staging
 ```
 
-Do not delete the Queue assets during a Worker rollback. If a later change adds
-Hyperdrive or consumers, first roll back to this inert version, verify no
-consumption, and only then remove those later bindings through a reviewed
-configuration change.
+Deploying or rolling back the inert Worker does not remove Queue consumers from
+another Worker. The canary therefore has the separate name
+`winerim-middleware-runtime-canary-staging`. Plan and dry-run its explicit
+removal without touching Queue assets:
+
+```sh
+npm run cf:runtime:canary:remove:plan
+npm run cf:runtime:canary:remove:dry-run
+```
+
+The actual removal is deliberately absent from package scripts. After checking
+the dry-run, execute the script only with both gates:
+
+```sh
+node scripts/remove-runtime-canary-consumer.mjs \
+  --apply \
+  --confirm-worker=winerim-middleware-runtime-canary-staging
+```
 
 ## Integration hooks
 

@@ -84,6 +84,69 @@ done < "$EXPECTED"
 # the replay gate; operators can run validate.sh to inspect the full matrix.
 "${PSQL[@]}" -d "$DB_NAME" -f "$SCRIPT_DIR/validate-readonly.sql" >/dev/null
 
+CANARY_CONNECTION_A=11111111-1111-4111-8111-111111111111
+CANARY_CONNECTION_B=22222222-2222-4222-8222-222222222222
+"${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+INSERT INTO public.pos_connections (id, location_name, provider, base_url, api_token, enabled)
+VALUES
+  ('$CANARY_CONNECTION_A', 'Canary scope A', 'agora', 'https://a.invalid', '', false),
+  ('$CANARY_CONNECTION_B', 'Canary scope B', 'agora', 'https://b.invalid', '', false);
+
+DO \$test_unapproved\$
+DECLARE rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
+    VALUES ('$CANARY_CONNECTION_A', true, NULL, now() + interval '1 hour');
+  EXCEPTION WHEN check_violation THEN
+    rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'active unapproved canary scope was accepted'; END IF;
+END
+\$test_unapproved\$;
+
+DO \$test_expired\$
+DECLARE rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
+    VALUES ('$CANARY_CONNECTION_A', true, now() - interval '2 hours', now() - interval '1 hour');
+  EXCEPTION WHEN check_violation THEN
+    rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'expired active canary scope was accepted'; END IF;
+END
+\$test_expired\$;
+
+INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
+VALUES ('$CANARY_CONNECTION_A', true, now(), now() + interval '1 hour');
+
+DO \$test_single_active\$
+DECLARE rejected boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
+    VALUES ('$CANARY_CONNECTION_B', true, now(), now() + interval '1 hour');
+  EXCEPTION WHEN unique_violation THEN
+    rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'second active canary scope was accepted'; END IF;
+END
+\$test_single_active\$;
+SQL
+
+runtime_canary_valid_scope=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT ((SELECT count(*) FROM public.runtime_canary_connections) = 1 AND (SELECT count(*) FROM public.pos_connections) = 1)::int")
+
+"${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+DELETE FROM public.runtime_canary_connections;
+INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
+VALUES
+  ('$CANARY_CONNECTION_A', false, NULL, NULL),
+  ('$CANARY_CONNECTION_B', false, now() - interval '2 hours', now() - interval '1 hour');
+SQL
+runtime_canary_invalid_scope_hidden=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT ((SELECT count(*) FROM public.runtime_canary_connections) = 0 AND (SELECT count(*) FROM public.pos_connections) = 0)::int")
+"${PSQL[@]}" -d "$DB_NAME" -c "DELETE FROM public.runtime_canary_connections; DELETE FROM public.pos_connections WHERE id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');" >/dev/null
+
 rls_missing=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity")
 security_definer_public=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef AND EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE')")
 table_count=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'")
@@ -106,8 +169,8 @@ platform_helpers=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_proc
 legacy_contact_columns=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='connection_notification_contacts' AND column_name IN ('label','channel','target','notify_client','notify_recovery','min_severity','alert_types')")
 secure_contact_columns=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='connection_notification_contacts' AND column_name IN ('contact_type','display_name','email','phone')")
 
-if [ "$missing" -gt 0 ] || [ "$rls_missing" -gt 0 ] || [ "$security_definer_public" -gt 0 ] || [ "$public_policies" -gt 0 ] || [ "$runtime_lock_table" != "1" ] || [ "$runtime_lock_functions" != "1" ] || [ "$runtime_vault_privileges" != "1" ] || [ "$runtime_canary_scope" != "1" ] || [ "$api_minimum_privileges" != "1" ] || [ "$legacy_lock_functions" != "0" ] || [ "$platform_helpers" -gt 0 ] || [ "$legacy_contact_columns" -gt 0 ] || [ "$secure_contact_columns" != "4" ]; then
-  printf 'RESULT=EMPTY_REPLAY_FAILED missing=%s rls_missing=%s public_security_definer=%s public_policies=%s runtime_lock_table=%s runtime_lock_functions=%s runtime_vault_privileges=%s runtime_canary_scope=%s api_minimum_privileges=%s legacy_lock_functions=%s platform_helpers=%s legacy_contact_columns=%s secure_contact_columns=%s\n' "$missing" "$rls_missing" "$security_definer_public" "$public_policies" "$runtime_lock_table" "$runtime_lock_functions" "$runtime_vault_privileges" "$runtime_canary_scope" "$api_minimum_privileges" "$legacy_lock_functions" "$platform_helpers" "$legacy_contact_columns" "$secure_contact_columns" >&2
+if [ "$missing" -gt 0 ] || [ "$rls_missing" -gt 0 ] || [ "$security_definer_public" -gt 0 ] || [ "$public_policies" -gt 0 ] || [ "$runtime_lock_table" != "1" ] || [ "$runtime_lock_functions" != "1" ] || [ "$runtime_vault_privileges" != "1" ] || [ "$runtime_canary_scope" != "1" ] || [ "$runtime_canary_valid_scope" != "1" ] || [ "$runtime_canary_invalid_scope_hidden" != "1" ] || [ "$api_minimum_privileges" != "1" ] || [ "$legacy_lock_functions" != "0" ] || [ "$platform_helpers" -gt 0 ] || [ "$legacy_contact_columns" -gt 0 ] || [ "$secure_contact_columns" != "4" ]; then
+  printf 'RESULT=EMPTY_REPLAY_FAILED missing=%s rls_missing=%s public_security_definer=%s public_policies=%s runtime_lock_table=%s runtime_lock_functions=%s runtime_vault_privileges=%s runtime_canary_scope=%s runtime_canary_valid_scope=%s runtime_canary_invalid_scope_hidden=%s api_minimum_privileges=%s legacy_lock_functions=%s platform_helpers=%s legacy_contact_columns=%s secure_contact_columns=%s\n' "$missing" "$rls_missing" "$security_definer_public" "$public_policies" "$runtime_lock_table" "$runtime_lock_functions" "$runtime_vault_privileges" "$runtime_canary_scope" "$runtime_canary_valid_scope" "$runtime_canary_invalid_scope_hidden" "$api_minimum_privileges" "$legacy_lock_functions" "$platform_helpers" "$legacy_contact_columns" "$secure_contact_columns" >&2
   exit 1
 fi
 
@@ -116,6 +179,8 @@ printf 'INFO: runtime_cannot_manage_lock_table=%s\n' "$runtime_lock_table"
 printf 'INFO: runtime_cannot_execute_lock_functions=%s\n' "$runtime_lock_functions"
 printf 'INFO: runtime_vault_minimum_privileges=%s\n' "$runtime_vault_privileges"
 printf 'INFO: runtime_canary_scope_minimum_privileges=%s\n' "$runtime_canary_scope"
+printf 'INFO: runtime_canary_valid_scope_visible=%s\n' "$runtime_canary_valid_scope"
+printf 'INFO: runtime_canary_invalid_scope_hidden=%s\n' "$runtime_canary_invalid_scope_hidden"
 printf 'INFO: api_minimum_privileges=%s\n' "$api_minimum_privileges"
 printf 'INFO: legacy_lock_function_privileges=%s\n' "$legacy_lock_functions"
 printf 'INFO: excluded_platform_health_helpers=%s\n' "$platform_helpers"

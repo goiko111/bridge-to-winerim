@@ -1,5 +1,14 @@
 export const RUNTIME_ENVELOPE_NAME = "winerim.middleware.runtime" as const;
 export const RUNTIME_ENVELOPE_VERSION = 1 as const;
+export const RUNTIME_CANARY_PLACEHOLDER_CONNECTION_ID = "00000000-0000-4000-8000-000000000000" as const;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isDeployableRuntimeCanaryConnectionId(value: unknown): value is string {
+  const connectionId = String(value ?? "").trim();
+  return UUID_PATTERN.test(connectionId)
+    && connectionId !== RUNTIME_CANARY_PLACEHOLDER_CONNECTION_ID;
+}
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };

@@ -30,6 +30,7 @@ TABLE wine_type_family_mappings
 TABLE winerim_push_tracking
 TABLE winerim_wines
 FUNCTION claim_outbound_tasks
+FUNCTION enforce_runtime_canary_connection_window
 FUNCTION acquire_agora_dispatch_lock
 FUNCTION has_role
 FUNCTION release_agora_dispatch_lock
@@ -38,4 +39,5 @@ FUNCTION update_updated_at_column
 COLUMN sales_line_items.provider_sold_at
 COLUMN sales_line_items.provider_sold_at_source
 INDEX idx_sales_line_items_connection_provider_sold_at
+INDEX runtime_canary_connections_single_active_idx
 FOREIGN_KEY_SET_NULL stock_sync_log_sales_line_item_id_fkey

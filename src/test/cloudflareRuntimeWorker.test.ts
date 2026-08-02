@@ -69,13 +69,27 @@ function dependencies(database: DatabaseAdapter, executor: RuntimeExecutor | nul
   } satisfies Required<RuntimeWorkerDependencies>;
 }
 
-async function queueEnvelope(scope: string) {
+async function queueEnvelope(
+  scope: string,
+  connectionId = "11111111-1111-4111-8111-111111111111",
+) {
   return createRuntimeEnvelope({
-    connectionId: "11111111-1111-4111-8111-111111111111",
+    connectionId,
     job: "outbound.process",
     dedupeScope: scope,
     source: { kind: "queue", eventId: scope },
     payload: { taskId: scope },
+    createdAt: "2026-08-02T10:00:00.000Z",
+  });
+}
+
+async function liveCanaryEnvelope(scope: string) {
+  return createRuntimeEnvelope({
+    connectionId: "11111111-1111-4111-8111-111111111111",
+    job: "winerim.sales-import-live",
+    dedupeScope: scope,
+    source: { kind: "queue", eventId: scope },
+    payload: { dryRun: true },
     createdAt: "2026-08-02T10:00:00.000Z",
   });
 }
@@ -107,6 +121,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       environment: "staging",
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
     }]));
     const database = fakeDatabase(query);
     const env = readyEnv();
@@ -176,6 +191,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       environment: "staging",
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
     }]));
     const database = fakeDatabase(query);
     const env = readyEnv();
@@ -195,6 +211,90 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       ok: false,
       executorBound: false,
       reason: "RUNTIME_NOT_READY",
+    });
+  });
+
+  it("reports a dedicated canary consumer ready without producer bindings", async () => {
+    const query = vi.fn(async () => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
+    }]));
+    const database = fakeDatabase(query);
+    const env: MiddlewareRuntimeEnv = {
+      ENVIRONMENT: "staging",
+      RELEASE: "canary-fixture",
+      RUNTIME_EXECUTION_ENABLED: "true",
+      RUNTIME_MODE: "canary-consumer",
+      RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+      MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+      RUNTIME_EXECUTOR: { fetch: vi.fn() },
+    };
+
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      canaryConsumer: true,
+      missingBindings: [],
+    });
+  });
+
+  it("keeps canary readiness closed until the approved database scope exists", async () => {
+    const database = fakeDatabase(() => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: false,
+    }]));
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      {
+        ENVIRONMENT: "staging",
+        RUNTIME_EXECUTION_ENABLED: "true",
+        RUNTIME_MODE: "canary-consumer",
+        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+        RUNTIME_EXECUTOR: { fetch: vi.fn() },
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      canaryScope: "not_ready",
+      database: "schema_not_ready",
+    });
+  });
+
+  it("fails canary readiness when the connection id is still the placeholder", async () => {
+    const database = fakeDatabase(() => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
+    }]));
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      {
+        ENVIRONMENT: "staging",
+        RUNTIME_EXECUTION_ENABLED: "true",
+        RUNTIME_MODE: "canary-consumer",
+        RUNTIME_CANARY_CONNECTION_ID: "00000000-0000-4000-8000-000000000000",
+        MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+        RUNTIME_EXECUTOR: { fetch: vi.fn() },
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      missingBindings: ["RUNTIME_CANARY_CONNECTION_ID"],
     });
   });
 
@@ -262,6 +362,95 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       { queue: "runtime", messages: [message] },
       readyEnv(),
       { database: databaseFactory, executor: () => null },
+    );
+
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(databaseFactory).not.toHaveBeenCalled();
+  });
+
+  it("terminally acknowledges an out-of-scope canary message before database reservation", async () => {
+    const body = await queueEnvelope(
+      "wrong-canary-connection",
+      "22222222-2222-4222-8222-222222222222",
+    );
+    const message = { id: "cf-scope-rejected", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
+    const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
+    const env = readyEnv();
+    env.RUNTIME_MODE = "canary-consumer";
+    env.RUNTIME_CANARY_CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+
+    await runRuntimeQueue(
+      { queue: "winerim-staging-sales", messages: [message] },
+      env,
+      { database: databaseFactory, executor: () => executor },
+    );
+
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(databaseFactory).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("terminally acknowledges a non-live job for the canary connection before database reservation", async () => {
+    const body = await queueEnvelope("wrong-canary-job");
+    const message = { id: "cf-job-rejected", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
+    const env = readyEnv();
+    env.RUNTIME_MODE = "canary-consumer";
+    env.RUNTIME_CANARY_CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+
+    await runRuntimeQueue(
+      { queue: "winerim-staging-sales", messages: [message] },
+      env,
+      { database: databaseFactory, executor: () => successfulExecutor },
+    );
+
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(databaseFactory).not.toHaveBeenCalled();
+  });
+
+  it("allows only the reviewed live-import envelope through to reservation", async () => {
+    const statements: string[] = [];
+    const database = fakeDatabase((statement) => {
+      statements.push(statement.text);
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) return result([{ attempt: 1 }]);
+      if (statement.text.includes("SET status = 'SUCCESS'")) return result([{ attempt: 1 }]);
+      return result();
+    });
+    const executor = { execute: vi.fn(async () => ({ ok: true as const, detail: "completed" })) };
+    const body = await liveCanaryEnvelope("reviewed-live-import");
+    const message = { id: "cf-canary-live", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const env = readyEnv();
+    env.RUNTIME_MODE = "canary-consumer";
+    env.RUNTIME_CANARY_CONNECTION_ID = body.connectionId;
+
+    await runRuntimeQueue(
+      { queue: "winerim-staging-sales", messages: [message] },
+      env,
+      dependencies(database, executor),
+    );
+
+    expect(executor.execute).toHaveBeenCalledOnce();
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+    expect(statements.some((statement) => statement.includes("runtime_idempotency"))).toBe(true);
+  });
+
+  it("fails closed without database access when the canary id is a placeholder", async () => {
+    const body = await queueEnvelope("placeholder-canary");
+    const message = { id: "cf-placeholder", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
+    const env = readyEnv();
+    env.RUNTIME_MODE = "canary-consumer";
+    env.RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000";
+
+    await runRuntimeQueue(
+      { queue: "winerim-staging-sales", messages: [message] },
+      env,
+      { database: databaseFactory, executor: () => successfulExecutor },
     );
 
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
@@ -373,5 +562,36 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     expect(message.retry).not.toHaveBeenCalled();
     expect(statements.some((text) => text.includes("status = 'TERMINAL'"))).toBe(true);
     expect(statements.some((text) => text.includes("runtime_execution_log"))).toBe(true);
+  });
+
+  it("persists the DLQ handoff before the final platform retry", async () => {
+    const statements: Array<{ text: string; values: readonly unknown[] }> = [];
+    const database = fakeDatabase((statement) => {
+      statements.push(statement);
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) return result([{ attempt: 3 }]);
+      if (statement.text.includes("SET status = 'RETRY'")) return result([{ attempt: 3 }]);
+      return result();
+    });
+    const executor = { execute: vi.fn(async () => ({
+      ok: false as const,
+      failure: { httpStatus: 503 },
+    })) };
+    const body = await queueEnvelope("dlq-handoff");
+    body.maxAttempts = 3;
+    const message = { id: "cf-dlq", attempts: 3, body, ack: vi.fn(), retry: vi.fn() };
+
+    await runRuntimeQueue(
+      { queue: "winerim-staging-sales", messages: [message] },
+      readyEnv(),
+      dependencies(database, executor),
+    );
+
+    expect(message.retry).toHaveBeenCalledWith();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(statements.some((statement) => statement.text.includes("SET status = 'RETRY'"))).toBe(true);
+    expect(statements.some((statement) => statement.values.some((value) =>
+      typeof value === "string" && value.includes("dead_letter_pending")
+    ))).toBe(true);
+    expect(statements.some((statement) => statement.values.includes("BLOCKED"))).toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { runtimeLaneForJob } from "../../cloudflare/workers/middleware-runtime/src/contracts";
 
 const root = resolve(import.meta.dirname, "../..");
 const config = readFileSync(resolve(root, "wrangler.middleware-runtime.toml"), "utf8");
@@ -10,9 +11,9 @@ const executorConfig = readFileSync(
   resolve(root, "wrangler.middleware-runtime-executor.toml"),
   "utf8",
 );
-const canaryConfig = readFileSync(resolve(root, "wrangler.middleware-runtime-canary.toml"), "utf8");
+const canaryConfig = readFileSync(resolve(root, "wrangler.middleware-runtime-canary.toml.example"), "utf8");
 const executorCanaryConfig = readFileSync(
-  resolve(root, "wrangler.middleware-runtime-executor-canary.toml"),
+  resolve(root, "wrangler.middleware-runtime-executor-canary.toml.example"),
   "utf8",
 );
 const hyperdriveExample = readFileSync(
@@ -55,17 +56,36 @@ describe("Cloudflare middleware runtime staging config", () => {
 
   it("isolates the reviewed canary in dedicated configs", () => {
     expect(canaryConfig).toContain('RUNTIME_EXECUTION_ENABLED = "true"');
-    expect(canaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"');
+    expect(canaryConfig).toContain('name = "winerim-middleware-runtime-canary-staging"');
+    expect(canaryConfig).toContain('RUNTIME_MODE = "canary-consumer"');
+    expect(canaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "{{RUNTIME_CANARY_CONNECTION_ID}}"');
     expect(canaryConfig).not.toContain("[env.staging.triggers]");
     expect(canaryConfig).not.toContain("[[env.staging.queues.producers]]");
     expect(canaryConfig.match(/\[\[env\.staging\.queues\.consumers\]\]/g)).toHaveLength(1);
-    expect(canaryConfig).toContain('queue = "winerim-staging-stock"');
+    expect(canaryConfig).toContain('queue = "winerim-staging-sales"');
     expect(canaryConfig).toContain('dead_letter_queue = "winerim-staging-dead-letter"');
     expect(canaryConfig).toContain("max_batch_size = 1");
     expect(canaryConfig).toContain("max_concurrency = 1");
     expect(executorCanaryConfig).toContain('RUNTIME_EXECUTION_ENABLED = "true"');
-    expect(executorCanaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"');
-    expect(executorCanaryConfig).not.toContain("RUNTIME_VAULT_KEY =");
+    expect(executorCanaryConfig).toContain('name = "winerim-middleware-runtime-executor-canary-staging"');
+    expect(executorCanaryConfig).toContain('RUNTIME_CANARY_CONNECTION_ID = "{{RUNTIME_CANARY_CONNECTION_ID}}"');
+    expect(executorCanaryConfig).toContain("[[env.staging.secrets_store_secrets]]");
+    expect(executorCanaryConfig).toContain('binding = "RUNTIME_VAULT_KEY"');
+    expect(executorCanaryConfig).toContain('store_id = "{{CLOUDFLARE_RUNTIME_VAULT_STORE_ID}}"');
+    expect(executorCanaryConfig).toContain('secret_name = "{{CLOUDFLARE_RUNTIME_VAULT_SECRET_NAME}}"');
+  });
+
+  it("keeps the live sales-import job on the matching sales Queue contract", () => {
+    const salesImportQueue = config.match(
+      /\[\[env\.staging\.queues\.producers\]\][\s\S]*?binding\s*=\s*"MIDDLEWARE_SALES_IMPORT_QUEUE"[\s\S]*?queue\s*=\s*"([^"]+)"/,
+    )?.[1];
+    const canaryQueue = canaryConfig.match(
+      /\[\[env\.staging\.queues\.consumers\]\][\s\S]*?queue\s*=\s*"([^"]+)"/,
+    )?.[1];
+
+    expect(runtimeLaneForJob("winerim.sales-import-live")).toBe("sales-import");
+    expect(salesImportQueue).toBe("winerim-staging-sales");
+    expect(canaryQueue).toBe(salesImportQueue);
   });
 
   it("keeps the private executor staging-only, unrouted and without embedded vault material", () => {
@@ -100,12 +120,15 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(packageJson.scripts).toMatchObject({
       "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts",
       "cf:runtime:dry-run:staging": expect.stringContaining("--dry-run"),
-      "cf:runtime:dry-run:canary": expect.stringContaining("wrangler.middleware-runtime-canary.toml"),
+      "cf:runtime:dry-run:canary": expect.stringContaining("runtime-canary-config.mjs dry-run runtime"),
+      "cf:runtime:canary:render": expect.stringContaining("runtime-canary-config.mjs"),
+      "cf:runtime:canary:remove:plan": expect.stringContaining("remove-runtime-canary-consumer.mjs"),
+      "cf:runtime:canary:remove:dry-run": expect.stringContaining("--dry-run"),
       "cf:runtime:deploy:staging": expect.stringContaining("--strict"),
       "cf:runtime:deployments:staging": expect.stringContaining("deployments status"),
       "cf:runtime:rollback:staging": expect.stringContaining("wrangler rollback"),
       "cf:executor:dry-run:staging": expect.stringContaining("wrangler.middleware-runtime-executor.toml"),
-      "cf:executor:dry-run:canary": expect.stringContaining("wrangler.middleware-runtime-executor-canary.toml"),
+      "cf:executor:dry-run:canary": expect.stringContaining("runtime-canary-config.mjs dry-run executor"),
     });
   });
 });

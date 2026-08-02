@@ -102,6 +102,40 @@ describe("private runtime executor Worker", () => {
     });
   });
 
+  it("rejects placeholder connection ids and string Worker secrets in readiness", async () => {
+    const worker = createMiddlewareRuntimeExecutorWorker();
+    const response = await worker.fetch(new Request("https://runtime-executor.internal/ready"), enabledEnv({
+      RUNTIME_CANARY_CONNECTION_ID: "00000000-0000-4000-8000-000000000000",
+      RUNTIME_VAULT_KEY: "worker-secret-strings-are-not-secret-store-bindings" as never,
+    }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      missingBindings: expect.arrayContaining([
+        "RUNTIME_CANARY_CONNECTION_ID",
+        "RUNTIME_VAULT_KEY",
+      ]),
+    });
+  });
+
+  it("rejects a placeholder canary before opening PostgreSQL", async () => {
+    const database = vi.fn();
+    const worker = createMiddlewareRuntimeExecutorWorker({ database });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      { dryRun: true },
+    )), enabledEnv({
+      RUNTIME_CANARY_CONNECTION_ID: "00000000-0000-4000-8000-000000000000",
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "RUNTIME_EXECUTION_DISABLED" },
+    });
+    expect(database).not.toHaveBeenCalled();
+  });
+
   it("allows only the narrow stock mutation job set", async () => {
     const fake = fakeDatabase();
     const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
