@@ -390,6 +390,29 @@ export function createPersistentRuntimeQueueHooks(
       }, { isolationLevel: "serializable" });
     },
 
+    async releaseForDeadLetter(envelope, input) {
+      await database.transaction(async (transaction) => {
+        const released = await transaction.query<RuntimeAttemptRow>(sql`
+          UPDATE public.runtime_idempotency
+          SET status = 'RETRY', lease_expires_at = NULL,
+            result = ${JSON.stringify({
+              errorClass: input.disposition.failure.class,
+              reason: input.reason,
+              state: "dead_letter_pending",
+            })}::jsonb,
+            updated_at = now()
+          WHERE idempotency_key = ${envelope.idempotencyKey} AND status = 'RUNNING'
+          RETURNING attempt
+        `);
+        const row = released.rows[0];
+        if (!row) throw new Error("RUNTIME_RESERVATION_LOST");
+        await insertExecutionLog(transaction, envelope, "BLOCKED", row.attempt, {
+          errorClass: input.disposition.failure.class,
+          detail: { reason: input.reason, state: "dead_letter_pending" },
+        });
+      }, { isolationLevel: "serializable" });
+    },
+
     async recordTerminal(envelope, input) {
       if (!envelope) return;
       await database.transaction(async (transaction) => {

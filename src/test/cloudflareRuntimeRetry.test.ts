@@ -82,6 +82,7 @@ describe("Cloudflare runtime retry policy", () => {
       execute: vi.fn(async () => ({ ok: false, failure: { httpStatus: 503 } })),
       complete: vi.fn(async () => undefined),
       releaseForRetry: vi.fn(async () => undefined),
+      releaseForDeadLetter: vi.fn(async () => undefined),
       recordTerminal: vi.fn(async () => undefined),
     };
 
@@ -117,6 +118,7 @@ describe("Cloudflare runtime retry policy", () => {
       execute: vi.fn(),
       complete: vi.fn(),
       releaseForRetry: vi.fn(),
+      releaseForDeadLetter: vi.fn(),
       recordTerminal: vi.fn(async () => undefined),
     };
 
@@ -154,6 +156,7 @@ describe("Cloudflare runtime retry policy", () => {
       execute: vi.fn(async () => ({ ok: false as const, failure: { httpStatus: 503 } })),
       complete: vi.fn(),
       releaseForRetry: vi.fn(),
+      releaseForDeadLetter: vi.fn(async () => undefined),
       recordTerminal: vi.fn(),
     };
 
@@ -162,6 +165,10 @@ describe("Cloudflare runtime retry policy", () => {
     expect(message.ack).not.toHaveBeenCalled();
     expect(message.retry).toHaveBeenCalledWith();
     expect(hooks.releaseForRetry).not.toHaveBeenCalled();
+    expect(hooks.releaseForDeadLetter).toHaveBeenCalledWith(body, expect.objectContaining({
+      messageId: "exhausted-message",
+      reason: "attempts_exhausted",
+    }));
     expect(hooks.recordTerminal).not.toHaveBeenCalled();
     expect(summary).toMatchObject({ retried: 1, acknowledged: 0, terminal: 0 });
   });

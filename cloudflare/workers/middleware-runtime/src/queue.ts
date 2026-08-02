@@ -31,6 +31,11 @@ export type RuntimeQueueHooks = {
   execute(envelope: RuntimeEnvelopeV1): Promise<RuntimeExecutionResult>;
   complete(envelope: RuntimeEnvelopeV1, result: Extract<RuntimeExecutionResult, { ok: true }>): Promise<void>;
   releaseForRetry(envelope: RuntimeEnvelopeV1, disposition: Extract<RuntimeQueueDisposition, { action: "retry" }>): Promise<void>;
+  releaseForDeadLetter(envelope: RuntimeEnvelopeV1, input: {
+    messageId: string;
+    reason: "attempts_exhausted";
+    disposition: Extract<RuntimeQueueDisposition, { action: "terminal" }>;
+  }): Promise<void>;
   recordTerminal(envelope: RuntimeEnvelopeV1 | null, input: {
     messageId: string;
     reason: string;
@@ -119,6 +124,11 @@ export async function consumeRuntimeQueueBatch(
         // A final retry hands the message to the platform DLQ. Recording a
         // terminal idempotency row first would make a redelivery look like an
         // acknowledged duplicate and bypass that DLQ transition.
+        await hooks.releaseForDeadLetter(envelope, {
+          messageId: message.id,
+          reason: "attempts_exhausted",
+          disposition,
+        });
         message.retry();
         summary.retried++;
         continue;
