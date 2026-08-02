@@ -106,7 +106,7 @@ infrastructure/postgres/test-empty-replay.sh
 ```
 
 Resultado fresco: `STATIC_MANIFEST_OK_DATABASE_READONLY_SKIPPED` y
-`EMPTY_REPLAY_HARDENED_OK`; 28 tablas, seis funciones, RLS en todas las tablas,
+`EMPTY_REPLAY_HARDENED_OK`; 30 tablas, seis funciones, RLS en todas las tablas,
 cero RPC `SECURITY DEFINER` ejecutables por `PUBLIC` y cero policies legacy.
 
 Cuando exista una DB staging dedicada, primero lectura:

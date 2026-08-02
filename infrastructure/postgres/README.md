@@ -26,7 +26,7 @@ directory is applied remotely by validation or replay.
 - `0002_release_schema_addendum.sql`: reviewed portable materialization of that
   contract: health tables without legacy contacts or database HTTP, provider
   sale timestamps, runtime-owned dispatch locks and the durable stock-log FK.
-- `expected-schema.txt`: active middleware contract: 28 public tables, six
+- `expected-schema.txt`: active middleware contract: 30 public tables, six
   portable functions, two columns, one index and one SET NULL foreign key.
 - `build-bootstrap.sh`: concatenates the reviewed historical schema, role
   hardening and portable release addendum into one generated SQL artifact.
@@ -186,7 +186,7 @@ Test the classified schema chain on an empty local Postgres installation:
 infrastructure/postgres/test-empty-replay.sh
 ```
 
-Current verified result: `EMPTY_REPLAY_HARDENED_OK` with 28 public tables, six
+Current verified result: `EMPTY_REPLAY_HARDENED_OK` with 30 public tables, six
 public functions, RLS on every public table, no legacy/public role policies,
 no `PUBLIC` execution on security-definer functions and no database HTTP health
 helper.
