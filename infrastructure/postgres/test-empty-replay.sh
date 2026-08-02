@@ -61,6 +61,11 @@ while read -r object_type object_name _; do
     INDEX)
       present=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT (to_regclass('public.$object_name') IS NOT NULL)::int")
       ;;
+    TRIGGER)
+      table_name=${object_name%%.*}
+      trigger_name=${object_name#*.}
+      present=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT EXISTS (SELECT 1 FROM pg_trigger trigger JOIN pg_class table_class ON table_class.oid=trigger.tgrelid JOIN pg_namespace n ON n.oid=table_class.relnamespace WHERE n.nspname='public' AND table_class.relname='$table_name' AND trigger.tgname='$trigger_name' AND NOT trigger.tgisinternal)::int")
+      ;;
     FOREIGN_KEY_SET_NULL)
       present=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT EXISTS (SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname='public' AND c.conname='$object_name' AND c.contype='f' AND c.confdeltype='n')::int")
       ;;

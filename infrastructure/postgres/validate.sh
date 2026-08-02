@@ -150,8 +150,9 @@ required_tables=$(awk '$1 == "TABLE" { count++ } END { print count + 0 }' "$EXPE
 required_functions=$(awk '$1 == "FUNCTION" { count++ } END { print count + 0 }' "$EXPECTED")
 required_columns=$(awk '$1 == "COLUMN" { count++ } END { print count + 0 }' "$EXPECTED")
 required_indexes=$(awk '$1 == "INDEX" { count++ } END { print count + 0 }' "$EXPECTED")
+required_triggers=$(awk '$1 == "TRIGGER" { count++ } END { print count + 0 }' "$EXPECTED")
 required_foreign_keys=$(awk '$1 == "FOREIGN_KEY_SET_NULL" { count++ } END { print count + 0 }' "$EXPECTED")
-ok "expected contract declares $required_tables tables, $required_functions functions, $required_columns columns, $required_indexes indexes and $required_foreign_keys SET NULL foreign keys"
+ok "expected contract declares $required_tables tables, $required_functions functions, $required_columns columns, $required_indexes indexes, $required_triggers triggers and $required_foreign_keys SET NULL foreign keys"
 
 if rg -n -i 'pg_net|net\.http|invoke_connection_health_monitor|CREATE[[:space:]]+TABLE[[:space:]]+(IF[[:space:]]+NOT[[:space:]]+EXISTS[[:space:]]+)?public\.connection_notification_contacts' "$PORTABLE_ADDENDUM" >/dev/null; then
   fail "portable addendum contains a forbidden platform helper or legacy contacts table"

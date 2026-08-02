@@ -28,6 +28,7 @@ WITH expected(name) AS (
     ('provider_credentials'),
     ('provider_products'),
     ('runtime_connection_credentials'),
+    ('runtime_canary_connections'),
     ('runtime_execution_log'),
     ('runtime_idempotency'),
     ('sales_events'),
@@ -50,6 +51,7 @@ WITH expected(name) AS (
   VALUES
     ('acquire_agora_dispatch_lock'),
     ('claim_outbound_tasks'),
+    ('enforce_runtime_canary_connection_window'),
     ('has_role'),
     ('release_agora_dispatch_lock'),
     ('rescue_zombie_outbound_tasks'),
@@ -88,6 +90,20 @@ ORDER BY expected.table_name, expected.column_name;
 SELECT
   to_regclass('public.idx_sales_line_items_connection_provider_sold_at') IS NOT NULL
     AS provider_sold_at_index_present;
+
+SELECT
+  to_regclass('public.runtime_canary_connections_single_active_idx') IS NOT NULL
+    AS runtime_canary_index_present,
+  EXISTS (
+    SELECT 1
+    FROM pg_trigger trigger
+    JOIN pg_class table_class ON table_class.oid = trigger.tgrelid
+    JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND table_class.relname = 'runtime_canary_connections'
+      AND trigger.tgname = 'enforce_runtime_canary_connection_window'
+      AND NOT trigger.tgisinternal
+  ) AS runtime_canary_trigger_present;
 
 SELECT
   c.conname,

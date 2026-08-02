@@ -29,6 +29,14 @@ directory is applied remotely by validation or replay.
 - `0003_runtime_connection_credentials.sql` through
   `0005_runtime_canary_connection_scope.sql`: encrypted credential schema and
   least-privilege, approved, expiring single-connection canary scope.
+- `upgrade-staging-runtime.sh`: plan-only by default, pins the immutable
+  Supabase project, accepts only the reviewed 28-table prestate, takes a mode
+  `0600` logical backup in an explicitly confirmed encrypted directory, proves
+  that backup in disposable PostgreSQL, then applies only `0003..0005` after
+  exact confirmations.
+- `rollback-runtime-upgrade.sql`: fail-closed inverse for an unused canary; it
+  requires empty runtime credential/scope tables and restores the verified
+  28-table prestate. `test-runtime-upgrade.sh` proves `28 -> 30 -> 28` locally.
 - `expected-schema.txt`: active middleware contract: 30 public tables, seven
   portable functions, two columns, two indexes and one SET NULL foreign key.
 - `build-bootstrap.sh`: concatenates the reviewed historical schema, role

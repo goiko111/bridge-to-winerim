@@ -8,6 +8,7 @@ fi
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DATABASE_URL=$1
+STAGING_DATABASE_URL="$DATABASE_URL" node "$SCRIPT_DIR/staging-target.mjs" >/dev/null
 existing=$(psql "$DATABASE_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")
 if [ "$existing" = "t" ]; then
   printf 'Refusing bootstrap: public.pos_connections already exists\n' >&2

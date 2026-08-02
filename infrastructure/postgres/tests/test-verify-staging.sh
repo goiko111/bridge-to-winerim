@@ -58,6 +58,20 @@ BEGIN
 END
 $tables$;
 
+CREATE TABLE public.runtime_connection_credentials (id bigint PRIMARY KEY);
+CREATE TABLE public.runtime_canary_connections (
+  connection_id uuid PRIMARY KEY,
+  active boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX runtime_canary_connections_single_active_idx
+  ON public.runtime_canary_connections ((active)) WHERE active = true;
+CREATE FUNCTION public.enforce_runtime_canary_connection_window()
+RETURNS trigger LANGUAGE plpgsql AS 'BEGIN NEW.updated_at := now(); RETURN NEW; END';
+CREATE TRIGGER enforce_runtime_canary_connection_window
+  BEFORE INSERT OR UPDATE ON public.runtime_canary_connections
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_canary_connection_window();
+
 DO $rls$
 DECLARE
   table_record record;
@@ -190,6 +204,20 @@ fi
 assert_dsn_hidden "$membership_output" 'membership failure'
 if ! grep -q 'api_login_members_unsafe expected=0 actual=1' <<<"$membership_output"; then
   printf 'FAIL: LOGIN membership failure was not specific\n%s\n' "$membership_output" >&2
+  exit 1
+fi
+
+"$REAL_PSQL" -X -v ON_ERROR_STOP=1 -h "$SOCKET_DIR" -p "$PORT" -d "$DB_NAME" >/dev/null <<'SQL'
+REVOKE middleware_readonly FROM middleware_api_login;
+DROP INDEX public.runtime_canary_connections_single_active_idx;
+SQL
+if index_output=$(run_verify); then
+  printf 'FAIL: missing runtime canary index unexpectedly passed\n' >&2
+  exit 1
+fi
+assert_dsn_hidden "$index_output" 'runtime index failure'
+if ! grep -q 'runtime_canary_unique_index expected=1 actual=0' <<<"$index_output"; then
+  printf 'FAIL: runtime index failure was not specific\n%s\n' "$index_output" >&2
   exit 1
 fi
 

@@ -11,13 +11,19 @@ on:
         description: "Exact reviewed commit SHA to deploy"
         required: true
         type: string
-      confirm_db_host:
-        description: "Exact non-secret staging database host"
+      migration_mode:
+        description: "Database operation: none, empty bootstrap or reviewed 28-to-30 runtime upgrade"
         required: true
-        type: string
-      confirm_db_name:
-        description: "Exact non-secret staging database name"
-        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - bootstrap-empty
+          - upgrade-runtime-28-to-30
+      confirm_upgrade_plan_sha:
+        description: "Exact 64-character plan digest printed by upgrade-staging-runtime.sh (upgrade only)"
+        required: false
+        default: ""
         type: string
       apply_migrations:
         description: "Apply the reviewed staging bootstrap/migrations"
@@ -78,10 +84,13 @@ jobs:
           ' wrangler.middleware.toml)"
           test "$access_required" = "true" || (echo "Staging must require Access JWT before static admin secrets can be omitted" >&2; exit 1)
       - run: npx tsc --noEmit --pretty false
-      - run: npx vitest run src/test/middlewareOnboarding.test.ts src/test/middlewareWorkerSecurity.test.ts src/test/integrationChecklist.test.ts src/test/cloudflareDbAdapter.test.ts src/test/cloudflareDbSql.test.ts src/test/cloudflareRuntime*.test.ts
+      - run: npx vitest run src/test/middlewareOnboarding.test.ts src/test/middlewareWorkerSecurity.test.ts src/test/integrationChecklist.test.ts src/test/cloudflareDbAdapter.test.ts src/test/cloudflareDbSql.test.ts src/test/cloudflareRuntime*.test.ts src/test/stagingRuntimeUpgrade.test.ts
       - run: npx wrangler deploy --config wrangler.middleware.toml --env staging --dry-run --outdir /tmp/middleware-worker-check
       - run: npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/middleware-runtime-check
       - run: infrastructure/postgres/smoke-local-worker.sh
+      - name: Verify reviewed 28-to-30 upgrade and rollback locally
+        run: |
+          PATH="$(pg_config --bindir):$PATH" infrastructure/postgres/test-runtime-upgrade.sh
       - run: node --check scripts/smoke-middleware-api.mjs
 
   release:
@@ -103,38 +112,30 @@ jobs:
       - name: Verify staging database target before bootstrap
         env:
           STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
-          EXPECTED_DB_HOST: ${{ vars.STAGING_DB_HOST }}
-          EXPECTED_DB_NAME: ${{ vars.STAGING_DB_NAME }}
-          CONFIRM_DB_HOST: ${{ inputs.confirm_db_host }}
-          CONFIRM_DB_NAME: ${{ inputs.confirm_db_name }}
           APPLY_MIGRATIONS: ${{ inputs.apply_migrations }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
         run: |
           test -n "$STAGING_DB_URL" || (echo "Missing STAGING_DB_URL" >&2; exit 1)
-          test -n "$EXPECTED_DB_HOST" || (echo "Missing non-secret middleware-staging variable STAGING_DB_HOST" >&2; exit 1)
-          test -n "$EXPECTED_DB_NAME" || (echo "Missing non-secret middleware-staging variable STAGING_DB_NAME" >&2; exit 1)
-          test "$CONFIRM_DB_HOST" = "$EXPECTED_DB_HOST" || (echo "confirm_db_host does not match the reviewed staging host" >&2; exit 1)
-          test "$CONFIRM_DB_NAME" = "$EXPECTED_DB_NAME" || (echo "confirm_db_name does not match the reviewed staging database" >&2; exit 1)
-
-          parsed_target="$(DATABASE_URL="$STAGING_DB_URL" node <<'NODE'
-          const url = new URL(process.env.DATABASE_URL);
-          const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-          if (!url.hostname || !database || database.includes("/")) process.exit(2);
-          process.stdout.write(`${url.hostname.toLowerCase()}\t${database}`);
-          NODE
-          )"
-          IFS=$'\t' read -r actual_host actual_name <<< "$parsed_target"
-          test "$actual_host" = "$EXPECTED_DB_HOST" || (echo "STAGING_DB_URL host does not match lowercase STAGING_DB_HOST" >&2; exit 1)
-          test "$actual_name" = "$EXPECTED_DB_NAME" || (echo "STAGING_DB_URL database does not match STAGING_DB_NAME" >&2; exit 1)
-
+          STAGING_DATABASE_URL="$STAGING_DB_URL" node infrastructure/postgres/staging-target.mjs >/dev/null
           connected_name="$(psql "$STAGING_DB_URL" -XAtqc "select current_database()")"
-          test "$connected_name" = "$EXPECTED_DB_NAME" || (echo "Connected database identity does not match STAGING_DB_NAME" >&2; exit 1)
+          test "$connected_name" = postgres || (echo "Connected database identity is not the immutable postgres target" >&2; exit 1)
 
           has_sentinel="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.infrastructure_metadata') is not null")"
           if [ "$has_sentinel" = "t" ]; then
             identity="$(psql "$STAGING_DB_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
             test "$identity" = "staging" || (echo "Existing database sentinel is not staging" >&2; exit 1)
+            table_count="$(psql "$STAGING_DB_URL" -XAtqc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")"
+            if [ "$table_count" = 28 ]; then
+              test "$MIGRATION_MODE" = upgrade-runtime-28-to-30 || (echo "28-table staging requires migration_mode=upgrade-runtime-28-to-30" >&2; exit 1)
+            elif [ "$table_count" = 30 ]; then
+              test "$MIGRATION_MODE" = none || (echo "30-table staging must use migration_mode=none" >&2; exit 1)
+            else
+              echo "Existing staging inventory is neither reviewed pre-upgrade nor post-upgrade" >&2
+              exit 1
+            fi
           else
             test "$APPLY_MIGRATIONS" = "true" || (echo "Empty staging database requires apply_migrations=true" >&2; exit 1)
+            test "$MIGRATION_MODE" = bootstrap-empty || (echo "Empty staging database requires migration_mode=bootstrap-empty" >&2; exit 1)
             has_core_schema="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
             test "$has_core_schema" = "f" || (echo "Refusing bootstrap: core schema exists without the staging sentinel" >&2; exit 1)
             echo "Verified empty staging target; bootstrap is permitted"
@@ -144,20 +145,37 @@ jobs:
         if: ${{ inputs.apply_migrations }}
         env:
           STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
+          CONFIRM_UPGRADE_PLAN_SHA: ${{ inputs.confirm_upgrade_plan_sha }}
+          STAGING_ENCRYPTED_BACKUP_DIR: ${{ vars.STAGING_ENCRYPTED_BACKUP_DIR }}
+          WINERIM_ENCRYPTED_BACKUP_DIR_CONFIRMED: ${{ vars.STAGING_BACKUP_STORAGE_CONFIRMED }}
         run: |
-          test -x infrastructure/postgres/apply-staging.sh || (echo "Reviewed apply-staging.sh is not available" >&2; exit 1)
-          infrastructure/postgres/apply-staging.sh "$STAGING_DB_URL"
+          case "$MIGRATION_MODE" in
+            bootstrap-empty)
+              infrastructure/postgres/apply-staging.sh "$STAGING_DB_URL"
+              ;;
+            upgrade-runtime-28-to-30)
+              test "$CONFIRM_UPGRADE_PLAN_SHA" != "" || (echo "confirm_upgrade_plan_sha is required" >&2; exit 1)
+              infrastructure/postgres/upgrade-staging-runtime.sh \
+                --database-url "$STAGING_DB_URL" \
+                --backup-dir "$STAGING_ENCRYPTED_BACKUP_DIR" \
+                --apply \
+                --confirm-project-ref qpbmqvfnunkylvtvnyyx \
+                --confirm-upgrade runtime-0003-0005-only \
+                --confirm-plan-sha "$CONFIRM_UPGRADE_PLAN_SHA"
+              ;;
+            *) echo "apply_migrations requires a reviewed migration_mode" >&2; exit 1 ;;
+          esac
 
       - name: Verify staging identity and database contract after bootstrap
         env:
           DATABASE_URL: ${{ secrets.STAGING_DB_URL }}
-          EXPECTED_DB_NAME: ${{ vars.STAGING_DB_NAME }}
         run: |
           identity="$(psql "$DATABASE_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
           connected_name="$(psql "$DATABASE_URL" -XAtqc "select current_database()")"
           has_core_schema="$(psql "$DATABASE_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
           test "$identity" = "staging" || (echo "Post-bootstrap database sentinel is not staging" >&2; exit 1)
-          test "$connected_name" = "$EXPECTED_DB_NAME" || (echo "Post-bootstrap database name does not match STAGING_DB_NAME" >&2; exit 1)
+          test "$connected_name" = postgres || (echo "Post-bootstrap database name is not postgres" >&2; exit 1)
           test "$has_core_schema" = "t" || (echo "Post-bootstrap core schema is missing" >&2; exit 1)
           infrastructure/postgres/validate.sh
 

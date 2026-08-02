@@ -82,8 +82,28 @@ fi
 
 check_equals \
   'public_tables' \
-  '28' \
+  '30' \
   "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'"
+
+check_equals \
+  'runtime_upgrade_tables' \
+  '2' \
+  "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND c.relname IN ('runtime_connection_credentials','runtime_canary_connections')"
+
+check_equals \
+  'runtime_canary_function' \
+  '1' \
+  "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='enforce_runtime_canary_connection_window'"
+
+check_equals \
+  'runtime_canary_trigger' \
+  '1' \
+  "SELECT count(*) FROM pg_trigger trigger JOIN pg_class table_class ON table_class.oid=trigger.tgrelid JOIN pg_namespace n ON n.oid=table_class.relnamespace WHERE n.nspname='public' AND table_class.relname='runtime_canary_connections' AND trigger.tgname='enforce_runtime_canary_connection_window' AND NOT trigger.tgisinternal"
+
+check_equals \
+  'runtime_canary_unique_index' \
+  '1' \
+  "SELECT count(*) FROM pg_class index_class JOIN pg_namespace n ON n.oid=index_class.relnamespace WHERE n.nspname='public' AND index_class.relkind='i' AND index_class.relname='runtime_canary_connections_single_active_idx'"
 
 check_equals \
   'public_tables_without_rls' \
