@@ -72,6 +72,27 @@ describe("middleware Worker security gates", () => {
     await expect(protectedResponse.json()).resolves.toMatchObject({ error: "UNAUTHORIZED" });
   });
 
+  it("keeps an application token behind Access for service automation", async () => {
+    const serviceEnv = { ...localEnv, REQUIRE_ACCESS_JWT: "true" };
+    const denied = await worker.fetch(new Request("https://api.example.test/api/onboarding/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }), serviceEnv);
+    expect(denied.status).toBe(401);
+
+    const allowed = await worker.fetch(new Request("https://api.example.test/api/onboarding/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Middleware-Token": localEnv.MIDDLEWARE_ADMIN_TOKEN,
+      },
+      body: "{}",
+    }), serviceEnv);
+    expect(allowed.status).toBe(400);
+    await expect(allowed.json()).resolves.toMatchObject({ error: "VALIDATION_FAILED" });
+  });
+
   it("rejects a private POS destination before making an outbound request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const response = await worker.fetch(new Request("https://api.example.test/api/onboarding/test", {

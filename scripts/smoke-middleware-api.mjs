@@ -36,15 +36,14 @@ function assertSafeTarget(url) {
 }
 
 function protectedHeaders() {
+  const headers = {};
   if (accessConfigured) {
-    return {
-      "CF-Access-Client-Id": accessClientId,
-      "CF-Access-Client-Secret": accessClientSecret,
-      ...(accessCookie ? { Cookie: accessCookie } : {}),
-    };
+    headers["CF-Access-Client-Id"] = accessClientId;
+    headers["CF-Access-Client-Secret"] = accessClientSecret;
+    if (accessCookie) headers.Cookie = accessCookie;
   }
-  if (adminToken) return { "X-Middleware-Token": adminToken };
-  return {};
+  if (adminToken) headers["X-Middleware-Token"] = adminToken;
+  return headers;
 }
 
 async function request(path, init = {}, { protectedRequest = true } = {}) {

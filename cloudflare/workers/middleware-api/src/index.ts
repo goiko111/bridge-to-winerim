@@ -175,6 +175,7 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ val
 async function requireAdminAccess(request: Request, env: Env): Promise<Response | null> {
   if (env.REQUIRE_ACCESS_JWT === "true") {
     if ((await verifyAccessJwt(request, env)).valid) return null;
+    if (env.MIDDLEWARE_ADMIN_TOKEN && bearerToken(request) === env.MIDDLEWARE_ADMIN_TOKEN) return null;
     return jsonResponse({ success: false, error: "ACCESS_IDENTITY_REQUIRED" }, env, { status: 401 });
   }
   if (!env.MIDDLEWARE_ADMIN_TOKEN) {
