@@ -614,14 +614,43 @@ export default {
       const unauthorized = await requireAdminAccess(request, env);
       if (unauthorized) return unauthorized;
       try {
-        const result = await database(env).query<{ value: string }>(sql`
-          SELECT value FROM infrastructure_metadata WHERE key = 'environment'
+        const result = await database(env).query<{
+          value: string;
+          role_name: string;
+          api_role_member: boolean;
+          runtime_role_member: boolean;
+          unsafe_role: boolean;
+          can_read_connections: boolean;
+          can_mutate_connections: boolean;
+        }>(sql`
+          SELECT
+            value,
+            current_user AS role_name,
+            pg_has_role(current_user, 'middleware_api', 'member') AS api_role_member,
+            pg_has_role(current_user, 'middleware_runtime', 'member') AS runtime_role_member,
+            (
+              SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication
+              FROM pg_roles
+              WHERE rolname = current_user
+            ) AS unsafe_role,
+            has_table_privilege(current_user, 'public.pos_connections', 'SELECT') AS can_read_connections,
+            has_table_privilege(current_user, 'public.pos_connections', 'INSERT,UPDATE,DELETE') AS can_mutate_connections
+          FROM public.infrastructure_metadata
+          WHERE key = 'environment'
         `);
-        const identity = result.rows[0]?.value;
+        const readiness = result.rows[0];
+        const identity = readiness?.value;
         if (identity !== (env.ENVIRONMENT || "local")) {
           return jsonResponse({ ok: false, error: "DATABASE_IDENTITY_MISMATCH" }, env, { status: 503 });
         }
-        return jsonResponse({ ok: true, database: identity }, env);
+        if (!readiness.api_role_member
+          || readiness.runtime_role_member
+          || readiness.unsafe_role
+          || !readiness.can_read_connections
+          || readiness.can_mutate_connections) {
+          return jsonResponse({ ok: false, error: "DATABASE_ROLE_MISMATCH" }, env, { status: 503 });
+        }
+        return jsonResponse({ ok: true, database: identity, role: readiness.role_name }, env);
       } catch {
         return jsonResponse({ ok: false, error: "DATABASE_NOT_READY" }, env, { status: 503 });
       }

@@ -23,6 +23,10 @@ ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
 POS_TEST_ALLOWED_HOSTS = ""
 REQUIRE_ACCESS_JWT = "true"
 
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "04bde119c3354a5b9be3fadbf3c0b46d"
+
 [env.production]
 name = "winerim-middleware-api"
 workers_dev = false

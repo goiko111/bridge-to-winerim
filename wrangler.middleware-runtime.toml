@@ -13,6 +13,10 @@ ENVIRONMENT = "staging"
 RELEASE = "staging-inert"
 RUNTIME_EXECUTION_ENABLED = "false"
 
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "0adae4108e4241f19cf5ba2709cbc69f"
+
 [env.staging.triggers]
 crons = ["*/5 * * * *"]
 

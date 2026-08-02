@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
 const config = readFileSync(resolve(root, "wrangler.middleware-runtime.toml"), "utf8");
+const apiConfig = readFileSync(resolve(root, "wrangler.middleware.toml"), "utf8");
 const hyperdriveExample = readFileSync(
   resolve(root, "wrangler.middleware-runtime.hyperdrive.toml.example"),
   "utf8",
@@ -41,9 +42,14 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(queueNames).toHaveLength(6);
   });
 
-  it("keeps Hyperdrive out of the deployable config until a real ID exists", () => {
-    expect(config).not.toContain("hyperdrive");
-    expect(config).not.toContain("MIDDLEWARE_DB");
+  it("binds distinct middleware-owned Hyperdrives in staging", () => {
+    const runtimeId = config.match(/\[\[env\.staging\.hyperdrive\]\][\s\S]*?binding\s*=\s*"MIDDLEWARE_DB"[\s\S]*?id\s*=\s*"([a-f0-9]{32})"/)?.[1];
+    const apiId = apiConfig.match(/\[\[env\.staging\.hyperdrive\]\][\s\S]*?binding\s*=\s*"MIDDLEWARE_DB"[\s\S]*?id\s*=\s*"([a-f0-9]{32})"/)?.[1];
+    expect(runtimeId).toBeTruthy();
+    expect(apiId).toBeTruthy();
+    expect(runtimeId).not.toBe(apiId);
+    expect(config).not.toContain("market-winerim-postgres");
+    expect(apiConfig).not.toContain("market-winerim-postgres");
     expect(hyperdriveExample).toContain('binding = "MIDDLEWARE_DB"');
     expect(hyperdriveExample).not.toMatch(/^\s*id\s*=/m);
     expect(hyperdriveExample).toContain("must never be passed to Wrangler directly");

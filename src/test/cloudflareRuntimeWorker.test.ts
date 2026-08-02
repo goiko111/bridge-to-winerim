@@ -97,8 +97,78 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       service: "winerim-middleware-runtime",
       stagingOnly: true,
       externalWrites: false,
+      executionEnabled: false,
     });
     expect(database).not.toHaveBeenCalled();
+  });
+
+  it("accepts an injected local executor without requiring a service binding", async () => {
+    const query = vi.fn(async () => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+    }]));
+    const database = fakeDatabase(query);
+    const env = readyEnv();
+    env.RUNTIME_EXECUTOR = undefined;
+
+    const worker = createMiddlewareRuntimeWorker(dependencies(database, successfulExecutor));
+    const response = await worker.fetch(new Request("https://runtime.invalid/ready"), env);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      executorBound: true,
+      missingBindings: [],
+    });
+  });
+
+  it("sanitizes executor binding failures instead of propagating provider details", async () => {
+    const database = fakeDatabase(() => result());
+    const env = readyEnv();
+    env.RUNTIME_EXECUTOR = {
+      fetch: vi.fn(async () => {
+        throw new Error("upstream included sensitive fixture material");
+      }),
+    };
+    const body = await queueEnvelope("executor-binding-failure");
+    const message = { id: "cf-binding", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+
+    await createMiddlewareRuntimeWorker({ database: () => database }).queue(
+      { queue: "runtime", messages: [message] },
+      env,
+    );
+
+    expect(message.retry).toHaveBeenCalled();
+    expect(message.ack).not.toHaveBeenCalled();
+  });
+
+  it("treats a malformed successful executor response as unavailable", async () => {
+    const statements: string[] = [];
+    const database = fakeDatabase((statement) => {
+      statements.push(statement.text);
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) return result([{ attempt: 1 }]);
+      if (statement.text.includes("SET status = 'RETRY'")) return result([{ attempt: 1 }]);
+      return result();
+    });
+    const env = readyEnv();
+    env.RUNTIME_EXECUTOR = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({ ok: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })),
+    };
+    const body = await queueEnvelope("executor-invalid-success-response");
+    const message = { id: "cf-invalid", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+
+    await createMiddlewareRuntimeWorker({ database: () => database }).queue(
+      { queue: "runtime", messages: [message] },
+      env,
+    );
+
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 120 });
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(statements.some((text) => text.includes("status = 'RETRY'"))).toBe(true);
   });
 
   it("reports readiness only when staging schema, queues and executor gate are complete", async () => {

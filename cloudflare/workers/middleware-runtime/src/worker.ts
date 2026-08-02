@@ -26,6 +26,7 @@ const STAGING_ENVIRONMENT = "staging";
 const EXECUTION_ENABLED = "true";
 const FAIL_CLOSED_RETRY_SECONDS = 300;
 const IDEMPOTENCY_LEASE_MINUTES = 2;
+const EXECUTOR_TIMEOUT_MS = 15_000;
 
 export type RuntimeQueueSendMessage = {
   body: RuntimeEnvelopeV1;
@@ -121,7 +122,7 @@ function defaultDatabase(env: MiddlewareRuntimeEnv): DatabaseAdapter {
 
 function safeExecutorMessage(value: unknown): string {
   const normalized = String(value || "RUNTIME_EXECUTOR_FAILED").trim();
-  return /^[A-Za-z0-9_.:-]{1,80}$/.test(normalized)
+  return /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized)
     ? normalized
     : "RUNTIME_EXECUTOR_FAILED";
 }
@@ -129,7 +130,9 @@ function safeExecutorMessage(value: unknown): string {
 function safeExecutorDetail(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized ? normalized.slice(0, 160) : undefined;
+  return /^(catalog|sales|stock|outbound):[A-Za-z0-9_.:-]{1,140}$/.test(normalized)
+    ? normalized
+    : undefined;
 }
 
 function defaultExecutor(env: MiddlewareRuntimeEnv): RuntimeExecutor | null {
@@ -137,23 +140,43 @@ function defaultExecutor(env: MiddlewareRuntimeEnv): RuntimeExecutor | null {
   if (!binding) return null;
   return {
     async execute(envelope): Promise<RuntimeExecutionResult> {
-      const response = await binding.fetch(new Request("https://runtime-executor.internal/v1/execute", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ envelope }),
-      }));
-      const payload = await response.json().catch(() => ({})) as {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), EXECUTOR_TIMEOUT_MS);
+      let response: Response;
+      let payload: {
         ok?: unknown;
         detail?: unknown;
         failure?: { httpStatus?: unknown; message?: unknown; retryableLine?: unknown };
       };
+      try {
+        response = await binding.fetch(new Request("https://runtime-executor.internal/v1/execute", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ envelope }),
+          signal: controller.signal,
+        }));
+        payload = await response.json().catch(() => ({}));
+      } catch {
+        return {
+          ok: false,
+          failure: { httpStatus: 503, message: "RUNTIME_EXECUTOR_UNAVAILABLE" },
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
 
       if (response.ok && payload.ok === true) {
         return { ok: true, detail: safeExecutorDetail(payload.detail) };
       }
-      const httpStatus = typeof payload.failure?.httpStatus === "number"
-        ? payload.failure.httpStatus
-        : response.status;
+      const declaredStatus = payload.failure?.httpStatus;
+      const httpStatus = typeof declaredStatus === "number"
+          && Number.isInteger(declaredStatus)
+          && declaredStatus >= 400
+          && declaredStatus <= 599
+        ? declaredStatus
+        : response.status >= 400 && response.status <= 599
+        ? response.status
+        : 503;
       return {
         ok: false,
         failure: {
@@ -197,12 +220,12 @@ function queueBindings(env: MiddlewareRuntimeEnv): Record<string, RuntimeQueuePr
   };
 }
 
-function missingBindingNames(env: MiddlewareRuntimeEnv): string[] {
+function missingBindingNames(env: MiddlewareRuntimeEnv, executor?: RuntimeExecutor | null): string[] {
   const missing = Object.entries(queueBindings(env))
     .filter(([, binding]) => !binding)
     .map(([name]) => name);
   if (!env.MIDDLEWARE_DB) missing.push("MIDDLEWARE_DB");
-  if (!env.RUNTIME_EXECUTOR) missing.push("RUNTIME_EXECUTOR");
+  if (!env.RUNTIME_EXECUTOR && !executor) missing.push("RUNTIME_EXECUTOR");
   return missing.sort();
 }
 
@@ -424,7 +447,7 @@ export async function runRuntimeScheduled(
   if (!executionGateOpen(env, executor)) {
     return { status: "inactive", reason: "RUNTIME_EXECUTOR_NOT_READY", connections: 0, messages: 0 };
   }
-  if (missingBindingNames(env).length > 0) {
+  if (missingBindingNames(env, executor).length > 0) {
     return { status: "inactive", reason: "RUNTIME_BINDINGS_INCOMPLETE", connections: 0, messages: 0 };
   }
 
@@ -472,7 +495,7 @@ async function readiness(
   dependencies: Required<RuntimeWorkerDependencies>,
 ): Promise<Response> {
   const executor = dependencies.executor(env);
-  const missingBindings = missingBindingNames(env);
+  const missingBindings = missingBindingNames(env, executor);
   const executionEnabled = env.RUNTIME_EXECUTION_ENABLED?.trim().toLowerCase() === EXECUTION_ENABLED;
   if (!isStaging(env) || !env.MIDDLEWARE_DB) {
     return json({
@@ -541,13 +564,15 @@ export function createMiddlewareRuntimeWorker(dependencies: RuntimeWorkerDepende
       if (request.method !== "GET") return json({ ok: false, error: "METHOD_NOT_ALLOWED" }, 405);
       const path = new URL(request.url).pathname;
       if (path === "/health") {
+        const executionEnabled = env.RUNTIME_EXECUTION_ENABLED?.trim().toLowerCase() === EXECUTION_ENABLED;
         return json({
           ok: true,
           service: "winerim-middleware-runtime",
           environment: env.ENVIRONMENT ?? null,
           release: env.RELEASE ?? null,
           stagingOnly: true,
-          externalWrites: false,
+          executionEnabled,
+          externalWrites: executionEnabled,
         });
       }
       if (path === "/ready") return readiness(env, resolved);

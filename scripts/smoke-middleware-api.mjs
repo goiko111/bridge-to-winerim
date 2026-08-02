@@ -1,5 +1,8 @@
 const baseUrl = (process.argv[2] || process.env.MIDDLEWARE_API_URL || "").replace(/\/+$/, "");
 const adminToken = process.env.MIDDLEWARE_ADMIN_TOKEN || "";
+const accessClientId = process.env.CLOUDFLARE_ACCESS_CLIENT_ID || "";
+const accessClientSecret = process.env.CLOUDFLARE_ACCESS_CLIENT_SECRET || "";
+const expectedHostname = process.env.MIDDLEWARE_EXPECTED_HOSTNAME || "";
 const requestTimeoutMs = Number(process.env.MIDDLEWARE_SMOKE_TIMEOUT_MS || 8000);
 
 if (!baseUrl) {
@@ -7,11 +10,51 @@ if (!baseUrl) {
   process.exit(2);
 }
 
-async function request(path, init = {}) {
+const parsedBaseUrl = new URL(baseUrl);
+assertSafeTarget(parsedBaseUrl);
+
+const accessConfigured = Boolean(accessClientId && accessClientSecret);
+if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
+  console.error("FAIL: both Cloudflare Access service-token values are required");
+  process.exit(2);
+}
+
+function assertSafeTarget(url) {
+  if (url.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(url.hostname)) {
+    console.error("FAIL: remote smoke target must use HTTPS");
+    process.exit(2);
+  }
+  if (url.hostname.endsWith(".workers.dev")) {
+    console.error("FAIL: workers.dev is not an allowed staging surface");
+    process.exit(2);
+  }
+  if (expectedHostname && url.hostname !== expectedHostname) {
+    console.error(`FAIL: expected smoke hostname ${expectedHostname}`);
+    process.exit(2);
+  }
+}
+
+function protectedHeaders() {
+  if (accessConfigured) {
+    return {
+      "CF-Access-Client-Id": accessClientId,
+      "CF-Access-Client-Secret": accessClientSecret,
+    };
+  }
+  if (adminToken) return { "X-Middleware-Token": adminToken };
+  return {};
+}
+
+async function request(path, init = {}, { protectedRequest = true } = {}) {
   let res;
   try {
     res = await fetch(`${baseUrl}${path}`, {
       ...init,
+      headers: {
+        ...(protectedRequest ? protectedHeaders() : {}),
+        ...(init.headers || {}),
+      },
+      redirect: "manual",
       signal: AbortSignal.timeout(requestTimeoutMs),
     });
   } catch (error) {
@@ -36,50 +79,27 @@ function assert(condition, message, detail) {
   console.log(`OK: ${message}`);
 }
 
+if (accessConfigured) {
+  const accessDenied = await request("/health", {}, { protectedRequest: false });
+  assert([302, 401, 403].includes(accessDenied.status), "Access blocks unauthenticated traffic", accessDenied);
+}
+
 const health = await request("/health");
 assert(health.status === 200 && health.body?.ok === true, "health endpoint", health);
 
 const checklist = await request("/api/checklist?provider=agora");
 assert(checklist.status === 200 && checklist.body?.success === true, "Agora checklist endpoint", checklist);
 
-const unauthorized = await request("/api/onboarding/requests", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ provider: "agora", locationName: "Smoke Test", posBaseUrl: "example.com:8984" }),
-});
-assert([401, 503].includes(unauthorized.status), "onboarding request is not public", unauthorized);
+const fleetUnauthorized = await request("/api/agora/fleet", {}, { protectedRequest: false });
+assert([302, 401, 403, 503].includes(fleetUnauthorized.status), "Agora fleet is not public", fleetUnauthorized);
 
-const fleetUnauthorized = await request("/api/agora/fleet");
-assert([401, 503].includes(fleetUnauthorized.status), "Agora fleet is not public", fleetUnauthorized);
-
-if (adminToken) {
-  const create = await request("/api/onboarding/requests", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Middleware-Token": adminToken,
-    },
-    body: JSON.stringify({
-      reviewPacket: {
-        provider: "agora",
-        locationName: "Smoke Test",
-        posBaseUrl: "example.com:8984",
-        posApiToken: "must-not-persist",
-        winerimApiToken: "must-not-persist-either",
-        readyForTechnicalReview: false,
-        gateSummary: [{ id: "input", label: "Datos", status: "pass", detail: "OK", technicalDetail: "must-not-persist" }],
-        nextRequiredChecklistIds: ["mapped-sale"],
-      },
-    }),
-  });
-  const serialized = JSON.stringify(create.body);
-  assert(create.status === 201 && create.body?.success === true, "protected onboarding request can be created", create);
-  assert(!serialized.includes("must-not-persist"), "protected onboarding response is sanitized", create);
-
+if (accessConfigured || adminToken) {
+  const ready = await request("/ready");
+  assert(ready.status === 200 && ready.body?.ok === true && ready.body?.database === "staging", "database readiness", ready);
   const fleet = await request("/api/agora/fleet", {
-    headers: { "X-Middleware-Token": adminToken },
+    method: "GET",
   });
   assert(fleet.status === 200 && fleet.body?.success === true && Array.isArray(fleet.body?.rows), "protected Agora fleet can be read", fleet);
 } else {
-  console.log("SKIP: protected create smoke test (MIDDLEWARE_ADMIN_TOKEN not set).");
+  console.log("SKIP: protected read-only smoke (Access service token or admin token not set).");
 }

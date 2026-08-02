@@ -16,7 +16,11 @@ describeDatabase("middleware Worker with a real empty Postgres bootstrap", () =>
   it("verifies the database sentinel through /ready", async () => {
     const response = await worker.fetch(new Request("https://api.example.test/ready", { headers: auth }), env);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, database: "staging" });
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      database: "staging",
+      role: "middleware_api_login",
+    });
   });
 
   it("reads the seeded Agora fleet through Hyperdrive-compatible pg", async () => {
