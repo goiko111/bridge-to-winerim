@@ -1,0 +1,9 @@
+# Documentation only. Do not pass this file directly to Wrangler.
+# Append the binding to a private staging configuration after creating a
+# middleware-owned Hyperdrive with the LOGIN principal that is a member only
+# of `middleware_api`. Never reuse the runtime or market-winerim credentials.
+
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+# Required before use: the verified API Hyperdrive UUID returned by
+# `wrangler hyperdrive create` or `wrangler hyperdrive list`.

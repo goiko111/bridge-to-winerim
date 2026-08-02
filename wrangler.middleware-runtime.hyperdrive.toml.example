@@ -1,0 +1,10 @@
+# This file is documentation, not a deployable Wrangler configuration, and
+# must never be passed to Wrangler directly.
+# Append this table to a private staging config only after creating the
+# middleware-owned staging Hyperdrive. Add its real Cloudflare UUID as the
+# required `id` field; never reuse market-winerim-postgres or the API LOGIN.
+
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+# Required before use: id from `wrangler hyperdrive create` or the verified
+# middleware-owned row returned by `wrangler hyperdrive list`.

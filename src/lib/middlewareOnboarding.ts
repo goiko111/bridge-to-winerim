@@ -51,6 +51,62 @@ export const PROVIDER_LABELS: Record<OnboardingProvider, string> = {
 const DEFAULT_PROVIDER: OnboardingProvider = "agora";
 export const DEFAULT_REVO_BASE_URL = "https://revoxef.works/api/external";
 
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return a === 10
+    || a === 127
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || a === 0
+    || a >= 224;
+}
+
+function isPrivateIpv6(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return normalized === "::1"
+    || normalized === "::"
+    || normalized.startsWith("fc")
+    || normalized.startsWith("fd")
+    || /^fe[89ab]/.test(normalized);
+}
+
+export interface OnboardingDestinationValidation {
+  allowed: boolean;
+  reason?: "INVALID_URL" | "CREDENTIALS_IN_URL" | "PRIVATE_DESTINATION" | "HOST_NOT_ALLOWED" | "PORT_NOT_ALLOWED";
+}
+
+export function validateOnboardingDestination(
+  value: string,
+  allowedHosts: readonly string[],
+): OnboardingDestinationValidation {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return { allowed: false, reason: "INVALID_URL" };
+  }
+
+  if (parsed.username || parsed.password) return { allowed: false, reason: "CREDENTIALS_IN_URL" };
+
+  const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || isPrivateIpv4(hostname) || isPrivateIpv6(hostname)) {
+    return { allowed: false, reason: "PRIVATE_DESTINATION" };
+  }
+
+  const effectivePort = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+  if (!["80", "443", "8984"].includes(effectivePort)) {
+    return { allowed: false, reason: "PORT_NOT_ALLOWED" };
+  }
+
+  const normalizedAllowedHosts = allowedHosts.map((host) => host.trim().toLowerCase().replace(/\.$/, "")).filter(Boolean);
+  if (!normalizedAllowedHosts.includes(hostname)) return { allowed: false, reason: "HOST_NOT_ALLOWED" };
+
+  return { allowed: true };
+}
+
 export function normalizePosBaseUrl(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -87,6 +143,8 @@ export function validateCommercialOnboardingInput(input: Partial<CommercialOnboa
       const parsed = new URL(normalized.posBaseUrl);
       if (!["http:", "https:"].includes(parsed.protocol)) {
         errors.posBaseUrl = "La URL debe usar http o https.";
+      } else if (parsed.username || parsed.password) {
+        errors.posBaseUrl = "La URL no puede incluir usuario ni contrasena.";
       }
     } catch {
       errors.posBaseUrl = "La URL del POS no tiene un formato valido.";

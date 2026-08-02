@@ -1,6 +1,7 @@
 name = "winerim-middleware-api"
 main = "cloudflare/workers/middleware-api/src/index.ts"
 compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [vars]
@@ -10,7 +11,7 @@ ALLOWED_ORIGIN = "http://localhost:8080"
 
 [env.staging]
 name = "winerim-middleware-api-staging"
-workers_dev = true
+workers_dev = false
 routes = [
   { pattern = "api-staging.middleware.winerim.wine/*", zone_name = "winerim.wine" }
 ]
@@ -19,6 +20,8 @@ routes = [
 ENVIRONMENT = "staging"
 RELEASE = "staging"
 ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
+POS_TEST_ALLOWED_HOSTS = ""
+REQUIRE_ACCESS_JWT = "true"
 
 [env.production]
 name = "winerim-middleware-api"
@@ -31,3 +34,5 @@ routes = [
 ENVIRONMENT = "production"
 RELEASE = "production"
 ALLOWED_ORIGIN = "https://middleware.winerim.wine"
+POS_TEST_ALLOWED_HOSTS = ""
+REQUIRE_ACCESS_JWT = "true"

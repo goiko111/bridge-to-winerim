@@ -7,6 +7,7 @@ import {
   normalizeOnboardingInput,
   normalizePosBaseUrl,
   sanitizeTechnicalReviewPacketPayload,
+  validateOnboardingDestination,
   validateCommercialOnboardingInput,
   type OnboardingGate,
 } from "@/lib/middlewareOnboarding";
@@ -18,6 +19,43 @@ describe("middleware commercial onboarding", () => {
 
   it("preserves https URLs and removes trailing slash", () => {
     expect(normalizePosBaseUrl("https://api.revo.works/v2/")).toBe("https://api.revo.works/v2");
+  });
+
+  it("allows only explicitly configured onboarding destinations", () => {
+    expect(validateOnboardingDestination(
+      "http://pos.example.com:8984",
+      ["pos.example.com"],
+    )).toEqual({ allowed: true });
+    expect(validateOnboardingDestination(
+      "http://other.example.com:8984",
+      ["pos.example.com"],
+    )).toEqual({ allowed: false, reason: "HOST_NOT_ALLOWED" });
+  });
+
+  it("rejects credentials and local/private destinations", () => {
+    expect(validateOnboardingDestination(
+      "https://user:password@pos.example.com",
+      ["pos.example.com"],
+    )).toEqual({ allowed: false, reason: "CREDENTIALS_IN_URL" });
+    expect(validateOnboardingDestination(
+      "http://192.168.1.2:8984",
+      ["192.168.1.2"],
+    )).toEqual({ allowed: false, reason: "PRIVATE_DESTINATION" });
+    expect(validateOnboardingDestination(
+      "http://[::1]:8984",
+      ["::1"],
+    )).toEqual({ allowed: false, reason: "PRIVATE_DESTINATION" });
+  });
+
+  it("allows only the reviewed HTTP, HTTPS and Agora ports", () => {
+    expect(validateOnboardingDestination(
+      "http://pos.example.com:8984",
+      ["pos.example.com"],
+    )).toEqual({ allowed: true });
+    expect(validateOnboardingDestination(
+      "https://pos.example.com:9443",
+      ["pos.example.com"],
+    )).toEqual({ allowed: false, reason: "PORT_NOT_ALLOWED" });
   });
 
   it("defaults to Agora and trims input", () => {

@@ -7,8 +7,20 @@ on:
         description: "Type staging-only to confirm this must not touch production"
         required: true
         type: string
+      confirm_sha:
+        description: "Exact reviewed commit SHA to deploy"
+        required: true
+        type: string
+      confirm_db_host:
+        description: "Exact non-secret staging database host"
+        required: true
+        type: string
+      confirm_db_name:
+        description: "Exact non-secret staging database name"
+        required: true
+        type: string
       apply_migrations:
-        description: "Apply control-plane migrations to the staging database"
+        description: "Apply the reviewed staging bootstrap/migrations"
         required: true
         default: false
         type: boolean
@@ -18,132 +30,212 @@ on:
         default: true
         type: boolean
       deploy_pages:
-        description: "Build and deploy staging Pages"
+        description: "Build and deploy staging Pages after API smoke"
         required: true
         default: false
         type: boolean
+
+permissions:
+  contents: read
 
 concurrency:
   group: middleware-staging
   cancel-in-progress: false
 
 jobs:
-  guard:
-    name: Safety guard
-    runs-on: ubuntu-latest
-    outputs:
-      ok: ${{ steps.guard.outputs.ok }}
-    steps:
-      - id: guard
-        run: |
-          if [ "${{ inputs.confirm_target }}" != "staging-only" ]; then
-            echo "confirm_target must be exactly: staging-only" >&2
-            exit 1
-          fi
-          echo "ok=true" >> "$GITHUB_OUTPUT"
-
   validate:
-    name: Validate staging bundle
+    name: Validate reviewed staging source
     runs-on: ubuntu-latest
-    needs: guard
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Verify explicit target and immutable source
+        env:
+          CONFIRM_TARGET: ${{ inputs.confirm_target }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+        run: |
+          test "$CONFIRM_TARGET" = "staging-only" || (echo "confirm_target must be staging-only" >&2; exit 1)
+          test "$CONFIRM_SHA" = "$ACTUAL_SHA" || (echo "confirm_sha does not match the workflow commit" >&2; exit 1)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx esbuild cloudflare/workers/middleware-api/src/index.ts --bundle --platform=browser --format=esm --outfile=/tmp/middleware-worker-check.js
-      - run: npx esbuild src/lib/middlewareOnboarding.ts --bundle --platform=browser --format=esm --outfile=/tmp/middleware-onboarding-check.js
+      - name: Verify staging requires Cloudflare Access JWT
+        run: |
+          access_required="$(awk '
+            $0 == "[env.staging.vars]" { in_staging = 1; next }
+            in_staging && /^\[/ { exit }
+            in_staging && $1 == "REQUIRE_ACCESS_JWT" {
+              value = $3
+              gsub(/"/, "", value)
+              print value
+              exit
+            }
+          ' wrangler.middleware.toml)"
+          test "$access_required" = "true" || (echo "Staging must require Access JWT before static admin secrets can be omitted" >&2; exit 1)
+      - run: npx tsc --noEmit --pretty false
+      - run: npx vitest run src/test/middlewareOnboarding.test.ts src/test/middlewareWorkerSecurity.test.ts src/test/integrationChecklist.test.ts src/test/cloudflareDbAdapter.test.ts src/test/cloudflareDbSql.test.ts src/test/cloudflareRuntime*.test.ts
+      - run: npx wrangler deploy --config wrangler.middleware.toml --env staging --dry-run --outdir /tmp/middleware-worker-check
+      - run: npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/middleware-runtime-check
+      - run: infrastructure/postgres/smoke-local-worker.sh
       - run: node --check scripts/smoke-middleware-api.mjs
 
-  migrate:
-    name: Apply staging control-plane migrations
+  release:
+    name: Verify, migrate and deploy staging serially
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: validate
-    if: ${{ inputs.apply_migrations }}
     environment: middleware-staging
     steps:
-      - uses: actions/checkout@v4
-      - name: Check staging database secret
-        env:
-          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
-        run: |
-          if [ -z "$STAGING_DB_URL" ]; then
-            echo "Missing STAGING_DB_URL secret in middleware-staging environment." >&2
-            exit 1
-          fi
-      - name: Apply control-plane migrations only
-        env:
-          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
-        run: |
-          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260629151602_connection_notification_contacts.sql
-          psql "$STAGING_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260630063407_integration_onboarding_requests.sql
-
-  deploy-worker:
-    name: Deploy staging Worker
-    runs-on: ubuntu-latest
-    needs: validate
-    if: ${{ inputs.deploy_worker }}
-    environment: middleware-staging
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Check Worker staging secrets
+
+      - name: Verify staging database target before bootstrap
         env:
-          LOVABLE_CLOUD_URL: ${{ secrets.LOVABLE_CLOUD_URL }}
-          LOVABLE_SERVICE_ROLE_KEY: ${{ secrets.LOVABLE_SERVICE_ROLE_KEY }}
-          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+          EXPECTED_DB_HOST: ${{ vars.STAGING_DB_HOST }}
+          EXPECTED_DB_NAME: ${{ vars.STAGING_DB_NAME }}
+          CONFIRM_DB_HOST: ${{ inputs.confirm_db_host }}
+          CONFIRM_DB_NAME: ${{ inputs.confirm_db_name }}
+          APPLY_MIGRATIONS: ${{ inputs.apply_migrations }}
         run: |
-          test -n "$LOVABLE_CLOUD_URL" || (echo "Missing LOVABLE_CLOUD_URL" >&2; exit 1)
-          test -n "$LOVABLE_SERVICE_ROLE_KEY" || (echo "Missing LOVABLE_SERVICE_ROLE_KEY" >&2; exit 1)
-          test -n "$MIDDLEWARE_ADMIN_TOKEN" || (echo "Missing MIDDLEWARE_ADMIN_TOKEN" >&2; exit 1)
-      - name: Configure Worker staging secrets
+          test -n "$STAGING_DB_URL" || (echo "Missing STAGING_DB_URL" >&2; exit 1)
+          test -n "$EXPECTED_DB_HOST" || (echo "Missing non-secret middleware-staging variable STAGING_DB_HOST" >&2; exit 1)
+          test -n "$EXPECTED_DB_NAME" || (echo "Missing non-secret middleware-staging variable STAGING_DB_NAME" >&2; exit 1)
+          test "$CONFIRM_DB_HOST" = "$EXPECTED_DB_HOST" || (echo "confirm_db_host does not match the reviewed staging host" >&2; exit 1)
+          test "$CONFIRM_DB_NAME" = "$EXPECTED_DB_NAME" || (echo "confirm_db_name does not match the reviewed staging database" >&2; exit 1)
+
+          parsed_target="$(DATABASE_URL="$STAGING_DB_URL" node <<'NODE'
+          const url = new URL(process.env.DATABASE_URL);
+          const database = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+          if (!url.hostname || !database || database.includes("/")) process.exit(2);
+          process.stdout.write(`${url.hostname.toLowerCase()}\t${database}`);
+          NODE
+          )"
+          IFS=$'\t' read -r actual_host actual_name <<< "$parsed_target"
+          test "$actual_host" = "$EXPECTED_DB_HOST" || (echo "STAGING_DB_URL host does not match lowercase STAGING_DB_HOST" >&2; exit 1)
+          test "$actual_name" = "$EXPECTED_DB_NAME" || (echo "STAGING_DB_URL database does not match STAGING_DB_NAME" >&2; exit 1)
+
+          connected_name="$(psql "$STAGING_DB_URL" -XAtqc "select current_database()")"
+          test "$connected_name" = "$EXPECTED_DB_NAME" || (echo "Connected database identity does not match STAGING_DB_NAME" >&2; exit 1)
+
+          has_sentinel="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.infrastructure_metadata') is not null")"
+          if [ "$has_sentinel" = "t" ]; then
+            identity="$(psql "$STAGING_DB_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
+            test "$identity" = "staging" || (echo "Existing database sentinel is not staging" >&2; exit 1)
+          else
+            test "$APPLY_MIGRATIONS" = "true" || (echo "Empty staging database requires apply_migrations=true" >&2; exit 1)
+            has_core_schema="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
+            test "$has_core_schema" = "f" || (echo "Refusing bootstrap: core schema exists without the staging sentinel" >&2; exit 1)
+            echo "Verified empty staging target; bootstrap is permitted"
+          fi
+
+      - name: Apply reviewed staging migrations
+        if: ${{ inputs.apply_migrations }}
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+        run: |
+          test -x infrastructure/postgres/apply-staging.sh || (echo "Reviewed apply-staging.sh is not available" >&2; exit 1)
+          infrastructure/postgres/apply-staging.sh "$STAGING_DB_URL"
+
+      - name: Verify staging identity and database contract after bootstrap
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DB_URL }}
+          EXPECTED_DB_NAME: ${{ vars.STAGING_DB_NAME }}
+        run: |
+          identity="$(psql "$DATABASE_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
+          connected_name="$(psql "$DATABASE_URL" -XAtqc "select current_database()")"
+          has_core_schema="$(psql "$DATABASE_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
+          test "$identity" = "staging" || (echo "Post-bootstrap database sentinel is not staging" >&2; exit 1)
+          test "$connected_name" = "$EXPECTED_DB_NAME" || (echo "Post-bootstrap database name does not match STAGING_DB_NAME" >&2; exit 1)
+          test "$has_core_schema" = "t" || (echo "Post-bootstrap core schema is missing" >&2; exit 1)
+          infrastructure/postgres/validate.sh
+
+      - name: Verify Cloudflare and Access service credentials
+        if: ${{ inputs.deploy_worker || inputs.deploy_pages }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          LOVABLE_CLOUD_URL: ${{ secrets.LOVABLE_CLOUD_URL }}
-          LOVABLE_SERVICE_ROLE_KEY: ${{ secrets.LOVABLE_SERVICE_ROLE_KEY }}
-          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          printf '%s' "$LOVABLE_CLOUD_URL" | npx wrangler secret put LOVABLE_CLOUD_URL --config wrangler.middleware.toml --env staging
-          printf '%s' "$LOVABLE_SERVICE_ROLE_KEY" | npx wrangler secret put LOVABLE_SERVICE_ROLE_KEY --config wrangler.middleware.toml --env staging
-          printf '%s' "$MIDDLEWARE_ADMIN_TOKEN" | npx wrangler secret put MIDDLEWARE_ADMIN_TOKEN --config wrangler.middleware.toml --env staging
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Missing CLOUDFLARE_API_TOKEN" >&2; exit 1)
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_ID" || (echo "Missing CF_ACCESS_CLIENT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_SECRET" || (echo "Missing CF_ACCESS_CLIENT_SECRET" >&2; exit 1)
+          npx wrangler whoami >/dev/null
+
+      - name: Capture current Worker rollback version
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          previous="$(npx wrangler deployments list --config wrangler.middleware.toml --env staging --json | jq -er '.[-1].versions[0].version_id')"
+          echo "PREVIOUS_WORKER_VERSION=$previous" >> "$GITHUB_ENV"
+
       - name: Deploy Worker to staging only
+        if: ${{ inputs.deploy_worker }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler deploy --config wrangler.middleware.toml --env staging
-      - name: Smoke test public staging endpoints
-        run: npm run cf:api:smoke:staging
-      - name: Smoke test protected staging endpoints
-        env:
-          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
-        run: npm run cf:api:smoke:staging
 
-  deploy-pages:
-    name: Deploy staging Pages
-    runs-on: ubuntu-latest
-    needs: validate
-    if: ${{ inputs.deploy_pages }}
-    environment: middleware-staging
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
+      - name: Verify API denial and readiness through Cloudflare Access
+        if: ${{ inputs.deploy_worker || inputs.deploy_pages }}
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            https://api-staging.middleware.winerim.wine/ready)"
+          test "$public_status" != "200" || (echo "Protected staging readiness is public" >&2; exit 1)
+          body="$(curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            https://api-staging.middleware.winerim.wine/ready)"
+          jq -e '.ok == true and .database == "staging"' <<<"$body" >/dev/null
+
+      - name: Roll back Worker after failed post-deploy verification
+        if: ${{ failure() && inputs.deploy_worker && env.PREVIOUS_WORKER_VERSION != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler rollback "$PREVIOUS_WORKER_VERSION" --config wrangler.middleware.toml --env staging --message "Automatic rollback after staging smoke failure" --yes
+
       - name: Build staging frontend
+        if: ${{ success() && inputs.deploy_pages }}
         env:
           VITE_MIDDLEWARE_API_URL: https://api-staging.middleware.winerim.wine
         run: npm run build
-      - name: Deploy Pages to staging only
+
+      - name: Deploy Pages to protected staging
+        if: ${{ success() && inputs.deploy_pages }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler pages deploy dist --project-name winerim-middleware-staging --branch staging
+
+      - name: Verify Pages is not public without Access
+        if: ${{ success() && inputs.deploy_pages }}
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            https://staging.middleware.winerim.wine/)"
+          test "$public_status" != "200" || (echo "Protected staging Pages is public" >&2; exit 1)
+          curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            https://staging.middleware.winerim.wine/ >/dev/null

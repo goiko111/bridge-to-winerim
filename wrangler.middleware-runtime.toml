@@ -1,0 +1,41 @@
+name = "winerim-middleware-runtime"
+main = "cloudflare/workers/middleware-runtime/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[env.staging]
+name = "winerim-middleware-runtime-staging"
+workers_dev = false
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging-inert"
+RUNTIME_EXECUTION_ENABLED = "false"
+
+[env.staging.triggers]
+crons = ["*/5 * * * *"]
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_CATALOG_QUEUE"
+queue = "winerim-staging-catalog"
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_SALES_STOCK_QUEUE"
+queue = "winerim-staging-sales"
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_SALES_IMPORT_QUEUE"
+queue = "winerim-staging-sales"
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_STOCK_SYNC_QUEUE"
+queue = "winerim-staging-stock"
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_OUTBOUND_QUEUE"
+queue = "winerim-staging-outbound"
+
+[[env.staging.queues.producers]]
+binding = "MIDDLEWARE_MAINTENANCE_QUEUE"
+queue = "winerim-staging-maintenance"
