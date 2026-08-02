@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "schema": "public",
+  "sourceEnvironment": "lovable-production",
+  "targetEnvironment": "staging",
+  "targetProjectRef": "qpbmqvfnunkylvtvnyyx",
+  "sentinel": {
+    "table": "infrastructure_metadata",
+    "key": "environment",
+    "value": "staging"
+  },
+  "sourceTables": [
+    "agora_dispatch_locks",
+    "agora_master_data",
+    "classification_config",
+    "connection_alerts",
+    "connection_health_checks",
+    "connection_notification_contacts",
+    "integration_onboarding_requests",
+    "middleware_incident_email_attempts",
+    "middleware_incident_events",
+    "middleware_incidents",
+    "outbound_tasks",
+    "pos_connections",
+    "product_mappings",
+    "provider_capabilities",
+    "provider_credentials",
+    "provider_products",
+    "sales_events",
+    "sales_line_items",
+    "stock_sync_log",
+    "user_roles",
+    "webhook_events",
+    "wine_family_rules",
+    "wine_type_family_mappings",
+    "winerim_push_tracking",
+    "winerim_wines"
+  ],
+  "stagingOnlyTables": [
+    "infrastructure_metadata",
+    "runtime_execution_log",
+    "runtime_idempotency"
+  ],
+  "runtimeMustRemainEmpty": [
+    "runtime_execution_log",
+    "runtime_idempotency"
+  ]
+}
