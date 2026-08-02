@@ -33,6 +33,7 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(config).toContain('main = "cloudflare/workers/middleware-runtime/src/worker.ts"');
     expect(config).toMatch(/workers_dev\s*=\s*false/g);
     expect(config.match(/preview_urls\s*=\s*false/g)).toHaveLength(2);
+    expect(config).not.toMatch(/preview_urls\s*=\s*true/g);
     expect(config).toContain('[env.staging.vars]');
     expect(config).toContain('RUNTIME_EXECUTION_ENABLED = "false"');
     expect(config).toContain('crons = ["*/5 * * * *"]');
@@ -93,6 +94,7 @@ describe("Cloudflare middleware runtime staging config", () => {
     expect(executorConfig).toContain('main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"');
     expect(executorConfig).toContain('RUNTIME_EXECUTION_ENABLED = "false"');
     expect(executorConfig.match(/preview_urls\s*=\s*false/g)).toHaveLength(2);
+    expect(executorConfig).not.toMatch(/preview_urls\s*=\s*true/g);
     expect(executorConfig).toContain('RUNTIME_VAULT_KEY_VERSION = "v1"');
     expect(executorConfig).toContain('WINERIM_ALLOWED_HOSTS = "app.winerim.com"');
     expect(executorConfig).not.toContain("[env.production]");
