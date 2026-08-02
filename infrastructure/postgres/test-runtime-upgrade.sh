@@ -10,6 +10,8 @@ TMP_ROOT=$(mktemp -d /tmp/wrut.XXXXXX)
 DATA_DIR="$TMP_ROOT/data"
 SOCKET_DIR="$TMP_ROOT/socket"
 BACKUP_DIR="$TMP_ROOT/encrypted-fixture-volume"
+BIN_DIR="$TMP_ROOT/bin"
+PG_DUMP_LOG="$TMP_ROOT/pg-dump-args.log"
 PORT=$((57432 + ($$ % 500)))
 SERVER_STARTED=0
 cleanup() {
@@ -18,8 +20,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$SOCKET_DIR" "$BACKUP_DIR"
+mkdir -p "$SOCKET_DIR" "$BACKUP_DIR" "$BIN_DIR"
 chmod 700 "$BACKUP_DIR"
+REAL_PG_DUMP=$(command -v pg_dump)
+cat >"$BIN_DIR/pg_dump" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >>"$PG_DUMP_LOG"
+exec "$REAL_PG_DUMP" "$@"
+SH
+chmod 700 "$BIN_DIR/pg_dump"
+export REAL_PG_DUMP PG_DUMP_LOG
 initdb -D "$DATA_DIR" --auth=trust --no-locale --encoding=UTF8 >/dev/null
 if ! pg_ctl -D "$DATA_DIR" -l "$TMP_ROOT/postgres.log" -o "-h 127.0.0.1 -k '$SOCKET_DIR' -p $PORT" -w start >/dev/null; then
   tail -n 20 "$TMP_ROOT/postgres.log" >&2 || true
@@ -43,6 +54,7 @@ test -n "$plan_sha" || { printf 'LOCAL_UPGRADE_PLAN_DIGEST_MISSING\n' >&2; exit 
 
 WINERIM_LOCAL_DISPOSABLE_UPGRADE_TEST=1 \
 WINERIM_ENCRYPTED_BACKUP_DIR_CONFIRMED=YES_ENCRYPTED_VOLUME \
+PATH="$BIN_DIR:$PATH" \
   "$SCRIPT_DIR/upgrade-staging-runtime.sh" \
   --database-url "$database_url" \
   --backup-dir "$BACKUP_DIR" \
@@ -50,6 +62,11 @@ WINERIM_ENCRYPTED_BACKUP_DIR_CONFIRMED=YES_ENCRYPTED_VOLUME \
   --confirm-project-ref local-disposable-test \
   --confirm-upgrade runtime-0003-0005-only \
   --confirm-plan-sha "$plan_sha" >/dev/null
+
+grep -Fxq -- '--schema=public' "$PG_DUMP_LOG" || {
+  printf 'LOCAL_UPGRADE_PG_DUMP_PUBLIC_SCHEMA_REQUIRED\n' >&2
+  exit 1
+}
 
 post_tables=$(psql -XAtq -h 127.0.0.1 -p "$PORT" -d winerim_runtime_upgrade_test -c \
   "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")

@@ -107,7 +107,7 @@ toc="$BACKUP_DIR/staging-runtime-preupgrade-$stamp.toc"
 roles="$BACKUP_DIR/staging-runtime-preupgrade-$stamp.roles.tsv"
 memberships="$BACKUP_DIR/staging-runtime-preupgrade-$stamp.memberships.tsv"
 data_fingerprint="$BACKUP_DIR/staging-runtime-preupgrade-$stamp.data.tsv"
-pg_dump "$DATABASE_URL" --format=custom --no-owner --file="$backup"
+pg_dump "$DATABASE_URL" --schema=public --format=custom --no-owner --file="$backup"
 pg_restore --list "$backup" >"$toc"
 query "SELECT rolname, rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname IN ('authenticated','service_role','middleware_api','middleware_api_login','middleware_migrator','middleware_readonly','middleware_runtime','middleware_runtime_login') ORDER BY rolname" >"$roles"
 query "SELECT granted.rolname, member.rolname, membership.admin_option FROM pg_auth_members membership JOIN pg_roles granted ON granted.oid=membership.roleid JOIN pg_roles member ON member.oid=membership.member WHERE granted.rolname LIKE 'middleware_%' OR member.rolname LIKE 'middleware_%' ORDER BY granted.rolname, member.rolname" >"$memberships"
@@ -136,6 +136,8 @@ createdb -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" winerim_restore_test
 psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -f "$SCRIPT_DIR/bootstrap-prelude.sql" >/dev/null
 psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -c \
   'CREATE ROLE middleware_api NOLOGIN; CREATE ROLE middleware_readonly NOLOGIN; CREATE ROLE middleware_runtime NOLOGIN; CREATE ROLE middleware_migrator NOLOGIN; CREATE ROLE middleware_api_login NOLOGIN; CREATE ROLE middleware_runtime_login NOLOGIN;' >/dev/null
+psql -X -v ON_ERROR_STOP=1 -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -c \
+  'DROP SCHEMA public CASCADE;' >/dev/null
 pg_restore --exit-on-error --no-owner -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test "$backup" >/dev/null
 restored_tables=$(psql -XAtq -h "$RESTORE_SOCKET" -p "$RESTORE_PORT" -d winerim_restore_test -c \
   "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")
