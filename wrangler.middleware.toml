@@ -1,0 +1,33 @@
+name = "winerim-middleware-api"
+main = "cloudflare/workers/middleware-api/src/index.ts"
+compatibility_date = "2026-06-12"
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "local"
+RELEASE = "dev"
+ALLOWED_ORIGIN = "http://localhost:8080"
+
+[env.staging]
+name = "winerim-middleware-api-staging"
+workers_dev = true
+routes = [
+  { pattern = "api-staging.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging"
+ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
+
+[env.production]
+name = "winerim-middleware-api"
+workers_dev = false
+routes = [
+  { pattern = "api.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+RELEASE = "production"
+ALLOWED_ORIGIN = "https://middleware.winerim.wine"

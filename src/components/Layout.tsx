@@ -10,11 +10,17 @@ import {
   Settings,
   ChevronLeft,
   Wine,
+  ClipboardCheck,
+  ListChecks,
+  MonitorCheck,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/onboarding", icon: ClipboardCheck, label: "Onboarding" },
+  { to: "/checklist", icon: ListChecks, label: "Checklist" },
+  { to: "/agora-fleet", icon: MonitorCheck, label: "Flota Agora" },
   { to: "/integrations", icon: Plug, label: "Integrations" },
   { to: "/sync-monitor", icon: Activity, label: "Sync Monitor" },
   { to: "/alerts", icon: Bell, label: "Alerts", badgeKey: "alerts" },
