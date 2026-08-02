@@ -122,6 +122,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
       runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
     }]));
     const database = fakeDatabase(query);
     const env = readyEnv();
@@ -192,6 +193,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
       runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
     }]));
     const database = fakeDatabase(query);
     const env = readyEnv();
@@ -220,6 +222,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
       runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
     }]));
     const database = fakeDatabase(query);
     const env: MiddlewareRuntimeEnv = {
@@ -251,6 +254,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
       runtime_canary_scope_ready: false,
+      runtime_credentials_ready: true,
     }]));
     const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
       new Request("https://runtime.invalid/ready"),
@@ -272,12 +276,41 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     });
   });
 
+  it("keeps canary readiness closed until both active credential rows exist", async () => {
+    const database = fakeDatabase(() => result([{
+      environment: "staging",
+      runtime_idempotency_ready: true,
+      runtime_execution_log_ready: true,
+      runtime_canary_scope_ready: true,
+      runtime_credentials_ready: false,
+    }]));
+    const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
+      new Request("https://runtime.invalid/ready"),
+      {
+        ENVIRONMENT: "staging",
+        RUNTIME_EXECUTION_ENABLED: "true",
+        RUNTIME_MODE: "canary-consumer",
+        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
+        RUNTIME_EXECUTOR: { fetch: vi.fn() },
+      },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      credentials: "not_ready",
+      database: "schema_not_ready",
+    });
+  });
+
   it("fails canary readiness when the connection id is still the placeholder", async () => {
     const database = fakeDatabase(() => result([{
       environment: "staging",
       runtime_idempotency_ready: true,
       runtime_execution_log_ready: true,
       runtime_canary_scope_ready: true,
+      runtime_credentials_ready: true,
     }]));
     const response = await createMiddlewareRuntimeWorker(dependencies(database)).fetch(
       new Request("https://runtime.invalid/ready"),

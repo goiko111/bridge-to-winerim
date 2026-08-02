@@ -15,6 +15,45 @@ import {
 } from "../../cloudflare/workers/middleware-runtime-executor/src/worker";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+const KEY_VERSION = "v1";
+
+function base64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function credentialAad(kind: "agora" | "winerim"): Uint8Array {
+  return new TextEncoder().encode([
+    "winerim-runtime-credential", "1", CONNECTION_ID, "agora", kind, KEY_VERSION,
+  ].join("|"));
+}
+
+async function encryptedCredentialRow(kind: "agora" | "winerim", secret = `fixture-${kind}`) {
+  const master = new Uint8Array(32).fill(7);
+  const nonce = new Uint8Array(12).fill(kind === "agora" ? 3 : 4);
+  const key = await crypto.subtle.importKey("raw", master, { name: "AES-GCM" }, false, ["encrypt"]);
+  const ciphertext = await crypto.subtle.encrypt({
+    name: "AES-GCM",
+    iv: nonce,
+    additionalData: credentialAad(kind),
+    tagLength: 128,
+  }, key, new TextEncoder().encode(secret));
+  return {
+    master: base64(master),
+    row: {
+      connection_id: CONNECTION_ID,
+      provider: "agora",
+      credential_kind: kind,
+      algorithm: "AES-256-GCM",
+      key_version: KEY_VERSION,
+      aad_version: 1,
+      ciphertext_base64: base64(new Uint8Array(ciphertext)),
+      nonce_base64: base64(nonce),
+      active: true,
+    },
+  };
+}
 
 function result<Row extends Record<string, unknown>>(rows: Row[]): QueryResult<Row> {
   return { rows, rowCount: rows.length };
@@ -24,6 +63,24 @@ function fakeDatabase(rows: Record<string, unknown>[] = []) {
   const query = vi.fn(async <Row extends Record<string, unknown>>(_statement: SqlStatement) => (
     result(rows as Row[])
   ));
+  const adapter: DatabaseAdapter = {
+    query,
+    transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({ query }),
+  };
+  return { adapter, query };
+}
+
+function readinessDatabase(rows: Partial<Record<"agora" | "winerim", Record<string, unknown>>>) {
+  const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
+    if (statement.text.includes("FROM public.pos_connections")) {
+      return result([{ connection_id: CONNECTION_ID, provider: "agora", enabled: true }] as Row[]);
+    }
+    const kind = [...statement.values].reverse().find((value) => value === "agora" || value === "winerim") as
+      | "agora"
+      | "winerim"
+      | undefined;
+    return result((kind && rows[kind] ? [rows[kind]] : []) as Row[]);
+  });
   const adapter: DatabaseAdapter = {
     query,
     transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({ query }),
@@ -134,6 +191,66 @@ describe("private runtime executor Worker", () => {
       failure: { message: "RUNTIME_EXECUTION_DISABLED" },
     });
     expect(database).not.toHaveBeenCalled();
+  });
+
+  it("keeps readiness closed when one required credential row is missing", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({ RUNTIME_VAULT_KEY: { get: async () => agora.master } }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      credentials: "not_ready",
+      reason: "RUNTIME_EXECUTOR_NOT_READY",
+    });
+  });
+
+  it("sanitizes a Secrets Store read failure during readiness", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({ RUNTIME_VAULT_KEY: { get: async () => { throw new Error("sensitive store diagnostic"); } } }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(JSON.stringify(await response.json())).not.toContain("sensitive store diagnostic");
+  });
+
+  it("rejects invalid ciphertext during readiness without exposing it", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const fake = readinessDatabase({
+      agora: { ...agora.row, ciphertext_base64: "not-base64!" },
+      winerim: winerim.row,
+    });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({ RUNTIME_VAULT_KEY: { get: async () => agora.master } }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ credentials: "not_ready" });
+  });
+
+  it("certifies readiness only when both scoped credentials decrypt", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
+    const vaultGet = vi.fn(async () => agora.master);
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({ RUNTIME_VAULT_KEY: { get: vaultGet } }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, credentials: "ready", reason: null });
+    expect(vaultGet).toHaveBeenCalledTimes(2);
   });
 
   it("allows only the narrow stock mutation job set", async () => {

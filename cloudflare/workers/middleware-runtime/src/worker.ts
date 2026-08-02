@@ -109,6 +109,7 @@ interface RuntimeReadinessRow extends Record<string, unknown> {
   runtime_idempotency_ready: boolean;
   runtime_execution_log_ready: boolean;
   runtime_canary_scope_ready: boolean;
+  runtime_credentials_ready: boolean;
 }
 
 function isCanaryConsumer(env: MiddlewareRuntimeEnv): boolean {
@@ -602,12 +603,26 @@ async function readiness(
             WHERE scope.connection_id = ${reviewedConnectionId}::uuid
           )
         END AS runtime_canary_scope_ready
+        ,CASE
+          WHEN ${canaryConsumer} = false THEN true
+          WHEN ${reviewedConnectionId}::uuid IS NULL THEN false
+          ELSE (
+            SELECT count(*) = 2
+              AND count(DISTINCT credentials.credential_kind) = 2
+              AND bool_and(credentials.provider = 'agora')
+            FROM public.runtime_connection_credentials credentials
+            WHERE credentials.connection_id = ${reviewedConnectionId}::uuid
+              AND credentials.active = true
+              AND credentials.credential_kind IN ('agora', 'winerim')
+          )
+        END AS runtime_credentials_ready
     `);
     const row = result.rows[0];
     const schemaReady = row?.environment === STAGING_ENVIRONMENT
       && row.runtime_idempotency_ready === true
       && row.runtime_execution_log_ready === true
-      && row.runtime_canary_scope_ready === true;
+      && row.runtime_canary_scope_ready === true
+      && row.runtime_credentials_ready === true;
     const ready = schemaReady && missingBindings.length === 0 && executionEnabled && executor !== null;
     return json({
       ok: ready,
@@ -619,6 +634,7 @@ async function readiness(
       executorBound: executor !== null,
       missingBindings,
       canaryScope: row?.runtime_canary_scope_ready === true ? "ready" : "not_ready",
+      credentials: row?.runtime_credentials_ready === true ? "ready" : "not_ready",
       database: schemaReady ? "ready" : "schema_not_ready",
       reason: ready ? null : "RUNTIME_NOT_READY",
     }, ready ? 200 : 503);

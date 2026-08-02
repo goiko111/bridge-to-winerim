@@ -192,7 +192,10 @@ function normalizedDependencies(
   };
 }
 
-function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
+async function readiness(
+  env: MiddlewareRuntimeExecutorEnv,
+  dependencies: Required<RuntimeExecutorWorkerDependencies>,
+): Promise<Response> {
   const environment = String(env.ENVIRONMENT ?? "").trim().toLowerCase();
   const executionEnabled = String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true";
   const missingBindings = [
@@ -205,7 +208,29 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
       ? "RUNTIME_CANARY_CONNECTION_ID"
       : null,
   ].filter((value): value is string => !!value);
-  const ready = environment === STAGING_ENVIRONMENT && executionEnabled && missingBindings.length === 0;
+  let credentialsReady = false;
+  if (environment === STAGING_ENVIRONMENT && executionEnabled && missingBindings.length === 0) {
+    try {
+      const database = dependencies.database(env);
+      const connectionId = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
+      const connection = await createPostgresRuntimeConnectionPort(database).load(connectionId);
+      if (connection?.enabled === true && connection.provider.toLowerCase() === "agora") {
+        const credentials = createPostgresEncryptedCredentialPort(database, {
+          masterKey: env.RUNTIME_VAULT_KEY!,
+          keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
+        });
+        const agora = await credentials.open({ connectionId, provider: "agora", kind: "agora" });
+        const winerim = await credentials.open({ connectionId, provider: "agora", kind: "winerim" });
+        credentialsReady = Boolean(await agora?.read()) && Boolean(await winerim?.read());
+      }
+    } catch {
+      credentialsReady = false;
+    }
+  }
+  const ready = environment === STAGING_ENVIRONMENT
+    && executionEnabled
+    && missingBindings.length === 0
+    && credentialsReady;
   return json({
     ok: ready,
     service: "winerim-middleware-runtime-executor",
@@ -215,6 +240,8 @@ function readiness(env: MiddlewareRuntimeExecutorEnv): Response {
     executionEnabled,
     enabledJobs: ENABLED_STOCK_JOBS,
     missingBindings,
+    credentials: credentialsReady ? "ready" : "not_ready",
+    reason: ready ? null : "RUNTIME_EXECUTOR_NOT_READY",
   }, ready ? 200 : 503);
 }
 
@@ -232,7 +259,7 @@ export function createMiddlewareRuntimeExecutorWorker(
   return {
     async fetch(request: Request, env: MiddlewareRuntimeExecutorEnv): Promise<Response> {
       const url = new URL(request.url);
-      if (request.method === "GET" && url.pathname === "/ready") return readiness(env);
+      if (request.method === "GET" && url.pathname === "/ready") return readiness(env, resolved);
       if (!executionGateOpen(env)) {
         return createRuntimeExecutorService({
           execute: async () => ({
