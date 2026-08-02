@@ -53,6 +53,9 @@ describe("middleware Worker security gates", () => {
       expect(section).toContain('REQUIRE_ACCESS_JWT = "true"');
       expect(section).toContain('POS_TEST_ALLOWED_HOSTS = ""');
     }
+    expect(staging).toContain('{ pattern = "api-staging.middleware.winerim.wine", custom_domain = true }');
+    expect(staging).toContain('CF_ACCESS_AUD = "73274f22dd76b3448149994f075d6de604c14d91c0568d6f9d280cd812babc2b"');
+    expect(staging).toContain('CF_ACCESS_TEAM_DOMAIN = "https://still-credit-1c67.cloudflareaccess.com"');
   });
 
   it("keeps health public but protects onboarding tests", async () => {

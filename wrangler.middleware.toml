@@ -13,7 +13,7 @@ ALLOWED_ORIGIN = "http://localhost:8080"
 name = "winerim-middleware-api-staging"
 workers_dev = false
 routes = [
-  { pattern = "api-staging.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+  { pattern = "api-staging.middleware.winerim.wine", custom_domain = true }
 ]
 
 [env.staging.vars]
@@ -22,6 +22,8 @@ RELEASE = "staging"
 ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
 POS_TEST_ALLOWED_HOSTS = ""
 REQUIRE_ACCESS_JWT = "true"
+CF_ACCESS_AUD = "73274f22dd76b3448149994f075d6de604c14d91c0568d6f9d280cd812babc2b"
+CF_ACCESS_TEAM_DOMAIN = "https://still-credit-1c67.cloudflareaccess.com"
 
 [[env.staging.hyperdrive]]
 binding = "MIDDLEWARE_DB"
