@@ -5,6 +5,8 @@ import {
   RuntimeQueueDisposition,
 } from "./retry";
 
+const POISON_RETRY_DELAY_SECONDS = 300;
+
 export type CloudflareQueueMessageLike<TBody = unknown> = {
   readonly id: string;
   readonly attempts: number;
@@ -61,9 +63,10 @@ export async function consumeRuntimeQueueBatch(
   for (const message of batch.messages) {
     if (!isRuntimeEnvelope(message.body)) {
       await hooks.recordTerminal(null, { messageId: message.id, reason: "invalid_runtime_envelope" });
-      message.ack();
-      summary.acknowledged++;
-      summary.terminal++;
+      // Let the configured Queue retry limit route poison messages into the
+      // DLQ. Never persist or log their potentially sensitive body.
+      message.retry({ delaySeconds: POISON_RETRY_DELAY_SECONDS });
+      summary.retried++;
       summary.invalid++;
       continue;
     }
@@ -112,6 +115,14 @@ export async function consumeRuntimeQueueBatch(
     }
 
     if (disposition.action === "terminal") {
+      if (disposition.reason === "attempts_exhausted") {
+        // A final retry hands the message to the platform DLQ. Recording a
+        // terminal idempotency row first would make a redelivery look like an
+        // acknowledged duplicate and bypass that DLQ transition.
+        message.retry();
+        summary.retried++;
+        continue;
+      }
       await hooks.recordTerminal(envelope, {
         messageId: message.id,
         reason: disposition.reason,

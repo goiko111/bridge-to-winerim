@@ -17,6 +17,10 @@ RUNTIME_EXECUTION_ENABLED = "false"
 binding = "MIDDLEWARE_DB"
 id = "0adae4108e4241f19cf5ba2709cbc69f"
 
+[[env.staging.services]]
+binding = "RUNTIME_EXECUTOR"
+service = "winerim-middleware-runtime-executor-staging"
+
 [env.staging.triggers]
 crons = ["*/5 * * * *"]
 
@@ -43,3 +47,13 @@ queue = "winerim-staging-outbound"
 [[env.staging.queues.producers]]
 binding = "MIDDLEWARE_MAINTENANCE_QUEUE"
 queue = "winerim-staging-maintenance"
+
+# Canary-only consumer. Keep execution disabled until the private executor,
+# vault binding and one reviewed stock envelope have passed remote readiness.
+[[env.staging.queues.consumers]]
+queue = "winerim-staging-stock"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "winerim-staging-dead-letter"

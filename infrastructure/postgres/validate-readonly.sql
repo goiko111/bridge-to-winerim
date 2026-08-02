@@ -27,6 +27,7 @@ WITH expected(name) AS (
     ('provider_capabilities'),
     ('provider_credentials'),
     ('provider_products'),
+    ('runtime_connection_credentials'),
     ('runtime_execution_log'),
     ('runtime_idempotency'),
     ('sales_events'),
@@ -135,7 +136,7 @@ WHERE n.nspname = 'public'
 ORDER BY p.proname;
 
 SELECT
-  has_table_privilege(
+  NOT has_table_privilege(
     'middleware_runtime',
     'public.agora_dispatch_locks',
     'SELECT,INSERT,UPDATE,DELETE'
@@ -150,6 +151,23 @@ SELECT
     'public.release_agora_dispatch_lock(uuid,text,text)',
     'EXECUTE'
   ) AS runtime_can_release_dispatch_lock;
+
+SELECT
+  has_table_privilege(
+    'middleware_runtime',
+    'public.runtime_connection_credentials',
+    'SELECT'
+  ) AS runtime_can_read_encrypted_credentials,
+  has_table_privilege(
+    'middleware_runtime',
+    'public.runtime_connection_credentials',
+    'INSERT,UPDATE,DELETE'
+  ) AS runtime_cannot_write_encrypted_credentials,
+  NOT has_table_privilege(
+    'middleware_api',
+    'public.runtime_connection_credentials',
+    'SELECT,INSERT,UPDATE,DELETE'
+  ) AS api_cannot_access_encrypted_credentials;
 
 SELECT
   extname,

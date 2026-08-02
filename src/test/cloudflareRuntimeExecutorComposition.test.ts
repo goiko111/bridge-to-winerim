@@ -11,6 +11,18 @@ import { createRuntimeEnvelope } from "../../cloudflare/workers/middleware-runti
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_CONNECTION_ID = "22222222-2222-4222-8222-222222222222";
+const ALL_RUNTIME_JOBS: readonly RuntimeJob[] = [
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "sales.auto-sync",
+  "sales.sync-intraday",
+  "sales.sync-open-tickets",
+  "outbound.process",
+  "winerim.sales-import-live",
+  "winerim.sales-import-historical",
+  "winerim.stock-apply",
+  "maintenance.reconcile",
+];
 
 async function envelope(job: RuntimeJob, dryRun = false) {
   return createRuntimeEnvelope({
@@ -49,6 +61,7 @@ function options(overrides: Partial<RuntimeExecutorCompositionOptions> = {}) {
   const base: RuntimeExecutorCompositionOptions = {
     environment: "staging",
     executionEnabled: true,
+    enabledJobs: ALL_RUNTIME_JOBS,
     connections: {
       load: vi.fn(async (connectionId) => ({ connectionId, provider: "agora", enabled: true })),
     },
@@ -84,6 +97,18 @@ describe("connection-scoped runtime executor composition", () => {
       ok: false,
       failure: { message: "RUNTIME_EXECUTION_DISABLED" },
     });
+    expect(fixture.open).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the deployment does not explicitly allowlist the job", async () => {
+    const fixture = options({ enabledJobs: [] });
+    await expect(createConnectionScopedRuntimeExecutor(fixture.value).execute(
+      await envelope("winerim.sales-import-live", true),
+    )).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "RUNTIME_JOB_NOT_ENABLED" },
+    });
+    expect(fixture.value.connections.load).not.toHaveBeenCalled();
     expect(fixture.open).not.toHaveBeenCalled();
   });
 
@@ -211,5 +236,25 @@ describe("connection-scoped runtime executor composition", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, detail: "stock:dry-run:sales-import" });
+  });
+
+  it("rejects secret-shaped fields before loading configuration or opening the vault", async () => {
+    const fixture = options();
+    const runtimeEnvelope = await envelope("winerim.sales-import-live", true);
+    runtimeEnvelope.payload = { dryRun: true, nested: { api_token: "must-not-enter-queue" } };
+    const service = createRuntimeExecutorService(createConnectionScopedRuntimeExecutor(fixture.value));
+    const response = await service.fetch(new Request("https://executor.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ envelope: runtimeEnvelope }),
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 422, message: "SENSITIVE_RUNTIME_PAYLOAD_REJECTED" },
+    });
+    expect(fixture.value.connections.load).not.toHaveBeenCalled();
+    expect(fixture.open).not.toHaveBeenCalled();
   });
 });

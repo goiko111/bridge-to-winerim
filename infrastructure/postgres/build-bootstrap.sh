@@ -6,6 +6,7 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 MANIFEST="$SCRIPT_DIR/migration-manifest.tsv"
 MIGRATIONS_DIR="$REPO_ROOT/supabase/migrations"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
+RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 
 {
@@ -35,6 +36,9 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN release schema addendum\n'
   cat "$PORTABLE_ADDENDUM"
   printf '\n-- END release schema addendum\n'
+  printf '\n-- BEGIN runtime credential vault schema\n'
+  cat "$RUNTIME_CREDENTIALS_ADDENDUM"
+  printf '\n-- END runtime credential vault schema\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"

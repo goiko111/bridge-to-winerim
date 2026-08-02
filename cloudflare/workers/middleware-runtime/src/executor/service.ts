@@ -6,6 +6,7 @@ export type RuntimeExecutorService = Readonly<{
 }>;
 
 const MAX_EXECUTOR_REQUEST_BYTES = 64 * 1024;
+const SENSITIVE_PAYLOAD_KEY = /(^|[_-])(token|secret|password|authorization|credential|api[_-]?key)($|[_-])/i;
 
 function json(body: Record<string, unknown>, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -28,6 +29,14 @@ async function parseEnvelope(request: Request): Promise<unknown> {
   }
   const parsed = JSON.parse(body) as { envelope?: unknown };
   return parsed.envelope;
+}
+
+function containsSensitivePayload(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsSensitivePayload);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, child]) => SENSITIVE_PAYLOAD_KEY.test(key) || containsSensitivePayload(child),
+  );
 }
 
 export function createRuntimeExecutorService(executor: RuntimeExecutorService) {
@@ -54,6 +63,12 @@ export function createRuntimeExecutorService(executor: RuntimeExecutorService) {
 
       if (!isRuntimeEnvelope(envelope)) {
         return json({ ok: false, failure: { httpStatus: 422, message: "INVALID_RUNTIME_ENVELOPE" } }, 422);
+      }
+      if (containsSensitivePayload(envelope.payload)) {
+        return json({
+          ok: false,
+          failure: { httpStatus: 422, message: "SENSITIVE_RUNTIME_PAYLOAD_REJECTED" },
+        }, 422);
       }
 
       const result = await executor.execute(envelope);

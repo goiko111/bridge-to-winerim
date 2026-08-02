@@ -43,6 +43,7 @@ export type RuntimeConnectionExecutorPortsFactory = Readonly<{
 export type RuntimeExecutorCompositionOptions = Readonly<{
   environment?: string;
   executionEnabled?: boolean | string;
+  enabledJobs?: readonly RuntimeJob[];
   connections: RuntimeConnectionConfigurationPort;
   credentials: RuntimeCredentialAccessPort;
   ports: RuntimeConnectionExecutorPortsFactory;
@@ -75,6 +76,14 @@ function normalized(value: unknown): string {
 function executionGateOpen(options: RuntimeExecutorCompositionOptions): boolean {
   return normalized(options.environment) === STAGING_ENVIRONMENT
     && (options.executionEnabled === true || normalized(options.executionEnabled) === "true");
+}
+
+function jobGateOpen(
+  options: RuntimeExecutorCompositionOptions,
+  envelope: RuntimeEnvelopeV1,
+): boolean {
+  return Array.isArray(options.enabledJobs)
+    && options.enabledJobs.includes(envelope.job);
 }
 
 function payloadDryRun(envelope: RuntimeEnvelopeV1): boolean {
@@ -139,6 +148,7 @@ export function createConnectionScopedRuntimeExecutor(
     async execute(input): Promise<RuntimeExecutionResult> {
       if (!isRuntimeEnvelope(input)) return failure(422, "INVALID_RUNTIME_ENVELOPE");
       if (!executionGateOpen(options)) return failure(503, "RUNTIME_EXECUTION_DISABLED");
+      if (!jobGateOpen(options, input)) return failure(503, "RUNTIME_JOB_NOT_ENABLED");
 
       // Work on a detached envelope so a provider factory cannot mutate the
       // Queue-owned message or its idempotency identity.

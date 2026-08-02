@@ -17,6 +17,7 @@ TABLE provider_capabilities
 TABLE provider_credentials
 TABLE provider_products
 TABLE runtime_execution_log
+TABLE runtime_connection_credentials
 TABLE runtime_idempotency
 TABLE sales_events
 TABLE sales_line_items

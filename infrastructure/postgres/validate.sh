@@ -8,6 +8,7 @@ MANIFEST="$SCRIPT_DIR/migration-manifest.tsv"
 EXPECTED="$SCRIPT_DIR/expected-schema.txt"
 READONLY_SQL="$SCRIPT_DIR/validate-readonly.sql"
 PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
+RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
 RELEASE_VALIDATOR="$SCRIPT_DIR/validate-release-addendum.sh"
@@ -36,12 +37,24 @@ for required_file in \
   "$EXPECTED" \
   "$READONLY_SQL" \
   "$PORTABLE_ADDENDUM" \
+  "$RUNTIME_CREDENTIALS_ADDENDUM" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
   "$RELEASE_VALIDATOR"
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'CREATE TABLE IF NOT EXISTS public.runtime_connection_credentials' \
+  "algorithm text NOT NULL DEFAULT 'AES-256-GCM'" \
+  'GRANT SELECT ON public.runtime_connection_credentials TO middleware_runtime' \
+  'FROM PUBLIC, authenticated, service_role, middleware_api, middleware_readonly, middleware_runtime'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_CREDENTIALS_ADDENDUM" >/dev/null; then
+    fail "runtime credential addendum is missing: $required_pattern"
   fi
 done
 
