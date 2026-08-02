@@ -9,7 +9,7 @@ Publicar la interfaz operativa del middleware en Cloudflare Pages sin mover toda
 - Framework preset: Vite
 - Build command: `npm run build`
 - Output directory: `dist`
-- Node version: 20
+- Node version: 22
 
 ## Variables de entorno
 

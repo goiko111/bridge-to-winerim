@@ -1,5 +1,6 @@
 const baseUrl = (process.argv[2] || process.env.MIDDLEWARE_API_URL || "").replace(/\/+$/, "");
 const adminToken = process.env.MIDDLEWARE_ADMIN_TOKEN || "";
+const requestTimeoutMs = Number(process.env.MIDDLEWARE_SMOKE_TIMEOUT_MS || 8000);
 
 if (!baseUrl) {
   console.error("Usage: node scripts/smoke-middleware-api.mjs <base-url>");
@@ -7,7 +8,15 @@ if (!baseUrl) {
 }
 
 async function request(path, init = {}) {
-  const res = await fetch(`${baseUrl}${path}`, init);
+  let res;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+  } catch (error) {
+    return { status: 0, body: { error: "REQUEST_FAILED", detail: String(error) } };
+  }
   const text = await res.text();
   let body;
   try {
