@@ -3,10 +3,12 @@ main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"
 compatibility_date = "2026-06-12"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
+preview_urls = false
 
 [env.staging]
 name = "winerim-middleware-runtime-executor-staging"
 workers_dev = false
+preview_urls = false
 
 [env.staging.vars]
 ENVIRONMENT = "staging"

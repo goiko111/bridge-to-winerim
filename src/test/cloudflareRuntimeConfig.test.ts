@@ -32,6 +32,7 @@ describe("Cloudflare middleware runtime staging config", () => {
   it("is staging-only and inert by default", () => {
     expect(config).toContain('main = "cloudflare/workers/middleware-runtime/src/worker.ts"');
     expect(config).toMatch(/workers_dev\s*=\s*false/g);
+    expect(config.match(/preview_urls\s*=\s*false/g)).toHaveLength(2);
     expect(config).toContain('[env.staging.vars]');
     expect(config).toContain('RUNTIME_EXECUTION_ENABLED = "false"');
     expect(config).toContain('crons = ["*/5 * * * *"]');
@@ -91,6 +92,7 @@ describe("Cloudflare middleware runtime staging config", () => {
   it("keeps the private executor staging-only, unrouted and without embedded vault material", () => {
     expect(executorConfig).toContain('main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"');
     expect(executorConfig).toContain('RUNTIME_EXECUTION_ENABLED = "false"');
+    expect(executorConfig.match(/preview_urls\s*=\s*false/g)).toHaveLength(2);
     expect(executorConfig).toContain('RUNTIME_VAULT_KEY_VERSION = "v1"');
     expect(executorConfig).toContain('WINERIM_ALLOWED_HOSTS = "app.winerim.com"');
     expect(executorConfig).not.toContain("[env.production]");
@@ -118,7 +120,7 @@ describe("Cloudflare middleware runtime staging config", () => {
 
   it("provides explicit test, dry-run, deploy, status and rollback scripts", () => {
     expect(packageJson.scripts).toMatchObject({
-      "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts",
+      "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts --environment node",
       "cf:runtime:dry-run:staging": expect.stringContaining("--dry-run"),
       "cf:runtime:dry-run:canary": expect.stringContaining("runtime-canary-config.mjs dry-run runtime"),
       "cf:runtime:canary:render": expect.stringContaining("runtime-canary-config.mjs"),
