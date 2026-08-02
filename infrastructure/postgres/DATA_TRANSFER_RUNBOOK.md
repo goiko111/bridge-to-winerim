@@ -14,7 +14,7 @@ copies rows from the five staging-owned tables:
 
 The allowlist is versioned in `data-transfer/config.json`. A source database
 may contain additional platform tables, but they are never dumped. The target
-must contain exactly the 29 reviewed public tables and the sentinel
+must contain exactly the 30 reviewed public tables and the sentinel
 `public.infrastructure_metadata.environment=staging`.
 
 ## Safety contract

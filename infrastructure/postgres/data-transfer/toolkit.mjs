@@ -907,7 +907,7 @@ export function buildSafePlan(config) {
       "exported repeatable-read snapshot with LSN/timestamp",
       "provider_credentials staging-only and required empty",
       "pos_connections exported through an exact signed credential-sanitizing projection",
-      "target sentinel environment=staging and exact 29-table inventory",
+      "target sentinel environment=staging and exact 30-table inventory",
       "runtime staging tables empty before import",
       "target backup before one-transaction replacement",
       "row counts, streaming SHA-256, FK and required-empty reconciliation",

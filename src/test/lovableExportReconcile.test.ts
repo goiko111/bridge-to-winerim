@@ -41,11 +41,19 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(config.stagingOnlyTables).toEqual([
       "infrastructure_metadata",
       "provider_credentials",
+      "runtime_canary_connections",
       "runtime_connection_credentials",
       "runtime_execution_log",
       "runtime_idempotency",
     ]);
-    expect(expectedTargetTables(config)).toHaveLength(29);
+    expect(expectedTargetTables(config)).toHaveLength(30);
+    expect(config.runtimeMustRemainEmpty).toEqual([
+      "provider_credentials",
+      "runtime_canary_connections",
+      "runtime_connection_credentials",
+      "runtime_execution_log",
+      "runtime_idempotency",
+    ]);
     expect(targetReplaceTables(config)).not.toContain("infrastructure_metadata");
     expect(targetReplaceTables(config)).toContain("runtime_idempotency");
     expect(targetReplaceTables(config)).toContain("provider_credentials");
