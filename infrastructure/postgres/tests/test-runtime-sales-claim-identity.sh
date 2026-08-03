@@ -72,6 +72,30 @@ SQL
 
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
   -f "$POSTGRES_DIR/0011_runtime_sales_claim_identity.sql" >/dev/null
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'ALTER TABLE public.runtime_idempotency DROP CONSTRAINT runtime_idempotency_sales_claim_identity_scope' >/dev/null
+if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -f "$POSTGRES_DIR/0012_runtime_sales_claim_identity_immutability.sql" \
+  >"$TMP_ROOT/missing-scope.out" 2>&1; then
+  printf 'IMMUTABILITY_MIGRATION_ACCEPTED_MISSING_SCOPE_CONSTRAINT\n' >&2
+  exit 1
+fi
+grep -Fq 'sales claim scope constraint is required' "$TMP_ROOT/missing-scope.out"
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c \
+  "ALTER TABLE public.runtime_idempotency ADD CONSTRAINT runtime_idempotency_sales_claim_identity_scope CHECK (job = 'sales.claim' OR sales_claim_identity IS NULL)" >/dev/null
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'DROP INDEX public.uq_runtime_sales_claim_identity' >/dev/null
+if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -f "$POSTGRES_DIR/0012_runtime_sales_claim_identity_immutability.sql" \
+  >"$TMP_ROOT/missing-index.out" 2>&1; then
+  printf 'IMMUTABILITY_MIGRATION_ACCEPTED_MISSING_UNIQUE_INDEX\n' >&2
+  exit 1
+fi
+grep -Fq 'unique sales claim index contract is required' "$TMP_ROOT/missing-index.out"
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c \
+  "CREATE UNIQUE INDEX uq_runtime_sales_claim_identity ON public.runtime_idempotency (sales_claim_identity) WHERE job = 'sales.claim' AND sales_claim_identity IS NOT NULL" >/dev/null
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -f "$POSTGRES_DIR/0012_runtime_sales_claim_identity_immutability.sql" >/dev/null
 
 contract=$(psql "$DATABASE_URL" -XAtq -F '|' -c "
   SELECT
@@ -132,6 +156,47 @@ if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "
   exit 1
 fi
 grep -Fq 'RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABLE' "$TMP_ROOT/identity-change.out"
+
+if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "
+  UPDATE public.runtime_idempotency
+  SET sales_claim_identity = NULL
+  WHERE idempotency_key='sales-claim:v1:legacy'
+" >"$TMP_ROOT/identity-clear.out" 2>&1; then
+  printf 'SALES_CLAIM_IDENTITY_CLEAR_ACCEPTED\n' >&2
+  exit 1
+fi
+grep -Fq 'RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABLE' "$TMP_ROOT/identity-clear.out"
+
+if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "
+  UPDATE public.runtime_idempotency
+  SET result = '{}'::jsonb
+  WHERE idempotency_key='sales-claim:v1:legacy'
+" >"$TMP_ROOT/identity-result-clear.out" 2>&1; then
+  printf 'SALES_CLAIM_RESULT_CLEAR_ACCEPTED\n' >&2
+  exit 1
+fi
+grep -Fq 'RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABLE' "$TMP_ROOT/identity-result-clear.out"
+
+if psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 >"$TMP_ROOT/runtime-identity-clear.out" 2>&1 <<'SQL'
+SET ROLE middleware_runtime;
+UPDATE public.runtime_idempotency
+SET sales_claim_identity = NULL
+WHERE idempotency_key='sales-claim:v2:runtime-role';
+RESET ROLE;
+SQL
+then
+  printf 'RUNTIME_ROLE_SALES_CLAIM_IDENTITY_CLEAR_ACCEPTED\n' >&2
+  exit 1
+fi
+grep -Fq 'permission denied' "$TMP_ROOT/runtime-identity-clear.out"
+
+psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+SET ROLE middleware_runtime;
+UPDATE public.runtime_idempotency
+SET status='SUCCESS', result=result || '{"appliedQuantity":1}'::jsonb, updated_at=now()
+WHERE idempotency_key='sales-claim:v2:runtime-role';
+RESET ROLE;
+SQL
 
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 DROP TRIGGER runtime_bind_sales_claim_identity ON public.runtime_idempotency;

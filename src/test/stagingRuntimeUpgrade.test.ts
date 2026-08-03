@@ -114,7 +114,7 @@ describe("staging runtime schema upgrade gates", () => {
     expect(readme).not.toContain("Hyperdrive propio | No creado ni enlazado");
   });
 
-  it("requires migration 0011 before either staging runtime component can deploy", () => {
+  it("requires the immutable sales-claim identity contract before either runtime component can deploy", () => {
     const worker = readFileSync(
       resolve(root, "cloudflare/workers/middleware-runtime/src/worker.ts"),
       "utf8",
@@ -134,6 +134,10 @@ describe("staging runtime schema upgrade gates", () => {
       "indisvalid",
       "tgenabled IN ('O', 'A')",
       "tgtype = 23",
+      "has_column_privilege(",
+      "count(*) = 8",
+      "array_agg(column_name::text ORDER BY column_name)",
+      "grantee = 'middleware_runtime_login'",
     ]) {
       expect(worker).toContain(contract);
     }
@@ -145,6 +149,7 @@ describe("staging runtime schema upgrade gates", () => {
       "indisvalid",
       "tgenabled IN ('O','A')",
       "tgtype=23",
+      "runtime_idempotency_update_privilege_contract",
     ]) expect(verifier).toContain(contract);
     expect(deploy).toContain("verify-staging.sh");
     expect(deploy).toContain("STAGING_RUNTIME_EXECUTION_MUST_REMAIN_DISABLED");

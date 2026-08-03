@@ -29,6 +29,14 @@ directory is applied remotely by validation or replay.
 - `0003_runtime_connection_credentials.sql` through
   `0005_runtime_canary_connection_scope.sql`: encrypted credential schema and
   least-privilege, approved, expiring single-connection canary scope.
+- `0010_runtime_idempotency_lease_binding.sql` through
+  `0012_runtime_sales_claim_identity_immutability.sql`: immutable lease and
+  logical sales-claim identity. Runtime can update only the eight operational
+  receipt columns; it cannot clear or replace `sales_claim_identity`.
+- `apply-rescue-production-hardening.sh`: target-bound, plan-only-by-default
+  application of `0012` over an exact hydration-aware backup. Apply mode
+  requires project, plan, backup-manifest and action confirmations, verifies
+  the unchanged hydration fingerprint, and emits a fresh `pre-canary` backup.
 - `upgrade-staging-runtime.sh`: plan-only by default, pins the immutable
   Supabase project, accepts only the reviewed 28-table prestate, takes a mode
   `0600` logical backup in an operator-attested encrypted and durable directory,

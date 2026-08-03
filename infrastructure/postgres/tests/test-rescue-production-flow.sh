@@ -95,7 +95,7 @@ if operator_error=$("$POSTGRES_DIR/verify-rescue-production.sh" 2>&1); then
 fi
 grep -q 'runtime_login_identity expected=middleware_runtime_login' <<<"$operator_error"
 export RESCUE_PRODUCTION_RUNTIME_DATABASE_URL="postgresql://middleware_runtime_login@127.0.0.1:$PORT/winerim_rescue_production_test"
-"$POSTGRES_DIR/verify-rescue-production.sh" >/dev/null
+RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 "$POSTGRES_DIR/verify-rescue-production.sh" >/dev/null
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c 'DROP ROLE middleware_api_login, middleware_readonly_login, middleware_runtime_login' >/dev/null
 unset RESCUE_PRODUCTION_RUNTIME_DATABASE_URL
 export RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=0
@@ -464,6 +464,120 @@ test "$(awk -F= '$1=="hydration_plan_sha256" {print $2}' "$post_hydration_artifa
 test -n "$(awk -F= '$1=="hydration_mappings_semantic_sha256" {print $2}' "$post_hydration_artifact/manifest.txt")"
 test "$(sha256sum "$post_hydration_artifact/hydration-plan.json" | awk '{print $1}')" = "$(awk -F= '$1=="hydration_plan_sha256" {print $2}' "$post_hydration_artifact/manifest.txt")"
 (cd "$post_hydration_artifact" && { sha256sum -c manifest.txt.sha256 >/dev/null 2>&1 || shasum -a 256 -c manifest.txt.sha256 >/dev/null; })
+
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+CREATE ROLE middleware_api_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION INHERIT;
+CREATE ROLE middleware_readonly_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION INHERIT;
+CREATE ROLE middleware_runtime_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION INHERIT;
+GRANT middleware_api TO middleware_api_login;
+GRANT middleware_readonly TO middleware_readonly_login;
+GRANT middleware_runtime TO middleware_runtime_login;
+SQL
+export RESCUE_PRODUCTION_RUNTIME_DATABASE_URL="postgresql://middleware_runtime_login@127.0.0.1:$PORT/winerim_rescue_production_test"
+export RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3
+
+# Reconstruct the exact pre-0012 weakness and prove the target-bound hardening
+# path can upgrade it without changing the hydrated data fingerprint.
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -f "$POSTGRES_DIR/0011_runtime_sales_claim_identity.sql" >/dev/null
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'GRANT UPDATE ON public.runtime_idempotency TO middleware_runtime' >/dev/null
+pre_hardening_backup_output=$("$POSTGRES_DIR/backup-rescue-production.sh" post-hydration)
+pre_hardening_artifact=$(sed -n 's/.*artifact_dir=\([^ ]*\).*/\1/p' <<<"$pre_hardening_backup_output")
+test -n "$pre_hardening_artifact" && test -d "$pre_hardening_artifact"
+export RESCUE_PRODUCTION_HARDENING_BACKUP_ARTIFACT_DIR="$pre_hardening_artifact"
+cp "$pre_hardening_artifact/public.toc" "$TMP_ROOT/public.toc.clean"
+printf 'tampered\n' >>"$pre_hardening_artifact/public.toc"
+if tampered_artifact_error=$("$POSTGRES_DIR/apply-rescue-production-hardening.sh" 2>&1); then
+  printf 'FAIL: hardening plan accepted a tampered rollback artifact\n' >&2
+  exit 1
+fi
+grep -q 'HARDENING_BACKUP_DIGEST_REJECTED key=toc_sha256' <<<"$tampered_artifact_error"
+mv "$TMP_ROOT/public.toc.clean" "$pre_hardening_artifact/public.toc"
+chmod 600 "$pre_hardening_artifact/public.toc"
+hardening_plan_output=$("$POSTGRES_DIR/apply-rescue-production-hardening.sh")
+grep -q 'RESULT=PLAN_ONLY' <<<"$hardening_plan_output"
+hardening_plan_sha=$(sed -n 's/.*plan_sha256=\([^ ]*\).*/\1/p' <<<"$hardening_plan_output")
+hardening_manifest_sha=$(sed -n 's/.*backup_manifest_sha256=\([^ ]*\).*/\1/p' <<<"$hardening_plan_output")
+test -n "$hardening_plan_sha" && test -n "$hardening_manifest_sha"
+hardening_apply_output=$("$POSTGRES_DIR/apply-rescue-production-hardening.sh" \
+  --apply \
+  --confirm-project-ref "$PROJECT_REF" \
+  --confirm-plan-sha "$hardening_plan_sha" \
+  --confirm-backup-manifest-sha "$hardening_manifest_sha" \
+  --confirm-action APPLY_RESCUE_PRODUCTION_IDEMPOTENCY_0012)
+grep -q 'RESULT=RESCUE_PRODUCTION_HARDENING_APPLIED' <<<"$hardening_apply_output"
+grep -q 'RESCUE_PRODUCTION_BACKUP_OK phase=pre-canary' <<<"$hardening_apply_output"
+test "$(psql "$RESCUE_PRODUCTION_DATABASE_URL" -XAtq -c "SELECT count(*) FROM pg_trigger trigger_contract JOIN pg_class table_class ON table_class.oid=trigger_contract.tgrelid JOIN pg_proc trigger_function ON trigger_function.oid=trigger_contract.tgfoid WHERE table_class.oid='public.runtime_idempotency'::regclass AND trigger_contract.tgname='runtime_bind_sales_claim_identity' AND NOT trigger_contract.tgisinternal AND position('NEW.sales_claim_identity IS DISTINCT FROM OLD.sales_claim_identity' IN trigger_function.prosrc)>0 AND (SELECT count(*) FROM unnest(trigger_contract.tgattr))=4 AND NOT has_table_privilege('middleware_runtime','public.runtime_idempotency','UPDATE') AND NOT has_column_privilege('middleware_runtime','public.runtime_idempotency','sales_claim_identity','UPDATE')")" = 1
+. "$POSTGRES_DIR/postgres-client-tools.sh"
+configure_postgres_tools "$RESCUE_PRODUCTION_DATABASE_URL"
+test "$(hydration_database_fingerprint "$RESCUE_PRODUCTION_DATABASE_URL" "$HYDRATION_CONNECTION_ID")" = "$HYDRATION_DIGEST"
+unset RESCUE_PRODUCTION_HARDENING_BACKUP_ARTIFACT_DIR
+
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'GRANT UPDATE (idempotency_key) ON public.runtime_idempotency TO middleware_runtime' >/dev/null
+if excessive_role_grant_error=$("$POSTGRES_DIR/verify-rescue-production.sh" 2>&1); then
+  printf 'FAIL: verifier accepted an extra runtime role UPDATE column\n' >&2
+  exit 1
+fi
+grep -q 'runtime_idempotency_update_privilege_contract' <<<"$excessive_role_grant_error"
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'REVOKE UPDATE (idempotency_key) ON public.runtime_idempotency FROM middleware_runtime' >/dev/null
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'GRANT UPDATE (sales_claim_identity) ON public.runtime_idempotency TO middleware_runtime_login' >/dev/null
+if direct_login_grant_error=$("$POSTGRES_DIR/verify-rescue-production.sh" 2>&1); then
+  printf 'FAIL: verifier accepted a direct runtime login UPDATE grant\n' >&2
+  exit 1
+fi
+grep -q 'runtime_idempotency_update_privilege_contract' <<<"$direct_login_grant_error"
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+  -c 'REVOKE UPDATE (sales_claim_identity) ON public.runtime_idempotency FROM middleware_runtime_login' >/dev/null
+
+if empty_contract_error=$(env \
+  -u RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID \
+  -u RESCUE_PRODUCTION_HYDRATION_PLAN_FILE \
+  -u RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_WINES \
+  -u RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS \
+  -u RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS \
+  -u RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS \
+  "$POSTGRES_DIR/backup-rescue-production.sh" pre-canary 2>&1); then
+  printf 'FAIL: pre-canary backup accepted hydrated rows without the exact hydration contract\n' >&2
+  exit 1
+fi
+grep -q 'PRE_CANARY_INERT_STATE_VERIFICATION_FAILED' <<<"$empty_contract_error"
+
+RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 "$POSTGRES_DIR/verify-rescue-production.sh" >/dev/null
+hydrated_pre_canary_output=$("$POSTGRES_DIR/backup-rescue-production.sh" pre-canary)
+grep -q 'RESCUE_PRODUCTION_BACKUP_OK phase=pre-canary' <<<"$hydrated_pre_canary_output"
+hydrated_pre_canary_artifact=$(sed -n 's/.*artifact_dir=\([^ ]*\).*/\1/p' <<<"$hydrated_pre_canary_output")
+test -n "$hydrated_pre_canary_artifact" && test -d "$hydrated_pre_canary_artifact"
+test "$(awk -F= '$1=="schema_version" {print $2}' "$hydrated_pre_canary_artifact/manifest.txt")" = 5
+test "$(awk -F= '$1=="phase" {print $2}' "$hydrated_pre_canary_artifact/manifest.txt")" = pre-canary
+test "$(awk -F= '$1=="hydration_connection_id" {print $2}' "$hydrated_pre_canary_artifact/manifest.txt")" = "$HYDRATION_CONNECTION_ID"
+test "$(awk -F= '$1=="hydration_digest" {print $2}' "$hydrated_pre_canary_artifact/manifest.txt")" = "$HYDRATION_DIGEST"
+test "$(sha256sum "$hydrated_pre_canary_artifact/hydration-plan.json" | awk '{print $1}')" = "$(awk -F= '$1=="hydration_plan_sha256" {print $2}' "$hydrated_pre_canary_artifact/manifest.txt")"
+(cd "$hydrated_pre_canary_artifact" && { sha256sum -c manifest.txt.sha256 >/dev/null 2>&1 || shasum -a 256 -c manifest.txt.sha256 >/dev/null; })
+
+export RESCUE_PRODUCTION_ROLLBACK_ARTIFACT_DIR="$hydrated_pre_canary_artifact"
+hydrated_rollback_plan=$("$POSTGRES_DIR/rollback-rescue-production.sh")
+grep -q "scope=hydration-only:$HYDRATION_CONNECTION_ID" <<<"$hydrated_rollback_plan"
+hydrated_rollback_sha=$(sed -n 's/.*plan_sha256=\([^ ]*\).*/\1/p' <<<"$hydrated_rollback_plan")
+test -n "$hydrated_rollback_sha"
+hydrated_rollback_output=$("$POSTGRES_DIR/rollback-rescue-production.sh" \
+  --apply \
+  --confirm-project-ref "$PROJECT_REF" \
+  --confirm-plan-sha "$hydrated_rollback_sha" \
+  --confirm-action ROLLBACK_RESCUE_PRODUCTION_TO_PRE_CANARY)
+grep -q 'RESULT=RESCUE_PRODUCTION_ROLLED_BACK_TO_PRE_CANARY' <<<"$hydrated_rollback_output"
+hydrated_rollback_counts=$(psql "$RESCUE_PRODUCTION_DATABASE_URL" -XAtq -c "SELECT (SELECT count(*) FROM public.pos_connections) || '|' || (SELECT count(*) FROM public.pos_connections WHERE enabled OR catalog_sync_enabled OR sync_mode<>'PULL_ONLY' OR write_mode<>'NONE') || '|' || (SELECT count(*) FROM public.winerim_wines WHERE connection_id='$HYDRATION_CONNECTION_ID'::uuid) || '|' || (SELECT count(*) FROM public.provider_products WHERE connection_id='$HYDRATION_CONNECTION_ID'::uuid) || '|' || (SELECT count(*) FROM public.product_mappings WHERE connection_id='$HYDRATION_CONNECTION_ID'::uuid) || '|' || (SELECT count(*) FROM public.agora_master_data WHERE connection_id='$HYDRATION_CONNECTION_ID'::uuid)")
+test "$hydrated_rollback_counts" = '31|0|70|409|72|1'
+configure_postgres_tools "$RESCUE_PRODUCTION_DATABASE_URL"
+test "$(hydration_database_fingerprint "$RESCUE_PRODUCTION_DATABASE_URL" "$HYDRATION_CONNECTION_ID")" = "$HYDRATION_DIGEST"
+unset RESCUE_PRODUCTION_ROLLBACK_ARTIFACT_DIR
+
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c 'DROP ROLE middleware_api_login, middleware_readonly_login, middleware_runtime_login' >/dev/null
+unset RESCUE_PRODUCTION_RUNTIME_DATABASE_URL
+export RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=0
 
 createdb -h 127.0.0.1 -p "$PORT" winerim_rescue_restore_test
 psql "$RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE' >/dev/null

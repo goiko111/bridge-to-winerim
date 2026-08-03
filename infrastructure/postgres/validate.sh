@@ -15,6 +15,8 @@ RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
 RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
 RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
 RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
+RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
+RESCUE_PRODUCTION_HARDENING_APPLIER="$SCRIPT_DIR/apply-rescue-production-hardening.sh"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
 RELEASE_VALIDATOR="$SCRIPT_DIR/validate-release-addendum.sh"
@@ -50,12 +52,39 @@ for required_file in \
   "$RUNTIME_CATALOG_PERMISSIONS" \
   "$RUNTIME_IDEMPOTENCY_LEASE_BINDING" \
   "$RUNTIME_SALES_CLAIM_IDENTITY" \
+  "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY" \
+  "$RESCUE_PRODUCTION_HARDENING_APPLIER" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
   "$RELEASE_VALIDATOR"
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'APPLY_RESCUE_PRODUCTION_IDEMPOTENCY_0012' \
+  'RESCUE_PRODUCTION_HARDENING_BACKUP_ARTIFACT_DIR' \
+  'HARDENING_DATABASE_DIGEST_REJECTED' \
+  'verify-rescue-production.sh' \
+  'backup-rescue-production.sh" pre-canary'
+do
+  if ! rg -F "$required_pattern" "$RESCUE_PRODUCTION_HARDENING_APPLIER" >/dev/null; then
+    fail "rescue production hardening applier is missing: $required_pattern"
+  fi
+done
+
+for required_pattern in \
+  'UPDATE OF connection_id, job, result, sales_claim_identity' \
+  'NEW.sales_claim_identity IS DISTINCT FROM OLD.sales_claim_identity' \
+  'REVOKE UPDATE ON public.runtime_idempotency FROM middleware_runtime' \
+  'GRANT UPDATE (' \
+  'uq_runtime_sales_claim_identity' \
+  'runtime_idempotency_sales_claim_identity_scope'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY" >/dev/null; then
+    fail "runtime sales claim immutability addendum is missing: $required_pattern"
   fi
 done
 

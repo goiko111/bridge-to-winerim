@@ -69,14 +69,55 @@ verify_artifact_digest "$prerequisites" restore_prerequisites_sha256
 phase=$(manifest_value phase)
 case "$phase" in
   pre-canary)
-    test "$(manifest_value schema_version)" = 3 || { printf 'ROLLBACK_PRE_CANARY_SCHEMA_VERSION_REJECTED\n' >&2; exit 3; }
+    pre_canary_schema_version=$(manifest_value schema_version)
+    case "$pre_canary_schema_version" in 3|5) ;; *) printf 'ROLLBACK_PRE_CANARY_SCHEMA_VERSION_REJECTED\n' >&2; exit 3 ;; esac
     test "$(manifest_value observed_environment)" = rescue-production || { printf 'ROLLBACK_PRE_CANARY_ENVIRONMENT_REJECTED\n' >&2; exit 3; }
     test "$(manifest_value public_table_count)" = 30 || { printf 'ROLLBACK_PRE_CANARY_TABLES_REJECTED\n' >&2; exit 3; }
     if [ "$target_mode" != local-disposable ]; then
       test "$(manifest_value backup_storage)" = encrypted-disk-image || { printf 'ROLLBACK_PRE_CANARY_STORAGE_REJECTED\n' >&2; exit 3; }
     fi
     test -n "$RUNTIME_DATABASE_URL" || { printf 'RESCUE_PRODUCTION_RUNTIME_DATABASE_URL_REQUIRED\n' >&2; exit 3; }
-    expected_inventory=$(awk 'BEGIN {OFS="\t"} $0=="infrastructure_metadata" {print $0,1; next} $0=="pos_connections" {print $0,31; next} {print $0,0}' "$SCRIPT_DIR/expected-tables-runtime-postupgrade.txt")
+    if [ "$pre_canary_schema_version" = 5 ]; then
+      hydration_plan_artifact="$ARTIFACT_DIR/hydration-plan.json"
+      test -f "$hydration_plan_artifact" && test ! -L "$hydration_plan_artifact" || {
+        printf 'ROLLBACK_HYDRATION_PLAN_ARTIFACT_REJECTED\n' >&2
+        exit 3
+      }
+      verify_artifact_digest "$hydration_plan_artifact" hydration_plan_sha256
+      hydration_connection_id=$(manifest_value hydration_connection_id)
+      hydration_wines=$(manifest_value hydration_winerim_wines)
+      hydration_products=$(manifest_value hydration_provider_products)
+      hydration_mappings=$(manifest_value hydration_product_mappings)
+      hydration_master=$(manifest_value hydration_master_rows)
+      hydration_digest=$(manifest_value hydration_digest)
+      if [[ ! "$hydration_connection_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then
+        printf 'ROLLBACK_HYDRATION_CONNECTION_ID_REJECTED\n' >&2
+        exit 3
+      fi
+      for hydration_count in "$hydration_wines" "$hydration_products" "$hydration_mappings" "$hydration_master"; do
+        case "$hydration_count" in ''|*[!0-9]*) printf 'ROLLBACK_HYDRATION_COUNTS_REJECTED\n' >&2; exit 3 ;; esac
+        [ "$hydration_count" -gt 0 ] || { printf 'ROLLBACK_HYDRATION_COUNTS_REJECTED\n' >&2; exit 3; }
+      done
+      test "$hydration_master" = 1 || { printf 'ROLLBACK_HYDRATION_MASTER_COUNT_REJECTED\n' >&2; exit 3; }
+      [[ "$hydration_digest" =~ ^[0-9a-f]{64}$ ]] || { printf 'ROLLBACK_HYDRATION_DIGEST_REJECTED\n' >&2; exit 3; }
+      if ! node - "$hydration_plan_artifact" "$hydration_connection_id" "$hydration_wines" "$hydration_products" "$hydration_mappings" "$hydration_digest" <<'NODE'
+const { readFileSync } = require("node:fs");
+const [path, connectionId, wines, products, mappings, digest] = process.argv.slice(2);
+const plan = JSON.parse(readFileSync(path, "utf8"));
+if (plan?.schemaVersion !== 2 || plan?.kind !== "disabled-connection-hydration"
+  || plan.connectionId !== connectionId || plan.hydrationDigest !== digest
+  || plan?.counts?.currentWinerimWines !== Number(wines)
+  || plan?.counts?.currentAgoraProducts !== Number(products)
+  || plan?.counts?.acceptedMappings !== Number(mappings)) process.exit(1);
+NODE
+      then
+        printf 'ROLLBACK_HYDRATION_PLAN_CONTRACT_REJECTED\n' >&2
+        exit 3
+      fi
+      expected_inventory=$(awk -v wines="$hydration_wines" -v products="$hydration_products" -v mappings="$hydration_mappings" -v master="$hydration_master" 'BEGIN {OFS="\t"} $0=="infrastructure_metadata" {print $0,1; next} $0=="pos_connections" {print $0,31; next} $0=="winerim_wines" {print $0,wines; next} $0=="provider_products" {print $0,products; next} $0=="product_mappings" {print $0,mappings; next} $0=="agora_master_data" {print $0,master; next} {print $0,0}' "$SCRIPT_DIR/expected-tables-runtime-postupgrade.txt")
+    else
+      expected_inventory=$(awk 'BEGIN {OFS="\t"} $0=="infrastructure_metadata" {print $0,1; next} $0=="pos_connections" {print $0,31; next} {print $0,0}' "$SCRIPT_DIR/expected-tables-runtime-postupgrade.txt")
+    fi
     if ! diff -u <(printf '%s\n' "$expected_inventory") "$inventory" >&2; then
       printf 'ROLLBACK_PRE_CANARY_NOT_INERT\n' >&2
       exit 3
@@ -223,8 +264,26 @@ test "$CONFIRM_ACTION" = "$confirm_action_expected" || { printf 'CONFIRM_ACTION_
 if [ "$phase" = pre-canary ]; then
   "$PSQL_CMD" "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$prerequisites" >/dev/null
   "$PG_RESTORE_CMD" --exit-on-error --no-owner --dbname "$DATABASE_URL" "$dump" >/dev/null
-  RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 "$SCRIPT_DIR/verify-rescue-production.sh" >/dev/null
-  "$SCRIPT_DIR/backup-rescue-production.sh" post-canary-rollback
+  if [ "$pre_canary_schema_version" = 5 ]; then
+    RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 \
+      RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID="$hydration_connection_id" \
+      RESCUE_PRODUCTION_HYDRATION_PLAN_FILE="$hydration_plan_artifact" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_WINES="$hydration_wines" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS="$hydration_products" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS="$hydration_mappings" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS="$hydration_master" \
+      "$SCRIPT_DIR/verify-rescue-production.sh" >/dev/null
+    RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID="$hydration_connection_id" \
+      RESCUE_PRODUCTION_HYDRATION_PLAN_FILE="$hydration_plan_artifact" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_WINES="$hydration_wines" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS="$hydration_products" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS="$hydration_mappings" \
+      RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS="$hydration_master" \
+      "$SCRIPT_DIR/backup-rescue-production.sh" post-canary-rollback
+  else
+    RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 "$SCRIPT_DIR/verify-rescue-production.sh" >/dev/null
+    "$SCRIPT_DIR/backup-rescue-production.sh" post-canary-rollback
+  fi
   printf 'RESULT=RESCUE_PRODUCTION_ROLLED_BACK_TO_PRE_CANARY project_ref=%s connections=31 unsafe=0 runtime_rows=0\n' "$project_ref"
   exit 0
 fi

@@ -794,6 +794,16 @@ async function readiness(
           )
           AND EXISTS (
             SELECT 1
+            FROM pg_constraint constraint_contract
+            WHERE constraint_contract.conrelid = 'public.runtime_idempotency'::regclass
+              AND constraint_contract.conname = 'runtime_idempotency_sales_claim_identity_scope'
+              AND constraint_contract.contype = 'c'
+              AND constraint_contract.convalidated
+              AND pg_get_constraintdef(constraint_contract.oid)
+                = 'CHECK (((job = ''sales.claim''::text) OR (sales_claim_identity IS NULL)))'
+          )
+          AND EXISTS (
+            SELECT 1
             FROM pg_trigger trigger_contract
             JOIN pg_class table_class ON table_class.oid = trigger_contract.tgrelid
             JOIN pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
@@ -812,15 +822,51 @@ async function readiness(
               AND (
                 SELECT count(*)
                 FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum)
-              ) = 3
+              ) = 4
               AND (
                 SELECT count(DISTINCT table_attribute.attname)
                 FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum)
                 JOIN pg_attribute table_attribute
                   ON table_attribute.attrelid = table_class.oid
                   AND table_attribute.attnum = trigger_attribute.attnum
-                WHERE table_attribute.attname IN ('connection_id', 'job', 'result')
-              ) = 3
+                WHERE table_attribute.attname IN ('connection_id', 'job', 'result', 'sales_claim_identity')
+              ) = 4
+          )
+          AND NOT has_table_privilege('middleware_runtime', 'public.runtime_idempotency', 'UPDATE')
+          AND NOT has_column_privilege(
+            'middleware_runtime',
+            'public.runtime_idempotency',
+            'sales_claim_identity',
+            'UPDATE'
+          )
+          AND (
+            SELECT count(*) = 8
+              AND count(DISTINCT column_name) = 8
+              AND array_agg(column_name::text ORDER BY column_name) = ARRAY[
+                'attempt', 'lease_expires_at', 'lease_token', 'message_id',
+                'payload_sha256', 'result', 'status', 'updated_at'
+              ]::text[]
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'runtime_idempotency'
+              AND grantee = 'middleware_runtime'
+              AND privilege_type = 'UPDATE'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM information_schema.table_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'runtime_idempotency'
+              AND grantee = 'middleware_runtime_login'
+              AND privilege_type = 'UPDATE'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM information_schema.column_privileges
+            WHERE table_schema = 'public'
+              AND table_name = 'runtime_idempotency'
+              AND grantee = 'middleware_runtime_login'
+              AND privilege_type = 'UPDATE'
           ) AS runtime_idempotency_ready,
         to_regclass('public.runtime_execution_log') IS NOT NULL AS runtime_execution_log_ready,
         CASE

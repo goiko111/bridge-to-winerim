@@ -14,13 +14,17 @@ EXPECTED_HYDRATION_WINERIM_WINES=${RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_
 EXPECTED_HYDRATION_PROVIDER_PRODUCTS=${RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS:-}
 EXPECTED_HYDRATION_PRODUCT_MAPPINGS=${RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS:-}
 EXPECTED_HYDRATION_MASTER_ROWS=${RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS:-}
+HYDRATION_AWARE=0
 
 case "$PHASE" in
   pre-bootstrap|post-bootstrap|post-hydration|pre-canary|pre-rollback|post-rollback|post-canary-rollback) ;;
   *) printf 'Usage: %s <pre-bootstrap|post-bootstrap|post-hydration|pre-canary|pre-rollback|post-rollback|post-canary-rollback>\n' "$0" >&2; exit 2 ;;
 esac
 
-if [ "$PHASE" = post-hydration ]; then
+if [ "$PHASE" = post-hydration ] \
+  || { [ "$PHASE" = pre-canary ] && [ -n "$HYDRATION_CONNECTION_ID" ]; } \
+  || { [ "$PHASE" = post-canary-rollback ] && [ -n "$HYDRATION_CONNECTION_ID" ]; }; then
+  HYDRATION_AWARE=1
   if [[ ! "$HYDRATION_CONNECTION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then
     printf 'RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID_INVALID\n' >&2
     exit 2
@@ -153,7 +157,7 @@ case "$PHASE" in
     ;;
 esac
 
-if [ "$PHASE" = post-hydration ]; then
+if [ "$HYDRATION_AWARE" = 1 ]; then
   hydration_plan_metadata=$(node - "$HYDRATION_PLAN_FILE" "$HYDRATION_CONNECTION_ID" \
     "$EXPECTED_HYDRATION_WINERIM_WINES" "$EXPECTED_HYDRATION_PROVIDER_PRODUCTS" \
     "$EXPECTED_HYDRATION_PRODUCT_MAPPINGS" "$EXPECTED_HYDRATION_MASTER_ROWS" <<'NODE'
@@ -333,6 +337,12 @@ if [ "$PHASE" = pre-canary ]; then
     exit 3
   }
   if ! RESCUE_PRODUCTION_EXPECTED_LOGIN_ROLES=3 \
+    RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID="$HYDRATION_CONNECTION_ID" \
+    RESCUE_PRODUCTION_HYDRATION_PLAN_FILE="$HYDRATION_PLAN_FILE" \
+    RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_WINES="$EXPECTED_HYDRATION_WINERIM_WINES" \
+    RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS="$EXPECTED_HYDRATION_PROVIDER_PRODUCTS" \
+    RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS="$EXPECTED_HYDRATION_PRODUCT_MAPPINGS" \
+    RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS="$EXPECTED_HYDRATION_MASTER_ROWS" \
     "$SCRIPT_DIR/verify-rescue-production.sh" >/dev/null; then
     printf 'PRE_CANARY_INERT_STATE_VERIFICATION_FAILED\n' >&2
     exit 3
@@ -398,12 +408,12 @@ inventory_sha=$("${SHA256[@]}" "$inventory" | awk '{print $1}')
 prerequisites_sha=$("${SHA256[@]}" "$prerequisites" | awk '{print $1}')
 table_count=$(wc -l <"$inventory" | tr -d ' ')
 manifest_schema_version=3
-[ "$PHASE" != post-hydration ] || manifest_schema_version=5
+[ "$HYDRATION_AWARE" != 1 ] || manifest_schema_version=5
 printf 'schema_version=%s\nproject_ref=%s\nexpected_environment=rescue-production\nobserved_environment=%s\nphase=%s\nbackup_storage=%s\npostgres_server_major=%s\npsql_major=%s\npg_dump_major=%s\npg_restore_major=%s\npublic_table_count=%s\ndump_sha256=%s\ntoc_sha256=%s\nroles_sha256=%s\nmemberships_sha256=%s\ninventory_sha256=%s\nrestore_prerequisites_sha256=%s\n' \
   "$manifest_schema_version" "$project_ref" "$environment" "$PHASE" "$backup_storage" \
   "$POSTGRES_SERVER_MAJOR" "$POSTGRES_PSQL_MAJOR" "$POSTGRES_DUMP_MAJOR" "$POSTGRES_RESTORE_MAJOR" \
   "$table_count" "$dump_sha" "$toc_sha" "$roles_sha" "$memberships_sha" "$inventory_sha" "$prerequisites_sha" >"$manifest"
-if [ "$PHASE" = post-hydration ]; then
+if [ "$HYDRATION_AWARE" = 1 ]; then
   hydration_plan_artifact="$artifact_dir/hydration-plan.json"
   cp "$HYDRATION_PLAN_FILE" "$hydration_plan_artifact"
   chmod 600 "$hydration_plan_artifact"
