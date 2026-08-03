@@ -93,6 +93,11 @@ SHA-256 values in the deployment manifest. The package smoke must start the
 consumer and executor bundles in local Workerd before deployment. Deploy only
 those rendered TOMLs and bundles:
 
+Generate the random writer-fence proof first in the same secure environment and
+capture its SHA-256 without writing the plaintext to Git or the deployment
+manifest. Keep the plaintext only for the later Secrets Store binding and grant
+generation.
+
 ```sh
 CANARY_RUN_ID=<SHORT_UNIQUE_RUN> \
 CANARY_CONNECTION_ID=<UUID> \
@@ -182,8 +187,10 @@ separately rotatable Agora credential and a different reviewed manifest.
 5. Probe the old writer with its revoked credential. It must return `401` or
    `403`. Save a sanitized response and its SHA-256; never save the token.
 6. Probe the rotated credential with a read-only endpoint. It must succeed.
-7. Generate a random proof secret of at least 32 bytes. This is not the
-   provider credential. Bind it only to the canary runtime.
+7. Reuse the random proof secret generated before resource rendering. It must
+   be at least 32 bytes, its SHA-256 must equal the value already bound in the
+   deployment manifest, and it is not a provider credential. Bind the plaintext
+   only to the canary runtime.
 8. Prepare the grant in a secure temporary path:
 
    ```sh

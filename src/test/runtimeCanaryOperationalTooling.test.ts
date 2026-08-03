@@ -658,6 +658,21 @@ describe("rescue canary retirement tooling", () => {
     expect(plan.databaseFailureAction).toContain("fresh gate");
   });
 
+  it("accepts legacy v2 manifests only for append-only retirement", () => {
+    const manifest = deploymentManifest();
+    manifest.version = 2;
+    delete manifest.writerFence;
+    const plan = rescueCanaryRetirementPlan({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      deploymentManifest: manifest,
+      deploymentManifestSha256: "a".repeat(64),
+    });
+
+    expect(plan.database).toMatchObject({ behavior: "deactivate-only", deletesRows: false });
+  });
+
   it("rejects a retirement manifest from another run or with a changed hash", () => {
     const manifest = deploymentManifest();
     expect(() => rescueCanaryRetirementPlan({

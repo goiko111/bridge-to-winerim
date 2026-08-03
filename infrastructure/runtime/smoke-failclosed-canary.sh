@@ -55,7 +55,11 @@ if (
   || manifest.credentialBinding?.keyVersion !== "v1"
   || manifest.credentialBinding?.exclusiveAttestationSha256 !== "b".repeat(64)
   || manifest.credentialBinding?.credentialSetSha256 !== "c".repeat(64)
+  || manifest.writerFence?.holderId !== "smoke-holder"
   || manifest.writerFence?.proofSha256 !== "d".repeat(64)
+  || manifest.writerFence?.exclusiveCredentialRef
+    !== "runtime-vault://postgres/11111111-1111-4111-8111-111111111111/agora/winerim"
+  || !/^[a-f0-9]{64}$/.test(manifest.writerFence?.credentialBinding ?? "")
   || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== "winerim"
   || manifest.credentialPolicy?.agoraCredentialMode !== "shared-read-only"
   || manifest.mutationPolicy?.agoraCatalogApply !== false
