@@ -205,21 +205,33 @@ Record the exact artifact directory and manifest digest outside shell history.
 The backup script refuses this phase unless the inert verifier passes and the
 macOS backing image is confirmed encrypted by `hdiutil`.
 
-After the separately reviewed preparation writes exactly one candidate scope,
-one enabled connection and the two active encrypted credentials, run the
-read-only pre-canary gate before starting any consumer:
+Migration `0013_runtime_canary_control_plane_history.sql` is required before
+credential preparation. It refuses a non-empty credential or canary control
+plane, changes each identity to `(connection_id, run_id)`, adds terminal
+history and immutable evidence hashes, and permits only one global active run.
+Apply it only while rescue production remains inert and after a fresh verified
+backup. A successful migration does not enable a connection or credential.
+
+After the separately reviewed provisioning and atomic activation write exactly
+one candidate scope, one enabled connection and the two active encrypted
+credentials for one immutable run, execute the read-only pre-canary gate before
+starting any consumer:
 
 ```bash
 export RESCUE_PRODUCTION_CANARY_CONNECTION_ID='<approved-connection-uuid>'
+export RESCUE_PRODUCTION_CANARY_RUN_ID='<approved-run-id>'
 infrastructure/postgres/verify-rescue-production-pre-canary.sh
 ```
 
 That gate requires the enabled connection and unique unexpired canary scope to
-have the same UUID, exactly `agora` and `winerim` active credentials, no active
-catalog/control plane outside the candidate, and zero prior outbound debt,
-idempotency/execution receipts, sales, lines, or stock receipts. It also
-recomputes the complete four-table hydration fingerprint and requires it to
-equal the exact digest stored in the master hydration marker.
+have the same UUID and run ID, persisted deployment/fence/credential-set
+hashes, exactly `agora` and `winerim` active credentials tied to that run, no
+active catalog/control plane outside the candidate, zero prior outbound debt
+and zero operational receipts for every other connection. `bootstrap` also
+requires zero candidate receipts; `rotate` allows the candidate's preserved
+history only when all earlier scope and credential generations are terminal.
+It also recomputes the complete four-table hydration fingerprint and requires
+it to equal the exact digest stored in the master hydration marker.
 
 ## Roll back to pre-canary
 

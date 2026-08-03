@@ -16,6 +16,7 @@ RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
 RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
 RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
+RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 
 {
@@ -75,6 +76,9 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN runtime sales claim identity immutability\n'
   cat "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY"
   printf '\n-- END runtime sales claim identity immutability\n'
+  printf '\n-- BEGIN runtime canary control-plane history\n'
+  cat "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY"
+  printf '\n-- END runtime canary control-plane history\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"

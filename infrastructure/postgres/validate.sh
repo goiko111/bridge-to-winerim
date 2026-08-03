@@ -16,6 +16,7 @@ RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
 RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
 RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
+RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
 RESCUE_PRODUCTION_HARDENING_APPLIER="$SCRIPT_DIR/apply-rescue-production-hardening.sh"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
@@ -53,6 +54,7 @@ for required_file in \
   "$RUNTIME_IDEMPOTENCY_LEASE_BINDING" \
   "$RUNTIME_SALES_CLAIM_IDENTITY" \
   "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY" \
+  "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY" \
   "$RESCUE_PRODUCTION_HARDENING_APPLIER" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
@@ -60,6 +62,20 @@ for required_file in \
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'PRIMARY KEY (connection_id, credential_kind, run_id)' \
+  'CREATE UNIQUE INDEX idx_runtime_connection_credentials_active' \
+  'PRIMARY KEY (connection_id, run_id)' \
+  'generation_mode IN (' \
+  'scope.run_id = runtime_connection_credentials.run_id' \
+  'RUNTIME_CANARY_SCOPE_TERMINAL' \
+  'RUNTIME_CREDENTIAL_REACTIVATION_REJECTED'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY" >/dev/null; then
+    fail "runtime canary control-plane history addendum is missing: $required_pattern"
   fi
 done
 

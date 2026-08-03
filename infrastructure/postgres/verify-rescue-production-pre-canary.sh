@@ -7,6 +7,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DATABASE_URL=${RESCUE_PRODUCTION_DATABASE_URL:-}
 RUNTIME_DATABASE_URL=${RESCUE_PRODUCTION_RUNTIME_DATABASE_URL:-}
 CANARY_CONNECTION_ID=${RESCUE_PRODUCTION_CANARY_CONNECTION_ID:-}
+CANARY_RUN_ID=${RESCUE_PRODUCTION_CANARY_RUN_ID:-}
 EXPECTED_CONNECTIONS=${RESCUE_PRODUCTION_EXPECTED_CONNECTIONS:-31}
 EXPECTED_CANARY_WINERIM_WINES=${RESCUE_PRODUCTION_EXPECTED_CANARY_WINERIM_WINES:-70}
 EXPECTED_CANARY_PROVIDER_PRODUCTS=${RESCUE_PRODUCTION_EXPECTED_CANARY_PROVIDER_PRODUCTS:-409}
@@ -29,6 +30,10 @@ for expected_catalog_count in \
 done
 if [[ ! "$CANARY_CONNECTION_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]; then
   printf 'RESCUE_PRODUCTION_CANARY_CONNECTION_ID_INVALID\n' >&2
+  exit 2
+fi
+if [[ ! "$CANARY_RUN_ID" =~ ^[a-z0-9][a-z0-9-]{2,31}$ ]]; then
+  printf 'RESCUE_PRODUCTION_CANARY_RUN_ID_INVALID\n' >&2
   exit 2
 fi
 for command_name in node psql; do
@@ -102,9 +107,17 @@ check_equals "$DATABASE_URL" noncandidate_control_plane_unsafe 0 "SELECT count(*
 
 check_equals "$DATABASE_URL" active_canary_scopes 1 "SELECT count(*) FROM public.runtime_canary_connections WHERE active"
 check_equals "$DATABASE_URL" active_canary_scope_identity "$CANARY_CONNECTION_ID" "SELECT connection_id::text FROM public.runtime_canary_connections WHERE active"
-check_equals "$DATABASE_URL" active_canary_scope_valid 1 "SELECT count(*) FROM public.runtime_canary_connections WHERE connection_id=$candidate AND active AND approved_at IS NOT NULL AND approved_at<=now() AND expires_at IS NOT NULL AND expires_at>now()"
+check_equals "$DATABASE_URL" active_canary_scope_run "$CANARY_RUN_ID" "SELECT run_id FROM public.runtime_canary_connections WHERE active AND connection_id=$candidate"
+check_equals "$DATABASE_URL" active_canary_scope_valid 1 "SELECT count(*) FROM public.runtime_canary_connections WHERE connection_id=$candidate AND run_id='$CANARY_RUN_ID' AND note='rescue-canary-run:$CANARY_RUN_ID' AND status='ACTIVE' AND active AND approved_at IS NOT NULL AND approved_at<=now() AND expires_at IS NOT NULL AND expires_at>now() AND deployment_manifest_sha256 ~ '^[a-f0-9]{64}$' AND writer_fence_grant_sha256 ~ '^[a-f0-9]{64}$' AND credential_set_sha256 ~ '^[a-f0-9]{64}$' AND activated_at IS NOT NULL AND retired_at IS NULL"
+canary_generation_mode=$(query_scalar "$DATABASE_URL" active_canary_generation_mode "SELECT generation_mode FROM public.runtime_canary_connections WHERE connection_id=$candidate AND run_id='$CANARY_RUN_ID' AND active") || canary_generation_mode=''
+if [[ ! "$canary_generation_mode" =~ ^(bootstrap|rotate)$ ]]; then
+  printf 'FAIL: active_canary_generation_mode invalid=%s\n' "$canary_generation_mode" >&2
+  FAILURES=$((FAILURES + 1))
+else
+  printf 'OK: active_canary_generation_mode=%s\n' "$canary_generation_mode"
+fi
 check_equals "$DATABASE_URL" active_runtime_credentials 2 "SELECT count(*) FROM public.runtime_connection_credentials WHERE active"
-check_equals "$DATABASE_URL" active_runtime_credential_kinds 'agora,winerim' "SELECT string_agg(credential_kind, ',' ORDER BY credential_kind) FROM public.runtime_connection_credentials WHERE active AND connection_id=$candidate"
+check_equals "$DATABASE_URL" active_runtime_credential_kinds 'agora,winerim' "SELECT string_agg(credential_kind, ',' ORDER BY credential_kind) FROM public.runtime_connection_credentials WHERE active AND connection_id=$candidate AND run_id='$CANARY_RUN_ID' AND activated_at IS NOT NULL AND retired_at IS NULL AND attestation_sha256 ~ '^[a-f0-9]{64}$'"
 check_equals "$DATABASE_URL" active_runtime_credentials_outside_candidate 0 "SELECT count(*) FROM public.runtime_connection_credentials WHERE active AND connection_id<>$candidate"
 
 check_equals "$DATABASE_URL" candidate_winerim_wines "$EXPECTED_CANARY_WINERIM_WINES" "SELECT count(*) FROM public.winerim_wines WHERE connection_id=$candidate"
@@ -191,11 +204,21 @@ else
 fi
 
 check_equals "$DATABASE_URL" prior_outbound_debt 0 "SELECT count(*) FROM public.outbound_tasks"
-check_equals "$DATABASE_URL" prior_runtime_idempotency_receipts 0 "SELECT count(*) FROM public.runtime_idempotency"
-check_equals "$DATABASE_URL" prior_runtime_execution_receipts 0 "SELECT count(*) FROM public.runtime_execution_log"
-check_equals "$DATABASE_URL" prior_sales_events 0 "SELECT count(*) FROM public.sales_events"
-check_equals "$DATABASE_URL" prior_sales_line_items 0 "SELECT count(*) FROM public.sales_line_items"
-check_equals "$DATABASE_URL" prior_stock_receipts 0 "SELECT count(*) FROM public.stock_sync_log"
+check_equals "$DATABASE_URL" noncandidate_runtime_receipts 0 "SELECT (SELECT count(*) FROM public.runtime_idempotency WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.runtime_execution_log WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.sales_events WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.sales_line_items WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.stock_sync_log WHERE connection_id<>$candidate)"
+candidate_runtime_idempotency=$(query_scalar "$DATABASE_URL" candidate_runtime_idempotency "SELECT count(*) FROM public.runtime_idempotency WHERE connection_id=$candidate") || candidate_runtime_idempotency=''
+candidate_runtime_execution=$(query_scalar "$DATABASE_URL" candidate_runtime_execution "SELECT count(*) FROM public.runtime_execution_log WHERE connection_id=$candidate") || candidate_runtime_execution=''
+candidate_sales_events=$(query_scalar "$DATABASE_URL" candidate_sales_events "SELECT count(*) FROM public.sales_events WHERE connection_id=$candidate") || candidate_sales_events=''
+candidate_sales_line_items=$(query_scalar "$DATABASE_URL" candidate_sales_line_items "SELECT count(*) FROM public.sales_line_items WHERE connection_id=$candidate") || candidate_sales_line_items=''
+candidate_stock_receipts=$(query_scalar "$DATABASE_URL" candidate_stock_receipts "SELECT count(*) FROM public.stock_sync_log WHERE connection_id=$candidate") || candidate_stock_receipts=''
+if [ "$canary_generation_mode" = bootstrap ]; then
+  for count_value in "$candidate_runtime_idempotency" "$candidate_runtime_execution" "$candidate_sales_events" "$candidate_sales_line_items" "$candidate_stock_receipts"; do
+    if [ "$count_value" != 0 ]; then
+      printf 'FAIL: bootstrap canary has prior operational rows\n' >&2
+      FAILURES=$((FAILURES + 1))
+      break
+    fi
+  done
+fi
 
 check_equals "$DATABASE_URL" runtime_sales_claim_identity_trigger_contract 1 "SELECT count(*) FROM pg_trigger trigger_contract JOIN pg_class table_class ON table_class.oid=trigger_contract.tgrelid JOIN pg_namespace table_namespace ON table_namespace.oid=table_class.relnamespace JOIN pg_proc trigger_function ON trigger_function.oid=trigger_contract.tgfoid WHERE table_namespace.nspname='public' AND table_class.relname='runtime_idempotency' AND trigger_contract.tgname='runtime_bind_sales_claim_identity' AND NOT trigger_contract.tgisinternal AND trigger_contract.tgenabled IN ('O','A') AND trigger_contract.tgtype=23 AND trigger_function.proname='runtime_bind_sales_claim_identity' AND position('NEW.sales_claim_identity IS DISTINCT FROM OLD.sales_claim_identity' IN trigger_function.prosrc)>0 AND (SELECT count(*) FROM unnest(trigger_contract.tgattr))=4"
 check_equals "$DATABASE_URL" runtime_idempotency_update_privilege_contract 1 "SELECT ((NOT has_table_privilege('middleware_runtime','public.runtime_idempotency','UPDATE')) AND (NOT has_column_privilege('middleware_runtime','public.runtime_idempotency','sales_claim_identity','UPDATE')) AND (SELECT count(DISTINCT column_name)=8 FROM information_schema.column_privileges WHERE table_schema='public' AND table_name='runtime_idempotency' AND grantee='middleware_runtime' AND privilege_type='UPDATE' AND column_name IN ('message_id','status','attempt','lease_expires_at','payload_sha256','lease_token','result','updated_at')))::int"
@@ -206,7 +229,7 @@ check_equals "$DATABASE_URL" runtime_catalog_privilege_contract '1|0|1|0|0|1|1|0
 check_equals "$RUNTIME_DATABASE_URL" runtime_session_identity middleware_runtime_login "SELECT session_user"
 check_equals "$RUNTIME_DATABASE_URL" runtime_login_identity middleware_runtime_login "SELECT current_user"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_connection_identity "$CANARY_CONNECTION_ID" "SELECT id::text FROM public.pos_connections"
-check_equals "$RUNTIME_DATABASE_URL" runtime_effective_scope_identity "$CANARY_CONNECTION_ID" "SELECT connection_id::text FROM public.runtime_canary_connections"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_scope_identity "$CANARY_CONNECTION_ID|$CANARY_RUN_ID" "SELECT connection_id::text || '|' || run_id FROM public.runtime_canary_connections"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_credentials 2 "SELECT count(*) FROM public.runtime_connection_credentials"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_winerim_wines "$EXPECTED_CANARY_WINERIM_WINES" "SELECT count(*) FROM public.winerim_wines"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_product_mappings "$EXPECTED_CANARY_PRODUCT_MAPPINGS" "SELECT count(*) FROM public.product_mappings"
@@ -214,10 +237,11 @@ check_equals "$RUNTIME_DATABASE_URL" runtime_effective_provider_products "$EXPEC
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_master_rows "$EXPECTED_CANARY_MASTER_ROWS" "SELECT count(*) FROM public.agora_master_data"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_tracking_rows 0 "SELECT count(*) FROM public.winerim_push_tracking"
 check_equals "$RUNTIME_DATABASE_URL" runtime_effective_catalog_cross_connection_rows 0 "SELECT (SELECT count(*) FROM public.provider_products WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.agora_master_data WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.product_mappings WHERE connection_id<>$candidate) + (SELECT count(*) FROM public.winerim_push_tracking WHERE connection_id<>$candidate)"
-check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_idempotency 0 "SELECT count(*) FROM public.runtime_idempotency"
-check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_execution_log 0 "SELECT count(*) FROM public.runtime_execution_log"
-check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_sales 0 "SELECT count(*) FROM public.sales_events"
-check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_stock 0 "SELECT count(*) FROM public.stock_sync_log"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_idempotency "$candidate_runtime_idempotency" "SELECT count(*) FROM public.runtime_idempotency"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_execution_log "$candidate_runtime_execution" "SELECT count(*) FROM public.runtime_execution_log"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_sales "$candidate_sales_events" "SELECT count(*) FROM public.sales_events"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_sales_lines "$candidate_sales_line_items" "SELECT count(*) FROM public.sales_line_items"
+check_equals "$RUNTIME_DATABASE_URL" runtime_effective_prior_stock "$candidate_stock_receipts" "SELECT count(*) FROM public.stock_sync_log"
 
 if [ "$FAILURES" -gt 0 ]; then
   printf 'RESULT=RESCUE_PRODUCTION_PRE_CANARY_VERIFY_FAILED failures=%s\n' "$FAILURES" >&2

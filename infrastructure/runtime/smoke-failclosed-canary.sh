@@ -14,6 +14,7 @@ CANARY_MESSAGE_ID=message-smoke-a \
 CANARY_IDEMPOTENCY_KEY=idempotency-smoke-a \
 CANARY_PAYLOAD_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 CANARY_EXCLUSIVE_CREDENTIAL_VERSION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+CANARY_CREDENTIAL_SET_SHA256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 CANARY_RELEASE=smoke-release \
 CANARY_HOLDER_ID=smoke-holder \
 RUNTIME_HYPERDRIVE_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -41,6 +42,14 @@ const manifest = JSON.parse(readFileSync(process.argv[2], "utf8"));
 if (manifest.runId !== "smoke-a") throw new Error("SMOKE_MANIFEST_RUN_MISMATCH");
 if (manifest.scopeNote !== "rescue-canary-run:smoke-a") {
   throw new Error("SMOKE_MANIFEST_SCOPE_MISMATCH");
+}
+if (
+  manifest.version !== 2
+  || manifest.credentialBinding?.keyVersion !== "v1"
+  || manifest.credentialBinding?.exclusiveAttestationSha256 !== "b".repeat(64)
+  || manifest.credentialBinding?.credentialSetSha256 !== "c".repeat(64)
+) {
+  throw new Error("SMOKE_MANIFEST_CREDENTIAL_BINDING_MISMATCH");
 }
 if (Object.keys(manifest.resources.queues).length !== 4) {
   throw new Error("SMOKE_MANIFEST_QUEUE_INVENTORY_MISMATCH");

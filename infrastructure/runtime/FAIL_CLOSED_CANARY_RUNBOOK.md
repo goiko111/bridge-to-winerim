@@ -38,6 +38,7 @@ treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
   private rescue-production executor that keeps broad sales/cursor flags off
 - `infrastructure/runtime/prepare-writer-fence-grant.mjs`
 - `infrastructure/runtime/prepare-runtime-credential-provisioning.mjs`
+- `infrastructure/runtime/prepare-rescue-canary-activation.mjs`
 - `infrastructure/runtime/prepare-rescue-canary-retirement.mjs`
 - `infrastructure/runtime/render-failclosed-canary-configs.mjs`
 - `infrastructure/runtime/verify-failclosed-canary-package.mjs`
@@ -94,6 +95,7 @@ CANARY_MESSAGE_ID=<REVIEWED_MESSAGE_ID> \
 CANARY_IDEMPOTENCY_KEY=<REVIEWED_IDEMPOTENCY_KEY> \
 CANARY_PAYLOAD_SHA256=<SHA256_OF_CANONICAL_PAYLOAD> \
 CANARY_EXCLUSIVE_CREDENTIAL_VERSION=<ROTATED_VERSION> \
+CANARY_CREDENTIAL_SET_SHA256=<PROVISIONING_MANIFEST_CREDENTIAL_SET_SHA256> \
 CANARY_RELEASE=<IMMUTABLE_COMMIT> \
 CANARY_HOLDER_ID=<DEPLOYMENT_VERSION> \
 RUNTIME_HYPERDRIVE_ID=<32_HEX_ID> \
@@ -127,34 +129,44 @@ recorded, render the two inactive rows outside the repository:
 
 ```sh
 CANARY_CONNECTION_ID=<UUID> \
+CANARY_RUN_ID=<RUN> \
 RUNTIME_VAULT_KEY_VERSION=<VERSION> \
 RUNTIME_VAULT_MASTER_KEY=<BASE64_32_BYTE_KEY> \
 RUNTIME_AGORA_CREDENTIAL=<ROTATED_AGORA_TOKEN> \
 RUNTIME_WINERIM_CREDENTIAL=<WINERIM_TOKEN> \
   node infrastructure/runtime/prepare-runtime-credential-provisioning.mjs \
     --render \
+    --mode=bootstrap \
     --confirm-connection=<UUID> \
     --output=/secure/tmp/runtime-credentials.sql
 ```
 
 The SQL artifact is mode `0600`, contains ciphertext rather than plaintext,
-and inserts both rows with `active=false`. It refuses an existing credential
-row, an active scope, an active credential, a non-inert connection or any
-operational receipt for the candidate. Review and apply it through the
-separate database gate; rendering never opens the runtime.
+and inserts both rows with `active=false` under an immutable `run_id`. An
+adjacent mode `0600` manifest binds both attestations, the credential-set hash
+and the SQL hash. Bootstrap refuses any existing credential row, active scope,
+active credential, non-inert connection or operational receipt. A later
+rotation uses `--mode=rotate`, requires every prior generation to be terminal,
+and preserves its rows. Review and apply the SQL through the separate database
+gate; rendering never opens the runtime.
 
 ## Writer fence procedure
 
 1. Select one `connectionId`, one provider mutation and one deployment holder.
-2. Stop that connection in the old writer without changing any other tenant.
-3. Rotate the provider/Winerim mutation credential. Put the new credential
+2. Pause the dedicated new consumer and stop that connection in the old writer
+   without changing any other tenant. Revoke any still-valid new-runtime grant
+   before changing credentials.
+3. Wait at least `130 s`: the maximum `120 s` lease plus the `10 s` provider
+   network timeout. A process that already opened the old secret must have no
+   valid lease or in-flight mutation when rotation starts.
+4. Rotate the provider/Winerim mutation credential. Put the new credential
    only in the new private executor. Do not copy it back to Lovable.
-4. Probe the old writer with its revoked credential. It must return `401` or
+5. Probe the old writer with its revoked credential. It must return `401` or
    `403`. Save a sanitized response and its SHA-256; never save the token.
-5. Probe the rotated credential with a read-only endpoint. It must succeed.
-6. Generate a random proof secret of at least 32 bytes. This is not the
+6. Probe the rotated credential with a read-only endpoint. It must succeed.
+7. Generate a random proof secret of at least 32 bytes. This is not the
    provider credential. Bind it only to the canary runtime.
-7. Prepare the grant in a secure temporary path:
+8. Prepare the grant in a secure temporary path:
 
    ```sh
    CANARY_CONNECTION_ID=<UUID> \
@@ -171,15 +183,62 @@ separate database gate; rendering never opens the runtime.
        --output=/secure/tmp/writer-fence-grant.json
    ```
 
-8. Store the grant and proof as separate Secrets Store values. The grant has
+9. Store the grant and proof as separate Secrets Store values. The grant has
    only a proof hash and an attestation reference/version for the encrypted
    credential row. The provider credential remains encrypted in Postgres; the
    Cloudflare Secrets Store holds the vault master key, grant and proof.
-9. Acquire/renew a `30..120` second lease immediately before each mutation.
+10. Acquire/renew a `30..120` second lease immediately before each mutation.
    Reject it unless at least `15 s` remain: the Winerim mutation timeout is
    `10 s` and the extra `5 s` is the minimum safety margin.
    Missing binding, missing proof, expired grant, active foreign holder or
    malformed response means retry without opening the database or executor.
+
+The `401`/`403` evidence is necessary but not sufficient: do not render or
+apply activation unless the old writer is paused, the prior grant is revoked,
+the `130 s` drain window elapsed, and the rotated read-only probe succeeded.
+
+## Atomic activation
+
+Render the activation SQL only after credential provisioning, fail-closed
+resource rendering and writer-fence preparation are complete. Every input file
+is bound by its separately captured SHA-256:
+
+```sh
+CANARY_CONNECTION_ID=<UUID> \
+CANARY_RUN_ID=<RUN> \
+CANARY_SCOPE_APPROVED_AT=<ISO_TIME> \
+CANARY_SCOPE_EXPIRES_AT=<ISO_TIME_WITHIN_TWO_HOURS> \
+RUNTIME_VAULT_KEY_VERSION=<VERSION> \
+CANARY_DEPLOYMENT_MANIFEST=/secure/tmp/canary-configs/canary-deployment-manifest.json \
+CANARY_DEPLOYMENT_MANIFEST_SHA256=<CAPTURED_SHA256> \
+CANARY_WRITER_FENCE_GRANT=/secure/tmp/writer-fence-grant.json \
+CANARY_WRITER_FENCE_GRANT_SHA256=<CAPTURED_SHA256> \
+RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST=/secure/tmp/runtime-credentials.sql.manifest.json \
+RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST_SHA256=<CAPTURED_SHA256> \
+  node infrastructure/runtime/prepare-rescue-canary-activation.mjs \
+    --render \
+    --confirm-connection=<UUID> \
+    --output=/secure/tmp/activate-canary.sql
+```
+
+Applying that reviewed SQL is a separate production gate. One transaction
+locks the connection, scope and credential control tables and activates exactly
+the reviewed two-row credential generation and scope. `bootstrap` requires an
+inert candidate with zero operational rows. `rotate` preserves prior receipts
+only for that candidate and only after every prior scope and credential
+generation is terminal. Both modes require zero outbound debt, zero operational
+rows for other connections, catalog off, `PULL_ONLY`, `write_mode=NONE` and
+backfill `0`. The immutable evidence hashes are stored on the scope. Replay, a
+second active run, changed evidence or a partial generation fails closed.
+
+Before starting the Queue consumer, run the pre-canary verifier with both the
+connection and exact generation:
+
+```sh
+export RESCUE_PRODUCTION_CANARY_CONNECTION_ID=<UUID>
+export RESCUE_PRODUCTION_CANARY_RUN_ID=<RUN>
+infrastructure/postgres/verify-rescue-production-pre-canary.sh
+```
 
 ## Runtime integration contract
 
@@ -212,7 +271,9 @@ outer Queue boundary after the sales branch is merged.
 
 1. Remove/pause the dedicated canary consumer first. Leave messages in the
    canary Queue or DLQ; do not move them to a shared Queue.
-2. Let the lease expire and revoke the proof/grant Secrets Store values.
+2. Revoke the proof/grant Secrets Store values, then wait at least `130 s`
+   for the maximum lease and provider timeout to drain before database
+   retirement.
 3. Keep the rotated provider credential exclusive. If the old runtime must
    resume, install that current credential there only after the Cloudflare
    consumer is gone and verify that Cloudflare receives `401/403`.
@@ -238,9 +299,10 @@ CANARY_DEPLOYMENT_MANIFEST_SHA256=<CAPTURED_RENDER_SHA256> \
 
 The renderer-created deployment manifest and its separately captured SHA-256
 bind retirement to the exact Workers, Queues, secret bindings and archive
-bucket used by that run. The SQL locks the three control-plane tables and
-deactivates both credential rows, the exact scope and the candidate connection
-in one transaction. It preserves credentials, receipts, logs and DLQ evidence.
+bucket used by that run. The SQL locks the three control-plane tables and marks
+both credential rows and the exact scope terminal in one transaction while
+disabling the candidate. It preserves credential generations, receipts, logs
+and DLQ evidence.
 The adjacent JSON plan orders Cloudflare cleanup only after the consumer is
 paused, all four Queues are read back and database retirement has succeeded.
 It does not execute Cloudflare commands.

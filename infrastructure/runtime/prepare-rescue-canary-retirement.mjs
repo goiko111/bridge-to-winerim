@@ -28,14 +28,26 @@ function parseTimestamp(value) {
   return new Date(parsed).toISOString();
 }
 
-export function renderRescueCanaryRetirementSql({ connectionId, runId, approvedAt }) {
+export function renderRescueCanaryRetirementSql({
+  connectionId,
+  runId,
+  approvedAt,
+  deploymentManifestSha256,
+}) {
   if (!UUID_PATTERN.test(connectionId)) throw new Error("RESCUE_CANARY_RETIREMENT_INVALID_CONNECTION_ID");
   if (!RUN_PATTERN.test(runId)) throw new Error("RESCUE_CANARY_RETIREMENT_INVALID_RUN_ID");
+  if (!SHA256_PATTERN.test(deploymentManifestSha256)) {
+    throw new Error("RESCUE_CANARY_RETIREMENT_INVALID_DEPLOYMENT_MANIFEST_SHA256");
+  }
   const expectedApprovedAt = parseTimestamp(approvedAt);
   const scopeNote = `rescue-canary-run:${runId}`;
   return `\\set ON_ERROR_STOP on
 
 BEGIN;
+
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '20s';
+SELECT pg_advisory_xact_lock(hashtextextended('runtime-canary-control-plane', 0));
 
 LOCK TABLE public.pos_connections,
   public.runtime_canary_connections,
@@ -60,9 +72,14 @@ BEGIN
     SELECT count(*)
     FROM public.runtime_canary_connections
     WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
       AND active = true
+      AND status = 'ACTIVE'
       AND approved_at = '${expectedApprovedAt}'::timestamptz
       AND note = '${scopeNote}'
+      AND deployment_manifest_sha256 = '${deploymentManifestSha256}'
+      AND writer_fence_grant_sha256 IS NOT NULL
+      AND credential_set_sha256 IS NOT NULL
   ) <> 1 THEN
     RAISE EXCEPTION 'exact canary scope identity does not match';
   END IF;
@@ -74,16 +91,34 @@ BEGIN
   ) <> 0 THEN
     RAISE EXCEPTION 'another active canary scope exists';
   END IF;
+  IF (
+    SELECT count(*)
+    FROM public.runtime_connection_credentials
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND active = true
+      AND activated_at IS NOT NULL
+      AND retired_at IS NULL
+      AND credential_kind IN ('agora', 'winerim')
+  ) <> 2 THEN
+    RAISE EXCEPTION 'exact active credential generation does not match';
+  END IF;
 END;
 $verify_rescue_canary_retirement$;
 
 UPDATE public.runtime_connection_credentials
-SET active = false
-WHERE connection_id = '${connectionId}'::uuid;
+SET active = false,
+    retired_at = transaction_timestamp()
+WHERE connection_id = '${connectionId}'::uuid
+  AND run_id = '${runId}'
+  AND active = true;
 
 UPDATE public.runtime_canary_connections
-SET active = false
+SET active = false,
+    status = 'RETIRED',
+    retired_at = transaction_timestamp()
 WHERE connection_id = '${connectionId}'::uuid
+  AND run_id = '${runId}'
   AND active = true
   AND approved_at = '${expectedApprovedAt}'::timestamptz;
 
@@ -109,6 +144,22 @@ BEGIN
     ) THEN
     RAISE EXCEPTION 'rescue canary retirement readback failed';
   END IF;
+  IF (
+    SELECT count(*) FROM public.runtime_canary_connections
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND status = 'RETIRED'
+      AND active = false
+      AND retired_at IS NOT NULL
+  ) <> 1 OR (
+    SELECT count(*) FROM public.runtime_connection_credentials
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND active = false
+      AND retired_at IS NOT NULL
+  ) <> 2 THEN
+    RAISE EXCEPTION 'rescue canary retirement history readback failed';
+  END IF;
 END;
 $readback_rescue_canary_retirement$;
 
@@ -118,7 +169,7 @@ COMMIT;
 
 function deploymentResources(deploymentManifest, connectionId, runId) {
   if (
-    deploymentManifest?.version !== 1
+    deploymentManifest?.version !== 2
     || deploymentManifest.connectionId !== connectionId
     || deploymentManifest.runId !== runId
     || deploymentManifest.scopeNote !== `rescue-canary-run:${runId}`
@@ -197,16 +248,18 @@ export function rescueCanaryRetirementPlan({
     },
     cloudflareOrder: [
       { step: 1, action: "pause-exclusive-consumer", resources: [resources.workers.consumer] },
-      { step: 2, action: "verify-all-queues-empty-or-archived", resources: queues },
-      { step: 3, action: "apply-reviewed-database-retirement-sql", resource: connectionId },
       {
-        step: 4,
-        action: "revoke-canary-proof-grant-and-vault-bindings",
-        resources: [resources.secrets.proof, resources.secrets.grant, resources.secrets.vault],
+        step: 2,
+        action: "revoke-canary-proof-and-grant-bindings",
+        resources: [resources.secrets.proof, resources.secrets.grant],
       },
-      { step: 5, action: "delete-dedicated-workers-after-readback", resources: workers },
-      { step: 6, action: "delete-dedicated-queues-after-readback", resources: queues },
-      { step: 7, action: "preserve-dlq-and-alarm-ledger", resources: [resources.archiveBucket] },
+      { step: 3, action: "wait-for-lease-and-network-drain", minimumSeconds: 130 },
+      { step: 4, action: "verify-all-queues-empty-or-archived", resources: queues },
+      { step: 5, action: "apply-reviewed-database-retirement-sql", resource: connectionId },
+      { step: 6, action: "revoke-canary-vault-binding", resources: [resources.secrets.vault] },
+      { step: 7, action: "delete-dedicated-workers-after-readback", resources: workers },
+      { step: 8, action: "delete-dedicated-queues-after-readback", resources: queues },
+      { step: 9, action: "preserve-dlq-and-alarm-ledger", resources: [resources.archiveBucket] },
     ],
     databaseFailureAction: "keep resources; verify scope and credentials; require a fresh gate before consumer resume",
     forbidden: ["shared-queue-delete", "row-delete", "truncate", "stock-write", "cursor-write"],
@@ -256,7 +309,12 @@ export function prepareRescueCanaryRetirement({ environment = process.env, outpu
   }
   const sqlPath = resolve(directory, "retire-rescue-canary.sql");
   const retirementManifestPath = resolve(directory, "retire-rescue-canary.json");
-  const sql = renderRescueCanaryRetirementSql({ connectionId, runId, approvedAt });
+  const sql = renderRescueCanaryRetirementSql({
+    connectionId,
+    runId,
+    approvedAt,
+    deploymentManifestSha256: actualManifestSha256,
+  });
   const manifest = `${JSON.stringify(plan, null, 2)}\n`;
   writeFileSync(sqlPath, sql, { encoding: "utf8", mode: 0o600, flag: "wx" });
   writeFileSync(retirementManifestPath, manifest, { encoding: "utf8", mode: 0o600, flag: "wx" });

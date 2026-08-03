@@ -53,10 +53,14 @@ INSERT INTO public.pos_connections (
   'https://redacted.invalid', '', false, false, 'PULL_ONLY', 'NONE'
 );
 INSERT INTO public.runtime_canary_connections (
-  connection_id, active, approved_at, expires_at, note
+  connection_id, run_id, active, status, approved_at, expires_at, note,
+  deployment_manifest_sha256, writer_fence_grant_sha256,
+  credential_set_sha256, activated_at
 ) VALUES (
-  '11111111-1111-4111-8111-111111111111', true,
-  now() - interval '1 minute', now() + interval '1 hour', 'claim identity test'
+  '11111111-1111-4111-8111-111111111111', 'claim-identity-test', true, 'ACTIVE',
+  now() - interval '1 minute', now() + interval '1 hour',
+  'rescue-canary-run:claim-identity-test', repeat('a',64), repeat('b',64),
+  repeat('c',64), now()
 );
 
 INSERT INTO public.runtime_idempotency (

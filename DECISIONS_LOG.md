@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-08-03 - Activacion versionada y drain antes de rotacion
+- **Decision**: cada canary usa un `run_id` unico y se activa en una sola
+  transaccion ligada a manifests SHA-256. Scope y credenciales retirados son
+  terminales, se conservan y no pueden reactivarse. `bootstrap` exige cero
+  recibos; `rotate` puede conservar solo recibos del candidato con todas las
+  generaciones anteriores terminales. Credenciales, RLS, readiness y vault
+  deben coincidir con el mismo `run_id` activo.
+- **Razon**: evita activaciones parciales, replay de artefactos y mezcla de
+  generaciones o evidencias.
+- **Alternativa descartada**: updates manuales separados, overwrite de
+  credenciales o reutilizar el mismo scope.
+- **Rollback / mitigacion**: pausar consumer/writer, revocar grants y esperar
+  `>=130 s` antes de rotar; `401/403` antiguo, probe nuevo, retiro append-only
+  y verificador exacto por UUID+`run_id`.
+
 ## 2026-08-03 - Credenciales inactivas y retirada sin borrado
 - **Decision**: separar preparacion y activacion. El provisionador solo inserta
   Agora+Winerim cifrados con `active=false`; la retirada desactiva

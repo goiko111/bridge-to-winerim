@@ -10,6 +10,7 @@ const AES_GCM_NONCE_BYTES = 12;
 const AES_256_KEY_BYTES = 32;
 const MAX_SECRET_BYTES = 8 * 1024;
 const RUNTIME_CREDENTIAL_REFERENCE_PREFIX = "runtime-vault://postgres";
+const CANARY_RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 
 type RuntimeConnectionRow = Record<string, unknown> & {
   connection_id: unknown;
@@ -37,6 +38,7 @@ export type RuntimeVaultSecretBinding = Readonly<{
 export type RuntimeCredentialVaultOptions = Readonly<{
   masterKey: RuntimeVaultSecretBinding;
   keyVersion: string;
+  runId: string;
 }>;
 
 export type RuntimeCredentialAttestation = Readonly<{
@@ -216,24 +218,35 @@ export function createPostgresEncryptedCredentialPort(
   database: DatabaseAdapter,
   options: RuntimeCredentialVaultOptions,
 ): RuntimeCredentialAccessPort {
+  const expectedRunId = text(options.runId);
   return {
     async open(input): Promise<SecretTextPort | null> {
+      if (!CANARY_RUN_PATTERN.test(expectedRunId)) return null;
       const result = await database.query<RuntimeCredentialRow>(sql`
         SELECT
-          connection_id::text,
-          provider,
-          credential_kind,
-          algorithm,
-          key_version,
-          aad_version,
-          encode(ciphertext, 'base64') AS ciphertext_base64,
-          encode(nonce, 'base64') AS nonce_base64,
-          active
-        FROM public.runtime_connection_credentials
-        WHERE connection_id = ${input.connectionId}::uuid
-          AND provider = ${input.provider.toLowerCase()}
-          AND credential_kind = ${input.kind}
-          AND active = true
+          credentials.connection_id::text,
+          credentials.provider,
+          credentials.credential_kind,
+          credentials.algorithm,
+          credentials.key_version,
+          credentials.aad_version,
+          encode(credentials.ciphertext, 'base64') AS ciphertext_base64,
+          encode(credentials.nonce, 'base64') AS nonce_base64,
+          credentials.active
+        FROM public.runtime_connection_credentials credentials
+        JOIN public.runtime_canary_connections scope
+          ON scope.connection_id = credentials.connection_id
+         AND scope.run_id = credentials.run_id
+        WHERE credentials.connection_id = ${input.connectionId}::uuid
+          AND credentials.run_id = ${expectedRunId}
+          AND credentials.provider = ${input.provider.toLowerCase()}
+          AND credentials.credential_kind = ${input.kind}
+          AND credentials.active = true
+          AND scope.status = 'ACTIVE'
+          AND scope.active = true
+          AND scope.run_id = ${expectedRunId}
+          AND scope.approved_at <= now()
+          AND scope.expires_at > now()
         LIMIT 2
       `);
       if (result.rowCount !== 1) return null;

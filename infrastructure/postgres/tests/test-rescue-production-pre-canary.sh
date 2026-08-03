@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 POSTGRES_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+POSTGRES_BIN=${POSTGRES_BIN:-/opt/homebrew/opt/postgresql@17/bin}
+PATH="$POSTGRES_BIN:$PATH"
 for command_name in initdb pg_ctl createdb psql node; do
   command -v "$command_name" >/dev/null 2>&1 || { printf 'BLOCKED: %s is not installed\n' "$command_name" >&2; exit 2; }
 done
@@ -189,16 +191,26 @@ psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 >/dev/null <<SQL
 UPDATE public.pos_connections
 SET enabled=true, base_url='https://canary.invalid'
 WHERE id='$CANDIDATE_ID';
-INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at, note)
-VALUES ('$CANDIDATE_ID', true, now() - interval '1 minute', now() + interval '1 hour', 'local test');
+INSERT INTO public.runtime_canary_connections (
+  connection_id, run_id, active, status, approved_at, expires_at, note,
+  deployment_manifest_sha256, writer_fence_grant_sha256,
+  credential_set_sha256, activated_at
+) VALUES (
+  '$CANDIDATE_ID', 'precanary-local-test', true, 'ACTIVE',
+  now() - interval '1 minute', now() + interval '1 hour',
+  'rescue-canary-run:precanary-local-test', repeat('a',64), repeat('b',64),
+  repeat('c',64), now()
+);
 INSERT INTO public.runtime_connection_credentials (
-  connection_id, provider, credential_kind, key_version, ciphertext, nonce, active
+  connection_id, provider, credential_kind, run_id, key_version,
+  ciphertext, nonce, attestation_sha256, active, activated_at
 )
 VALUES
-  ('$CANDIDATE_ID', 'agora', 'agora', 'test-v1', decode(repeat('11', 17), 'hex'), decode(repeat('22', 12), 'hex'), true),
-  ('$CANDIDATE_ID', 'agora', 'winerim', 'test-v1', decode(repeat('33', 17), 'hex'), decode(repeat('44', 12), 'hex'), true);
+  ('$CANDIDATE_ID', 'agora', 'agora', 'precanary-local-test', 'test-v1', decode(repeat('11', 17), 'hex'), decode(repeat('22', 12), 'hex'), repeat('d',64), true, now()),
+  ('$CANDIDATE_ID', 'agora', 'winerim', 'precanary-local-test', 'test-v1', decode(repeat('33', 17), 'hex'), decode(repeat('44', 12), 'hex'), repeat('e',64), true, now());
 SQL
 export RESCUE_PRODUCTION_CANARY_CONNECTION_ID="$CANDIDATE_ID"
+export RESCUE_PRODUCTION_CANARY_RUN_ID=precanary-local-test
 "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null
 
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.provider_products SET price=999 WHERE connection_id='$CANDIDATE_ID' AND provider_product_id='900001'" >/dev/null
@@ -362,12 +374,12 @@ if "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null 2>&1; then
 fi
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.pos_connections SET catalog_sync_enabled=false WHERE id='$OTHER_ID'" >/dev/null
 
-psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.runtime_connection_credentials SET active=false WHERE connection_id='$CANDIDATE_ID' AND credential_kind='winerim'" >/dev/null
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "DELETE FROM public.runtime_connection_credentials WHERE connection_id='$CANDIDATE_ID' AND run_id='precanary-local-test' AND credential_kind='winerim'" >/dev/null
 if "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null 2>&1; then
   printf 'FAIL: pre-canary verifier accepted one active credential\n' >&2
   exit 1
 fi
-psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.runtime_connection_credentials SET active=true WHERE connection_id='$CANDIDATE_ID' AND credential_kind='winerim'" >/dev/null
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "INSERT INTO public.runtime_connection_credentials (connection_id, provider, credential_kind, run_id, key_version, ciphertext, nonce, attestation_sha256, active, activated_at) VALUES ('$CANDIDATE_ID', 'agora', 'winerim', 'precanary-local-test', 'test-v1', decode(repeat('33', 17), 'hex'), decode(repeat('44', 12), 'hex'), repeat('e',64), true, now())" >/dev/null
 
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "INSERT INTO public.outbound_tasks (connection_id) VALUES ('$CANDIDATE_ID')" >/dev/null
 if "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null 2>&1; then

@@ -109,10 +109,13 @@ INSERT INTO public.stock_sync_log (
   ('22222222-bbbb-4222-c222-222222222222', '22222222-2222-4222-8222-222222222222', '22222222-bbbb-4222-a222-222222222222', '22222222-bbbb-4222-b222-222222222222', 'product-b', 'wine-b', 'Product B', 1, 'SUCCESS', 'existing-b');
 
 INSERT INTO public.runtime_canary_connections (
-  connection_id, active, approved_at, expires_at, note
+  connection_id, run_id, active, status, approved_at, expires_at, note,
+  deployment_manifest_sha256, writer_fence_grant_sha256,
+  credential_set_sha256, activated_at
 ) VALUES (
-  '11111111-1111-4111-8111-111111111111', true, now(), now() + interval '15 minutes',
-  'disposable permission test'
+  '11111111-1111-4111-8111-111111111111', 'permission-test-a', true, 'ACTIVE',
+  now(), now() + interval '15 minutes', 'rescue-canary-run:permission-test-a',
+  repeat('a',64), repeat('b',64), repeat('c',64), now()
 );
 SQL
 
@@ -444,9 +447,17 @@ test "$runtime_privileges" = "1|1|1|1|1|1|0|1|0|1|0|1|0|1|0|1|0|0|1|1|0|1|0|1|1|
 }
 
 "${ADMIN_PSQL[@]}" -c "
-  UPDATE public.runtime_canary_connections
-  SET expires_at = now() + interval '100 milliseconds'
+  DELETE FROM public.runtime_canary_connections
   WHERE connection_id = '11111111-1111-4111-8111-111111111111';
+  INSERT INTO public.runtime_canary_connections (
+    connection_id, run_id, active, status, approved_at, expires_at, note,
+    deployment_manifest_sha256, writer_fence_grant_sha256,
+    credential_set_sha256, activated_at
+  ) VALUES (
+    '11111111-1111-4111-8111-111111111111', 'permission-test-expiry', true, 'ACTIVE',
+    now(), now() + interval '100 milliseconds', 'rescue-canary-run:permission-test-expiry',
+    repeat('d',64), repeat('e',64), repeat('f',64), now()
+  );
   SELECT pg_sleep(0.2);
 " >/dev/null
 

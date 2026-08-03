@@ -46,6 +46,7 @@ export function renderFailclosedCanaryConfigs({
   const idempotencyKey = required(environment, "CANARY_IDEMPOTENCY_KEY");
   const payloadSha256 = required(environment, "CANARY_PAYLOAD_SHA256").toLowerCase();
   const exclusiveCredentialVersion = required(environment, "CANARY_EXCLUSIVE_CREDENTIAL_VERSION");
+  const credentialSetSha256 = required(environment, "CANARY_CREDENTIAL_SET_SHA256").toLowerCase();
   const release = required(environment, "CANARY_RELEASE");
   const holderId = required(environment, "CANARY_HOLDER_ID");
   const hyperdriveId = required(environment, "RUNTIME_HYPERDRIVE_ID");
@@ -67,6 +68,9 @@ export function renderFailclosedCanaryConfigs({
   }
   if (!/^[a-f0-9]{64}$/.test(exclusiveCredentialVersion)) {
     throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CREDENTIAL_VERSION");
+  }
+  if (!/^[a-f0-9]{64}$/.test(credentialSetSha256)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CREDENTIAL_SET_SHA256");
   }
   if (!KEY_VERSION_PATTERN.test(runtimeVaultKeyVersion)) {
     throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_VAULT_KEY_VERSION");
@@ -105,6 +109,7 @@ export function renderFailclosedCanaryConfigs({
     CANARY_IDEMPOTENCY_KEY: idempotencyKey,
     CANARY_PAYLOAD_SHA256: payloadSha256,
     CANARY_EXCLUSIVE_CREDENTIAL_VERSION: exclusiveCredentialVersion,
+    CANARY_CREDENTIAL_SET_SHA256: credentialSetSha256,
     RELEASE: release,
     WRITER_FENCE_HOLDER_ID: holderId,
     RUNTIME_HYPERDRIVE_ID: hyperdriveId,
@@ -140,10 +145,15 @@ export function renderFailclosedCanaryConfigs({
     outputs[key] = outputPath;
   }
   const deploymentManifest = {
-    version: 1,
+    version: 2,
     runId,
     connectionId,
     scopeNote: `rescue-canary-run:${runId}`,
+    credentialBinding: {
+      keyVersion: runtimeVaultKeyVersion,
+      exclusiveAttestationSha256: exclusiveCredentialVersion,
+      credentialSetSha256,
+    },
     resources: {
       queues: {
         input: queueName,

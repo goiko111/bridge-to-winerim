@@ -125,6 +125,7 @@ function enabledEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}): Midd
     RELEASE: "fixture",
     RUNTIME_EXECUTION_ENABLED: "true",
     RUNTIME_CANARY_CONNECTION_ID: CONNECTION_ID,
+    CANARY_RUN_ID: "run-20260803-a",
     RUNTIME_VAULT_KEY_VERSION: "v1",
     WINERIM_API_BASE_URL: "https://app.winerim.com",
     WINERIM_ALLOWED_HOSTS: "app.winerim.com",
@@ -155,7 +156,11 @@ async function credentialFenceFor(
 }> {
   const credential = await createPostgresEncryptedCredentialPort(
     readinessDatabase({ [kind]: fixture.row }).adapter,
-    { masterKey: { get: async () => fixture.master }, keyVersion: KEY_VERSION },
+    {
+      masterKey: { get: async () => fixture.master },
+      keyVersion: KEY_VERSION,
+      runId: "run-20260803-a",
+    },
   ).open({ connectionId: CONNECTION_ID, provider: "agora", kind });
   const attestation = runtimeCredentialAttestation(credential!);
   return {
@@ -292,6 +297,7 @@ describe("private runtime executor Worker", () => {
         "RUNTIME_VAULT_KEY",
         "RUNTIME_VAULT_KEY_VERSION",
         "RUNTIME_CANARY_CONNECTION_ID",
+        "CANARY_RUN_ID",
       ]),
     });
   });

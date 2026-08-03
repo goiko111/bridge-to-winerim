@@ -2,7 +2,44 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-08-03 15:05 CEST_
+_Última actualización: 2026-08-03 16:46 CEST_
+
+## El Bejeque - activacion y rotacion versionadas - 2026-08-03
+
+### Hechos
+
+- `0013_runtime_canary_control_plane_history.sql` versiona scope y
+  credenciales por `run_id`, conserva estados terminales, bloquea replay y
+  limita a un unico canary activo global.
+- Provision genera la pareja cifrada inactiva y manifest; activacion enlaza
+  manifests de deploy/fence/credenciales por SHA-256 en una transaccion;
+  retirada marca `RETIRED` sin borrar; rotacion exige historial completo.
+- `bootstrap` exige cero recibos operativos. `rotate` conserva los recibos del
+  candidato solo con todo el historial anterior terminal; RLS, readiness y
+  vault ligan credenciales activas al mismo `run_id` activo.
+- El runbook pausa consumer/writer, revoca grants y espera `>=130 s` antes de
+  rotar, cubriendo lease maxima `120 s` y timeout de red `10 s`.
+- Validacion: PG17 dos generaciones y pre-canary OK; replay/RLS/permisos OK;
+  tooling focal `21/21`, runtime `267/267`, executor `61/61`, fail-closed
+  `15/15`, root `546` tests, TypeScript, build y Wrangler dry-run con Node 24
+  OK.
+- Lint focalizado OK. Lint global falla por `951` errores y `85` avisos
+  heredados fuera de este bloque.
+- La revision independiente final devuelve `SIN_P0_P1` tras exigir `run_id`
+  tambien en el vault y alinear `RETIRED`/`ABORTED` como estados terminales.
+- El Bejeque sigue apagado. No hubo push, deploy, secretos ni writes remotos.
+
+### Decision
+
+- Activar solo una generacion exacta mediante SQL transaccional y evidencia
+  SHA-256; ninguna generacion terminal puede reutilizarse.
+- La evidencia `401/403` solo se acepta tras pausa, revocacion y drain
+  `>=130 s`.
+
+### Tareas pendientes
+
+- Backup inerte, aplicar `0013`, rotar/revocar writer antiguo, obtener
+  `401/403`, provisionar y desplegar canary dedicado antes de shadow/operacion.
 
 ## El Bejeque - tooling canary fail-closed - 2026-08-03
 

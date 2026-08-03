@@ -101,8 +101,12 @@ DO \$test_unapproved\$
 DECLARE rejected boolean := false;
 BEGIN
   BEGIN
-    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
-    VALUES ('$CANARY_CONNECTION_A', true, NULL, now() + interval '1 hour');
+    INSERT INTO public.runtime_canary_connections (
+      connection_id, run_id, active, status, approved_at, expires_at, note
+    ) VALUES (
+      '$CANARY_CONNECTION_A', 'empty-unapproved', true, 'ACTIVE', NULL,
+      now() + interval '1 hour', 'rescue-canary-run:empty-unapproved'
+    );
   EXCEPTION WHEN check_violation THEN
     rejected := true;
   END;
@@ -114,8 +118,16 @@ DO \$test_expired\$
 DECLARE rejected boolean := false;
 BEGIN
   BEGIN
-    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
-    VALUES ('$CANARY_CONNECTION_A', true, now() - interval '2 hours', now() - interval '1 hour');
+    INSERT INTO public.runtime_canary_connections (
+      connection_id, run_id, active, status, approved_at, expires_at, note,
+      deployment_manifest_sha256, writer_fence_grant_sha256,
+      credential_set_sha256, activated_at
+    ) VALUES (
+      '$CANARY_CONNECTION_A', 'empty-expired', true, 'ACTIVE',
+      now() - interval '2 hours', now() - interval '1 hour',
+      'rescue-canary-run:empty-expired', repeat('a',64), repeat('b',64),
+      repeat('c',64), now() - interval '2 hours'
+    );
   EXCEPTION WHEN check_violation THEN
     rejected := true;
   END;
@@ -123,15 +135,27 @@ BEGIN
 END
 \$test_expired\$;
 
-INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
-VALUES ('$CANARY_CONNECTION_A', true, now(), now() + interval '1 hour');
+INSERT INTO public.runtime_canary_connections (
+  connection_id, run_id, active, status, approved_at, expires_at, note,
+  deployment_manifest_sha256, writer_fence_grant_sha256,
+  credential_set_sha256, activated_at
+) VALUES (
+  '$CANARY_CONNECTION_A', 'empty-valid-a', true, 'ACTIVE', now(), now() + interval '1 hour',
+  'rescue-canary-run:empty-valid-a', repeat('a',64), repeat('b',64), repeat('c',64), now()
+);
 
 DO \$test_single_active\$
 DECLARE rejected boolean := false;
 BEGIN
   BEGIN
-    INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
-    VALUES ('$CANARY_CONNECTION_B', true, now(), now() + interval '1 hour');
+    INSERT INTO public.runtime_canary_connections (
+      connection_id, run_id, active, status, approved_at, expires_at, note,
+      deployment_manifest_sha256, writer_fence_grant_sha256,
+      credential_set_sha256, activated_at
+    ) VALUES (
+      '$CANARY_CONNECTION_B', 'empty-valid-b', true, 'ACTIVE', now(), now() + interval '1 hour',
+      'rescue-canary-run:empty-valid-b', repeat('d',64), repeat('e',64), repeat('f',64), now()
+    );
   EXCEPTION WHEN unique_violation THEN
     rejected := true;
   END;
@@ -144,10 +168,13 @@ runtime_canary_valid_scope=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middle
 
 "${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
 DELETE FROM public.runtime_canary_connections;
-INSERT INTO public.runtime_canary_connections (connection_id, active, approved_at, expires_at)
-VALUES
-  ('$CANARY_CONNECTION_A', false, NULL, NULL),
-  ('$CANARY_CONNECTION_B', false, now() - interval '2 hours', now() - interval '1 hour');
+INSERT INTO public.runtime_canary_connections (
+  connection_id, run_id, active, status, approved_at, expires_at, note
+) VALUES
+  ('$CANARY_CONNECTION_A', 'empty-prepared-a', false, 'PREPARED', NULL, NULL,
+   'rescue-canary-run:empty-prepared-a'),
+  ('$CANARY_CONNECTION_B', 'empty-prepared-b', false, 'PREPARED', NULL, NULL,
+   'rescue-canary-run:empty-prepared-b');
 SQL
 runtime_canary_invalid_scope_hidden=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT ((SELECT count(*) FROM public.runtime_canary_connections) = 0 AND (SELECT count(*) FROM public.pos_connections) = 0)::int")
 "${PSQL[@]}" -d "$DB_NAME" -c "DELETE FROM public.runtime_canary_connections; DELETE FROM public.pos_connections WHERE id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');" >/dev/null

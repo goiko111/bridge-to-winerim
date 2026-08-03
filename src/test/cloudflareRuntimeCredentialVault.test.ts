@@ -14,6 +14,7 @@ import {
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_VERSION = "fixture-v1";
+const RUN_ID = "run-20260803-a";
 
 function base64(bytes: Uint8Array): string {
   let binary = "";
@@ -87,6 +88,7 @@ describe("encrypted runtime credential vault", () => {
     const port = createPostgresEncryptedCredentialPort(fake.adapter, {
       masterKey: binding,
       keyVersion: KEY_VERSION,
+      runId: RUN_ID,
     });
 
     const secret = await port.open({
@@ -107,6 +109,11 @@ describe("encrypted runtime credential vault", () => {
     expect(JSON.stringify(attestation)).not.toContain("fixture-winerim-token");
     expect(binding.get).toHaveBeenCalledOnce();
     expect(fake.statements[0].text).toContain("runtime_connection_credentials");
+    expect(fake.statements[0].text).toContain("runtime_canary_connections");
+    expect(fake.statements[0].text).toContain("scope.run_id = credentials.run_id");
+    expect(fake.statements[0].text).toContain("credentials.run_id =");
+    expect(fake.statements[0].values).toContain(RUN_ID);
+    expect(fake.statements[0].text).toContain("scope.status = 'ACTIVE'");
     expect(fake.statements[0].text).not.toMatch(/api_token|winerim_api_token|base_url/i);
     expect(JSON.stringify(fake.statements[0].values)).not.toContain("fixture-winerim-token");
     expect(JSON.stringify(fake.statements[0].values)).not.toContain(fixture.master);
@@ -123,6 +130,7 @@ describe("encrypted runtime credential vault", () => {
     const port = createPostgresEncryptedCredentialPort(fake.adapter, {
       masterKey: { get: async () => postgresWrappedBase64(fixture.master) },
       keyVersion: KEY_VERSION,
+      runId: RUN_ID,
     });
 
     const secret = await port.open({
@@ -140,6 +148,7 @@ describe("encrypted runtime credential vault", () => {
     const secret = await createPostgresEncryptedCredentialPort(fake.adapter, {
       masterKey: binding,
       keyVersion: KEY_VERSION,
+      runId: RUN_ID,
     }).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
 
     expect(secret).toBeNull();
@@ -152,6 +161,7 @@ describe("encrypted runtime credential vault", () => {
     const port = createPostgresEncryptedCredentialPort(fake.adapter, {
       masterKey: { get: async () => fixture.master },
       keyVersion: KEY_VERSION,
+      runId: RUN_ID,
     });
 
     let failure = "";
@@ -170,7 +180,7 @@ describe("encrypted runtime credential vault", () => {
     const second = await encryptedRow("fixture-secret-v2");
     const open = async (row: Record<string, unknown>) => createPostgresEncryptedCredentialPort(
       database([row]).adapter,
-      { masterKey: { get: async () => first.master }, keyVersion: KEY_VERSION },
+      { masterKey: { get: async () => first.master }, keyVersion: KEY_VERSION, runId: RUN_ID },
     ).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
 
     const firstSecret = await open(first.row);
@@ -180,6 +190,19 @@ describe("encrypted runtime credential vault", () => {
 
     expect(firstAttestation.reference).toBe(secondAttestation.reference);
     expect(firstAttestation.version).not.toBe(secondAttestation.version);
+  });
+
+  it("fails closed before querying when the expected run id is absent", async () => {
+    const fixture = await encryptedRow("fixture-secret");
+    const fake = database([fixture.row]);
+    const secret = await createPostgresEncryptedCredentialPort(fake.adapter, {
+      masterKey: { get: async () => fixture.master },
+      keyVersion: KEY_VERSION,
+      runId: "",
+    }).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
+
+    expect(secret).toBeNull();
+    expect(fake.statements).toHaveLength(0);
   });
 
   it("loads only non-secret connection scope for composition", async () => {

@@ -750,6 +750,7 @@ async function readiness(
 
   try {
     const reviewedConnectionId = canaryConnectionId(env);
+    const reviewedRunId = canaryIdentifier(env.CANARY_RUN_ID);
     const result = await dependencies.database(env).query<RuntimeReadinessRow>(sql`
       SELECT
         (SELECT value FROM public.infrastructure_metadata WHERE key = 'environment') AS environment,
@@ -871,24 +872,39 @@ async function readiness(
         to_regclass('public.runtime_execution_log') IS NOT NULL AS runtime_execution_log_ready,
         CASE
           WHEN ${canaryConsumer} = false THEN true
-          WHEN ${reviewedConnectionId}::uuid IS NULL THEN false
+          WHEN ${reviewedConnectionId}::uuid IS NULL OR ${reviewedRunId}::text IS NULL THEN false
           ELSE (
             SELECT count(*) = 1
             FROM public.runtime_canary_connections scope
             WHERE scope.connection_id = ${reviewedConnectionId}::uuid
+              AND scope.run_id = ${reviewedRunId}
+              AND scope.status = 'ACTIVE'
+              AND scope.active = true
+              AND scope.approved_at IS NOT NULL
+              AND scope.approved_at <= now()
+              AND scope.expires_at IS NOT NULL
+              AND scope.expires_at > now()
           )
         END AS runtime_canary_scope_ready
         ,CASE
           WHEN ${canaryConsumer} = false THEN true
-          WHEN ${reviewedConnectionId}::uuid IS NULL THEN false
+          WHEN ${reviewedConnectionId}::uuid IS NULL OR ${reviewedRunId}::text IS NULL THEN false
           ELSE (
             SELECT count(*) = 2
               AND count(DISTINCT credentials.credential_kind) = 2
               AND bool_and(credentials.provider = 'agora')
             FROM public.runtime_connection_credentials credentials
+            JOIN public.runtime_canary_connections scope
+              ON scope.connection_id = credentials.connection_id
+             AND scope.run_id = credentials.run_id
             WHERE credentials.connection_id = ${reviewedConnectionId}::uuid
+              AND credentials.run_id = ${reviewedRunId}
               AND credentials.active = true
               AND credentials.credential_kind IN ('agora', 'winerim')
+              AND scope.status = 'ACTIVE'
+              AND scope.active = true
+              AND scope.approved_at <= now()
+              AND scope.expires_at > now()
           )
         END AS runtime_credentials_ready
     `);

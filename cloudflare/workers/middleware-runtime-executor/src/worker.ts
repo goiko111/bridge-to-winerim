@@ -497,9 +497,7 @@ async function readiness(
     !isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
       ? "RUNTIME_CANARY_CONNECTION_ID"
       : null,
-    writerFenceRequired && !canaryIdentifier(env.CANARY_RUN_ID)
-      ? "CANARY_RUN_ID"
-      : null,
+    !canaryIdentifier(env.CANARY_RUN_ID) ? "CANARY_RUN_ID" : null,
     writerFenceRequired && !canaryIdentifier(env.WRITER_FENCE_HOLDER_ID)
       ? "WRITER_FENCE_HOLDER_ID"
       : null,
@@ -526,6 +524,7 @@ async function readiness(
         const credentials = createPostgresEncryptedCredentialPort(database, {
           masterKey: env.RUNTIME_VAULT_KEY!,
           keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
+          runId: String(env.CANARY_RUN_ID ?? "").trim(),
         });
         const agora = await credentials.open({ connectionId, provider: "agora", kind: "agora" });
         const winerim = await credentials.open({ connectionId, provider: "agora", kind: "winerim" });
@@ -671,6 +670,7 @@ export function createMiddlewareRuntimeExecutorWorker(
         credentials: createPostgresEncryptedCredentialPort(database, {
           masterKey: env.RUNTIME_VAULT_KEY,
           keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
+          runId: String(env.CANARY_RUN_ID ?? "").trim(),
         }),
         ports: {
           create: (context) => createStockPorts(context, env, resolved),
@@ -681,6 +681,7 @@ export function createMiddlewareRuntimeExecutorWorker(
       const scopedCredentials = createPostgresEncryptedCredentialPort(database, {
         masterKey: env.RUNTIME_VAULT_KEY,
         keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
+        runId: String(env.CANARY_RUN_ID ?? "").trim(),
       });
       const guardedCatalogApply: AgoraCatalogApplyAndReadbackPort = {
         async applyAndReadback(input) {

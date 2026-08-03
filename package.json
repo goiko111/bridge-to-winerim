@@ -20,6 +20,8 @@
     "cf:runtime:canary:remove:plan": "node scripts/remove-runtime-canary-consumer.mjs",
     "cf:runtime:canary:remove:dry-run": "node scripts/remove-runtime-canary-consumer.mjs --dry-run",
     "rescue:credentials:plan": "node infrastructure/runtime/prepare-runtime-credential-provisioning.mjs",
+    "rescue:canary:activation:plan": "node infrastructure/runtime/prepare-rescue-canary-activation.mjs",
+    "postgres:canary-control-plane:test": "bash infrastructure/postgres/tests/test-runtime-canary-control-plane.sh",
     "rescue:canary:retirement:plan": "node infrastructure/runtime/prepare-rescue-canary-retirement.mjs",
     "cf:runtime:deploy:staging": "infrastructure/postgres/deploy-staging-runtime-component.sh runtime",
     "cf:runtime:deployments:staging": "npx wrangler deployments status --config wrangler.middleware-runtime.toml --env staging",

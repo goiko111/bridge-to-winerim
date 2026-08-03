@@ -2,6 +2,21 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - El Bejeque activation gate versionado
+
+- [x] Añadir `run_id`, estados terminales, evidencias SHA-256 e inmutabilidad.
+- [x] Implementar provisioning, activacion y retiro transaccionales con
+  manifests privados y rotacion versionada.
+- [x] Validar dos generaciones PG17, RLS, pre-canary, runtime, executor,
+  fail-closed, suite root, TypeScript, build y Wrangler dry-run.
+- [x] Cerrar drain programatico, orden de retirada y binding exacto de
+  credenciales/RLS/readiness/vault al `run_id` activo.
+- [ ] Backup rescue fresh y aplicar `0013` solo con control plane vacio.
+- [ ] Pausar consumer/writer, revocar grants, esperar `>=130 s`, rotar y
+  obtener `401/403` sanitizado mas dos probes read-only correctos.
+- [ ] Provisionar inactivo, desplegar recursos dedicados, activar run exacto,
+  verificar y ejecutar solo una operacion controlada.
+
 ## P0 - El Bejeque rescue pre-canary
 
 - [x] Aplicar `72 -> 95` mappings con backup, readback y rollback.
