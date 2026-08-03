@@ -13,6 +13,7 @@
     "cf:api:smoke:staging": "node scripts/smoke-middleware-api.mjs https://api-staging.middleware.winerim.wine",
     "cf:api:smoke:local": "node scripts/smoke-middleware-api.mjs http://127.0.0.1:8787",
     "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts --environment node",
+    "cf:executor:test": "vitest run --config cloudflare/workers/middleware-runtime-executor/vitest.config.ts",
     "cf:runtime:dry-run:staging": "npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/winerim-middleware-runtime-staging-dryrun",
     "cf:runtime:canary:render": "node scripts/runtime-canary-config.mjs render",
     "cf:runtime:dry-run:canary": "node scripts/runtime-canary-config.mjs dry-run runtime",

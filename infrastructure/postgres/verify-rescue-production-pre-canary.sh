@@ -10,9 +10,9 @@ CANARY_CONNECTION_ID=${RESCUE_PRODUCTION_CANARY_CONNECTION_ID:-}
 EXPECTED_CONNECTIONS=${RESCUE_PRODUCTION_EXPECTED_CONNECTIONS:-31}
 EXPECTED_CANARY_WINERIM_WINES=${RESCUE_PRODUCTION_EXPECTED_CANARY_WINERIM_WINES:-70}
 EXPECTED_CANARY_PROVIDER_PRODUCTS=${RESCUE_PRODUCTION_EXPECTED_CANARY_PROVIDER_PRODUCTS:-409}
-EXPECTED_CANARY_PRODUCT_MAPPINGS=${RESCUE_PRODUCTION_EXPECTED_CANARY_PRODUCT_MAPPINGS:-72}
+EXPECTED_CANARY_PRODUCT_MAPPINGS=${RESCUE_PRODUCTION_EXPECTED_CANARY_PRODUCT_MAPPINGS:-95}
 EXPECTED_CANARY_MASTER_ROWS=${RESCUE_PRODUCTION_EXPECTED_CANARY_MASTER_ROWS:-1}
-EXPECTED_CANARY_AMBIGUOUS_PRODUCTS=${RESCUE_PRODUCTION_EXPECTED_CANARY_AMBIGUOUS_PRODUCTS:-34}
+EXPECTED_CANARY_AMBIGUOUS_PRODUCTS=${RESCUE_PRODUCTION_EXPECTED_CANARY_AMBIGUOUS_PRODUCTS:-11}
 FAILURES=0
 
 test -n "$DATABASE_URL" || { printf 'RESCUE_PRODUCTION_DATABASE_URL_REQUIRED\n' >&2; exit 2; }
@@ -116,7 +116,61 @@ check_equals "$DATABASE_URL" noncandidate_winerim_wines 0 "SELECT count(*) FROM 
 check_equals "$DATABASE_URL" noncandidate_provider_products 0 "SELECT count(*) FROM public.provider_products WHERE connection_id<>$candidate"
 check_equals "$DATABASE_URL" noncandidate_product_mappings 0 "SELECT count(*) FROM public.product_mappings WHERE connection_id<>$candidate"
 check_equals "$DATABASE_URL" noncandidate_master_rows 0 "SELECT count(*) FROM public.agora_master_data WHERE connection_id<>$candidate"
-check_equals "$DATABASE_URL" candidate_confirmed_mapping_contract_invalid 0 "SELECT count(*) FROM public.product_mappings pm LEFT JOIN public.provider_products pp ON pp.connection_id=pm.connection_id AND pp.provider_product_id=pm.provider_product_id LEFT JOIN public.winerim_wines ww ON ww.connection_id=pm.connection_id AND ww.winerim_id=pm.winerim_wine_id LEFT JOIN LATERAL (SELECT count(*) AS reason_count, min(substring(reason FROM '([1-9][0-9]*)$')::bigint) AS stock_id FROM unnest(pm.match_reasons) reason WHERE reason ~ ('^CURRENT_' || pm.format_type || '_STOCK_ID_[1-9][0-9]*$')) stock_reason ON true WHERE pm.connection_id=$candidate AND (pm.status<>'CONFIRMED' OR pm.match_method<>'RESCUE_EXACT_ID_WINE_VARIANT' OR pm.match_score IS DISTINCT FROM 1 OR pm.winerim_wine_id IS NULL OR pm.format_type NOT IN ('BOTTLE','GLASS','MAGNUM') OR cardinality(pm.match_reasons)<>4 OR NOT (pm.match_reasons @> ARRAY['CURRENT_AGORA_PRODUCT_ID','CURRENT_WINERIM_WINE_ID','CURRENT_' || pm.format_type || '_STOCK_ACTIVE_TRUE']::text[]) OR stock_reason.reason_count<>1 OR pp.id IS NULL OR pp.is_wine_candidate IS NOT TRUE OR pp.sync_status<>'SYNCED' OR pp.sync_error IS NOT NULL OR pp.winerim_wine_id IS DISTINCT FROM pm.winerim_wine_id OR pp.sale_format IS DISTINCT FROM pm.format_type OR ww.id IS NULL OR stock_reason.stock_id IS NULL OR stock_reason.stock_id IS DISTINCT FROM CASE pm.format_type WHEN 'BOTTLE' THEN ww.bottle_stock_id WHEN 'GLASS' THEN ww.glass_stock_id WHEN 'MAGNUM' THEN ww.magnum_stock_id END OR (SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ww.raw_payload->'stocks')='array' THEN ww.raw_payload->'stocks' ELSE '[]'::jsonb END) stock WHERE stock->>'id'=stock_reason.stock_id::text AND stock->>'stockActive'='true' AND lower(stock->'winePrice'->>'variant')=CASE pm.format_type WHEN 'BOTTLE' THEN 'botella' WHEN 'GLASS' THEN 'copa' WHEN 'MAGNUM' THEN 'magnum' END)<>1)"
+mapping_contract_query="$(cat <<SQL
+SELECT count(*)
+FROM public.product_mappings pm
+LEFT JOIN public.provider_products pp
+  ON pp.connection_id=pm.connection_id AND pp.provider_product_id=pm.provider_product_id
+LEFT JOIN public.winerim_wines ww
+  ON ww.connection_id=pm.connection_id AND ww.winerim_id=pm.winerim_wine_id
+LEFT JOIN LATERAL (
+  SELECT count(*) AS reason_count,
+         min(substring(reason FROM '([1-9][0-9]*)$')::bigint) AS stock_id
+  FROM unnest(pm.match_reasons) reason
+  WHERE reason ~ ('^CURRENT_' || pm.format_type || '_STOCK_ID_[1-9][0-9]*$')
+) stock_reason ON true
+LEFT JOIN LATERAL (
+  SELECT count(*) AS stock_count,
+         bool_or(COALESCE((stock->>'stockActive')::boolean, false)) AS stock_active,
+         min(lower(stock->'winePrice'->>'variant')) AS stock_variant
+  FROM jsonb_array_elements(
+    CASE WHEN jsonb_typeof(ww.raw_payload->'stocks')='array'
+      THEN ww.raw_payload->'stocks' ELSE '[]'::jsonb END
+  ) stock
+  WHERE stock->>'id'=stock_reason.stock_id::text
+) stock_contract ON true
+WHERE pm.connection_id=$candidate
+  AND (
+    pm.status<>'CONFIRMED'
+    OR pm.match_method NOT IN ('RESCUE_EXACT_ID_WINE_VARIANT','RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY')
+    OR pm.match_score IS DISTINCT FROM 1
+    OR pm.winerim_wine_id IS NULL
+    OR pm.format_type NOT IN ('BOTTLE','GLASS','MAGNUM')
+    OR cardinality(pm.match_reasons)<>4
+    OR NOT (pm.match_reasons @> ARRAY['CURRENT_AGORA_PRODUCT_ID','CURRENT_WINERIM_WINE_ID']::text[])
+    OR stock_reason.reason_count<>1
+    OR pp.id IS NULL OR pp.is_wine_candidate IS NOT TRUE OR pp.sync_status<>'SYNCED'
+    OR pp.sync_error IS NOT NULL OR pp.winerim_wine_id IS DISTINCT FROM pm.winerim_wine_id
+    OR pp.sale_format IS DISTINCT FROM pm.format_type
+    OR ww.id IS NULL OR stock_reason.stock_id IS NULL
+    OR stock_reason.stock_id IS DISTINCT FROM CASE pm.format_type
+      WHEN 'BOTTLE' THEN ww.bottle_stock_id WHEN 'GLASS' THEN ww.glass_stock_id
+      WHEN 'MAGNUM' THEN ww.magnum_stock_id END
+    OR stock_contract.stock_count<>1
+    OR stock_contract.stock_variant IS DISTINCT FROM CASE pm.format_type
+      WHEN 'BOTTLE' THEN 'botella' WHEN 'GLASS' THEN 'copa' WHEN 'MAGNUM' THEN 'magnum' END
+    OR (pm.match_method='RESCUE_EXACT_ID_WINE_VARIANT' AND (
+      stock_contract.stock_active IS DISTINCT FROM true
+      OR NOT (pm.match_reasons @> ARRAY['CURRENT_' || pm.format_type || '_STOCK_ACTIVE_TRUE']::text[])
+    ))
+    OR (pm.match_method='RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY' AND (
+      stock_contract.stock_active IS DISTINCT FROM false
+      OR NOT (pm.match_reasons @> ARRAY['CURRENT_' || pm.format_type || '_STOCK_ACTIVE_FALSE_SALES_ONLY']::text[])
+    ))
+  )
+SQL
+)"
+check_equals "$DATABASE_URL" candidate_confirmed_mapping_contract_invalid 0 "$mapping_contract_query"
 check_equals "$DATABASE_URL" candidate_ambiguous_provider_products "$EXPECTED_CANARY_AMBIGUOUS_PRODUCTS" "SELECT count(*) FROM public.provider_products pp WHERE pp.connection_id=$candidate AND pp.is_wine_candidate IS TRUE AND pp.winerim_wine_id IS NULL AND pp.sync_status='BLOCKED' AND pp.sync_error='HYDRATION_WINE_CANDIDATE_AMBIGUOUS' AND pp.classification_override='AUTO'"
 check_equals "$DATABASE_URL" candidate_wine_candidate_contract_invalid 0 "SELECT count(*) FROM public.provider_products pp LEFT JOIN public.product_mappings pm ON pm.connection_id=pp.connection_id AND pm.provider_product_id=pp.provider_product_id WHERE pp.connection_id=$candidate AND pp.is_wine_candidate IS TRUE AND ((pm.id IS NOT NULL AND (pm.status<>'CONFIRMED' OR pp.sync_status<>'SYNCED' OR pp.sync_error IS NOT NULL OR pp.winerim_wine_id IS DISTINCT FROM pm.winerim_wine_id)) OR (pm.id IS NULL AND (pp.winerim_wine_id IS NOT NULL OR pp.sync_status<>'BLOCKED' OR pp.sync_error IS DISTINCT FROM 'HYDRATION_WINE_CANDIDATE_AMBIGUOUS' OR pp.classification_override<>'AUTO')))"
 check_equals "$DATABASE_URL" candidate_ambiguous_products_with_mapping 0 "SELECT count(*) FROM public.provider_products pp JOIN public.product_mappings pm ON pm.connection_id=pp.connection_id AND pm.provider_product_id=pp.provider_product_id WHERE pp.connection_id=$candidate AND pp.sync_status='BLOCKED' AND pp.sync_error='HYDRATION_WINE_CANDIDATE_AMBIGUOUS'"

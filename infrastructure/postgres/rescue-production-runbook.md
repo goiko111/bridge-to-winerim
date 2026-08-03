@@ -133,7 +133,7 @@ For the reviewed El Bejeque hydration:
 export RESCUE_PRODUCTION_HYDRATION_CONNECTION_ID='ba44c13a-5f48-4a49-8b3f-04049b244d94'
 export RESCUE_PRODUCTION_EXPECTED_HYDRATION_WINERIM_WINES=70
 export RESCUE_PRODUCTION_EXPECTED_HYDRATION_PROVIDER_PRODUCTS=409
-export RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS=72
+export RESCUE_PRODUCTION_EXPECTED_HYDRATION_PRODUCT_MAPPINGS=95
 export RESCUE_PRODUCTION_EXPECTED_HYDRATION_MASTER_ROWS=1
 export RESCUE_PRODUCTION_HYDRATION_PLAN_FILE='/absolute/path/to/reviewed/hydration-plan.json'
 
@@ -146,14 +146,16 @@ The backup is refused unless all of these invariants hold:
 - exactly 31 connections exist and all are disabled, catalog-off,
   `PULL_ONLY`, `write_mode=NONE`, credential-free, cursor-free and breaker-free;
 - `winerim_wines`, `provider_products`, `product_mappings` and
-  `agora_master_data` contain exactly `70/409/72/1` rows for the supplied UUID
+  `agora_master_data` contain exactly `70/409/95/1` rows for the supplied UUID
   and no rows for any other connection;
 - the supplied regular, non-symlink hydration plan has the reviewed schema,
   connection and counts; its canonical content recomputes to its own
   `hydrationDigest`, and the master row carries that exact digest marker;
 - every mapping has the exact semantic fingerprint from the reviewed plan,
-  including product/wine identity, format, method, score, reasons, active stock
-  ID, variant-specific stock column and `winePrice.variant`;
+  including product/wine identity, format, method, score, reasons, exact stock
+  ID, variant-specific stock column, `stockActive` and `winePrice.variant`;
+- the `23` inactive exact variants (`21` glass and `2` bottle) use the
+  `RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY` method and remain history-only;
 - the complete canonical database projection of `winerim_wines`,
   `provider_products`, `product_mappings` and `agora_master_data` recomputes to
   the reviewed `hydrationDigest`; same-count changes to any semantic field are
@@ -175,7 +177,7 @@ restore-prerequisite hashes. It also records server, `psql`, `pg_dump` and
 Restore only into a new PostgreSQL 17 database using the standard procedure
 above. Before accepting the restored artifact, verify the manifest digest and
 require the same 30-table inventory, `31` inert connections, the exact
-`70/409/72/1` rows owned by the recorded connection UUID, and zero rows in all
+`70/409/95/1` rows owned by the recorded connection UUID, and zero rows in all
 other tables. A successful restore does not create LOGIN roles or authorize a
 canary; those remain separate reviewed gates.
 

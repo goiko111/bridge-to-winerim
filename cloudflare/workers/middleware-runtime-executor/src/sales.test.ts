@@ -244,6 +244,136 @@ async function executeUnresolvedClosedDay(
   return { execution, fake, request };
 }
 
+async function executeInactiveSalesOnly(input: {
+  variant: "GLASS" | "BOTTLE";
+  stockActivity: boolean | "missing";
+}) {
+  const isGlass = input.variant === "GLASS";
+  const providerProductId = isGlass ? "700200" : "500200";
+  const wineId = isGlass ? "200" : "201";
+  const exactStockId = isGlass ? 2002 : 2011;
+  const decoyStockId = isGlass ? 2092 : 2091;
+  const winerimVariant = isGlass ? "copa" : "botella";
+  const payload = invoicePayloadWithLines([{
+    Index: 1,
+    ProductId: providerProductId,
+    SaleFormatId: providerProductId,
+    ProductName: `${isGlass ? "C" : "B"} Inactive sales-only`,
+    FamilyName: isGlass ? "COPAS WINERIM" : "TINTOS WINERIM",
+    SaleFormatName: isGlass ? "Copa" : "Botella",
+    Quantity: 1,
+    UnitPrice: isGlass ? 7 : 28,
+    TotalAmount: isGlass ? 7 : 28,
+    CreationDate: "2026-08-03T13:05:00",
+  }]);
+  let eventIndex = 0;
+  const fake = databaseHarness((statement) => {
+    const query = statement.text;
+    if (query.includes("FROM public.pos_connections") && !query.includes("FOR UPDATE")) {
+      return result([{
+        connection_id: CONNECTION_ID,
+        provider: "agora",
+        base_url: "https://agora.example.test",
+        enabled: true,
+        last_business_day_synced: "2026-08-02",
+        provider_config: {
+          time_zone: "Europe/Madrid",
+          intraday_sales_sync_enabled: true,
+          runtime_sales_cutover_business_day: "2026-08-03",
+        },
+      }]);
+    }
+    if (query.includes("FROM public.product_mappings")) {
+      return result([{
+        mapping_id: `mapping-${input.variant.toLowerCase()}-inactive`,
+        provider_product_id: providerProductId,
+        provider_product_name: `${isGlass ? "C" : "B"} Inactive sales-only`,
+        winerim_wine_id: wineId,
+        format_type: input.variant,
+        stock_id: String(exactStockId),
+        stock_active: false,
+      }]);
+    }
+    if (query.includes("FROM public.provider_products")) return result();
+    if (query.includes("FROM public.runtime_idempotency")) return result();
+    if (query.includes("conflict_count")) return result([{ conflict_count: 0 }]);
+    if (query.includes("INSERT INTO public.sales_events")) {
+      eventIndex += 1;
+      return result([{ id: `22222222-2222-4222-8222-${String(eventIndex).padStart(12, "0")}` }]);
+    }
+    if (query.includes("DELETE FROM public.sales_line_items")) return result();
+    if (query.includes("INSERT INTO public.sales_line_items")) return result();
+    if (query.includes("INSERT INTO public.runtime_idempotency")) {
+      return result([{
+        idempotency_key: "sales-only-claim",
+        message_id: "sales-only-order",
+        job: "sales.claim",
+        status: "RUNNING",
+        applied_quantity: 0,
+        lease_expired: false,
+        result: { appliedQuantity: 0 },
+        updated_at: "2026-08-03T12:00:00.000Z",
+      }]);
+    }
+    if (query.includes("UPDATE public.runtime_idempotency")) {
+      return result([{ idempotency_key: "sales-only-claim" }]);
+    }
+    if (query.includes("UPDATE public.pos_connections")) return result([{}], 1);
+    throw new Error(`unexpected SQL in inactive sales-only execution: ${query}`);
+  });
+  const httpCalls: Array<{ url: string; method: string; body: unknown }> = [];
+  const request = vi.fn<typeof fetch>(async (rawUrl, init) => {
+    const url = String(rawUrl);
+    const method = String(init?.method ?? "GET");
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    httpCalls.push({ url, method, body });
+    if (url.startsWith("https://agora.example.test/api/export/")) {
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.endsWith(`/api/v2/stock/wine/${wineId}`)) {
+      const exact = {
+        id: exactStockId,
+        stock: isGlass ? 24 : 5,
+        ...(input.stockActivity === "missing" ? {} : { stockActive: input.stockActivity }),
+        winePrice: { variant: winerimVariant },
+      };
+      return new Response(JSON.stringify({ stocks: [{
+        id: decoyStockId,
+        stock: 99,
+        stockActive: true,
+        winePrice: { variant: winerimVariant },
+      }, exact] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (method === "POST" && url.endsWith("/api/v2/sales/import")) {
+      const orderId = (body as { sales: Array<{ orderId: string }> }).sales[0].orderId;
+      return new Response(JSON.stringify({
+        sales: [{ orderId, status: "imported", stockApplied: false }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`unexpected HTTP ${method} ${url}`);
+  });
+  const beforeMutation = vi.fn(async () => undefined);
+  const execution = await executeAgoraSalesEnvelope(
+    await envelope("sales.sync-intraday", { businessDay: "2026-08-03" }),
+    { executionEnabled: true, cursorEnabled: true, dlqReady: true },
+    {
+      database: fake.database,
+      agoraCredential: { read: () => "agora-fixture" },
+      winerimCredential: { read: () => "winerim-fixture" },
+      winerimBaseUrl: "https://winerim.example.test",
+      winerimAllowedHosts: ["winerim.example.test"],
+      request,
+      now: () => Date.parse("2026-08-03T12:00:00.000Z"),
+      sleep: vi.fn(async () => undefined),
+      beforeMutation,
+    },
+  );
+  return { beforeMutation, exactStockId, execution, fake, httpCalls };
+}
+
 describe("private sales executor invoice loader", () => {
   it("recognizes only bounded invoice containers and preserves legacy document identity", () => {
     expect(parseAgoraInvoicesPayload(invoicePayload())).toMatchObject({ recognized: true });
@@ -521,6 +651,41 @@ describe("private sales executor fail-closed cursor", () => {
 });
 
 describe("private sales executor operational composition", () => {
+  it.each(["GLASS", "BOTTLE"] as const)(
+    "imports an inactive %s mapping sales-only with live:false and its exact stockId",
+    async (variant) => {
+      const outcome = await executeInactiveSalesOnly({ variant, stockActivity: false });
+
+      expect(outcome.execution).toEqual({ ok: true, detail: "sales:complete:1:1:1" });
+      expect(outcome.beforeMutation).toHaveBeenCalledTimes(1);
+      expect(outcome.httpCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          url: "https://winerim.example.test/api/v2/sales/import",
+          method: "POST",
+          body: expect.objectContaining({
+            live: false,
+            sales: [expect.objectContaining({ stockId: outcome.exactStockId, qty: 1 })],
+          }),
+        }),
+      ]));
+      expect(outcome.httpCalls.some((call) => call.method === "PUT")).toBe(false);
+    },
+  );
+
+  it("fails closed when the exact Winerim stock has no activity evidence", async () => {
+    const outcome = await executeInactiveSalesOnly({ variant: "GLASS", stockActivity: "missing" });
+
+    expect(outcome.execution).toMatchObject({
+      ok: false,
+      failure: { message: "SALES_EXECUTION_FAILED_FOR_DLQ" },
+    });
+    expect(outcome.beforeMutation).not.toHaveBeenCalled();
+    expect(outcome.httpCalls.some((call) => call.url.endsWith("/api/v2/sales/import"))).toBe(false);
+    expect(outcome.fake.statements.some((statement) => statement.values.some((value) => (
+      typeof value === "string" && value.includes("WINERIM_STOCK_ACTIVITY_UNKNOWN")
+    )))).toBe(true);
+  });
+
   it("persists XML open tickets idempotently in shadow mode without Winerim or cursor writes", async () => {
     const eventId = "22222222-2222-4222-8222-000000000042";
     const fake = databaseHarness((statement) => {
@@ -547,7 +712,7 @@ describe("private sales executor operational composition", () => {
           winerim_wine_id: "47593",
           format_type: "BOTTLE",
           stock_id: "475931",
-          wine_active: true,
+          stock_active: true,
         }]);
       }
       if (query.includes("INSERT INTO public.sales_events")) return result([{ id: eventId }]);
@@ -735,7 +900,7 @@ describe("private sales executor operational composition", () => {
       winerim_wine_id: "100",
       format_type: "BOTTLE",
       stock_id: "1001",
-      wine_active: true,
+      stock_active: true,
     }], [{
       provider_product_id: "500100",
       family: "TINTOS WINERIM",
@@ -796,7 +961,7 @@ describe("private sales executor operational composition", () => {
           winerim_wine_id: "100",
           format_type: "BOTTLE",
           stock_id: "1001",
-          wine_active: true,
+          stock_active: true,
         }, {
           mapping_id: "mapping-glass",
           provider_product_id: "700101",
@@ -804,7 +969,7 @@ describe("private sales executor operational composition", () => {
           winerim_wine_id: "101",
           format_type: "GLASS",
           stock_id: "1012",
-          wine_active: true,
+          stock_active: true,
         }]);
       }
       if (query.includes("FROM public.provider_products")) {
@@ -863,6 +1028,11 @@ describe("private sales executor operational composition", () => {
       }
       if (url.endsWith("/api/v2/stock/wine/100")) {
         return new Response(JSON.stringify({ stocks: [{
+          id: 1099,
+          stock: 99,
+          stockActive: true,
+          winePrice: { variant: "botella" },
+        }, {
           id: 1001,
           stock: 10,
           stockActive: true,
@@ -875,6 +1045,11 @@ describe("private sales executor operational composition", () => {
           stock: 8,
           stockActive: true,
           winePrice: { variant: "botella" },
+        }, {
+          id: 1092,
+          stock: 99,
+          stockActive: true,
+          winePrice: { variant: "copa" },
         }, {
           id: 1012,
           stock: 48,
@@ -944,7 +1119,10 @@ describe("private sales executor operational composition", () => {
         method: "POST",
         body: expect.objectContaining({
           live: true,
-          sales: [expect.objectContaining({ soldAt: "2026-08-03T13:02:00" })],
+          sales: [expect.objectContaining({
+            stockId: 1012,
+            soldAt: "2026-08-03T13:02:00",
+          })],
         }),
       }),
     ]));
@@ -979,7 +1157,7 @@ describe("private sales executor operational composition", () => {
         winerim_wine_id: "100",
         format_type: "BOTTLE",
         stock_id: "1001",
-        wine_active: true,
+        stock_active: true,
       }, {
         mapping_id: "mapping-glass",
         provider_product_id: "700101",
@@ -987,7 +1165,7 @@ describe("private sales executor operational composition", () => {
         winerim_wine_id: "101",
         format_type: "GLASS",
         stock_id: "1012",
-        wine_active: true,
+        stock_active: true,
       }]);
       if (query.includes("FROM public.runtime_idempotency")) return result();
       if (query.includes("INSERT INTO public.sales_events")) {
@@ -1071,7 +1249,7 @@ describe("private sales executor operational composition", () => {
         winerim_wine_id: "100",
         format_type: "BOTTLE",
         stock_id: "1001",
-        wine_active: true,
+        stock_active: true,
       }, {
         mapping_id: "mapping-glass",
         provider_product_id: "700101",
@@ -1079,7 +1257,7 @@ describe("private sales executor operational composition", () => {
         winerim_wine_id: "101",
         format_type: "GLASS",
         stock_id: "1012",
-        wine_active: true,
+        stock_active: true,
       }]);
       if (query.includes("jsonb_array_elements_text")) return result();
       if (query.includes("FROM public.runtime_idempotency")) {

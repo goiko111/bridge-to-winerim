@@ -292,14 +292,21 @@ payload.providerProducts = payload.providerProducts.map((row) => {
 payload.acceptedMappings = payload.acceptedMappings.map((row) => {
   const { databaseContract, semantic } = takeDatabaseContract(row, "MAPPINGS");
   const formatType = String(semantic.formatType ?? "").toUpperCase();
+  const stockActive = semantic.stockActive === true;
   const expectedReasons = [
     "CURRENT_AGORA_PRODUCT_ID",
     "CURRENT_WINERIM_WINE_ID",
     `CURRENT_${formatType}_STOCK_ID_${semantic.stockId}`,
-    `CURRENT_${formatType}_STOCK_ACTIVE_TRUE`,
+    stockActive
+      ? `CURRENT_${formatType}_STOCK_ACTIVE_TRUE`
+      : `CURRENT_${formatType}_STOCK_ACTIVE_FALSE_SALES_ONLY`,
   ];
+  const expectedMatchMethod = stockActive
+    ? "RESCUE_EXACT_ID_WINE_VARIANT"
+    : "RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY";
   if (databaseContract.matchScore !== 1
       || !sameJson(databaseContract.matchReasons, expectedReasons)
+      || semantic.matchMethod !== expectedMatchMethod
       || databaseContract.agoraProductId !== String(semantic.providerProductId)
       || databaseContract.lastSyncedAt !== null
       || databaseContract.lastSyncError !== null) {
@@ -375,9 +382,9 @@ for (const mapping of payload.acceptedMappings) {
     ? wine.rawPayload.stocks.filter((stock) => Number(stock?.id) === stockId)
     : [];
   if (Number(wine[variant.column]) !== stockId || matchingStocks.length !== 1
-      || matchingStocks[0]?.stockActive !== true
+      || (matchingStocks[0]?.stockActive === true) !== mapping.stockActive
       || String(matchingStocks[0]?.winePrice?.variant ?? "").toLowerCase() !== variant.name
-      || mapping.stockVariant !== variant.name || mapping.stockActive !== true
+      || mapping.stockVariant !== variant.name || typeof mapping.stockActive !== "boolean"
       || product.name !== mapping.providerProductName
       || product.winerimWineId !== mapping.winerimWineId
       || product.saleFormat !== mapping.formatType) {

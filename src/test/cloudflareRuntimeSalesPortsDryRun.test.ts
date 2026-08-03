@@ -86,7 +86,7 @@ function mappingRow() {
     winerim_wine_id: "100",
     format_type: "GLASS",
     stock_id: "stock-glass-100",
-    wine_active: true,
+    stock_active: true,
   };
 }
 

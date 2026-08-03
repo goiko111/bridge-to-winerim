@@ -136,7 +136,7 @@ INSERT INTO public.winerim_wines (
 )
 VALUES
   ('$CANDIDATE_ID', '101', 'Canary bottle wine', '{"stocks":[{"id":1001,"stockActive":true,"winePrice":{"variant":"botella"}},{"id":1099,"stockActive":true,"winePrice":{"variant":"magnum"}}]}'::jsonb, 1001, NULL, 1099),
-  ('$CANDIDATE_ID', '102', 'Canary glass wine', '{"stocks":[{"id":1002,"stockActive":true,"winePrice":{"variant":"copa"}}]}'::jsonb, NULL, 1002, NULL);
+  ('$CANDIDATE_ID', '102', 'Canary glass wine', '{"stocks":[{"id":1002,"stockActive":false,"winePrice":{"variant":"copa"}}]}'::jsonb, NULL, 1002, NULL);
 INSERT INTO public.provider_products (
   connection_id, provider_product_id, name, sale_format, is_wine_candidate,
   wine_score, wine_reasons, classification_override, last_score, last_reasons,
@@ -144,7 +144,7 @@ INSERT INTO public.provider_products (
 )
 VALUES
   ('$CANDIDATE_ID', '500101', 'B Canary bottle', 'BOTTLE', true, 100, ARRAY['RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT'], 'AUTO', 100, ARRAY['RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT'], 'SYNCED', NULL, '101'),
-  ('$CANDIDATE_ID', '700102', 'C Canary glass', 'GLASS', true, 100, ARRAY['RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT'], 'AUTO', 100, ARRAY['RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT'], 'SYNCED', NULL, '102'),
+  ('$CANDIDATE_ID', '700102', 'C Canary glass', 'GLASS', true, 100, ARRAY['RESCUE_EXACT_ID_WINE_INACTIVE_VARIANT_SALES_ONLY'], 'AUTO', 100, ARRAY['RESCUE_EXACT_ID_WINE_INACTIVE_VARIANT_SALES_ONLY'], 'SYNCED', NULL, '102'),
   ('$CANDIDATE_ID', '500103', 'B Ambiguous candidate', NULL, true, 50, ARRAY['REJECTED_STOCK_VARIANT_INACTIVE'], 'AUTO', 50, ARRAY['REJECTED_STOCK_VARIANT_INACTIVE'], 'BLOCKED', 'HYDRATION_WINE_CANDIDATE_AMBIGUOUS', NULL),
   ('$CANDIDATE_ID', '900001', 'Non wine', NULL, false, 0, ARRAY[]::text[], 'AUTO', 0, ARRAY[]::text[], 'NOT_SYNCED', NULL, NULL);
 INSERT INTO public.product_mappings (
@@ -154,7 +154,7 @@ INSERT INTO public.product_mappings (
 )
 VALUES
   ('$CANDIDATE_ID', '500101', 'B Canary bottle', '101', 'Canary bottle wine', 'RESCUE_EXACT_ID_WINE_VARIANT', 1, ARRAY['CURRENT_AGORA_PRODUCT_ID','CURRENT_WINERIM_WINE_ID','CURRENT_BOTTLE_STOCK_ID_1001','CURRENT_BOTTLE_STOCK_ACTIVE_TRUE'], 'CONFIRMED', 'BOTTLE', '500101', NULL, NULL),
-  ('$CANDIDATE_ID', '700102', 'C Canary glass', '102', 'Canary glass wine', 'RESCUE_EXACT_ID_WINE_VARIANT', 1, ARRAY['CURRENT_AGORA_PRODUCT_ID','CURRENT_WINERIM_WINE_ID','CURRENT_GLASS_STOCK_ID_1002','CURRENT_GLASS_STOCK_ACTIVE_TRUE'], 'CONFIRMED', 'GLASS', '700102', NULL, NULL);
+  ('$CANDIDATE_ID', '700102', 'C Canary glass', '102', 'Canary glass wine', 'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY', 1, ARRAY['CURRENT_AGORA_PRODUCT_ID','CURRENT_WINERIM_WINE_ID','CURRENT_GLASS_STOCK_ID_1002','CURRENT_GLASS_STOCK_ACTIVE_FALSE_SALES_ONLY'], 'CONFIRMED', 'GLASS', '700102', NULL, NULL);
 INSERT INTO public.agora_master_data (connection_id, families_json, products_summary_json, raw_xml_preview)
 SELECT
   '$CANDIDATE_ID'::uuid,
@@ -270,6 +270,13 @@ fi
 grep -Eq 'runtime_catalog_privilege_contract|runtime_effective_provider_products' <<<"$catalog_permission_error"
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$POSTGRES_DIR/0009_runtime_catalog_permissions.sql" >/dev/null
 "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null
+
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.winerim_wines SET raw_payload=jsonb_set(raw_payload, '{stocks,0,stockActive}', 'true'::jsonb) WHERE connection_id='$CANDIDATE_ID' AND winerim_id='102'" >/dev/null
+if "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null 2>&1; then
+  printf 'FAIL: pre-canary verifier accepted inactive sales-only markers with active source-stock evidence\n' >&2
+  exit 1
+fi
+psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.winerim_wines SET raw_payload=jsonb_set(raw_payload, '{stocks,0,stockActive}', 'false'::jsonb) WHERE connection_id='$CANDIDATE_ID' AND winerim_id='102'" >/dev/null
 
 psql "$RESCUE_PRODUCTION_DATABASE_URL" -X -v ON_ERROR_STOP=1 -c "UPDATE public.product_mappings SET match_reasons=array_remove(match_reasons, 'CURRENT_BOTTLE_STOCK_ACTIVE_TRUE') WHERE connection_id='$CANDIDATE_ID' AND provider_product_id='500101'" >/dev/null
 if "$POSTGRES_DIR/verify-rescue-production-pre-canary.sh" >/dev/null 2>&1; then

@@ -93,6 +93,7 @@ export type SalesImportLine = {
   lineId: string;
   winerimWineId: string;
   variant: SalesVariant;
+  stockId?: string;
   quantity: number;
   unitPrice?: number;
   totalAmount?: number;

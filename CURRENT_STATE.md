@@ -2,7 +2,32 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-22 14:35 CEST_
+_Última actualización: 2026-08-03 13:58 CEST_
+
+## El Bejeque - pre-canary seguro - 2026-08-03
+
+### Hechos
+
+- Rescue production conserva `31` conexiones inertes y El Bejeque apagado.
+- Hidratacion remota verificada: `70` vinos, `409` productos, `95` mappings y
+  `1` master; `23` mappings exactos inactivos quedan solo para historico
+  sales-only (`21` GLASS, `2` BOTTLE).
+- Cero credenciales runtime, canary, ventas, stock logs y outbound.
+- Backup cifrado real restaura en PG17 y valida apply/rollback de la transicion.
+- Root `531/531`, executor `61/61`, fail-closed `15/15` y TypeScript verdes.
+
+### Decision
+
+- `stockActive=false` nunca autoriza live ni stock. El canary no se abre sin
+  rotar la credencial anterior y demostrar `401/403` en el writer Lovable.
+
+### Tareas pendientes
+
+- Falta automatizar provision cifrado, retirada del canary rescue y limpieza
+  de scopes expirados. Las tareas `cf:runtime:canary:*` antiguas son solo para
+  staging y no deben usarse para este cutover.
+- Rotar/revocar credencial, cargar solo El Bejeque en vault, dos probes
+  read-only, shadow y una venta legitima con cola exclusiva y rollback.
 
 ## Abadia Yuste - mapping legacy exacto y univoco - 2026-07-22
 

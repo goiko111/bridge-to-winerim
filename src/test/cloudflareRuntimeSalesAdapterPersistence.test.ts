@@ -81,6 +81,11 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
     const fake = fakeDatabase((statement) => {
       expect(statement.text).toContain("pm.provider_product_id = ANY");
       expect(statement.text).toContain("pm.status = 'CONFIRMED'");
+      expect(statement.text).toContain("jsonb_array_elements");
+      expect(statement.text).toContain("stock_entry->>'stockActive'");
+      expect(statement.text).toContain("stock_contract.stock_count = 1");
+      expect(statement.text).toContain("RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY");
+      expect(statement.text).not.toContain("COALESCE((\n        SELECT (stock_entry->>'stockActive')::boolean");
       expect(statement.text).not.toContain("ILIKE");
       expect(statement.text).not.toContain("provider_product_name =");
       return result([{
@@ -90,7 +95,7 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
         winerim_wine_id: "47593",
         format_type: "BOTTLE",
         stock_id: "stock-47593",
-        wine_active: true,
+        stock_active: true,
       }]);
     });
     const adapter = createPostgresSalesAdapter(fake.database, {
@@ -115,6 +120,60 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
       stockActive: true,
     }));
     expect(fake.statements[0].values).toEqual([CONNECTION_ID, ["547593"]]);
+  });
+
+  it("preserves an exact inactive variant as sales-only instead of using wine activity", async () => {
+    const fake = fakeDatabase(() => result([{
+      mapping_id: "mapping-glass-1",
+      provider_product_id: "947593",
+      provider_product_name: "C Vi de Glass",
+      winerim_wine_id: "47593",
+      format_type: "GLASS",
+      stock_id: "stock-glass-47593",
+      stock_active: false,
+    }]));
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+    const glassDocument = salesDocument();
+    const glassLine = {
+      ...glassDocument.lines[0],
+      providerProductId: "947593",
+      productName: "C Vi de Glass",
+      suggestedVariant: "GLASS" as const,
+    };
+
+    await expect(adapter.resolveLine({
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+      document: glassDocument,
+      line: glassLine,
+    })).resolves.toMatchObject({
+      providerProductId: "947593",
+      variant: "GLASS",
+      stockId: "stock-glass-47593",
+      stockActive: false,
+    });
+  });
+
+  it("requires exactly one explicit stock activity record in the mapping query", async () => {
+    const fake = fakeDatabase((statement) => {
+      expect(statement.text).toContain("jsonb_typeof(stock_entry->'stockActive') = 'boolean'");
+      expect(statement.text).toContain("stock_contract.stock_count = 1");
+      return result();
+    });
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+    const document = salesDocument();
+    await expect(adapter.resolveLine({
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+      document,
+      line: document.lines[0],
+    })).resolves.toBeNull();
   });
 
   it("reads explicit provider-product classifications without name matching", async () => {
@@ -172,7 +231,7 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
           winerim_wine_id: "47593",
           format_type: "BOTTLE",
           stock_id: "stock-47593",
-          wine_active: true,
+          stock_active: true,
         }]);
       }
       if (statement.text.includes("INSERT INTO public.sales_events")) {
@@ -235,7 +294,7 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
           winerim_wine_id: "47593",
           format_type: "BOTTLE",
           stock_id: "stock-47593",
-          wine_active: true,
+          stock_active: true,
         }]);
       }
       if (statement.text.includes("INSERT INTO public.sales_events")) {

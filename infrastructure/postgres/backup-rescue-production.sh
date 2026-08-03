@@ -215,9 +215,14 @@ const variantName = { BOTTLE: "botella", GLASS: "copa", MAGNUM: "magnum" };
 const semanticMappings = plan.acceptedMappings.map((mapping) => {
   const formatType = String(mapping.formatType ?? "").toUpperCase();
   const stockId = Number(mapping.stockId);
-  if (!variantName[formatType] || !Number.isInteger(stockId) || stockId <= 0 || mapping.stockActive !== true) {
+  if (!variantName[formatType] || !Number.isInteger(stockId) || stockId <= 0 || typeof mapping.stockActive !== "boolean") {
     fail("HYDRATION_PLAN_MAPPING_STOCK_INVALID");
   }
+  const stockActive = mapping.stockActive === true;
+  const expectedMatchMethod = stockActive
+    ? "RESCUE_EXACT_ID_WINE_VARIANT"
+    : "RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY";
+  if (mapping.matchMethod !== expectedMatchMethod) fail("HYDRATION_PLAN_MAPPING_METHOD_INVALID");
   return {
     providerProductId: String(mapping.providerProductId),
     providerProductName: String(mapping.providerProductName),
@@ -228,15 +233,17 @@ const semanticMappings = plan.acceptedMappings.map((mapping) => {
     stockId,
     variantColumnStockId: stockId,
     rawStockVariant: variantName[formatType],
-    stockActive: true,
+    stockActive,
     status: "CONFIRMED",
-    matchMethod: "RESCUE_EXACT_ID_WINE_VARIANT",
+    matchMethod: expectedMatchMethod,
     matchScore: 1,
     matchReasons: [
       "CURRENT_AGORA_PRODUCT_ID",
       "CURRENT_WINERIM_WINE_ID",
       `CURRENT_${formatType}_STOCK_ID_${stockId}`,
-      `CURRENT_${formatType}_STOCK_ACTIVE_TRUE`,
+      stockActive
+        ? `CURRENT_${formatType}_STOCK_ACTIVE_TRUE`
+        : `CURRENT_${formatType}_STOCK_ACTIVE_FALSE_SALES_ONLY`,
     ].sort(),
   };
 }).sort((left, right) => left.providerProductId < right.providerProductId ? -1 : left.providerProductId > right.providerProductId ? 1 : 0);

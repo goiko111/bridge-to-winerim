@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-08-03 - El Bejeque acepta stock inactivo solo como sales-only
+- **Decision**: conservar identidades exactas con `stockActive=false` para
+  historico `live=false`, exigiendo `stockId` exacto, pero bloquearlas para
+  venta live y mutacion de stock.
+- **Razon**: recupera `23` variantes historicas inequívocas sin convertir
+  stock inactivo en stock operativo ni inventar mappings por nombre.
+- **Alternativa descartada**: rechazar todo stock inactivo o permitirlo en
+  live. La primera pierde historial verificable; la segunda puede descontar la
+  variante equivocada.
+- **Rollback / mitigacion**: transicion aditiva con SQL inverso probado sobre
+  backup cifrado PG17; runtime y conexion permanecen apagados.
+
 ## 2026-07-21 - Ampliar la evidencia SLA sin confundirla con cierre al 100%
 - **Decision**: registrar como verificadas en ambos sentidos dentro de siete
   minutos a Casa Nene, El Higueron, Kava, PurOsushi, Cienvinos Ecija, Sa

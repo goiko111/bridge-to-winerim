@@ -81,8 +81,10 @@ jobs:
           test "$access_required" = "true" || (echo "Staging must require Access JWT before static admin secrets can be omitted" >&2; exit 1)
       - run: npx tsc --noEmit --pretty false
       - run: npx vitest run src/test/middlewareOnboarding.test.ts src/test/middlewareWorkerSecurity.test.ts src/test/integrationChecklist.test.ts src/test/cloudflareDbAdapter.test.ts src/test/cloudflareDbSql.test.ts src/test/cloudflareRuntime*.test.ts src/test/stagingRuntimeUpgrade.test.ts
+      - run: npm run cf:executor:test
       - run: npx wrangler deploy --config wrangler.middleware.toml --env staging --dry-run --outdir /tmp/middleware-worker-check
       - run: npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/middleware-runtime-check
+      - run: npx wrangler deploy --config wrangler.middleware-runtime-executor.toml --env staging --dry-run --outdir /tmp/middleware-runtime-executor-check
       - run: infrastructure/postgres/smoke-local-worker.sh
       - name: Verify reviewed 28-to-30 upgrade and rollback locally
         run: |

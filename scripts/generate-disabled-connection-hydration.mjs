@@ -292,7 +292,9 @@ function providerProductRows(master, acceptedMappings, rejectedMappings, snapsho
     const classificationStatus = accepted ? "CONFIRMED" : isAmbiguousWineCandidate ? "AMBIGUOUS" : "NOT_WINE";
     const primaryPrice = product.prices[0]?.MainPrice ?? 0;
     const wineReasons = accepted
-      ? ["RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT"]
+      ? [accepted.stockActive
+          ? "RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT"
+          : "RESCUE_EXACT_ID_WINE_INACTIVE_VARIANT_SALES_ONLY"]
       : [
           ...(isWinerimFamily ? ["CURRENT_WINERIM_FAMILY"] : []),
           ...rejected.map((mapping) => `REJECTED_${mapping.reason}`),
@@ -357,13 +359,10 @@ export function buildDisabledConnectionHydration({
       const stockCandidates = stocksByWineVariant.get(`${winerimWineId}:${FORMAT_TO_STOCK_VARIANT[formatType]}`) ?? [];
       if (stockCandidates.length === 0) rejection = "STOCK_VARIANT_NOT_CURRENT";
       else if (stockCandidates.length !== 1) rejection = "AMBIGUOUS_STOCK_VARIANT";
-      else if (stockCandidates[0].stockActive !== true) {
-        rejection = "STOCK_VARIANT_INACTIVE";
-        rejectedStock = stockCandidates[0];
-      }
       else {
         const providerProduct = productById.get(providerProductId);
         const wine = wineById.get(winerimWineId);
+        const stockActive = stockCandidates[0].stockActive === true;
         acceptedMappings.push({
           providerProductId,
           providerProductName: String(providerProduct.attributes.Name ?? mapping.provider_product_name ?? "").trim(),
@@ -372,9 +371,11 @@ export function buildDisabledConnectionHydration({
           formatType,
           stockVariant: FORMAT_TO_STOCK_VARIANT[formatType],
           stockId: stockCandidates[0].id,
-          stockActive: true,
+          stockActive,
           status: "CONFIRMED",
-          matchMethod: "RESCUE_EXACT_ID_WINE_VARIANT",
+          matchMethod: stockActive
+            ? "RESCUE_EXACT_ID_WINE_VARIANT"
+            : "RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY",
         });
       }
     }
@@ -552,7 +553,9 @@ export function renderHydrationSql(plan) {
       "CURRENT_AGORA_PRODUCT_ID",
       "CURRENT_WINERIM_WINE_ID",
       `CURRENT_${mapping.formatType}_STOCK_ID_${mapping.stockId}`,
-      `CURRENT_${mapping.formatType}_STOCK_ACTIVE_TRUE`,
+      mapping.stockActive
+        ? `CURRENT_${mapping.formatType}_STOCK_ACTIVE_TRUE`
+        : `CURRENT_${mapping.formatType}_STOCK_ACTIVE_FALSE_SALES_ONLY`,
     ]),
     sqlText("CONFIRMED"), sqlText(mapping.formatType), sqlText(mapping.providerProductId), "NULL", "NULL",
   ]);

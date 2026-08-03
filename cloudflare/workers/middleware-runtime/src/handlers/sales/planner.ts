@@ -120,6 +120,7 @@ function buildImportLine(group: SalesGroup, quantity: number): SalesImportLine {
     lineId: group.lines.map(({ line }) => line.lineId).sort().join("+") || "aggregate",
     winerimWineId: group.lines[0].resolution.winerimWineId,
     variant: group.lines[0].resolution.variant,
+    stockId: group.lines[0].resolution.stockId,
     quantity,
     unitPrice: weightedUnitPrice(group),
     totalAmount: group.totalAmount,
@@ -266,13 +267,13 @@ export async function planSalesRun(
         });
         continue;
       }
-      if (mode === "OPERATIONAL" && resolution.stockActive && resolution.variant !== "GLASS" && !resolution.stockId) {
+      if (!resolution.stockId) {
         blocked.push({
           reason: "STOCK_ID_REQUIRED",
           documentId: document.documentId,
           lineId: line.lineId,
           providerProductId: line.providerProductId,
-          detail: `Active ${resolution.variant} stock requires a stock id`,
+          detail: `Exact ${resolution.variant} sales processing requires a stock id`,
         });
         continue;
       }

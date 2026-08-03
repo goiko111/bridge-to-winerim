@@ -40,15 +40,15 @@ function syntheticSources() {
 }
 
 describe("disabled connection hydration generator", () => {
-  it("accepts only exact current Product.Id + wineId + stock variant mappings", () => {
+  it("accepts exact current Product.Id + wineId + stock variant mappings and marks inactive stock sales-only", () => {
     const plan = buildDisabledConnectionHydration(syntheticSources());
     expect(plan.counts).toMatchObject({
       snapshotMappings: 4,
-      acceptedMappings: 1,
-      rejectedMappings: 3,
+      acceptedMappings: 2,
+      rejectedMappings: 2,
       inactiveWinerimStocks: 1,
-      confirmedProviderWineCandidates: 1,
-      ambiguousProviderWineCandidates: 4,
+      confirmedProviderWineCandidates: 2,
+      ambiguousProviderWineCandidates: 3,
     });
     expect(plan.acceptedMappings).toEqual([expect.objectContaining({
       providerProductId: "500101",
@@ -57,22 +57,23 @@ describe("disabled connection hydration generator", () => {
       stockId: 1001,
       stockActive: true,
       status: "CONFIRMED",
+    }), expect.objectContaining({
+      providerProductId: "901101",
+      winerimWineId: "101",
+      formatType: "GLASS",
+      stockId: 1002,
+      stockActive: false,
+      matchMethod: "RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY",
     })]);
     expect(plan.rejectedMappings.map((mapping) => mapping.reason).sort()).toEqual([
       "STOCK_VARIANT_NOT_CURRENT",
-      "STOCK_VARIANT_INACTIVE",
       "WINERIM_WINE_NOT_CURRENT",
     ].sort());
-    expect(plan.acceptedMappings.every((mapping) => mapping.stockId !== 1002)).toBe(true);
-    expect(plan.rejectedMappings.find((mapping) => mapping.reason === "STOCK_VARIANT_INACTIVE")).toMatchObject({
-      stockId: 1002,
-      stockActive: false,
-    });
   });
 
   it("keeps rejected and unmapped Winerim-family products as ambiguous wine candidates", () => {
     const plan = buildDisabledConnectionHydration(syntheticSources());
-    for (const productId of ["700102", "900101", "901101", "600103"]) {
+    for (const productId of ["700102", "900101", "600103"]) {
       expect(plan.providerProducts.find((product) => product.providerProductId === productId)).toMatchObject({
         isWineCandidate: true,
         classificationStatus: "AMBIGUOUS",
@@ -82,6 +83,14 @@ describe("disabled connection hydration generator", () => {
         saleFormat: null,
       });
     }
+    expect(plan.providerProducts.find((product) => product.providerProductId === "901101")).toMatchObject({
+      isWineCandidate: true,
+      classificationStatus: "CONFIRMED",
+      syncStatus: "SYNCED",
+      winerimWineId: "101",
+      saleFormat: "GLASS",
+      wineReasons: ["RESCUE_EXACT_ID_WINE_INACTIVE_VARIANT_SALES_ONLY"],
+    });
     expect(plan.providerProducts.find((product) => product.providerProductId === "10")).toMatchObject({
       isWineCandidate: false,
       classificationStatus: "NOT_WINE",
@@ -114,7 +123,8 @@ describe("disabled connection hydration generator", () => {
     expect(mappingSection).toContain("CURRENT_BOTTLE_STOCK_ACTIVE_TRUE");
     expect(mappingSection).not.toContain("700102");
     expect(mappingSection).not.toContain("900101");
-    expect(mappingSection).not.toContain("901101");
+    expect(mappingSection).toContain("901101");
+    expect(mappingSection).toContain("CURRENT_GLASS_STOCK_ACTIVE_FALSE_SALES_ONLY");
     expect(sql).not.toMatch(/api_token|winerim_api_token|last_business_day_synced|sales_events|outbound_tasks|runtime_canary_connections/i);
     expect(sql).not.toContain("SET enabled");
   });
@@ -150,7 +160,7 @@ describe("disabled connection hydration generator", () => {
   };
   const realFixtureAvailable = Object.values(realPaths).every(existsSync);
 
-  it.runIf(realFixtureAvailable)("reconciles active stock only in the real El Bejeque fixture", () => {
+  it.runIf(realFixtureAvailable)("reconciles active and exact sales-only stock in the real El Bejeque fixture", () => {
     const plan = buildDisabledConnectionHydration({
       connectionId,
       snapshot: JSON.parse(readFileSync(realPaths.snapshot, "utf8")),
@@ -160,23 +170,22 @@ describe("disabled connection hydration generator", () => {
       generatedAt: "2026-08-03T10:00:00.000Z",
     });
     expect(plan.counts).toMatchObject({
-      acceptedMappings: 72,
-      rejectedMappings: 34,
+      acceptedMappings: 95,
+      rejectedMappings: 11,
       inactiveWinerimStocks: 24,
-      confirmedProviderWineCandidates: 72,
-      ambiguousProviderWineCandidates: 34,
+      confirmedProviderWineCandidates: 95,
+      ambiguousProviderWineCandidates: 11,
     });
     expect(plan.rejectedByReason).toEqual({
       WINERIM_WINE_NOT_CURRENT: 10,
-      STOCK_VARIANT_INACTIVE: 23,
       STOCK_VARIANT_NOT_CURRENT: 1,
     });
-    expect(plan.acceptedMappings).toHaveLength(72);
-    expect(plan.acceptedMappings.every((mapping) => mapping.stockActive === true)).toBe(true);
-    expect(plan.rejectedMappings.filter((mapping) => mapping.reason === "STOCK_VARIANT_INACTIVE").every((mapping) => (
-      Number.isInteger(mapping.stockId) && mapping.stockActive === false
+    expect(plan.acceptedMappings).toHaveLength(95);
+    expect(plan.acceptedMappings.filter((mapping) => mapping.stockActive === false)).toHaveLength(23);
+    expect(plan.acceptedMappings.filter((mapping) => mapping.stockActive === false).every((mapping) => (
+      mapping.matchMethod === "RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY"
     ))).toBe(true);
-    expect(plan.providerProducts.filter((product) => product.classificationStatus === "AMBIGUOUS")).toHaveLength(34);
+    expect(plan.providerProducts.filter((product) => product.classificationStatus === "AMBIGUOUS")).toHaveLength(11);
     expect(plan.providerProducts.filter((product) => product.classificationStatus === "AMBIGUOUS").every((product) => (
       product.isWineCandidate === true && product.syncStatus === "BLOCKED" && product.winerimWineId === null
     ))).toBe(true);

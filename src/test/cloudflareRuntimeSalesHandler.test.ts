@@ -59,6 +59,7 @@ describe("Cloudflare runtime sales handler", () => {
     const ports = handlerPorts({
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-1",
       stockActive: true,
     });
     const result = await handleSalesRun({
@@ -80,6 +81,7 @@ describe("Cloudflare runtime sales handler", () => {
     const rejectedPorts = handlerPorts({
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-1",
       stockActive: true,
     }, {
       importSales: vi.fn().mockResolvedValue({ ok: true, lines: [{ stockApplied: false }] }),
@@ -97,6 +99,7 @@ describe("Cloudflare runtime sales handler", () => {
     const duplicatePorts = handlerPorts({
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-1",
       stockActive: true,
     }, {
       importSales: vi.fn().mockResolvedValue({ ok: true, duplicate: true }),
@@ -128,6 +131,7 @@ describe("Cloudflare runtime sales handler", () => {
     const ports = handlerPorts({
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-1",
       stockActive: true,
     }, {
       importSales: vi.fn().mockResolvedValue({ ok: false, status: 409 }),
@@ -175,6 +179,7 @@ describe("Cloudflare runtime sales handler", () => {
     const ports = handlerPorts({
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-1",
       stockActive: true,
     }, { importSales });
     const input = {

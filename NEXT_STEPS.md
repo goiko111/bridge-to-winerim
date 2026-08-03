@@ -2,6 +2,17 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - El Bejeque rescue pre-canary
+
+- [x] Aplicar `72 -> 95` mappings con backup, readback y rollback.
+- [x] Endurecer sales para stockId exacto y sales-only inactivo fail-closed.
+- [x] Validar suites, verifier, paquete fence y backup restaurable.
+- [ ] Implementar provisionador cifrado de dos credenciales sin exponerlas.
+- [ ] Implementar retirada/cleanup del canary rescue y scope expirado.
+- [ ] Rotar credencial antigua y obtener evidencia `401/403` antes del grant.
+- [ ] Dos probes read-only, shadow y una sola venta legitima; mantener todo el
+  resto apagado.
+
 ## P0 - Corte operativo al cerrar 2026-07-22
 
 - [x] Publicar en `main` el hardening de ventas/cursor/monitor:

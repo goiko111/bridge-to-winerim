@@ -66,6 +66,48 @@ describe("Cloudflare runtime sales planner", () => {
     }
   });
 
+  it("imports an exact inactive glass mapping as operational sales-only", async () => {
+    const plan = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document()],
+    }, ports({
+      winerimWineId: "47593",
+      variant: "GLASS",
+      stockId: "stock-glass-1",
+      stockActive: false,
+    }));
+
+    expect(plan.blocked).toEqual([]);
+    expect(plan.intents).toHaveLength(1);
+    expect(plan.intents[0].action).toMatchObject({
+      kind: "SALES_IMPORT",
+      live: false,
+      requireStockApplied: false,
+      lines: [expect.objectContaining({ stockId: "stock-glass-1" })],
+    });
+  });
+
+  it("blocks any mapped import that lacks an exact stock id", async () => {
+    const plan = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document()],
+    }, ports({
+      winerimWineId: "47593",
+      variant: "GLASS",
+      stockActive: false,
+    }));
+
+    expect(plan.intents).toEqual([]);
+    expect(plan.blocked).toEqual([expect.objectContaining({
+      reason: "STOCK_ID_REQUIRED",
+      providerProductId: "547593",
+    })]);
+  });
+
   it("keeps historical imports sales-only for both glass and bottle", async () => {
     for (const variant of ["GLASS", "BOTTLE"] as const) {
       const plan = await planSalesRun({
@@ -432,6 +474,7 @@ describe("Cloudflare runtime sales planner", () => {
     const resolution: SalesLineResolution = {
       winerimWineId: "47593",
       variant: "GLASS",
+      stockId: "stock-glass-1",
       stockActive: true,
     };
     const lines = [

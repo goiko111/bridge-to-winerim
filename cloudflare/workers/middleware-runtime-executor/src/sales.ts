@@ -117,7 +117,7 @@ type OpenTicketResult = Readonly<{
 type WinerimStockEntry = Readonly<{
   identity: WinerimStockIdentity;
   stock: number;
-  active: boolean;
+  active: boolean | null;
 }>;
 
 export class SalesLaneError extends Error {
@@ -722,9 +722,14 @@ function runtimeStockVariant(variant: WinerimVariant): WinerimStockIdentity["var
   return "bottle";
 }
 
-function readStockActive(stock: JsonRecord): boolean {
+function readStockActive(stock: JsonRecord): boolean | null {
   const value = stock.stockActive ?? stock.stock_active ?? stock.active;
-  return value === undefined || value === null || value === "" ? true : boolean(value);
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === 0) return value === 1;
+  const normalized = text(value).toLowerCase();
+  if (["true", "1", "yes"].includes(normalized)) return true;
+  if (["false", "0", "no"].includes(normalized)) return false;
+  return null;
 }
 
 function positiveInteger(value: unknown): number | null {
@@ -869,17 +874,51 @@ function mapStockRun(
 function createSalesMutations(
   dependencies: SalesLaneDependencies,
   providerSoldAtByOrderId: ReadonlyMap<string, string>,
+  exactMappings: ReadonlyMap<string, SalesLineResolution>,
 ): Pick<SalesExecutionPorts, "applyStock" | "importSales"> {
   const readStocks = createWinerimStockReader(dependencies);
   const transport = mutationTransport(dependencies);
 
+  const exactStock = (
+    stocks: WinerimStockEntry[],
+    stockId: number,
+    variant: WinerimStockIdentity["variant"],
+  ): WinerimStockEntry | null => {
+    const matches = stocks.filter((entry) => (
+      entry.identity.stockId === stockId && entry.identity.variant === variant
+    ));
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  const importStockId = (line: SalesImportCommand["lines"][number]): number | null => {
+    const providedStockId = positiveInteger(line.stockId);
+    if (!providedStockId || providedStockId <= 0) return null;
+    if (line.providerProductIds.length === 0) return null;
+    const mappings = line.providerProductIds.map((providerProductId) => exactMappings.get(providerProductId));
+    if (mappings.some((mapping) => !mapping)) return null;
+    const stockIds = new Set(mappings.map((mapping) => {
+      if (
+        mapping!.winerimWineId !== line.winerimWineId
+        || mapping!.variant !== line.variant
+      ) return null;
+      const stockId = positiveInteger(mapping!.stockId);
+      return stockId && stockId > 0 ? stockId : null;
+    }));
+    return stockIds.size === 1 && stockIds.has(providedStockId) ? providedStockId : null;
+  };
+
   const applyStock = async (command: StockApplyCommand): Promise<StockApplyResult> => {
     const desiredVariant = stockVariant(command.variant);
     const stocks = await readStocks(command.winerimWineId);
-    const source = stocks.find((entry) => (
-      entry.active && entry.identity.variant === runtimeStockVariant(desiredVariant)
-    ));
+    const expectedStockId = positiveInteger(command.stockId);
+    const source = expectedStockId && expectedStockId > 0
+      ? exactStock(stocks, expectedStockId, runtimeStockVariant(desiredVariant))
+      : null;
     if (!source) return { ok: false, status: 422, error: "WINERIM_STOCK_VARIANT_NOT_FOUND" };
+    if (source.active === null) {
+      return { ok: false, status: 422, error: "WINERIM_STOCK_ACTIVITY_UNKNOWN" };
+    }
+    if (!source.active) return { ok: false, status: 422, error: "WINERIM_STOCK_VARIANT_INACTIVE" };
     const adapter = createPostgresStockAdapter(dependencies.database, {
       connectionId: command.connectionId,
       transport,
@@ -907,10 +946,22 @@ function createSalesMutations(
     }
     const line = command.lines[0];
     const stocks = await readStocks(line.winerimWineId);
-    const sold = stocks.find((entry) => (
-      entry.active && entry.identity.variant === runtimeStockVariant(stockVariant(line.variant))
-    ));
+    const expectedStockId = importStockId(line);
+    if (!expectedStockId) {
+      return { ok: false, status: 422, error: "SALES_IMPORT_STOCK_ID_REQUIRED" };
+    }
+    const sold = exactStock(
+      stocks,
+      expectedStockId,
+      runtimeStockVariant(stockVariant(line.variant)),
+    );
     if (!sold) return { ok: false, status: 422, error: "WINERIM_STOCK_VARIANT_NOT_FOUND" };
+    if (sold.active === null) {
+      return { ok: false, status: 422, error: "WINERIM_STOCK_ACTIVITY_UNKNOWN" };
+    }
+    if (command.live && !sold.active) {
+      return { ok: false, status: 422, error: "WINERIM_STOCK_VARIANT_INACTIVE" };
+    }
 
     if (!command.live) {
       const plan = {
@@ -924,6 +975,7 @@ function createSalesMutations(
           method: "POST" as const,
           path: "/api/v2/sales/import" as const,
           body: {
+            live: false,
             sales: [{
               stockId: sold.identity.stockId,
               qty: line.quantity,
@@ -1224,7 +1276,7 @@ async function executeOpenTickets(
     throw new SalesLaneError("SALES_LEGACY_IDEMPOTENCY_RECONCILIATION_REQUIRED");
   }
 
-  const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan));
+  const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan), mappingById);
   const execution = await executeSalesPlan(plan, {
     reserveClaim: salesAdapter.reserveClaim,
     completeClaim: salesAdapter.completeClaim,
@@ -1330,7 +1382,7 @@ async function executeDay(
 
   await salesAdapter.persistDocuments(classified.observations);
 
-  const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan));
+  const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan), mappingById);
   const execution = await executeSalesPlan(plan, {
     reserveClaim: salesAdapter.reserveClaim,
     completeClaim: salesAdapter.completeClaim,

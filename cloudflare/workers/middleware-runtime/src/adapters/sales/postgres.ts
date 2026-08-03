@@ -32,7 +32,7 @@ type MappingRow = {
   winerim_wine_id: unknown;
   format_type: unknown;
   stock_id: unknown;
-  wine_active: unknown;
+  stock_active: unknown;
 };
 
 type ProductClassificationRow = {
@@ -160,7 +160,7 @@ function mappingFromRow(row: MappingRow): ExactSalesMapping | null {
     winerimWineId: wineId,
     variant,
     stockId: nullableText(row.stock_id) ?? undefined,
-    stockActive: boolean(row.wine_active),
+    stockActive: boolean(row.stock_active),
   };
 }
 
@@ -210,15 +210,33 @@ async function selectExactMappings(
         WHEN upper(pm.format_type) IN ('MAGNUM', 'M') THEN ww.magnum_stock_id
         ELSE ww.bottle_stock_id
       END::text AS stock_id,
-      COALESCE(ww.is_active, false) AS wine_active
+      stock_contract.stock_active
     FROM public.product_mappings pm
     LEFT JOIN public.winerim_wines ww
       ON ww.connection_id = pm.connection_id
      AND ww.winerim_id = pm.winerim_wine_id
+    JOIN LATERAL (
+      SELECT
+        bool_and((stock_entry->>'stockActive')::boolean) AS stock_active,
+        count(*) AS stock_count
+        FROM jsonb_array_elements(COALESCE(ww.raw_payload->'stocks', '[]'::jsonb)) stock_entry
+        WHERE stock_entry->>'id' = (
+          CASE
+            WHEN upper(pm.format_type) IN ('GLASS', 'COPA', 'C') THEN ww.glass_stock_id
+            WHEN upper(pm.format_type) IN ('MAGNUM', 'M') THEN ww.magnum_stock_id
+            ELSE ww.bottle_stock_id
+          END
+        )::text
+          AND jsonb_typeof(stock_entry->'stockActive') = 'boolean'
+    ) stock_contract ON stock_contract.stock_count = 1
     WHERE pm.connection_id = ${connectionId}::uuid
       AND pm.provider_product_id = ANY(${ids}::text[])
       AND pm.status = 'CONFIRMED'
       AND pm.winerim_wine_id IS NOT NULL
+      AND (
+        (stock_contract.stock_active IS TRUE AND pm.match_method = 'RESCUE_EXACT_ID_WINE_VARIANT')
+        OR (stock_contract.stock_active IS FALSE AND pm.match_method = 'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY')
+      )
     ORDER BY pm.provider_product_id ASC
   `);
   return result.rows.map(mappingFromRow).filter((row): row is ExactSalesMapping => !!row);
