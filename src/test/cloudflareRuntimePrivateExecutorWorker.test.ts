@@ -91,8 +91,18 @@ function fakeDatabase(rows: Record<string, unknown>[] = []) {
   return { adapter, query };
 }
 
-function readinessDatabase(rows: Partial<Record<"agora" | "winerim", Record<string, unknown>>>) {
+function readinessDatabase(
+  rows: Partial<Record<"agora" | "winerim", Record<string, unknown>>>,
+  activeGrantSha256?: string,
+) {
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
+    if (statement.text.includes("FROM public.runtime_canary_connections")) {
+      return result((activeGrantSha256 ? [{
+        connection_id: CONNECTION_ID,
+        run_id: "run-20260803-a",
+        writer_fence_grant_sha256: activeGrantSha256,
+      }] : []) as Row[]);
+    }
     if (statement.text.includes("FROM public.pos_connections")) {
       return result([{
         connection_id: CONNECTION_ID,
@@ -207,6 +217,36 @@ async function credentialFenceFor(
   return {
     attestation,
     binding: await writerFenceCredentialBinding(attestation),
+  };
+}
+
+async function activeGrantFor(
+  credentialFence: Awaited<ReturnType<typeof credentialFenceFor>>,
+) {
+  const proof = "active-writer-fence-proof-for-runtime-tests-123456";
+  const now = Date.now();
+  const rawGrant = JSON.stringify({
+    version: 1,
+    connectionId: CONNECTION_ID,
+    runId: "run-20260803-a",
+    holderId: "deployment-a",
+    proofSha256: await sha256Hex(proof),
+    exclusiveCredentialRef: credentialFence.attestation.reference,
+    credentialVersion: credentialFence.attestation.version,
+    credentialBinding: credentialFence.binding,
+    legacyWriter: {
+      revokedAt: new Date(now - 120_000).toISOString(),
+      negativeProbeStatus: 401,
+      evidenceSha256: "d".repeat(64),
+    },
+    issuedAt: new Date(now - 60_000).toISOString(),
+    expiresAt: new Date(now + 60 * 60_000).toISOString(),
+  });
+  return {
+    proof,
+    rawGrant,
+    grantSha256: await sha256Hex(rawGrant),
+    credentialVersion: credentialFence.attestation.version,
   };
 }
 
@@ -535,7 +575,10 @@ describe("private runtime executor Worker", () => {
       issuedAt: "2026-08-03T11:55:00.000Z",
       expiresAt: "2026-08-03T13:00:00.000Z",
     });
-    const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
+    const fake = readinessDatabase(
+      { agora: agora.row, winerim: winerim.row },
+      await sha256Hex(grant),
+    );
     const response = await createMiddlewareRuntimeExecutorWorker({
       database: () => fake.adapter,
       now: () => now,
@@ -596,6 +639,36 @@ describe("private runtime executor Worker", () => {
       CANARY_WRITER_FENCE_PROOF: { get: async () => proof },
       CANARY_WRITER_FENCE_GRANT: { get: async () => grant },
     }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ ok: false, writerFenceReady: false });
+  });
+
+  it("keeps readiness at 503 when the grant secret differs from active scope evidence", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const credentialFence = await credentialFenceFor(winerim);
+    const activeFence = await activeGrantFor(credentialFence);
+    const swappedGrant = JSON.stringify({
+      ...JSON.parse(activeFence.rawGrant),
+      legacyWriter: {
+        ...JSON.parse(activeFence.rawGrant).legacyWriter,
+        evidenceSha256: "e".repeat(64),
+      },
+    });
+    const fake = readinessDatabase(
+      { agora: agora.row, winerim: winerim.row },
+      activeFence.grantSha256,
+    );
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      rescueCanaryEnv({
+        RUNTIME_VAULT_KEY: { get: async () => agora.master },
+        CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+        CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+        CANARY_WRITER_FENCE_GRANT: { get: async () => swappedGrant },
+      }),
+    );
 
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ ok: false, writerFenceReady: false });
@@ -1085,7 +1158,8 @@ describe("private runtime executor Worker", () => {
   it("renews the rescue writer fence immediately before a live Winerim mutation", async () => {
     const winerim = await encryptedCredentialRow("winerim");
     const credentialFence = await credentialFenceFor(winerim);
-    const fake = readinessDatabase({ winerim: winerim.row });
+    const activeFence = await activeGrantFor(credentialFence);
+    const fake = readinessDatabase({ winerim: winerim.row }, activeFence.grantSha256);
     const order: string[] = [];
     const audit = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const request = vi.fn<typeof fetch>(async () => {
@@ -1127,6 +1201,9 @@ describe("private runtime executor Worker", () => {
     );
     const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
       RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => activeFence.rawGrant },
       WRITER_FENCE: { fetch: fence },
     }));
 
@@ -1146,15 +1223,56 @@ describe("private runtime executor Worker", () => {
     audit.mockRestore();
   });
 
+  it("rejects swapped active evidence with 403 before lease or provider calls", async () => {
+    const winerim = await encryptedCredentialRow("winerim");
+    const credentialFence = await credentialFenceFor(winerim);
+    const activeFence = await activeGrantFor(credentialFence);
+    const swappedGrant = JSON.stringify({
+      ...JSON.parse(activeFence.rawGrant),
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+    });
+    const fake = readinessDatabase({ winerim: winerim.row }, activeFence.grantSha256);
+    const provider = vi.fn<typeof fetch>();
+    const lease = vi.fn();
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      request: provider,
+    });
+    const canary = await rescueEnvelope({
+      mode: "operational",
+      orderId: "rescue-live-order-swapped-evidence",
+      soldAt: "2026-08-03T08:00:00.000Z",
+      quantity: 1,
+      soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+      stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+    });
+    const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
+      RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => swappedGrant },
+      WRITER_FENCE: { fetch: lease },
+    }));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: false,
+      failure: { httpStatus: 403, message: "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED" },
+    });
+    expect(lease).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it("blocks the mutation when the writer-fence credential version drifts", async () => {
     const winerim = await encryptedCredentialRow("winerim");
     const credentialFence = await credentialFenceFor(winerim);
+    const activeFence = await activeGrantFor(credentialFence);
     const driftedVersion = "d".repeat(64);
     const driftedBinding = await writerFenceCredentialBinding({
       reference: credentialFence.attestation.reference,
       version: driftedVersion,
     });
-    const fake = readinessDatabase({ winerim: winerim.row });
+    const fake = readinessDatabase({ winerim: winerim.row }, activeFence.grantSha256);
     const request = vi.fn<typeof fetch>();
     const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter, request });
     const canary = await rescueEnvelope(
@@ -1169,6 +1287,9 @@ describe("private runtime executor Worker", () => {
     );
     const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
       RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => activeFence.rawGrant },
       WRITER_FENCE: {
         fetch: async (_input, init) => {
           const body = JSON.parse(String(init?.body ?? "{}"));
@@ -1191,7 +1312,8 @@ describe("private runtime executor Worker", () => {
   it("blocks the mutation when the reacquired lease is too close to expiry", async () => {
     const winerim = await encryptedCredentialRow("winerim");
     const credentialFence = await credentialFenceFor(winerim);
-    const fake = readinessDatabase({ winerim: winerim.row });
+    const activeFence = await activeGrantFor(credentialFence);
+    const fake = readinessDatabase({ winerim: winerim.row }, activeFence.grantSha256);
     const request = vi.fn<typeof fetch>();
     const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter, request });
     const canary = await rescueEnvelope(
@@ -1206,6 +1328,9 @@ describe("private runtime executor Worker", () => {
     );
     const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
       RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => activeFence.rawGrant },
       WRITER_FENCE: {
         fetch: async (_input, init) => {
           const body = JSON.parse(String(init?.body ?? "{}"));

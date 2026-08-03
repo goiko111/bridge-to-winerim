@@ -58,6 +58,8 @@ function main() {
 
   requireText(fence, 'class_name = "ConnectionWriterFence"', "DURABLE_WRITER_LEASE_MISSING");
   requireText(fence, 'binding = "WRITER_FENCE_GRANT"', "WRITER_FENCE_GRANT_NOT_SECRET_BOUND");
+  requireText(fence, 'binding = "MIDDLEWARE_DB"', "WRITER_FENCE_DATABASE_NOT_BOUND");
+  requireText(fence, 'id = "{{RUNTIME_HYPERDRIVE_ID}}"', "WRITER_FENCE_HYPERDRIVE_NOT_TEMPLATED");
   requireText(observer, 'binding = "CANARY_DLQ_ARCHIVE"', "DLQ_ARCHIVE_MISSING");
   requireText(observer, 'binding = "CANARY_DLQ_ALERTS"', "DLQ_ALARM_PRODUCER_MISSING");
   requireText(observer, 'queue = "{{CANARY_DLQ_QUEUE_NAME}}"', "DLQ_CONSUMER_MISSING");

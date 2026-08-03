@@ -2,6 +2,7 @@ import { Client } from "pg";
 
 import {
   createHyperdrivePostgresAdapter,
+  sql,
   type DatabaseAdapter,
   type DriverQueryConfig,
   type HyperdriveBinding,
@@ -53,9 +54,9 @@ import {
 import {
   acquireExclusiveWriterFence,
   authorizeWriterFenceMutation,
-  parseWriterFenceGrant,
-  validateWriterFenceGrant,
+  validateActiveWriterFenceGrant,
   writerFenceCredentialBinding,
+  type WriterFenceActiveScopeEvidence,
   type WriterFenceClientEnvironment,
   type WriterFenceMutationAuthorization,
 } from "../../../canary-failclosed/src/writerFence";
@@ -153,8 +154,75 @@ async function rescueRequestEnvelope(request: Request): Promise<unknown> {
   }
 }
 
+interface ActiveWriterFenceScopeRow extends Record<string, unknown> {
+  connection_id: string;
+  run_id: string;
+  writer_fence_grant_sha256: string;
+}
+
+async function loadActiveWriterFenceEvidence(
+  database: DatabaseAdapter,
+  connectionId: string,
+  runId: string,
+): Promise<WriterFenceActiveScopeEvidence | null> {
+  const result = await database.query<ActiveWriterFenceScopeRow>(sql`
+    SELECT
+      scope.connection_id::text AS connection_id,
+      scope.run_id,
+      scope.writer_fence_grant_sha256
+    FROM public.runtime_canary_connections scope
+    WHERE scope.connection_id = ${connectionId}::uuid
+      AND scope.run_id = ${runId}
+      AND scope.active = true
+      AND scope.status = 'ACTIVE'
+      AND scope.writer_fence_grant_sha256 IS NOT NULL
+    LIMIT 2
+  `);
+  if (result.rowCount !== 1 || result.rows.length !== 1) return null;
+  const row = result.rows[0];
+  return {
+    connectionId: String(row.connection_id),
+    runId: String(row.run_id),
+    writerFenceGrantSha256: String(row.writer_fence_grant_sha256),
+  };
+}
+
+async function activeWriterFenceGrant(input: {
+  env: MiddlewareRuntimeExecutorEnv;
+  database: DatabaseAdapter;
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  nowMs: number;
+}) {
+  if (
+    typeof input.env.CANARY_WRITER_FENCE_PROOF?.get !== "function"
+    || typeof input.env.CANARY_WRITER_FENCE_GRANT?.get !== "function"
+  ) {
+    throw new Error("WRITER_FENCE_ACTIVE_EVIDENCE_BINDING_MISSING");
+  }
+  const evidence = await loadActiveWriterFenceEvidence(
+    input.database,
+    input.connectionId,
+    input.runId,
+  );
+  if (!evidence) throw new Error("WRITER_FENCE_ACTIVE_SCOPE_NOT_FOUND");
+  const rawGrant = await input.env.CANARY_WRITER_FENCE_GRANT.get();
+  const proof = await input.env.CANARY_WRITER_FENCE_PROOF.get();
+  return validateActiveWriterFenceGrant({
+    rawGrant,
+    proof,
+    evidence,
+    connectionId: input.connectionId,
+    runId: input.runId,
+    holderId: input.holderId,
+    nowMs: input.nowMs,
+  });
+}
+
 async function assertExclusiveWriterFence(
   env: MiddlewareRuntimeExecutorEnv,
+  database: DatabaseAdapter,
   connectionId: string,
   credential: SecretTextPort,
   now: () => number,
@@ -170,6 +238,18 @@ async function assertExclusiveWriterFence(
   if (!runId || !holderId) {
     throw new Error("WRITER_FENCE_EXECUTOR_SCOPE_MISSING");
   }
+  const rescueProduction = String(env.ENVIRONMENT ?? "").trim().toLowerCase()
+    === RESCUE_PRODUCTION_ENVIRONMENT;
+  const grant = rescueProduction
+    ? await activeWriterFenceGrant({
+      env,
+      database,
+      connectionId,
+      runId,
+      holderId,
+      nowMs: now(),
+    })
+    : null;
   const attestation = runtimeCredentialAttestation(credential);
   if (
     attestation.connectionId !== connectionId
@@ -177,6 +257,13 @@ async function assertExclusiveWriterFence(
     || attestation.kind !== expectedCredentialKind
   ) {
     throw new Error("WRITER_FENCE_CREDENTIAL_SCOPE_MISMATCH");
+  }
+  if (grant && (
+    grant.exclusiveCredentialRef !== attestation.reference
+    || grant.credentialVersion !== attestation.version
+    || grant.credentialBinding !== await writerFenceCredentialBinding(attestation)
+  )) {
+    throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_MISMATCH");
   }
   const lease = await acquireExclusiveWriterFence({ env, connectionId, runId, holderId });
   const authorization = await authorizeWriterFenceMutation({
@@ -312,6 +399,7 @@ function allowedWinerimTarget(env: MiddlewareRuntimeExecutorEnv): {
 function createStockPorts(
   context: RuntimeConnectionExecutorContext,
   env: MiddlewareRuntimeExecutorEnv,
+  database: DatabaseAdapter,
   dependencies: Required<Pick<RuntimeExecutorWorkerDependencies, "request" | "now" | "sleep">>,
 ): ProviderNeutralRuntimeExecutorPorts {
   const target = allowedWinerimTarget(env);
@@ -337,6 +425,7 @@ function createStockPorts(
         async send(request) {
           await assertExclusiveWriterFence(
             env,
+            database,
             context.envelope.connectionId,
             credential,
             dependencies.now,
@@ -408,6 +497,7 @@ function rescueAgoraCredentialModeValid(env: MiddlewareRuntimeExecutorEnv): bool
 
 async function validateWriterFenceReadiness(
   env: MiddlewareRuntimeExecutorEnv,
+  database: DatabaseAdapter,
   connectionId: string,
   credential: SecretTextPort,
   nowMs: number,
@@ -429,9 +519,14 @@ async function validateWriterFenceReadiness(
     || attestation.kind !== "winerim"
     || attestation.version !== expectedVersion
   ) return false;
-  const proof = await env.CANARY_WRITER_FENCE_PROOF.get();
-  const grant = parseWriterFenceGrant(await env.CANARY_WRITER_FENCE_GRANT.get());
-  await validateWriterFenceGrant({ grant, proof, connectionId, runId, holderId, nowMs });
+  const grant = await activeWriterFenceGrant({
+    env,
+    database,
+    connectionId,
+    runId,
+    holderId,
+    nowMs,
+  });
   return grant.exclusiveCredentialRef === attestation.reference
     && grant.credentialVersion === attestation.version
     && grant.credentialBinding === await writerFenceCredentialBinding(attestation);
@@ -676,6 +771,7 @@ async function readiness(
             if (winerimCredentialReady) {
               writerFenceReady = await validateWriterFenceReadiness(
                 env,
+                database,
                 connectionId,
                 winerim,
                 dependencies.now(),
@@ -843,7 +939,7 @@ export function createMiddlewareRuntimeExecutorWorker(
           runId: String(env.CANARY_RUN_ID ?? "").trim(),
         }),
         ports: {
-          create: (context) => createStockPorts(context, env, resolved),
+          create: (context) => createStockPorts(context, env, database, resolved),
         },
       };
       const stockExecutor = createConnectionScopedRuntimeExecutor(options);
@@ -871,6 +967,7 @@ export function createMiddlewareRuntimeExecutorWorker(
           if (!rawCatalogApply) return { ok: false, code: "APPLY_REJECTED" };
           await assertExclusiveWriterFence(
             env,
+            database,
             input.connectionId,
             input.credential,
             resolved.now,
@@ -893,6 +990,28 @@ export function createMiddlewareRuntimeExecutorWorker(
       });
       return createRuntimeExecutorService({
         async execute(envelope): Promise<RuntimeExecutionResult> {
+          if (
+            String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
+            && !envelopeDryRun(envelope)
+          ) {
+            const runId = canaryIdentifier(env.CANARY_RUN_ID);
+            const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
+            if (!runId || !holderId) {
+              return failure(403, "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED");
+            }
+            try {
+              await activeWriterFenceGrant({
+                env,
+                database,
+                connectionId: envelope.connectionId,
+                runId,
+                holderId,
+                nowMs: resolved.now(),
+              });
+            } catch {
+              return failure(403, "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED");
+            }
+          }
           if (CATALOG_JOBS.has(envelope.job)) return catalogExecutor.execute(envelope);
           if (envelope.job === "outbound.process") {
             return failure(503, "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED");
@@ -936,6 +1055,7 @@ export function createMiddlewareRuntimeExecutorWorker(
               maxClosedDaysPerRun: maxClosedDays(env),
               beforeMutation: () => assertExclusiveWriterFence(
                 env,
+                database,
                 envelope.connectionId,
                 winerim,
                 resolved.now,

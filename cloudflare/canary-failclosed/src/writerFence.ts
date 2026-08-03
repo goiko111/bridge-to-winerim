@@ -53,6 +53,12 @@ export type WriterFenceCredentialAttestation = Readonly<{
   version: string;
 }>;
 
+export type WriterFenceActiveScopeEvidence = Readonly<{
+  connectionId: string;
+  runId: string;
+  writerFenceGrantSha256: string;
+}>;
+
 export type WriterFenceMutationAuthorization = Readonly<{
   connectionId: string;
   runId: string;
@@ -214,6 +220,40 @@ export async function validateWriterFenceGrant(input: {
   if (expiresAt <= nowMs) throw new Error("WRITER_FENCE_GRANT_EXPIRED");
   if (expiresAt - issuedAt > 2 * 60 * 60 * 1_000) throw new Error("WRITER_FENCE_GRANT_WINDOW_TOO_WIDE");
   if (revokedAt > issuedAt || revokedAt > nowMs) throw new Error("WRITER_FENCE_LEGACY_REVOKE_ORDER_INVALID");
+}
+
+export async function validateActiveWriterFenceGrant(input: {
+  rawGrant: string;
+  proof: string;
+  evidence: WriterFenceActiveScopeEvidence;
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  nowMs?: number;
+}): Promise<WriterFenceGrantV1> {
+  if (
+    input.evidence.connectionId !== input.connectionId
+    || input.evidence.runId !== input.runId
+  ) {
+    throw new Error("WRITER_FENCE_ACTIVE_SCOPE_MISMATCH");
+  }
+  if (!SHA256_PATTERN.test(input.evidence.writerFenceGrantSha256)) {
+    throw new Error("WRITER_FENCE_ACTIVE_GRANT_EVIDENCE_REJECTED");
+  }
+  if (await sha256Hex(input.rawGrant) !== input.evidence.writerFenceGrantSha256) {
+    throw new Error("WRITER_FENCE_ACTIVE_GRANT_MISMATCH");
+  }
+
+  const grant = parseWriterFenceGrant(input.rawGrant);
+  await validateWriterFenceGrant({
+    grant,
+    proof: input.proof,
+    connectionId: input.connectionId,
+    runId: input.runId,
+    holderId: input.holderId,
+    ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
+  });
+  return grant;
 }
 
 export async function acquireExclusiveWriterFence(input: {

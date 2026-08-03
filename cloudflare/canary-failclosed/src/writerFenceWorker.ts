@@ -1,7 +1,17 @@
+import { Client } from "pg";
+
 import {
-  parseWriterFenceGrant,
+  createHyperdrivePostgresAdapter,
+  sql,
+  type DatabaseAdapter,
+  type DriverQueryConfig,
+  type HyperdriveBinding,
+  type PostgresClientFactory,
+} from "../../workers/middleware-api/src/db";
+import {
   SecretsStoreSecretLike,
-  validateWriterFenceGrant,
+  validateActiveWriterFenceGrant,
+  WriterFenceActiveScopeEvidence,
   WriterFenceGrantV1,
   WriterFenceLease,
 } from "./writerFence";
@@ -22,6 +32,11 @@ type DurableNamespaceLike = {
 type WriterFenceWorkerEnvironment = {
   CONNECTION_WRITER_FENCE: DurableNamespaceLike;
   WRITER_FENCE_GRANT: SecretsStoreSecretLike;
+  MIDDLEWARE_DB?: HyperdriveBinding;
+};
+
+type WriterFenceWorkerDependencies = {
+  database?: (env: WriterFenceWorkerEnvironment) => DatabaseAdapter;
 };
 
 type AcquireRequest = {
@@ -36,6 +51,61 @@ type LeaseCredential = Pick<
   WriterFenceGrantV1,
   "exclusiveCredentialRef" | "credentialVersion" | "credentialBinding"
 >;
+
+interface ActiveScopeRow extends Record<string, unknown> {
+  connection_id: string;
+  run_id: string;
+  writer_fence_grant_sha256: string;
+}
+
+const createPostgresClient: PostgresClientFactory = ({ connectionString, applicationName }) => {
+  const client = new Client({ connectionString, application_name: applicationName });
+  return {
+    connect: async () => {
+      await client.connect();
+    },
+    query: async <Row extends Record<string, unknown>>(query: string | DriverQueryConfig) => {
+      const result = await client.query<Row>(query);
+      return { rows: result.rows, rowCount: result.rowCount };
+    },
+    end: () => client.end(),
+  };
+};
+
+function defaultDatabase(env: WriterFenceWorkerEnvironment): DatabaseAdapter {
+  if (!env.MIDDLEWARE_DB) throw new Error("WRITER_FENCE_ACTIVE_SCOPE_DATABASE_MISSING");
+  return createHyperdrivePostgresAdapter(env.MIDDLEWARE_DB, {
+    createClient: createPostgresClient,
+    applicationName: "winerim-writer-fence",
+  });
+}
+
+async function loadActiveScopeEvidence(
+  database: DatabaseAdapter,
+  connectionId: string,
+  runId: string,
+): Promise<WriterFenceActiveScopeEvidence | null> {
+  const result = await database.query<ActiveScopeRow>(sql`
+    SELECT
+      scope.connection_id::text AS connection_id,
+      scope.run_id,
+      scope.writer_fence_grant_sha256
+    FROM public.runtime_canary_connections scope
+    WHERE scope.connection_id = ${connectionId}::uuid
+      AND scope.run_id = ${runId}
+      AND scope.active = true
+      AND scope.status = 'ACTIVE'
+      AND scope.writer_fence_grant_sha256 IS NOT NULL
+    LIMIT 2
+  `);
+  if (result.rowCount !== 1 || result.rows.length !== 1) return null;
+  const row = result.rows[0];
+  return {
+    connectionId: String(row.connection_id),
+    runId: String(row.run_id),
+    writerFenceGrantSha256: String(row.writer_fence_grant_sha256),
+  };
+}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -93,6 +163,7 @@ export class ConnectionWriterFence {
   constructor(
     private readonly state: DurableStateLike,
     private readonly env: WriterFenceWorkerEnvironment,
+    private readonly dependencies: WriterFenceWorkerDependencies = {},
   ) {}
 
   async fetch(request: Request): Promise<Response> {
@@ -110,10 +181,14 @@ export class ConnectionWriterFence {
     }
     try {
       const proof = request.headers.get("x-writer-fence-proof") ?? "";
-      const grant = parseWriterFenceGrant(await this.env.WRITER_FENCE_GRANT.get());
-      await validateWriterFenceGrant({
-        grant,
+      const rawGrant = await this.env.WRITER_FENCE_GRANT.get();
+      const database = (this.dependencies.database ?? defaultDatabase)(this.env);
+      const evidence = await loadActiveScopeEvidence(database, body.connectionId, body.runId);
+      if (!evidence) throw new Error("WRITER_FENCE_ACTIVE_SCOPE_NOT_FOUND");
+      const grant = await validateActiveWriterFenceGrant({
+        rawGrant,
         proof,
+        evidence,
         connectionId: body.connectionId,
         runId: body.runId,
         holderId: body.holderId,

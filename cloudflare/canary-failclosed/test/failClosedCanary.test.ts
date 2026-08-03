@@ -6,6 +6,12 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import type {
+  DatabaseAdapter,
+  DatabaseTransaction,
+  QueryResult,
+  SqlStatement,
+} from "../../workers/middleware-api/src/db";
 import { RuntimeEnvelopeV1 } from "../../workers/middleware-runtime/src/contracts";
 import { observeCanaryDlqBatch } from "../src/dlqObserver";
 import {
@@ -66,6 +72,26 @@ async function scope() {
     payloadSha256: await runtimePayloadSha256(reviewed.payload),
     job: "winerim.sales-import-live" as const,
     lane: "sales-import" as const,
+  };
+}
+
+function activeScopeDatabase(writerFenceGrantSha256: string): DatabaseAdapter {
+  const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
+    if (!statement.text.includes("FROM public.runtime_canary_connections")) {
+      return { rows: [], rowCount: 0 } as QueryResult<Row>;
+    }
+    return {
+      rows: [{
+        connection_id: connectionId,
+        run_id: runId,
+        writer_fence_grant_sha256: writerFenceGrantSha256,
+      }] as Row[],
+      rowCount: 1,
+    };
+  });
+  return {
+    query,
+    transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({ query }),
   };
 }
 
@@ -360,6 +386,7 @@ describe("connection writer fence", () => {
         expiresAt: "2026-08-03T07:00:00.000Z",
       });
       let rawGrant = JSON.stringify(await createGrant(credential.version));
+      const activeGrantSha256 = await sha256Hex(rawGrant);
       const values = new Map<string, unknown>();
       const storage = {
         get: async <T>(key: string) => values.get(key) as T | undefined,
@@ -375,6 +402,7 @@ describe("connection writer fence", () => {
           },
           WRITER_FENCE_GRANT: { get: async () => rawGrant },
         },
+        { database: () => activeScopeDatabase(activeGrantSha256) },
       );
       const request = () => new Request("https://writer-fence.internal/v1/leases/acquire", {
         method: "POST",
@@ -396,8 +424,90 @@ describe("connection writer fence", () => {
 
       rawGrant = JSON.stringify(await createGrant("2".repeat(64)));
       const drifted = await worker.fetch(request());
-      expect(drifted.status).toBe(409);
+      expect(drifted.status).toBe(403);
+      await expect(drifted.json()).resolves.toMatchObject({ error: "WRITER_FENCE_ACTIVE_GRANT_MISMATCH" });
       expect((values.get("lease") as { credentialVersion: string }).credentialVersion).toBe(credential.version);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects any grant or proof pair that differs from the immutable active scope", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-08-03T06:30:00.000Z");
+    try {
+      const proof = "proof-only-known-by-the-new-runtime-1234567890";
+      const credential = {
+        reference: `runtime-vault://postgres/${connectionId}/agora/winerim`,
+        version: "7".repeat(64),
+      };
+      const grant: WriterFenceGrantV1 = {
+        version: 1,
+        connectionId,
+        runId,
+        holderId: "deploy-a",
+        proofSha256: await sha256Hex(proof),
+        exclusiveCredentialRef: credential.reference,
+        credentialVersion: credential.version,
+        credentialBinding: await writerFenceCredentialBinding(credential),
+        legacyWriter: {
+          revokedAt: "2026-08-03T05:59:00.000Z",
+          negativeProbeStatus: 401,
+          evidenceSha256: "a".repeat(64),
+        },
+        issuedAt: "2026-08-03T06:00:00.000Z",
+        expiresAt: "2026-08-03T07:00:00.000Z",
+      };
+      const activeRawGrant = JSON.stringify(grant);
+      const activeGrantSha256 = await sha256Hex(activeRawGrant);
+      const swappedProof = "different-proof-only-known-by-runtime-123456789";
+      const cases = [
+        {
+          rawGrant: JSON.stringify({
+            ...grant,
+            legacyWriter: { ...grant.legacyWriter, evidenceSha256: "b".repeat(64) },
+          }),
+          proof,
+        },
+        { rawGrant: JSON.stringify({ ...grant, issuedAt: "2026-08-03T06:00:01.000Z" }), proof },
+        { rawGrant: JSON.stringify({ ...grant, expiresAt: "2026-08-03T07:00:01.000Z" }), proof },
+        {
+          rawGrant: JSON.stringify({ ...grant, proofSha256: await sha256Hex(swappedProof) }),
+          proof: swappedProof,
+        },
+      ];
+
+      for (const drift of cases) {
+        const values = new Map<string, unknown>();
+        const storage = {
+          get: async <T>(key: string) => values.get(key) as T | undefined,
+          put: async <T>(key: string, value: T) => { values.set(key, value); },
+          transaction: async <T>(callback: (transaction: typeof storage) => Promise<T>) => callback(storage),
+        };
+        const worker = new ConnectionWriterFence(
+          { storage },
+          {
+            CONNECTION_WRITER_FENCE: {
+              idFromName: (name: string) => name,
+              get: () => ({ fetch: async () => new Response(null, { status: 501 }) }),
+            },
+            WRITER_FENCE_GRANT: { get: async () => drift.rawGrant },
+          },
+          { database: () => activeScopeDatabase(activeGrantSha256) },
+        );
+        const response = await worker.fetch(new Request("https://writer-fence.internal/v1/leases/acquire", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-writer-fence-proof": drift.proof,
+          },
+          body: JSON.stringify({ connectionId, runId, holderId: "deploy-a", ttlSeconds: 90 }),
+        }));
+
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toMatchObject({ error: "WRITER_FENCE_ACTIVE_GRANT_MISMATCH" });
+        expect(values.has("lease")).toBe(false);
+      }
     } finally {
       vi.useRealTimers();
     }
