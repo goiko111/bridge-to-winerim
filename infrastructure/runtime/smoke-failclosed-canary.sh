@@ -23,6 +23,7 @@ CANARY_EXCLUSIVE_CREDENTIAL_VERSION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 CANARY_CREDENTIAL_SET_SHA256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 CANARY_RELEASE=smoke-release \
 CANARY_HOLDER_ID=smoke-holder \
+CANARY_WRITER_FENCE_PROOF_SHA256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
 RUNTIME_HYPERDRIVE_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 RUNTIME_EXECUTOR_SERVICE_NAME=runtime-executor-smoke \
 RUNTIME_VAULT_STORE_ID=runtime-vault-store-smoke \
@@ -50,10 +51,11 @@ if (manifest.scopeNote !== "rescue-canary-run:smoke-a") {
   throw new Error("SMOKE_MANIFEST_SCOPE_MISMATCH");
 }
 if (
-  manifest.version !== 2
+  manifest.version !== 3
   || manifest.credentialBinding?.keyVersion !== "v1"
   || manifest.credentialBinding?.exclusiveAttestationSha256 !== "b".repeat(64)
   || manifest.credentialBinding?.credentialSetSha256 !== "c".repeat(64)
+  || manifest.writerFence?.proofSha256 !== "d".repeat(64)
   || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== "winerim"
   || manifest.credentialPolicy?.agoraCredentialMode !== "shared-read-only"
   || manifest.mutationPolicy?.agoraCatalogApply !== false

@@ -58,13 +58,18 @@ function validateDeploymentManifest({
   deploymentBundleSha256,
 }) {
   if (
-    manifest?.version !== 2
+    manifest?.version !== 3
     || manifest.connectionId !== connectionId
     || manifest.runId !== runId
     || manifest.scopeNote !== `rescue-canary-run:${runId}`
     || manifest.credentialBinding?.keyVersion !== keyVersion
     || manifest.credentialBinding?.credentialSetSha256 !== credentialSetSha256
     || !SHA256_PATTERN.test(manifest.credentialBinding?.exclusiveAttestationSha256 ?? "")
+    || !RESOURCE_PATTERN.test(manifest.writerFence?.holderId ?? "")
+    || !SHA256_PATTERN.test(manifest.writerFence?.proofSha256 ?? "")
+    || manifest.writerFence?.exclusiveCredentialRef
+      !== `runtime-vault://postgres/${connectionId}/agora/winerim`
+    || !SHA256_PATTERN.test(manifest.writerFence?.credentialBinding ?? "")
     || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== "winerim"
     || manifest.credentialPolicy?.agoraCredentialMode !== "shared-read-only"
     || manifest.mutationPolicy?.agoraCatalogApply !== false
@@ -117,7 +122,10 @@ function validateDeploymentManifest({
   if (namedResources.some((value) => !RESOURCE_PATTERN.test(value))) {
     throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_RESOURCE_NAME");
   }
-  return manifest.credentialBinding.exclusiveAttestationSha256;
+  return {
+    exclusiveAttestationSha256: manifest.credentialBinding.exclusiveAttestationSha256,
+    writerFence: manifest.writerFence,
+  };
 }
 
 function validateProvisioningManifest({ manifest, connectionId, runId, keyVersion }) {
@@ -159,16 +167,29 @@ function validateWriterFenceGrant({
   connectionId,
   runId,
   expectedAttestation,
+  expectedHolderId,
+  expectedProofSha256,
+  expectedCredentialRef,
+  expectedCredentialBinding,
   approvedAt,
   expiresAt,
 }) {
-  const expectedRef = `runtime-vault://postgres/${connectionId}/agora/winerim`;
+  const recomputedCredentialBinding = createHash("sha256").update([
+    "winerim-writer-fence-credential",
+    "1",
+    expectedCredentialRef,
+    expectedAttestation,
+  ].join("|")).digest("hex");
   if (
     grant?.version !== 1
     || grant.connectionId !== connectionId
     || grant.runId !== runId
-    || grant.exclusiveCredentialRef !== expectedRef
+    || grant.holderId !== expectedHolderId
+    || grant.proofSha256 !== expectedProofSha256
+    || grant.exclusiveCredentialRef !== expectedCredentialRef
     || grant.credentialVersion !== expectedAttestation
+    || grant.credentialBinding !== recomputedCredentialBinding
+    || expectedCredentialBinding !== recomputedCredentialBinding
     || ![401, 403].includes(grant.legacyWriter?.negativeProbeStatus)
     || !SHA256_PATTERN.test(grant.legacyWriter?.evidenceSha256 ?? "")
   ) {
@@ -475,7 +496,7 @@ export function rescueCanaryActivationPlan({
     runId,
     keyVersion,
   });
-  const expectedAttestation = validateDeploymentManifest({
+  const deployment = validateDeploymentManifest({
     manifest: deploymentManifest,
     connectionId,
     runId,
@@ -484,14 +505,18 @@ export function rescueCanaryActivationPlan({
     deploymentConfigSha256,
     deploymentBundleSha256,
   });
-  if (expectedAttestation !== provisioning.attestations.winerim) {
+  if (deployment.exclusiveAttestationSha256 !== provisioning.attestations.winerim) {
     throw new Error("RESCUE_CANARY_ACTIVATION_EXCLUSIVE_CREDENTIAL_ATTESTATION_MISMATCH");
   }
   const writerFence = validateWriterFenceGrant({
     grant: writerFenceGrant,
     connectionId,
     runId,
-    expectedAttestation,
+    expectedAttestation: deployment.exclusiveAttestationSha256,
+    expectedHolderId: deployment.writerFence.holderId,
+    expectedProofSha256: deployment.writerFence.proofSha256,
+    expectedCredentialRef: deployment.writerFence.exclusiveCredentialRef,
+    expectedCredentialBinding: deployment.writerFence.credentialBinding,
     approvedAt: approved,
     expiresAt: expires,
   });

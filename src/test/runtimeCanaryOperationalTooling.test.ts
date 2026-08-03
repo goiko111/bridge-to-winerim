@@ -73,8 +73,15 @@ const DEPLOYMENT_BUNDLE_SHA256 = {
 
 function deploymentManifest() {
   const queueName = `winerim-rescue-prod-canary-${RETIREMENT_RUN_ID}`;
+  const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/winerim`;
+  const credentialBinding = createHash("sha256").update([
+    "winerim-writer-fence-credential",
+    "1",
+    exclusiveCredentialRef,
+    "b".repeat(64),
+  ].join("|")).digest("hex");
   return {
-    version: 2,
+    version: 3,
     runId: RETIREMENT_RUN_ID,
     connectionId: CONNECTION_ID,
     scopeNote: `rescue-canary-run:${RETIREMENT_RUN_ID}`,
@@ -82,6 +89,12 @@ function deploymentManifest() {
       keyVersion: KEY_VERSION,
       exclusiveAttestationSha256: "b".repeat(64),
       credentialSetSha256: CREDENTIAL_SET_SHA256,
+    },
+    writerFence: {
+      holderId: "release-a",
+      proofSha256: "a".repeat(64),
+      exclusiveCredentialRef,
+      credentialBinding,
     },
     credentialPolicy: {
       exclusiveWriterCredentialKind: "winerim",
@@ -312,15 +325,21 @@ describe("runtime credential provisioning tooling", () => {
 
 describe("rescue canary activation tooling", () => {
   function writerFenceGrant() {
+    const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/winerim`;
     return {
       version: 1,
       connectionId: CONNECTION_ID,
       runId: RETIREMENT_RUN_ID,
       holderId: "release-a",
       proofSha256: "a".repeat(64),
-      exclusiveCredentialRef: `runtime-vault://postgres/${CONNECTION_ID}/agora/winerim`,
+      exclusiveCredentialRef,
       credentialVersion: "b".repeat(64),
-      credentialBinding: "c".repeat(64),
+      credentialBinding: createHash("sha256").update([
+        "winerim-writer-fence-credential",
+        "1",
+        exclusiveCredentialRef,
+        "b".repeat(64),
+      ].join("|")).digest("hex"),
       legacyWriter: {
         revokedAt: "2026-08-03T11:50:00.000Z",
         negativeProbeStatus: 401,
@@ -432,6 +451,42 @@ describe("rescue canary activation tooling", () => {
       deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
       deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
     })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
+  });
+
+  it("rejects a grant whose holder, proof or credential binding differs from the deployment", () => {
+    const base = {
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: deploymentManifest(),
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    };
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      writerFenceGrant: { ...writerFenceGrant(), holderId: "release-b" },
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      writerFenceGrant: { ...writerFenceGrant(), proofSha256: "e".repeat(64) },
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      writerFenceGrant: { ...writerFenceGrant(), credentialBinding: "c".repeat(64) },
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+    const wrongBindingManifest = deploymentManifest();
+    wrongBindingManifest.writerFence.credentialBinding = "c".repeat(64);
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      deploymentManifest: wrongBindingManifest,
+      writerFenceGrant: { ...writerFenceGrant(), credentialBinding: "c".repeat(64) },
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
   });
 
   it("renders a rotated activation that preserves prior operational receipts", () => {

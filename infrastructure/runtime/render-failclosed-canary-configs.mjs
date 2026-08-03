@@ -103,6 +103,7 @@ export function renderFailclosedCanaryConfigs({
   const credentialSetSha256 = required(environment, "CANARY_CREDENTIAL_SET_SHA256").toLowerCase();
   const release = required(environment, "CANARY_RELEASE");
   const holderId = required(environment, "CANARY_HOLDER_ID");
+  const proofSha256 = required(environment, "CANARY_WRITER_FENCE_PROOF_SHA256").toLowerCase();
   const hyperdriveId = required(environment, "RUNTIME_HYPERDRIVE_ID");
   const executorService = required(environment, "RUNTIME_EXECUTOR_SERVICE_NAME");
   const runtimeVaultStoreId = required(environment, "RUNTIME_VAULT_STORE_ID");
@@ -137,6 +138,9 @@ export function renderFailclosedCanaryConfigs({
   }
   if (!HEX32_PATTERN.test(hyperdriveId)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_HYPERDRIVE_ID");
   if (!/^[a-f0-9]{64}$/.test(payloadSha256)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_PAYLOAD_SHA256");
+  if (!/^[a-f0-9]{64}$/.test(proofSha256)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_WRITER_FENCE_PROOF_SHA256");
+  }
   if (!NAME_PATTERN.test(archiveBucket)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_ARCHIVE_BUCKET");
 
   const queueName = `winerim-rescue-prod-canary-${runId}`;
@@ -215,7 +219,7 @@ export function renderFailclosedCanaryConfigs({
     bundles[key] = bundlePath;
   }
   const deploymentManifest = {
-    version: 2,
+    version: 3,
     runId,
     connectionId,
     scopeNote: `rescue-canary-run:${runId}`,
@@ -223,6 +227,17 @@ export function renderFailclosedCanaryConfigs({
       keyVersion: runtimeVaultKeyVersion,
       exclusiveAttestationSha256: exclusiveCredentialVersion,
       credentialSetSha256,
+    },
+    writerFence: {
+      holderId,
+      proofSha256,
+      exclusiveCredentialRef: `runtime-vault://postgres/${connectionId}/agora/winerim`,
+      credentialBinding: createHash("sha256").update([
+        "winerim-writer-fence-credential",
+        "1",
+        `runtime-vault://postgres/${connectionId}/agora/winerim`,
+        exclusiveCredentialVersion,
+      ].join("|")).digest("hex"),
     },
     credentialPolicy: {
       exclusiveWriterCredentialKind: "winerim",

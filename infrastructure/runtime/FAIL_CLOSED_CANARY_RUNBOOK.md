@@ -103,6 +103,7 @@ CANARY_EXCLUSIVE_CREDENTIAL_VERSION=<ROTATED_VERSION> \
 CANARY_CREDENTIAL_SET_SHA256=<PROVISIONING_MANIFEST_CREDENTIAL_SET_SHA256> \
 CANARY_RELEASE=<IMMUTABLE_COMMIT> \
 CANARY_HOLDER_ID=<DEPLOYMENT_VERSION> \
+CANARY_WRITER_FENCE_PROOF_SHA256=<SHA256_OF_NEW_RANDOM_PROOF> \
 RUNTIME_HYPERDRIVE_ID=<32_HEX_ID> \
 RUNTIME_EXECUTOR_SERVICE_NAME=<PRIVATE_EXECUTOR> \
 RUNTIME_VAULT_STORE_ID=<STORE_ID> \
@@ -118,7 +119,9 @@ CANARY_DLQ_ARCHIVE_BUCKET=<R2_BUCKET> \
     --output-dir=/secure/tmp/canary-configs
 ```
 
-Do not store rendered IDs, grants or secret coordinates in Git.
+The proof hash must be captured independently from the proof secret before
+rendering. The deployment manifest contains only that SHA-256, never the proof
+plaintext. Do not store rendered IDs, grants or secret coordinates in Git.
 
 ## Encrypted credential provisioning
 
