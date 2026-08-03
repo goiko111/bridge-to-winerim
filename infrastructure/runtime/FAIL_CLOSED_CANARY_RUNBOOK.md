@@ -39,6 +39,7 @@ treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
 - `infrastructure/runtime/prepare-writer-fence-grant.mjs`
 - `infrastructure/runtime/prepare-runtime-credential-provisioning.mjs`
 - `infrastructure/runtime/prepare-rescue-canary-activation.mjs`
+- `infrastructure/runtime/prepare-rescue-canary-prepared-abort.mjs`
 - `infrastructure/runtime/prepare-rescue-canary-retirement.mjs`
 - `infrastructure/runtime/render-failclosed-canary-configs.mjs`
 - `infrastructure/runtime/verify-failclosed-canary-package.mjs`
@@ -263,6 +264,24 @@ generation is terminal. Both modes require zero outbound debt, zero operational
 rows for other connections, catalog off, `PULL_ONLY`, `write_mode=NONE` and
 backfill `0`. The immutable evidence hashes are stored on the scope. Replay, a
 second active run, changed evidence or a partial generation fails closed.
+
+If the run must be abandoned before activation, preserve its audit trail with
+the append-only `PREPARED -> ABORTED` transition. This is not a rollback of an
+active run and must never be used after `activated_at` is set:
+
+```sh
+CANARY_CONNECTION_ID=<UUID> \
+CANARY_RUN_ID=<RUN> \
+  npm run rescue:canary:prepared-abort:plan -- \
+    --output=/secure/tmp/abort-prepared-canary.sql
+```
+
+Review and apply that SQL through the same authenticated database channel. It
+requires the connection to remain inert, the exact scope to remain inactive,
+and exactly two inactive credential rows. It retires those rows and marks the
+scope `ABORTED`; it does not delete evidence, activate credentials or touch
+operational data. Replaying the abort fails closed, while a later generation
+with a new run ID remains possible.
 
 The generated provisioning, activation and retirement artifacts are pure SQL
 transactions. Apply them with `psql -v ON_ERROR_STOP=1` or through the
