@@ -14,6 +14,7 @@ import {
 } from "../../middleware-runtime/src/adapters/http";
 import type { PostgresCatalogAdapterFactory } from "../../middleware-runtime/src/adapters/catalog";
 import {
+  isRuntimeEnvelope,
   isDeployableRuntimeCanaryConnectionId,
   type RuntimeEnvelopeV1,
   type RuntimeJob,
@@ -46,8 +47,15 @@ import {
   salesLaneGateFailure,
 } from "./sales";
 import {
+  isEnvelopeInsideExclusiveCanaryScope,
+  type ExclusiveCanaryScope,
+} from "../../../canary-failclosed/src/exclusiveScope";
+import {
   acquireExclusiveWriterFence,
   authorizeWriterFenceMutation,
+  parseWriterFenceGrant,
+  validateWriterFenceGrant,
+  writerFenceCredentialBinding,
   type WriterFenceClientEnvironment,
   type WriterFenceMutationAuthorization,
 } from "../../../canary-failclosed/src/writerFence";
@@ -81,24 +89,68 @@ export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironme
   RUNTIME_CATALOG_APPLY_ENABLED?: string;
   RUNTIME_OUTBOUND_EXECUTION_ENABLED?: string;
   RUNTIME_OUTBOUND_MUTATION_ENABLED?: string;
+  RUNTIME_AGORA_CREDENTIAL_MODE?: string;
+  CANARY_EXCLUSIVE_CREDENTIAL_VERSION?: string;
   RUNTIME_AGORA_CATALOG_BASE_URL?: string;
   RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS?: string;
   RUNTIME_AGORA_CATALOG_PROFILE_JSON?: string;
   RUNTIME_CANARY_CONNECTION_ID?: string;
   CANARY_RUN_ID?: string;
+  CANARY_MESSAGE_ID?: string;
+  CANARY_IDEMPOTENCY_KEY?: string;
+  CANARY_PAYLOAD_SHA256?: string;
   WRITER_FENCE_HOLDER_ID?: string;
   RUNTIME_VAULT_KEY_VERSION?: string;
   WINERIM_API_BASE_URL?: string;
   WINERIM_ALLOWED_HOSTS?: string;
   MIDDLEWARE_DB?: HyperdriveBinding;
   RUNTIME_VAULT_KEY?: RuntimeVaultSecretBinding;
+  CANARY_WRITER_FENCE_GRANT?: RuntimeVaultSecretBinding;
 }
 
 const CANARY_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
+const MAX_EXECUTOR_SCOPE_REQUEST_BYTES = 64 * 1024;
 
 function canaryIdentifier(value: unknown): string | null {
   const normalized = String(value ?? "").trim();
   return CANARY_IDENTIFIER_PATTERN.test(normalized) ? normalized : null;
+}
+
+function rescueExecutorScope(env: MiddlewareRuntimeExecutorEnv): ExclusiveCanaryScope | null {
+  const connectionId = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
+  const runId = canaryIdentifier(env.CANARY_RUN_ID);
+  const messageId = canaryIdentifier(env.CANARY_MESSAGE_ID);
+  const idempotencyKey = canaryIdentifier(env.CANARY_IDEMPOTENCY_KEY);
+  const payloadSha256 = String(env.CANARY_PAYLOAD_SHA256 ?? "").trim().toLowerCase();
+  if (
+    !isDeployableRuntimeCanaryConnectionId(connectionId)
+    || !runId
+    || !messageId
+    || !idempotencyKey
+    || !/^[a-f0-9]{64}$/.test(payloadSha256)
+  ) return null;
+  return {
+    queueName: `winerim-rescue-prod-canary-${runId}`,
+    connectionId,
+    runId,
+    messageId,
+    idempotencyKey,
+    payloadSha256,
+    job: "winerim.sales-import-live",
+    lane: "sales-import",
+  };
+}
+
+async function rescueRequestEnvelope(request: Request): Promise<unknown> {
+  const declaredLength = Number(request.headers.get("content-length") || "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_EXECUTOR_SCOPE_REQUEST_BYTES) return null;
+  try {
+    const body = await request.clone().text();
+    if (new TextEncoder().encode(body).byteLength > MAX_EXECUTOR_SCOPE_REQUEST_BYTES) return null;
+    return (JSON.parse(body) as { envelope?: unknown }).envelope;
+  } catch {
+    return null;
+  }
 }
 
 async function assertExclusiveWriterFence(
@@ -333,6 +385,58 @@ function switchEnabled(value: unknown): boolean {
   return String(value ?? "").trim().toLowerCase() === "true";
 }
 
+const SHARED_READ_ONLY_AGORA_CREDENTIAL_MODE = "shared-read-only";
+
+function agoraCredentialMode(env: MiddlewareRuntimeExecutorEnv): string {
+  return String(env.RUNTIME_AGORA_CREDENTIAL_MODE ?? "").trim().toLowerCase();
+}
+
+function sharedAgoraReadOnlyPolicyOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
+  if (agoraCredentialMode(env) !== SHARED_READ_ONLY_AGORA_CREDENTIAL_MODE) return true;
+  return [
+    env.RUNTIME_CATALOG_EXECUTION_ENABLED,
+    env.RUNTIME_CATALOG_FETCH_ENABLED,
+    env.RUNTIME_CATALOG_APPLY_ENABLED,
+    env.RUNTIME_OUTBOUND_EXECUTION_ENABLED,
+    env.RUNTIME_OUTBOUND_MUTATION_ENABLED,
+  ].every((value) => !switchEnabled(value));
+}
+
+function rescueAgoraCredentialModeValid(env: MiddlewareRuntimeExecutorEnv): boolean {
+  return agoraCredentialMode(env) === SHARED_READ_ONLY_AGORA_CREDENTIAL_MODE;
+}
+
+async function validateWriterFenceReadiness(
+  env: MiddlewareRuntimeExecutorEnv,
+  connectionId: string,
+  credential: SecretTextPort,
+  nowMs: number,
+): Promise<boolean> {
+  const runId = canaryIdentifier(env.CANARY_RUN_ID);
+  const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
+  const expectedVersion = String(env.CANARY_EXCLUSIVE_CREDENTIAL_VERSION ?? "").trim().toLowerCase();
+  if (
+    !runId
+    || !holderId
+    || !/^[a-f0-9]{64}$/.test(expectedVersion)
+    || typeof env.CANARY_WRITER_FENCE_PROOF?.get !== "function"
+    || typeof env.CANARY_WRITER_FENCE_GRANT?.get !== "function"
+  ) return false;
+  const attestation = runtimeCredentialAttestation(credential);
+  if (
+    attestation.connectionId !== connectionId
+    || attestation.provider !== "agora"
+    || attestation.kind !== "winerim"
+    || attestation.version !== expectedVersion
+  ) return false;
+  const proof = await env.CANARY_WRITER_FENCE_PROOF.get();
+  const grant = parseWriterFenceGrant(await env.CANARY_WRITER_FENCE_GRANT.get());
+  await validateWriterFenceGrant({ grant, proof, connectionId, runId, holderId, nowMs });
+  return grant.exclusiveCredentialRef === attestation.reference
+    && grant.credentialVersion === attestation.version
+    && grant.credentialBinding === await writerFenceCredentialBinding(attestation);
+}
+
 function catalogSwitches(env: MiddlewareRuntimeExecutorEnv): PrivateCatalogSwitches {
   return {
     executionEnabled: switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED),
@@ -488,6 +592,7 @@ async function readiness(
   const outboundExecutionRequested = switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED);
   const outboundMutationRequested = switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
   const writerFenceRequired = environment === RESCUE_PRODUCTION_ENVIRONMENT || catalogApplyRequested;
+  const agoraReadOnlyPolicyOpen = sharedAgoraReadOnlyPolicyOpen(env);
   const missingBindings = [
     !env.MIDDLEWARE_DB ? "MIDDLEWARE_DB" : null,
     typeof env.RUNTIME_VAULT_KEY?.get !== "function" ? "RUNTIME_VAULT_KEY" : null,
@@ -509,9 +614,35 @@ async function readiness(
       && (!env.CANARY_WRITER_FENCE_PROOF || typeof env.CANARY_WRITER_FENCE_PROOF.get !== "function")
       ? "CANARY_WRITER_FENCE_PROOF"
       : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && (!env.CANARY_WRITER_FENCE_GRANT || typeof env.CANARY_WRITER_FENCE_GRANT.get !== "function")
+      ? "CANARY_WRITER_FENCE_GRANT"
+      : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && !/^[a-f0-9]{64}$/.test(String(env.CANARY_EXCLUSIVE_CREDENTIAL_VERSION ?? "").trim().toLowerCase())
+      ? "CANARY_EXCLUSIVE_CREDENTIAL_VERSION"
+      : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && !rescueAgoraCredentialModeValid(env)
+      ? "RUNTIME_AGORA_CREDENTIAL_MODE"
+      : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && !canaryIdentifier(env.CANARY_MESSAGE_ID)
+      ? "CANARY_MESSAGE_ID"
+      : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && !canaryIdentifier(env.CANARY_IDEMPOTENCY_KEY)
+      ? "CANARY_IDEMPOTENCY_KEY"
+      : null,
+    environment === RESCUE_PRODUCTION_ENVIRONMENT
+      && !/^[a-f0-9]{64}$/.test(String(env.CANARY_PAYLOAD_SHA256 ?? "").trim().toLowerCase())
+      ? "CANARY_PAYLOAD_SHA256"
+      : null,
+    !agoraReadOnlyPolicyOpen ? "RUNTIME_AGORA_READ_ONLY_POLICY" : null,
   ].filter((value): value is string => !!value);
   let agoraCredentialReady = false;
   let winerimCredentialReady = false;
+  let writerFenceReady = environment !== RESCUE_PRODUCTION_ENVIRONMENT;
   let credentialsReady = false;
   if (executionEnvironmentAllowed(env) && executionEnabled && missingBindings.length === 0) {
     try {
@@ -542,6 +673,14 @@ async function readiness(
             winerimCredentialReady = attestation.connectionId === connectionId
               && attestation.provider === "agora"
               && attestation.kind === "winerim";
+            if (winerimCredentialReady) {
+              writerFenceReady = await validateWriterFenceReadiness(
+                env,
+                connectionId,
+                winerim,
+                dependencies.now(),
+              );
+            }
           }
         }
         credentialsReady = agoraCredentialReady && winerimCredentialReady;
@@ -549,6 +688,7 @@ async function readiness(
     } catch {
       agoraCredentialReady = false;
       winerimCredentialReady = false;
+      writerFenceReady = false;
       credentialsReady = false;
     }
   }
@@ -559,6 +699,7 @@ async function readiness(
     && executionEnabled
     && missingBindings.length === 0
       && credentialsReady
+      && writerFenceReady
       && catalogTransportReady;
   return json({
     ok: ready,
@@ -570,6 +711,10 @@ async function readiness(
     release: env.RELEASE ?? null,
     stagingOnly: environment === STAGING_ENVIRONMENT,
     executionScope: environment === RESCUE_PRODUCTION_ENVIRONMENT ? "exclusive-canary" : "staging",
+    agoraCredentialMode: agoraCredentialMode(env),
+    agoraReadOnlyPolicyOpen,
+    writerFenceReady,
+    exactCanaryScopeReady: environment !== RESCUE_PRODUCTION_ENVIRONMENT || rescueExecutorScope(env) !== null,
     executionEnabled,
     enabledJobs: enabledJobs(env),
     sales: {
@@ -624,9 +769,23 @@ function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
       && typeof env.WRITER_FENCE.fetch === "function"
       && !!env.CANARY_WRITER_FENCE_PROOF
       && typeof env.CANARY_WRITER_FENCE_PROOF.get === "function"
+      && !!env.CANARY_WRITER_FENCE_GRANT
+      && typeof env.CANARY_WRITER_FENCE_GRANT.get === "function"
+      && /^[a-f0-9]{64}$/.test(
+        String(env.CANARY_EXCLUSIVE_CREDENTIAL_VERSION ?? "").trim().toLowerCase(),
+      )
     );
   return executionEnvironmentAllowed(env)
     && rescueFenceReady
+    && (
+      String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
+      || rescueAgoraCredentialModeValid(env)
+    )
+    && (
+      String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
+      || rescueExecutorScope(env) !== null
+    )
+    && sharedAgoraReadOnlyPolicyOpen(env)
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
     && isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
     && typeof env.RUNTIME_VAULT_KEY?.get === "function";
@@ -647,6 +806,17 @@ export function createMiddlewareRuntimeExecutorWorker(
             failure: { httpStatus: 503, message: "RUNTIME_EXECUTION_DISABLED" },
           }),
         }).fetch(request);
+      }
+
+      if (String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT) {
+        const scope = rescueExecutorScope(env);
+        const envelope = await rescueRequestEnvelope(request);
+        if (!scope || !isRuntimeEnvelope(envelope)
+          || !await isEnvelopeInsideExclusiveCanaryScope(envelope, scope)) {
+          return createRuntimeExecutorService({
+            execute: async () => failure(422, "RUNTIME_CANARY_SCOPE_REJECTED"),
+          }).fetch(request);
+        }
       }
 
       let database: DatabaseAdapter;

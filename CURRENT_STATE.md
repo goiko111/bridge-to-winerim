@@ -1,5 +1,30 @@
 # CURRENT_STATE
 
+## 2026-08-03 19:33 CEST - Bundles Workerd OK; Albariza preview limpio
+
+- El empaquetado fail-closed usa ahora el bundler de Wrangler con Node 22+
+  antes de fijar `no_bundle` y SHA-256; consumer y executor arrancan en
+  Workerd local. El P1 de `require()` dinamico queda corregido localmente.
+- Suite raiz `570` OK y `3` skipped; executor `61/61`, fail-closed `15/15`,
+  TypeScript, build, cuatro dry-runs Wrangler y smoke Workerd OK.
+- Preview fresco Albariza: `748` vinos, `763` variantes, `762` publicables,
+  `0` colisiones y `0` diffs inesperados. Una copa sin precio queda excluida.
+- El Bejeque sigue inerte: token Winerim nuevo validado, sin deploy ni writes;
+  faltan token Agora por canal seguro y prueba negativa/evidencia equivalente
+  de revocacion Winerim anterior.
+
+## 2026-08-03 19:20 CEST - Fence asimetrico y bundles de canary cerrados
+
+- Rescue solo acepta Agora `shared-read-only`; cinco carriles de mutacion
+  Agora quedan cerrados antes de DB.
+- Executor valida envelope exacto y el deploy usa cuatro bundles preconstruidos
+  ligados por SHA-256 a sus TOML y al manifiesto de activacion.
+- Nuevo token Winerim de El Bejeque pasa `wines` y `stock` en lectura. Falta
+  prueba negativa del token antiguo y token Agora por canal seguro.
+- Naming Albariza elimina colisiones de botones preservando overrides.
+- Suite raiz `568`, executor `61`, fail-closed `15`, naming `20`, TypeScript,
+  build y cuatro Wrangler dry-runs OK. Cero deploys y cero writes.
+
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
 _Última actualización: 2026-08-03 18:26 CEST_

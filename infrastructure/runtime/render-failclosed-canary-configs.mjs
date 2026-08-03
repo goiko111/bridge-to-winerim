@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +43,51 @@ function render(template, values) {
     throw new Error(`FAILCLOSED_CANARY_RENDER_UNRESOLVED_${[...new Set(unresolved)].join("_")}`);
   }
   return rendered;
+}
+
+function bundleWithWrangler({ key, entrypoint, renderedConfig, outputDir }) {
+  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0], 10);
+  if (!Number.isFinite(nodeMajor) || nodeMajor < 22) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_NODE_22_REQUIRED");
+  }
+
+  const wranglerPath = resolve(repoRoot, "node_modules/wrangler/bin/wrangler.js");
+  const inputConfigPath = resolve(outputDir, `.wrangler.${key}.bundle-input.toml`);
+  const buildDirectory = resolve(outputDir, `.wrangler-${key}-build`);
+  const bundlePath = resolve(outputDir, `worker.${key}.mjs`);
+  const sourceConfig = renderedConfig
+    .replace(/^main\s*=\s*"([^"]+)"/m, `main = "${entrypoint}"`)
+    .replace(/^no_bundle\s*=\s*true\s*\n/m, "");
+  writeFileSync(inputConfigPath, sourceConfig, { encoding: "utf8", mode: 0o600 });
+
+  try {
+    execFileSync(process.execPath, [
+      wranglerPath,
+      "deploy",
+      "--config",
+      inputConfigPath,
+      "--dry-run",
+      "--outdir",
+      buildDirectory,
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, CI: "true" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const builtWorkers = readdirSync(buildDirectory)
+      .filter((name) => name.endsWith(".js") && !name.endsWith(".js.map"));
+    if (builtWorkers.length !== 1) {
+      throw new Error(`FAILCLOSED_CANARY_WRANGLER_OUTPUT_INVALID_${key.toUpperCase()}`);
+    }
+    copyFileSync(resolve(buildDirectory, builtWorkers[0]), bundlePath);
+    chmodSync(bundlePath, 0o600);
+    return bundlePath;
+  } catch {
+    throw new Error(`FAILCLOSED_CANARY_WRANGLER_BUNDLE_FAILED_${key.toUpperCase()}`);
+  } finally {
+    rmSync(inputConfigPath, { force: true });
+    rmSync(buildDirectory, { recursive: true, force: true });
+  }
 }
 
 export function renderFailclosedCanaryConfigs({
@@ -134,15 +188,31 @@ export function renderFailclosedCanaryConfigs({
     fence: "wrangler.writer-fence.toml.example",
     observer: "wrangler.dlq-observer.toml.example",
   };
+  const entrypoints = Object.fromEntries(Object.entries(templates).map(([key, templateName]) => {
+    const template = readFileSync(resolve(templateRoot, templateName), "utf8");
+    const main = template.match(/^main\s*=\s*"([^"]+)"/m)?.[1];
+    if (!main) throw new Error(`FAILCLOSED_CANARY_RENDER_MAIN_MISSING_${key.toUpperCase()}`);
+    return [key, resolve(repoRoot, main)];
+  }));
   mkdirSync(outputDir, { recursive: true, mode: 0o700 });
   const outputs = {};
+  const bundles = {};
   for (const [key, templateName] of Object.entries(templates)) {
+    const template = readFileSync(resolve(templateRoot, templateName), "utf8");
+    const sourceConfig = render(template, values);
+    const bundlePath = bundleWithWrangler({
+      key,
+      entrypoint: entrypoints[key],
+      renderedConfig: sourceConfig,
+      outputDir,
+    });
     const outputPath = resolve(outputDir, `wrangler.${key}.toml`);
-    const rendered = render(readFileSync(resolve(templateRoot, templateName), "utf8"), values)
-      .replace(/^main\s*=\s*"([^"]+)"/m, (_match, path) => `main = "${resolve(repoRoot, path)}"`);
+    const rendered = sourceConfig
+      .replace(/^main\s*=\s*"([^"]+)"/m, `main = "${bundlePath}"\nno_bundle = true`);
     writeFileSync(outputPath, rendered, { encoding: "utf8", mode: 0o600 });
     chmodSync(outputPath, 0o600);
     outputs[key] = outputPath;
+    bundles[key] = bundlePath;
   }
   const deploymentManifest = {
     version: 2,
@@ -153,6 +223,15 @@ export function renderFailclosedCanaryConfigs({
       keyVersion: runtimeVaultKeyVersion,
       exclusiveAttestationSha256: exclusiveCredentialVersion,
       credentialSetSha256,
+    },
+    credentialPolicy: {
+      exclusiveWriterCredentialKind: "winerim",
+      agoraCredentialMode: "shared-read-only",
+    },
+    mutationPolicy: {
+      agoraCatalogApply: false,
+      agoraOutboundMutation: false,
+      winerimMutation: true,
     },
     resources: {
       queues: {
@@ -178,6 +257,10 @@ export function renderFailclosedCanaryConfigs({
       key,
       createHash("sha256").update(readFileSync(path)).digest("hex"),
     ])),
+    bundleSha256: Object.fromEntries(Object.entries(bundles).map(([key, path]) => [
+      key,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ])),
   };
   const manifest = `${JSON.stringify(deploymentManifest, null, 2)}\n`;
   const manifestPath = resolve(outputDir, "canary-deployment-manifest.json");
@@ -185,6 +268,7 @@ export function renderFailclosedCanaryConfigs({
   chmodSync(manifestPath, 0o600);
   return {
     outputs,
+    bundles,
     queueName,
     dlqName,
     alarmName,

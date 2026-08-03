@@ -18,6 +18,7 @@ const MAX_WINDOW_MS = 2 * 60 * 60 * 1_000;
 const MIN_LEGACY_WRITER_DRAIN_MS = 130 * 1_000;
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "../..");
+const DEPLOYMENT_CONFIG_KEYS = Object.freeze(["consumer", "executor", "fence", "observer"]);
 
 function required(environment, name) {
   const value = String(environment[name] ?? "").trim();
@@ -47,7 +48,15 @@ function readBoundJson({ path, expectedSha256, label }) {
   }
 }
 
-function validateDeploymentManifest({ manifest, connectionId, runId, keyVersion, credentialSetSha256 }) {
+function validateDeploymentManifest({
+  manifest,
+  connectionId,
+  runId,
+  keyVersion,
+  credentialSetSha256,
+  deploymentConfigSha256,
+  deploymentBundleSha256,
+}) {
   if (
     manifest?.version !== 2
     || manifest.connectionId !== connectionId
@@ -56,8 +65,25 @@ function validateDeploymentManifest({ manifest, connectionId, runId, keyVersion,
     || manifest.credentialBinding?.keyVersion !== keyVersion
     || manifest.credentialBinding?.credentialSetSha256 !== credentialSetSha256
     || !SHA256_PATTERN.test(manifest.credentialBinding?.exclusiveAttestationSha256 ?? "")
+    || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== "winerim"
+    || manifest.credentialPolicy?.agoraCredentialMode !== "shared-read-only"
+    || manifest.mutationPolicy?.agoraCatalogApply !== false
+    || manifest.mutationPolicy?.agoraOutboundMutation !== false
+    || manifest.mutationPolicy?.winerimMutation !== true
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_MANIFEST_SCOPE_MISMATCH");
+  }
+  if (DEPLOYMENT_CONFIG_KEYS.some((key) => (
+    !SHA256_PATTERN.test(manifest.configSha256?.[key] ?? "")
+    || manifest.configSha256[key] !== deploymentConfigSha256?.[key]
+  ))) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_CONFIG_SHA256_MISMATCH");
+  }
+  if (DEPLOYMENT_CONFIG_KEYS.some((key) => (
+    !SHA256_PATTERN.test(manifest.bundleSha256?.[key] ?? "")
+    || manifest.bundleSha256[key] !== deploymentBundleSha256?.[key]
+  ))) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_BUNDLE_SHA256_MISMATCH");
   }
   const queueName = `winerim-rescue-prod-canary-${runId}`;
   const expected = {
@@ -424,6 +450,8 @@ export function rescueCanaryActivationPlan({
   writerFenceGrantSha256,
   credentialProvisioningManifest,
   credentialProvisioningManifestSha256,
+  deploymentConfigSha256,
+  deploymentBundleSha256,
 }) {
   if (!UUID_PATTERN.test(connectionId)) throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_CONNECTION_ID");
   if (!RUN_PATTERN.test(runId)) throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_RUN_ID");
@@ -455,6 +483,8 @@ export function rescueCanaryActivationPlan({
     runId,
     keyVersion,
     credentialSetSha256: provisioning.credentialSetSha256,
+    deploymentConfigSha256,
+    deploymentBundleSha256,
   });
   if (expectedAttestation !== provisioning.attestations.winerim) {
     throw new Error("RESCUE_CANARY_ACTIVATION_EXCLUSIVE_CREDENTIAL_ATTESTATION_MISMATCH");
@@ -481,6 +511,8 @@ export function rescueCanaryActivationPlan({
     deploymentManifestSha256,
     writerFenceGrantSha256,
     credentialProvisioningManifestSha256,
+    deploymentConfigSha256,
+    deploymentBundleSha256,
     credentialSetSha256: provisioning.credentialSetSha256,
     credentialAttestations: provisioning.attestations,
     activation: {
@@ -488,11 +520,21 @@ export function rescueCanaryActivationPlan({
       catalogDisabled: true,
       syncMode: "PULL_ONLY",
       writeMode: "NONE",
+      exclusiveWriterCredentialKind: "winerim",
+      agoraCredentialMode: "shared-read-only",
       credentialKinds: ["agora", "winerim"],
       firstCanaryRequiresZeroOperationalRows: true,
       preservesPriorOperationalRowsOnRotation: provisioning.mode === "rotate",
     },
-    forbidden: ["catalog-enable", "backfill", "cursor-write", "stock-write", "shared-queue"],
+    forbidden: [
+      "agora-catalog-write",
+      "agora-outbound-write",
+      "catalog-enable",
+      "backfill",
+      "cursor-write",
+      "stock-write",
+      "shared-queue",
+    ],
   };
 }
 
@@ -526,6 +568,19 @@ export function prepareRescueCanaryActivation({ environment = process.env, outpu
     expectedSha256: credentialProvisioningManifestSha256,
     label: "CREDENTIAL_PROVISIONING_MANIFEST",
   });
+  const deploymentConfigSha256 = {};
+  const deploymentBundleSha256 = {};
+  for (const key of DEPLOYMENT_CONFIG_KEYS) {
+    const configPath = resolve(required(environment, `CANARY_DEPLOYMENT_CONFIG_${key.toUpperCase()}`));
+    const bundlePath = resolve(required(environment, `CANARY_DEPLOYMENT_BUNDLE_${key.toUpperCase()}`));
+    const config = readFileSync(configPath, "utf8");
+    const configuredMain = config.match(/^main\s*=\s*"([^"]+)"/m)?.[1];
+    if (configuredMain !== bundlePath || !/^no_bundle\s*=\s*true$/m.test(config)) {
+      throw new Error("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_BUNDLE_BINDING_MISMATCH");
+    }
+    deploymentConfigSha256[key] = createHash("sha256").update(config).digest("hex");
+    deploymentBundleSha256[key] = createHash("sha256").update(readFileSync(bundlePath)).digest("hex");
+  }
   const plan = rescueCanaryActivationPlan({
     connectionId,
     runId,
@@ -538,6 +593,8 @@ export function prepareRescueCanaryActivation({ environment = process.env, outpu
     writerFenceGrantSha256: fence.sha256,
     credentialProvisioningManifest: provisioning.value,
     credentialProvisioningManifestSha256: provisioning.sha256,
+    deploymentConfigSha256,
+    deploymentBundleSha256,
   });
   const target = resolve(output);
   const relativeTarget = relative(repoRoot, target);

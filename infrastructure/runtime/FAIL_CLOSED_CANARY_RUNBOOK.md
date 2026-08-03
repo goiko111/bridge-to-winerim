@@ -86,7 +86,12 @@ planned input Queue would have another producer or consumer.
 
 Render the templates outside the repository with mode `0600`. The renderer
 derives all four physical Queue names from `CANARY_RUN_ID`, rejects shared
-Queue names and fails if any placeholder remains:
+Queue names and fails if any placeholder remains. It also creates four
+Workers bundled by Wrangler under Node 22 or newer, points each rendered TOML
+at its exact bundle with `no_bundle=true`, and records both config and bundle
+SHA-256 values in the deployment manifest. The package smoke must start the
+consumer and executor bundles in local Workerd before deployment. Deploy only
+those rendered TOMLs and bundles:
 
 ```sh
 CANARY_RUN_ID=<SHORT_UNIQUE_RUN> \
@@ -132,8 +137,8 @@ CANARY_CONNECTION_ID=<UUID> \
 CANARY_RUN_ID=<RUN> \
 RUNTIME_VAULT_KEY_VERSION=<VERSION> \
 RUNTIME_VAULT_MASTER_KEY=<BASE64_32_BYTE_KEY> \
-RUNTIME_AGORA_CREDENTIAL=<ROTATED_AGORA_TOKEN> \
-RUNTIME_WINERIM_CREDENTIAL=<WINERIM_TOKEN> \
+RUNTIME_AGORA_CREDENTIAL=<CURRENT_SHARED_READ_ONLY_AGORA_TOKEN> \
+RUNTIME_WINERIM_CREDENTIAL=<ROTATED_WINERIM_TOKEN> \
   node infrastructure/runtime/prepare-runtime-credential-provisioning.mjs \
     --render \
     --mode=bootstrap \
@@ -150,6 +155,14 @@ rotation uses `--mode=rotate`, requires every prior generation to be terminal,
 and preserves its rows. Review and apply the SQL through the separate database
 gate; rendering never opens the runtime.
 
+For the current El Bejeque rescue, the Agora credential is deliberately
+`shared-read-only`: it may authenticate bounded `GET` reads but it is not the
+exclusive writer credential. The deployment manifest binds exclusivity to the
+rotated Winerim credential and forces catalog and outbound Agora mutation
+switches off. Readiness and direct execution both fail closed if any of those
+switches is enabled. A future canary that needs to mutate Agora must use a
+separately rotatable Agora credential and a different reviewed manifest.
+
 ## Writer fence procedure
 
 1. Select one `connectionId`, one provider mutation and one deployment holder.
@@ -159,8 +172,10 @@ gate; rendering never opens the runtime.
 3. Wait at least `130 s`: the maximum `120 s` lease plus the `10 s` provider
    network timeout. A process that already opened the old secret must have no
    valid lease or in-flight mutation when rotation starts.
-4. Rotate the provider/Winerim mutation credential. Put the new credential
-   only in the new private executor. Do not copy it back to Lovable.
+4. Rotate the Winerim mutation credential. Put the new credential only in the
+   new private executor. Do not copy it back to Lovable. The existing Agora
+   credential may be provisioned only as `shared-read-only`; never use it for
+   catalog import or outbound mutation in this run.
 5. Probe the old writer with its revoked credential. It must return `401` or
    `403`. Save a sanitized response and its SHA-256; never save the token.
 6. Probe the rotated credential with a read-only endpoint. It must succeed.
@@ -211,6 +226,14 @@ CANARY_SCOPE_EXPIRES_AT=<ISO_TIME_WITHIN_TWO_HOURS> \
 RUNTIME_VAULT_KEY_VERSION=<VERSION> \
 CANARY_DEPLOYMENT_MANIFEST=/secure/tmp/canary-configs/canary-deployment-manifest.json \
 CANARY_DEPLOYMENT_MANIFEST_SHA256=<CAPTURED_SHA256> \
+CANARY_DEPLOYMENT_CONFIG_CONSUMER=/secure/tmp/canary-configs/wrangler.consumer.toml \
+CANARY_DEPLOYMENT_CONFIG_EXECUTOR=/secure/tmp/canary-configs/wrangler.executor.toml \
+CANARY_DEPLOYMENT_CONFIG_FENCE=/secure/tmp/canary-configs/wrangler.fence.toml \
+CANARY_DEPLOYMENT_CONFIG_OBSERVER=/secure/tmp/canary-configs/wrangler.observer.toml \
+CANARY_DEPLOYMENT_BUNDLE_CONSUMER=/secure/tmp/canary-configs/worker.consumer.mjs \
+CANARY_DEPLOYMENT_BUNDLE_EXECUTOR=/secure/tmp/canary-configs/worker.executor.mjs \
+CANARY_DEPLOYMENT_BUNDLE_FENCE=/secure/tmp/canary-configs/worker.fence.mjs \
+CANARY_DEPLOYMENT_BUNDLE_OBSERVER=/secure/tmp/canary-configs/worker.observer.mjs \
 CANARY_WRITER_FENCE_GRANT=/secure/tmp/writer-fence-grant.json \
 CANARY_WRITER_FENCE_GRANT_SHA256=<CAPTURED_SHA256> \
 RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST=/secure/tmp/runtime-credentials.sql.manifest.json \
@@ -243,7 +266,9 @@ infrastructure/postgres/verify-rescue-production-pre-canary.sh
 ## Runtime integration contract
 
 The public runtime guards the exact physical Queue and payload before opening
-Hyperdrive or invoking the executor. The private executor independently renews
+Hyperdrive or invoking the executor. The private executor repeats the exact
+message ID, idempotency key, source event, lane, job and canonical payload hash
+check before opening its own database or credential bindings, then independently renews
 the lease immediately before every Winerim mutation and rejects expired or
 drifted credential evidence. Broad sales, cursor and DLQ switches remain off in
 the exclusive executor template. Run the integration-source verifier, full

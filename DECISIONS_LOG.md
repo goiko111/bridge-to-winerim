@@ -1,5 +1,22 @@
 # DECISIONS_LOG
 
+## 2026-08-03 - Bundle revisado debe arrancar en Workerd
+
+- Los cuatro artefactos se generan con el bundler de Wrangler bajo Node 22+,
+  se fijan despues con `no_bundle` y SHA-256, y consumer/executor deben pasar
+  smoke de arranque Workerd antes de cualquier despliegue.
+- Se descarta el prebundle `esbuild platform=node`: conservaba `require()`
+  dinamicos de `pg` que el dry-run aceptaba pero Workerd no podia ejecutar.
+
+## 2026-08-03 - Agora compartido solo en lectura; Winerim writer exclusivo
+
+- El rescue de El Bejeque admite la credencial Agora no rotada solo en modo
+  `shared-read-only`, con catalogo y outbound mutables cerrados.
+- Winerim es la unica credencial exclusiva y debe coincidir con grant,
+  attestation, bundle, config y `run_id` antes de readiness.
+- Albariza usa recursos y onboarding separados; preview y canary preceden a
+  cualquier carga completa.
+
 > Append-only. Una decisión por bloque. Formato: fecha · decisión · razón · alternativa descartada.
 
 ---

@@ -2,6 +2,17 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Fence El Bejeque y preview Albariza
+
+- [x] Modo Agora `shared-read-only`, scope exacto y bundles inmutables.
+- [x] Token Winerim nuevo validado en dos GET oficiales.
+- [x] Preview fresco Albariza: `762` publicables, cero colisiones/diffs.
+- [x] Generar bundles con Wrangler y arrancar consumer/executor en Workerd.
+- [ ] Obtener `401/403` antiguo o evidencia backend equivalente aprobada.
+- [ ] Introducir Agora El Bejeque por canal seguro y provisionar inactivo.
+- [ ] Corregir/excluir la copa Albariza sin precio y ejecutar canary B/C antes
+  de publicacion completa.
+
 ## P0 - El Bejeque activation gate versionado
 
 - [x] Añadir `run_id`, estados terminales, evidencias SHA-256 e inmutabilidad.

@@ -58,6 +58,18 @@ const CREDENTIAL_SET_SHA256 = runtimeCredentialSetSha256({
     attestationSha256,
   })),
 });
+const DEPLOYMENT_CONFIG_SHA256 = {
+  consumer: "1".repeat(64),
+  executor: "2".repeat(64),
+  fence: "3".repeat(64),
+  observer: "4".repeat(64),
+};
+const DEPLOYMENT_BUNDLE_SHA256 = {
+  consumer: "5".repeat(64),
+  executor: "6".repeat(64),
+  fence: "7".repeat(64),
+  observer: "8".repeat(64),
+};
 
 function deploymentManifest() {
   const queueName = `winerim-rescue-prod-canary-${RETIREMENT_RUN_ID}`;
@@ -70,6 +82,15 @@ function deploymentManifest() {
       keyVersion: KEY_VERSION,
       exclusiveAttestationSha256: "b".repeat(64),
       credentialSetSha256: CREDENTIAL_SET_SHA256,
+    },
+    credentialPolicy: {
+      exclusiveWriterCredentialKind: "winerim",
+      agoraCredentialMode: "shared-read-only",
+    },
+    mutationPolicy: {
+      agoraCatalogApply: false,
+      agoraOutboundMutation: false,
+      winerimMutation: true,
     },
     resources: {
       queues: {
@@ -91,7 +112,8 @@ function deploymentManifest() {
       },
       archiveBucket: RETIREMENT_RESOURCES.archiveBucket,
     },
-    configSha256: {},
+    configSha256: DEPLOYMENT_CONFIG_SHA256,
+    bundleSha256: DEPLOYMENT_BUNDLE_SHA256,
   };
 }
 
@@ -120,6 +142,27 @@ function database(rows: Record<string, unknown>[]): DatabaseAdapter {
     transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({ query }),
   };
 }
+
+describe("fail-closed canary packaging", () => {
+  it("pins Wrangler-built bundles and smoke-starts consumer and executor in Workerd", () => {
+    const renderer = readFileSync(join(
+      process.cwd(),
+      "infrastructure/runtime/render-failclosed-canary-configs.mjs",
+    ), "utf8");
+    const smoke = readFileSync(join(
+      process.cwd(),
+      "infrastructure/runtime/smoke-failclosed-canary.sh",
+    ), "utf8");
+
+    expect(renderer).toContain("node_modules/wrangler/bin/wrangler.js");
+    expect(renderer).toContain('"--dry-run"');
+    expect(renderer).toContain("FAILCLOSED_CANARY_RENDER_NODE_22_REQUIRED");
+    expect(renderer).not.toContain('platform: "node"');
+    expect(smoke).toContain("workerd_startup_smoke consumer");
+    expect(smoke).toContain("workerd_startup_smoke executor");
+    expect(smoke).toContain("FAILCLOSED_CANARY_WORKERD_DYNAMIC_REQUIRE_");
+  });
+});
 
 describe("runtime credential provisioning tooling", () => {
   it("encrypts with the exact vault AAD and keeps credentials inactive", () => {
@@ -325,6 +368,8 @@ describe("rescue canary activation tooling", () => {
       writerFenceGrantSha256: "f".repeat(64),
       credentialProvisioningManifest: credentialProvisioningManifest(),
       credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
     });
 
     expect(plan).toMatchObject({
@@ -334,9 +379,37 @@ describe("rescue canary activation tooling", () => {
       activation: {
         oneConnection: true,
         catalogDisabled: true,
+        exclusiveWriterCredentialKind: "winerim",
+        agoraCredentialMode: "shared-read-only",
         firstCanaryRequiresZeroOperationalRows: true,
       },
     });
+  });
+
+  it("rejects activation when the deployment could mutate Agora with a shared credential", () => {
+    const unsafe = {
+      ...deploymentManifest(),
+      mutationPolicy: {
+        agoraCatalogApply: true,
+        agoraOutboundMutation: false,
+        winerimMutation: true,
+      },
+    };
+    expect(() => rescueCanaryActivationPlan({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: unsafe,
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrant: writerFenceGrant(),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    })).toThrow("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_MANIFEST_SCOPE_MISMATCH");
   });
 
   it("rejects activation before the legacy lease and network drain elapsed", () => {
@@ -356,6 +429,8 @@ describe("rescue canary activation tooling", () => {
       writerFenceGrantSha256: "f".repeat(64),
       credentialProvisioningManifest: credentialProvisioningManifest(),
       credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
     })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
   });
 
@@ -383,7 +458,31 @@ describe("rescue canary activation tooling", () => {
 
   it("writes a private activation artifact and rejects changed evidence", () => {
     const directory = mkdtempSync(join(tmpdir(), "runtime-canary-activate."));
-    const deploymentSource = `${JSON.stringify(deploymentManifest(), null, 2)}\n`;
+    const bundlePaths = Object.fromEntries(Object.keys(DEPLOYMENT_BUNDLE_SHA256).map((key) => {
+      const path = join(directory, `worker.${key}.mjs`);
+      writeFileSync(path, `fixture-bundle-${key}\n`, { mode: 0o600 });
+      return [key, path];
+    }));
+    const configSources = {};
+    const configPaths = Object.fromEntries(Object.keys(DEPLOYMENT_CONFIG_SHA256).map((key) => {
+      const path = join(directory, `wrangler.${key}.toml`);
+      configSources[key] = `main = "${bundlePaths[key]}"\nno_bundle = true\nfixture = "${key}"\n`;
+      writeFileSync(path, configSources[key], { mode: 0o600 });
+      return [key, path];
+    }));
+    const configSha256 = Object.fromEntries(Object.entries(configPaths).map(([key, path]) => [
+      key,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ]));
+    const bundleSha256 = Object.fromEntries(Object.entries(bundlePaths).map(([key, path]) => [
+      key,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ]));
+    const deploymentSource = `${JSON.stringify({
+      ...deploymentManifest(),
+      configSha256,
+      bundleSha256,
+    }, null, 2)}\n`;
     const deploymentPath = join(directory, "canary-deployment-manifest.json");
     const deploymentSha256 = createHash("sha256").update(deploymentSource).digest("hex");
     const fenceSource = `${JSON.stringify(writerFenceGrant(), null, 2)}\n`;
@@ -408,6 +507,14 @@ describe("rescue canary activation tooling", () => {
       CANARY_WRITER_FENCE_GRANT_SHA256: fenceSha256,
       RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST: provisioningPath,
       RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST_SHA256: provisioningSha256,
+      CANARY_DEPLOYMENT_CONFIG_CONSUMER: configPaths.consumer,
+      CANARY_DEPLOYMENT_CONFIG_EXECUTOR: configPaths.executor,
+      CANARY_DEPLOYMENT_CONFIG_FENCE: configPaths.fence,
+      CANARY_DEPLOYMENT_CONFIG_OBSERVER: configPaths.observer,
+      CANARY_DEPLOYMENT_BUNDLE_CONSUMER: bundlePaths.consumer,
+      CANARY_DEPLOYMENT_BUNDLE_EXECUTOR: bundlePaths.executor,
+      CANARY_DEPLOYMENT_BUNDLE_FENCE: bundlePaths.fence,
+      CANARY_DEPLOYMENT_BUNDLE_OBSERVER: bundlePaths.observer,
     };
 
     const result = prepareRescueCanaryActivation({ environment, output });
@@ -417,6 +524,17 @@ describe("rescue canary activation tooling", () => {
       environment: { ...environment, CANARY_WRITER_FENCE_GRANT_SHA256: "0".repeat(64) },
       output: join(directory, "must-not-exist.sql"),
     })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_SHA256_MISMATCH");
+    writeFileSync(configPaths.executor, `${configSources.executor}# tampered\n`, { mode: 0o600 });
+    expect(() => prepareRescueCanaryActivation({
+      environment,
+      output: join(directory, "tampered-config-must-not-exist.sql"),
+    })).toThrow("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_CONFIG_SHA256_MISMATCH");
+    writeFileSync(configPaths.executor, configSources.executor, { mode: 0o600 });
+    writeFileSync(bundlePaths.executor, "tampered-executor-bundle\n", { mode: 0o600 });
+    expect(() => prepareRescueCanaryActivation({
+      environment,
+      output: join(directory, "tampered-bundle-must-not-exist.sql"),
+    })).toThrow("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_BUNDLE_SHA256_MISMATCH");
   });
 });
 
