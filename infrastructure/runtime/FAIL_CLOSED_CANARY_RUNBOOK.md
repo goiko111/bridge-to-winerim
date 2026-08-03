@@ -254,6 +254,10 @@ rows for other connections, catalog off, `PULL_ONLY`, `write_mode=NONE` and
 backfill `0`. The immutable evidence hashes are stored on the scope. Replay, a
 second active run, changed evidence or a partial generation fails closed.
 
+The generated provisioning, activation and retirement artifacts are pure SQL
+transactions. Apply them with `psql -v ON_ERROR_STOP=1` or through the
+authenticated Supabase Management API; they contain no `psql` meta-commands.
+
 Before starting the Queue consumer, run the pre-canary verifier with both the
 connection and exact generation:
 

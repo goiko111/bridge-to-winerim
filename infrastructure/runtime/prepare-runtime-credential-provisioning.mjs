@@ -170,9 +170,7 @@ export function renderCredentialProvisioningSql({
     false
   )`).join(",\n  ");
 
-  return `\\set ON_ERROR_STOP on
-
-BEGIN;
+  return `BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '20s';

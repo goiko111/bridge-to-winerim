@@ -41,9 +41,7 @@ export function renderRescueCanaryRetirementSql({
   }
   const expectedApprovedAt = parseTimestamp(approvedAt);
   const scopeNote = `rescue-canary-run:${runId}`;
-  return `\\set ON_ERROR_STOP on
-
-BEGIN;
+  return `BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '20s';
