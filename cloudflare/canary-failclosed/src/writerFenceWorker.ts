@@ -2,6 +2,7 @@ import {
   parseWriterFenceGrant,
   SecretsStoreSecretLike,
   validateWriterFenceGrant,
+  WriterFenceGrantV1,
   WriterFenceLease,
 } from "./writerFence";
 
@@ -31,6 +32,10 @@ type AcquireRequest = {
 };
 
 type StoredLease = WriterFenceLease & { acquiredAt: string };
+type LeaseCredential = Pick<
+  WriterFenceGrantV1,
+  "exclusiveCredentialRef" | "credentialVersion" | "credentialBinding"
+>;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -42,17 +47,20 @@ function json(status: number, body: unknown): Response {
 async function acquireLease(
   storage: DurableStorageLike,
   request: AcquireRequest,
-  credentialVersion: string,
+  credential: LeaseCredential,
+  grantExpiresAt: string,
 ): Promise<StoredLease | null> {
   return storage.transaction(async (transaction) => {
     const now = Date.now();
     const current = await transaction.get<StoredLease>("lease");
-    if (
-      current
-      && Date.parse(current.expiresAt) > now
-      && (current.runId !== request.runId || current.holderId !== request.holderId)
-    ) {
-      return null;
+    if (current && Date.parse(current.expiresAt) > now) {
+      const sameHolder = current.connectionId === request.connectionId
+        && current.runId === request.runId
+        && current.holderId === request.holderId;
+      const sameCredential = current.credentialReference === credential.exclusiveCredentialRef
+        && current.credentialVersion === credential.credentialVersion
+        && current.credentialBinding === credential.credentialBinding;
+      if (!sameHolder || !sameCredential) return null;
     }
     const lastToken = await transaction.get<number>("lastFencingToken") ?? 0;
     const renewal = current
@@ -60,14 +68,20 @@ async function acquireLease(
       && current.holderId === request.holderId
       && Date.parse(current.expiresAt) > now;
     const fencingToken = renewal ? current.fencingToken : lastToken + 1;
+    const requestedExpiry = now + request.ttlSeconds * 1_000;
+    const grantExpiry = Date.parse(grantExpiresAt);
+    const effectiveExpiry = Math.min(requestedExpiry, grantExpiry);
+    if (!Number.isFinite(effectiveExpiry) || effectiveExpiry <= now) return null;
     const lease: StoredLease = {
       connectionId: request.connectionId,
       runId: request.runId,
       holderId: request.holderId,
-      credentialVersion,
+      credentialReference: credential.exclusiveCredentialRef,
+      credentialVersion: credential.credentialVersion,
+      credentialBinding: credential.credentialBinding,
       fencingToken,
       acquiredAt: new Date(now).toISOString(),
-      expiresAt: new Date(now + request.ttlSeconds * 1_000).toISOString(),
+      expiresAt: new Date(effectiveExpiry).toISOString(),
     };
     await transaction.put("lease", lease);
     await transaction.put("lastFencingToken", fencingToken);
@@ -104,7 +118,12 @@ export class ConnectionWriterFence {
         runId: body.runId,
         holderId: body.holderId,
       });
-      const lease = await acquireLease(this.state.storage, body, grant.credentialVersion);
+      const lease = await acquireLease(
+        this.state.storage,
+        body,
+        grant,
+        grant.expiresAt,
+      );
       if (!lease) return json(409, { error: "writer_lease_held_by_other_runtime" });
       return json(200, lease);
     } catch (error) {

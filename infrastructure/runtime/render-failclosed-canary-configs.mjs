@@ -6,6 +6,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const templateRoot = resolve(repoRoot, "cloudflare/canary-failclosed");
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/;
+const KEY_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CANARY_MESSAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const HEX32_PATTERN = /^[a-f0-9]{32}$/;
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{2,62}$/;
@@ -39,10 +41,17 @@ export function renderFailclosedCanaryConfigs({
 } = {}) {
   const runId = required(environment, "CANARY_RUN_ID");
   const connectionId = required(environment, "CANARY_CONNECTION_ID");
+  const messageId = required(environment, "CANARY_MESSAGE_ID");
+  const idempotencyKey = required(environment, "CANARY_IDEMPOTENCY_KEY");
+  const payloadSha256 = required(environment, "CANARY_PAYLOAD_SHA256").toLowerCase();
+  const exclusiveCredentialVersion = required(environment, "CANARY_EXCLUSIVE_CREDENTIAL_VERSION");
   const release = required(environment, "CANARY_RELEASE");
   const holderId = required(environment, "CANARY_HOLDER_ID");
   const hyperdriveId = required(environment, "RUNTIME_HYPERDRIVE_ID");
   const executorService = required(environment, "RUNTIME_EXECUTOR_SERVICE_NAME");
+  const runtimeVaultStoreId = required(environment, "RUNTIME_VAULT_STORE_ID");
+  const runtimeVaultSecretName = required(environment, "RUNTIME_VAULT_SECRET_NAME");
+  const runtimeVaultKeyVersion = required(environment, "RUNTIME_VAULT_KEY_VERSION");
   const fenceService = required(environment, "WRITER_FENCE_SERVICE_NAME");
   const proofStoreId = required(environment, "WRITER_FENCE_PROOF_STORE_ID");
   const proofSecretName = required(environment, "WRITER_FENCE_PROOF_SECRET_NAME");
@@ -52,11 +61,23 @@ export function renderFailclosedCanaryConfigs({
 
   if (!RUN_PATTERN.test(runId)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_RUN_ID");
   if (!UUID_PATTERN.test(connectionId)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CONNECTION_ID");
-  if (![release, holderId, executorService, fenceService, proofStoreId, proofSecretName, grantStoreId, grantSecretName]
+  if (![messageId, idempotencyKey].every((value) => CANARY_MESSAGE_PATTERN.test(value))) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_MESSAGE_IDENTITY");
+  }
+  if (!/^[a-f0-9]{64}$/.test(exclusiveCredentialVersion)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CREDENTIAL_VERSION");
+  }
+  if (!KEY_VERSION_PATTERN.test(runtimeVaultKeyVersion)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_VAULT_KEY_VERSION");
+  }
+  if (![release, holderId, executorService, runtimeVaultStoreId,
+    runtimeVaultSecretName, fenceService,
+    proofStoreId, proofSecretName, grantStoreId, grantSecretName]
     .every((value) => ID_PATTERN.test(value))) {
     throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_IDENTIFIER");
   }
   if (!HEX32_PATTERN.test(hyperdriveId)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_HYPERDRIVE_ID");
+  if (!/^[a-f0-9]{64}$/.test(payloadSha256)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_PAYLOAD_SHA256");
   if (!NAME_PATTERN.test(archiveBucket)) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_ARCHIVE_BUCKET");
 
   const queueName = `winerim-rescue-prod-canary-${runId}`;
@@ -79,10 +100,17 @@ export function renderFailclosedCanaryConfigs({
   const values = {
     CANARY_RUN_ID: runId,
     CANARY_CONNECTION_ID: connectionId,
+    CANARY_MESSAGE_ID: messageId,
+    CANARY_IDEMPOTENCY_KEY: idempotencyKey,
+    CANARY_PAYLOAD_SHA256: payloadSha256,
+    CANARY_EXCLUSIVE_CREDENTIAL_VERSION: exclusiveCredentialVersion,
     RELEASE: release,
     WRITER_FENCE_HOLDER_ID: holderId,
     RUNTIME_HYPERDRIVE_ID: hyperdriveId,
     RUNTIME_EXECUTOR_SERVICE_NAME: executorService,
+    RUNTIME_VAULT_STORE_ID: runtimeVaultStoreId,
+    RUNTIME_VAULT_SECRET_NAME: runtimeVaultSecretName,
+    RUNTIME_VAULT_KEY_VERSION: runtimeVaultKeyVersion,
     WRITER_FENCE_SERVICE_NAME: fenceService,
     WRITER_FENCE_PROOF_STORE_ID: proofStoreId,
     WRITER_FENCE_PROOF_SECRET_NAME: proofSecretName,
@@ -96,6 +124,7 @@ export function renderFailclosedCanaryConfigs({
   };
   const templates = {
     consumer: "wrangler.canary-consumer.toml.example",
+    executor: "wrangler.canary-executor.toml.example",
     fence: "wrangler.writer-fence.toml.example",
     observer: "wrangler.dlq-observer.toml.example",
   };

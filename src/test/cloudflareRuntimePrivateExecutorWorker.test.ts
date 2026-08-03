@@ -13,6 +13,11 @@ import {
   parseLiveGlassCanaryInput,
   type MiddlewareRuntimeExecutorEnv,
 } from "../../cloudflare/workers/middleware-runtime-executor/src/worker";
+import {
+  createPostgresEncryptedCredentialPort,
+  runtimeCredentialAttestation,
+} from "../../cloudflare/workers/middleware-runtime/src/executor";
+import { writerFenceCredentialBinding } from "../../cloudflare/canary-failclosed/src/writerFence";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_VERSION = "v1";
@@ -114,6 +119,35 @@ function enabledEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}): Midd
   };
 }
 
+function rescueCanaryEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}): MiddlewareRuntimeExecutorEnv {
+  return enabledEnv({
+    ENVIRONMENT: "rescue-production",
+    RUNTIME_MODE: "exclusive-canary-executor",
+    CANARY_RUN_ID: "run-20260803-a",
+    WRITER_FENCE_HOLDER_ID: "deployment-a",
+    WRITER_FENCE: { fetch: vi.fn() },
+    CANARY_WRITER_FENCE_PROOF: { get: vi.fn(async () => "x".repeat(40)) },
+    ...overrides,
+  });
+}
+
+async function credentialFenceFor(
+  fixture: Awaited<ReturnType<typeof encryptedCredentialRow>>,
+): Promise<{
+  attestation: ReturnType<typeof runtimeCredentialAttestation>;
+  binding: string;
+}> {
+  const credential = await createPostgresEncryptedCredentialPort(
+    readinessDatabase({ winerim: fixture.row }).adapter,
+    { masterKey: { get: async () => fixture.master }, keyVersion: KEY_VERSION },
+  ).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
+  const attestation = runtimeCredentialAttestation(credential!);
+  return {
+    attestation,
+    binding: await writerFenceCredentialBinding(attestation),
+  };
+}
+
 function executeRequest(runtimeEnvelope: unknown) {
   return new Request("https://runtime-executor.internal/v1/execute", {
     method: "POST",
@@ -137,6 +171,37 @@ describe("private runtime executor Worker", () => {
       failure: { httpStatus: 503, message: "RUNTIME_EXECUTION_DISABLED" },
     });
     expect(database).not.toHaveBeenCalled();
+  });
+
+  it("keeps rescue production closed without the exclusive-canary executor mode", async () => {
+    const database = vi.fn();
+    const worker = createMiddlewareRuntimeExecutorWorker({ database });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      { dryRun: true },
+    )), enabledEnv({ ENVIRONMENT: "rescue-production" }));
+
+    expect(response.status).toBe(503);
+    expect(database).not.toHaveBeenCalled();
+  });
+
+  it("opens the rescue execution gate only in exclusive-canary mode", async () => {
+    const fake = fakeDatabase([{
+      connection_id: CONNECTION_ID,
+      provider: "agora",
+      enabled: true,
+    }]);
+    const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      { dryRun: true, orderId: "rescue-canary-1", mode: "operational", quantity: 1,
+        soldAt: "2026-08-03T08:00:00.000Z",
+        soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+        stockSource: { wineId: "42", stockId: 4201, variant: "bottle" } },
+    )), rescueCanaryEnv());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
   });
 
   it("advertises missing private bindings without reading secret values", async () => {
@@ -338,7 +403,150 @@ describe("private runtime executor Worker", () => {
     expect(fake.query).toHaveBeenCalledOnce();
   });
 
-  it("derives the remote orderId from queue idempotency and ignores caller drift", async () => {
+  it("renews the rescue writer fence immediately before a live Winerim mutation", async () => {
+    const winerim = await encryptedCredentialRow("winerim");
+    const credentialFence = await credentialFenceFor(winerim);
+    const fake = readinessDatabase({ winerim: winerim.row });
+    const order: string[] = [];
+    const audit = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const request = vi.fn<typeof fetch>(async () => {
+      order.push("mutation");
+      return Response.json({
+        sales: [{ orderId: "rescue-live-order-1", stockApplied: true }],
+      });
+    });
+    const fence = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      order.push("fence");
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        connectionId: string;
+        runId: string;
+        holderId: string;
+      };
+      return Response.json({
+        ...body,
+        fencingToken: 9,
+        credentialReference: credentialFence.attestation.reference,
+        credentialVersion: credentialFence.attestation.version,
+        credentialBinding: credentialFence.binding,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+    });
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      request,
+      sleep: vi.fn(async () => undefined),
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      {
+        mode: "operational",
+        orderId: "rescue-live-order-1",
+        soldAt: "2026-08-03T08:00:00.000Z",
+        quantity: 1,
+        soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+        stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+      },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      WRITER_FENCE: { fetch: fence },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    expect(order).toEqual(["fence", "mutation"]);
+    expect(fence).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledWith(expect.stringContaining('"fencingToken":9'));
+    expect(audit).toHaveBeenCalledWith(expect.stringContaining('"credentialReference":"runtime-vault://postgres/'));
+    expect(audit).toHaveBeenCalledWith(expect.stringContaining(
+      `"credentialVersion":"${credentialFence.attestation.version}"`,
+    ));
+    expect(audit).toHaveBeenCalledWith(expect.stringContaining(
+      `"credentialBinding":"${credentialFence.binding}"`,
+    ));
+    audit.mockRestore();
+  });
+
+  it("blocks the mutation when the writer-fence credential version drifts", async () => {
+    const winerim = await encryptedCredentialRow("winerim");
+    const credentialFence = await credentialFenceFor(winerim);
+    const driftedVersion = "d".repeat(64);
+    const driftedBinding = await writerFenceCredentialBinding({
+      reference: credentialFence.attestation.reference,
+      version: driftedVersion,
+    });
+    const fake = readinessDatabase({ winerim: winerim.row });
+    const request = vi.fn<typeof fetch>();
+    const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter, request });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      {
+        mode: "operational",
+        orderId: "rescue-live-order-drift",
+        soldAt: "2026-08-03T08:00:00.000Z",
+        quantity: 1,
+        soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+        stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+      },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      WRITER_FENCE: {
+        fetch: async (_input, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return Response.json({
+            ...body,
+            fencingToken: 10,
+            credentialReference: credentialFence.attestation.reference,
+            credentialVersion: driftedVersion,
+            credentialBinding: driftedBinding,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+      },
+    }));
+
+    expect(response.status).toBe(503);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("blocks the mutation when the reacquired lease is too close to expiry", async () => {
+    const winerim = await encryptedCredentialRow("winerim");
+    const credentialFence = await credentialFenceFor(winerim);
+    const fake = readinessDatabase({ winerim: winerim.row });
+    const request = vi.fn<typeof fetch>();
+    const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter, request });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "winerim.sales-import-live",
+      {
+        mode: "operational",
+        orderId: "rescue-live-order-expiring",
+        soldAt: "2026-08-03T08:00:00.000Z",
+        quantity: 1,
+        soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+        stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+      },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => winerim.master },
+      WRITER_FENCE: {
+        fetch: async (_input, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return Response.json({
+            ...body,
+            fencingToken: 11,
+            credentialReference: credentialFence.attestation.reference,
+            credentialVersion: credentialFence.attestation.version,
+            credentialBinding: credentialFence.binding,
+            expiresAt: new Date(Date.now() + 1_000).toISOString(),
+          });
+        },
+      },
+    }));
+
+    expect(response.status).toBe(503);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("preserves the reviewed remote orderId while queue idempotency owns the local claim", async () => {
     const runtimeEnvelope = await envelope("winerim.sales-import-live", {
       mode: "operational",
       orderId: "caller-controlled-order",
@@ -349,11 +557,21 @@ describe("private runtime executor Worker", () => {
     });
 
     expect(parseLiveGlassCanaryInput(runtimeEnvelope)).toMatchObject({
-      orderId: runtimeEnvelope.idempotencyKey,
+      orderId: "caller-controlled-order",
       mode: "operational",
       soldStock: { variant: "glass" },
       stockSource: { variant: "bottle" },
     });
+  });
+
+  it("rejects a missing remote orderId before a stock canary can run", async () => {
+    const runtimeEnvelope = await envelope("winerim.sales-import-live", {
+      mode: "operational",
+      soldAt: "2026-08-02T12:00:00.000Z",
+      quantity: 1,
+      soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
+    });
+    expect(() => parseLiveGlassCanaryInput(runtimeEnvelope)).toThrow("RUNTIME_STOCK_ORDER_ID_INVALID");
   });
 
   it("rejects secret-bearing envelopes before database or vault access", async () => {

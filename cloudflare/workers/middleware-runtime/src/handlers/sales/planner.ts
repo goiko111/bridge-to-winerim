@@ -88,10 +88,9 @@ function selectDocuments(input: SalesPlanningInput, blocked: SalesBlockedItem[])
   return Array.from(unique.values());
 }
 
-function positiveIntegerQuantity(rawQuantity: number, historical: boolean): number | null {
+function positiveIntegerQuantity(rawQuantity: number): number | null {
   if (!Number.isFinite(rawQuantity) || rawQuantity <= 0) return null;
-  if (historical && !Number.isInteger(rawQuantity)) return null;
-  return historical ? rawQuantity : Math.ceil(rawQuantity);
+  return Number.isInteger(rawQuantity) ? rawQuantity : null;
 }
 
 function weightedUnitPrice(group: SalesGroup): number | undefined {
@@ -171,6 +170,18 @@ export async function planSalesRun(
         });
         continue;
       }
+      if (!Number.isInteger(line.quantity)) {
+        blocked.push({
+          reason: mode === "HISTORICAL" ? "FRACTIONAL_HISTORICAL_QUANTITY" : "INVALID_QUANTITY",
+          documentId: document.documentId,
+          lineId: line.lineId,
+          providerProductId: line.providerProductId,
+          detail: mode === "HISTORICAL"
+            ? `Historical sales-only import omits fractional quantities; received ${line.quantity}`
+            : `Operational stock application requires a whole quantity; received ${line.quantity}`,
+        });
+        continue;
+      }
       if (!resolution) {
         blocked.push({
           reason: "MAPPING_NOT_FOUND",
@@ -213,7 +224,7 @@ export async function planSalesRun(
 
   const drafts: Array<Omit<SalesMutationIntent, "observedAppliedQuantity">> = [];
   for (const group of groups.values()) {
-    const quantity = positiveIntegerQuantity(group.rawQuantity, mode === "HISTORICAL");
+    const quantity = positiveIntegerQuantity(group.rawQuantity);
     if (quantity === null) {
       blocked.push({
         reason: mode === "HISTORICAL" && group.rawQuantity > 0

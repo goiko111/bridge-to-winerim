@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 RESCUE_SQL=${1:-}
-EXPECTED_CONNECTIONS=${2:-30}
+EXPECTED_CONNECTIONS=${2:-31}
 
 if [ -z "$RESCUE_SQL" ] || [ ! -f "$RESCUE_SQL" ]; then
   printf 'USAGE: %s /absolute/path/rescue-connections-disabled.sql [expected-count]\n' "$0" >&2

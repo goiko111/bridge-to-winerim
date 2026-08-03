@@ -141,7 +141,7 @@ export function buildRescueBootstrapManifest({
   credentialReadiness = null,
   fleetFiles = ["fleet.json"],
   connectivityFile = "connectivity.json",
-  expectedCount = 30,
+  expectedCount = 31,
 } = {}) {
   const rows = fleet?.rows;
   validateFleetRows(rows, expectedCount);
@@ -290,7 +290,7 @@ function main(args = process.argv.slice(2)) {
   const connectivityPath = argumentValue(args, "connectivity");
   const outputDir = argumentValue(args, "output-dir");
   const readinessPath = argumentValue(args, "credential-readiness");
-  const expectedCount = Number(argumentValue(args, "expected-count") ?? 30);
+  const expectedCount = Number(argumentValue(args, "expected-count") ?? 31);
   if (!fleetPathValue || !connectivityPath || !outputDir) {
     throw new Error("USAGE: build-rescue-bootstrap.mjs --fleet=PATH --connectivity=PATH --output-dir=PATH [--credential-readiness=PATH]");
   }

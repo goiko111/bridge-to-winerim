@@ -10,10 +10,17 @@ RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT
 CANARY_RUN_ID=smoke-a \
 CANARY_CONNECTION_ID=11111111-1111-4111-8111-111111111111 \
+CANARY_MESSAGE_ID=message-smoke-a \
+CANARY_IDEMPOTENCY_KEY=idempotency-smoke-a \
+CANARY_PAYLOAD_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+CANARY_EXCLUSIVE_CREDENTIAL_VERSION=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
 CANARY_RELEASE=smoke-release \
 CANARY_HOLDER_ID=smoke-holder \
 RUNTIME_HYPERDRIVE_ID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 RUNTIME_EXECUTOR_SERVICE_NAME=runtime-executor-smoke \
+RUNTIME_VAULT_STORE_ID=runtime-vault-store-smoke \
+RUNTIME_VAULT_SECRET_NAME=runtime-vault-secret-smoke \
+RUNTIME_VAULT_KEY_VERSION=v1 \
 WRITER_FENCE_SERVICE_NAME=writer-fence-smoke \
 WRITER_FENCE_PROOF_STORE_ID=proof-store-smoke \
 WRITER_FENCE_PROOF_SECRET_NAME=proof-secret-smoke \
@@ -23,7 +30,7 @@ CANARY_DLQ_ARCHIVE_BUCKET=winerim-canary-dlq-smoke \
   node infrastructure/runtime/render-failclosed-canary-configs.mjs \
     --output-dir="$RENDER_DIR" >/dev/null
 
-test "$(find "$RENDER_DIR" -type f | wc -l | tr -d ' ')" = "3"
+test "$(find "$RENDER_DIR" -type f | wc -l | tr -d ' ')" = "4"
 test "$(find "$RENDER_DIR" -type f ! -perm 600 | wc -l | tr -d ' ')" = "0"
 ! rg -Fq '{{' "$RENDER_DIR"
 ! rg -Fq 'winerim-staging-sales' "$RENDER_DIR"

@@ -9,6 +9,7 @@ import type {
 import {
   createPostgresEncryptedCredentialPort,
   createPostgresRuntimeConnectionPort,
+  runtimeCredentialAttestation,
 } from "../../cloudflare/workers/middleware-runtime/src/executor";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
@@ -95,6 +96,15 @@ describe("encrypted runtime credential vault", () => {
     });
 
     expect(await secret?.read()).toBe("fixture-winerim-token");
+    const attestation = runtimeCredentialAttestation(secret!);
+    expect(attestation).toMatchObject({
+      reference: `runtime-vault://postgres/${CONNECTION_ID}/agora/winerim`,
+      version: expect.stringMatching(/^[a-f0-9]{64}$/),
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+      kind: "winerim",
+    });
+    expect(JSON.stringify(attestation)).not.toContain("fixture-winerim-token");
     expect(binding.get).toHaveBeenCalledOnce();
     expect(fake.statements[0].text).toContain("runtime_connection_credentials");
     expect(fake.statements[0].text).not.toMatch(/api_token|winerim_api_token|base_url/i);
@@ -153,6 +163,23 @@ describe("encrypted runtime credential vault", () => {
     expect(failure).toBeTruthy();
     expect(failure).not.toContain("sensitive-fixture-material");
     expect(failure).not.toContain(fixture.master);
+  });
+
+  it("changes the attested version when the opened ciphertext changes", async () => {
+    const first = await encryptedRow("fixture-secret-v1");
+    const second = await encryptedRow("fixture-secret-v2");
+    const open = async (row: Record<string, unknown>) => createPostgresEncryptedCredentialPort(
+      database([row]).adapter,
+      { masterKey: { get: async () => first.master }, keyVersion: KEY_VERSION },
+    ).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
+
+    const firstSecret = await open(first.row);
+    const secondSecret = await open(second.row);
+    const firstAttestation = runtimeCredentialAttestation(firstSecret!);
+    const secondAttestation = runtimeCredentialAttestation(secondSecret!);
+
+    expect(firstAttestation.reference).toBe(secondAttestation.reference);
+    expect(firstAttestation.version).not.toBe(secondAttestation.version);
   });
 
   it("loads only non-secret connection scope for composition", async () => {

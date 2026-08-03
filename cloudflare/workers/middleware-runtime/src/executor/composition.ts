@@ -42,6 +42,7 @@ export type RuntimeConnectionExecutorPortsFactory = Readonly<{
 
 export type RuntimeExecutorCompositionOptions = Readonly<{
   environment?: string;
+  executionScope?: "staging" | "exclusive-canary";
   executionEnabled?: boolean | string;
   allowedConnectionId?: string;
   enabledJobs?: readonly RuntimeJob[];
@@ -51,6 +52,7 @@ export type RuntimeExecutorCompositionOptions = Readonly<{
 }>;
 
 const STAGING_ENVIRONMENT = "staging";
+const RESCUE_PRODUCTION_ENVIRONMENT = "rescue-production";
 const SUPPORTED_PROVIDER = "agora";
 
 const LIVE_JOB_CREDENTIALS: Readonly<Record<RuntimeJob, readonly RuntimeCredentialKind[]>> = {
@@ -75,7 +77,10 @@ function normalized(value: unknown): string {
 }
 
 function executionGateOpen(options: RuntimeExecutorCompositionOptions): boolean {
-  return normalized(options.environment) === STAGING_ENVIRONMENT
+  const environment = normalized(options.environment);
+  const environmentAllowed = environment === STAGING_ENVIRONMENT
+    || (environment === RESCUE_PRODUCTION_ENVIRONMENT && options.executionScope === "exclusive-canary");
+  return environmentAllowed
     && (options.executionEnabled === true || normalized(options.executionEnabled) === "true");
 }
 

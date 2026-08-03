@@ -101,6 +101,25 @@ describe("connection-scoped runtime executor composition", () => {
     expect(fixture.open).not.toHaveBeenCalled();
   });
 
+  it("allows rescue production only for the explicit exclusive-canary scope", async () => {
+    const blocked = options({ environment: "rescue-production" });
+    await expect(createConnectionScopedRuntimeExecutor(blocked.value).execute(
+      await envelope("winerim.sales-import-live", true),
+    )).resolves.toMatchObject({
+      ok: false,
+      failure: { message: "RUNTIME_EXECUTION_DISABLED" },
+    });
+    expect(blocked.value.connections.load).not.toHaveBeenCalled();
+
+    const allowed = options({
+      environment: "rescue-production",
+      executionScope: "exclusive-canary",
+    });
+    await expect(createConnectionScopedRuntimeExecutor(allowed.value).execute(
+      await envelope("winerim.sales-import-live", true),
+    )).resolves.toMatchObject({ ok: true });
+  });
+
   it("fails closed when the deployment does not explicitly allowlist the job", async () => {
     const fixture = options({ enabledJobs: [] });
     await expect(createConnectionScopedRuntimeExecutor(fixture.value).execute(

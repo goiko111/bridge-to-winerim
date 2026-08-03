@@ -9,6 +9,7 @@ import type {
 const AES_GCM_NONCE_BYTES = 12;
 const AES_256_KEY_BYTES = 32;
 const MAX_SECRET_BYTES = 8 * 1024;
+const RUNTIME_CREDENTIAL_REFERENCE_PREFIX = "runtime-vault://postgres";
 
 type RuntimeConnectionRow = Record<string, unknown> & {
   connection_id: unknown;
@@ -37,6 +38,18 @@ export type RuntimeCredentialVaultOptions = Readonly<{
   keyVersion: string;
 }>;
 
+export type RuntimeCredentialAttestation = Readonly<{
+  reference: string;
+  version: string;
+  connectionId: string;
+  provider: string;
+  kind: RuntimeCredentialKind;
+}>;
+
+export type RuntimeAttestedSecretTextPort = SecretTextPort & Readonly<{
+  attestation(): RuntimeCredentialAttestation;
+}>;
+
 function text(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -54,6 +67,59 @@ function decodeBase64(value: unknown): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function normalizedBase64(value: unknown): string {
+  return text(value).replace(/[\t\n\r ]+/g, "");
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function credentialAttestation(
+  row: RuntimeCredentialRow,
+): Promise<RuntimeCredentialAttestation> {
+  const connectionId = text(row.connection_id);
+  const provider = text(row.provider).toLowerCase();
+  const kind = text(row.credential_kind) as RuntimeCredentialKind;
+  const keyVersion = text(row.key_version);
+  const aadVersion = Number(row.aad_version);
+  const reference = `${RUNTIME_CREDENTIAL_REFERENCE_PREFIX}/${connectionId}/${provider}/${kind}`;
+  const version = await sha256Hex([
+    "winerim-runtime-credential-attestation",
+    "1",
+    reference,
+    keyVersion,
+    String(aadVersion),
+    normalizedBase64(row.nonce_base64),
+    normalizedBase64(row.ciphertext_base64),
+  ].join("|"));
+  return Object.freeze({ reference, version, connectionId, provider, kind });
+}
+
+export function runtimeCredentialAttestation(
+  credential: SecretTextPort,
+): RuntimeCredentialAttestation {
+  const candidate = credential as Partial<RuntimeAttestedSecretTextPort>;
+  if (typeof candidate.attestation !== "function") {
+    throw new Error("RUNTIME_VAULT_ATTESTATION_MISSING");
+  }
+  const attestation = candidate.attestation();
+  if (
+    !attestation
+    || !attestation.reference.startsWith(`${RUNTIME_CREDENTIAL_REFERENCE_PREFIX}/`)
+    || !/^[a-f0-9]{64}$/.test(attestation.version)
+    || !attestation.connectionId
+    || attestation.provider !== "agora"
+    || !["agora", "winerim"].includes(attestation.kind)
+  ) {
+    throw new Error("RUNTIME_VAULT_ATTESTATION_INVALID");
+  }
+  return attestation;
 }
 
 function credentialAad(input: {
@@ -178,7 +244,11 @@ export function createPostgresEncryptedCredentialPort(
         return null;
       }
       const value = await decryptCredential(row, options);
-      return Object.freeze({ read: () => value });
+      const attestation = await credentialAttestation(row);
+      return Object.freeze({
+        read: () => value,
+        attestation: () => attestation,
+      }) as RuntimeAttestedSecretTextPort;
     },
   };
 }

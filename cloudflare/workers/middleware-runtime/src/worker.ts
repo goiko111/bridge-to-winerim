@@ -11,7 +11,6 @@ import {
 } from "../../middleware-api/src/db";
 import {
   isDeployableRuntimeCanaryConnectionId,
-  isRuntimeEnvelope,
   type RuntimeEnvelopeV1,
   type RuntimeLane,
 } from "./contracts";
@@ -26,15 +25,27 @@ import {
   DEFAULT_RUNTIME_SCHEDULER_PLAN,
   type RuntimeScheduledConnection,
 } from "./scheduler";
+import {
+  guardExclusiveCanaryBatch,
+  type ExclusiveCanaryScope,
+} from "../../../canary-failclosed/src/exclusiveScope";
+import {
+  acquireExclusiveWriterFence,
+  type WriterFenceClientEnvironment,
+} from "../../../canary-failclosed/src/writerFence";
 
 const STAGING_ENVIRONMENT = "staging";
+const RESCUE_PRODUCTION_ENVIRONMENT = "rescue-production";
 const EXECUTION_ENABLED = "true";
 const FAIL_CLOSED_RETRY_SECONDS = 300;
 const IDEMPOTENCY_LEASE_MINUTES = 2;
 const EXECUTOR_TIMEOUT_MS = 15_000;
-const CANARY_CONSUMER_MODE = "canary-consumer";
+const LEGACY_CANARY_CONSUMER_MODE = "canary-consumer";
+const EXCLUSIVE_CANARY_CONSUMER_MODE = "exclusive-canary-consumer";
 const CANARY_RUNTIME_JOB = "winerim.sales-import-live";
 const CANARY_RUNTIME_LANE = "sales-import";
+const CANARY_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 export type RuntimeQueueSendMessage = {
   body: RuntimeEnvelopeV1;
@@ -53,12 +64,18 @@ export interface RuntimeExecutor {
   execute(envelope: RuntimeEnvelopeV1): Promise<RuntimeExecutionResult>;
 }
 
-export interface MiddlewareRuntimeEnv {
+export interface MiddlewareRuntimeEnv extends WriterFenceClientEnvironment {
   ENVIRONMENT?: string;
   RELEASE?: string;
   RUNTIME_EXECUTION_ENABLED?: string;
   RUNTIME_MODE?: string;
   RUNTIME_CANARY_CONNECTION_ID?: string;
+  CANARY_RUN_ID?: string;
+  CANARY_EXCLUSIVE_QUEUE_NAME?: string;
+  CANARY_MESSAGE_ID?: string;
+  CANARY_IDEMPOTENCY_KEY?: string;
+  CANARY_PAYLOAD_SHA256?: string;
+  WRITER_FENCE_HOLDER_ID?: string;
   MIDDLEWARE_DB?: HyperdriveBinding;
   RUNTIME_EXECUTOR?: RuntimeExecutorServiceBinding;
   MIDDLEWARE_CATALOG_QUEUE?: RuntimeQueueProducer;
@@ -113,12 +130,51 @@ interface RuntimeReadinessRow extends Record<string, unknown> {
 }
 
 function isCanaryConsumer(env: MiddlewareRuntimeEnv): boolean {
-  return env.RUNTIME_MODE?.trim().toLowerCase() === CANARY_CONSUMER_MODE;
+  const mode = env.RUNTIME_MODE?.trim().toLowerCase();
+  return mode === LEGACY_CANARY_CONSUMER_MODE || mode === EXCLUSIVE_CANARY_CONSUMER_MODE;
+}
+
+function isExclusiveCanaryConsumer(env: MiddlewareRuntimeEnv): boolean {
+  return env.RUNTIME_MODE?.trim().toLowerCase() === EXCLUSIVE_CANARY_CONSUMER_MODE;
 }
 
 function canaryConnectionId(env: MiddlewareRuntimeEnv): string | null {
   const value = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
   return isDeployableRuntimeCanaryConnectionId(value) ? value : null;
+}
+
+function canaryIdentifier(value: unknown): string | null {
+  const normalized = String(value ?? "").trim();
+  return CANARY_IDENTIFIER_PATTERN.test(normalized) ? normalized : null;
+}
+
+function exclusiveCanaryScope(env: MiddlewareRuntimeEnv): ExclusiveCanaryScope | null {
+  const connectionId = canaryConnectionId(env);
+  const runId = canaryIdentifier(env.CANARY_RUN_ID);
+  const queueName = canaryIdentifier(env.CANARY_EXCLUSIVE_QUEUE_NAME);
+  const messageId = canaryIdentifier(env.CANARY_MESSAGE_ID);
+  const idempotencyKey = canaryIdentifier(env.CANARY_IDEMPOTENCY_KEY);
+  const payloadSha256 = String(env.CANARY_PAYLOAD_SHA256 ?? "").trim().toLowerCase();
+  if (!connectionId || !runId || !queueName || !messageId || !idempotencyKey
+    || !SHA256_PATTERN.test(payloadSha256)) return null;
+  return {
+    queueName,
+    connectionId,
+    runId,
+    messageId,
+    idempotencyKey,
+    payloadSha256,
+    job: CANARY_RUNTIME_JOB,
+    lane: CANARY_RUNTIME_LANE,
+  };
+}
+
+function executionEnvironmentAllowed(env: MiddlewareRuntimeEnv): boolean {
+  const environment = env.ENVIRONMENT?.trim().toLowerCase();
+  if (environment === STAGING_ENVIRONMENT) {
+    return env.RUNTIME_MODE?.trim().toLowerCase() !== LEGACY_CANARY_CONSUMER_MODE;
+  }
+  return environment === RESCUE_PRODUCTION_ENVIRONMENT && isExclusiveCanaryConsumer(env);
 }
 
 const createPostgresClient: PostgresClientFactory = ({ connectionString, applicationName }) => {
@@ -225,7 +281,7 @@ function isStaging(env: MiddlewareRuntimeEnv): boolean {
 }
 
 function executionGateOpen(env: MiddlewareRuntimeEnv, executor: RuntimeExecutor | null): boolean {
-  return isStaging(env)
+  return executionEnvironmentAllowed(env)
     && env.RUNTIME_EXECUTION_ENABLED?.trim().toLowerCase() === EXECUTION_ENABLED
     && executor !== null;
 }
@@ -251,6 +307,28 @@ function missingBindingNames(env: MiddlewareRuntimeEnv, executor?: RuntimeExecut
   if (!env.RUNTIME_EXECUTOR && !executor) missing.push("RUNTIME_EXECUTOR");
   if (isCanaryConsumer(env) && !canaryConnectionId(env)) {
     missing.push("RUNTIME_CANARY_CONNECTION_ID");
+  }
+  if (isCanaryConsumer(env) && !isExclusiveCanaryConsumer(env)) {
+    missing.push("RUNTIME_MODE_EXCLUSIVE_CANARY_REQUIRED");
+  }
+  if (isExclusiveCanaryConsumer(env)) {
+    if (!canaryIdentifier(env.CANARY_RUN_ID)) missing.push("CANARY_RUN_ID");
+    if (!canaryIdentifier(env.CANARY_EXCLUSIVE_QUEUE_NAME)) {
+      missing.push("CANARY_EXCLUSIVE_QUEUE_NAME");
+    }
+    if (!canaryIdentifier(env.CANARY_MESSAGE_ID)) missing.push("CANARY_MESSAGE_ID");
+    if (!canaryIdentifier(env.CANARY_IDEMPOTENCY_KEY)) missing.push("CANARY_IDEMPOTENCY_KEY");
+    if (!SHA256_PATTERN.test(String(env.CANARY_PAYLOAD_SHA256 ?? "").trim().toLowerCase())) {
+      missing.push("CANARY_PAYLOAD_SHA256");
+    }
+    if (!canaryIdentifier(env.WRITER_FENCE_HOLDER_ID)) missing.push("WRITER_FENCE_HOLDER_ID");
+    if (!env.WRITER_FENCE || typeof env.WRITER_FENCE.fetch !== "function") {
+      missing.push("WRITER_FENCE");
+    }
+    if (!env.CANARY_WRITER_FENCE_PROOF
+      || typeof env.CANARY_WRITER_FENCE_PROOF.get !== "function") {
+      missing.push("CANARY_WRITER_FENCE_PROOF");
+    }
   }
   return missing.sort();
 }
@@ -528,6 +606,11 @@ export async function runRuntimeQueue(
   env: MiddlewareRuntimeEnv,
   dependencies: Required<RuntimeWorkerDependencies>,
 ): Promise<void> {
+  if (isCanaryConsumer(env) && !isExclusiveCanaryConsumer(env)) {
+    retryBatchFailClosed(batch);
+    return;
+  }
+
   const executor = dependencies.executor(env);
   if (!executionGateOpen(env, executor) || !env.MIDDLEWARE_DB) {
     retryBatchFailClosed(batch);
@@ -535,30 +618,32 @@ export async function runRuntimeQueue(
   }
 
   let scopedBatch = batch;
-  if (isCanaryConsumer(env)) {
-    const allowedConnectionId = canaryConnectionId(env);
-    if (!allowedConnectionId) {
+  if (isExclusiveCanaryConsumer(env)) {
+    const scope = exclusiveCanaryScope(env);
+    const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
+    if (!scope || !holderId) {
       retryBatchFailClosed(batch);
       return;
     }
-    const acceptedMessages: CloudflareMessageBatchLike["messages"][number][] = [];
-    for (const message of batch.messages) {
-      if (isRuntimeEnvelope(message.body) && (
-        message.body.connectionId !== allowedConnectionId
-        || message.body.job !== CANARY_RUNTIME_JOB
-        || message.body.lane !== CANARY_RUNTIME_LANE
-      )) {
-        // This is a terminal canary-scope rejection. Acknowledge without
-        // opening Hyperdrive so an unrelated connection cannot create a
-        // reservation, retry loop or provider mutation.
-        message.ack();
-        continue;
+    const guarded = await guardExclusiveCanaryBatch(batch, scope);
+    const fencedMessages: CloudflareMessageBatchLike["messages"][number][] = [];
+    for (const message of guarded.accepted) {
+      try {
+        await acquireExclusiveWriterFence({
+          env,
+          connectionId: scope.connectionId,
+          runId: scope.runId,
+          holderId,
+        });
+        fencedMessages.push(message);
+      } catch {
+        message.retry({ delaySeconds: FAIL_CLOSED_RETRY_SECONDS });
       }
-      acceptedMessages.push(message);
     }
-    if (acceptedMessages.length === 0) return;
-    scopedBatch = { queue: batch.queue, messages: acceptedMessages };
+    if (fencedMessages.length === 0) return;
+    scopedBatch = { queue: batch.queue, messages: fencedMessages };
   }
+
   await consumeRuntimeQueueBatch(
     scopedBatch,
     createPersistentRuntimeQueueHooks(dependencies.database(env), executor),
@@ -573,17 +658,18 @@ async function readiness(
   const missingBindings = missingBindingNames(env, executor);
   const executionEnabled = env.RUNTIME_EXECUTION_ENABLED?.trim().toLowerCase() === EXECUTION_ENABLED;
   const canaryConsumer = isCanaryConsumer(env);
-  if (!isStaging(env) || !env.MIDDLEWARE_DB) {
+  if (!executionEnvironmentAllowed(env) || !env.MIDDLEWARE_DB) {
     return json({
       ok: false,
       environment: env.ENVIRONMENT ?? null,
       release: env.RELEASE ?? null,
-      stagingOnly: true,
+      stagingOnly: isStaging(env),
+      executionScope: isExclusiveCanaryConsumer(env) ? "exclusive-canary" : "staging",
       executionEnabled,
       canaryConsumer,
       executorBound: executor !== null,
       missingBindings,
-      reason: !isStaging(env) ? "NOT_STAGING" : "DATABASE_BINDING_MISSING",
+      reason: !executionEnvironmentAllowed(env) ? "EXECUTION_ENVIRONMENT_REJECTED" : "DATABASE_BINDING_MISSING",
     }, 503);
   }
 
@@ -618,7 +704,7 @@ async function readiness(
         END AS runtime_credentials_ready
     `);
     const row = result.rows[0];
-    const schemaReady = row?.environment === STAGING_ENVIRONMENT
+    const schemaReady = row?.environment === env.ENVIRONMENT?.trim().toLowerCase()
       && row.runtime_idempotency_ready === true
       && row.runtime_execution_log_ready === true
       && row.runtime_canary_scope_ready === true
@@ -656,7 +742,8 @@ async function readiness(
       ok: ready,
       environment: env.ENVIRONMENT ?? null,
       release: env.RELEASE ?? null,
-      stagingOnly: true,
+      stagingOnly: isStaging(env),
+      executionScope: isExclusiveCanaryConsumer(env) ? "exclusive-canary" : "staging",
       executionEnabled,
       canaryConsumer,
       executorBound: executor !== null,
@@ -672,7 +759,8 @@ async function readiness(
       ok: false,
       environment: env.ENVIRONMENT ?? null,
       release: env.RELEASE ?? null,
-      stagingOnly: true,
+      stagingOnly: isStaging(env),
+      executionScope: isExclusiveCanaryConsumer(env) ? "exclusive-canary" : "staging",
       executionEnabled,
       canaryConsumer,
       executorBound: executor !== null,
@@ -705,7 +793,8 @@ export function createMiddlewareRuntimeWorker(dependencies: RuntimeWorkerDepende
           service: "winerim-middleware-runtime",
           environment: env.ENVIRONMENT ?? null,
           release: env.RELEASE ?? null,
-          stagingOnly: true,
+          stagingOnly: isStaging(env),
+          executionScope: isExclusiveCanaryConsumer(env) ? "exclusive-canary" : "staging",
           executionEnabled,
           canaryConsumer: isCanaryConsumer(env),
           externalWrites: executionEnabled,

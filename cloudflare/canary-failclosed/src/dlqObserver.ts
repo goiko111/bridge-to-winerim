@@ -22,9 +22,9 @@ export type CanaryDlqObserverEnvironment = {
 type CanaryDlqAlarmV1 = {
   version: 1;
   event: "canary_dlq_message";
+  alarmId: string;
   messageId: string;
   queue: string;
-  attempts: number;
   bodySha256: string;
   connectionId: string | null;
   runEventId: string | null;
@@ -34,6 +34,15 @@ type CanaryDlqAlarmV1 = {
 
 function safeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160) || "unknown";
+}
+
+function archiveKey(
+  namespace: "dlq" | "alarms",
+  queue: string,
+  messageId: string,
+  bodySha256: string,
+): string {
+  return `${namespace}/${safeSegment(queue)}/${safeSegment(messageId)}-${bodySha256}.json`;
 }
 
 async function bodyDigest(body: unknown): Promise<string> {
@@ -47,25 +56,21 @@ async function bodyDigest(body: unknown): Promise<string> {
 async function alarmFor(
   queue: string,
   message: CanaryQueueMessageLike,
-  observedAt: string,
 ): Promise<CanaryDlqAlarmV1> {
   const envelope = isRuntimeEnvelope(message.body) ? message.body : null;
-  const archiveKey = [
-    "dlq",
-    observedAt.slice(0, 10),
-    `${safeSegment(observedAt)}-${safeSegment(message.id)}.json`,
-  ].join("/");
+  const bodySha256 = await bodyDigest(message.body);
+  const alarmId = await sha256Hex([queue, message.id, bodySha256].join("|"));
   return {
     version: 1,
     event: "canary_dlq_message",
+    alarmId,
     messageId: message.id,
     queue,
-    attempts: message.attempts,
-    bodySha256: await bodyDigest(message.body),
+    bodySha256,
     connectionId: envelope?.connectionId ?? null,
     runEventId: envelope?.source.eventId ?? null,
-    observedAt,
-    archiveKey,
+    observedAt: envelope?.createdAt ?? "1970-01-01T00:00:00.000Z",
+    archiveKey: archiveKey("dlq", queue, message.id, bodySha256),
   };
 }
 
@@ -74,13 +79,14 @@ async function archiveDlqMessage(
   queue: string,
   message: CanaryQueueMessageLike,
 ): Promise<void> {
-  const alarm = await alarmFor(queue, message, new Date().toISOString());
+  const alarm = await alarmFor(queue, message);
   await env.CANARY_DLQ_ARCHIVE.put(alarm.archiveKey, JSON.stringify(alarm), {
     httpMetadata: { contentType: "application/json" },
     customMetadata: {
       event: alarm.event,
       queue: safeSegment(queue),
       bodySha256: alarm.bodySha256,
+      alarmId: alarm.alarmId,
     },
   });
   await env.CANARY_DLQ_ALERTS.send(alarm);
@@ -88,19 +94,22 @@ async function archiveDlqMessage(
 
 async function archiveAlarm(
   env: CanaryDlqObserverEnvironment,
+  queue: string,
   message: CanaryQueueMessageLike,
 ): Promise<void> {
   const body = message.body as Partial<CanaryDlqAlarmV1>;
-  if (body.version !== 1 || body.event !== "canary_dlq_message" || typeof body.bodySha256 !== "string") {
+  if (body.version !== 1 || body.event !== "canary_dlq_message"
+    || typeof body.alarmId !== "string" || typeof body.bodySha256 !== "string") {
     throw new Error("CANARY_DLQ_ALARM_INVALID");
   }
-  const key = `alarms/${safeSegment(body.observedAt ?? new Date().toISOString())}-${safeSegment(message.id)}.json`;
+  const key = archiveKey("alarms", queue, body.alarmId, body.bodySha256);
   await env.CANARY_DLQ_ARCHIVE.put(key, JSON.stringify(body), {
     httpMetadata: { contentType: "application/json" },
     customMetadata: { event: "canary_dlq_alarm", bodySha256: body.bodySha256 },
   });
   console.error(JSON.stringify({
     event: "canary_dlq_alarm",
+    alarmId: body.alarmId,
     messageId: body.messageId,
     connectionId: body.connectionId ?? null,
     bodySha256: body.bodySha256,
@@ -117,7 +126,7 @@ export async function observeCanaryDlqBatch(
       if (batch.queue === env.CANARY_DLQ_QUEUE_NAME) {
         await archiveDlqMessage(env, batch.queue, message);
       } else if (batch.queue === env.CANARY_ALARM_QUEUE_NAME) {
-        await archiveAlarm(env, message);
+        await archiveAlarm(env, batch.queue, message);
       } else {
         throw new Error("CANARY_DLQ_UNEXPECTED_PHYSICAL_QUEUE");
       }

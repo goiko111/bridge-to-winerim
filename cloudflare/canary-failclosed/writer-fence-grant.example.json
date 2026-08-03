@@ -4,8 +4,9 @@
   "runId": "replace-with-reviewed-canary-run",
   "holderId": "replace-with-deployment-version",
   "proofSha256": "replace-with-sha256-of-exclusive-proof-secret",
-  "exclusiveCredentialRef": "cloudflare-secrets-store://replace/store/credential",
-  "credentialVersion": "replace-with-rotated-version",
+  "exclusiveCredentialRef": "runtime-vault://postgres/replace-connection/agora/winerim",
+  "credentialVersion": "replace-with-sha256-attestation-version",
+  "credentialBinding": "replace-with-sha256-reference-version-binding",
   "legacyWriter": {
     "revokedAt": "2026-01-01T00:00:00.000Z",
     "negativeProbeStatus": 401,

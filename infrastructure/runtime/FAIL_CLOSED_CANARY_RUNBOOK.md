@@ -1,6 +1,7 @@
 # Fail-closed canary package
 
-Status: local-only, no remote resources created and no runtime integration yet.
+Status: integrated locally in the private runtime and executor; remote canary
+resources are still not deployed or active.
 
 This package closes two QA gates without sharing the sales Queue and without
 treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
@@ -12,12 +13,16 @@ treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
    and its own physical DLQ.
 3. A message outside the reviewed Queue/connection/lane/job/run is retried. It
    is never acknowledged and therefore remains observable through the DLQ.
+   The accepted message must also match the reviewed message ID, idempotency
+   key and canonical payload SHA-256 exactly.
 4. DLQ acknowledgement requires both a sanitized R2 archive record and an
    alarm event. The alarm consumer writes a second R2 ledger record and a
    structured Cloudflare error log.
 5. Before provider mutation, the runtime must acquire a Durable Object lease
    named by `connectionId` and present a proof secret known only by the new
    runtime.
+   The private executor independently renews this lease immediately before
+   each Winerim mutation and validates the reviewed credential version.
 6. A lease grant is valid only after the previous writer credential was
    revoked or rotated and a sanitized `401`/`403` negative probe was recorded.
 7. A Cloudflare lease alone cannot stop Lovable. Credential revocation is the
@@ -29,7 +34,8 @@ treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
 - `cloudflare/canary-failclosed/src/writerFence.ts`
 - `cloudflare/canary-failclosed/src/writerFenceWorker.ts`
 - `cloudflare/canary-failclosed/src/dlqObserver.ts`
-- three non-deployable Wrangler templates in the same directory
+- four non-deployable Wrangler templates in the same directory, including a
+  private rescue-production executor that keeps broad sales/cursor flags off
 - `infrastructure/runtime/prepare-writer-fence-grant.mjs`
 - `infrastructure/runtime/render-failclosed-canary-configs.mjs`
 - `infrastructure/runtime/verify-failclosed-canary-package.mjs`
@@ -75,10 +81,17 @@ Queue names and fails if any placeholder remains:
 ```sh
 CANARY_RUN_ID=<SHORT_UNIQUE_RUN> \
 CANARY_CONNECTION_ID=<UUID> \
+CANARY_MESSAGE_ID=<REVIEWED_MESSAGE_ID> \
+CANARY_IDEMPOTENCY_KEY=<REVIEWED_IDEMPOTENCY_KEY> \
+CANARY_PAYLOAD_SHA256=<SHA256_OF_CANONICAL_PAYLOAD> \
+CANARY_EXCLUSIVE_CREDENTIAL_VERSION=<ROTATED_VERSION> \
 CANARY_RELEASE=<IMMUTABLE_COMMIT> \
 CANARY_HOLDER_ID=<DEPLOYMENT_VERSION> \
 RUNTIME_HYPERDRIVE_ID=<32_HEX_ID> \
 RUNTIME_EXECUTOR_SERVICE_NAME=<PRIVATE_EXECUTOR> \
+RUNTIME_VAULT_STORE_ID=<STORE_ID> \
+RUNTIME_VAULT_SECRET_NAME=<SECRET_NAME> \
+RUNTIME_VAULT_KEY_VERSION=<VERSION> \
 WRITER_FENCE_SERVICE_NAME=<PRIVATE_FENCE_SERVICE> \
 WRITER_FENCE_PROOF_STORE_ID=<STORE_ID> \
 WRITER_FENCE_PROOF_SECRET_NAME=<SECRET_NAME> \
@@ -109,8 +122,8 @@ Do not store rendered IDs, grants or secret coordinates in Git.
    CANARY_RUN_ID=<RUN> \
    CANARY_HOLDER_ID=<DEPLOYMENT_VERSION> \
    CANARY_WRITER_FENCE_PROOF=<NEW_RANDOM_SECRET> \
-   CANARY_EXCLUSIVE_CREDENTIAL_REF=cloudflare-secrets-store://<STORE>/<SECRET> \
-   CANARY_EXCLUSIVE_CREDENTIAL_VERSION=<ROTATED_VERSION> \
+   CANARY_EXCLUSIVE_CREDENTIAL_REF=runtime-vault://postgres/<CONNECTION>/<PROVIDER>/<KIND> \
+   CANARY_EXCLUSIVE_CREDENTIAL_VERSION=<SHA256_ATTESTATION_OF_OPENED_ENCRYPTED_ROW> \
    LEGACY_WRITER_REVOKED_AT=<ISO_TIME> \
    LEGACY_WRITER_NEGATIVE_PROBE_STATUS=401 \
    LEGACY_WRITER_EVIDENCE_SHA256=<SANITIZED_EVIDENCE_SHA256> \
@@ -120,28 +133,24 @@ Do not store rendered IDs, grants or secret coordinates in Git.
    ```
 
 8. Store the grant and proof as separate Secrets Store values. The grant has
-   only a proof hash and a reference to the rotated credential.
+   only a proof hash and an attestation reference/version for the encrypted
+   credential row. The provider credential remains encrypted in Postgres; the
+   Cloudflare Secrets Store holds the vault master key, grant and proof.
 9. Acquire/renew a `30..120` second lease immediately before each mutation.
+   Reject it unless at least `15 s` remain: the Winerim mutation timeout is
+   `10 s` and the extra `5 s` is the minimum safety margin.
    Missing binding, missing proof, expired grant, active foreign holder or
    malformed response means retry without opening the database or executor.
 
-## Runtime integration after the sales agent finishes
+## Runtime integration contract
 
-Do not edit `middleware-runtime-executor/src/worker.ts` or `sales.ts` for these
-gates. Integration is limited to the public runtime Queue boundary:
-
-1. Import `guardExclusiveCanaryBatch` from `exclusiveScope.ts` and
-   `acquireExclusiveWriterFence` from `writerFence.ts` in
-   `cloudflare/workers/middleware-runtime/src/worker.ts`.
-2. At the beginning of `runRuntimeQueue`, before creating the database adapter
-   or invoking `RUNTIME_EXECUTOR`, guard the exact physical Queue and retain
-   only accepted messages.
-3. For each accepted message, acquire the connection lease. On any fence
-   error, call `retry()` and do not call `ack()`, Hyperdrive or the executor.
-4. Pass only scope-and-fence-approved messages to the existing queue consumer.
-5. Remove the old canary branch that acknowledges scope mismatches.
-6. Run the integration-source verifier, full runtime tests, TypeScript, bundle
-   and Wrangler dry-run with Node 22 or newer.
+The public runtime guards the exact physical Queue and payload before opening
+Hyperdrive or invoking the executor. The private executor independently renews
+the lease immediately before every Winerim mutation and rejects expired or
+drifted credential evidence. Broad sales, cursor and DLQ switches remain off in
+the exclusive executor template. Run the integration-source verifier, full
+runtime tests, executor-local tests, TypeScript, bundle and Wrangler dry-run
+with Node 22 or newer on one immutable commit.
 
 This sequence does not overlap the sales composition: it changes only the
 outer Queue boundary after the sales branch is merged.
@@ -167,3 +176,6 @@ outer Queue boundary after the sales branch is merged.
    consumer is gone and verify that Cloudflare receives `401/403`.
 4. Preserve R2 DLQ/alarm ledgers and deployment IDs for reconciliation.
 5. Never restore a database snapshot over confirmed canary receipts.
+6. Follow `RESCUE_PRODUCTION_CUTOVER_RUNBOOK.md`; database rollback is
+   append-only after the first real receipt and stock compensation is separately
+   fenced and readback-gated.

@@ -41,10 +41,10 @@ function main() {
   if (!IDENTIFIER_PATTERN.test(runId)) throw new Error("WRITER_FENCE_GRANT_INVALID_RUN_ID");
   if (!IDENTIFIER_PATTERN.test(holderId)) throw new Error("WRITER_FENCE_GRANT_INVALID_HOLDER_ID");
   if (proof.length < 32) throw new Error("WRITER_FENCE_GRANT_PROOF_TOO_SHORT");
-  if (!exclusiveCredentialRef.startsWith("cloudflare-secrets-store://")) {
+  if (!exclusiveCredentialRef.startsWith("runtime-vault://postgres/")) {
     throw new Error("WRITER_FENCE_GRANT_EXCLUSIVE_CREDENTIAL_REF_REQUIRED");
   }
-  if (!IDENTIFIER_PATTERN.test(credentialVersion)) {
+  if (!SHA256_PATTERN.test(credentialVersion)) {
     throw new Error("WRITER_FENCE_GRANT_INVALID_CREDENTIAL_VERSION");
   }
   if (![401, 403].includes(negativeProbeStatus)) {
@@ -70,6 +70,12 @@ function main() {
     proofSha256: createHash("sha256").update(proof).digest("hex"),
     exclusiveCredentialRef,
     credentialVersion,
+    credentialBinding: createHash("sha256").update([
+      "winerim-writer-fence-credential",
+      "1",
+      exclusiveCredentialRef,
+      credentialVersion,
+    ].join("|")).digest("hex"),
     legacyWriter: { revokedAt, negativeProbeStatus, evidenceSha256 },
     issuedAt,
     expiresAt,

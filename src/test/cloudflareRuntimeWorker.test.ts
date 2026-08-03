@@ -19,8 +19,14 @@ import {
   type RuntimeQueueProducer,
   type RuntimeWorkerDependencies,
 } from "../../cloudflare/workers/middleware-runtime/src/worker";
+import { writerFenceCredentialBinding } from "../../cloudflare/canary-failclosed/src/writerFence";
 
 type StatementLike = { text: string; values: readonly unknown[] };
+const CANARY_CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+const CANARY_RUN_ID = "run-20260803-a";
+const CANARY_QUEUE_NAME = `winerim-rescue-prod-canary-${CANARY_RUN_ID}`;
+const CANARY_HOLDER_ID = "deployment-a";
+const DRY_RUN_PAYLOAD_SHA256 = "e59f1698ce59234efe2e872cfe891a303dc5993d05a87ca5476decaa7dfde3f7";
 
 function result<Row extends Record<string, unknown>>(rows: Row[] = []): QueryResult<Row> {
   return { rows, rowCount: rows.length };
@@ -58,6 +64,57 @@ function readyEnv(): MiddlewareRuntimeEnv {
   };
 }
 
+function exclusiveCanaryBindings(
+  connectionId = CANARY_CONNECTION_ID,
+  reviewed?: Readonly<{ messageId: string; idempotencyKey: string }>,
+): Pick<MiddlewareRuntimeEnv,
+  | "RUNTIME_MODE"
+  | "RUNTIME_CANARY_CONNECTION_ID"
+  | "CANARY_RUN_ID"
+  | "CANARY_EXCLUSIVE_QUEUE_NAME"
+  | "CANARY_MESSAGE_ID"
+  | "CANARY_IDEMPOTENCY_KEY"
+  | "CANARY_PAYLOAD_SHA256"
+  | "WRITER_FENCE_HOLDER_ID"
+  | "WRITER_FENCE"
+  | "CANARY_WRITER_FENCE_PROOF"
+> {
+  return {
+    RUNTIME_MODE: "exclusive-canary-consumer",
+    RUNTIME_CANARY_CONNECTION_ID: connectionId,
+    CANARY_RUN_ID,
+    CANARY_EXCLUSIVE_QUEUE_NAME: CANARY_QUEUE_NAME,
+    CANARY_MESSAGE_ID: reviewed?.messageId ?? "reviewed-message",
+    CANARY_IDEMPOTENCY_KEY: reviewed?.idempotencyKey ?? "reviewed-idempotency",
+    CANARY_PAYLOAD_SHA256: DRY_RUN_PAYLOAD_SHA256,
+    WRITER_FENCE_HOLDER_ID: CANARY_HOLDER_ID,
+    WRITER_FENCE: {
+      fetch: vi.fn(async (_input, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          connectionId?: string;
+          runId?: string;
+          holderId?: string;
+        };
+        const credential = {
+          reference: `runtime-vault://postgres/${connectionId}/agora/winerim`,
+          version: "a".repeat(64),
+        };
+        return Response.json({
+          connectionId: body.connectionId,
+          runId: body.runId,
+          holderId: body.holderId,
+          fencingToken: 1,
+          credentialReference: credential.reference,
+          credentialVersion: credential.version,
+          credentialBinding: await writerFenceCredentialBinding(credential),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+      }),
+    },
+    CANARY_WRITER_FENCE_PROOF: { get: vi.fn(async () => "x".repeat(40)) },
+  };
+}
+
 const successfulExecutor: RuntimeExecutor = {
   execute: vi.fn(async (): Promise<RuntimeExecutionResult> => ({ ok: true, detail: "completed" })),
 };
@@ -84,14 +141,18 @@ async function queueEnvelope(
 }
 
 async function liveCanaryEnvelope(scope: string) {
-  return createRuntimeEnvelope({
+  const created = await createRuntimeEnvelope({
     connectionId: "11111111-1111-4111-8111-111111111111",
     job: "winerim.sales-import-live",
     dedupeScope: scope,
-    source: { kind: "queue", eventId: scope },
+    source: { kind: "queue", eventId: `pending:${scope}` },
     payload: { dryRun: true },
     createdAt: "2026-08-02T10:00:00.000Z",
   });
+  return {
+    ...created,
+    source: { kind: "queue" as const, eventId: `canary:${CANARY_RUN_ID}:${created.messageId}` },
+  };
 }
 
 describe("staging-only Cloudflare middleware runtime Worker", () => {
@@ -229,8 +290,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       ENVIRONMENT: "staging",
       RELEASE: "canary-fixture",
       RUNTIME_EXECUTION_ENABLED: "true",
-      RUNTIME_MODE: "canary-consumer",
-      RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+      ...exclusiveCanaryBindings(),
       MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
       RUNTIME_EXECUTOR: {
         fetch: vi.fn(async () => new Response(JSON.stringify({
@@ -272,8 +332,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       {
         ENVIRONMENT: "staging",
         RUNTIME_EXECUTION_ENABLED: "true",
-        RUNTIME_MODE: "canary-consumer",
-        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        ...exclusiveCanaryBindings(),
         MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
         RUNTIME_EXECUTOR: {
           fetch: vi.fn(async () => new Response(JSON.stringify({
@@ -305,8 +364,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       {
         ENVIRONMENT: "staging",
         RUNTIME_EXECUTION_ENABLED: "true",
-        RUNTIME_MODE: "canary-consumer",
-        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        ...exclusiveCanaryBindings(),
         MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
         RUNTIME_EXECUTOR: {
           fetch: vi.fn(async () => new Response(JSON.stringify({
@@ -339,8 +397,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       {
         ENVIRONMENT: "staging",
         RUNTIME_EXECUTION_ENABLED: "true",
-        RUNTIME_MODE: "canary-consumer",
-        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        ...exclusiveCanaryBindings(),
         MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
         RUNTIME_EXECUTOR: { fetch: vi.fn() },
       },
@@ -367,8 +424,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       {
         ENVIRONMENT: "staging",
         RUNTIME_EXECUTION_ENABLED: "true",
-        RUNTIME_MODE: "canary-consumer",
-        RUNTIME_CANARY_CONNECTION_ID: "11111111-1111-4111-8111-111111111111",
+        ...exclusiveCanaryBindings(),
         MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
         RUNTIME_EXECUTOR: { fetch: vi.fn() },
       },
@@ -395,8 +451,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
       {
         ENVIRONMENT: "staging",
         RUNTIME_EXECUTION_ENABLED: "true",
-        RUNTIME_MODE: "canary-consumer",
-        RUNTIME_CANARY_CONNECTION_ID: "00000000-0000-4000-8000-000000000000",
+        ...exclusiveCanaryBindings("00000000-0000-4000-8000-000000000000"),
         MIDDLEWARE_DB: { connectionString: "postgres://runtime.invalid/staging" },
         RUNTIME_EXECUTOR: { fetch: vi.fn() },
       },
@@ -480,7 +535,7 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     expect(databaseFactory).not.toHaveBeenCalled();
   });
 
-  it("terminally acknowledges an out-of-scope canary message before database reservation", async () => {
+  it("retries an out-of-scope canary message before database reservation", async () => {
     const body = await queueEnvelope(
       "wrong-canary-connection",
       "22222222-2222-4222-8222-222222222222",
@@ -489,38 +544,78 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
     const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
     const env = readyEnv();
-    env.RUNTIME_MODE = "canary-consumer";
-    env.RUNTIME_CANARY_CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+    Object.assign(env, exclusiveCanaryBindings());
 
     await runRuntimeQueue(
-      { queue: "winerim-staging-sales", messages: [message] },
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
       env,
       { database: databaseFactory, executor: () => executor },
     );
 
-    expect(message.ack).toHaveBeenCalledOnce();
-    expect(message.retry).not.toHaveBeenCalled();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
     expect(databaseFactory).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
   });
 
-  it("terminally acknowledges a non-live job for the canary connection before database reservation", async () => {
+  it("retries a non-live job for the canary connection before database reservation", async () => {
     const body = await queueEnvelope("wrong-canary-job");
     const message = { id: "cf-job-rejected", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
     const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
     const env = readyEnv();
-    env.RUNTIME_MODE = "canary-consumer";
-    env.RUNTIME_CANARY_CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+    Object.assign(env, exclusiveCanaryBindings());
 
     await runRuntimeQueue(
-      { queue: "winerim-staging-sales", messages: [message] },
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
       env,
       { database: databaseFactory, executor: () => successfulExecutor },
     );
 
-    expect(message.ack).toHaveBeenCalledOnce();
-    expect(message.retry).not.toHaveBeenCalled();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
     expect(databaseFactory).not.toHaveBeenCalled();
+  });
+
+  it("rejects the deprecated canary mode before the database or executor", async () => {
+    const body = await liveCanaryEnvelope("legacy-mode");
+    const message = { id: "cf-legacy-mode", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
+    const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
+    const env = readyEnv();
+    env.RUNTIME_MODE = "canary-consumer";
+    env.RUNTIME_CANARY_CONNECTION_ID = body.connectionId;
+
+    await runRuntimeQueue(
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
+      env,
+      { database: databaseFactory, executor: () => executor },
+    );
+
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(databaseFactory).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("retries a valid scoped message when the writer fence lease is denied", async () => {
+    const body = await liveCanaryEnvelope("lease-denied");
+    const message = { id: "cf-fence-denied", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+    const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
+    const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
+    const env = readyEnv();
+    Object.assign(env, exclusiveCanaryBindings(body.connectionId, body));
+    env.WRITER_FENCE = { fetch: vi.fn(async () => new Response("held", { status: 409 })) };
+
+    await runRuntimeQueue(
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
+      env,
+      { database: databaseFactory, executor: () => executor },
+    );
+
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(databaseFactory).not.toHaveBeenCalled();
+    expect(executor.execute).not.toHaveBeenCalled();
   });
 
   it("allows only the reviewed live-import envelope through to reservation", async () => {
@@ -535,11 +630,11 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     const body = await liveCanaryEnvelope("reviewed-live-import");
     const message = { id: "cf-canary-live", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
     const env = readyEnv();
-    env.RUNTIME_MODE = "canary-consumer";
-    env.RUNTIME_CANARY_CONNECTION_ID = body.connectionId;
+    env.ENVIRONMENT = "rescue-production";
+    Object.assign(env, exclusiveCanaryBindings(body.connectionId, body));
 
     await runRuntimeQueue(
-      { queue: "winerim-staging-sales", messages: [message] },
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
       env,
       dependencies(database, executor),
     );
@@ -555,11 +650,10 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     const message = { id: "cf-placeholder", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
     const databaseFactory = vi.fn(() => fakeDatabase(() => result()));
     const env = readyEnv();
-    env.RUNTIME_MODE = "canary-consumer";
-    env.RUNTIME_CANARY_CONNECTION_ID = "00000000-0000-4000-8000-000000000000";
+    Object.assign(env, exclusiveCanaryBindings("00000000-0000-4000-8000-000000000000"));
 
     await runRuntimeQueue(
-      { queue: "winerim-staging-sales", messages: [message] },
+      { queue: CANARY_QUEUE_NAME, messages: [message] },
       env,
       { database: databaseFactory, executor: () => successfulExecutor },
     );

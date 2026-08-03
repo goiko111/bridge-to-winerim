@@ -219,6 +219,23 @@ describe("Cloudflare runtime sales planner", () => {
     }, ports(resolution));
     expect(fractional.blocked[0].reason).toBe("FRACTIONAL_HISTORICAL_QUANTITY");
 
+    const operationalFractional = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document({
+        lines: [
+          { ...document().lines[0], lineId: "fraction-1", quantity: 0.5 },
+          { ...document().lines[0], lineId: "fraction-2", quantity: 0.5 },
+        ],
+      })],
+    }, ports(resolution));
+    expect(operationalFractional.intents).toEqual([]);
+    expect(operationalFractional.blocked).toEqual([
+      expect.objectContaining({ reason: "INVALID_QUANTITY", lineId: "fraction-1" }),
+      expect.objectContaining({ reason: "INVALID_QUANTITY", lineId: "fraction-2" }),
+    ]);
+
     const fallbackTicket = await planSalesRun({
       connectionId: "connection-1",
       provider: "agora",

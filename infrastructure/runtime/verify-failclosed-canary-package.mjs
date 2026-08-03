@@ -19,6 +19,7 @@ function rejectText(source, rejected, code) {
 
 function main() {
   const consumer = read("wrangler.canary-consumer.toml.example");
+  const executor = read("wrangler.canary-executor.toml.example");
   const fence = read("wrangler.writer-fence.toml.example");
   const observer = read("wrangler.dlq-observer.toml.example");
   const scope = read("src/exclusiveScope.ts");
@@ -29,10 +30,22 @@ function main() {
   requireText(consumer, 'dead_letter_queue = "{{CANARY_DLQ_QUEUE_NAME}}"', "CANARY_DLQ_NOT_BOUND");
   requireText(consumer, 'binding = "WRITER_FENCE"', "WRITER_FENCE_SERVICE_NOT_BOUND");
   requireText(consumer, 'binding = "CANARY_WRITER_FENCE_PROOF"', "EXCLUSIVE_PROOF_NOT_BOUND");
+  requireText(consumer, 'CANARY_PAYLOAD_SHA256 = "{{CANARY_PAYLOAD_SHA256}}"', "CANARY_PAYLOAD_HASH_NOT_BOUND");
+  requireText(consumer, "max_batch_size = 1", "CANARY_BATCH_SIZE_MUST_BE_ONE");
+  requireText(consumer, "max_concurrency = 1", "CANARY_CONCURRENCY_MUST_BE_ONE");
+  requireText(consumer, "max_retries = 3", "CANARY_RETRY_LIMIT_MISSING");
   rejectText(consumer, "winerim-staging-sales", "SHARED_STAGING_SALES_QUEUE_FORBIDDEN");
   rejectText(consumer, "winerim-rescue-prod-sales", "SHARED_PRODUCTION_SALES_QUEUE_FORBIDDEN");
   rejectText(consumer, "[[queues.producers]]", "CANARY_CONSUMER_MUST_NOT_PRODUCE");
   rejectText(consumer, "[triggers]", "CANARY_CONSUMER_MUST_NOT_SCHEDULE");
+
+  requireText(executor, 'ENVIRONMENT = "rescue-production"', "CANARY_EXECUTOR_ENVIRONMENT_REJECTED");
+  requireText(executor, 'RUNTIME_MODE = "exclusive-canary-executor"', "CANARY_EXECUTOR_MODE_MISSING");
+  requireText(executor, 'binding = "RUNTIME_VAULT_KEY"', "CANARY_EXECUTOR_VAULT_MISSING");
+  requireText(executor, 'binding = "WRITER_FENCE"', "CANARY_EXECUTOR_FENCE_MISSING");
+  requireText(executor, 'binding = "CANARY_WRITER_FENCE_PROOF"', "CANARY_EXECUTOR_PROOF_MISSING");
+  requireText(executor, 'RUNTIME_SALES_EXECUTION_ENABLED = "false"', "CANARY_EXECUTOR_BROAD_SALES_FORBIDDEN");
+  rejectText(executor, "[[routes]]", "CANARY_EXECUTOR_PUBLIC_ROUTE_FORBIDDEN");
 
   requireText(fence, 'class_name = "ConnectionWriterFence"', "DURABLE_WRITER_LEASE_MISSING");
   requireText(fence, 'binding = "WRITER_FENCE_GRANT"', "WRITER_FENCE_GRANT_NOT_SECRET_BOUND");

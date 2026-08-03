@@ -9,6 +9,9 @@ PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
 RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
+PLATFORM_ROLE_HARDENING="$SCRIPT_DIR/0006_revoke_supabase_platform_roles.sql"
+RUNTIME_SALES_CANARY_PERMISSIONS="$SCRIPT_DIR/0007_runtime_sales_canary_permissions.sql"
+RUNTIME_SALES_COLUMN_PRIVILEGES="$SCRIPT_DIR/0008_runtime_sales_column_privileges.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 
 {
@@ -47,6 +50,15 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN runtime canary connection scope\n'
   cat "$RUNTIME_CANARY_SCOPE"
   printf '\n-- END runtime canary connection scope\n'
+  printf '\n-- BEGIN Supabase platform role hardening\n'
+  cat "$PLATFORM_ROLE_HARDENING"
+  printf '\n-- END Supabase platform role hardening\n'
+  printf '\n-- BEGIN runtime sales canary permissions\n'
+  cat "$RUNTIME_SALES_CANARY_PERMISSIONS"
+  printf '\n-- END runtime sales canary permissions\n'
+  printf '\n-- BEGIN runtime sales column privileges\n'
+  cat "$RUNTIME_SALES_COLUMN_PRIVILEGES"
+  printf '\n-- END runtime sales column privileges\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"
