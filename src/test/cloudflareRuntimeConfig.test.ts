@@ -24,6 +24,10 @@ const apiHyperdriveExample = readFileSync(
   resolve(root, "wrangler.middleware-api.hyperdrive.toml.example"),
   "utf8",
 );
+const stagingRuntimeDeploy = readFileSync(
+  resolve(root, "infrastructure/postgres/deploy-staging-runtime-component.sh"),
+  "utf8",
+);
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
@@ -128,11 +132,14 @@ describe("Cloudflare middleware runtime staging config", () => {
       "cf:runtime:canary:render": expect.stringContaining("runtime-canary-config.mjs"),
       "cf:runtime:canary:remove:plan": expect.stringContaining("remove-runtime-canary-consumer.mjs"),
       "cf:runtime:canary:remove:dry-run": expect.stringContaining("--dry-run"),
-      "cf:runtime:deploy:staging": expect.stringContaining("--strict"),
+      "cf:runtime:deploy:staging": expect.stringContaining("deploy-staging-runtime-component.sh runtime"),
       "cf:runtime:deployments:staging": expect.stringContaining("deployments status"),
       "cf:runtime:rollback:staging": expect.stringContaining("wrangler rollback"),
       "cf:executor:dry-run:staging": expect.stringContaining("wrangler.middleware-runtime-executor.toml"),
       "cf:executor:dry-run:canary": expect.stringContaining("runtime-canary-config.mjs dry-run executor"),
+      "cf:executor:deploy:staging": expect.stringContaining("deploy-staging-runtime-component.sh executor"),
     });
+    expect(stagingRuntimeDeploy).toContain("--strict");
+    expect(stagingRuntimeDeploy).toContain("verify-staging.sh");
   });
 });

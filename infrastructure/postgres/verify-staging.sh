@@ -119,6 +119,21 @@ check_equals \
   "SELECT count(*) FROM pg_class index_class JOIN pg_namespace n ON n.oid=index_class.relnamespace WHERE n.nspname='public' AND index_class.relkind='i' AND index_class.relname='runtime_canary_connections_single_active_idx'"
 
 check_equals \
+  'runtime_idempotency_hardening_columns' \
+  '3' \
+  "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='runtime_idempotency' AND column_name IN ('payload_sha256','lease_token','sales_claim_identity')"
+
+check_equals \
+  'runtime_sales_claim_identity_unique_index_contract' \
+  '1' \
+  "SELECT count(*) FROM pg_index index_contract JOIN pg_class index_class ON index_class.oid=index_contract.indexrelid JOIN pg_namespace index_namespace ON index_namespace.oid=index_class.relnamespace JOIN pg_class table_class ON table_class.oid=index_contract.indrelid JOIN pg_attribute identity_column ON identity_column.attrelid=table_class.oid AND identity_column.attname='sales_claim_identity' AND identity_column.attnum > 0 AND NOT identity_column.attisdropped WHERE index_namespace.nspname='public' AND table_class.relname='runtime_idempotency' AND index_class.relname='uq_runtime_sales_claim_identity' AND index_contract.indisunique AND index_contract.indisvalid AND index_contract.indisready AND index_contract.indnkeyatts=1 AND index_contract.indnatts=1 AND index_contract.indkey::text=identity_column.attnum::text AND pg_get_expr(index_contract.indpred,index_contract.indrelid)='((job = ''sales.claim''::text) AND (sales_claim_identity IS NOT NULL))'"
+
+check_equals \
+  'runtime_sales_claim_identity_trigger_contract' \
+  '1' \
+  "SELECT count(*) FROM pg_trigger trigger_contract JOIN pg_class table_class ON table_class.oid=trigger_contract.tgrelid JOIN pg_namespace table_namespace ON table_namespace.oid=table_class.relnamespace JOIN pg_proc trigger_function ON trigger_function.oid=trigger_contract.tgfoid JOIN pg_namespace function_namespace ON function_namespace.oid=trigger_function.pronamespace WHERE table_namespace.nspname='public' AND table_class.relname='runtime_idempotency' AND trigger_contract.tgname='runtime_bind_sales_claim_identity' AND NOT trigger_contract.tgisinternal AND trigger_contract.tgenabled IN ('O','A') AND trigger_contract.tgtype=23 AND function_namespace.nspname='public' AND trigger_function.proname='runtime_bind_sales_claim_identity' AND position('RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABLE' IN trigger_function.prosrc) > 0 AND position('NEW.sales_claim_identity := derived_identity' IN trigger_function.prosrc) > 0 AND (SELECT count(*) FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum))=3 AND (SELECT count(DISTINCT table_attribute.attname) FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum) JOIN pg_attribute table_attribute ON table_attribute.attrelid=table_class.oid AND table_attribute.attnum=trigger_attribute.attnum WHERE table_attribute.attname IN ('connection_id','job','result'))=3"
+
+check_equals \
   'public_tables_without_rls' \
   '0' \
   "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT c.relrowsecurity"

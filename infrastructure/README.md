@@ -1,13 +1,14 @@
 # Infraestructura propia Middleware Winerim
 
-Indice operativo de los puntos 1-6. Corte: 2026-08-02, Europe/Madrid.
+Indice operativo de los puntos 1-6. Corte: 2026-08-03, Europe/Madrid.
 
 ## Regla de seguridad
 
 Este arbol es preparacion de staging. No autoriza produccion.
 
-- No desplegar Workers o Pages, no enlazar consumers, no activar Cron y no
-  cambiar DNS hasta que pasen los gates de este documento.
+- Staging solo puede desplegarse por los scripts fail-closed revisados, con
+  ejecucion apagada y sin consumers. Pages, Cron operativo y cambios DNS
+  siguen fuera de este gate.
 - No aplicar SQL a Lovable Cloud/backend ni a una base que no tenga identidad
   de staging confirmada.
 - No usar el Hyperdrive `market-winerim-postgres`: pertenece a otro sistema.
@@ -26,17 +27,23 @@ Este arbol es preparacion de staging. No autoriza produccion.
 | `winerim-staging-outbound` | Queue creada, sin consumer | No |
 | `winerim-staging-maintenance` | Queue creada, sin consumer | No |
 | `winerim-staging-dead-letter` | Queue creada, sin consumer ni binding | No |
-| Worker runtime nuevo | No desplegado | No |
-| Worker API de esta fase | No desplegado; el Worker de control plane de junio es una version historica distinta | No para este rollout |
-| Postgres propio | No provisionado | No |
-| Hyperdrive propio | No creado ni enlazado | No |
-| DNS `api-staging` / `staging` | Bloqueado, sin dominio operativo | No |
-| Cloudflare Access | Bloqueado por permisos/configuracion de IdP y policy | No |
+| Worker runtime y executor | Desplegados en staging, ejecucion `false`, sin consumers | No |
+| Worker API | Desplegado en staging y protegido por Access | Solo trafico autenticado de control |
+| Postgres staging | Supabase `qpbmqvfnunkylvtvnyyx`, sentinel `staging`, 30 tablas; backup cifrado restaurado antes del hardening | No por si solo |
+| Hyperdrive API | Activo staging verificado `04bde119c3354a5b9be3fadbf3c0b46d`, principal API separado | Solo Worker API |
+| Hyperdrive runtime/executor | Activo staging verificado `0adae4108e4241f19cf5ba2709cbc69f`, principal runtime separado | No con ejecucion apagada |
+| DNS `api-staging` / `staging` | `api-staging` activo; dominio frontend `staging` no publicado | API autenticada solamente |
+| Cloudflare Access | Activo para `api-staging`, con rechazo anonimo y Service Auth verificados | Si, autenticado |
 
-Las seis Queues son solo activos vacios. El TOML local declara productores para
-cinco nombres, pero no se ha desplegado; por tanto no hay producer nuevo ni
-consumer remoto. `winerim-staging-dead-letter` queda deliberadamente sin
+Las seis Queues son activos de staging. Hay bindings producer declarados, pero
+no existe ningun consumer y `RUNTIME_EXECUTION_ENABLED=false`; por tanto no se
+procesa trabajo. `winerim-staging-dead-letter` queda deliberadamente sin
 binding hasta que exista un consumer revisado.
+
+Los IDs anteriores certifican el recurso Cloudflare y su asignacion al inventario
+staging. Este documento no deduce de ellos el hostname o proyecto Postgres, el
+principal LOGIN ni sus grants; esos datos deben validarse por URL, sentinel,
+readiness y pruebas de permisos antes de autorizar un deploy.
 
 La auditoria remota reproducible esta en
 [`cloudflare/audit-staging-readonly.sh`](./cloudflare/audit-staging-readonly.sh).
@@ -48,20 +55,20 @@ compatible con Wrangler `4.118+`. No rebajar Wrangler para saltar el gate.
 | Punto | Alcance | Estado local | Bloqueo remoto |
 |---:|---|---|---|
 | 1 | Fuente limpia, toolchain y CI staging | Rama limpia, commit acotado, workflow fail-closed y validacion completa | Publicar el SHA revisado en PR; no hacer merge automatico |
-| 2 | Bootstrap Postgres portable y endurecido | Validacion estatica y replay vacio OK | Falta proveedor/base staging |
-| 3 | Adaptador Worker -> Postgres/Hyperdrive | Adaptador y tests unitarios presentes | Falta DB, Hyperdrive y binding |
-| 4 | Runtime, scheduler, envelopes, retry y Queues | Implementacion local fail-closed; suite, typecheck y bundle verdes | No hay Worker runtime desplegado ni consumers |
-| 5 | Handlers y adaptadores provider-neutral | Catalogo, ventas, stock, outbound, transportes HTTP y executor presentes localmente | Falta componer el executor desplegable con credenciales cifradas, binding privado y canary |
-| 6 | Assets, seguridad, observabilidad y corte | Pages/Queues creados de forma inerte; QA documentada | DB, Hyperdrive, DNS y Access bloqueados |
+| 2 | Bootstrap Postgres portable y endurecido | Validacion, replay y backup/restore PG17 OK | Aplicar hardening revisado en staging |
+| 3 | Adaptador Worker -> Postgres/Hyperdrive | Bindings y principals staging verificados | Readback posterior al deploy inerte |
+| 4 | Runtime, scheduler, envelopes, retry y Queues | Runtime/executor fail-closed; tests y bundles verdes | Sin consumers; canary pendiente |
+| 5 | Handlers y adaptadores provider-neutral | Catalogo, ventas, stock, outbound y OpenTicket compuestos | Credenciales y canary de una conexion |
+| 6 | Assets, seguridad, observabilidad y corte | API+Access activos; Pages bloqueado; QA documentada | DLQ/consumer/cutover siguen gateados |
 
 ## 1. Fuente limpia, toolchain y CI
 
 ### Artefactos
 
 - [Workflow staging](../.github/workflows/deploy-middleware-staging.yml)
-- [Wrangler API](../wrangler.middleware.toml)
+- [Wrangler API y Hyperdrive API staging `04bde119c3354a5b9be3fadbf3c0b46d`](../wrangler.middleware.toml)
 - [Ejemplo Hyperdrive API sin ID real](../wrangler.middleware-api.hyperdrive.toml.example)
-- [Wrangler runtime](../wrangler.middleware-runtime.toml)
+- [Wrangler runtime y Hyperdrive runtime staging `0adae4108e4241f19cf5ba2709cbc69f`](../wrangler.middleware-runtime.toml)
 - [Ejemplo Hyperdrive sin ID real](../wrangler.middleware-runtime.hyperdrive.toml.example)
 - Commits base del scaffold: `61fddb0` y `c303fb3`.
 
@@ -152,8 +159,12 @@ pasan contra un PostgreSQL local desechable creado por
 `infrastructure/postgres/smoke-local-worker.sh`. El adaptador parametriza
 valores, exige allowlist para identificadores y soporta transacciones.
 
-El typecheck global esta verde. El gate remoto que queda es ejecutar esos mismos
-tres tests contra la DB staging real antes de crear/enlazar Hyperdrive.
+El typecheck global esta verde. Los Hyperdrive staging verificados en el
+inventario Cloudflare son `04bde119c3354a5b9be3fadbf3c0b46d` para API y
+`0adae4108e4241f19cf5ba2709cbc69f` para runtime/executor. El gate remoto que
+queda es ejecutar los tres tests contra la DB staging y comprobar el principal
+y sus privilegios antes de desplegar; no se afirma aqui una identidad de origen
+que no haya pasado ese readback.
 
 ## 4. Runtime Cloudflare, Cron y Queues
 
@@ -190,10 +201,10 @@ binding privado `RUNTIME_EXECUTOR`; no se ha compuesto ni desplegado el servicio
 que descifra credenciales y conecta esos adapters. Este limite es deliberado:
 no se inventan secretos ni se habilita I/O exterior desde una fuente incompleta.
 
-Gate remoto: Postgres/Hyperdrive staging, principals LOGIN separados,
-composicion privada del executor, persistencia atomica validada contra la DB
-gestionada y DLQ/observabilidad. Un Cron declarado no se activa remotamente
-antes de este gate.
+Gate remoto: origen Postgres staging y principals LOGIN de los Hyperdrive
+existentes comprobados por readback, composicion privada del executor,
+persistencia atomica validada contra la DB gestionada y DLQ/observabilidad. Un
+Cron declarado no se activa remotamente antes de este gate.
 
 ## 5. Handlers provider-neutral
 
@@ -248,26 +259,29 @@ npx wrangler deployments list --config wrangler.middleware.toml --env staging
 npx wrangler deployments status --config wrangler.middleware.toml --env staging
 ```
 
-El plan de activos fue escrito antes de crear Pages y las seis Queues; su frase
-`No se creo ... Pages/Queue` esta superada por el estado remoto de este indice.
-Sus runbooks de DNS, Access, Hyperdrive y rollback siguen vigentes.
+El plan de activos fue escrito antes de crear Pages, las seis Queues y los dos
+Hyperdrive staging. Sus pasos de creacion de esos activos son historicos y quedan
+reemplazados por este inventario; los gates de DNS, Access, identidad DB y
+rollback siguen vigentes.
 
 ## Gate serial de rollout
 
 1. **SOURCE:** Node 22, SHA limpio, typecheck/tests/build/dry-run verdes.
 2. **DB:** Postgres staging vacio, sentinel `environment=staging`, bootstrap,
    validacion read-only, backup y restore ensayado.
-3. **HYPERDRIVE:** crear uno propio, binding solo staging, rol minimo y
-   `/ready` fail-closed si DB no responde.
-4. **ACCESS/DNS:** proteger Pages, API, `workers.dev` y previews; JWT/RBAC
-   probado. No aceptar alta de plan o coste sin aprobacion.
+3. **HYPERDRIVE:** comprobar que API usa `04bde119c3354a5b9be3fadbf3c0b46d`
+   y runtime/executor `0adae4108e4241f19cf5ba2709cbc69f`, con origen staging,
+   principal minimo y `/ready` fail-closed si DB no responde.
+4. **ACCESS/DNS:** el custom domain del API debe existir y superar el preflight
+   anonimo/service-token antes del deploy; `workers.dev` y previews siguen
+   desactivados. Pages queda bloqueado hasta tener gate y rollback propios.
 5. **INERT DEPLOY:** desplegar API/runtime con ejecucion apagada, sin consumers
    y sin mensajes; registrar versiones anteriores y comprobar health/readiness.
 6. **CANARY:** enlazar un solo consumer y una conexion no critica, primero
    lectura/dry-run; observar idempotencia, retry, DLQ y metricas. Escritura solo
    con snapshot/readback/rollback especificos.
 
-El workflow solo puede invocarse cuando DB, DNS y Access existan:
+El workflow solo puede invocarse con DB, DNS y Access ya verificados:
 
 ```sh
 BRANCH="$(git branch --show-current)"
@@ -276,19 +290,19 @@ gh workflow run deploy-middleware-staging.yml \
   --ref "$BRANCH" \
   -f confirm_target=staging-only \
   -f confirm_sha="$SHA" \
-  -f confirm_db_host="<STAGING_DB_HOST>" \
-  -f confirm_db_name="<STAGING_DB_NAME>" \
   -f apply_migrations=true \
   -f deploy_worker=true \
   -f deploy_pages=false
 ```
 
-No ejecutar hoy: DB, DNS y Access siguen bloqueados.
+No usar este workflow para Pages, produccion ni canary. El runtime privado se
+publica solo con `deploy-staging-runtime-component.sh`, que exige el contrato
+DB completo, ejecucion apagada y ausencia de consumers.
 
 ## Rollback obligatorio
 
-Antes de cada rollout guardar SHA, Worker version, deployment Pages, esquema
-DB, bindings y conteos de Queue.
+Pages no forma parte de este workflow mientras siga bloqueado. Antes de cada
+rollout API guardar SHA, version Worker, esquema DB, bindings y conteos de Queue.
 
 ```sh
 npx wrangler deployments list --config wrangler.middleware.toml --env staging --json
@@ -302,7 +316,9 @@ Orden de rollback:
 1. Deshabilitar ejecucion y retirar consumers/cron en configuracion revisada.
 2. Volver al Worker anterior por ID exacto y verificar deployments.
 3. Retirar binding Hyperdrive del Worker antes de eliminar Hyperdrive.
-4. Revertir dominio/Access solo despues de confirmar que no expone Pages/API.
+4. El workflow no crea ni reconfigura dominio/Access: exige ambos antes del
+   deploy. Si derivan durante el rollout, mantener el API revertido y tratarlo
+   como incidente manual; no intentar recrearlos desde este workflow.
 5. Restaurar snapshot o descartar DB staging; nunca ejecutar SQL inverso a
    ciegas.
 6. No borrar Queues hasta confirmar cero producers, consumers y mensajes. Las
@@ -323,14 +339,12 @@ y rollback probado a la plataforma actual.
 
 ## Pendientes exactos
 
-- Crear Postgres staging y cerrar identidad, backups, roles y URL TLS.
-- Crear dos Hyperdrive propios, API y runtime con LOGIN distintos, y probar los
-  tres tests de integracion DB.
-- Configurar DNS y Cloudflare Access con permisos/IdP aprobados.
-- Desplegar primero una version inerte; no enlazar consumers en ese deploy.
-- Componer el servicio privado `RUNTIME_EXECUTOR` sobre los adapters ya
-  implementados, con credenciales cifradas y allowlists por conexion; despues
-  cerrar observabilidad, limites, alertas, DLQ y canary no critico.
+- Aplicar `0009`-`0011` y verificar columna, indice y trigger semanticos antes
+  de actualizar runtime/executor staging.
+- Mantener executor/runtime inertes y comprobar versiones, bindings y cero
+  consumers despues del deploy.
+- Cargar credenciales cifradas solo para una conexion canary aprobada; despues
+  cerrar observabilidad, limites, alertas, DLQ e idempotencia live.
 - Obtener export consistente de produccion antes de plantear un corte real.
 
-`INFRASTRUCTURE_POINTS_1_6_STATUS=LOCAL_ADVANCED_REMOTE_INERT_BLOCKED_DB_ACCESS`
+`INFRASTRUCTURE_POINTS_1_6_STATUS=STAGING_INERT_READY_FOR_HARDENING_CANARY_BLOCKED`

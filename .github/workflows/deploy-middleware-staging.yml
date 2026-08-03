@@ -30,7 +30,7 @@ on:
         default: true
         type: boolean
       deploy_pages:
-        description: "Build and deploy staging Pages after API smoke"
+        description: "Blocked until Pages has a reviewed preflight and rollback gate"
         required: true
         default: false
         type: boolean
@@ -53,9 +53,11 @@ jobs:
           CONFIRM_TARGET: ${{ inputs.confirm_target }}
           CONFIRM_SHA: ${{ inputs.confirm_sha }}
           ACTUAL_SHA: ${{ github.sha }}
+          DEPLOY_PAGES: ${{ inputs.deploy_pages }}
         run: |
           test "$CONFIRM_TARGET" = "staging-only" || (echo "confirm_target must be staging-only" >&2; exit 1)
           test "$CONFIRM_SHA" = "$ACTUAL_SHA" || (echo "confirm_sha does not match the workflow commit" >&2; exit 1)
+          test "$DEPLOY_PAGES" = "false" || (echo "Pages deploy is blocked until its Access preflight and rollback gate are reviewed" >&2; exit 1)
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
@@ -102,6 +104,93 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      - name: Preflight existing API domain and Cloudflare Access
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          api_host="api-staging.middleware.winerim.wine"
+          api_service="winerim-middleware-api-staging"
+          api_url="https://$api_host"
+          cloudflare_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Missing CLOUDFLARE_API_TOKEN" >&2; exit 1)
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_ID" || (echo "Missing CF_ACCESS_CLIENT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_SECRET" || (echo "Missing CF_ACCESS_CLIENT_SECRET" >&2; exit 1)
+          test -n "$MIDDLEWARE_ADMIN_TOKEN" || (echo "Missing MIDDLEWARE_ADMIN_TOKEN" >&2; exit 1)
+          npx wrangler whoami >/dev/null
+
+          expected_aud="$(awk '
+            $0 == "[env.staging.vars]" { in_staging = 1; next }
+            in_staging && /^\[/ { exit }
+            in_staging && $1 == "CF_ACCESS_AUD" {
+              value = $3
+              gsub(/"/, "", value)
+              print value
+              exit
+            }
+          ' wrangler.middleware.toml)"
+          test -n "$expected_aud" || (echo "Missing staging CF_ACCESS_AUD" >&2; exit 1)
+
+          domains="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/workers/domains")"
+          jq -e --arg host "$api_host" --arg service "$api_service" '
+            .success == true and any(.result[]; .hostname == $host and .service == $service)
+          ' <<<"$domains" >/dev/null || {
+            echo "API custom domain is not already mapped to the staging Worker" >&2
+            exit 1
+          }
+
+          apps="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/access/apps?per_page=100")"
+          app="$(jq -cer --arg domain "$api_host" '
+            [.result[] | select(.domain == $domain and .type == "self_hosted")]
+            | if length == 1 then .[0] else error("expected exactly one Access app") end
+          ' <<<"$apps")"
+          access_app_id="$(jq -er '.id' <<<"$app")"
+          access_app_aud="$(jq -er '.aud' <<<"$app")"
+          test "$access_app_aud" = "$expected_aud" || {
+            echo "Access application audience does not match staging CF_ACCESS_AUD" >&2
+            exit 1
+          }
+
+          policies="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/access/apps/$access_app_id/policies?per_page=100")"
+          jq -e '
+            .success == true
+            and any(.result[]; .action == "allow" or .action == "service_auth")
+          ' <<<"$policies" >/dev/null || {
+            echo "Access application has no allow or service-auth policy" >&2
+            exit 1
+          }
+
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            "$api_url/health")"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Access preflight did not block anonymous API traffic: HTTP $public_status" >&2; exit 1 ;;
+          esac
+
+          protected_health="$(curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            "$api_url/health")"
+          jq -e '
+            .ok == true
+            and .service == "winerim-middleware-api"
+            and .environment == "staging"
+          ' <<<"$protected_health" >/dev/null
+          echo "ACCESS_PREFLIGHT_OK host=$api_host service=$api_service"
 
       - name: Verify staging database target before bootstrap
         env:
@@ -161,22 +250,6 @@ jobs:
           test "$has_core_schema" = "t" || (echo "Post-bootstrap core schema is missing" >&2; exit 1)
           infrastructure/postgres/validate.sh
 
-      - name: Verify Cloudflare and Access service credentials
-        if: ${{ inputs.deploy_worker || inputs.deploy_pages }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
-        run: |
-          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Missing CLOUDFLARE_API_TOKEN" >&2; exit 1)
-          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" >&2; exit 1)
-          test -n "$CF_ACCESS_CLIENT_ID" || (echo "Missing CF_ACCESS_CLIENT_ID" >&2; exit 1)
-          test -n "$CF_ACCESS_CLIENT_SECRET" || (echo "Missing CF_ACCESS_CLIENT_SECRET" >&2; exit 1)
-          test -n "$MIDDLEWARE_ADMIN_TOKEN" || (echo "Missing MIDDLEWARE_ADMIN_TOKEN" >&2; exit 1)
-          npx wrangler whoami >/dev/null
-
       - name: Capture current Worker rollback version
         if: ${{ inputs.deploy_worker }}
         env:
@@ -194,15 +267,18 @@ jobs:
         run: npx wrangler deploy --config wrangler.middleware.toml --env staging
 
       - name: Verify API denial and readiness through Cloudflare Access
-        if: ${{ inputs.deploy_worker || inputs.deploy_pages }}
+        if: ${{ inputs.deploy_worker }}
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
         run: |
           public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
-            https://api-staging.middleware.winerim.wine/ready)"
-          test "$public_status" != "200" || (echo "Protected staging readiness is public" >&2; exit 1)
+            https://api-staging.middleware.winerim.wine/health)"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Cloudflare Access did not block anonymous API traffic after deploy: HTTP $public_status" >&2; exit 1 ;;
+          esac
           body="$(curl --fail --silent --show-error --max-time 10 \
             -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
             -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
@@ -215,31 +291,39 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler rollback "$PREVIOUS_WORKER_VERSION" --config wrangler.middleware.toml --env staging --message "Automatic rollback after staging smoke failure" --yes
-
-      - name: Build staging frontend
-        if: ${{ success() && inputs.deploy_pages }}
-        env:
-          VITE_MIDDLEWARE_API_URL: https://api-staging.middleware.winerim.wine
-        run: npm run build
-
-      - name: Deploy Pages to protected staging
-        if: ${{ success() && inputs.deploy_pages }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler pages deploy dist --project-name winerim-middleware-staging --branch staging
-
-      - name: Verify Pages is not public without Access
-        if: ${{ success() && inputs.deploy_pages }}
-        env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
+          set -euo pipefail
+          npx wrangler rollback "$PREVIOUS_WORKER_VERSION" \
+            --config wrangler.middleware.toml \
+            --env staging \
+            --message "Automatic rollback after staging smoke failure" \
+            --yes
+
+          active="$(npx wrangler deployments list \
+            --config wrangler.middleware.toml \
+            --env staging \
+            --json | jq -er '.[-1].versions[0].version_id')"
+          test "$active" = "$PREVIOUS_WORKER_VERSION" || {
+            echo "Rollback did not restore the captured Worker version" >&2
+            exit 1
+          }
+
           public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
-            https://staging.middleware.winerim.wine/)"
-          test "$public_status" != "200" || (echo "Protected staging Pages is public" >&2; exit 1)
-          curl --fail --silent --show-error --max-time 10 \
+            https://api-staging.middleware.winerim.wine/health)"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Access is not blocking the rolled-back API: HTTP $public_status" >&2; exit 1 ;;
+          esac
+
+          protected_health="$(curl --fail --silent --show-error --max-time 10 \
             -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
             -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-            https://staging.middleware.winerim.wine/ >/dev/null
+            https://api-staging.middleware.winerim.wine/health)"
+          jq -e '
+            .ok == true
+            and .service == "winerim-middleware-api"
+            and .environment == "staging"
+          ' <<<"$protected_health" >/dev/null
+          echo "API_ROLLBACK_VERIFIED version=$PREVIOUS_WORKER_VERSION"
