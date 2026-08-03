@@ -40,6 +40,21 @@ no existe ningun consumer y `RUNTIME_EXECUTION_ENABLED=false`; por tanto no se
 procesa trabajo. `winerim-staging-dead-letter` queda deliberadamente sin
 binding hasta que exista un consumer revisado.
 
+Recibo de hardening staging del 2026-08-03 12:12 CEST:
+
+- migraciones `0009`, `0010` y `0011` aplicadas tras restaurar el backup
+  cifrado `runtime-hardening-20260803T092210Z`;
+- `verify-staging.sh` devuelve `STAGING_VERIFY_OK`: inventario exacto de 30
+  tablas, RLS completo, tres columnas de idempotencia y contratos semanticos
+  validos para indice y trigger;
+- executor `407ca0ae-2ae0-4057-a670-ad1b6d847200`, release
+  `staging-private-inert` y ejecucion `false`;
+- runtime `12538571-5563-4341-b866-cf05d37f70ee`, release `staging-inert`,
+  ejecucion `false`, solo bindings producer y cero consumers;
+- rollback exacto disponible a executor
+  `d71eb3cc-bf83-42b4-acc0-1330c7c6ef99` y runtime
+  `7d23abb1-7d8e-4f58-bb65-3f8195de3185`.
+
 Los IDs anteriores certifican el recurso Cloudflare y su asignacion al inventario
 staging. Este documento no deduce de ellos el hostname o proyecto Postgres, el
 principal LOGIN ni sus grants; esos datos deben validarse por URL, sentinel,
@@ -339,12 +354,10 @@ y rollback probado a la plataforma actual.
 
 ## Pendientes exactos
 
-- Aplicar `0009`-`0011` y verificar columna, indice y trigger semanticos antes
-  de actualizar runtime/executor staging.
-- Mantener executor/runtime inertes y comprobar versiones, bindings y cero
-  consumers despues del deploy.
+- Mantener executor/runtime inertes hasta completar un canary individual con
+  snapshots, observabilidad, idempotencia y rollback verificados.
 - Cargar credenciales cifradas solo para una conexion canary aprobada; despues
   cerrar observabilidad, limites, alertas, DLQ e idempotencia live.
 - Obtener export consistente de produccion antes de plantear un corte real.
 
-`INFRASTRUCTURE_POINTS_1_6_STATUS=STAGING_INERT_READY_FOR_HARDENING_CANARY_BLOCKED`
+`INFRASTRUCTURE_POINTS_1_6_STATUS=STAGING_HARDENED_INERT_CANARY_PENDING`
