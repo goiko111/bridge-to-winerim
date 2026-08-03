@@ -81,10 +81,11 @@ function main() {
     expiresAt,
   };
   const target = outputPath();
+  const source = `${JSON.stringify(grant, null, 2)}\n`;
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  writeFileSync(target, `${JSON.stringify(grant, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(target, source, { mode: 0o600 });
   chmodSync(target, 0o600);
-  const grantSha256 = createHash("sha256").update(JSON.stringify(grant)).digest("hex");
+  const grantSha256 = createHash("sha256").update(source).digest("hex");
   process.stdout.write(
     `WRITER_FENCE_GRANT_READY path=${target} connection=${connectionId} run=${runId} sha256=${grantSha256}\n`,
   );

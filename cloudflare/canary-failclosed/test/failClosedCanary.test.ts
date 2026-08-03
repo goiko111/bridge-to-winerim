@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -289,7 +290,7 @@ describe("connection writer fence", () => {
     const credentialReference = `runtime-vault://postgres/${connectionId}/agora/winerim`;
     const credentialVersion = "f".repeat(64);
     try {
-      execFileSync(process.execPath, [
+      const stdout = execFileSync(process.execPath, [
         resolve("infrastructure/runtime/prepare-writer-fence-grant.mjs"),
         `--output=${output}`,
       ], {
@@ -309,8 +310,11 @@ describe("connection writer fence", () => {
           CANARY_FENCE_EXPIRES_AT: "2026-08-03T07:00:00.000Z",
         },
         stdio: "pipe",
-      });
-      const grant = parseWriterFenceGrant(readFileSync(output, "utf8"));
+      }).toString("utf8");
+      const source = readFileSync(output);
+      const announcedSha256 = stdout.match(/sha256=([a-f0-9]{64})/)?.[1];
+      expect(announcedSha256).toBe(createHash("sha256").update(source).digest("hex"));
+      const grant = parseWriterFenceGrant(source.toString("utf8"));
       expect(grant.credentialVersion).toBe(credentialVersion);
       expect(grant.credentialBinding).toBe(await writerFenceCredentialBinding({
         reference: credentialReference,
