@@ -242,7 +242,7 @@ function normalizeCurrentWines(winesDocument, stockDocument) {
     const bottle = variants.BOTTLE;
     const glass = variants.GLASS;
     const magnum = variants.MAGNUM;
-    const fallback = bottle ?? glass ?? magnum ?? allStocks[0] ?? null;
+    const fallback = [bottle, glass, magnum, ...allStocks].find((stock) => stock?.stockActive === true) ?? null;
     return {
       winerimId: wineId,
       name: String(wine.name).trim(),
@@ -261,9 +261,9 @@ function normalizeCurrentWines(winesDocument, stockDocument) {
       bottleStockId: bottle?.id ?? null,
       glassStockId: glass?.id ?? null,
       magnumStockId: magnum?.id ?? null,
-      serveByGlass: Boolean(glass),
+      serveByGlass: glass?.stockActive === true,
       pricingStatus: fallback ? "READY" : "MISSING",
-      pricingMissingReason: fallback ? null : "NO_CURRENT_STOCK_VARIANT",
+      pricingMissingReason: fallback ? null : "NO_ACTIVE_CURRENT_STOCK_VARIANT",
       rawPayload: { wine, stocks: allStocks.map(({ wineId: _wineId, variant: _variant, ...entry }) => entry) },
     };
   }).sort((left, right) => Number(left.winerimId) - Number(right.winerimId));
@@ -271,24 +271,46 @@ function normalizeCurrentWines(winesDocument, stockDocument) {
   return { wineById, stocksByWineVariant, cacheRows };
 }
 
-function providerProductRows(master, acceptedMappings) {
+function providerProductRows(master, acceptedMappings, rejectedMappings, snapshotMappings) {
   const mappingByProduct = new Map(acceptedMappings.map((mapping) => [mapping.providerProductId, mapping]));
+  const rejectedByProduct = new Map();
+  for (const mapping of rejectedMappings) {
+    const mappings = rejectedByProduct.get(mapping.providerProductId) ?? [];
+    mappings.push(mapping);
+    rejectedByProduct.set(mapping.providerProductId, mappings);
+  }
+  const snapshotProductIds = new Set(snapshotMappings.map((mapping) => String(mapping?.provider_product_id ?? "")));
   const familyNames = new Map(master.families.map((family) => [String(family.Id), String(family.Name ?? "")]));
   return master.products.map((product) => {
     const attributes = product.attributes;
     const providerProductId = String(attributes.Id);
     const accepted = mappingByProduct.get(providerProductId) ?? null;
+    const rejected = rejectedByProduct.get(providerProductId) ?? [];
+    const family = familyNames.get(String(attributes.FamilyId ?? "")) ?? null;
+    const isWinerimFamily = /\bWINERIM\b/i.test(String(family ?? ""));
+    const isAmbiguousWineCandidate = !accepted && (isWinerimFamily || rejected.length > 0 || snapshotProductIds.has(providerProductId));
+    const classificationStatus = accepted ? "CONFIRMED" : isAmbiguousWineCandidate ? "AMBIGUOUS" : "NOT_WINE";
     const primaryPrice = product.prices[0]?.MainPrice ?? 0;
+    const wineReasons = accepted
+      ? ["RESCUE_EXACT_ID_WINE_ACTIVE_VARIANT"]
+      : [
+          ...(isWinerimFamily ? ["CURRENT_WINERIM_FAMILY"] : []),
+          ...rejected.map((mapping) => `REJECTED_${mapping.reason}`),
+          ...(!isWinerimFamily && rejected.length === 0 && snapshotProductIds.has(providerProductId) ? ["HISTORICAL_WINE_MAPPING_PRESENT"] : []),
+        ];
     return {
       providerProductId,
       name: String(attributes.Name ?? "").trim(),
-      family: familyNames.get(String(attributes.FamilyId ?? "")) ?? null,
+      family,
       vatRate: 0,
       saleFormat: accepted?.formatType ?? null,
       price: Number(primaryPrice),
-      isWineCandidate: Boolean(accepted),
-      wineScore: accepted ? 100 : 0,
-      wineReasons: accepted ? ["RESCUE_EXACT_ID_WINE_VARIANT"] : [],
+      isWineCandidate: Boolean(accepted || isAmbiguousWineCandidate),
+      classificationStatus,
+      wineScore: accepted ? 100 : isAmbiguousWineCandidate ? 50 : 0,
+      wineReasons,
+      syncStatus: accepted ? "SYNCED" : isAmbiguousWineCandidate ? "BLOCKED" : "NOT_SYNCED",
+      syncError: isAmbiguousWineCandidate ? "HYDRATION_WINE_CANDIDATE_AMBIGUOUS" : null,
       winerimWineId: accepted?.winerimWineId ?? null,
       rawPayload: { attributes, prices: product.prices },
     };
@@ -325,6 +347,7 @@ export function buildDisabledConnectionHydration({
     const winerimWineId = String(mapping?.winerim_wine_id ?? "").trim();
     const formatType = String(mapping?.format_type ?? "").trim().toUpperCase();
     let rejection = null;
+    let rejectedStock = null;
     if (mapping?.status !== "CONFIRMED") rejection = "MAPPING_STATUS_NOT_CONFIRMED";
     else if (!POSITIVE_INTEGER_PATTERN.test(providerProductId) || !productById.has(providerProductId)) rejection = "PROVIDER_PRODUCT_NOT_IN_CURRENT_MASTER";
     else if ((mappingIdCounts.get(providerProductId) ?? 0) !== 1) rejection = "AMBIGUOUS_PROVIDER_PRODUCT_MAPPING";
@@ -334,6 +357,10 @@ export function buildDisabledConnectionHydration({
       const stockCandidates = stocksByWineVariant.get(`${winerimWineId}:${FORMAT_TO_STOCK_VARIANT[formatType]}`) ?? [];
       if (stockCandidates.length === 0) rejection = "STOCK_VARIANT_NOT_CURRENT";
       else if (stockCandidates.length !== 1) rejection = "AMBIGUOUS_STOCK_VARIANT";
+      else if (stockCandidates[0].stockActive !== true) {
+        rejection = "STOCK_VARIANT_INACTIVE";
+        rejectedStock = stockCandidates[0];
+      }
       else {
         const providerProduct = productById.get(providerProductId);
         const wine = wineById.get(winerimWineId);
@@ -345,6 +372,7 @@ export function buildDisabledConnectionHydration({
           formatType,
           stockVariant: FORMAT_TO_STOCK_VARIANT[formatType],
           stockId: stockCandidates[0].id,
+          stockActive: true,
           status: "CONFIRMED",
           matchMethod: "RESCUE_EXACT_ID_WINE_VARIANT",
         });
@@ -358,6 +386,8 @@ export function buildDisabledConnectionHydration({
         winerimWineName: mapping?.winerim_wine_name ?? null,
         formatType: formatType || null,
         reason: rejection,
+        stockId: rejectedStock?.id ?? null,
+        stockActive: rejectedStock ? rejectedStock.stockActive === true : null,
       });
     }
   }
@@ -366,12 +396,33 @@ export function buildDisabledConnectionHydration({
 
   const rejectionCounts = {};
   for (const rejected of rejectedMappings) rejectionCounts[rejected.reason] = (rejectionCounts[rejected.reason] ?? 0) + 1;
-  const providers = providerProductRows(master, acceptedMappings);
+  const providers = providerProductRows(master, acceptedMappings, rejectedMappings, mappings);
+  const hydrationDigest = sha256(canonicalJson({
+    schemaVersion: 2,
+    connectionId,
+    acceptedMappings,
+    winerimWines: cacheRows,
+    providerProducts: providers,
+    agoraMasterData: {
+      families: master.families,
+      products: providers.map((product) => ({
+        providerProductId: product.providerProductId,
+        name: product.name,
+        family: product.family,
+        price: product.price,
+        saleFormat: product.saleFormat,
+        classificationStatus: product.classificationStatus,
+        winerimWineId: product.winerimWineId,
+        rawPayload: product.rawPayload,
+      })),
+    },
+  }));
   const plan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "disabled-connection-hydration",
     generatedAt,
     connectionId,
+    hydrationDigest,
     locationName: String(snapshotConnection.location_name ?? ""),
     sourceDigests,
     sourceSnapshotState: {
@@ -401,8 +452,11 @@ export function buildDisabledConnectionHydration({
       rejectedMappings: rejectedMappings.length,
       currentWinerimWines: cacheRows.length,
       currentWinerimStocks: stockDocument.stocks.length,
+      inactiveWinerimStocks: stockDocument.stocks.filter((stock) => stock?.stockActive !== true).length,
       currentAgoraFamilies: master.families.length,
       currentAgoraProducts: master.products.length,
+      confirmedProviderWineCandidates: providers.filter((product) => product.classificationStatus === "CONFIRMED").length,
+      ambiguousProviderWineCandidates: providers.filter((product) => product.classificationStatus === "AMBIGUOUS").length,
     },
     rejectedByReason: rejectionCounts,
     acceptedMappings,
@@ -417,6 +471,7 @@ export function buildDisabledConnectionHydration({
         family: product.family,
         price: product.price,
         sale_format: product.saleFormat,
+        classification_status: product.classificationStatus,
         winerim_wine_id: product.winerimWineId,
         raw_payload: product.rawPayload,
       })),
@@ -431,20 +486,49 @@ function valuesRows(rows) {
 }
 
 export function renderHydrationSql(plan) {
-  if (plan?.kind !== "disabled-connection-hydration" || !UUID_PATTERN.test(String(plan.connectionId ?? ""))) {
+  if (plan?.schemaVersion !== 2 || plan?.kind !== "disabled-connection-hydration" || !UUID_PATTERN.test(String(plan.connectionId ?? ""))) {
     throw new Error("HYDRATION_PLAN_INVALID");
   }
   if (!plan.acceptedMappings.length || !plan.winerimWines.length || !plan.providerProducts.length) {
     throw new Error("HYDRATION_PLAN_EMPTY_DATASET");
   }
   const connectionId = plan.connectionId;
-  const expectedWineIds = plan.winerimWines.map((wine) => sqlText(wine.winerimId));
-  const expectedProviderIds = plan.providerProducts.map((product) => sqlText(product.providerProductId));
-  const expectedMappingRows = plan.acceptedMappings.map((mapping) => [
-    sqlText(mapping.providerProductId),
-    sqlText(mapping.winerimWineId),
-    sqlText(mapping.formatType),
-  ]);
+  if (!/^[0-9a-f]{64}$/.test(String(plan.hydrationDigest ?? ""))) throw new Error("HYDRATION_PLAN_DIGEST_INVALID");
+  const hydrationMarker = `WINERIM_RESCUE_HYDRATION_V2_SHA256:${plan.hydrationDigest}`;
+  const wineColumns = [
+    "connection_id", "winerim_id", "name", "sku", "ean", "vintage", "winery", "region", "grape_variety", "format",
+    "price", "stock_quantity", "raw_payload", "wine_type", "bottle_sale_price", "bottle_purchase_price",
+    "glass_sale_price", "glass_cost_price", "magnum_sale_price", "magnum_purchase_price", "serve_by_glass",
+    "is_active", "pricing_status", "pricing_missing_reason", "glass_stock_id", "bottle_stock_id", "magnum_stock_id",
+  ];
+  const providerColumns = [
+    "connection_id", "provider_product_id", "name", "family", "vat_rate", "sale_format", "price",
+    "is_wine_candidate", "wine_score", "wine_reasons", "raw_payload", "winerim_wine_id",
+    "classification_override", "last_score", "last_reasons", "sync_status", "sync_error", "last_synced_at", "provider_updated_at",
+  ];
+  const masterColumns = [
+    "connection_id", "families_json", "vats_json", "price_lists_json", "preparation_types_json",
+    "preparation_orders_json", "warehouses_json", "products_summary_json", "raw_xml_preview",
+    "fetched_at", "sale_points_json", "sale_centers_json",
+  ];
+  const mappingColumns = [
+    "connection_id", "provider_product_id", "provider_product_name", "winerim_wine_id",
+    "winerim_wine_name", "match_method", "match_score", "match_reasons", "status",
+    "format_type", "agora_product_id", "last_synced_at", "last_sync_error",
+  ];
+  const columns = (items, alias = null) => items.map((item) => alias ? `${alias}.${item}` : item).join(", ");
+  const semanticMismatch = (targetTable, expectedTable, semanticColumns) => `(
+    EXISTS (
+      (SELECT ${columns(semanticColumns, "target")} FROM public.${targetTable} target WHERE target.connection_id = ${sqlText(connectionId)}::uuid)
+      EXCEPT
+      (SELECT ${columns(semanticColumns, "expected")} FROM ${expectedTable} expected)
+    )
+    OR EXISTS (
+      (SELECT ${columns(semanticColumns, "expected")} FROM ${expectedTable} expected)
+      EXCEPT
+      (SELECT ${columns(semanticColumns, "target")} FROM public.${targetTable} target WHERE target.connection_id = ${sqlText(connectionId)}::uuid)
+    )
+  )`;
 
   const wineRows = plan.winerimWines.map((wine) => [
     sqlText(connectionId), sqlText(wine.winerimId), sqlText(wine.name), sqlText(wine.sku), sqlText(wine.ean),
@@ -458,13 +542,37 @@ export function renderHydrationSql(plan) {
     sqlText(connectionId), sqlText(product.providerProductId), sqlText(product.name), sqlText(product.family),
     sqlNumber(product.vatRate), sqlText(product.saleFormat), sqlNumber(product.price), sqlBoolean(product.isWineCandidate),
     sqlNumber(product.wineScore), sqlTextArray(product.wineReasons), sqlJson(product.rawPayload), sqlText(product.winerimWineId),
+    sqlText("AUTO"), sqlNumber(product.wineScore), sqlTextArray(product.wineReasons), sqlText(product.syncStatus),
+    sqlText(product.syncError), "NULL", "NULL",
   ]);
   const mappingRows = plan.acceptedMappings.map((mapping) => [
     sqlText(connectionId), sqlText(mapping.providerProductId), sqlText(mapping.providerProductName),
     sqlText(mapping.winerimWineId), sqlText(mapping.winerimWineName), sqlText(mapping.matchMethod), "1",
-    sqlTextArray(["CURRENT_AGORA_PRODUCT_ID", "CURRENT_WINERIM_WINE_ID", `CURRENT_${mapping.formatType}_STOCK_ID_${mapping.stockId}`]),
-    sqlText("CONFIRMED"), sqlText(mapping.formatType), sqlText(mapping.providerProductId),
+    sqlTextArray([
+      "CURRENT_AGORA_PRODUCT_ID",
+      "CURRENT_WINERIM_WINE_ID",
+      `CURRENT_${mapping.formatType}_STOCK_ID_${mapping.stockId}`,
+      `CURRENT_${mapping.formatType}_STOCK_ACTIVE_TRUE`,
+    ]),
+    sqlText("CONFIRMED"), sqlText(mapping.formatType), sqlText(mapping.providerProductId), "NULL", "NULL",
   ]);
+  const masterRows = [[
+    sqlText(connectionId), sqlJson(plan.agoraMasterData.families), "'[]'::jsonb", "'[]'::jsonb",
+    "'[]'::jsonb", "'[]'::jsonb", "'[]'::jsonb", sqlJson(plan.agoraMasterData.productsSummary),
+    sqlText(hydrationMarker), "NULL", "'[]'::jsonb", "'[]'::jsonb",
+  ]];
+  const expectedCounts = {
+    wines: plan.counts.currentWinerimWines,
+    providers: plan.counts.currentAgoraProducts,
+    masters: 1,
+    mappings: plan.counts.acceptedMappings,
+  };
+  const semanticMismatchSql = [
+    semanticMismatch("winerim_wines", "hydration_expected_wines", wineColumns),
+    semanticMismatch("provider_products", "hydration_expected_products", providerColumns),
+    semanticMismatch("agora_master_data", "hydration_expected_master", masterColumns),
+    semanticMismatch("product_mappings", "hydration_expected_mappings", mappingColumns),
+  ].join("\n    OR ");
 
   return `\\set ON_ERROR_STOP on
 BEGIN;
@@ -474,129 +582,98 @@ SET LOCAL idle_in_transaction_session_timeout = '60s';
 
 -- Fail closed before taking any catalog/cache action.
 DO $hydration_guard$
-DECLARE target_count integer;
+DECLARE target_enabled boolean; target_catalog boolean; target_write_mode text;
 BEGIN
-  SELECT count(*) INTO target_count
+  SELECT enabled, catalog_sync_enabled, write_mode
+  INTO STRICT target_enabled, target_catalog, target_write_mode
   FROM public.pos_connections
   WHERE id = ${sqlText(connectionId)}::uuid
-    AND enabled IS FALSE
-    AND catalog_sync_enabled IS FALSE
-    AND write_mode = 'NONE';
-  IF target_count <> 1 THEN
+  FOR UPDATE;
+  IF target_enabled IS DISTINCT FROM false OR target_catalog IS DISTINCT FROM false OR target_write_mode IS DISTINCT FROM 'NONE' THEN
     RAISE EXCEPTION 'HYDRATION_TARGET_NOT_DISABLED_CATALOG_OFF_WRITE_NONE';
   END IF;
+EXCEPTION WHEN NO_DATA_FOUND THEN
+  RAISE EXCEPTION 'HYDRATION_TARGET_CONNECTION_NOT_FOUND';
 END
 $hydration_guard$;
 
-CREATE TEMP TABLE hydration_expected_wines (winerim_id text PRIMARY KEY) ON COMMIT DROP;
-INSERT INTO hydration_expected_wines (winerim_id) VALUES
-${valuesRows(expectedWineIds.map((id) => [id]))};
+-- Serialize all four hydration tables. This also closes races for the two old
+-- cache tables that do not have a foreign key to pos_connections.
+LOCK TABLE public.winerim_wines, public.provider_products, public.agora_master_data, public.product_mappings
+  IN SHARE ROW EXCLUSIVE MODE;
 
-CREATE TEMP TABLE hydration_expected_products (provider_product_id text PRIMARY KEY) ON COMMIT DROP;
-INSERT INTO hydration_expected_products (provider_product_id) VALUES
-${valuesRows(expectedProviderIds.map((id) => [id]))};
+CREATE TEMP TABLE hydration_expected_wines (LIKE public.winerim_wines INCLUDING DEFAULTS) ON COMMIT DROP;
+INSERT INTO hydration_expected_wines (${columns(wineColumns)}) VALUES
+${valuesRows(wineRows)};
 
-CREATE TEMP TABLE hydration_expected_mappings (
-  provider_product_id text PRIMARY KEY,
-  winerim_wine_id text NOT NULL,
-  format_type text NOT NULL
+CREATE TEMP TABLE hydration_expected_products (LIKE public.provider_products INCLUDING DEFAULTS) ON COMMIT DROP;
+INSERT INTO hydration_expected_products (${columns(providerColumns)}) VALUES
+${valuesRows(providerRows)};
+
+CREATE TEMP TABLE hydration_expected_master (LIKE public.agora_master_data INCLUDING DEFAULTS) ON COMMIT DROP;
+INSERT INTO hydration_expected_master (${columns(masterColumns)}) VALUES
+${valuesRows(masterRows)};
+
+CREATE TEMP TABLE hydration_expected_mappings (LIKE public.product_mappings INCLUDING DEFAULTS) ON COMMIT DROP;
+INSERT INTO hydration_expected_mappings (${columns(mappingColumns)}) VALUES
+${valuesRows(mappingRows)};
+
+CREATE TEMP TABLE hydration_control (
+  should_insert boolean NOT NULL,
+  hydration_digest text NOT NULL
 ) ON COMMIT DROP;
-INSERT INTO hydration_expected_mappings (provider_product_id, winerim_wine_id, format_type) VALUES
-${valuesRows(expectedMappingRows)};
 
--- A previous hydration may be replayed, but unexpected cache/mapping rows abort.
+-- First run requires all four target scopes to be empty. A replay is a no-op
+-- only when every semantic field and the hydration digest are identical.
 DO $hydration_existing_scope$
+DECLARE wine_count integer; provider_count integer; master_count integer; mapping_count integer;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.winerim_wines row
-    WHERE row.connection_id = ${sqlText(connectionId)}::uuid
-      AND NOT EXISTS (SELECT 1 FROM hydration_expected_wines expected WHERE expected.winerim_id = row.winerim_id)
-  ) THEN RAISE EXCEPTION 'HYDRATION_UNEXPECTED_EXISTING_WINERIM_WINE'; END IF;
-  IF EXISTS (
-    SELECT 1 FROM public.provider_products row
-    WHERE row.connection_id = ${sqlText(connectionId)}::uuid
-      AND NOT EXISTS (SELECT 1 FROM hydration_expected_products expected WHERE expected.provider_product_id = row.provider_product_id)
-  ) THEN RAISE EXCEPTION 'HYDRATION_UNEXPECTED_EXISTING_PROVIDER_PRODUCT'; END IF;
-  IF EXISTS (
-    SELECT 1 FROM public.product_mappings row
-    WHERE row.connection_id = ${sqlText(connectionId)}::uuid
-      AND NOT EXISTS (
-        SELECT 1 FROM hydration_expected_mappings expected
-        WHERE expected.provider_product_id = row.provider_product_id
-          AND expected.winerim_wine_id = row.winerim_wine_id
-          AND expected.format_type = row.format_type
-          AND row.status = 'CONFIRMED'
-      )
-  ) THEN RAISE EXCEPTION 'HYDRATION_UNEXPECTED_OR_NONCONFIRMED_EXISTING_MAPPING'; END IF;
+  SELECT count(*) INTO wine_count FROM public.winerim_wines WHERE connection_id = ${sqlText(connectionId)}::uuid;
+  SELECT count(*) INTO provider_count FROM public.provider_products WHERE connection_id = ${sqlText(connectionId)}::uuid;
+  SELECT count(*) INTO master_count FROM public.agora_master_data WHERE connection_id = ${sqlText(connectionId)}::uuid;
+  SELECT count(*) INTO mapping_count FROM public.product_mappings WHERE connection_id = ${sqlText(connectionId)}::uuid;
+  IF wine_count = 0 AND provider_count = 0 AND master_count = 0 AND mapping_count = 0 THEN
+    INSERT INTO hydration_control VALUES (true, ${sqlText(plan.hydrationDigest)});
+  ELSIF wine_count = ${expectedCounts.wines}
+    AND provider_count = ${expectedCounts.providers}
+    AND master_count = ${expectedCounts.masters}
+    AND mapping_count = ${expectedCounts.mappings}
+    AND NOT (${semanticMismatchSql})
+  THEN
+    INSERT INTO hydration_control VALUES (false, ${sqlText(plan.hydrationDigest)});
+  ELSE
+    RAISE EXCEPTION 'HYDRATION_TARGET_NOT_EMPTY_OR_IDENTICAL wines=% providers=% master=% mappings=%', wine_count, provider_count, master_count, mapping_count;
+  END IF;
 END
 $hydration_existing_scope$;
 
 INSERT INTO public.winerim_wines (
-  connection_id, winerim_id, name, sku, ean, vintage, winery, region, grape_variety, format,
-  price, stock_quantity, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price,
-  glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass,
-  is_active, pricing_status, pricing_missing_reason, glass_stock_id, bottle_stock_id, magnum_stock_id
-) VALUES
-${valuesRows(wineRows)}
-ON CONFLICT (connection_id, winerim_id) DO UPDATE SET
-  name = EXCLUDED.name, sku = EXCLUDED.sku, ean = EXCLUDED.ean, vintage = EXCLUDED.vintage,
-  winery = EXCLUDED.winery, region = EXCLUDED.region, grape_variety = EXCLUDED.grape_variety,
-  format = EXCLUDED.format, price = EXCLUDED.price, stock_quantity = EXCLUDED.stock_quantity,
-  raw_payload = EXCLUDED.raw_payload, wine_type = EXCLUDED.wine_type,
-  bottle_sale_price = EXCLUDED.bottle_sale_price, bottle_purchase_price = EXCLUDED.bottle_purchase_price,
-  glass_sale_price = EXCLUDED.glass_sale_price, glass_cost_price = EXCLUDED.glass_cost_price,
-  magnum_sale_price = EXCLUDED.magnum_sale_price, magnum_purchase_price = EXCLUDED.magnum_purchase_price,
-  serve_by_glass = EXCLUDED.serve_by_glass, is_active = EXCLUDED.is_active,
-  pricing_status = EXCLUDED.pricing_status, pricing_missing_reason = EXCLUDED.pricing_missing_reason,
-  glass_stock_id = EXCLUDED.glass_stock_id, bottle_stock_id = EXCLUDED.bottle_stock_id,
-  magnum_stock_id = EXCLUDED.magnum_stock_id;
+  ${columns(wineColumns)}
+)
+SELECT ${columns(wineColumns, "expected")}
+FROM hydration_expected_wines expected
+WHERE (SELECT should_insert FROM hydration_control);
 
 INSERT INTO public.provider_products (
-  connection_id, provider_product_id, name, family, vat_rate, sale_format, price,
-  is_wine_candidate, wine_score, wine_reasons, raw_payload, winerim_wine_id
-) VALUES
-${valuesRows(providerRows)}
-ON CONFLICT (connection_id, provider_product_id) DO UPDATE SET
-  name = EXCLUDED.name, family = EXCLUDED.family, vat_rate = EXCLUDED.vat_rate,
-  sale_format = EXCLUDED.sale_format, price = EXCLUDED.price,
-  is_wine_candidate = EXCLUDED.is_wine_candidate, wine_score = EXCLUDED.wine_score,
-  wine_reasons = EXCLUDED.wine_reasons, raw_payload = EXCLUDED.raw_payload,
-  winerim_wine_id = EXCLUDED.winerim_wine_id;
+  ${columns(providerColumns)}
+)
+SELECT ${columns(providerColumns, "expected")}
+FROM hydration_expected_products expected
+WHERE (SELECT should_insert FROM hydration_control);
 
 INSERT INTO public.agora_master_data (
-  connection_id, families_json, vats_json, price_lists_json, preparation_types_json,
-  preparation_orders_json, warehouses_json, products_summary_json, raw_xml_preview,
-  fetched_at, sale_points_json, sale_centers_json
-) VALUES (
-  ${sqlText(connectionId)}::uuid, ${sqlJson(plan.agoraMasterData.families)}, '[]'::jsonb, '[]'::jsonb,
-  '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, ${sqlJson(plan.agoraMasterData.productsSummary)},
-  NULL, ${sqlText(plan.generatedAt)}::timestamptz, '[]'::jsonb, '[]'::jsonb
+  ${columns(masterColumns)}
 )
-ON CONFLICT (connection_id) DO UPDATE SET
-  families_json = EXCLUDED.families_json, vats_json = EXCLUDED.vats_json,
-  price_lists_json = EXCLUDED.price_lists_json, preparation_types_json = EXCLUDED.preparation_types_json,
-  preparation_orders_json = EXCLUDED.preparation_orders_json, warehouses_json = EXCLUDED.warehouses_json,
-  products_summary_json = EXCLUDED.products_summary_json, raw_xml_preview = NULL,
-  fetched_at = EXCLUDED.fetched_at, sale_points_json = EXCLUDED.sale_points_json,
-  sale_centers_json = EXCLUDED.sale_centers_json;
+SELECT ${columns(masterColumns, "expected")}
+FROM hydration_expected_master expected
+WHERE (SELECT should_insert FROM hydration_control);
 
 INSERT INTO public.product_mappings (
-  connection_id, provider_product_id, provider_product_name, winerim_wine_id,
-  winerim_wine_name, match_method, match_score, match_reasons, status,
-  format_type, agora_product_id
-) VALUES
-${valuesRows(mappingRows)}
-ON CONFLICT (connection_id, provider_product_id) DO UPDATE SET
-  provider_product_name = EXCLUDED.provider_product_name,
-  winerim_wine_id = EXCLUDED.winerim_wine_id,
-  winerim_wine_name = EXCLUDED.winerim_wine_name,
-  match_method = EXCLUDED.match_method,
-  match_score = EXCLUDED.match_score,
-  match_reasons = EXCLUDED.match_reasons,
-  status = 'CONFIRMED',
-  format_type = EXCLUDED.format_type,
-  agora_product_id = EXCLUDED.agora_product_id,
-  last_sync_error = NULL;
+  ${columns(mappingColumns)}
+)
+SELECT ${columns(mappingColumns, "expected")}
+FROM hydration_expected_mappings expected
+WHERE (SELECT should_insert FROM hydration_control);
 
 -- Exact postconditions, including the connection kill switches.
 DO $hydration_postcondition$
@@ -609,7 +686,7 @@ BEGIN
   ) THEN RAISE EXCEPTION 'HYDRATION_TARGET_STATE_CHANGED'; END IF;
   SELECT count(*) INTO wine_count FROM public.winerim_wines WHERE connection_id = ${sqlText(connectionId)}::uuid;
   SELECT count(*) INTO provider_count FROM public.provider_products WHERE connection_id = ${sqlText(connectionId)}::uuid;
-  SELECT count(*) INTO mapping_count FROM public.product_mappings WHERE connection_id = ${sqlText(connectionId)}::uuid AND status = 'CONFIRMED';
+  SELECT count(*) INTO mapping_count FROM public.product_mappings WHERE connection_id = ${sqlText(connectionId)}::uuid;
   SELECT count(*) INTO master_count FROM public.agora_master_data WHERE connection_id = ${sqlText(connectionId)}::uuid;
   IF wine_count <> ${plan.counts.currentWinerimWines}
     OR provider_count <> ${plan.counts.currentAgoraProducts}
@@ -617,16 +694,9 @@ BEGIN
     OR master_count <> 1
   THEN RAISE EXCEPTION 'HYDRATION_POSTCONDITION_COUNT_MISMATCH wines=% providers=% mappings=% master=%', wine_count, provider_count, mapping_count, master_count;
   END IF;
-  IF EXISTS (
-    SELECT 1 FROM public.product_mappings row
-    WHERE row.connection_id = ${sqlText(connectionId)}::uuid
-      AND (row.status <> 'CONFIRMED' OR NOT EXISTS (
-        SELECT 1 FROM hydration_expected_mappings expected
-        WHERE expected.provider_product_id = row.provider_product_id
-          AND expected.winerim_wine_id = row.winerim_wine_id
-          AND expected.format_type = row.format_type
-      ))
-  ) THEN RAISE EXCEPTION 'HYDRATION_POSTCONDITION_UNEXPECTED_MAPPING'; END IF;
+  IF ${semanticMismatchSql} THEN
+    RAISE EXCEPTION 'HYDRATION_POSTCONDITION_SEMANTIC_MISMATCH';
+  END IF;
 END
 $hydration_postcondition$;
 

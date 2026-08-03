@@ -18,16 +18,23 @@ function syntheticSources() {
       mappings: { data: [
         { provider_product_id: "500101", provider_product_name: "B Exact", winerim_wine_id: "101", winerim_wine_name: "Exact", format_type: "BOTTLE", status: "CONFIRMED" },
         { provider_product_id: "700102", provider_product_name: "B Missing wine", winerim_wine_id: "102", winerim_wine_name: "Gone", format_type: "BOTTLE", status: "CONFIRMED" },
-        { provider_product_id: "900101", provider_product_name: "C No glass", winerim_wine_id: "101", winerim_wine_name: "Exact", format_type: "GLASS", status: "CONFIRMED" },
+        { provider_product_id: "900101", provider_product_name: "M No magnum", winerim_wine_id: "101", winerim_wine_name: "Exact", format_type: "MAGNUM", status: "CONFIRMED" },
+        { provider_product_id: "901101", provider_product_name: "C Inactive", winerim_wine_id: "101", winerim_wine_name: "Exact", format_type: "GLASS", status: "CONFIRMED" },
       ] },
     },
-    masterXml: `<?xml version="1.0"?><Export><Families><Family Id="1" Name="WINERIM" /></Families><Products>
+    masterXml: `<?xml version="1.0"?><Export><Families><Family Id="1" Name="TINTOS WINERIM" /><Family Id="2" Name="COMIDA" /></Families><Products>
       <Product Id="500101" Name="B Exact" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="20.00" /></Prices></Product>
       <Product Id="700102" Name="B Missing wine" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="30.00" /></Prices></Product>
-      <Product Id="900101" Name="C No glass" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="5.00" /></Prices></Product>
+      <Product Id="900101" Name="M No magnum" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="40.00" /></Prices></Product>
+      <Product Id="901101" Name="C Inactive" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="5.00" /></Prices></Product>
+      <Product Id="600103" Name="B Unmapped Winerim family" FamilyId="1"><Prices><Price PriceListId="4" MainPrice="22.00" /></Prices></Product>
+      <Product Id="10" Name="Food" FamilyId="2"><Prices><Price PriceListId="4" MainPrice="9.00" /></Prices></Product>
     </Products></Export>`,
     winesDocument: { success: true, wines: [{ id: 101, name: "Exact", type: "tinto", vintage: "2024" }] },
-    stockDocument: { success: true, stocks: [{ id: 1001, stock: 4, stockActive: true, winePrice: { price: "20", variant: "botella", wine: { id: 101, name: "Exact" } } }] },
+    stockDocument: { success: true, stocks: [
+      { id: 1001, stock: 4, stockActive: true, winePrice: { price: "20", variant: "botella", wine: { id: 101, name: "Exact" } } },
+      { id: 1002, stock: 0, stockActive: false, winePrice: { price: "5", variant: "copa", wine: { id: 101, name: "Exact" } } },
+    ] },
     generatedAt: "2026-08-03T10:00:00.000Z",
   };
 }
@@ -35,35 +42,91 @@ function syntheticSources() {
 describe("disabled connection hydration generator", () => {
   it("accepts only exact current Product.Id + wineId + stock variant mappings", () => {
     const plan = buildDisabledConnectionHydration(syntheticSources());
-    expect(plan.counts).toMatchObject({ snapshotMappings: 3, acceptedMappings: 1, rejectedMappings: 2 });
+    expect(plan.counts).toMatchObject({
+      snapshotMappings: 4,
+      acceptedMappings: 1,
+      rejectedMappings: 3,
+      inactiveWinerimStocks: 1,
+      confirmedProviderWineCandidates: 1,
+      ambiguousProviderWineCandidates: 4,
+    });
     expect(plan.acceptedMappings).toEqual([expect.objectContaining({
       providerProductId: "500101",
       winerimWineId: "101",
       formatType: "BOTTLE",
       stockId: 1001,
+      stockActive: true,
       status: "CONFIRMED",
     })]);
     expect(plan.rejectedMappings.map((mapping) => mapping.reason).sort()).toEqual([
       "STOCK_VARIANT_NOT_CURRENT",
+      "STOCK_VARIANT_INACTIVE",
       "WINERIM_WINE_NOT_CURRENT",
-    ]);
+    ].sort());
+    expect(plan.acceptedMappings.every((mapping) => mapping.stockId !== 1002)).toBe(true);
+    expect(plan.rejectedMappings.find((mapping) => mapping.reason === "STOCK_VARIANT_INACTIVE")).toMatchObject({
+      stockId: 1002,
+      stockActive: false,
+    });
   });
 
-  it("renders replay-safe SQL guarded by disabled, catalog-off and write NONE before and after", () => {
+  it("keeps rejected and unmapped Winerim-family products as ambiguous wine candidates", () => {
+    const plan = buildDisabledConnectionHydration(syntheticSources());
+    for (const productId of ["700102", "900101", "901101", "600103"]) {
+      expect(plan.providerProducts.find((product) => product.providerProductId === productId)).toMatchObject({
+        isWineCandidate: true,
+        classificationStatus: "AMBIGUOUS",
+        syncStatus: "BLOCKED",
+        syncError: "HYDRATION_WINE_CANDIDATE_AMBIGUOUS",
+        winerimWineId: null,
+        saleFormat: null,
+      });
+    }
+    expect(plan.providerProducts.find((product) => product.providerProductId === "10")).toMatchObject({
+      isWineCandidate: false,
+      classificationStatus: "NOT_WINE",
+      syncStatus: "NOT_SYNCED",
+    });
+  });
+
+  it("renders one-shot SQL with row/table locks and exact semantic no-op replay", () => {
     const plan = buildDisabledConnectionHydration(syntheticSources());
     const sql = renderHydrationSql(plan);
     expect(sql).toContain("enabled IS FALSE");
     expect(sql).toContain("catalog_sync_enabled IS FALSE");
     expect(sql).toContain("write_mode = 'NONE'");
-    expect(sql).toContain("ON CONFLICT (connection_id, winerim_id) DO UPDATE");
-    expect(sql).toContain("ON CONFLICT (connection_id, provider_product_id) DO UPDATE");
+    expect(sql).toContain("target_write_mode IS DISTINCT FROM 'NONE'");
+    expect(sql).toContain("FOR UPDATE;");
+    expect(sql).toContain("IN SHARE ROW EXCLUSIVE MODE");
+    expect(sql.indexOf("FOR UPDATE;")).toBeLessThan(sql.indexOf("LOCK TABLE public.winerim_wines"));
+    expect(sql.indexOf("LOCK TABLE public.winerim_wines")).toBeLessThan(sql.indexOf("SELECT count(*) INTO wine_count"));
+    expect(sql.indexOf("SELECT count(*) INTO wine_count")).toBeLessThan(sql.indexOf("INSERT INTO public.winerim_wines"));
+    expect(sql).toContain("HYDRATION_TARGET_NOT_EMPTY_OR_IDENTICAL");
+    expect(sql).toContain("WINERIM_RESCUE_HYDRATION_V2_SHA256:");
+    expect(sql).toContain("INSERT INTO hydration_control VALUES (false");
+    expect(sql).not.toMatch(/ON CONFLICT|DO UPDATE|TRUNCATE|DELETE FROM/i);
     expect(sql).toContain("HYDRATION_POSTCONDITION_COUNT_MISMATCH");
-    const mappingSection = sql.slice(sql.indexOf("INSERT INTO public.product_mappings"));
+    const mappingSection = sql.slice(
+      sql.indexOf("INSERT INTO hydration_expected_mappings"),
+      sql.indexOf("CREATE TEMP TABLE hydration_control"),
+    );
     expect(mappingSection).toContain("500101");
+    expect(mappingSection).toContain("CURRENT_BOTTLE_STOCK_ACTIVE_TRUE");
     expect(mappingSection).not.toContain("700102");
     expect(mappingSection).not.toContain("900101");
+    expect(mappingSection).not.toContain("901101");
     expect(sql).not.toMatch(/api_token|winerim_api_token|last_business_day_synced|sales_events|outbound_tasks|runtime_canary_connections/i);
     expect(sql).not.toContain("SET enabled");
+  });
+
+  it("changes the semantic digest when an input changes, preventing stale replay", () => {
+    const initial = buildDisabledConnectionHydration(syntheticSources());
+    const changedSources = syntheticSources();
+    changedSources.stockDocument.stocks[0].stock = 3;
+    const changed = buildDisabledConnectionHydration(changedSources);
+    expect(changed.hydrationDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(changed.hydrationDigest).not.toBe(initial.hydrationDigest);
+    expect(renderHydrationSql(changed)).toContain(`WINERIM_RESCUE_HYDRATION_V2_SHA256:${changed.hydrationDigest}`);
   });
 
   it("rejects unsafe or structurally ambiguous XML", () => {
@@ -87,7 +150,7 @@ describe("disabled connection hydration generator", () => {
   };
   const realFixtureAvailable = Object.values(realPaths).every(existsSync);
 
-  it.runIf(realFixtureAvailable)("reconciles the real El Bejeque fixture as 95 exact and 11 rejected", () => {
+  it.runIf(realFixtureAvailable)("reconciles active stock only in the real El Bejeque fixture", () => {
     const plan = buildDisabledConnectionHydration({
       connectionId,
       snapshot: JSON.parse(readFileSync(realPaths.snapshot, "utf8")),
@@ -96,9 +159,27 @@ describe("disabled connection hydration generator", () => {
       stockDocument: JSON.parse(readFileSync(realPaths.stock, "utf8")),
       generatedAt: "2026-08-03T10:00:00.000Z",
     });
-    expect(plan.counts.acceptedMappings).toBe(95);
-    expect(plan.counts.rejectedMappings).toBe(11);
-    expect(plan.rejectedByReason).toEqual({ WINERIM_WINE_NOT_CURRENT: 10, STOCK_VARIANT_NOT_CURRENT: 1 });
+    expect(plan.counts).toMatchObject({
+      acceptedMappings: 72,
+      rejectedMappings: 34,
+      inactiveWinerimStocks: 24,
+      confirmedProviderWineCandidates: 72,
+      ambiguousProviderWineCandidates: 34,
+    });
+    expect(plan.rejectedByReason).toEqual({
+      WINERIM_WINE_NOT_CURRENT: 10,
+      STOCK_VARIANT_INACTIVE: 23,
+      STOCK_VARIANT_NOT_CURRENT: 1,
+    });
+    expect(plan.acceptedMappings).toHaveLength(72);
+    expect(plan.acceptedMappings.every((mapping) => mapping.stockActive === true)).toBe(true);
+    expect(plan.rejectedMappings.filter((mapping) => mapping.reason === "STOCK_VARIANT_INACTIVE").every((mapping) => (
+      Number.isInteger(mapping.stockId) && mapping.stockActive === false
+    ))).toBe(true);
+    expect(plan.providerProducts.filter((product) => product.classificationStatus === "AMBIGUOUS")).toHaveLength(34);
+    expect(plan.providerProducts.filter((product) => product.classificationStatus === "AMBIGUOUS").every((product) => (
+      product.isWineCandidate === true && product.syncStatus === "BLOCKED" && product.winerimWineId === null
+    ))).toBe(true);
     expect(plan.rejectedMappings.find((mapping) => mapping.reason === "STOCK_VARIANT_NOT_CURRENT")).toMatchObject({
       providerProductId: "1122870",
       winerimWineId: "222870",
