@@ -70,7 +70,7 @@ test "$middleware_roles" = 0 || { printf 'RESCUE_PRODUCTION_UNKNOWN_ROLE_PRESTAT
 bootstrap="$TMP_ROOT/bootstrap.sql"
 "$SCRIPT_DIR/build-bootstrap.sh" "$bootstrap" >/dev/null
 seed_sha=$("${SHA256[@]}" "$SEED_SQL" | awk '{print $1}')
-plan_sha=$(cat "$bootstrap" "$SEED_SQL" "$SCRIPT_DIR/rescue-production-target.mjs" "$SCRIPT_DIR/backup-rescue-production.sh" "$SCRIPT_DIR/verify-rescue-production.sh" "$SCRIPT_DIR/apply-rescue-production.sh" "$SCRIPT_DIR/rollback-rescue-production.sh" | "${SHA256[@]}" | awk '{print $1}')
+plan_sha=$(cat "$bootstrap" "$SEED_SQL" "$SCRIPT_DIR/rescue-production-target.mjs" "$SCRIPT_DIR/verify-encrypted-backup-root.mjs" "$SCRIPT_DIR/backup-rescue-production.sh" "$SCRIPT_DIR/verify-rescue-production.sh" "$SCRIPT_DIR/apply-rescue-production.sh" "$SCRIPT_DIR/rollback-rescue-production.sh" | "${SHA256[@]}" | awk '{print $1}')
 printf 'RESCUE_PRODUCTION_PLAN_OK project_ref=%s environment=rescue-production pre_tables=0 post_tables=30 connections=31 plan_sha256=%s seed_sha256=%s\n' "$project_ref" "$plan_sha" "$seed_sha"
 
 if [ "$APPLY" -ne 1 ]; then
