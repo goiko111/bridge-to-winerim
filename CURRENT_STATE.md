@@ -2,7 +2,42 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-08-03 13:58 CEST_
+_Última actualización: 2026-08-03 15:05 CEST_
+
+## El Bejeque - tooling canary fail-closed - 2026-08-03
+
+### Hechos
+
+- Existe un provisionador local que cifra Agora+Winerim con AES-256-GCM y el
+  AAD exacto del runtime. Solo genera SQL privado `0600`, inserta ambas filas
+  con `active=false` y rechaza vault no vacio, candidato no inerte, scopes
+  activos o filas operativas.
+- Existe un preparador de retirada rescue que desactiva credenciales, scope y
+  conexion sin borrar filas ni logs, y genera el orden de retirada de recursos
+  Cloudflare. El modo por defecto de ambas herramientas es plan-only.
+- PostgreSQL 17 local verifico provision, activacion simulada y retirada:
+  estado final `0` credenciales activas, `0` scopes activos y conexion apagada.
+- Validacion: root `539/539`, executor `61/61`, fail-closed `15/15`, TypeScript,
+  lint acotado y `git diff --check` verdes.
+- No se cargaron tokens reales, no se conecto a Supabase/Cloudflare/Agora/
+  Winerim y no hubo deploy ni escritura productiva.
+- La revision independiente detecto y se corrigieron: replay de artefacto,
+  binding `runId`/scope, readback global, inventario incompleto Cloudflare y
+  rutas sensibles dentro del repo/symlink. La reprovision de la misma
+  conexion sigue exigiendo un procedimiento de rotacion versionada separado.
+- La segunda revision independiente no encuentra P0/P1: la retirada exige el
+  manifiesto de deploy `0600` y su SHA-256, usa locks y no puede apuntar a
+  recursos compartidos aportados manualmente.
+
+### Decision
+
+- Provisionar siempre inactivo y separar activacion de preparacion. La
+  retirada desactiva y conserva evidencia; nunca borra ni hace `TRUNCATE`.
+
+### Tareas pendientes
+
+- Rotar/revocar la credencial del writer anterior y obtener `401/403` antes de
+  renderizar/aplicar un artefacto real. Despues: probes, shadow y canary unico.
 
 ## El Bejeque - pre-canary seguro - 2026-08-03
 
@@ -23,9 +58,9 @@ _Última actualización: 2026-08-03 13:58 CEST_
 
 ### Tareas pendientes
 
-- Falta automatizar provision cifrado, retirada del canary rescue y limpieza
-  de scopes expirados. Las tareas `cf:runtime:canary:*` antiguas son solo para
-  staging y no deben usarse para este cutover.
+- Provision cifrado y retirada/cleanup rescue ya estan automatizados
+  localmente y validados. Las tareas `cf:runtime:canary:*` antiguas siguen
+  siendo solo para staging y no deben usarse para este cutover.
 - Rotar/revocar credencial, cargar solo El Bejeque en vault, dos probes
   read-only, shadow y una venta legitima con cola exclusiva y rollback.
 

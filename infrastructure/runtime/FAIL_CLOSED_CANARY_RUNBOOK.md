@@ -37,6 +37,8 @@ treating `RUNTIME_EXECUTION_ENABLED` as a writer lock.
 - four non-deployable Wrangler templates in the same directory, including a
   private rescue-production executor that keeps broad sales/cursor flags off
 - `infrastructure/runtime/prepare-writer-fence-grant.mjs`
+- `infrastructure/runtime/prepare-runtime-credential-provisioning.mjs`
+- `infrastructure/runtime/prepare-rescue-canary-retirement.mjs`
 - `infrastructure/runtime/render-failclosed-canary-configs.mjs`
 - `infrastructure/runtime/verify-failclosed-canary-package.mjs`
 - `infrastructure/runtime/smoke-failclosed-canary.sh`
@@ -110,6 +112,36 @@ CANARY_DLQ_ARCHIVE_BUCKET=<R2_BUCKET> \
 ```
 
 Do not store rendered IDs, grants or secret coordinates in Git.
+
+## Encrypted credential provisioning
+
+The command is plan-only unless `--render` and the exact connection
+confirmation are present:
+
+```sh
+npm run rescue:credentials:plan
+```
+
+After the legacy writer credential is rotated and its negative probe is
+recorded, render the two inactive rows outside the repository:
+
+```sh
+CANARY_CONNECTION_ID=<UUID> \
+RUNTIME_VAULT_KEY_VERSION=<VERSION> \
+RUNTIME_VAULT_MASTER_KEY=<BASE64_32_BYTE_KEY> \
+RUNTIME_AGORA_CREDENTIAL=<ROTATED_AGORA_TOKEN> \
+RUNTIME_WINERIM_CREDENTIAL=<WINERIM_TOKEN> \
+  node infrastructure/runtime/prepare-runtime-credential-provisioning.mjs \
+    --render \
+    --confirm-connection=<UUID> \
+    --output=/secure/tmp/runtime-credentials.sql
+```
+
+The SQL artifact is mode `0600`, contains ciphertext rather than plaintext,
+and inserts both rows with `active=false`. It refuses an existing credential
+row, an active scope, an active credential, a non-inert connection or any
+operational receipt for the candidate. Review and apply it through the
+separate database gate; rendering never opens the runtime.
 
 ## Writer fence procedure
 
@@ -189,3 +221,26 @@ outer Queue boundary after the sales branch is merged.
 6. Follow `RESCUE_PRODUCTION_CUTOVER_RUNBOOK.md`; database rollback is
    append-only after the first real receipt and stock compensation is separately
    fenced and readback-gated.
+
+Prepare the exact database/resource retirement plan without executing it:
+
+```sh
+CANARY_CONNECTION_ID=<UUID> \
+CANARY_RUN_ID=<RUN> \
+CANARY_SCOPE_APPROVED_AT=<EXACT_ISO_TIMESTAMP> \
+CANARY_DEPLOYMENT_MANIFEST=/secure/tmp/canary-configs/canary-deployment-manifest.json \
+CANARY_DEPLOYMENT_MANIFEST_SHA256=<CAPTURED_RENDER_SHA256> \
+  node infrastructure/runtime/prepare-rescue-canary-retirement.mjs \
+    --render \
+    --confirm-connection=<UUID> \
+    --output-dir=/secure/tmp/canary-retirement
+```
+
+The renderer-created deployment manifest and its separately captured SHA-256
+bind retirement to the exact Workers, Queues, secret bindings and archive
+bucket used by that run. The SQL locks the three control-plane tables and
+deactivates both credential rows, the exact scope and the candidate connection
+in one transaction. It preserves credentials, receipts, logs and DLQ evidence.
+The adjacent JSON plan orders Cloudflare cleanup only after the consumer is
+paused, all four Queues are read back and database retirement has succeeded.
+It does not execute Cloudflare commands.

@@ -30,11 +30,25 @@ CANARY_DLQ_ARCHIVE_BUCKET=winerim-canary-dlq-smoke \
   node infrastructure/runtime/render-failclosed-canary-configs.mjs \
     --output-dir="$RENDER_DIR" >/dev/null
 
-test "$(find "$RENDER_DIR" -type f | wc -l | tr -d ' ')" = "4"
+test "$(find "$RENDER_DIR" -type f | wc -l | tr -d ' ')" = "5"
 test "$(find "$RENDER_DIR" -type f ! -perm 600 | wc -l | tr -d ' ')" = "0"
 ! rg -Fq '{{' "$RENDER_DIR"
 ! rg -Fq 'winerim-staging-sales' "$RENDER_DIR"
 ! rg -Fq 'winerim-rescue-prod-sales' "$RENDER_DIR"
+node - "$RENDER_DIR/canary-deployment-manifest.json" <<'NODE'
+const { readFileSync } = require("node:fs");
+const manifest = JSON.parse(readFileSync(process.argv[2], "utf8"));
+if (manifest.runId !== "smoke-a") throw new Error("SMOKE_MANIFEST_RUN_MISMATCH");
+if (manifest.scopeNote !== "rescue-canary-run:smoke-a") {
+  throw new Error("SMOKE_MANIFEST_SCOPE_MISMATCH");
+}
+if (Object.keys(manifest.resources.queues).length !== 4) {
+  throw new Error("SMOKE_MANIFEST_QUEUE_INVENTORY_MISMATCH");
+}
+if (Object.keys(manifest.resources.workers).length !== 4) {
+  throw new Error("SMOKE_MANIFEST_WORKER_INVENTORY_MISMATCH");
+}
+NODE
 npx vitest run \
   --config cloudflare/canary-failclosed/vitest.config.ts
 

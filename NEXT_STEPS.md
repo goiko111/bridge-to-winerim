@@ -7,8 +7,10 @@
 - [x] Aplicar `72 -> 95` mappings con backup, readback y rollback.
 - [x] Endurecer sales para stockId exacto y sales-only inactivo fail-closed.
 - [x] Validar suites, verifier, paquete fence y backup restaurable.
-- [ ] Implementar provisionador cifrado de dos credenciales sin exponerlas.
-- [ ] Implementar retirada/cleanup del canary rescue y scope expirado.
+- [x] Implementar provisionador cifrado de dos credenciales sin exponerlas;
+  genera solo artefacto privado inactivo y fail-closed.
+- [x] Implementar retirada/cleanup del canary rescue y scope expirado sin
+  borrar evidencias; validado en PostgreSQL 17 local.
 - [ ] Rotar credencial antigua y obtener evidencia `401/403` antes del grant.
 - [ ] Dos probes read-only, shadow y una sola venta legitima; mantener todo el
   resto apagado.

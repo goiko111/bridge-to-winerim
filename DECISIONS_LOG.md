@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-08-03 - Credenciales inactivas y retirada sin borrado
+- **Decision**: separar preparacion y activacion. El provisionador solo inserta
+  Agora+Winerim cifrados con `active=false`; la retirada desactiva
+  credenciales, scope y conexion, conservando filas y logs.
+- **Razon**: un render parcial, scope expirado o abort del canary debe quedar
+  fail-closed y auditable, sin abrir un segundo writer ni perder evidencia.
+- **Alternativa descartada**: `upsert` de credenciales activas, limpieza por
+  `DELETE/TRUNCATE` o reutilizar scripts antiguos de staging.
+- **Rollback / mitigacion**: SQL transaccional con identidad exacta del scope,
+  readback final y artefactos `0600`; la rotacion real sigue separada y gateada.
+
 ## 2026-08-03 - El Bejeque acepta stock inactivo solo como sales-only
 - **Decision**: conservar identidades exactas con `stockActive=false` para
   historico `live=false`, exigiendo `stockId` exacto, pero bloquearlas para

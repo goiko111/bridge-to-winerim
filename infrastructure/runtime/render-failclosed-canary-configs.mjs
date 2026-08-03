@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,7 +139,49 @@ export function renderFailclosedCanaryConfigs({
     chmodSync(outputPath, 0o600);
     outputs[key] = outputPath;
   }
-  return { outputs, queueName, dlqName, alarmName, observerFailureName };
+  const deploymentManifest = {
+    version: 1,
+    runId,
+    connectionId,
+    scopeNote: `rescue-canary-run:${runId}`,
+    resources: {
+      queues: {
+        input: queueName,
+        dlq: dlqName,
+        alarms: alarmName,
+        observerFailures: observerFailureName,
+      },
+      workers: {
+        consumer: queueName,
+        executor: executorService,
+        fence: fenceService,
+        observer: `winerim-rescue-prod-canary-dlq-observer-${runId}`,
+      },
+      secrets: {
+        vault: runtimeVaultSecretName,
+        proof: proofSecretName,
+        grant: grantSecretName,
+      },
+      archiveBucket,
+    },
+    configSha256: Object.fromEntries(Object.entries(outputs).map(([key, path]) => [
+      key,
+      createHash("sha256").update(readFileSync(path)).digest("hex"),
+    ])),
+  };
+  const manifest = `${JSON.stringify(deploymentManifest, null, 2)}\n`;
+  const manifestPath = resolve(outputDir, "canary-deployment-manifest.json");
+  writeFileSync(manifestPath, manifest, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  chmodSync(manifestPath, 0o600);
+  return {
+    outputs,
+    queueName,
+    dlqName,
+    alarmName,
+    observerFailureName,
+    manifestPath,
+    manifestSha256: createHash("sha256").update(manifest).digest("hex"),
+  };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
