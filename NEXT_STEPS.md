@@ -11,11 +11,15 @@
   fail-closed, suite root, TypeScript, build y Wrangler dry-run.
 - [x] Cerrar drain programatico, orden de retirada y binding exacto de
   credenciales/RLS/readiness/vault al `run_id` activo.
-- [ ] Backup rescue fresh y aplicar `0013` solo con control plane vacio.
-- [ ] Pausar consumer/writer, revocar grants, esperar `>=130 s`, rotar y
-  obtener `401/403` sanitizado mas dos probes read-only correctos.
-- [ ] Provisionar inactivo, desplegar recursos dedicados, activar run exacto,
-  verificar y ejecutar solo una operacion controlada.
+- [x] Revalidar backup, crear snapshot logico fresco y aplicar `0013` solo con
+  control plane vacio.
+- [x] Rotar login runtime/Hyperdrive, activar vault key rescue y crear cuatro
+  Queues exclusivas inertes para `bejeque-20260803-a`.
+- [ ] Aprobar/habilitar R2 Standard; no ejecutar checkout automaticamente.
+- [ ] Rotar tokens Agora/Winerim, guardar `401/403`, esperar `>=130 s` y
+  obtener dos probes read-only correctos.
+- [ ] Provisionar inactivo, crear bucket R2, desplegar recursos dedicados,
+  activar run exacto, verificar y ejecutar solo una operacion controlada.
 
 ## P0 - El Bejeque rescue pre-canary
 
@@ -26,7 +30,8 @@
   genera solo artefacto privado inactivo y fail-closed.
 - [x] Implementar retirada/cleanup del canary rescue y scope expirado sin
   borrar evidencias; validado en PostgreSQL 17 local.
-- [ ] Rotar credencial antigua y obtener evidencia `401/403` antes del grant.
+- [ ] Rotar credenciales Agora/Winerim y obtener evidencia `401/403` antes del
+  grant.
 - [ ] Dos probes read-only, shadow y una sola venta legitima; mantener todo el
   resto apagado.
 

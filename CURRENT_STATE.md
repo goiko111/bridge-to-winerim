@@ -2,7 +2,40 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-08-03 16:46 CEST_
+_Última actualización: 2026-08-03 17:44 CEST_
+
+## El Bejeque - esquema y recursos externos inertes - 2026-08-03
+
+### Hechos
+
+- Backup cifrado anterior a `0013` revalidado y snapshot logico fresco de las
+  `30` tablas creado en el volumen cifrado. Estado fresco: `31` conexiones,
+  El Bejeque `70/409/95/1` y cero filas operativas.
+- `0013_runtime_canary_control_plane_history.sql` quedo aplicada en rescue.
+  Readback: `run_id NOT NULL`, `6` constraints, `2` triggers, control plane
+  vacio y sin privilegios `anon/authenticated`.
+- `middleware_runtime_login` y el Hyperdrive rescue se rotaron y validaron con
+  una consulta read-only.
+- La vault key rescue esta activa en el unico Secrets Store de la cuenta; su
+  copia privada tiene modo `0600` en el volumen cifrado.
+- Existen cuatro Queues exclusivas para `bejeque-20260803-a`, todas con `0`
+  productores y `0` consumidores.
+- No hubo deploy de Workers, activacion de conexion, ventas, stock, cursor,
+  catalogo ni llamadas a TPV/Winerim.
+
+### Decisiones
+
+- Reutilizar el unico Secrets Store con nombres separados por entorno.
+- No habilitar R2 sin aprobacion del checkout y no desplegar Workers sin R2,
+  tokens rotados y manifests completos.
+
+### Tareas pendientes
+
+- Aprobar/habilitar R2 Standard.
+- Rotar tokens Agora y Winerim de El Bejeque; obtener `401/403` antiguo,
+  esperar `>=130 s` y completar dos probes read-only nuevos.
+- Provisionar credenciales inactivas, render/deploy dedicado, activation,
+  verifier, shadow y una sola operacion controlada.
 
 ## El Bejeque - activacion y rotacion versionadas - 2026-08-03
 
@@ -27,7 +60,8 @@ _Última actualización: 2026-08-03 16:46 CEST_
   heredados fuera de este bloque.
 - La revision independiente final devuelve `SIN_P0_P1` tras exigir `run_id`
   tambien en el vault y alinear `RETIRED`/`ABORTED` como estados terminales.
-- El Bejeque sigue apagado. No hubo push, deploy, secretos ni writes remotos.
+- En este bloque local El Bejeque seguia apagado; el bloque externo posterior
+  aplica `0013` y crea recursos inertes, documentado arriba.
 
 ### Decision
 

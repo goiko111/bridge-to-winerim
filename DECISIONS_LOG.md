@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-08-03 - Recursos rescue segregados y R2 con gate de coste
+- **Decision**: reservar `bejeque-20260803-a`, cuatro Queues dedicadas y una
+  vault key rescue namespaced en el unico Secrets Store disponible. Mantener
+  todo sin producer/consumer hasta completar la rotacion externa.
+- **Razon**: Cloudflare limita la beta a un store por cuenta; los nombres y
+  bindings separados evitan mezclar staging/rescue sin duplicar el store.
+- **Alternativa descartada**: reutilizar colas compartidas, reutilizar la key
+  staging o desplegar sin ledger R2.
+- **Rollback / mitigacion**: colas sin bindings, secreto revocable y conexion
+  rescue apagada. R2 exige checkout y no se habilita sin aprobacion explicita.
+
 ## 2026-08-03 - Activacion versionada y drain antes de rotacion
 - **Decision**: cada canary usa un `run_id` unico y se activa en una sola
   transaccion ligada a manifests SHA-256. Scope y credenciales retirados son
