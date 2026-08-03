@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-08-03 - R2 autorizado; no sustituye el writer fence
+- **Decision**: activar R2 Standard, crear bucket exclusivo de El Bejeque y
+  validar su ciclo remoto. Mantener el deploy unido a la pareja de tokens
+  rotada y a la evidencia del writer fence.
+- **Razon**: R2 ya puede conservar DLQ/evidencia, pero no evita que Lovable
+  use las mismas credenciales si se recupera.
+- **Alternativa descartada**: desplegar con manifests parciales, hashes
+  ficticios o tokens compartidos solo porque el runtime permanezca inerte.
+- **Rollback / mitigacion**: bucket vacio, sin bindings ni Workers; cuatro
+  Queues sin productores/consumidores y todas las conexiones apagadas.
+
 ## 2026-08-03 - Recursos rescue segregados y R2 con gate de coste
 - **Decision**: reservar `bejeque-20260803-a`, cuatro Queues dedicadas y una
   vault key rescue namespaced en el unico Secrets Store disponible. Mantener

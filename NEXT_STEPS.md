@@ -15,11 +15,15 @@
   control plane vacio.
 - [x] Rotar login runtime/Hyperdrive, activar vault key rescue y crear cuatro
   Queues exclusivas inertes para `bejeque-20260803-a`.
-- [ ] Aprobar/habilitar R2 Standard; no ejecutar checkout automaticamente.
+- [x] Usuario autorizo R2 Standard; suscripcion activa, bucket exclusivo WEUR
+  creado y healthcheck remoto cerrado con `0` objetos.
+- [x] Congelar `9e4ebce`, inventario Cloudflare privado y repetir validacion
+  exacta de tests, PG17, TypeScript, build y Wrangler dry-runs.
 - [ ] Rotar tokens Agora/Winerim, guardar `401/403`, esperar `>=130 s` y
   obtener dos probes read-only correctos.
-- [ ] Provisionar inactivo, crear bucket R2, desplegar recursos dedicados,
-  activar run exacto, verificar y ejecutar solo una operacion controlada.
+- [ ] Provisionar inactivo, renderizar manifests, desplegar recursos dedicados
+  sin consumer, activar/verificar run exacto y ejecutar shadow.
+- [ ] Ejecutar solo una operacion controlada tras cerrar todos los gates.
 
 ## P0 - El Bejeque rescue pre-canary
 

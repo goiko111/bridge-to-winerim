@@ -2,7 +2,31 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-08-03 17:44 CEST_
+_Última actualización: 2026-08-03 18:26 CEST_
+
+## El Bejeque - R2 listo y release congelado - 2026-08-03
+
+### Hechos
+
+- R2 Standard quedo activo con coste base `0 USD` y bucket exclusivo WEUR.
+- Healthcheck remoto `write/read/delete` OK; readback final `0` objetos y
+  `0 B`.
+- Cuatro Queues dedicadas siguen con `0` productores y `0` consumidores.
+- Fuente exacta `9e4ebce` e inventario Cloudflare se guardaron en el volumen
+  cifrado con SHA-256 y modo `0600`.
+- Validacion exacta: root `546`, executor `61`, fail-closed `15`, tooling `14`,
+  PostgreSQL 17, TypeScript, build y dos Wrangler dry-runs OK.
+- No hubo deploy, consumer ni llamada a Agora/Winerim.
+
+### Decision
+
+- R2 deja de ser bloqueo. No desplegar manifests parciales ni abrir el canary
+  hasta rotar la pareja Agora/Winerim y cercar el writer anterior.
+
+### Tareas pendientes
+
+- Rotacion proveedor, drain `>=130 s`, `401/403` antiguo y dos probes nuevos.
+- Provision cifrado inactivo, render/deploy, activacion/verifier y shadow.
 
 ## El Bejeque - esquema y recursos externos inertes - 2026-08-03
 
