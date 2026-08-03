@@ -3,6 +3,8 @@ import {
   type DatabaseAdapter,
   type DatabaseTransaction,
 } from "../../../../middleware-api/src/db";
+import type { JsonValue } from "../../contracts";
+import { canonicalJson, sha256Hex } from "../../idempotency";
 import type {
   ProviderSalesDocument,
   SalesClaimReservation,
@@ -15,6 +17,7 @@ import type {
   ExactSalesMapping,
   PostgresSalesAdapter,
   PostgresSalesAdapterOptions,
+  ProviderProductSalesClassification,
   SalesClaimReadback,
   SalesDocumentsReadback,
   SalesEventReadback,
@@ -32,6 +35,15 @@ type MappingRow = {
   wine_active: unknown;
 };
 
+type ProductClassificationRow = {
+  provider_product_id: unknown;
+  family: unknown;
+  is_wine_candidate: unknown;
+  classification_override: unknown;
+  last_score: unknown;
+  wine_score: unknown;
+};
+
 type ClaimRow = {
   idempotency_key: unknown;
   message_id: unknown;
@@ -40,6 +52,8 @@ type ClaimRow = {
   applied_quantity: unknown;
   lease_expires_at: unknown;
   lease_expired?: unknown;
+  payload_sha256?: unknown;
+  lease_token?: unknown;
   result: unknown;
   updated_at: unknown;
 };
@@ -116,6 +130,10 @@ function jsonRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(text).filter(Boolean) : [];
+}
+
 function normalizeVariant(value: unknown): SalesVariant | null {
   const normalized = text(value).trim().toUpperCase();
   if (["BOTTLE", "BOTELLA", "BOT"].includes(normalized)) return "BOTTLE";
@@ -143,6 +161,33 @@ function mappingFromRow(row: MappingRow): ExactSalesMapping | null {
     variant,
     stockId: nullableText(row.stock_id) ?? undefined,
     stockActive: boolean(row.wine_active),
+  };
+}
+
+function productClassificationFromRow(
+  row: ProductClassificationRow,
+): ProviderProductSalesClassification | null {
+  const providerProductId = text(row.provider_product_id).trim();
+  if (!providerProductId) return null;
+  const override = text(row.classification_override).trim().toUpperCase();
+  let classification: ProviderProductSalesClassification["classification"];
+  if (override === "WINE") {
+    classification = "WINE";
+  } else if (override === "NOT_WINE") {
+    classification = "NOT_WINE";
+  } else if (override && override !== "AUTO") {
+    classification = "AMBIGUOUS";
+  } else if (row.is_wine_candidate === true) {
+    classification = "WINE";
+  } else if (row.is_wine_candidate === false) {
+    classification = number(row.last_score ?? row.wine_score) > 0 ? "AMBIGUOUS" : "NOT_WINE";
+  } else {
+    classification = "AMBIGUOUS";
+  }
+  return {
+    providerProductId,
+    familyName: nullableText(row.family),
+    classification,
   };
 }
 
@@ -190,11 +235,59 @@ function claimMetadata(intent: SalesMutationIntent, appliedQuantity: number): Re
   return {
     appliedQuantity,
     orderId: intent.orderId,
+    provider: intent.provider,
+    businessDay: intent.businessDay,
     lifecycleId: intent.lifecycleId,
     winerimWineId: intent.winerimWineId,
     variant: intent.variant,
     sourceDocumentIds: intent.sourceDocumentIds,
     sourceLineIds: intent.sourceLineIds,
+    sourceDocumentKind: intent.sourceDocumentKind,
+  };
+}
+
+export async function buildSalesClaimPayloadHash(
+  intent: SalesMutationIntent,
+  appliedQuantityBefore = intent.observedAppliedQuantity,
+): Promise<string> {
+  const payload = JSON.parse(JSON.stringify({
+    version: 1,
+    claimKey: intent.claimKey,
+    orderId: intent.orderId,
+    connectionId: intent.connectionId,
+    provider: intent.provider,
+    businessDay: intent.businessDay,
+    lifecycleId: intent.lifecycleId,
+    winerimWineId: intent.winerimWineId,
+    variant: intent.variant,
+    desiredQuantity: intent.desiredQuantity,
+    appliedQuantityBefore,
+    action: intent.action,
+  })) as JsonValue;
+  return sha256Hex(canonicalJson(payload));
+}
+
+function claimSnapshot(row: ClaimRow): SalesClaimSnapshot {
+  const result = jsonRecord(row.result);
+  const variant = normalizeVariant(result.variant) ?? undefined;
+  const sourceDocumentKind = result.sourceDocumentKind === "OPEN_TICKET"
+    || result.sourceDocumentKind === "DEFINITIVE_INVOICE"
+    ? result.sourceDocumentKind
+    : undefined;
+  return {
+    claimKey: text(row.idempotency_key),
+    state: claimState(row.status),
+    appliedQuantity: number(row.applied_quantity ?? result.appliedQuantity),
+    ...(text(result.lifecycleId) ? { lifecycleId: text(result.lifecycleId) } : {}),
+    ...(text(result.winerimWineId) ? { winerimWineId: text(result.winerimWineId) } : {}),
+    ...(variant ? { variant } : {}),
+    ...(stringArray(result.sourceDocumentIds).length > 0
+      ? { sourceDocumentIds: stringArray(result.sourceDocumentIds) }
+      : {}),
+    ...(stringArray(result.sourceLineIds).length > 0
+      ? { sourceLineIds: stringArray(result.sourceLineIds) }
+      : {}),
+    ...(sourceDocumentKind ? { sourceDocumentKind } : {}),
   };
 }
 
@@ -272,6 +365,36 @@ export function createPostgresSalesAdapter(
   const readExactMappings = (providerProductIds: string[]) =>
     selectExactMappings(database, options.connectionId, providerProductIds);
 
+  const readProductClassifications = async (
+    providerProductIds: string[],
+    familyNames: string[],
+  ): Promise<ProviderProductSalesClassification[]> => {
+    const ids = Array.from(new Set(providerProductIds.map(String).map((value) => value.trim()).filter(Boolean))).sort();
+    const families = Array.from(new Set(
+      familyNames.map(String).map((value) => value.trim().toLowerCase()).filter(Boolean),
+    )).sort();
+    if (ids.length === 0 && families.length === 0) return [];
+    const result = await database.transaction(async (transaction) => transaction.query<ProductClassificationRow>(sql`
+      SELECT
+        provider_product_id,
+        family,
+        is_wine_candidate,
+        classification_override,
+        last_score,
+        wine_score
+      FROM public.provider_products
+      WHERE connection_id = ${options.connectionId}::uuid
+        AND (
+          provider_product_id = ANY(${ids}::text[])
+          OR lower(btrim(COALESCE(family, ''))) = ANY(${families}::text[])
+        )
+      ORDER BY provider_product_id ASC
+    `), { isolationLevel: "repeatable-read", readOnly: true });
+    return result.rows
+      .map(productClassificationFromRow)
+      .filter((row): row is ProviderProductSalesClassification => !!row);
+  };
+
   const readClaims = async (claimKeys: string[] = []): Promise<SalesClaimReadback[]> => {
     const keys = Array.from(new Set(claimKeys.map(String).filter(Boolean))).sort();
     const result = await database.transaction(async (transaction) => transaction.query<ClaimRow>(sql`
@@ -293,6 +416,62 @@ export function createPostgresSalesAdapter(
     return result.rows.map(mapClaim);
   };
 
+  const loadReconciliationClaims: NonNullable<PostgresSalesAdapter["loadReconciliationClaims"]> = async (input) => {
+    const lifecycleIds = Array.from(new Set(input.lifecycleIds.map(String).filter(Boolean))).sort();
+    const result = await database.transaction(async (transaction) => transaction.query<ClaimRow>(sql`
+      SELECT
+        ri.idempotency_key,
+        ri.message_id,
+        ri.job,
+        ri.status,
+        COALESCE((ri.result ->> 'appliedQuantity')::numeric, 0) AS applied_quantity,
+        ri.lease_expires_at,
+        ri.payload_sha256,
+        ri.lease_token,
+        ri.result,
+        ri.updated_at
+      FROM public.runtime_idempotency ri
+      WHERE ri.connection_id = ${options.connectionId}::uuid
+        AND ri.job = ${CLAIM_JOB}
+        AND (
+          ri.status = 'RUNNING'
+          OR COALESCE((ri.result ->> 'appliedQuantity')::numeric, 0) > 0
+        )
+        AND (
+          ri.result ->> 'lifecycleId' = ANY(${lifecycleIds}::text[])
+          OR (
+            ${input.includeMissingOpenTickets}
+            AND (
+              ri.result ->> 'sourceDocumentKind' = 'OPEN_TICKET'
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                  CASE
+                    WHEN jsonb_typeof(ri.result -> 'sourceDocumentIds') = 'array'
+                      THEN ri.result -> 'sourceDocumentIds'
+                    ELSE '[]'::jsonb
+                  END
+                ) source(document_id)
+                JOIN public.sales_events open_event
+                  ON open_event.connection_id = ri.connection_id
+                 AND open_event.provider_doc_id = source.document_id
+                 AND open_event.doc_type = 'OpenTicket'
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM public.sales_events definitive_event
+              WHERE definitive_event.connection_id = ri.connection_id
+                AND definitive_event.doc_type = 'BasicInvoice'
+                AND definitive_event.raw_json ->> 'lifecycleId' = ri.result ->> 'lifecycleId'
+            )
+          )
+        )
+      ORDER BY ri.updated_at DESC
+    `), { isolationLevel: "repeatable-read", readOnly: true });
+    return result.rows.map(claimSnapshot);
+  };
+
   const persistDocuments = async (documents: ProviderSalesDocument[]): Promise<void> => {
     for (const document of documents) {
       assertScope(options, { connectionId: options.connectionId, provider: document.provider });
@@ -301,7 +480,10 @@ export function createPostgresSalesAdapter(
       const mappingRows = await selectExactMappings(
         transaction,
         options.connectionId,
-        documents.flatMap((document) => document.lines.map((line) => line.providerProductId)),
+        documents.flatMap((document) => document.lines.flatMap((line) => [
+          line.providerProductId,
+          line.saleFormatId ?? "",
+        ])),
       );
       const mappings = new Map(mappingRows.map((mapping) => [mapping.providerProductId, mapping]));
 
@@ -348,9 +530,14 @@ export function createPostgresSalesAdapter(
         `);
 
         for (const line of document.lines) {
-          const mapping = mappings.get(line.providerProductId);
+          const mapping = mappings.get(line.providerProductId)
+            ?? (line.saleFormatId ? mappings.get(line.saleFormatId) : undefined);
           const format = mapping?.variant ?? line.suggestedVariant ?? null;
           const lineTotal = line.totalAmount ?? (line.unitPrice ?? 0) * line.quantity;
+          const isWineCandidate = !!mapping
+            || line.classification === "WINE"
+            || line.classification === "AMBIGUOUS"
+            || (line.classification === undefined && !!line.suggestedVariant);
           await transaction.query(sql`
             INSERT INTO public.sales_line_items (
               sales_event_id,
@@ -379,7 +566,7 @@ export function createPostgresSalesAdapter(
               ${line.unitPrice ?? 0},
               ${lineTotal},
               ${0},
-              ${!!mapping || !!line.suggestedVariant},
+              ${isWineCandidate},
               ${mapping?.winerimWineId ?? null},
               ${!!mapping},
               ${line.soldAt ?? null}::timestamp,
@@ -393,48 +580,10 @@ export function createPostgresSalesAdapter(
 
   const reserveClaim = async (intent: SalesMutationIntent): Promise<SalesClaimReservation> => {
     assertScope(options, intent);
+    const initialPayloadSha256 = await buildSalesClaimPayloadHash(intent);
+    const leaseToken = crypto.randomUUID();
     return database.transaction(async (transaction) => {
-      const initialResult = JSON.stringify(claimMetadata(intent, Math.max(0, intent.observedAppliedQuantity)));
-      const inserted = await transaction.query<ClaimRow>(sql`
-        INSERT INTO public.runtime_idempotency (
-          idempotency_key,
-          message_id,
-          connection_id,
-          job,
-          status,
-          attempt,
-          lease_expires_at,
-          result
-        ) VALUES (
-          ${intent.claimKey},
-          ${intent.orderId},
-          ${options.connectionId}::uuid,
-          ${CLAIM_JOB},
-          'RUNNING',
-          1,
-          now() + (${claimLeaseSeconds} * interval '1 second'),
-          ${initialResult}::jsonb
-        )
-        ON CONFLICT (idempotency_key) DO NOTHING
-        RETURNING
-          idempotency_key,
-          message_id,
-          job,
-          status,
-          COALESCE((result ->> 'appliedQuantity')::numeric, 0) AS applied_quantity,
-          lease_expires_at,
-          false AS lease_expired,
-          result,
-          updated_at
-      `);
-      if (inserted.rowCount > 0) {
-        return {
-          state: "ACQUIRED",
-          appliedQuantity: number(inserted.rows[0].applied_quantity),
-        };
-      }
-
-      const current = await transaction.query<ClaimRow>(sql`
+      const selectCurrent = () => transaction.query<ClaimRow>(sql`
         SELECT
           idempotency_key,
           message_id,
@@ -443,16 +592,96 @@ export function createPostgresSalesAdapter(
           COALESCE((result ->> 'appliedQuantity')::numeric, 0) AS applied_quantity,
           lease_expires_at,
           COALESCE(lease_expires_at <= now(), true) AS lease_expired,
+          payload_sha256,
+          lease_token,
           result,
           updated_at
         FROM public.runtime_idempotency
-        WHERE idempotency_key = ${intent.claimKey}
-          AND connection_id = ${options.connectionId}::uuid
+        WHERE connection_id = ${options.connectionId}::uuid
           AND job = ${CLAIM_JOB}
+          AND (
+            idempotency_key = ${intent.claimKey}
+            OR (
+              result ->> 'lifecycleId' = ${intent.lifecycleId}
+              AND result ->> 'winerimWineId' = ${intent.winerimWineId}
+              AND upper(result ->> 'variant') = ${intent.variant}
+            )
+          )
+        ORDER BY (idempotency_key = ${intent.claimKey}) DESC, updated_at DESC
+        LIMIT 2
         FOR UPDATE
       `);
+
+      let current = await selectCurrent();
+      if (current.rowCount > 1) {
+        throw new PostgresSalesAdapterInvariantError("SALES_CLAIM_DUPLICATE_IDENTITY_RECONCILIATION_REQUIRED");
+      }
+
+      const initialResult = JSON.stringify(claimMetadata(intent, Math.max(0, intent.observedAppliedQuantity)));
+      if (current.rowCount === 0) {
+        const inserted = await transaction.query<ClaimRow>(sql`
+          INSERT INTO public.runtime_idempotency (
+            idempotency_key,
+            message_id,
+            connection_id,
+            job,
+            status,
+            attempt,
+            lease_expires_at,
+            payload_sha256,
+            lease_token,
+            result
+          ) VALUES (
+            ${intent.claimKey},
+            ${intent.orderId},
+            ${options.connectionId}::uuid,
+            ${CLAIM_JOB},
+            'RUNNING',
+            1,
+            now() + (${claimLeaseSeconds} * interval '1 second'),
+            ${initialPayloadSha256},
+            ${leaseToken}::uuid,
+            ${initialResult}::jsonb
+          )
+          ON CONFLICT DO NOTHING
+          RETURNING
+            idempotency_key,
+            message_id,
+            job,
+            status,
+            COALESCE((result ->> 'appliedQuantity')::numeric, 0) AS applied_quantity,
+            lease_expires_at,
+            false AS lease_expired,
+            payload_sha256,
+            lease_token,
+            result,
+            updated_at
+        `);
+        if (inserted.rowCount === 1) {
+          return {
+            state: "ACQUIRED",
+            appliedQuantity: number(inserted.rows[0].applied_quantity),
+            claimKey: text(inserted.rows[0].idempotency_key) || intent.claimKey,
+            payloadSha256: initialPayloadSha256,
+            leaseToken,
+          };
+        }
+        current = await selectCurrent();
+        if (current.rowCount > 1) {
+          throw new PostgresSalesAdapterInvariantError("SALES_CLAIM_DUPLICATE_IDENTITY_RECONCILIATION_REQUIRED");
+        }
+      }
+
       const row = current.rows[0];
       if (!row) throw new PostgresSalesAdapterInvariantError("SALES_CLAIM_CONFLICT_NOT_FOUND");
+      const currentMetadata = jsonRecord(row.result);
+      if (
+        text(currentMetadata.lifecycleId) !== intent.lifecycleId
+        || text(currentMetadata.winerimWineId) !== intent.winerimWineId
+        || normalizeVariant(currentMetadata.variant) !== intent.variant
+      ) {
+        throw new PostgresSalesAdapterInvariantError("SALES_CLAIM_IDENTITY_MISMATCH");
+      }
       const appliedQuantity = number(row.applied_quantity);
       if (row.status === "SUCCESS" && appliedQuantity >= intent.desiredQuantity) {
         return { state: "DUPLICATE", appliedQuantity };
@@ -462,6 +691,7 @@ export function createPostgresSalesAdapter(
         return { state: "BUSY", appliedQuantity };
       }
 
+      const payloadSha256 = await buildSalesClaimPayloadHash(intent, appliedQuantity);
       const metadata = JSON.stringify(claimMetadata(intent, appliedQuantity));
       const reacquired = await transaction.query<ClaimRow>(sql`
         UPDATE public.runtime_idempotency
@@ -470,11 +700,17 @@ export function createPostgresSalesAdapter(
           status = 'RUNNING',
           attempt = attempt + 1,
           lease_expires_at = now() + (${claimLeaseSeconds} * interval '1 second'),
+          payload_sha256 = ${payloadSha256},
+          lease_token = ${leaseToken}::uuid,
           result = COALESCE(result, '{}'::jsonb) || ${metadata}::jsonb,
           updated_at = now()
-        WHERE idempotency_key = ${intent.claimKey}
+        WHERE idempotency_key = ${text(row.idempotency_key)}
           AND connection_id = ${options.connectionId}::uuid
           AND job = ${CLAIM_JOB}
+          AND (
+            status IN ('SUCCESS', 'RETRY')
+            OR (status = 'RUNNING' AND COALESCE(lease_expires_at <= now(), true))
+          )
         RETURNING
           idempotency_key,
           message_id,
@@ -483,13 +719,21 @@ export function createPostgresSalesAdapter(
           COALESCE((result ->> 'appliedQuantity')::numeric, 0) AS applied_quantity,
           lease_expires_at,
           false AS lease_expired,
+          payload_sha256,
+          lease_token,
           result,
           updated_at
       `);
       if (reacquired.rowCount !== 1) {
         throw new PostgresSalesAdapterInvariantError("SALES_CLAIM_REACQUIRE_FAILED");
       }
-      return { state: "ACQUIRED", appliedQuantity };
+      return {
+        state: "ACQUIRED",
+        appliedQuantity,
+        claimKey: text(row.idempotency_key),
+        payloadSha256,
+        leaseToken,
+      };
     }, { isolationLevel: "serializable", readOnly: false });
   };
 
@@ -509,6 +753,8 @@ export function createPostgresSalesAdapter(
         AND job = ${CLAIM_JOB}
         AND status = 'RUNNING'
         AND message_id = ${input.orderId}
+        AND payload_sha256 = ${input.payloadSha256}
+        AND lease_token = ${input.leaseToken}::uuid
       RETURNING idempotency_key
     `);
     if (result.rowCount !== 1) {
@@ -533,6 +779,8 @@ export function createPostgresSalesAdapter(
         AND job = ${CLAIM_JOB}
         AND status = 'RUNNING'
         AND message_id = ${input.orderId}
+        AND payload_sha256 = ${input.payloadSha256}
+        AND lease_token = ${input.leaseToken}::uuid
       RETURNING idempotency_key
     `);
     if (result.rowCount !== 1) {
@@ -614,16 +862,33 @@ export function createPostgresSalesAdapter(
       const mappings = await readExactMappings([input.line.providerProductId]);
       return mappings[0] ?? null;
     },
-    loadClaims: async (claimKeys) => (await readClaims(claimKeys)).map(({ claimKey, state, appliedQuantity }) => ({
-      claimKey,
-      state,
-      appliedQuantity,
+    loadClaims: async (claimKeys) => (await readClaims(claimKeys)).map((claim) => ({
+      claimKey: claim.claimKey,
+      state: claim.state,
+      appliedQuantity: claim.appliedQuantity,
+      ...(text(claim.result.lifecycleId) ? { lifecycleId: text(claim.result.lifecycleId) } : {}),
+      ...(text(claim.result.winerimWineId) ? { winerimWineId: text(claim.result.winerimWineId) } : {}),
+      ...(normalizeVariant(claim.result.variant)
+        ? { variant: normalizeVariant(claim.result.variant)! }
+        : {}),
+      ...(stringArray(claim.result.sourceDocumentIds).length > 0
+        ? { sourceDocumentIds: stringArray(claim.result.sourceDocumentIds) }
+        : {}),
+      ...(stringArray(claim.result.sourceLineIds).length > 0
+        ? { sourceLineIds: stringArray(claim.result.sourceLineIds) }
+        : {}),
+      ...(claim.result.sourceDocumentKind === "OPEN_TICKET"
+        || claim.result.sourceDocumentKind === "DEFINITIVE_INVOICE"
+        ? { sourceDocumentKind: claim.result.sourceDocumentKind }
+        : {}),
     })),
+    loadReconciliationClaims,
     persistDocuments,
     reserveClaim,
     completeClaim,
     releaseClaim,
     readExactMappings,
+    readProductClassifications,
     readDocuments,
     readClaims,
     planCursorAdvance,

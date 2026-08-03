@@ -20,6 +20,25 @@ export async function buildSalesClaimKey(input: {
   variant: SalesVariant;
 }): Promise<string> {
   const digest = await sha256Hex(canonicalJson({
+    version: 2,
+    connectionId: input.connectionId,
+    provider: input.provider,
+    lifecycleId: input.lifecycleId,
+    winerimWineId: input.winerimWineId,
+    variant: input.variant,
+  }));
+  return `sales-claim:v2:${digest}`;
+}
+
+export async function buildLegacySalesClaimKey(input: {
+  connectionId: string;
+  provider: string;
+  businessDay: string;
+  lifecycleId: string;
+  winerimWineId: string;
+  variant: SalesVariant;
+}): Promise<string> {
+  const digest = await sha256Hex(canonicalJson({
     version: 1,
     connectionId: input.connectionId,
     provider: input.provider,
@@ -29,6 +48,20 @@ export async function buildSalesClaimKey(input: {
     variant: input.variant,
   }));
   return `sales-claim:v1:${digest}`;
+}
+
+export async function buildCompatibleSalesClaimKeys(input: {
+  connectionId: string;
+  provider: string;
+  businessDay: string;
+  lifecycleId: string;
+  winerimWineId: string;
+  variant: SalesVariant;
+}): Promise<readonly [string, string]> {
+  return Promise.all([
+    buildSalesClaimKey(input),
+    buildLegacySalesClaimKey(input),
+  ]);
 }
 
 export async function buildSalesOrderId(input: {

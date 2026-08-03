@@ -20,6 +20,7 @@ import {
   type RuntimeExecutionResult,
   type RuntimeQueueHooks,
 } from "./queue";
+import { canonicalJson, sha256Hex } from "./idempotency";
 import {
   buildScheduledRuntimeMessages,
   DEFAULT_RUNTIME_SCHEDULER_PLAN,
@@ -112,6 +113,10 @@ interface ScheduledConnectionRow extends Record<string, unknown> {
 }
 
 interface RuntimeReservationRow extends Record<string, unknown> {
+  message_id: string;
+  connection_id: string;
+  job: string;
+  payload_sha256: string | null;
   status: "RUNNING" | "SUCCESS" | "RETRY" | "TERMINAL";
   attempt: number;
   lease_expired: boolean | null;
@@ -387,26 +392,52 @@ export function createPersistentRuntimeQueueHooks(
   database: DatabaseAdapter,
   executor: RuntimeExecutor,
 ): RuntimeQueueHooks {
+  const leases = new WeakMap<RuntimeEnvelopeV1, Readonly<{
+    token: string;
+    payloadSha256: string;
+  }>>();
+
+  const acquiredLease = (envelope: RuntimeEnvelopeV1) => {
+    const lease = leases.get(envelope);
+    if (!lease) throw new Error("RUNTIME_RESERVATION_LOST");
+    return lease;
+  };
+
+  const matchesReservationIdentity = (
+    reservation: RuntimeReservationRow,
+    envelope: RuntimeEnvelopeV1,
+    payloadSha256: string,
+  ) => reservation.message_id === envelope.messageId
+    && reservation.connection_id === envelope.connectionId
+    && reservation.job === envelope.job
+    && reservation.payload_sha256 === payloadSha256;
+
   return {
     async reserve(envelope) {
+      const payloadSha256 = await sha256Hex(canonicalJson(envelope.payload));
+      const leaseToken = crypto.randomUUID();
       return database.transaction(async (transaction) => {
         const inserted = await transaction.query<RuntimeAttemptRow>(sql`
           INSERT INTO public.runtime_idempotency (
             idempotency_key, message_id, connection_id, job, status, attempt,
-            lease_expires_at, result
+            lease_expires_at, payload_sha256, lease_token, result
           ) VALUES (
             ${envelope.idempotencyKey}, ${envelope.messageId}, ${envelope.connectionId},
             ${envelope.job}, 'RUNNING', 1,
             now() + (${IDEMPOTENCY_LEASE_MINUTES} * interval '1 minute'),
+            ${payloadSha256}, ${leaseToken}::uuid,
             ${JSON.stringify({ state: "reserved" })}::jsonb
           )
           ON CONFLICT (idempotency_key) DO NOTHING
           RETURNING attempt
         `);
-        if (inserted.rowCount === 1) return "acquired" as const;
+        if (inserted.rowCount === 1) {
+          leases.set(envelope, { token: leaseToken, payloadSha256 });
+          return "acquired" as const;
+        }
 
         const current = await transaction.query<RuntimeReservationRow>(sql`
-          SELECT status, attempt,
+          SELECT message_id, connection_id::text, job, payload_sha256, status, attempt,
             CASE WHEN lease_expires_at IS NULL THEN NULL ELSE lease_expires_at <= now() END AS lease_expired
           FROM public.runtime_idempotency
           WHERE idempotency_key = ${envelope.idempotencyKey}
@@ -414,6 +445,13 @@ export function createPersistentRuntimeQueueHooks(
         `);
         const reservation = current.rows[0];
         if (!reservation) return "busy" as const;
+
+        if (!matchesReservationIdentity(reservation, envelope, payloadSha256)) {
+          await insertExecutionLog(transaction, envelope, "BLOCKED", reservation.attempt, {
+            detail: { reason: "idempotency_identity_mismatch" },
+          });
+          return "conflict" as const;
+        }
 
         if (reservation.status === "SUCCESS" || reservation.status === "TERMINAL") {
           await insertExecutionLog(transaction, envelope, "DUPLICATE", reservation.attempt, {
@@ -435,6 +473,7 @@ export function createPersistentRuntimeQueueHooks(
           UPDATE public.runtime_idempotency
           SET status = 'RUNNING', attempt = attempt + 1,
             lease_expires_at = now() + (${IDEMPOTENCY_LEASE_MINUTES} * interval '1 minute'),
+            lease_token = ${leaseToken}::uuid,
             result = ${JSON.stringify({ state: "reserved" })}::jsonb,
             updated_at = now()
           WHERE idempotency_key = ${envelope.idempotencyKey}
@@ -444,7 +483,11 @@ export function createPersistentRuntimeQueueHooks(
             )
           RETURNING attempt
         `);
-        return reacquired.rowCount === 1 ? "acquired" as const : "busy" as const;
+        if (reacquired.rowCount === 1) {
+          leases.set(envelope, { token: leaseToken, payloadSha256 });
+          return "acquired" as const;
+        }
+        return "busy" as const;
       }, { isolationLevel: "serializable" });
     },
 
@@ -453,13 +496,20 @@ export function createPersistentRuntimeQueueHooks(
     },
 
     async complete(envelope, result) {
+      const lease = acquiredLease(envelope);
       await database.transaction(async (transaction) => {
         const completed = await transaction.query<RuntimeAttemptRow>(sql`
           UPDATE public.runtime_idempotency
           SET status = 'SUCCESS', lease_expires_at = NULL,
             result = ${JSON.stringify({ detail: safeExecutorDetail(result.detail), state: "completed" })}::jsonb,
             updated_at = now()
-          WHERE idempotency_key = ${envelope.idempotencyKey} AND status = 'RUNNING'
+          WHERE idempotency_key = ${envelope.idempotencyKey}
+            AND message_id = ${envelope.messageId}
+            AND connection_id = ${envelope.connectionId}::uuid
+            AND job = ${envelope.job}
+            AND payload_sha256 = ${lease.payloadSha256}
+            AND lease_token = ${lease.token}::uuid
+            AND status = 'RUNNING'
           RETURNING attempt
         `);
         const row = completed.rows[0];
@@ -468,9 +518,11 @@ export function createPersistentRuntimeQueueHooks(
           detail: { state: "completed" },
         });
       }, { isolationLevel: "serializable" });
+      leases.delete(envelope);
     },
 
     async releaseForRetry(envelope, disposition) {
+      const lease = acquiredLease(envelope);
       await database.transaction(async (transaction) => {
         const released = await transaction.query<RuntimeAttemptRow>(sql`
           UPDATE public.runtime_idempotency
@@ -482,7 +534,13 @@ export function createPersistentRuntimeQueueHooks(
               state: "retry",
             })}::jsonb,
             updated_at = now()
-          WHERE idempotency_key = ${envelope.idempotencyKey} AND status = 'RUNNING'
+          WHERE idempotency_key = ${envelope.idempotencyKey}
+            AND message_id = ${envelope.messageId}
+            AND connection_id = ${envelope.connectionId}::uuid
+            AND job = ${envelope.job}
+            AND payload_sha256 = ${lease.payloadSha256}
+            AND lease_token = ${lease.token}::uuid
+            AND status = 'RUNNING'
           RETURNING attempt
         `);
         const row = released.rows[0];
@@ -492,9 +550,11 @@ export function createPersistentRuntimeQueueHooks(
           detail: { delaySeconds: disposition.delaySeconds, reason: disposition.failure.reason },
         });
       }, { isolationLevel: "serializable" });
+      leases.delete(envelope);
     },
 
     async releaseForDeadLetter(envelope, input) {
+      const lease = acquiredLease(envelope);
       await database.transaction(async (transaction) => {
         const released = await transaction.query<RuntimeAttemptRow>(sql`
           UPDATE public.runtime_idempotency
@@ -505,7 +565,13 @@ export function createPersistentRuntimeQueueHooks(
               state: "dead_letter_pending",
             })}::jsonb,
             updated_at = now()
-          WHERE idempotency_key = ${envelope.idempotencyKey} AND status = 'RUNNING'
+          WHERE idempotency_key = ${envelope.idempotencyKey}
+            AND message_id = ${envelope.messageId}
+            AND connection_id = ${envelope.connectionId}::uuid
+            AND job = ${envelope.job}
+            AND payload_sha256 = ${lease.payloadSha256}
+            AND lease_token = ${lease.token}::uuid
+            AND status = 'RUNNING'
           RETURNING attempt
         `);
         const row = released.rows[0];
@@ -515,17 +581,25 @@ export function createPersistentRuntimeQueueHooks(
           detail: { reason: input.reason, state: "dead_letter_pending" },
         });
       }, { isolationLevel: "serializable" });
+      leases.delete(envelope);
     },
 
     async recordTerminal(envelope, input) {
       if (!envelope) return;
+      const lease = acquiredLease(envelope);
       await database.transaction(async (transaction) => {
         const terminal = await transaction.query<RuntimeAttemptRow>(sql`
           UPDATE public.runtime_idempotency
           SET status = 'TERMINAL', lease_expires_at = NULL,
             result = ${JSON.stringify({ reason: input.reason, state: "terminal" })}::jsonb,
             updated_at = now()
-          WHERE idempotency_key = ${envelope.idempotencyKey} AND status = 'RUNNING'
+          WHERE idempotency_key = ${envelope.idempotencyKey}
+            AND message_id = ${envelope.messageId}
+            AND connection_id = ${envelope.connectionId}::uuid
+            AND job = ${envelope.job}
+            AND payload_sha256 = ${lease.payloadSha256}
+            AND lease_token = ${lease.token}::uuid
+            AND status = 'RUNNING'
           RETURNING attempt
         `);
         const row = terminal.rows[0];
@@ -535,6 +609,7 @@ export function createPersistentRuntimeQueueHooks(
           detail: { reason: input.reason },
         });
       }, { isolationLevel: "serializable" });
+      leases.delete(envelope);
     },
   };
 }
@@ -678,7 +753,75 @@ async function readiness(
     const result = await dependencies.database(env).query<RuntimeReadinessRow>(sql`
       SELECT
         (SELECT value FROM public.infrastructure_metadata WHERE key = 'environment') AS environment,
-        to_regclass('public.runtime_idempotency') IS NOT NULL AS runtime_idempotency_ready,
+        to_regclass('public.runtime_idempotency') IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = to_regclass('public.runtime_idempotency')
+              AND attname = 'payload_sha256' AND attnum > 0 AND NOT attisdropped
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = to_regclass('public.runtime_idempotency')
+              AND attname = 'lease_token' AND attnum > 0 AND NOT attisdropped
+          )
+          AND EXISTS (
+            SELECT 1 FROM pg_attribute
+            WHERE attrelid = to_regclass('public.runtime_idempotency')
+              AND attname = 'sales_claim_identity' AND attnum > 0 AND NOT attisdropped
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_index index_contract
+            JOIN pg_class index_class ON index_class.oid = index_contract.indexrelid
+            JOIN pg_namespace index_namespace ON index_namespace.oid = index_class.relnamespace
+            JOIN pg_class table_class ON table_class.oid = index_contract.indrelid
+            JOIN pg_attribute identity_column
+              ON identity_column.attrelid = table_class.oid
+              AND identity_column.attname = 'sales_claim_identity'
+              AND identity_column.attnum > 0
+              AND NOT identity_column.attisdropped
+            WHERE index_namespace.nspname = 'public'
+              AND table_class.relname = 'runtime_idempotency'
+              AND index_class.relname = 'uq_runtime_sales_claim_identity'
+              AND index_contract.indisunique
+              AND index_contract.indisvalid
+              AND index_contract.indisready
+              AND index_contract.indnkeyatts = 1
+              AND index_contract.indnatts = 1
+              AND index_contract.indkey::text = identity_column.attnum::text
+              AND pg_get_expr(index_contract.indpred, index_contract.indrelid)
+                = '((job = ''sales.claim''::text) AND (sales_claim_identity IS NOT NULL))'
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM pg_trigger trigger_contract
+            JOIN pg_class table_class ON table_class.oid = trigger_contract.tgrelid
+            JOIN pg_namespace table_namespace ON table_namespace.oid = table_class.relnamespace
+            JOIN pg_proc trigger_function ON trigger_function.oid = trigger_contract.tgfoid
+            JOIN pg_namespace function_namespace ON function_namespace.oid = trigger_function.pronamespace
+            WHERE table_namespace.nspname = 'public'
+              AND table_class.relname = 'runtime_idempotency'
+              AND trigger_contract.tgname = 'runtime_bind_sales_claim_identity'
+              AND NOT trigger_contract.tgisinternal
+              AND trigger_contract.tgenabled IN ('O', 'A')
+              AND trigger_contract.tgtype = 23
+              AND function_namespace.nspname = 'public'
+              AND trigger_function.proname = 'runtime_bind_sales_claim_identity'
+              AND position('RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABLE' IN trigger_function.prosrc) > 0
+              AND position('NEW.sales_claim_identity := derived_identity' IN trigger_function.prosrc) > 0
+              AND (
+                SELECT count(*)
+                FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum)
+              ) = 3
+              AND (
+                SELECT count(DISTINCT table_attribute.attname)
+                FROM unnest(trigger_contract.tgattr) trigger_attribute(attnum)
+                JOIN pg_attribute table_attribute
+                  ON table_attribute.attrelid = table_class.oid
+                  AND table_attribute.attnum = trigger_attribute.attnum
+                WHERE table_attribute.attname IN ('connection_id', 'job', 'result')
+              ) = 3
+          ) AS runtime_idempotency_ready,
         to_regclass('public.runtime_execution_log') IS NOT NULL AS runtime_execution_log_ready,
         CASE
           WHEN ${canaryConsumer} = false THEN true

@@ -60,14 +60,21 @@ That command must fail until all three integration symbols are present.
 
 ## Resource plan, not executed
 
-Use one unique run slug, for example `sa-pedrera-20260803-a`. The reviewed
+Select the canary connection from a fresh, read-only readiness report. Do not
+reuse a restaurant name from an old incident or runbook example. The candidate
+must have both encrypted provider credentials present, two consecutive healthy
+read-only provider probes, exact mappings for the test product, an empty new
+runtime receipt set and an explicit rollback owner. Availability of a local
+credential alone is not functional approval.
+
+Use one unique run slug, for example `<candidate>-<yyyymmdd>-a`. The reviewed
 names should be:
 
 ```text
-winerim-rescue-prod-canary-sa-pedrera-20260803-a
-winerim-rescue-prod-canary-sa-pedrera-20260803-a-dlq
-winerim-rescue-prod-canary-sa-pedrera-20260803-a-alarms
-winerim-rescue-prod-canary-sa-pedrera-20260803-a-observer-failures
+winerim-rescue-prod-canary-<candidate>-<yyyymmdd>-a
+winerim-rescue-prod-canary-<candidate>-<yyyymmdd>-a-dlq
+winerim-rescue-prod-canary-<candidate>-<yyyymmdd>-a-alarms
+winerim-rescue-prod-canary-<candidate>-<yyyymmdd>-a-observer-failures
 ```
 
 Before creation, save `wrangler queues list` and reject the plan if any name
@@ -157,6 +164,9 @@ outer Queue boundary after the sales branch is merged.
 
 ## Canary acceptance
 
+- The selected connection is the only active rescue-production connection;
+  every other seeded connection remains disabled and has no active runtime
+  credential or canary scope.
 - Queue inventory proves one physical input Queue and one consumer.
 - Synthetic foreign-connection message reaches the dedicated DLQ and appears
   in both `dlq/` and `alarms/` R2 ledgers; it is never acknowledged by scope.

@@ -10,6 +10,8 @@ export type OpenTicketPolicy = "OBSERVE_ONLY" | "PROVISIONAL_STOCK";
 
 export type SalesIdentitySource = "PROVIDER" | "FALLBACK";
 
+export type SalesLineClassification = "WINE" | "NOT_WINE" | "AMBIGUOUS";
+
 export type ProviderSalesLine = {
   lineId: string;
   providerProductId: string;
@@ -21,6 +23,7 @@ export type ProviderSalesLine = {
   totalAmount?: number;
   soldAt?: string;
   suggestedVariant?: SalesVariant;
+  classification?: SalesLineClassification;
 };
 
 export type ProviderSalesDocument = {
@@ -48,6 +51,12 @@ export type SalesClaimSnapshot = {
   claimKey: string;
   state: SalesClaimState;
   appliedQuantity: number;
+  lifecycleId?: string;
+  winerimWineId?: string;
+  variant?: SalesVariant;
+  sourceDocumentIds?: string[];
+  sourceLineIds?: string[];
+  sourceDocumentKind?: SalesDocumentKind;
 };
 
 export type SalesBlockedReason =
@@ -58,7 +67,8 @@ export type SalesBlockedReason =
   | "FRACTIONAL_HISTORICAL_QUANTITY"
   | "MAPPING_NOT_FOUND"
   | "STOCK_ID_REQUIRED"
-  | "OPEN_TICKET_IDENTITY_NOT_STABLE";
+  | "OPEN_TICKET_IDENTITY_NOT_STABLE"
+  | "OPEN_TICKET_REMOVAL_REQUIRES_RECONCILIATION";
 
 export type SalesBlockedItem = {
   reason: SalesBlockedReason;
@@ -120,6 +130,7 @@ export type SalesMutationIntent = {
   observedAppliedQuantity: number;
   sourceDocumentIds: string[];
   sourceLineIds: string[];
+  sourceDocumentKind: SalesDocumentKind;
   action: SalesIntentAction;
 };
 
@@ -158,10 +169,20 @@ export type SalesPlanningPorts = {
     line: ProviderSalesLine;
   }): Promise<SalesLineResolution | null>;
   loadClaims?(claimKeys: string[]): Promise<SalesClaimSnapshot[]>;
+  loadReconciliationClaims?(input: {
+    lifecycleIds: string[];
+    includeMissingOpenTickets: boolean;
+  }): Promise<SalesClaimSnapshot[]>;
 };
 
 export type SalesClaimReservation =
-  | { state: "ACQUIRED"; appliedQuantity: number }
+  | {
+    state: "ACQUIRED";
+    appliedQuantity: number;
+    claimKey: string;
+    payloadSha256: string;
+    leaseToken: string;
+  }
   | { state: "DUPLICATE"; appliedQuantity: number }
   | { state: "BUSY"; appliedQuantity: number };
 
@@ -223,12 +244,16 @@ export type SalesExecutionPorts = {
     claimKey: string;
     orderId: string;
     appliedQuantity: number;
+    payloadSha256: string;
+    leaseToken: string;
   }): Promise<void>;
   releaseClaim(input: {
     claimKey: string;
     orderId: string;
     retryable: boolean;
     error: string;
+    payloadSha256: string;
+    leaseToken: string;
   }): Promise<void>;
 };
 

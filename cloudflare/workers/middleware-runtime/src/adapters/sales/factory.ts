@@ -253,6 +253,7 @@ export function createSalesPreparationFactory(
     }, {
       resolveLine: async ({ line }) => mappingById.get(line.providerProductId) ?? null,
       loadClaims: adapter.loadClaims,
+      loadReconciliationClaims: adapter.loadReconciliationClaims,
       persistDocuments: adapter.persistDocuments,
       reserveClaim: adapter.reserveClaim,
       completeClaim: adapter.completeClaim,

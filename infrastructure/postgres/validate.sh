@@ -12,6 +12,9 @@ PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
 RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
 RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
 RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
+RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
+RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
+RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
 RELEASE_VALIDATOR="$SCRIPT_DIR/validate-release-addendum.sh"
@@ -44,12 +47,51 @@ for required_file in \
   "$RUNTIME_CREDENTIALS_ADDENDUM" \
   "$RUNTIME_CANARY_PRIVILEGES" \
   "$RUNTIME_CANARY_SCOPE" \
+  "$RUNTIME_CATALOG_PERMISSIONS" \
+  "$RUNTIME_IDEMPOTENCY_LEASE_BINDING" \
+  "$RUNTIME_SALES_CLAIM_IDENTITY" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
   "$RELEASE_VALIDATOR"
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'ADD COLUMN IF NOT EXISTS sales_claim_identity text' \
+  'RUNTIME_SALES_CLAIM_DUPLICATE_RECONCILIATION_REQUIRED' \
+  'CREATE UNIQUE INDEX IF NOT EXISTS uq_runtime_sales_claim_identity' \
+  'CREATE TRIGGER runtime_bind_sales_claim_identity'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_SALES_CLAIM_IDENTITY" >/dev/null; then
+    fail "runtime sales claim identity addendum is missing: $required_pattern"
+  fi
+done
+
+for required_pattern in \
+  'ADD COLUMN IF NOT EXISTS payload_sha256 text' \
+  'ADD COLUMN IF NOT EXISTS lease_token uuid' \
+  'runtime_idempotency_payload_sha256_format'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_IDEMPOTENCY_LEASE_BINDING" >/dev/null; then
+    fail "runtime idempotency lease binding addendum is missing: $required_pattern"
+  fi
+done
+
+for required_pattern in \
+  'GRANT SELECT ON' \
+  'public.provider_products' \
+  'public.agora_master_data' \
+  'public.winerim_push_tracking' \
+  'middleware_runtime_canary_insert_product_mappings' \
+  'middleware_runtime_canary_update_product_mappings' \
+  'middleware_runtime_canary_insert_tracking' \
+  'middleware_runtime_canary_update_tracking'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_CATALOG_PERMISSIONS" >/dev/null; then
+    fail "runtime catalog permission addendum is missing: $required_pattern"
   fi
 done
 

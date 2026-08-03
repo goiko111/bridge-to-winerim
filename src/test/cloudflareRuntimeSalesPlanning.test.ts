@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildLegacySalesClaimKey,
   planSalesRun,
   type ProviderSalesDocument,
   type SalesLineResolution,
@@ -143,6 +144,259 @@ describe("Cloudflare runtime sales planner", () => {
       desiredQuantity: 1,
       appliedQuantity: 1,
     })]);
+  });
+
+  it("shares claim identity when the definitive invoice closes on a later business day", async () => {
+    const resolution: SalesLineResolution = {
+      winerimWineId: "47593",
+      variant: "BOTTLE",
+      stockId: "stock-1",
+      stockActive: true,
+    };
+    const openPlan = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        documentId: "open-ticket:sale-cycle-1",
+        kind: "OPEN_TICKET",
+        businessDay: "2026-07-29",
+      })],
+    }, ports(resolution));
+    expect(openPlan.intents[0].claimKey).toMatch(/^sales-claim:v2:/);
+    const claimKey = await buildLegacySalesClaimKey({
+      connectionId: "connection-1",
+      provider: "agora",
+      businessDay: "2026-07-29",
+      lifecycleId: "sale-cycle-1",
+      winerimWineId: "47593",
+      variant: "BOTTLE",
+    });
+
+    const finalPlan = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document({ businessDay: "2026-07-30" })],
+    }, {
+      resolveLine: vi.fn().mockResolvedValue(resolution),
+      loadClaims: vi.fn().mockResolvedValue([]),
+      loadReconciliationClaims: vi.fn().mockResolvedValue([{
+        claimKey,
+        state: "COMPLETE",
+        appliedQuantity: 1,
+        lifecycleId: "sale-cycle-1",
+        winerimWineId: "47593",
+        variant: "BOTTLE",
+        sourceDocumentIds: ["open-ticket:sale-cycle-1"],
+        sourceLineIds: ["line-1"],
+        sourceDocumentKind: "OPEN_TICKET",
+      }]),
+    });
+
+    expect(finalPlan.intents).toEqual([]);
+    expect(finalPlan.noops).toEqual([expect.objectContaining({
+      claimKey,
+      reason: "ALREADY_APPLIED",
+      desiredQuantity: 1,
+      appliedQuantity: 1,
+    })]);
+  });
+
+  it("blocks a quantity reduction after provisional stock instead of treating it as applied", async () => {
+    const resolution: SalesLineResolution = {
+      winerimWineId: "47593",
+      variant: "BOTTLE",
+      stockId: "stock-1",
+      stockActive: true,
+    };
+    const provisional = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        documentId: "open-ticket:sale-cycle-1",
+        kind: "OPEN_TICKET",
+        lines: [{ ...document().lines[0], quantity: 2 }],
+      })],
+    }, ports(resolution));
+    const claimKey = provisional.intents[0].claimKey;
+
+    const reduced = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        documentId: "open-ticket:sale-cycle-1",
+        kind: "OPEN_TICKET",
+        lines: [{ ...document().lines[0], quantity: 1 }],
+      })],
+    }, {
+      resolveLine: vi.fn().mockResolvedValue(resolution),
+      loadClaims: vi.fn().mockResolvedValue([{ claimKey, state: "COMPLETE", appliedQuantity: 2 }]),
+    });
+
+    expect(reduced.intents).toEqual([]);
+    expect(reduced.noops).toEqual([]);
+    expect(reduced.blocked).toEqual([expect.objectContaining({
+      reason: "REFUND_REQUIRES_RECONCILIATION",
+      detail: expect.stringContaining("fell from 2 applied unit(s) to 1"),
+    })]);
+  });
+
+  it("blocks deleted or zeroed provisional lines for explicit reconciliation", async () => {
+    const resolution: SalesLineResolution = {
+      winerimWineId: "47593",
+      variant: "BOTTLE",
+      stockId: "stock-1",
+      stockActive: true,
+    };
+    const provisional = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        documentId: "open-ticket:sale-cycle-1",
+        kind: "OPEN_TICKET",
+      })],
+    }, ports(resolution));
+    const claimKey = provisional.intents[0].claimKey;
+
+    const zeroed = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        documentId: "open-ticket:sale-cycle-1",
+        kind: "OPEN_TICKET",
+        lines: [{ ...document().lines[0], quantity: 0 }],
+      })],
+    }, {
+      resolveLine: vi.fn().mockResolvedValue(resolution),
+      loadClaims: vi.fn().mockResolvedValue([{ claimKey, state: "COMPLETE", appliedQuantity: 1 }]),
+    });
+
+    expect(zeroed.intents).toEqual([]);
+    expect(zeroed.noops).toEqual([]);
+    expect(zeroed.blocked).toEqual([expect.objectContaining({
+      reason: "REFUND_REQUIRES_RECONCILIATION",
+      lineId: "line-1",
+      detail: expect.stringContaining("after 1 unit(s) were applied provisionally"),
+    })]);
+
+    const loadReconciliationClaims = vi.fn().mockResolvedValue([{
+      claimKey,
+      state: "COMPLETE" as const,
+      appliedQuantity: 1,
+      lifecycleId: "sale-cycle-1",
+      winerimWineId: "47593",
+      variant: "BOTTLE" as const,
+      sourceDocumentIds: ["open-ticket:sale-cycle-1"],
+      sourceLineIds: ["line-1"],
+      sourceDocumentKind: "OPEN_TICKET" as const,
+    }]);
+    const removed = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document({ lines: [] })],
+    }, {
+      resolveLine: vi.fn().mockResolvedValue(resolution),
+      loadClaims: vi.fn().mockResolvedValue([]),
+      loadReconciliationClaims,
+    });
+
+    expect(removed.intents).toEqual([]);
+    expect(removed.noops).toEqual([]);
+    expect(removed.blocked).toEqual([expect.objectContaining({
+      reason: "OPEN_TICKET_REMOVAL_REQUIRES_RECONCILIATION",
+      detail: expect.stringContaining("stock is not restored automatically"),
+    })]);
+    expect(loadReconciliationClaims).toHaveBeenCalledWith({
+      lifecycleIds: ["sale-cycle-1"],
+      includeMissingOpenTickets: false,
+    });
+  });
+
+  it("allows an empty planning invoice when no provisional wine claim exists", async () => {
+    const plan = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "INTRADAY",
+      documents: [document({ lines: [] })],
+    }, {
+      resolveLine: vi.fn(),
+      loadClaims: vi.fn().mockResolvedValue([]),
+      loadReconciliationClaims: vi.fn().mockResolvedValue([]),
+    });
+
+    expect(plan.blocked).toEqual([]);
+    expect(plan.intents).toEqual([]);
+    expect(plan.noops).toEqual([]);
+  });
+
+  it("blocks a removed wine line and a missing OpenTicket without restoring stock", async () => {
+    const priorClaim = {
+      claimKey: "sales-claim:v1:removed-wine",
+      state: "COMPLETE" as const,
+      appliedQuantity: 2,
+      lifecycleId: "sale-cycle-1",
+      winerimWineId: "removed-wine",
+      variant: "BOTTLE" as const,
+      sourceDocumentIds: ["open-ticket:sale-cycle-1"],
+      sourceLineIds: ["removed-line"],
+      sourceDocumentKind: "OPEN_TICKET" as const,
+    };
+    const remaining = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [document({
+        kind: "OPEN_TICKET",
+        documentId: "open-ticket:sale-cycle-1",
+      })],
+    }, {
+      resolveLine: vi.fn().mockResolvedValue({
+        winerimWineId: "remaining-wine",
+        variant: "BOTTLE",
+        stockId: "remaining-stock",
+        stockActive: true,
+      }),
+      loadClaims: vi.fn().mockResolvedValue([]),
+      loadReconciliationClaims: vi.fn().mockResolvedValue([priorClaim]),
+    });
+    expect(remaining.blocked).toEqual([expect.objectContaining({
+      reason: "OPEN_TICKET_REMOVAL_REQUIRES_RECONCILIATION",
+      lineId: "removed-line",
+    })]);
+
+    const loadMissing = vi.fn().mockResolvedValue([priorClaim]);
+    const missing = await planSalesRun({
+      connectionId: "connection-1",
+      provider: "agora",
+      runKind: "OPEN_TICKET",
+      openTicketPolicy: "PROVISIONAL_STOCK",
+      documents: [],
+    }, {
+      resolveLine: vi.fn(),
+      loadClaims: vi.fn().mockResolvedValue([]),
+      loadReconciliationClaims: loadMissing,
+    });
+    expect(missing.intents).toEqual([]);
+    expect(missing.blocked).toEqual([expect.objectContaining({
+      reason: "OPEN_TICKET_REMOVAL_REQUIRES_RECONCILIATION",
+      documentId: "open-ticket:sale-cycle-1",
+    })]);
+    expect(loadMissing).toHaveBeenCalledWith({
+      lifecycleIds: [],
+      includeMissingOpenTickets: true,
+    });
   });
 
   it("keeps orderId stable across retries and line ordering", async () => {

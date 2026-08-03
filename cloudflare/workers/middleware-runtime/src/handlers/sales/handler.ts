@@ -170,9 +170,11 @@ export async function executeSalesPlan(
     if (reservation.state === "DUPLICATE" || appliedBefore >= intent.desiredQuantity) {
       if (reservation.state === "ACQUIRED") {
         await ports.completeClaim({
-          claimKey: intent.claimKey,
+          claimKey: reservation.claimKey,
           orderId: intent.orderId,
           appliedQuantity: appliedBefore,
+          payloadSha256: reservation.payloadSha256,
+          leaseToken: reservation.leaseToken,
         });
       }
       items.push({
@@ -202,10 +204,12 @@ export async function executeSalesPlan(
       const result = await executeIntent(intent, delta, orderId, mutationIdempotencyKey, ports);
       if (!result.ok) {
         await ports.releaseClaim({
-          claimKey: intent.claimKey,
+          claimKey: reservation.claimKey,
           orderId,
           retryable: result.retryable,
           error: result.error,
+          payloadSha256: reservation.payloadSha256,
+          leaseToken: reservation.leaseToken,
         });
         items.push({
           claimKey: intent.claimKey,
@@ -221,9 +225,11 @@ export async function executeSalesPlan(
         continue;
       }
       await ports.completeClaim({
-        claimKey: intent.claimKey,
+        claimKey: reservation.claimKey,
         orderId,
         appliedQuantity: intent.desiredQuantity,
+        payloadSha256: reservation.payloadSha256,
+        leaseToken: reservation.leaseToken,
       });
       items.push({
         claimKey: intent.claimKey,
@@ -237,10 +243,12 @@ export async function executeSalesPlan(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await ports.releaseClaim({
-        claimKey: intent.claimKey,
+        claimKey: reservation.claimKey,
         orderId,
         retryable: true,
         error: message,
+        payloadSha256: reservation.payloadSha256,
+        leaseToken: reservation.leaseToken,
       });
       items.push({
         claimKey: intent.claimKey,

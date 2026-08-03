@@ -64,6 +64,11 @@ export type WinerimMutationResponse = Readonly<{
   body?: unknown;
 }>;
 
+export type WinerimStockReadback = Readonly<{
+  stockId: number;
+  stock: number;
+}>;
+
 export type WinerimSalesImportResponseLine = Readonly<{
   orderId?: string;
   status?: string;
@@ -86,6 +91,8 @@ export type WinerimMutationAttempt = Readonly<{
   request: WinerimMutationHttpRequest;
   response?: WinerimMutationResponse;
   decision?: WinerimMutationResponseDecision;
+  readback?: WinerimStockReadback;
+  readbackError?: string;
   error?: string;
 }>;
 
@@ -102,6 +109,9 @@ export type WinerimMutationExecutionResult = Readonly<{
 
 export type WinerimMutationTransport = Readonly<{
   send(request: WinerimMutationHttpRequest): Promise<WinerimMutationResponse>;
+  // Absolute stock writes remain uncertified unless the adapter supplies a
+  // separately fetched, normalized post-write value for the same stockId.
+  readStock?(stockId: number): Promise<WinerimStockReadback>;
   sleep(milliseconds: number): Promise<void>;
 }>;
 

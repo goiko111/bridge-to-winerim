@@ -44,6 +44,7 @@ BOOTSTRAP_SQL="$TMP_ROOT/bootstrap.sql"
 for migration_pass in 1 2; do
   "${ADMIN_PSQL[@]}" -f "$SCRIPT_DIR/0007_runtime_sales_canary_permissions.sql" >/dev/null
   "${ADMIN_PSQL[@]}" -f "$SCRIPT_DIR/0008_runtime_sales_column_privileges.sql" >/dev/null
+  "${ADMIN_PSQL[@]}" -f "$SCRIPT_DIR/0009_runtime_catalog_permissions.sql" >/dev/null
 done
 
 "${ADMIN_PSQL[@]}" >/dev/null <<SQL
@@ -67,6 +68,25 @@ INSERT INTO public.product_mappings (
 ) VALUES
   ('11111111-aaaa-4111-9111-111111111111', '11111111-1111-4111-8111-111111111111', 'product-a', 'Product A', 'wine-a', 'Wine A', 'CONFIRMED'),
   ('22222222-bbbb-4222-9222-222222222222', '22222222-2222-4222-8222-222222222222', 'product-b', 'Product B', 'wine-b', 'Wine B', 'CONFIRMED');
+
+INSERT INTO public.provider_products (
+  connection_id, provider_product_id, name, family, sale_format,
+  is_wine_candidate, sync_status, winerim_wine_id
+) VALUES
+  ('11111111-1111-4111-8111-111111111111', 'product-a', 'Product A', 'Wine', 'BOTTLE', true, 'SYNCED', 'wine-a'),
+  ('22222222-2222-4222-8222-222222222222', 'product-b', 'Product B', 'Wine', 'BOTTLE', true, 'SYNCED', 'wine-b');
+
+INSERT INTO public.agora_master_data (connection_id, families_json, products_summary_json)
+VALUES
+  ('11111111-1111-4111-8111-111111111111', '[{"Id":"10","Name":"Wine"}]', '[{"Id":"product-a"}]'),
+  ('22222222-2222-4222-8222-222222222222', '[{"Id":"20","Name":"Wine"}]', '[{"Id":"product-b"}]');
+
+INSERT INTO public.winerim_push_tracking (
+  connection_id, winerim_wine_id, format, agora_product_id,
+  agora_family_id, source, sync_status
+) VALUES
+  ('11111111-1111-4111-8111-111111111111', 'wine-existing-a', 'BOTTLE', '500001', '10', 'WINERIM', 'VERIFIED'),
+  ('22222222-2222-4222-8222-222222222222', 'wine-existing-b', 'BOTTLE', '500002', '20', 'WINERIM', 'VERIFIED');
 
 INSERT INTO public.sales_events (
   id, connection_id, provider_doc_id, business_day, doc_type, line_count
@@ -119,10 +139,114 @@ visible_counts=$("${LOGIN_PSQL[@]}" -Atc "
     (SELECT count(*) FROM public.winerim_wines) || '|' ||
     (SELECT count(*) FROM public.sales_events) || '|' ||
     (SELECT count(*) FROM public.sales_line_items) || '|' ||
-    (SELECT count(*) FROM public.stock_sync_log)
+    (SELECT count(*) FROM public.stock_sync_log) || '|' ||
+    (SELECT count(*) FROM public.provider_products) || '|' ||
+    (SELECT count(*) FROM public.agora_master_data) || '|' ||
+    (SELECT count(*) FROM public.winerim_push_tracking)
 ")
-test "$visible_counts" = "1|1|1|1|1|1|1" || {
+test "$visible_counts" = "1|1|1|1|1|1|1|1|1|1" || {
   printf 'CANARY_VISIBLE_COUNTS_INVALID=%s\n' "$visible_counts" >&2
+  exit 1
+}
+
+"${LOGIN_PSQL[@]}" >/dev/null <<'SQL'
+INSERT INTO public.product_mappings (
+  connection_id, provider_product_id, provider_product_name,
+  winerim_wine_id, winerim_wine_name, match_method, match_score,
+  match_reasons, status, format_type, agora_product_id,
+  last_synced_at, last_sync_error
+)
+SELECT
+  '11111111-1111-4111-8111-111111111111', '500001', 'B Runtime plan',
+  winerim_id, name, 'RUNTIME_CATALOG_PLAN', 1,
+  ARRAY['DB_PLAN_PREPARED', 'plan:test-v1'], 'PENDING', 'BOTTLE', '500001', NULL, NULL
+FROM public.winerim_wines
+WHERE connection_id = '11111111-1111-4111-8111-111111111111'
+  AND winerim_id = 'wine-a'
+ON CONFLICT (connection_id, provider_product_id) DO UPDATE SET
+  provider_product_name = EXCLUDED.provider_product_name,
+  winerim_wine_id = EXCLUDED.winerim_wine_id,
+  winerim_wine_name = EXCLUDED.winerim_wine_name,
+  match_method = EXCLUDED.match_method,
+  match_score = EXCLUDED.match_score,
+  match_reasons = EXCLUDED.match_reasons,
+  status = 'PENDING',
+  format_type = EXCLUDED.format_type,
+  agora_product_id = EXCLUDED.agora_product_id,
+  last_synced_at = NULL,
+  last_sync_error = NULL,
+  updated_at = now()
+WHERE product_mappings.status = 'PENDING';
+
+INSERT INTO public.product_mappings (
+  connection_id, provider_product_id, provider_product_name,
+  winerim_wine_id, winerim_wine_name, match_method, match_score,
+  match_reasons, status, format_type, agora_product_id,
+  last_synced_at, last_sync_error
+)
+SELECT
+  '11111111-1111-4111-8111-111111111111', '500001', 'B Runtime plan updated',
+  winerim_id, name, 'RUNTIME_CATALOG_PLAN', 1,
+  ARRAY['DB_PLAN_PREPARED', 'plan:test-v2'], 'PENDING', 'BOTTLE', '500001', NULL, NULL
+FROM public.winerim_wines
+WHERE connection_id = '11111111-1111-4111-8111-111111111111'
+  AND winerim_id = 'wine-a'
+ON CONFLICT (connection_id, provider_product_id) DO UPDATE SET
+  provider_product_name = EXCLUDED.provider_product_name,
+  winerim_wine_id = EXCLUDED.winerim_wine_id,
+  winerim_wine_name = EXCLUDED.winerim_wine_name,
+  match_method = EXCLUDED.match_method,
+  match_score = EXCLUDED.match_score,
+  match_reasons = EXCLUDED.match_reasons,
+  status = 'PENDING',
+  format_type = EXCLUDED.format_type,
+  agora_product_id = EXCLUDED.agora_product_id,
+  last_synced_at = NULL,
+  last_sync_error = NULL,
+  updated_at = now()
+WHERE product_mappings.status = 'PENDING';
+
+INSERT INTO public.winerim_push_tracking (
+  connection_id, winerim_wine_id, format, agora_product_id,
+  agora_family_id, source, sync_status, last_error, pushed_at, verified_at
+) VALUES (
+  '11111111-1111-4111-8111-111111111111', 'wine-a', 'BOTTLE',
+  '500001', '10', 'WINERIM', 'NOT_PUSHED', NULL, NULL, NULL
+)
+ON CONFLICT (connection_id, winerim_wine_id, format) DO UPDATE SET
+  agora_product_id = EXCLUDED.agora_product_id,
+  agora_family_id = EXCLUDED.agora_family_id,
+  source = 'WINERIM',
+  sync_status = CASE
+    WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
+      THEN winerim_push_tracking.sync_status
+    ELSE 'NOT_PUSHED'
+  END,
+  last_error = CASE
+    WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
+      THEN winerim_push_tracking.last_error
+    ELSE NULL
+  END,
+  pushed_at = CASE
+    WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
+      THEN winerim_push_tracking.pushed_at
+    ELSE NULL
+  END,
+  verified_at = CASE
+    WHEN winerim_push_tracking.sync_status = 'VERIFIED'
+      THEN winerim_push_tracking.verified_at
+    ELSE NULL
+  END,
+  updated_at = now();
+SQL
+
+catalog_write_readback=$("${LOGIN_PSQL[@]}" -Atc "
+  SELECT
+    (SELECT count(*) FROM public.product_mappings WHERE provider_product_id='500001' AND provider_product_name='B Runtime plan updated' AND status='PENDING' AND match_method='RUNTIME_CATALOG_PLAN' AND match_reasons @> ARRAY['DB_PLAN_PREPARED','plan:test-v2']::text[]) || '|' ||
+    (SELECT count(*) FROM public.winerim_push_tracking WHERE winerim_wine_id='wine-a' AND format='BOTTLE' AND sync_status='NOT_PUSHED')
+")
+test "$catalog_write_readback" = "1|1" || {
+  printf 'CANARY_CATALOG_WRITE_READBACK_INVALID=%s\n' "$catalog_write_readback" >&2
   exit 1
 }
 
@@ -225,9 +349,33 @@ expect_login_failure STOCK_RECEIPT_DELETE \
   'permission denied' \
   "DELETE FROM public.stock_sync_log WHERE idempotency_key = 'runtime-a'"
 
-expect_login_failure MAPPING_INSERT \
+expect_login_failure CROSS_CONNECTION_MAPPING_INSERT \
+  'row-level security|permission denied' \
+  "INSERT INTO public.product_mappings (connection_id, provider_product_id, provider_product_name, winerim_wine_id, winerim_wine_name, match_method, match_score, status, format_type, agora_product_id) VALUES ('22222222-2222-4222-8222-222222222222', '500002', 'Forbidden', 'wine-b', 'Wine B', 'RUNTIME_CATALOG_PLAN', 1, 'PENDING', 'BOTTLE', '500002')"
+
+expect_login_failure CROSS_CONNECTION_TRACKING_INSERT \
+  'row-level security|permission denied' \
+  "INSERT INTO public.winerim_push_tracking (connection_id, winerim_wine_id, format, agora_product_id, source, sync_status) VALUES ('22222222-2222-4222-8222-222222222222', 'wine-b', 'BOTTLE', '500002', 'WINERIM', 'NOT_PUSHED')"
+
+expect_login_failure INVALID_MAPPING_STATE_INSERT \
+  'row-level security|permission denied' \
+  "INSERT INTO public.product_mappings (connection_id, provider_product_id, provider_product_name, winerim_wine_id, winerim_wine_name, match_method, match_score, match_reasons, status, format_type, agora_product_id) VALUES ('11111111-1111-4111-8111-111111111111', '500003', 'Forbidden', 'wine-a', 'Wine A', 'MANUAL', 1, ARRAY['DB_PLAN_PREPARED','plan:invalid'], 'CONFIRMED', 'BOTTLE', '500003')"
+
+expect_login_failure PROVIDER_PRODUCT_INSERT \
   'permission denied' \
-  "INSERT INTO public.product_mappings (connection_id, provider_product_id, provider_product_name) VALUES ('11111111-1111-4111-8111-111111111111', 'forbidden', 'Forbidden')"
+  "INSERT INTO public.provider_products (connection_id, provider_product_id, name) VALUES ('11111111-1111-4111-8111-111111111111', 'forbidden', 'Forbidden')"
+
+expect_login_failure MASTER_UPDATE \
+  'permission denied' \
+  "UPDATE public.agora_master_data SET families_json='[]'::jsonb WHERE connection_id='11111111-1111-4111-8111-111111111111'"
+
+expect_login_failure MAPPING_DELETE \
+  'permission denied' \
+  "DELETE FROM public.product_mappings WHERE provider_product_id='500001'"
+
+expect_login_failure TRACKING_TASK_UPDATE \
+  'permission denied' \
+  "UPDATE public.winerim_push_tracking SET task_id='11111111-aaaa-4111-a111-111111111111' WHERE winerim_wine_id='wine-a'"
 
 expect_login_failure CONNECTION_ENABLE_UPDATE \
   'permission denied' \
@@ -237,15 +385,23 @@ expect_login_failure CROSS_CONNECTION_EVENT_INSERT \
   'row-level security|permission denied' \
   "INSERT INTO public.sales_events (connection_id, provider_doc_id, business_day, doc_type, line_count) VALUES ('22222222-2222-4222-8222-222222222222', 'forbidden-doc', current_date, 'BasicInvoice', 0)"
 
-expect_login_failure OUTSIDE_TABLE_SELECT \
-  'permission denied' \
-  "SELECT count(*) FROM public.provider_products"
+cross_connection_catalog_visible=$("${LOGIN_PSQL[@]}" -Atc "
+  SELECT
+    (SELECT count(*) FROM public.provider_products WHERE connection_id='22222222-2222-4222-8222-222222222222') || '|' ||
+    (SELECT count(*) FROM public.agora_master_data WHERE connection_id='22222222-2222-4222-8222-222222222222') || '|' ||
+    (SELECT count(*) FROM public.product_mappings WHERE connection_id='22222222-2222-4222-8222-222222222222') || '|' ||
+    (SELECT count(*) FROM public.winerim_push_tracking WHERE connection_id='22222222-2222-4222-8222-222222222222')
+")
+test "$cross_connection_catalog_visible" = "0|0|0|0" || {
+  printf 'CROSS_CONNECTION_CATALOG_VISIBLE=%s\n' "$cross_connection_catalog_visible" >&2
+  exit 1
+}
 
 platform_privileges=$("${ADMIN_PSQL[@]}" -Atc "
   SELECT count(*)
   FROM information_schema.role_table_grants
   WHERE table_schema = 'public'
-    AND table_name IN ('pos_connections','product_mappings','winerim_wines','sales_events','sales_line_items','stock_sync_log')
+    AND table_name IN ('pos_connections','product_mappings','provider_products','agora_master_data','winerim_push_tracking','winerim_wines','sales_events','sales_line_items','stock_sync_log')
     AND grantee IN ('PUBLIC','anon','authenticated','service_role')
 ")
 test "$platform_privileges" = "0" || {
@@ -267,9 +423,22 @@ runtime_privileges=$("${ADMIN_PSQL[@]}" -Atc "
     has_table_privilege('middleware_runtime', 'public.stock_sync_log', 'SELECT,INSERT')::int || '|' ||
     has_table_privilege('middleware_runtime', 'public.stock_sync_log', 'UPDATE,DELETE')::int || '|' ||
     has_column_privilege('middleware_runtime', 'public.pos_connections', 'last_sync_at', 'UPDATE')::int || '|' ||
-    has_column_privilege('middleware_runtime', 'public.pos_connections', 'enabled', 'UPDATE')::int
+    has_column_privilege('middleware_runtime', 'public.pos_connections', 'enabled', 'UPDATE')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.provider_products', 'SELECT')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.provider_products', 'INSERT,UPDATE,DELETE')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.agora_master_data', 'SELECT')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.agora_master_data', 'INSERT,UPDATE,DELETE')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.product_mappings', 'INSERT,UPDATE,DELETE')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.product_mappings', 'provider_product_name', 'INSERT')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.product_mappings', 'status', 'UPDATE')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.product_mappings', 'id', 'UPDATE')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.winerim_push_tracking', 'SELECT')::int || '|' ||
+    has_table_privilege('middleware_runtime', 'public.winerim_push_tracking', 'INSERT,UPDATE,DELETE')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.winerim_push_tracking', 'agora_product_id', 'INSERT')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.winerim_push_tracking', 'sync_status', 'UPDATE')::int || '|' ||
+    has_column_privilege('middleware_runtime', 'public.winerim_push_tracking', 'task_id', 'UPDATE')::int
 ")
-test "$runtime_privileges" = "1|1|1|1|1|1|0|1|0|1|0|1|0" || {
+test "$runtime_privileges" = "1|1|1|1|1|1|0|1|0|1|0|1|0|1|0|1|0|0|1|1|0|1|0|1|1|0" || {
   printf 'RUNTIME_PRIVILEGES_INVALID=%s\n' "$runtime_privileges" >&2
   exit 1
 }
@@ -288,9 +457,12 @@ expired_counts=$("${LOGIN_PSQL[@]}" -Atc "
     (SELECT count(*) FROM public.winerim_wines) || '|' ||
     (SELECT count(*) FROM public.sales_events) || '|' ||
     (SELECT count(*) FROM public.sales_line_items) || '|' ||
-    (SELECT count(*) FROM public.stock_sync_log)
+    (SELECT count(*) FROM public.stock_sync_log) || '|' ||
+    (SELECT count(*) FROM public.provider_products) || '|' ||
+    (SELECT count(*) FROM public.agora_master_data) || '|' ||
+    (SELECT count(*) FROM public.winerim_push_tracking)
 ")
-test "$expired_counts" = "0|0|0|0|0|0" || {
+test "$expired_counts" = "0|0|0|0|0|0|0|0|0" || {
   printf 'EXPIRED_SCOPE_NOT_FAIL_CLOSED=%s\n' "$expired_counts" >&2
   exit 1
 }
@@ -300,8 +472,8 @@ expect_login_failure EXPIRED_SCOPE_INSERT \
   "INSERT INTO public.stock_sync_log (connection_id, product_name, quantity, status, idempotency_key) VALUES ('11111111-1111-4111-8111-111111111111', 'Expired receipt', 1, 'SUCCESS', 'runtime-expired')"
 
 printf 'INFO: login_role=%s attributes=%s\n' "$LOGIN_ROLE" "$role_attributes"
-printf 'INFO: visible_counts=%s receipt_readback=%s persistence_readback=%s expired_counts=%s\n' \
-  "$visible_counts" "$receipt_readback" "$persistence_readback" "$expired_counts"
+printf 'INFO: visible_counts=%s catalog_write_readback=%s cross_connection_catalog_visible=%s receipt_readback=%s persistence_readback=%s expired_counts=%s\n' \
+  "$visible_counts" "$catalog_write_readback" "$cross_connection_catalog_visible" "$receipt_readback" "$persistence_readback" "$expired_counts"
 printf 'INFO: runtime_privileges=%s platform_role_privileges=%s\n' \
   "$runtime_privileges" "$platform_privileges"
 printf 'RESULT=RUNTIME_SALES_CANARY_PERMISSIONS_OK\n'

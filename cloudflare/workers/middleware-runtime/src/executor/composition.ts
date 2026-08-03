@@ -10,6 +10,7 @@ export type RuntimeConnectionConfiguration = Readonly<{
   connectionId: string;
   provider: string;
   enabled: boolean;
+  baseUrl: string;
 }>;
 
 export type RuntimeConnectionConfigurationPort = Readonly<{

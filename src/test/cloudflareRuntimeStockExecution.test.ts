@@ -40,6 +40,24 @@ function transportFor(responses: WinerimMutationResponse[]): WinerimMutationTran
   };
 }
 
+function absoluteStockTransport(
+  responses: WinerimMutationResponse[],
+  readback: { stockId: number; stock: number } | Error,
+): WinerimMutationTransport & {
+  send: ReturnType<typeof vi.fn>;
+  readStock: ReturnType<typeof vi.fn>;
+  sleep: ReturnType<typeof vi.fn>;
+} {
+  const transport = transportFor(responses);
+  return {
+    ...transport,
+    readStock: vi.fn(async () => {
+      if (readback instanceof Error) throw readback;
+      return readback;
+    }),
+  };
+}
+
 describe("Cloudflare runtime Winerim mutation execution", () => {
   it("certifies live glass stock only with stockApplied true or duplicate true", async () => {
     for (const line of [
@@ -215,11 +233,11 @@ describe("Cloudflare runtime Winerim mutation execution", () => {
     }
   });
 
-  it("retries an absolute stock 409 with the same PUT payload and never imports a bottle sale", async () => {
-    const transport = transportFor([
+  it("retries an absolute stock 409 with the same PUT payload and certifies an exact readback", async () => {
+    const transport = absoluteStockTransport([
       { status: 409, body: { error: "Conflict" } },
       { status: 200, body: { success: true } },
-    ]);
+    ], { stockId: 4201, stock: 5 });
     const result = await executeWinerimStockMutation({
       mode: "operational",
       orderId: "provider:bottle:1",
@@ -232,12 +250,83 @@ describe("Cloudflare runtime Winerim mutation execution", () => {
     const requests = transport.send.mock.calls.map(([request]) => request);
 
     expect(result.ok).toBe(true);
+    expect(result.reason).toBe("absolute_stock_put_readback_certified");
     expect(requests).toHaveLength(2);
+    expect(transport.readStock).toHaveBeenCalledOnce();
+    expect(transport.readStock).toHaveBeenCalledWith(4201);
     expect(requests[0]).toBe(requests[1]);
     expect(requests[0]).toMatchObject({
       kind: "stock-put",
       path: "/api/v2/stock/4201",
       body: { stock: 5 },
+    });
+  });
+
+  it("does not certify a bottle or magnum PUT without an exact post-write readback", async () => {
+    for (const [soldStock, readback] of [
+      [bottle, { stockId: 4201, stock: 4 }],
+      [{ wineId: "wine-42", stockId: 4203, variant: "magnum" as const }, { stockId: 9999, stock: 5 }],
+    ] as const) {
+      const transport = absoluteStockTransport(
+        [{ status: 200, body: { success: true } }],
+        readback,
+      );
+      const result = await executeWinerimStockMutation({
+        mode: "operational",
+        orderId: `provider:${soldStock.variant}:mismatch`,
+        soldAt: "2026-08-02",
+        quantity: 1,
+        soldStock,
+        stockSource: soldStock,
+        currentSourceStock: 6,
+      }, transport);
+
+      expect(result).toMatchObject({
+        ok: false,
+        retryable: true,
+        reason: "absolute_stock_readback_mismatch",
+      });
+      expect(transport.send).toHaveBeenCalledOnce();
+      expect(transport.readStock).toHaveBeenCalledOnce();
+      expect(transport.sleep).not.toHaveBeenCalled();
+    }
+  });
+
+  it("fails retryable when absolute stock readback times out or is unavailable", async () => {
+    const timeout = absoluteStockTransport(
+      [{ status: 200, body: { success: true } }],
+      new Error("HTTP_TIMEOUT"),
+    );
+    const timedOut = await executeWinerimStockMutation({
+      mode: "operational",
+      orderId: "provider:bottle:timeout",
+      soldAt: "2026-08-02",
+      quantity: 1,
+      soldStock: bottle,
+      stockSource: bottle,
+      currentSourceStock: 6,
+    }, timeout);
+    expect(timedOut).toMatchObject({
+      ok: false,
+      retryable: true,
+      reason: "absolute_stock_readback_failed",
+    });
+    expect(timedOut.attempts[0]).toMatchObject({ readbackError: "HTTP_TIMEOUT" });
+
+    const unavailable = transportFor([{ status: 200, body: { success: true } }]);
+    const missingPort = await executeWinerimStockMutation({
+      mode: "operational",
+      orderId: "provider:bottle:no-readback-port",
+      soldAt: "2026-08-02",
+      quantity: 1,
+      soldStock: bottle,
+      stockSource: bottle,
+      currentSourceStock: 6,
+    }, unavailable);
+    expect(missingPort).toMatchObject({
+      ok: false,
+      retryable: true,
+      reason: "absolute_stock_readback_unavailable",
     });
   });
 });

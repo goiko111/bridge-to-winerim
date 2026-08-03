@@ -187,12 +187,15 @@ describe("encrypted runtime credential vault", () => {
       connection_id: CONNECTION_ID,
       provider: "agora",
       enabled: true,
+      base_url: "https://agora.example.test",
     }]);
     await expect(createPostgresRuntimeConnectionPort(fake.adapter).load(CONNECTION_ID)).resolves.toEqual({
       connectionId: CONNECTION_ID,
       provider: "agora",
       enabled: true,
+      baseUrl: "https://agora.example.test",
     });
-    expect(fake.statements[0].text).not.toMatch(/api_token|winerim_api_token|provider_config|base_url/i);
+    expect(fake.statements[0].text).toContain("base_url");
+    expect(fake.statements[0].text).not.toMatch(/api_token|winerim_api_token|provider_config/i);
   });
 });

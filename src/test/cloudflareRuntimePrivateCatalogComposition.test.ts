@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DatabaseAdapter } from "../../cloudflare/workers/middleware-api/src/db";
 import {
+  catalogProductCanonicalFingerprint,
   createPrivateCatalogLaneExecutor,
   privateCatalogEnabledJobs,
   PRIVATE_CATALOG_SAFETY_CONTRACT,
@@ -11,7 +12,10 @@ import type { PostgresCatalogAdapterFactory } from "../../cloudflare/workers/mid
 import type { RuntimeJob } from "../../cloudflare/workers/middleware-runtime/src/contracts";
 import { createRuntimeEnvelope } from "../../cloudflare/workers/middleware-runtime/src/idempotency";
 import { consumeRuntimeQueueBatch } from "../../cloudflare/workers/middleware-runtime/src/queue";
-import type { CatalogPlanningContext } from "../../cloudflare/workers/middleware-runtime/src/handlers/catalog";
+import type {
+  CatalogPlan,
+  CatalogPlanningContext,
+} from "../../cloudflare/workers/middleware-runtime/src/handlers/catalog";
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -68,6 +72,17 @@ function fixture(overrides: Partial<PrivateCatalogCompositionOptions> = {}) {
       appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
     },
   }));
+  const applyAndReadback = vi.fn(async ({ plan }: { plan: CatalogPlan }) => ({
+    ok: true as const,
+    receipt: {
+      status: "applied" as const,
+      appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+      canonicalProductFingerprints: Object.fromEntries(await Promise.all(plan.operations.map(async (operation) => [
+        operation.desired.productId,
+        await catalogProductCanonicalFingerprint(operation.desired),
+      ]))),
+    },
+  }));
   const adapterFactory = vi.fn(() => ({ loadPlanningContext, applyPlan })) as unknown as PostgresCatalogAdapterFactory;
   const value: PrivateCatalogCompositionOptions = {
     allowedConnectionId: CONNECTION_ID,
@@ -75,9 +90,10 @@ function fixture(overrides: Partial<PrivateCatalogCompositionOptions> = {}) {
     connections: { load },
     credentials: { open },
     adapterFactory,
+    agoraApply: { applyAndReadback },
     ...overrides,
   };
-  return { value, load, open, adapterFactory, loadPlanningContext, applyPlan };
+  return { value, load, open, adapterFactory, loadPlanningContext, applyPlan, applyAndReadback };
 }
 
 describe("private catalog executor composition", () => {
@@ -134,8 +150,37 @@ describe("private catalog executor composition", () => {
       provider: "agora",
       kind: "agora",
     });
+    expect(enabled.applyAndReadback).toHaveBeenCalledOnce();
     expect(enabled.applyPlan).toHaveBeenCalledOnce();
+    expect(enabled.applyAndReadback.mock.invocationCallOrder[0])
+      .toBeLessThan(enabled.applyPlan.mock.invocationCallOrder[0]);
     expect(privateCatalogEnabledJobs(enabled.value.switches)).toEqual(["catalog.sync-master"]);
+  });
+
+  it("fails closed before DB persistence when Agora readback is incomplete", async () => {
+    const applyAndReadback = vi.fn(async () => ({
+      ok: true as const,
+      receipt: {
+        status: "applied" as const,
+        appliedProductIds: [],
+        canonicalProductFingerprints: {},
+      },
+    }));
+    const configured = fixture({
+      switches: { executionEnabled: true, applyEnabled: true },
+      agoraApply: { applyAndReadback },
+    });
+
+    const result = await createPrivateCatalogLaneExecutor(configured.value).execute(
+      await envelope("catalog.sync-master", { formatTypes: ["BOTTLE"], winerimWineIds: ["1"] }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { httpStatus: 409, message: "CATALOG_APPLY_CONFLICT" },
+    });
+    expect(applyAndReadback).toHaveBeenCalledOnce();
+    expect(configured.applyPlan).not.toHaveBeenCalled();
   });
 
   it("keeps Winerim refresh behind its own port, credential and idempotency identity", async () => {

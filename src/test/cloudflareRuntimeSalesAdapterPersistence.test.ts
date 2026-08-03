@@ -117,6 +117,51 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
     expect(fake.statements[0].values).toEqual([CONNECTION_ID, ["547593"]]);
   });
 
+  it("reads explicit provider-product classifications without name matching", async () => {
+    const fake = fakeDatabase((statement) => {
+      expect(statement.text).toContain("FROM public.provider_products");
+      expect(statement.text).toContain("provider_product_id = ANY");
+      expect(statement.text).toContain("lower(btrim(COALESCE(family, ''))) = ANY");
+      expect(statement.text).not.toContain("ILIKE");
+      return result([{
+        provider_product_id: "wine-1",
+        family: "VINOS",
+        is_wine_candidate: true,
+        classification_override: "AUTO",
+        last_score: 100,
+        wine_score: 100,
+      }, {
+        provider_product_id: "food-1",
+        family: "COCINA",
+        is_wine_candidate: false,
+        classification_override: "NOT_WINE",
+        last_score: 0,
+        wine_score: 0,
+      }, {
+        provider_product_id: "review-1",
+        family: "VINOS",
+        is_wine_candidate: false,
+        classification_override: "AUTO",
+        last_score: 25,
+        wine_score: 25,
+      }]);
+    });
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+
+    await expect(adapter.readProductClassifications(
+      ["wine-1", "food-1", "review-1"],
+      ["VINOS", "COCINA"],
+    )).resolves.toEqual([
+      expect.objectContaining({ providerProductId: "wine-1", classification: "WINE" }),
+      expect.objectContaining({ providerProductId: "food-1", classification: "NOT_WINE" }),
+      expect.objectContaining({ providerProductId: "review-1", classification: "AMBIGUOUS" }),
+    ]);
+    expect(fake.transactionOptions).toEqual([{ isolationLevel: "repeatable-read", readOnly: true }]);
+  });
+
   it("upserts an event and replaces its mapped/unmapped lines atomically", async () => {
     const fake = fakeDatabase((statement) => {
       if (statement.text.includes("FROM public.product_mappings")) {
@@ -170,6 +215,49 @@ describe("PostgreSQL sales adapter mapping and persistence", () => {
       "Service not mapped",
       null,
       false,
+    ]));
+  });
+
+  it("persists an exact SaleFormatId mapping without rewriting the provider product identity", async () => {
+    const document = salesDocument();
+    document.lines[0] = {
+      ...document.lines[0],
+      providerProductId: "parent-product-1",
+      saleFormatId: "547593",
+    };
+    const fake = fakeDatabase((statement) => {
+      if (statement.text.includes("FROM public.product_mappings")) {
+        expect(statement.values).toEqual([CONNECTION_ID, expect.arrayContaining(["547593", "parent-product-1"])]);
+        return result([{
+          mapping_id: "mapping-format-1",
+          provider_product_id: "547593",
+          provider_product_name: "B Vi de Glass",
+          winerim_wine_id: "47593",
+          format_type: "BOTTLE",
+          stock_id: "stock-47593",
+          wine_active: true,
+        }]);
+      }
+      if (statement.text.includes("INSERT INTO public.sales_events")) {
+        return result([{ id: "22222222-2222-4222-8222-222222222222" }]);
+      }
+      return result();
+    });
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+
+    await adapter.persistDocuments([document]);
+
+    const lineInsert = fake.statements.find((statement) => (
+      statement.text.includes("INSERT INTO public.sales_line_items")
+      && statement.values.includes("parent-product-1")
+    ));
+    expect(lineInsert?.values).toEqual(expect.arrayContaining([
+      "parent-product-1",
+      "47593",
+      true,
     ]));
   });
 

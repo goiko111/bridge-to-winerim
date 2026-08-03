@@ -15,6 +15,7 @@ type RuntimeConnectionRow = Record<string, unknown> & {
   connection_id: unknown;
   provider: unknown;
   enabled: unknown;
+  base_url: unknown;
 };
 
 type RuntimeCredentialRow = Record<string, unknown> & {
@@ -194,7 +195,7 @@ export function createPostgresRuntimeConnectionPort(
   return {
     async load(connectionId) {
       const result = await database.query<RuntimeConnectionRow>(sql`
-        SELECT id::text AS connection_id, provider, enabled
+        SELECT id::text AS connection_id, provider, enabled, base_url
         FROM public.pos_connections
         WHERE id = ${connectionId}::uuid
         LIMIT 2
@@ -205,6 +206,7 @@ export function createPostgresRuntimeConnectionPort(
         connectionId: text(row.connection_id),
         provider: text(row.provider),
         enabled: row.enabled === true,
+        baseUrl: text(row.base_url),
       };
     },
   };

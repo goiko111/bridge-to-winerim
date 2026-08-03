@@ -20,7 +20,7 @@ export type CloudflareMessageBatchLike<TBody = unknown> = {
   readonly messages: readonly CloudflareQueueMessageLike<TBody>[];
 };
 
-export type IdempotencyReservation = "acquired" | "duplicate" | "busy";
+export type IdempotencyReservation = "acquired" | "duplicate" | "busy" | "conflict";
 
 export type RuntimeExecutionResult =
   | { ok: true; detail?: string }
@@ -86,6 +86,13 @@ export async function consumeRuntimeQueueBatch(
     }
     if (reservation === "busy") {
       message.retry({ delaySeconds: 5 });
+      summary.retried++;
+      continue;
+    }
+    if (reservation === "conflict") {
+      // A different immutable identity owns the key. Back off and let the
+      // configured Queue retry budget move it to the DLQ without executing.
+      message.retry({ delaySeconds: POISON_RETRY_DELAY_SECONDS });
       summary.retried++;
       continue;
     }

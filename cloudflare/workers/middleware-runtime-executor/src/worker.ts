@@ -7,7 +7,12 @@ import {
   type HyperdriveBinding,
   type PostgresClientFactory,
 } from "../../middleware-api/src/db";
-import { createWinerimMutationTransport, type SecretTextPort } from "../../middleware-runtime/src/adapters/http";
+import {
+  createWinerimMutationTransport,
+  type HttpRequestPort,
+  type SecretTextPort,
+} from "../../middleware-runtime/src/adapters/http";
+import type { PostgresCatalogAdapterFactory } from "../../middleware-runtime/src/adapters/catalog";
 import {
   isDeployableRuntimeCanaryConnectionId,
   type RuntimeEnvelopeV1,
@@ -27,6 +32,14 @@ import {
 import type { WinerimStockMutationInput, WinerimStockIdentity } from "../../middleware-runtime/src/handlers/stock";
 import type { RuntimeExecutionResult } from "../../middleware-runtime/src/queue";
 import {
+  createAgoraCatalogPlanApplyAndReadbackPort,
+  createPrivateCatalogLaneExecutor,
+  privateCatalogEnabledJobs,
+  type AgoraCatalogApplyAndReadbackPort,
+  type AgoraCatalogXmlProfile,
+  type PrivateCatalogSwitches,
+} from "./catalog";
+import {
   executeAgoraSalesEnvelope,
   isSalesLaneJob,
   salesLaneFlags,
@@ -45,10 +58,14 @@ const EXCLUSIVE_CANARY_EXECUTOR_MODE = "exclusive-canary-executor";
 const ENABLED_STOCK_JOBS = Object.freeze([
   "winerim.sales-import-live",
 ] as const satisfies readonly RuntimeJob[]);
-const SALES_JOBS = Object.freeze([
+const CURSORED_SALES_JOBS = Object.freeze([
   "sales.auto-sync",
   "sales.sync-intraday",
 ] as const satisfies readonly RuntimeJob[]);
+const CATALOG_JOBS = new Set<RuntimeJob>([
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+]);
 
 export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironment {
   ENVIRONMENT?: string;
@@ -59,6 +76,14 @@ export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironme
   RUNTIME_SALES_CURSOR_ENABLED?: string;
   RUNTIME_SALES_DLQ_READY?: string;
   RUNTIME_SALES_MAX_CLOSED_DAYS_PER_RUN?: string;
+  RUNTIME_CATALOG_EXECUTION_ENABLED?: string;
+  RUNTIME_CATALOG_FETCH_ENABLED?: string;
+  RUNTIME_CATALOG_APPLY_ENABLED?: string;
+  RUNTIME_OUTBOUND_EXECUTION_ENABLED?: string;
+  RUNTIME_OUTBOUND_MUTATION_ENABLED?: string;
+  RUNTIME_AGORA_CATALOG_BASE_URL?: string;
+  RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS?: string;
+  RUNTIME_AGORA_CATALOG_PROFILE_JSON?: string;
   RUNTIME_CANARY_CONNECTION_ID?: string;
   CANARY_RUN_ID?: string;
   WRITER_FENCE_HOLDER_ID?: string;
@@ -81,8 +106,13 @@ async function assertExclusiveWriterFence(
   connectionId: string,
   credential: SecretTextPort,
   now: () => number,
+  expectedCredentialKind: "agora" | "winerim" = "winerim",
+  requireFence = false,
 ): Promise<WriterFenceMutationAuthorization | null> {
-  if (String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT) return null;
+  if (
+    !requireFence
+    && String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
+  ) return null;
   const runId = canaryIdentifier(env.CANARY_RUN_ID);
   const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
   if (!runId || !holderId) {
@@ -92,7 +122,7 @@ async function assertExclusiveWriterFence(
   if (
     attestation.connectionId !== connectionId
     || attestation.provider !== "agora"
-    || attestation.kind !== "winerim"
+    || attestation.kind !== expectedCredentialKind
   ) {
     throw new Error("WRITER_FENCE_CREDENTIAL_SCOPE_MISMATCH");
   }
@@ -115,6 +145,13 @@ function executionEnvironmentAllowed(env: MiddlewareRuntimeExecutorEnv): boolean
 
 export interface RuntimeExecutorWorkerDependencies {
   database?: (env: MiddlewareRuntimeExecutorEnv) => DatabaseAdapter;
+  catalogAdapterFactory?: PostgresCatalogAdapterFactory;
+  catalogApply?: (input: Readonly<{
+    env: MiddlewareRuntimeExecutorEnv;
+    connectionId: string;
+    baseUrl: string;
+    request: HttpRequestPort;
+  }>) => AgoraCatalogApplyAndReadbackPort | null;
   request?: typeof fetch;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -292,18 +329,145 @@ function maxClosedDays(env: MiddlewareRuntimeExecutorEnv): number | undefined {
   return Number.isInteger(parsed) ? parsed : Number.NaN;
 }
 
-function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
-  const flags = salesLaneFlags(env);
-  return flags.executionEnabled && flags.cursorEnabled && flags.dlqReady
-    ? [...ENABLED_STOCK_JOBS, ...SALES_JOBS]
-    : ENABLED_STOCK_JOBS;
+function switchEnabled(value: unknown): boolean {
+  return String(value ?? "").trim().toLowerCase() === "true";
 }
+
+function catalogSwitches(env: MiddlewareRuntimeExecutorEnv): PrivateCatalogSwitches {
+  return {
+    executionEnabled: switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED),
+    // The Winerim refresh port is not connected in this Worker yet.
+    fetchEnabled: false,
+    applyEnabled: switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED),
+  };
+}
+
+function catalogProfile(value: unknown): AgoraCatalogXmlProfile | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let parsed: JsonRecord;
+  try {
+    const candidate = JSON.parse(value);
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+    parsed = candidate as JsonRecord;
+  } catch {
+    return null;
+  }
+  const colorByFormat = object(parsed.colorByFormat);
+  const orderByProductId = object(parsed.orderByProductId);
+  const priceListIds = Array.isArray(parsed.priceListIds)
+    ? parsed.priceListIds.map(String).map((item) => item.trim()).filter(Boolean)
+    : [];
+  const warehouseIds = Array.isArray(parsed.warehouseIds)
+    ? parsed.warehouseIds.map(String).map((item) => item.trim()).filter(Boolean)
+    : [];
+  if (
+    !colorByFormat
+    || !orderByProductId
+    || priceListIds.length === 0
+    || warehouseIds.length === 0
+    || !String(parsed.vatId ?? "").trim()
+    || !String(colorByFormat.BOTTLE ?? "").trim()
+    || !String(colorByFormat.GLASS ?? "").trim()
+    || !String(colorByFormat.MAGNUM ?? "").trim()
+  ) return null;
+  const preparationTypeId = String(parsed.preparationTypeId ?? "").trim();
+  const preparationOrderId = String(parsed.preparationOrderId ?? "").trim();
+  if (Boolean(preparationTypeId) !== Boolean(preparationOrderId)) return null;
+  return {
+    vatId: String(parsed.vatId).trim(),
+    priceListIds,
+    warehouseIds,
+    colorByFormat: {
+      BOTTLE: String(colorByFormat.BOTTLE).trim(),
+      GLASS: String(colorByFormat.GLASS).trim(),
+      MAGNUM: String(colorByFormat.MAGNUM).trim(),
+    },
+    preparationTypeId,
+    preparationOrderId,
+    orderByProductId: Object.fromEntries(Object.entries(orderByProductId).map(([key, item]) => [
+      key.trim(),
+      typeof item === "number" ? item : String(item ?? "").trim(),
+    ])),
+  };
+}
+
+function catalogTransportConfigurationReady(
+  env: MiddlewareRuntimeExecutorEnv,
+  connectionBaseUrl?: string,
+): boolean {
+  const baseUrl = String(env.RUNTIME_AGORA_CATALOG_BASE_URL ?? "").trim();
+  const expectedBaseUrl = String(connectionBaseUrl ?? "").trim();
+  const allowedHosts = String(env.RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  try {
+    const parsed = new URL(baseUrl);
+    const expected = new URL(expectedBaseUrl);
+    return ["http:", "https:"].includes(parsed.protocol)
+      && parsed.toString() === expected.toString()
+      && !parsed.username
+      && !parsed.password
+      && !parsed.search
+      && !parsed.hash
+      && (parsed.pathname === "/" || parsed.pathname === "")
+      && allowedHosts.includes(parsed.host.toLowerCase())
+      && catalogProfile(env.RUNTIME_AGORA_CATALOG_PROFILE_JSON) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function defaultCatalogApply(input: Readonly<{
+  env: MiddlewareRuntimeExecutorEnv;
+  connectionId: string;
+  baseUrl: string;
+  request: HttpRequestPort;
+}>): AgoraCatalogApplyAndReadbackPort | null {
+  const profile = catalogProfile(input.env.RUNTIME_AGORA_CATALOG_PROFILE_JSON);
+  if (!profile || !catalogTransportConfigurationReady(input.env, input.baseUrl)) return null;
+  return createAgoraCatalogPlanApplyAndReadbackPort({
+    enabled: input.env.RUNTIME_CATALOG_APPLY_ENABLED,
+    connectionId: input.connectionId,
+    baseUrl: input.baseUrl,
+    allowedHosts: String(input.env.RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS)
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+    request: input.request,
+    profile,
+  });
+}
+
+function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
+  if (!executionGateOpen(env)) return [];
+  const flags = salesLaneFlags(env);
+  return [
+    ...ENABLED_STOCK_JOBS,
+    ...privateCatalogEnabledJobs(catalogSwitches(env)),
+    ...(flags.executionEnabled && flags.dlqReady ? ["sales.sync-open-tickets" as const] : []),
+    ...(flags.executionEnabled && flags.cursorEnabled && flags.dlqReady ? CURSORED_SALES_JOBS : []),
+  ];
+}
+
+type NormalizedWorkerDependencies = Readonly<{
+  database: (env: MiddlewareRuntimeExecutorEnv) => DatabaseAdapter;
+  catalogAdapterFactory?: PostgresCatalogAdapterFactory;
+  catalogApply: NonNullable<RuntimeExecutorWorkerDependencies["catalogApply"]>;
+  request: typeof fetch;
+  now: () => number;
+  sleep: (milliseconds: number) => Promise<void>;
+}>;
 
 function normalizedDependencies(
   dependencies: RuntimeExecutorWorkerDependencies,
-): Required<RuntimeExecutorWorkerDependencies> {
+): NormalizedWorkerDependencies {
   return {
     database: dependencies.database ?? defaultDatabase,
+    ...(dependencies.catalogAdapterFactory
+      ? { catalogAdapterFactory: dependencies.catalogAdapterFactory }
+      : {}),
+    catalogApply: dependencies.catalogApply ?? defaultCatalogApply,
     request: dependencies.request ?? fetch,
     now: dependencies.now ?? Date.now,
     sleep: dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
@@ -312,11 +476,18 @@ function normalizedDependencies(
 
 async function readiness(
   env: MiddlewareRuntimeExecutorEnv,
-  dependencies: Required<RuntimeExecutorWorkerDependencies>,
+  dependencies: NormalizedWorkerDependencies,
 ): Promise<Response> {
   const environment = String(env.ENVIRONMENT ?? "").trim().toLowerCase();
   const executionEnabled = String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true";
   const salesFlags = salesLaneFlags(env);
+  const catalogFlags = catalogSwitches(env);
+  const catalogApplyRequested = switchEnabled(catalogFlags.applyEnabled);
+  const catalogFetchRequested = switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED);
+  let catalogTransportReady = !catalogApplyRequested;
+  const outboundExecutionRequested = switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED);
+  const outboundMutationRequested = switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
+  const writerFenceRequired = environment === RESCUE_PRODUCTION_ENVIRONMENT || catalogApplyRequested;
   const missingBindings = [
     !env.MIDDLEWARE_DB ? "MIDDLEWARE_DB" : null,
     typeof env.RUNTIME_VAULT_KEY?.get !== "function" ? "RUNTIME_VAULT_KEY" : null,
@@ -326,21 +497,23 @@ async function readiness(
     !isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
       ? "RUNTIME_CANARY_CONNECTION_ID"
       : null,
-    environment === RESCUE_PRODUCTION_ENVIRONMENT && !canaryIdentifier(env.CANARY_RUN_ID)
+    writerFenceRequired && !canaryIdentifier(env.CANARY_RUN_ID)
       ? "CANARY_RUN_ID"
       : null,
-    environment === RESCUE_PRODUCTION_ENVIRONMENT && !canaryIdentifier(env.WRITER_FENCE_HOLDER_ID)
+    writerFenceRequired && !canaryIdentifier(env.WRITER_FENCE_HOLDER_ID)
       ? "WRITER_FENCE_HOLDER_ID"
       : null,
-    environment === RESCUE_PRODUCTION_ENVIRONMENT
+    writerFenceRequired
       && (!env.WRITER_FENCE || typeof env.WRITER_FENCE.fetch !== "function")
       ? "WRITER_FENCE"
       : null,
-    environment === RESCUE_PRODUCTION_ENVIRONMENT
+    writerFenceRequired
       && (!env.CANARY_WRITER_FENCE_PROOF || typeof env.CANARY_WRITER_FENCE_PROOF.get !== "function")
       ? "CANARY_WRITER_FENCE_PROOF"
       : null,
   ].filter((value): value is string => !!value);
+  let agoraCredentialReady = false;
+  let winerimCredentialReady = false;
   let credentialsReady = false;
   if (executionEnvironmentAllowed(env) && executionEnabled && missingBindings.length === 0) {
     try {
@@ -348,28 +521,46 @@ async function readiness(
       const connectionId = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
       const connection = await createPostgresRuntimeConnectionPort(database).load(connectionId);
       if (connection?.enabled === true && connection.provider.toLowerCase() === "agora") {
+        catalogTransportReady = !catalogApplyRequested
+          || catalogTransportConfigurationReady(env, connection.baseUrl);
         const credentials = createPostgresEncryptedCredentialPort(database, {
           masterKey: env.RUNTIME_VAULT_KEY!,
           keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
         });
         const agora = await credentials.open({ connectionId, provider: "agora", kind: "agora" });
         const winerim = await credentials.open({ connectionId, provider: "agora", kind: "winerim" });
-        credentialsReady = Boolean(await agora?.read()) && Boolean(await winerim?.read());
-        if (credentialsReady && environment === RESCUE_PRODUCTION_ENVIRONMENT && winerim) {
-          const attestation = runtimeCredentialAttestation(winerim);
-          credentialsReady = attestation.connectionId === connectionId
-            && attestation.provider === "agora"
-            && attestation.kind === "winerim";
+        agoraCredentialReady = Boolean(await agora?.read());
+        winerimCredentialReady = Boolean(await winerim?.read());
+        if (environment === RESCUE_PRODUCTION_ENVIRONMENT) {
+          if (agoraCredentialReady && agora) {
+            const attestation = runtimeCredentialAttestation(agora);
+            agoraCredentialReady = attestation.connectionId === connectionId
+              && attestation.provider === "agora"
+              && attestation.kind === "agora";
+          }
+          if (winerimCredentialReady && winerim) {
+            const attestation = runtimeCredentialAttestation(winerim);
+            winerimCredentialReady = attestation.connectionId === connectionId
+              && attestation.provider === "agora"
+              && attestation.kind === "winerim";
+          }
         }
+        credentialsReady = agoraCredentialReady && winerimCredentialReady;
       }
     } catch {
+      agoraCredentialReady = false;
+      winerimCredentialReady = false;
       credentialsReady = false;
     }
+  }
+  if (catalogApplyRequested && !catalogTransportReady) {
+    missingBindings.push("RUNTIME_AGORA_CATALOG_TRANSPORT");
   }
   const ready = executionEnvironmentAllowed(env)
     && executionEnabled
     && missingBindings.length === 0
-    && credentialsReady;
+      && credentialsReady
+      && catalogTransportReady;
   return json({
     ok: ready,
     service: "winerim-middleware-runtime-executor",
@@ -392,8 +583,35 @@ async function readiness(
         && salesFlags.dlqReady
         && credentialsReady,
     },
+    catalog: {
+      executionEnabled: switchEnabled(catalogFlags.executionEnabled),
+      fetchRequested: catalogFetchRequested,
+      fetchEnabled: false,
+      fetchConnected: false,
+      applyEnabled: catalogApplyRequested,
+      transportReady: catalogTransportReady,
+      dryRunReady: executionEnabled
+        && switchEnabled(catalogFlags.executionEnabled)
+        && missingBindings.filter((binding) => binding !== "RUNTIME_AGORA_CATALOG_TRANSPORT").length === 0,
+      applyReady: executionEnabled
+        && switchEnabled(catalogFlags.executionEnabled)
+        && catalogApplyRequested
+        && catalogTransportReady
+        && agoraCredentialReady,
+    },
+    outbound: {
+      executionRequested: outboundExecutionRequested,
+      mutationRequested: outboundMutationRequested,
+      connected: false,
+      ready: false,
+      reason: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED",
+    },
     missingBindings,
     credentials: credentialsReady ? "ready" : "not_ready",
+    credentialReadiness: {
+      agora: agoraCredentialReady ? "ready" : "not_ready",
+      winerim: winerimCredentialReady ? "ready" : "not_ready",
+    },
     reason: ready ? null : "RUNTIME_EXECUTOR_NOT_READY",
   }, ready ? 200 : 503);
 }
@@ -464,14 +682,56 @@ export function createMiddlewareRuntimeExecutorWorker(
         masterKey: env.RUNTIME_VAULT_KEY,
         keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
       });
+      const guardedCatalogApply: AgoraCatalogApplyAndReadbackPort = {
+        async applyAndReadback(input) {
+          if (input.plan.operations.length !== 1) {
+            return { ok: false, code: "APPLY_REJECTED" };
+          }
+          const connection = await scopedConnections.load(input.connectionId);
+          if (!connection || connection.connectionId !== input.connectionId) {
+            return { ok: false, code: "APPLY_REJECTED" };
+          }
+          const rawCatalogApply = resolved.catalogApply({
+            env,
+            connectionId: input.connectionId,
+            baseUrl: connection.baseUrl,
+            request: { request: (target, init) => resolved.request(target, init) },
+          });
+          if (!rawCatalogApply) return { ok: false, code: "APPLY_REJECTED" };
+          await assertExclusiveWriterFence(
+            env,
+            input.connectionId,
+            input.credential,
+            resolved.now,
+            "agora",
+            true,
+          );
+          return rawCatalogApply.applyAndReadback(input);
+        },
+      };
+      const catalogExecutor = createPrivateCatalogLaneExecutor({
+        allowedConnectionId: String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim(),
+        switches: catalogSwitches(env),
+        database,
+        connections: scopedConnections,
+        credentials: scopedCredentials,
+        ...(resolved.catalogAdapterFactory
+          ? { adapterFactory: resolved.catalogAdapterFactory }
+          : {}),
+        agoraApply: guardedCatalogApply,
+      });
       return createRuntimeExecutorService({
         async execute(envelope): Promise<RuntimeExecutionResult> {
+          if (CATALOG_JOBS.has(envelope.job)) return catalogExecutor.execute(envelope);
+          if (envelope.job === "outbound.process") {
+            return failure(503, "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED");
+          }
           if (!isSalesLaneJob(envelope.job)) return stockExecutor.execute(envelope);
           if (envelope.connectionId !== String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim()) {
             return failure(422, "RUNTIME_CANARY_CONNECTION_REJECTED");
           }
           const flags = salesLaneFlags(env);
-          const salesGate = salesLaneGateFailure(flags, envelopeDryRun(envelope));
+          const salesGate = salesLaneGateFailure(flags, envelopeDryRun(envelope), envelope.job);
           if (salesGate) return failure(503, salesGate, true);
 
           try {
@@ -508,6 +768,7 @@ export function createMiddlewareRuntimeExecutorWorker(
                 envelope.connectionId,
                 winerim,
                 resolved.now,
+                "winerim",
               ).then(() => undefined),
             });
           } catch {

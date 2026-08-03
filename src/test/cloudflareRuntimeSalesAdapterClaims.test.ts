@@ -55,6 +55,9 @@ function intent(sourceDocumentId: string): SalesMutationIntent {
     observedAppliedQuantity: 0,
     sourceDocumentIds: [sourceDocumentId],
     sourceLineIds: ["line-1"],
+    sourceDocumentKind: sourceDocumentId.startsWith("open-ticket:")
+      ? "OPEN_TICKET"
+      : "DEFINITIVE_INVOICE",
     action: {
       kind: "STOCK_APPLY",
       stockId: "stock-47593",
@@ -76,16 +79,8 @@ describe("PostgreSQL sales adapter claims", () => {
     let state: "NONE" | "RUNNING" | "SUCCESS" = "NONE";
     let appliedQuantity = 0;
     const fake = fakeDatabase((statement) => {
-      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
-        if (state !== "NONE") return result();
-        state = "RUNNING";
-        return result([{
-          status: state,
-          applied_quantity: 0,
-          result: { appliedQuantity: 0 },
-        }]);
-      }
       if (statement.text.includes("FOR UPDATE")) {
+        if (state === "NONE") return result();
         return result([{
           idempotency_key: "sales-claim:v1:shared-open-final",
           message_id: "mw:v1:agora:2026-07-29:same:b:t1",
@@ -93,8 +88,23 @@ describe("PostgreSQL sales adapter claims", () => {
           status: state,
           applied_quantity: appliedQuantity,
           lease_expired: false,
-          result: { appliedQuantity },
+          result: {
+            appliedQuantity,
+            lifecycleId: "ticket-100",
+            winerimWineId: "47593",
+            variant: "BOTTLE",
+          },
           updated_at: "2026-07-29T13:05:00Z",
+        }]);
+      }
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
+        if (state !== "NONE") return result();
+        state = "RUNNING";
+        return result([{
+          idempotency_key: "sales-claim:v1:shared-open-final",
+          status: state,
+          applied_quantity: 0,
+          result: { appliedQuantity: 0 },
         }]);
       }
       if (statement.text.includes("status = 'SUCCESS'")) {
@@ -111,11 +121,21 @@ describe("PostgreSQL sales adapter claims", () => {
     });
 
     const openTicket = intent("open-ticket:ticket-100");
-    expect(await adapter.reserveClaim(openTicket)).toEqual({ state: "ACQUIRED", appliedQuantity: 0 });
-    await adapter.completeClaim({
+    const reservation = await adapter.reserveClaim(openTicket);
+    expect(reservation).toMatchObject({
+      state: "ACQUIRED",
+      appliedQuantity: 0,
       claimKey: openTicket.claimKey,
+      payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      leaseToken: expect.stringMatching(/^[a-f0-9-]{36}$/),
+    });
+    if (reservation.state !== "ACQUIRED") throw new Error("expected acquired sales claim");
+    await adapter.completeClaim({
+      claimKey: reservation.claimKey,
       orderId: openTicket.orderId,
       appliedQuantity: 1,
+      payloadSha256: reservation.payloadSha256,
+      leaseToken: reservation.leaseToken,
     });
 
     const definitive = intent("invoice:invoice-100");
@@ -123,7 +143,7 @@ describe("PostgreSQL sales adapter claims", () => {
 
     expect(fake.statements.some((statement) => statement.text.includes("FOR UPDATE"))).toBe(true);
     expect(fake.statements.filter((statement) => statement.text.includes("INSERT INTO public.runtime_idempotency")))
-      .toHaveLength(2);
+      .toHaveLength(1);
     expect(fake.transactionOptions).toEqual([
       { isolationLevel: "serializable", readOnly: false },
       { isolationLevel: "serializable", readOnly: false },
@@ -141,7 +161,12 @@ describe("PostgreSQL sales adapter claims", () => {
           status: "SUCCESS",
           applied_quantity: 1,
           lease_expired: true,
-          result: { appliedQuantity: 1 },
+          result: {
+            appliedQuantity: 1,
+            lifecycleId: "ticket-100",
+            winerimWineId: "47593",
+            variant: "BOTTLE",
+          },
           updated_at: "2026-07-29T13:05:00Z",
         }]);
       }
@@ -169,6 +194,9 @@ describe("PostgreSQL sales adapter claims", () => {
     await expect(adapter.reserveClaim(definitive)).resolves.toEqual({
       state: "ACQUIRED",
       appliedQuantity: 1,
+      claimKey: "sales-claim:v1:shared-open-final",
+      payloadSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      leaseToken: expect.stringMatching(/^[a-f0-9-]{36}$/),
     });
     const reacquire = fake.statements.find((statement) =>
       statement.text.includes("UPDATE public.runtime_idempotency")
@@ -227,6 +255,56 @@ describe("PostgreSQL sales adapter claims", () => {
     ]);
   });
 
+  it("loads lifecycle and missing-ticket claims for explicit reconciliation", async () => {
+    const fake = fakeDatabase((statement) => {
+      expect(statement.text).toContain("jsonb_array_elements_text");
+      expect(statement.text).toContain("definitive_event.doc_type = 'BasicInvoice'");
+      return result([{
+        idempotency_key: "sales-claim:v1:removed",
+        message_id: "legacy-order",
+        job: "sales.claim",
+        status: "SUCCESS",
+        applied_quantity: "2",
+        lease_expires_at: null,
+        result: {
+          appliedQuantity: 2,
+          lifecycleId: "ticket-removed",
+          winerimWineId: "47593",
+          variant: "BOTTLE",
+          sourceDocumentIds: ["open-ticket:removed"],
+          sourceLineIds: ["line-removed"],
+          sourceDocumentKind: "OPEN_TICKET",
+        },
+        updated_at: "2026-07-29T13:05:00Z",
+      }]);
+    });
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+
+    await expect(adapter.loadReconciliationClaims?.({
+      lifecycleIds: ["ticket-current"],
+      includeMissingOpenTickets: true,
+    })).resolves.toEqual([{
+      claimKey: "sales-claim:v1:removed",
+      state: "COMPLETE",
+      appliedQuantity: 2,
+      lifecycleId: "ticket-removed",
+      winerimWineId: "47593",
+      variant: "BOTTLE",
+      sourceDocumentIds: ["open-ticket:removed"],
+      sourceLineIds: ["line-removed"],
+      sourceDocumentKind: "OPEN_TICKET",
+    }]);
+    expect(fake.statements[0].values).toEqual([
+      CONNECTION_ID,
+      "sales.claim",
+      ["ticket-current"],
+      true,
+    ]);
+  });
+
   it("parameterizes failure details when releasing a claim", async () => {
     const secretLikeError = "upstream failed for token-do-not-inline";
     const fake = fakeDatabase((statement) => {
@@ -245,10 +323,34 @@ describe("PostgreSQL sales adapter claims", () => {
       orderId: "order-1",
       retryable: true,
       error: secretLikeError,
+      payloadSha256: "a".repeat(64),
+      leaseToken: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
 
     expect(fake.statements[0].text).not.toContain(secretLikeError);
     expect(JSON.stringify(fake.statements[0].values)).toContain(secretLikeError);
     expect(fake.statements[0].values).toContain("RETRY");
+    expect(fake.statements[0].text).toContain("payload_sha256 =");
+    expect(fake.statements[0].text).toContain("lease_token =");
+    expect(fake.statements[0].values).toContain("a".repeat(64));
+    expect(fake.statements[0].values).toContain("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  });
+
+  it("rejects completion from a stale lease owner", async () => {
+    const fake = fakeDatabase(() => result());
+    const adapter = createPostgresSalesAdapter(fake.database, {
+      connectionId: CONNECTION_ID,
+      provider: "agora",
+    });
+
+    await expect(adapter.completeClaim({
+      claimKey: "claim-1",
+      orderId: "order-1",
+      appliedQuantity: 1,
+      payloadSha256: "c".repeat(64),
+      leaseToken: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    })).rejects.toMatchObject({ code: "SALES_CLAIM_COMPLETE_NOT_OWNED" });
+    expect(fake.statements[0].text).toContain("payload_sha256 =");
+    expect(fake.statements[0].text).toContain("lease_token =");
   });
 });

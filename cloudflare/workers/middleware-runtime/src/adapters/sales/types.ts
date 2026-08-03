@@ -2,6 +2,7 @@ import type {
   ProviderSalesDocument,
   SalesClaimSnapshot,
   SalesExecutionPorts,
+  SalesLineClassification,
   SalesLineResolution,
   SalesPlanningPorts,
 } from "../../handlers/sales";
@@ -11,6 +12,12 @@ export type ExactSalesMapping = SalesLineResolution & {
   providerProductName: string;
   mappingId: string;
   mappingStatus: "CONFIRMED";
+};
+
+export type ProviderProductSalesClassification = {
+  providerProductId: string;
+  familyName: string | null;
+  classification: SalesLineClassification;
 };
 
 export type SalesEventReadback = {
@@ -78,6 +85,10 @@ export type PostgresSalesAdapter = SalesPlanningPorts &
     "persistDocuments" | "reserveClaim" | "completeClaim" | "releaseClaim"
   > & {
     readExactMappings(providerProductIds: string[]): Promise<ExactSalesMapping[]>;
+    readProductClassifications(
+      providerProductIds: string[],
+      familyNames: string[],
+    ): Promise<ProviderProductSalesClassification[]>;
     readDocuments(filter?: SalesReadbackFilter): Promise<SalesDocumentsReadback>;
     readClaims(claimKeys?: string[]): Promise<SalesClaimReadback[]>;
     planCursorAdvance(input: {

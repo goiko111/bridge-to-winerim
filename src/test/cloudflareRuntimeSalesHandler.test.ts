@@ -36,7 +36,13 @@ function handlerPorts(
     resolveLine: vi.fn().mockResolvedValue(resolution),
     loadClaims: vi.fn().mockResolvedValue([]),
     persistDocuments: vi.fn().mockResolvedValue(undefined),
-    reserveClaim: vi.fn().mockResolvedValue({ state: "ACQUIRED", appliedQuantity: 0 }),
+    reserveClaim: vi.fn().mockResolvedValue({
+      state: "ACQUIRED",
+      appliedQuantity: 0,
+      claimKey: "owned-claim",
+      payloadSha256: "a".repeat(64),
+      leaseToken: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    }),
     applyStock: vi.fn().mockResolvedValue({ ok: true, stockMoved: true }),
     importSales: vi.fn().mockResolvedValue({
       ok: true,
@@ -196,7 +202,13 @@ describe("Cloudflare runtime sales handler", () => {
       stockId: "stock-1",
       stockActive: true,
     }, {
-      reserveClaim: vi.fn().mockResolvedValue({ state: "ACQUIRED", appliedQuantity: 1 }),
+      reserveClaim: vi.fn().mockResolvedValue({
+        state: "ACQUIRED",
+        appliedQuantity: 1,
+        claimKey: "owned-claim",
+        payloadSha256: "b".repeat(64),
+        leaseToken: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      }),
       applyStock,
     });
     const result = await handleSalesRun({
@@ -216,6 +228,11 @@ describe("Cloudflare runtime sales handler", () => {
       appliedDelta: 1,
     });
     expect(ports.completeClaim).toHaveBeenCalledWith(expect.objectContaining({ appliedQuantity: 2 }));
+    expect(ports.completeClaim).toHaveBeenCalledWith(expect.objectContaining({
+      claimKey: "owned-claim",
+      payloadSha256: "b".repeat(64),
+      leaseToken: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    }));
   });
 
   it("records an active bottle sales-only when stock reports that it did not move", async () => {

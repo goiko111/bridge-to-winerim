@@ -154,7 +154,10 @@ describe("sales preparation ports dry-run", () => {
     expect(mappingSql.text).toContain("pm.status = 'CONFIRMED'");
     expect(mappingSql.text).not.toContain("ILIKE");
     expect(mappingSql.values).toEqual([CONNECTION_ID, ["700100"]]);
-    expect(fake.transactionOptions).toEqual([{ isolationLevel: "repeatable-read", readOnly: true }]);
+    expect(fake.transactionOptions).toEqual([
+      { isolationLevel: "repeatable-read", readOnly: true },
+      { isolationLevel: "repeatable-read", readOnly: true },
+    ]);
   });
 
   it("never proposes a cursor for historical or OpenTicket preparation", async () => {

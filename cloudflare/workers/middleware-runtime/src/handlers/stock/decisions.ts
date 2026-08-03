@@ -309,7 +309,7 @@ export function decideWinerimMutationResponse(input: {
     return emptyDecision("terminal", "winerim_request_or_identity_rejected");
   }
   if (input.response.status >= 200 && input.response.status < 300) {
-    return emptyDecision("success", "absolute_stock_put_accepted");
+    return emptyDecision("success", "absolute_stock_put_accepted_pending_readback");
   }
   return emptyDecision("terminal", "winerim_unclassified_http_failure");
 }

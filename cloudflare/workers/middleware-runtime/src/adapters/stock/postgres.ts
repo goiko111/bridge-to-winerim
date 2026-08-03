@@ -33,6 +33,8 @@ type ClaimRow = {
   attempt: unknown;
   lease_expires_at: unknown;
   lease_expired?: unknown;
+  payload_sha256?: unknown;
+  lease_token?: unknown;
   result: unknown;
   created_at: unknown;
   updated_at: unknown;
@@ -69,7 +71,13 @@ type StockRow = {
 };
 
 type ClaimReservation = Readonly<{
-  state: StockClaimState;
+  state: "ACQUIRED";
+  attempt: number;
+  writesPerformed: boolean;
+  reason: string;
+  leaseToken: string;
+}> | Readonly<{
+  state: Exclude<StockClaimState, "ACQUIRED">;
   attempt: number;
   writesPerformed: boolean;
   reason: string;
@@ -299,6 +307,7 @@ async function reserveClaim(
   payloadHash: string,
   leaseSeconds: number,
 ): Promise<ClaimReservation> {
+  const leaseToken = crypto.randomUUID();
   return database.transaction(async (transaction) => {
     const legacyClaim = await readExistingStockClaim(
       transaction,
@@ -332,6 +341,8 @@ async function reserveClaim(
         status,
         attempt,
         lease_expires_at,
+        payload_sha256,
+        lease_token,
         result
       ) VALUES (
         ${input.idempotencyKey},
@@ -341,6 +352,8 @@ async function reserveClaim(
         'RUNNING',
         1,
         now() + (${leaseSeconds} * interval '1 second'),
+        ${payloadHash},
+        ${leaseToken}::uuid,
         ${metadata}::jsonb
       )
       ON CONFLICT (idempotency_key) DO NOTHING
@@ -353,6 +366,8 @@ async function reserveClaim(
         attempt,
         lease_expires_at,
         false AS lease_expired,
+        payload_sha256,
+        lease_token,
         result,
         created_at,
         updated_at
@@ -363,6 +378,7 @@ async function reserveClaim(
         attempt: 1,
         writesPerformed: true,
         reason: "stock_claim_acquired",
+        leaseToken,
       };
     }
 
@@ -376,6 +392,8 @@ async function reserveClaim(
         attempt,
         lease_expires_at,
         COALESCE(lease_expires_at <= now(), true) AS lease_expired,
+        payload_sha256,
+        lease_token,
         result,
         created_at,
         updated_at
@@ -393,7 +411,9 @@ async function reserveClaim(
       text(current.job) === CLAIM_JOB;
     const sameOrder = text(current.message_id) === input.mutation.orderId &&
       text(currentMetadata.orderId) === input.mutation.orderId;
-    const samePayload = text(currentMetadata.payloadHash) === payloadHash;
+    const relationalPayloadHash = text(current.payload_sha256);
+    const samePayload = text(currentMetadata.payloadHash) === payloadHash
+      && (!relationalPayloadHash || relationalPayloadHash === payloadHash);
     if (!sameScope || !sameOrder || !samePayload) {
       return {
         state: "CONFLICT",
@@ -434,6 +454,8 @@ async function reserveClaim(
         status = 'RUNNING',
         attempt = attempt + 1,
         lease_expires_at = now() + (${leaseSeconds} * interval '1 second'),
+        payload_sha256 = ${payloadHash},
+        lease_token = ${leaseToken}::uuid,
         result = COALESCE(result, '{}'::jsonb) || ${metadata}::jsonb,
         updated_at = now()
       WHERE idempotency_key = ${input.idempotencyKey}
@@ -454,6 +476,8 @@ async function reserveClaim(
         attempt,
         lease_expires_at,
         false AS lease_expired,
+        payload_sha256,
+        lease_token,
         result,
         created_at,
         updated_at
@@ -466,6 +490,7 @@ async function reserveClaim(
       attempt: number(reacquired.rows[0].attempt),
       writesPerformed: true,
       reason: "stock_claim_reacquired_same_order_and_payload",
+      leaseToken,
     };
   }, { isolationLevel: "serializable", readOnly: false });
 }
@@ -481,6 +506,7 @@ async function finalizeClaim(
   input: StockMutationContext,
   plan: WinerimMutationPlan,
   payloadHash: string,
+  leaseToken: string,
   attempt: number,
   durationMs: number,
   execution: WinerimMutationExecutionResult,
@@ -506,7 +532,8 @@ async function finalizeClaim(
         AND job = ${CLAIM_JOB}
         AND status = 'RUNNING'
         AND message_id = ${input.mutation.orderId}
-        AND result ->> 'payloadHash' = ${payloadHash}
+        AND payload_sha256 = ${payloadHash}
+        AND lease_token = ${leaseToken}::uuid
       RETURNING idempotency_key
     `);
     if (updated.rowCount !== 1) {
@@ -726,6 +753,7 @@ export function createPostgresStockAdapter(
       input,
       plan,
       payloadHash,
+      reservation.leaseToken,
       reservation.attempt,
       durationMs,
       execution,

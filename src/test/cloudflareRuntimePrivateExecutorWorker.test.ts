@@ -7,7 +7,16 @@ import type {
   SqlStatement,
 } from "../../cloudflare/workers/middleware-api/src/db";
 import type { RuntimeJob } from "../../cloudflare/workers/middleware-runtime/src/contracts";
+import type { PostgresCatalogAdapterFactory } from "../../cloudflare/workers/middleware-runtime/src/adapters/catalog";
+import type {
+  CatalogPlan,
+  CatalogPlanningContext,
+} from "../../cloudflare/workers/middleware-runtime/src/handlers/catalog";
 import { createRuntimeEnvelope } from "../../cloudflare/workers/middleware-runtime/src/idempotency";
+import {
+  catalogProductCanonicalFingerprint,
+  type AgoraCatalogApplyAndReadbackPort,
+} from "../../cloudflare/workers/middleware-runtime-executor/src/catalog";
 import {
   createMiddlewareRuntimeExecutorWorker,
   parseLiveGlassCanaryInput,
@@ -21,6 +30,7 @@ import { writerFenceCredentialBinding } from "../../cloudflare/canary-failclosed
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 const KEY_VERSION = "v1";
+const AGORA_BASE_URL = "https://agora.example.test";
 
 function base64(bytes: Uint8Array): string {
   let binary = "";
@@ -78,7 +88,12 @@ function fakeDatabase(rows: Record<string, unknown>[] = []) {
 function readinessDatabase(rows: Partial<Record<"agora" | "winerim", Record<string, unknown>>>) {
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
     if (statement.text.includes("FROM public.pos_connections")) {
-      return result([{ connection_id: CONNECTION_ID, provider: "agora", enabled: true }] as Row[]);
+      return result([{
+        connection_id: CONNECTION_ID,
+        provider: "agora",
+        enabled: true,
+        base_url: AGORA_BASE_URL,
+      }] as Row[]);
     }
     const kind = [...statement.values].reverse().find((value) => value === "agora" || value === "winerim") as
       | "agora"
@@ -133,19 +148,75 @@ function rescueCanaryEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}):
 
 async function credentialFenceFor(
   fixture: Awaited<ReturnType<typeof encryptedCredentialRow>>,
+  kind: "agora" | "winerim" = "winerim",
 ): Promise<{
   attestation: ReturnType<typeof runtimeCredentialAttestation>;
   binding: string;
 }> {
   const credential = await createPostgresEncryptedCredentialPort(
-    readinessDatabase({ winerim: fixture.row }).adapter,
+    readinessDatabase({ [kind]: fixture.row }).adapter,
     { masterKey: { get: async () => fixture.master }, keyVersion: KEY_VERSION },
-  ).open({ connectionId: CONNECTION_ID, provider: "agora", kind: "winerim" });
+  ).open({ connectionId: CONNECTION_ID, provider: "agora", kind });
   const attestation = runtimeCredentialAttestation(credential!);
   return {
     attestation,
     binding: await writerFenceCredentialBinding(attestation),
   };
+}
+
+function catalogPlanningContext(wines = 1): CatalogPlanningContext {
+  return {
+    provider: "agora",
+    sourceRevision: "worker-catalog-fixture-v1",
+    wines: Array.from({ length: wines }, (_, index) => ({
+      winerimId: String(index + 1),
+      name: `Fixture ${index + 1}`,
+      active: true,
+      wineType: "tinto",
+      variants: [{ format: "BOTTLE" as const, salePrice: 20 + index }],
+    })),
+    existingFamilies: [{ id: "10", name: "TINTOS WINERIM" }],
+    existingProducts: [],
+    familyRouting: { byWineType: { tinto: { id: "10", name: "TINTOS WINERIM" } } },
+  };
+}
+
+function catalogAdapter(
+  order?: string[],
+  wines = 1,
+): PostgresCatalogAdapterFactory {
+  return vi.fn(() => ({
+    loadPlanningContext: vi.fn(async () => ({
+      ok: true as const,
+      context: catalogPlanningContext(wines),
+    })),
+    applyPlan: vi.fn(async ({ plan }: { plan: CatalogPlan }) => {
+      order?.push("persist");
+      return {
+        ok: true as const,
+        receipt: {
+          status: "applied" as const,
+          appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+        },
+      };
+    }),
+  })) as unknown as PostgresCatalogAdapterFactory;
+}
+
+function catalogTransportProfile(): string {
+  return JSON.stringify({
+    vatId: "1",
+    priceListIds: ["1"],
+    warehouseIds: ["1"],
+    colorByFormat: {
+      BOTTLE: "#8B0000",
+      GLASS: "#F5F5DC",
+      MAGNUM: "#333333",
+    },
+    preparationTypeId: "",
+    preparationOrderId: "",
+    orderByProductId: { "500001": "1" },
+  });
 }
 
 function executeRequest(runtimeEnvelope: unknown) {
@@ -215,6 +286,7 @@ describe("private runtime executor Worker", () => {
       ok: false,
       stagingOnly: true,
       executionEnabled: false,
+      enabledJobs: [],
       missingBindings: expect.arrayContaining([
         "MIDDLEWARE_DB",
         "RUNTIME_VAULT_KEY",
@@ -323,7 +395,362 @@ describe("private runtime executor Worker", () => {
     expect(vaultGet).toHaveBeenCalledTimes(2);
   });
 
-  it("allows only the narrow stock mutation job set", async () => {
+  it("advertises open-ticket shadow execution without opening the definitive cursor gate", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({
+        RUNTIME_VAULT_KEY: { get: async () => agora.master },
+        RUNTIME_SALES_EXECUTION_ENABLED: "true",
+        RUNTIME_SALES_CURSOR_ENABLED: "false",
+        RUNTIME_SALES_DLQ_READY: "true",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { enabledJobs: string[] };
+    expect(body.enabledJobs).toContain("sales.sync-open-tickets");
+    expect(body.enabledJobs).not.toContain("sales.auto-sync");
+    expect(body.enabledJobs).not.toContain("sales.sync-intraday");
+  });
+
+  it("reports catalog flags truthfully while keeping generic outbound disconnected", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const winerim = await encryptedCredentialRow("winerim");
+    const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      rescueCanaryEnv({
+        RUNTIME_VAULT_KEY: { get: async () => agora.master },
+        RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+        RUNTIME_CATALOG_APPLY_ENABLED: "true",
+        RUNTIME_AGORA_CATALOG_BASE_URL: AGORA_BASE_URL,
+        RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "agora.example.test",
+        RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+        RUNTIME_OUTBOUND_EXECUTION_ENABLED: "true",
+        RUNTIME_OUTBOUND_MUTATION_ENABLED: "true",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      enabledJobs: string[];
+      catalog: Record<string, unknown>;
+      outbound: Record<string, unknown>;
+    };
+    expect(body.enabledJobs).toContain("catalog.sync-master");
+    expect(body.enabledJobs).not.toContain("outbound.process");
+    expect(body.catalog).toMatchObject({
+      executionEnabled: true,
+      fetchRequested: false,
+      fetchEnabled: false,
+      fetchConnected: false,
+      applyEnabled: true,
+      transportReady: true,
+      dryRunReady: true,
+      applyReady: true,
+    });
+    expect(body.outbound).toEqual({
+      executionRequested: true,
+      mutationRequested: true,
+      connected: false,
+      ready: false,
+      reason: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED",
+    });
+  });
+
+  it("reports catalog dry-run readiness without requiring an Agora credential row", async () => {
+    const fake = readinessDatabase({});
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      enabledEnv({ RUNTIME_CATALOG_EXECUTION_ENABLED: "true" }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      catalog: {
+        executionEnabled: true,
+        dryRunReady: true,
+        applyReady: false,
+      },
+      credentialReadiness: { agora: "not_ready", winerim: "not_ready" },
+    });
+  });
+
+  it("reports catalog apply ready with its scoped Agora credential even if stock is not ready", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      new Request("https://runtime-executor.internal/ready"),
+      rescueCanaryEnv({
+        RUNTIME_VAULT_KEY: { get: async () => agora.master },
+        RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+        RUNTIME_CATALOG_APPLY_ENABLED: "true",
+        RUNTIME_AGORA_CATALOG_BASE_URL: AGORA_BASE_URL,
+        RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "agora.example.test",
+        RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      catalog: { applyReady: true },
+      credentialReadiness: { agora: "ready", winerim: "not_ready" },
+    });
+  });
+
+  it("runs a catalog dry-run without opening an Agora credential or a transport", async () => {
+    const fake = readinessDatabase({});
+    const vaultGet = vi.fn(async () => "not-read-by-catalog-preview");
+    const catalogApply = vi.fn(() => null);
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(),
+      catalogApply,
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { dryRun: true, winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    )), enabledEnv({
+      RUNTIME_VAULT_KEY: { get: vaultGet },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:preview:1:/),
+    });
+    expect(vaultGet).not.toHaveBeenCalled();
+    expect(catalogApply).not.toHaveBeenCalled();
+  });
+
+  it("requires the separate catalog apply flag before credential or transport access", async () => {
+    const fake = readinessDatabase({});
+    const vaultGet = vi.fn(async () => "must-not-be-read");
+    const remote = { applyAndReadback: vi.fn() } satisfies AgoraCatalogApplyAndReadbackPort;
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(),
+      catalogApply: () => remote,
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    )), enabledEnv({
+      RUNTIME_VAULT_KEY: { get: vaultGet },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "false",
+    }));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "CATALOG_APPLY_DISABLED" },
+    });
+    expect(vaultGet).not.toHaveBeenCalled();
+    expect(remote.applyAndReadback).not.toHaveBeenCalled();
+  });
+
+  it("fences an exact rescue canary before the single-product Agora apply and DB persistence", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const credentialFence = await credentialFenceFor(agora, "agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const order: string[] = [];
+    const remote: AgoraCatalogApplyAndReadbackPort = {
+      applyAndReadback: vi.fn(async ({ plan }) => {
+        order.push("post");
+        const fingerprints = Object.fromEntries(await Promise.all(plan.operations.map(async (operation) => [
+          operation.desired.productId,
+          await catalogProductCanonicalFingerprint(operation.desired),
+        ])));
+        return {
+          ok: true as const,
+          receipt: {
+            status: "applied" as const,
+            appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+            canonicalProductFingerprints: fingerprints,
+          },
+        };
+      }),
+    };
+    const fence = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      order.push("fence");
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        connectionId: string;
+        runId: string;
+        holderId: string;
+      };
+      return Response.json({
+        ...body,
+        fencingToken: 12,
+        credentialReference: credentialFence.attestation.reference,
+        credentialVersion: credentialFence.attestation.version,
+        credentialBinding: credentialFence.binding,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+    });
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(order),
+      catalogApply: () => remote,
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+      WRITER_FENCE: { fetch: fence },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:applied:1:/),
+    });
+    expect(order).toEqual(["fence", "post", "persist"]);
+    expect(fence).toHaveBeenCalledOnce();
+    expect(remote.applyAndReadback).toHaveBeenCalledOnce();
+  });
+
+  it("wires the reviewed Agora transport behind the fence and exact readback", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const credentialFence = await credentialFenceFor(agora, "agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const order: string[] = [];
+    let importedProduct = "";
+    const request = vi.fn<typeof fetch>(async (_target, init) => {
+      if (init?.method === "POST") {
+        order.push("post");
+        importedProduct = String(init.body ?? "").match(/<Product\b[\s\S]*<\/Product>/)?.[0] ?? "";
+        return new Response('<ImportResult Success="true" />', { status: 200 });
+      }
+      order.push("read");
+      return new Response(
+        `<?xml version="1.0"?><Export><Products>${importedProduct}</Products></Export>`,
+        { status: 200, headers: { "content-type": "application/xml" } },
+      );
+    });
+    const fence = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      order.push("fence");
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        connectionId: string;
+        runId: string;
+        holderId: string;
+      };
+      return Response.json({
+        ...body,
+        fencingToken: 13,
+        credentialReference: credentialFence.attestation.reference,
+        credentialVersion: credentialFence.attestation.version,
+        credentialBinding: credentialFence.binding,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+    });
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(order),
+      request,
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+      RUNTIME_AGORA_CATALOG_BASE_URL: AGORA_BASE_URL,
+      RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "agora.example.test",
+      RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+      WRITER_FENCE: { fetch: fence },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    expect(order).toEqual(["fence", "read", "post", "read", "persist"]);
+    expect(importedProduct).toContain('Id="500001"');
+    expect(importedProduct).toContain('FamilyId="10"');
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects catalog apply when the configured target differs from the connection base URL", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const request = vi.fn<typeof fetch>();
+    const fence = vi.fn();
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(),
+      request,
+    });
+
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    )), rescueCanaryEnv({
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+      RUNTIME_AGORA_CATALOG_BASE_URL: "https://wrong-agora.example.test",
+      RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "wrong-agora.example.test",
+      RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+      WRITER_FENCE: { fetch: fence },
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "CATALOG_APPLY_REJECTED" },
+    });
+    expect(fence).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("rejects a multi-product catalog apply before the remote transport", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const fake = readinessDatabase({ agora: agora.row });
+    const remote = { applyAndReadback: vi.fn() } satisfies AgoraCatalogApplyAndReadbackPort;
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(undefined, 2),
+      catalogApply: () => remote,
+    });
+    const response = await worker.fetch(executeRequest(await envelope(
+      "catalog.sync-master",
+      { winerimWineIds: ["1", "2"], formatTypes: ["BOTTLE"] },
+    )), enabledEnv({
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+    }));
+
+    expect(response.status).toBe(422);
+    expect(remote.applyAndReadback).not.toHaveBeenCalled();
+  });
+
+  it("keeps the generic outbound lane closed even when both requested flags are true", async () => {
+    const fake = fakeDatabase();
+    const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
+      executeRequest(await envelope("outbound.process", { dryRun: true })),
+      enabledEnv({
+        RUNTIME_OUTBOUND_EXECUTION_ENABLED: "true",
+        RUNTIME_OUTBOUND_MUTATION_ENABLED: "true",
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED" },
+    });
+    expect(fake.query).not.toHaveBeenCalled();
+  });
+
+  it("keeps the catalog lane closed by default before database access", async () => {
     const fake = fakeDatabase();
     const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
     const response = await worker.fetch(executeRequest(await envelope(
@@ -334,7 +761,7 @@ describe("private runtime executor Worker", () => {
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
       ok: false,
-      failure: { httpStatus: 503, message: "RUNTIME_JOB_NOT_ENABLED" },
+      failure: { httpStatus: 503, message: "CATALOG_EXECUTION_DISABLED" },
     });
     expect(fake.query).not.toHaveBeenCalled();
   });

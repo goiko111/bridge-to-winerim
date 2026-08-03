@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -5,13 +7,18 @@ import type {
   DatabaseTransaction,
   QueryResult,
 } from "../../cloudflare/workers/middleware-api/src/db";
-import { createRuntimeEnvelope } from "../../cloudflare/workers/middleware-runtime/src/idempotency";
+import {
+  canonicalJson,
+  createRuntimeEnvelope,
+  sha256Hex,
+} from "../../cloudflare/workers/middleware-runtime/src/idempotency";
 import type {
   CloudflareMessageBatchLike,
   RuntimeExecutionResult,
 } from "../../cloudflare/workers/middleware-runtime/src/queue";
 import {
   createMiddlewareRuntimeWorker,
+  createPersistentRuntimeQueueHooks,
   runRuntimeQueue,
   runRuntimeScheduled,
   type MiddlewareRuntimeEnv,
@@ -691,16 +698,25 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
 
   it("acknowledges a persisted duplicate without invoking the executor", async () => {
     const statements: string[] = [];
+    const body = await queueEnvelope("duplicate");
+    const payloadSha256 = await sha256Hex(canonicalJson(body.payload));
     const database = fakeDatabase((statement) => {
       statements.push(statement.text);
       if (statement.text.includes("INSERT INTO public.runtime_idempotency")) return result();
       if (statement.text.includes("FROM public.runtime_idempotency")) {
-        return result([{ status: "SUCCESS", attempt: 2, lease_expired: null }]);
+        return result([{
+          message_id: body.messageId,
+          connection_id: body.connectionId,
+          job: body.job,
+          payload_sha256: payloadSha256,
+          status: "SUCCESS",
+          attempt: 2,
+          lease_expired: null,
+        }]);
       }
       return result();
     });
     const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
-    const body = await queueEnvelope("duplicate");
     const message = { id: "cf-3", attempts: 2, body, ack: vi.fn(), retry: vi.fn() };
 
     await runRuntimeQueue(
@@ -712,6 +728,76 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     expect(message.ack).toHaveBeenCalledOnce();
     expect(executor.execute).not.toHaveBeenCalled();
     expect(statements.some((text) => text.includes("runtime_execution_log"))).toBe(true);
+  });
+
+  it("blocks an idempotency-key collision with a different message identity or payload", async () => {
+    const body = await queueEnvelope("identity-collision");
+    const database = fakeDatabase((statement) => {
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) return result();
+      if (statement.text.includes("FROM public.runtime_idempotency")) {
+        return result([{
+          message_id: "another-message",
+          connection_id: body.connectionId,
+          job: body.job,
+          payload_sha256: "f".repeat(64),
+          status: "SUCCESS",
+          attempt: 1,
+          lease_expired: null,
+        }]);
+      }
+      return result();
+    });
+    const executor = { execute: vi.fn(async () => ({ ok: true as const })) };
+    const message = { id: "cf-collision", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+
+    await runRuntimeQueue(
+      { queue: "runtime", messages: [message] },
+      readyEnv(),
+      dependencies(database, executor),
+    );
+
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+    expect(executor.execute).not.toHaveBeenCalled();
+  });
+
+  it("prevents an expired lease owner from completing a reacquired reservation", async () => {
+    const first = await queueEnvelope("lease-owner");
+    const second = structuredClone(first);
+    const payloadSha256 = await sha256Hex(canonicalJson(first.payload));
+    let insertCount = 0;
+    let completionCount = 0;
+    const database = fakeDatabase((statement) => {
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
+        insertCount++;
+        return insertCount === 1 ? result([{ attempt: 1 }]) : result();
+      }
+      if (statement.text.includes("FROM public.runtime_idempotency")) {
+        return result([{
+          message_id: first.messageId,
+          connection_id: first.connectionId,
+          job: first.job,
+          payload_sha256: payloadSha256,
+          status: "RUNNING",
+          attempt: 1,
+          lease_expired: true,
+        }]);
+      }
+      if (statement.text.includes("SET status = 'RUNNING'")) return result([{ attempt: 2 }]);
+      if (statement.text.includes("SET status = 'SUCCESS'")) {
+        completionCount++;
+        return completionCount === 1 ? result() : result([{ attempt: 2 }]);
+      }
+      return result();
+    });
+    const hooks = createPersistentRuntimeQueueHooks(database, {
+      execute: vi.fn(async () => ({ ok: true as const })),
+    });
+
+    await expect(hooks.reserve(first)).resolves.toBe("acquired");
+    await expect(hooks.reserve(second)).resolves.toBe("acquired");
+    await expect(hooks.complete(first, { ok: true })).rejects.toThrow("RUNTIME_RESERVATION_LOST");
+    await expect(hooks.complete(second, { ok: true })).resolves.toBeUndefined();
   });
 
   it("persists retry disposition while preserving the same idempotency key", async () => {

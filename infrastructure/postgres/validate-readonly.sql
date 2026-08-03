@@ -55,6 +55,7 @@ WITH expected(name) AS (
     ('has_role'),
     ('release_agora_dispatch_lock'),
     ('rescue_zombie_outbound_tasks'),
+    ('runtime_bind_sales_claim_identity'),
     ('update_updated_at_column')
 )
 SELECT
@@ -71,6 +72,9 @@ ORDER BY expected.name;
 
 WITH expected(table_name, column_name) AS (
   VALUES
+    ('runtime_idempotency', 'payload_sha256'),
+    ('runtime_idempotency', 'lease_token'),
+    ('runtime_idempotency', 'sales_claim_identity'),
     ('sales_line_items', 'provider_sold_at'),
     ('sales_line_items', 'provider_sold_at_source')
 )
@@ -94,6 +98,8 @@ SELECT
 SELECT
   to_regclass('public.runtime_canary_connections_single_active_idx') IS NOT NULL
     AS runtime_canary_index_present,
+  to_regclass('public.uq_runtime_sales_claim_identity') IS NOT NULL
+    AS runtime_sales_claim_identity_index_present,
   EXISTS (
     SELECT 1
     FROM pg_trigger trigger
@@ -103,7 +109,18 @@ SELECT
       AND table_class.relname = 'runtime_canary_connections'
       AND trigger.tgname = 'enforce_runtime_canary_connection_window'
       AND NOT trigger.tgisinternal
-  ) AS runtime_canary_trigger_present;
+  ) AS runtime_canary_trigger_present,
+  EXISTS (
+    SELECT 1
+    FROM pg_trigger trigger
+    JOIN pg_class table_class ON table_class.oid = trigger.tgrelid
+    JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND table_class.relname = 'runtime_idempotency'
+      AND trigger.tgname = 'runtime_bind_sales_claim_identity'
+      AND NOT trigger.tgisinternal
+      AND trigger.tgenabled IN ('O', 'A')
+  ) AS runtime_sales_claim_identity_trigger_present;
 
 SELECT
   c.conname,
@@ -145,6 +162,7 @@ WHERE n.nspname = 'public'
     'has_role',
     'release_agora_dispatch_lock',
     'rescue_zombie_outbound_tasks',
+    'runtime_bind_sales_claim_identity',
     'schedule_next_catalog_batch',
     'schedule_next_queue_batch',
     'update_updated_at_column'

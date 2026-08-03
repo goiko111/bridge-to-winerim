@@ -12,6 +12,9 @@ RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
 PLATFORM_ROLE_HARDENING="$SCRIPT_DIR/0006_revoke_supabase_platform_roles.sql"
 RUNTIME_SALES_CANARY_PERMISSIONS="$SCRIPT_DIR/0007_runtime_sales_canary_permissions.sql"
 RUNTIME_SALES_COLUMN_PRIVILEGES="$SCRIPT_DIR/0008_runtime_sales_column_privileges.sql"
+RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
+RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
+RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 
 {
@@ -59,6 +62,15 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN runtime sales column privileges\n'
   cat "$RUNTIME_SALES_COLUMN_PRIVILEGES"
   printf '\n-- END runtime sales column privileges\n'
+  printf '\n-- BEGIN runtime catalog permissions\n'
+  cat "$RUNTIME_CATALOG_PERMISSIONS"
+  printf '\n-- END runtime catalog permissions\n'
+  printf '\n-- BEGIN runtime idempotency lease binding\n'
+  cat "$RUNTIME_IDEMPOTENCY_LEASE_BINDING"
+  printf '\n-- END runtime idempotency lease binding\n'
+  printf '\n-- BEGIN runtime sales claim identity\n'
+  cat "$RUNTIME_SALES_CLAIM_IDENTITY"
+  printf '\n-- END runtime sales claim identity\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"

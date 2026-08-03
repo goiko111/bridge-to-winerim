@@ -20,6 +20,14 @@ function orderIdsForRequest(request: WinerimMutationHttpRequest): string[] {
     : [];
 }
 
+function stockIdForPut(request: Extract<WinerimMutationHttpRequest, { kind: "stock-put" }>): number {
+  const stockId = Number(request.path.slice(request.path.lastIndexOf("/") + 1));
+  if (!Number.isInteger(stockId) || stockId <= 0) {
+    throw new Error("invalid_absolute_stock_readback_identity");
+  }
+  return stockId;
+}
+
 export async function executeWinerimMutationPlan(
   plan: WinerimMutationPlan,
   transport: WinerimMutationTransport,
@@ -53,11 +61,87 @@ export async function executeWinerimMutationPlan(
     }
 
     const decision = decideWinerimMutationResponse({ plan, request, response });
-    attempts.push({ number: attemptNumber, request, response, decision });
     decision.certifiedOrderIds.forEach((orderId) => certified.add(orderId));
     decision.terminalOrderIds.forEach((orderId) => terminal.add(orderId));
 
     if (decision.action === "success") {
+      if (request.kind === "stock-put") {
+        if (!transport.readStock) {
+          attempts.push({
+            number: attemptNumber,
+            request,
+            response,
+            decision,
+            readbackError: "absolute_stock_readback_unavailable",
+          });
+          return {
+            ok: false,
+            retryable: true,
+            plan,
+            attempts,
+            certifiedOrderIds: [...certified],
+            terminalOrderIds: [...terminal],
+            pendingOrderIds: [],
+            reason: "absolute_stock_readback_unavailable",
+          };
+        }
+
+        let readback;
+        try {
+          readback = await transport.readStock(stockIdForPut(request));
+        } catch (error) {
+          attempts.push({
+            number: attemptNumber,
+            request,
+            response,
+            decision,
+            readbackError: error instanceof Error ? error.message : String(error),
+          });
+          return {
+            ok: false,
+            retryable: true,
+            plan,
+            attempts,
+            certifiedOrderIds: [...certified],
+            terminalOrderIds: [...terminal],
+            pendingOrderIds: [],
+            reason: "absolute_stock_readback_failed",
+          };
+        }
+
+        attempts.push({ number: attemptNumber, request, response, decision, readback });
+        const expectedStockId = stockIdForPut(request);
+        const exactReadback = readback.stockId === expectedStockId &&
+          Number.isInteger(readback.stock) &&
+          readback.stock === request.body.stock;
+        if (!exactReadback) {
+          return {
+            ok: false,
+            retryable: true,
+            plan,
+            attempts,
+            certifiedOrderIds: [...certified],
+            terminalOrderIds: [...terminal],
+            pendingOrderIds: [],
+            reason: "absolute_stock_readback_mismatch",
+          };
+        }
+
+        // This certifies the observed post-write value, not CAS. A later external
+        // writer can still change stock and must be handled by reconciliation.
+        return {
+          ok: true,
+          retryable: false,
+          plan,
+          attempts,
+          certifiedOrderIds: [...certified],
+          terminalOrderIds: [...terminal],
+          pendingOrderIds: [],
+          reason: "absolute_stock_put_readback_certified",
+        };
+      }
+
+      attempts.push({ number: attemptNumber, request, response, decision });
       const complete = plan.request.kind === "stock-put" ||
         (allOrderIds.every((orderId) => certified.has(orderId)) && terminal.size === 0);
       return {
@@ -71,6 +155,8 @@ export async function executeWinerimMutationPlan(
         reason: complete ? decision.reason : "mutation_completed_with_uncertified_lines",
       };
     }
+
+    attempts.push({ number: attemptNumber, request, response, decision });
 
     if (decision.action === "terminal") {
       return {

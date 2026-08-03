@@ -10,16 +10,19 @@ import {
   type SecretTextPort,
 } from "../../middleware-runtime/src/adapters/http";
 import { createPostgresSalesAdapter } from "../../middleware-runtime/src/adapters/sales";
+import type { ProviderProductSalesClassification } from "../../middleware-runtime/src/adapters/sales";
 import { createPostgresStockAdapter } from "../../middleware-runtime/src/adapters/stock";
 import type { RuntimeEnvelopeV1 } from "../../middleware-runtime/src/contracts";
 import {
   executeSalesPlan,
+  parseOpenTicketPayload,
   planSalesRun,
   type ProviderSalesDocument,
   type ProviderSalesLine,
   type SalesExecutionPorts,
   type SalesImportCommand,
   type SalesImportResult,
+  type SalesLineClassification,
   type SalesLineResolution,
   type SalesPlan,
   type SalesRunKind,
@@ -51,13 +54,13 @@ type JsonRecord = Record<string, unknown>;
 const SALES_JOBS = new Set<RuntimeEnvelopeV1["job"]>([
   "sales.auto-sync",
   "sales.sync-intraday",
+  "sales.sync-open-tickets",
 ]);
 const DEFAULT_TIME_ZONE = "Europe/Madrid";
 const DEFAULT_MAX_CLOSED_DAYS_PER_RUN = 2;
 const MAX_CLOSED_DAYS_PER_RUN = 7;
 const WINERIM_STOCK_READ_TIMEOUT_MS = 10_000;
 const WINERIM_STOCK_READ_MAX_BYTES = 2 * 1024 * 1024;
-const WINE_HINT = /(^|\s)(b\.?|botella|bottle|c\.?|copa|glass|m\.?|magnum)(\s|$)|vino|wine|winerim|tinto|blanco|rosado|espumoso|champagne|cava|generoso|fortificado|dulce/i;
 
 export type SalesLaneFlags = Readonly<{
   executionEnabled: boolean;
@@ -99,6 +102,16 @@ type SalesDayResult = Readonly<{
   executionCount: number;
   dryRun: boolean;
   cursorAdvanced: boolean;
+}>;
+
+type OpenTicketResult = Readonly<{
+  businessDay: string;
+  documentCount: number;
+  candidateLineCount: number;
+  blockedLineCount: number;
+  executionCount: number;
+  dryRun: boolean;
+  mode: "shadow" | "provisional-stock";
 }>;
 
 type WinerimStockEntry = Readonly<{
@@ -292,9 +305,10 @@ function providerLine(
 
 function lifecycleIdentity(invoice: JsonRecord, documentId: string): { id: string; source: "PROVIDER" | "FALLBACK" } {
   const id = [
+    invoice.GlobalId,
+    invoice.TicketGlobalId,
     invoice.TicketId,
     invoice.OrderId,
-    invoice.GlobalId,
     invoice.InvoiceId,
     invoice.DocumentId,
     invoice.Id,
@@ -400,10 +414,16 @@ export function salesLaneFlags(value: {
   };
 }
 
-export function salesLaneGateFailure(flags: SalesLaneFlags, dryRun: boolean): string | null {
+export function salesLaneGateFailure(
+  flags: SalesLaneFlags,
+  dryRun: boolean,
+  job?: RuntimeEnvelopeV1["job"],
+): string | null {
   if (dryRun) return null;
   if (!flags.executionEnabled) return "RUNTIME_SALES_EXECUTION_DISABLED";
-  if (!flags.cursorEnabled) return "RUNTIME_SALES_CURSOR_DISABLED";
+  if (job !== "sales.sync-open-tickets" && !flags.cursorEnabled) {
+    return "RUNTIME_SALES_CURSOR_DISABLED";
+  }
   if (!flags.dlqReady) return "RUNTIME_SALES_DLQ_NOT_READY";
   return null;
 }
@@ -417,6 +437,11 @@ export function salesConnectionGateFailure(
   if (job === "sales.sync-intraday" && !boolean(connection.providerConfig.intraday_sales_sync_enabled)) {
     return "SALES_INTRADAY_SYNC_DISABLED";
   }
+  if (job === "sales.sync-open-tickets") {
+    return boolean(connection.providerConfig.open_tickets_sync_enabled)
+      ? null
+      : "SALES_OPEN_TICKETS_SYNC_DISABLED";
+  }
   if (!salesCutoverBusinessDay(connection)) return "SALES_CUTOVER_DAY_REQUIRED";
   return null;
 }
@@ -428,6 +453,7 @@ function envelopePayload(envelope: RuntimeEnvelopeV1): JsonRecord {
 function runKindForJob(job: RuntimeEnvelopeV1["job"]): SalesRunKind {
   if (job === "sales.auto-sync") return "CLOSED_DAY";
   if (job === "sales.sync-intraday") return "INTRADAY";
+  if (job === "sales.sync-open-tickets") return "OPEN_TICKET";
   throw new SalesLaneError("SALES_JOB_UNSUPPORTED", 422, false);
 }
 
@@ -456,6 +482,7 @@ export function salesBusinessDays(
     return [explicitDay];
   }
   const today = todayInTimeZone(now, providerTimeZone(connection));
+  if (envelope.job === "sales.sync-open-tickets") return [today];
   if (envelope.job === "sales.sync-intraday") {
     return cutoverDay && today < cutoverDay ? [] : [today];
   }
@@ -501,10 +528,100 @@ async function loadDefinitiveDocuments(
   return normalizeAgoraDefinitiveInvoices(response.body, businessDay);
 }
 
-function candidateLine(line: ProviderSalesLine, exactMappings: Map<string, SalesLineResolution>): boolean {
-  if (exactMappings.has(line.providerProductId)) return true;
-  if (line.saleFormatId && exactMappings.has(line.saleFormatId)) return true;
-  return line.suggestedVariant !== undefined || WINE_HINT.test(`${line.familyName ?? ""} ${line.productName}`);
+function recordField(value: JsonRecord, ...names: string[]): unknown {
+  const keys = Object.keys(value);
+  for (const name of names) {
+    const key = keys.find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+    if (key) return value[key];
+  }
+  return undefined;
+}
+
+function recognizedOpenTicketPayload(payload: unknown): boolean {
+  if (Array.isArray(payload)) return true;
+  if (typeof payload === "string") {
+    const value = payload.trim();
+    if (!value) return false;
+    if (value.startsWith("<")) {
+      return /<(?:Tickets|TicketModel|Ticket)(?:\s|\/?>)/i.test(value);
+    }
+    try {
+      return recognizedOpenTicketPayload(JSON.parse(value));
+    } catch {
+      return false;
+    }
+  }
+  const root = record(payload);
+  if (!root) return false;
+  const direct = recordField(root, "Tickets", "TicketModels", "TicketModel", "Ticket");
+  if (direct !== undefined) return true;
+  const data = recordField(root, "Data");
+  if (data !== undefined) return recognizedOpenTicketPayload(data);
+  const identity = recordField(
+    root,
+    "GlobalId",
+    "TicketGlobalId",
+    "TicketId",
+    "DocumentId",
+    "DocId",
+    "Id",
+  );
+  return text(identity).length > 0 && recordField(root, "Lines", "TicketLines", "Items", "Products") !== undefined;
+}
+
+export function normalizeAgoraOpenTickets(
+  payload: unknown,
+  businessDay: string,
+  observedAt?: string,
+): ProviderSalesDocument[] {
+  if (!validBusinessDay(businessDay)) {
+    throw new SalesLaneError("SALES_INVALID_BUSINESS_DAY", 422, false);
+  }
+  if (!recognizedOpenTicketPayload(payload)) {
+    throw new SalesLaneError("AGORA_OPEN_TICKETS_PAYLOAD_UNRECOGNIZED");
+  }
+  let documents: ProviderSalesDocument[];
+  try {
+    documents = parseOpenTicketPayload(payload, {
+      provider: "agora",
+      businessDay,
+      observedAt,
+    });
+  } catch {
+    throw new SalesLaneError("AGORA_OPEN_TICKETS_PAYLOAD_UNRECOGNIZED");
+  }
+  if (documents.some((document) => (
+    document.provider !== "agora"
+    || document.kind !== "OPEN_TICKET"
+    || !validBusinessDay(document.businessDay)
+  ))) {
+    throw new SalesLaneError("AGORA_OPEN_TICKETS_PAYLOAD_INVALID");
+  }
+  return documents;
+}
+
+async function loadOpenTicketDocuments(
+  connection: SalesLaneConnection,
+  businessDay: string,
+  dependencies: SalesLaneDependencies,
+): Promise<ProviderSalesDocument[]> {
+  const target = baseUrl(connection.baseUrl);
+  const client = createAgoraReadOnlyClient({
+    baseUrl: target.value,
+    allowedHosts: [target.allowedHost],
+    credential: dependencies.agoraCredential,
+    request: { request: (url, init) => dependencies.request(url, init) },
+    timer: timer(dependencies),
+  });
+  const response = await client.exportOpenTickets();
+  if (!response.ok) {
+    throw new SalesLaneError(`AGORA_OPEN_TICKETS_HTTP_${response.status}`);
+  }
+  return normalizeAgoraOpenTickets(
+    response.body,
+    businessDay,
+    new Date(dependencies.now()).toISOString(),
+  );
 }
 
 function normalizeMappedLine(
@@ -518,16 +635,79 @@ function normalizeMappedLine(
   return line;
 }
 
+type ClassifiedPlanningDocuments = Readonly<{
+  observations: ProviderSalesDocument[];
+  planning: ProviderSalesDocument[];
+}>;
+
+function familyKey(value: string | undefined | null): string {
+  return text(value).toLowerCase();
+}
+
+function familyClassifications(
+  classifications: ProviderProductSalesClassification[],
+): Map<string, SalesLineClassification> {
+  const grouped = new Map<string, SalesLineClassification[]>();
+  for (const item of classifications) {
+    const key = familyKey(item.familyName);
+    if (!key) continue;
+    const values = grouped.get(key) ?? [];
+    values.push(item.classification);
+    grouped.set(key, values);
+  }
+  return new Map(Array.from(grouped.entries()).map(([key, values]) => {
+    if (values.includes("WINE")) return [key, "WINE"] as const;
+    if (values.includes("AMBIGUOUS")) return [key, "AMBIGUOUS"] as const;
+    return [key, "NOT_WINE"] as const;
+  }));
+}
+
+function classifyLine(
+  line: ProviderSalesLine,
+  exactMappings: Map<string, SalesLineResolution>,
+  classificationsById: Map<string, SalesLineClassification>,
+  classificationsByFamily: Map<string, SalesLineClassification>,
+): SalesLineClassification {
+  if (
+    exactMappings.has(line.providerProductId)
+    || (line.saleFormatId && exactMappings.has(line.saleFormatId))
+  ) return "WINE";
+  const productClassification = classificationsById.get(line.providerProductId)
+    ?? (line.saleFormatId ? classificationsById.get(line.saleFormatId) : undefined);
+  if (productClassification) return productClassification;
+  return classificationsByFamily.get(familyKey(line.familyName)) ?? "AMBIGUOUS";
+}
+
 function planningDocuments(
   documents: ProviderSalesDocument[],
   exactMappings: Map<string, SalesLineResolution>,
-): ProviderSalesDocument[] {
-  return documents.flatMap((document) => {
-    const lines = document.lines
-      .filter((line) => candidateLine(line, exactMappings))
-      .map((line) => normalizeMappedLine(line, exactMappings));
-    return lines.length > 0 ? [{ ...document, lines }] : [];
-  });
+  classifications: ProviderProductSalesClassification[],
+): ClassifiedPlanningDocuments {
+  const classificationsById = new Map(
+    classifications.map((item) => [item.providerProductId, item.classification]),
+  );
+  const classificationsByFamily = familyClassifications(classifications);
+  const observations = documents.map((document) => ({
+    ...document,
+    lines: document.lines.map((line) => ({
+      ...line,
+      classification: classifyLine(
+        line,
+        exactMappings,
+        classificationsById,
+        classificationsByFamily,
+      ),
+    })),
+  }));
+  return {
+    observations,
+    planning: observations.map((document) => ({
+      ...document,
+      lines: document.lines
+        .filter((line) => line.classification !== "NOT_WINE")
+        .map((line) => normalizeMappedLine(line, exactMappings)),
+    })),
+  };
 }
 
 function stockVariant(variant: SalesVariant): WinerimVariant {
@@ -610,6 +790,9 @@ function mutationTransport(dependencies: SalesLaneDependencies): WinerimMutation
       await dependencies.beforeMutation!();
       return transport.send(request);
     },
+    ...(transport.readStock
+      ? { readStock: (stockId: number) => transport.readStock!(stockId) }
+      : {}),
     sleep: transport.sleep,
   };
 }
@@ -946,6 +1129,122 @@ function legacyOrderPrefix(
   return `agora:${connectionShort}:${businessDay}:${winerimWineId}:${variantShort}:`;
 }
 
+async function executeOpenTickets(
+  connection: SalesLaneConnection,
+  businessDay: string,
+  dependencies: SalesLaneDependencies,
+  dryRun: boolean,
+): Promise<OpenTicketResult> {
+  const documents = await loadOpenTicketDocuments(connection, businessDay, dependencies);
+  const salesAdapter = createPostgresSalesAdapter(dependencies.database, {
+    connectionId: connection.connectionId,
+    provider: connection.provider,
+  });
+  const allIds = unique(documents.flatMap((document) => document.lines.flatMap((line) => [
+    line.providerProductId,
+    line.saleFormatId ?? "",
+  ])));
+  const mappings = await salesAdapter.readExactMappings(allIds);
+  const mappingById = new Map<string, SalesLineResolution>(
+    mappings.map((mapping) => [mapping.providerProductId, mapping]),
+  );
+  const classifications = await salesAdapter.readProductClassifications(
+    allIds,
+    unique(documents.flatMap((document) => document.lines.map((line) => line.familyName ?? ""))),
+  );
+  const classified = planningDocuments(documents, mappingById, classifications);
+  const candidates = classified.planning;
+  const stockEnabled = boolean(connection.providerConfig.open_tickets_stock_sync_enabled);
+  const plan = await planSalesRun({
+    connectionId: connection.connectionId,
+    provider: connection.provider,
+    runKind: "OPEN_TICKET",
+    openTicketPolicy: stockEnabled ? "PROVISIONAL_STOCK" : "OBSERVE_ONLY",
+    documents: candidates,
+  }, {
+    resolveLine: async ({ line }) => mappingById.get(line.providerProductId) ?? null,
+    loadClaims: stockEnabled ? salesAdapter.loadClaims : undefined,
+    loadReconciliationClaims: stockEnabled ? salesAdapter.loadReconciliationClaims : undefined,
+  });
+
+  if (dryRun) {
+    const execution = await executeSalesPlan(plan, {
+      reserveClaim: salesAdapter.reserveClaim,
+      completeClaim: salesAdapter.completeClaim,
+      releaseClaim: salesAdapter.releaseClaim,
+      applyStock: async () => { throw new SalesLaneError("SALES_DRY_RUN_MUTATION_ATTEMPTED"); },
+      importSales: async () => { throw new SalesLaneError("SALES_DRY_RUN_MUTATION_ATTEMPTED"); },
+    }, { dryRun: true });
+    return {
+      businessDay,
+      documentCount: documents.length,
+      candidateLineCount: candidates.reduce((sum, document) => sum + document.lines.length, 0),
+      blockedLineCount: plan.blocked.length,
+      executionCount: execution.items.length,
+      dryRun: true,
+      mode: stockEnabled ? "provisional-stock" : "shadow",
+    };
+  }
+
+  // Shadow is an idempotent database observation only. It intentionally does
+  // not advance the definitive cursor or contact Winerim.
+  await salesAdapter.persistDocuments(classified.observations);
+  if (!stockEnabled) {
+    return {
+      businessDay,
+      documentCount: documents.length,
+      candidateLineCount: candidates.reduce((sum, document) => sum + document.lines.length, 0),
+      blockedLineCount: plan.blocked.length,
+      executionCount: 0,
+      dryRun: false,
+      mode: "shadow",
+    };
+  }
+
+  if (plan.blocked.length > 0) {
+    throw new SalesLaneError("SALES_OPEN_TICKET_PLAN_BLOCKED_FOR_DLQ");
+  }
+  if (plan.noops.some((noop) => noop.reason === "CLAIM_BUSY")) {
+    throw new SalesLaneError("SALES_OPEN_TICKET_CLAIM_BUSY_FOR_DLQ");
+  }
+  const allMutationKeys = unique(plan.intents.map((intent) => intent.mutationIdempotencyKey));
+  if (await legacyReceiptConflict(
+    dependencies.database,
+    connection.connectionId,
+    unique(documents.map((document) => document.documentId)),
+    allMutationKeys,
+    unique(plan.intents.flatMap((intent) => [intent.orderId, `${intent.orderId}:sales-only`])),
+    unique(plan.intents.map((intent) => legacyOrderPrefix(
+      connection.connectionId,
+      intent.businessDay,
+      intent.winerimWineId,
+      intent.variant,
+    ))),
+  )) {
+    throw new SalesLaneError("SALES_LEGACY_IDEMPOTENCY_RECONCILIATION_REQUIRED");
+  }
+
+  const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan));
+  const execution = await executeSalesPlan(plan, {
+    reserveClaim: salesAdapter.reserveClaim,
+    completeClaim: salesAdapter.completeClaim,
+    releaseClaim: salesAdapter.releaseClaim,
+    ...mutations,
+  });
+  if (execution.items.some((item) => item.status === "FAILED" || item.status === "BUSY")) {
+    throw new SalesLaneError("SALES_OPEN_TICKET_EXECUTION_FAILED_FOR_DLQ");
+  }
+  return {
+    businessDay,
+    documentCount: documents.length,
+    candidateLineCount: candidates.reduce((sum, document) => sum + document.lines.length, 0),
+    blockedLineCount: 0,
+    executionCount: execution.items.length,
+    dryRun: false,
+    mode: "provisional-stock",
+  };
+}
+
 async function executeDay(
   connection: SalesLaneConnection,
   businessDay: string,
@@ -966,7 +1265,12 @@ async function executeDay(
   const mappingById = new Map<string, SalesLineResolution>(
     mappings.map((mapping) => [mapping.providerProductId, mapping]),
   );
-  const candidates = planningDocuments(documents, mappingById);
+  const classifications = await salesAdapter.readProductClassifications(
+    allIds,
+    unique(documents.flatMap((document) => document.lines.map((line) => line.familyName ?? ""))),
+  );
+  const classified = planningDocuments(documents, mappingById, classifications);
+  const candidates = classified.planning;
   const plan = await planSalesRun({
     connectionId: connection.connectionId,
     provider: connection.provider,
@@ -975,6 +1279,7 @@ async function executeDay(
   }, {
     resolveLine: async ({ line }) => mappingById.get(line.providerProductId) ?? null,
     loadClaims: salesAdapter.loadClaims,
+    loadReconciliationClaims: salesAdapter.loadReconciliationClaims,
   });
 
   if (dryRun) {
@@ -1023,7 +1328,7 @@ async function executeDay(
     throw new SalesLaneError("SALES_LEGACY_IDEMPOTENCY_RECONCILIATION_REQUIRED");
   }
 
-  await salesAdapter.persistDocuments(documents);
+  await salesAdapter.persistDocuments(classified.observations);
 
   const mutations = createSalesMutations(dependencies, soldAtByOrderId(plan));
   const execution = await executeSalesPlan(plan, {
@@ -1090,7 +1395,7 @@ export async function executeAgoraSalesEnvelope(
   try {
     if (!isSalesLaneJob(envelope.job)) throw new SalesLaneError("SALES_JOB_UNSUPPORTED", 422, false);
     const dryRun = envelopePayload(envelope).dryRun === true;
-    const gate = salesLaneGateFailure(flags, dryRun);
+    const gate = salesLaneGateFailure(flags, dryRun, envelope.job);
     if (gate) throw new SalesLaneError(gate);
     const connection = await loadConnection(dependencies.database, envelope.connectionId);
     if (
@@ -1103,6 +1408,27 @@ export async function executeAgoraSalesEnvelope(
     const runKind = runKindForJob(envelope.job);
     const connectionGate = salesConnectionGateFailure(connection, envelope.job, dryRun);
     if (connectionGate) throw new SalesLaneError(connectionGate, 422, false);
+    if (runKind === "OPEN_TICKET") {
+      const businessDay = salesBusinessDays(
+        envelope,
+        connection,
+        dependencies.now(),
+        dependencies.maxClosedDaysPerRun,
+      )[0];
+      const result = await executeOpenTickets(connection, businessDay, dependencies, dryRun);
+      return {
+        ok: true,
+        detail: [
+          "sales",
+          "open-tickets",
+          result.dryRun ? "dry-run" : result.mode,
+          result.documentCount,
+          result.candidateLineCount,
+          result.blockedLineCount,
+          result.executionCount,
+        ].join(":"),
+      };
+    }
     const days = salesBusinessDays(
       envelope,
       connection,
