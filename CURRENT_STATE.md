@@ -1,5 +1,19 @@
 # CURRENT_STATE
 
+## 2026-08-03 20:13 CEST - Release remoto congelado; gates externos precisos
+
+- `a80c9eb` esta publicado en
+  `origin/codex/own-infrastructure-20260802` y archivado `0600` en el volumen
+  cifrado con SHA-256 verificado.
+- Revalidacion exacta: runtime `284/284`, executor `61/61`, tooling `16/16`,
+  fail-closed `15/15`, TypeScript, build y Workerd OK.
+- Cloudflare rescue sigue inerte: R2 y Hyperdrive sanos, cuatro colas Bejeque
+  sin productores/consumidores y cero Workers canary desplegados.
+- El Bejeque no tiene token Agora en almacenamiento seguro y falta evidencia
+  `401/403` del token Winerim anterior. No se genero manifest parcial.
+- Albariza queda preparada con 7 familias, 762 altas y canary de catalogo
+  B/C, sin writes. Shadow read-only y live usaran runs separados.
+
 ## 2026-08-03 19:33 CEST - Bundles Workerd OK; Albariza preview limpio
 
 - El empaquetado fail-closed usa ahora el bundler de Wrangler con Node 22+

@@ -2946,3 +2946,13 @@ ninguna compensación de los efectos anteriores.
 **Alternativa descartada:** desactivar toda la conexión o insertar mappings sin
 lease. La primera afecta catálogo y observabilidad innecesariamente; la segunda
 ya demostró una carrera real con el cron.
+# 2026-08-03 20:13 CEST - Fuente remota y dos runs de canary
+
+- Solo `a80c9eb` publicado y congelado puede originar manifests del siguiente
+  deploy rescue.
+- El shadow es read-only y no comparte `run_id`, mensaje, idempotencia ni hash
+  con el canary live.
+- No desplegar manifests parciales. El orden es fence, executor, observer,
+  consumer inerte, readiness, activacion, shadow y luego un run live nuevo.
+- Albariza se carga por fases: familias, dos productos canary y solo despues
+  el resto del catalogo; una venta que mueva stock requiere gate separado.

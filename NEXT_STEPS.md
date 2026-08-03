@@ -2,6 +2,19 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Release remoto y canaries separados
+
+- [x] Publicar `a80c9eb`, congelar archive `0600` y actualizar inventario.
+- [x] Repetir runtime/executor/tooling/fail-closed/TypeScript/build/Workerd.
+- [ ] Introducir Agora El Bejeque por canal seguro; no aceptar plaintext en
+  argumentos, logs, Git ni Markdown.
+- [ ] Obtener `401/403` anterior o evidencia backend equivalente aprobada.
+- [ ] Desplegar fence/executor/observer antes del consumer y guardar readiness
+  pre/post activacion.
+- [ ] Ejecutar shadow read-only, retirarlo y crear otro run para live.
+- [ ] Albariza: provision apagado + 7 familias + canary `855797/1055797`;
+  venta real en gate de stock separado.
+
 ## P0 - Fence El Bejeque y preview Albariza
 
 - [x] Modo Agora `shared-read-only`, scope exacto y bundles inmutables.
