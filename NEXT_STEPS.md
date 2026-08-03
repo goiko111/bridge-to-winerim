@@ -1,5 +1,15 @@
 # NEXT_STEPS
 
+## P0 - El Bejeque: unico gate operativo restante - 2026-08-03 23:00 CEST
+
+- [x] Cerrar hashes manifest/grant/proof, aborto append-only y lectura DB.
+- [x] Aplicar/verificar migracion rescue con run A retirado y B preparado.
+- [x] Publicar `2bb7c00`, validar `579` tests, executor, Workerd, PG17 y build.
+- [x] Observar 20 veces Agora real: HTTP 200, 0 facturas y 0 tickets.
+- [ ] Primera venta real de copa mapeada: capturar IDs exactos y snapshot.
+- [ ] Regenerar manifest/grant, desplegar B serialmente, readiness doble,
+  mensaje unico, replay idempotente, readback de historial+stock y retirada.
+
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
 ## P0 - Release remoto y canaries separados

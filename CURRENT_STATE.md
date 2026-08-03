@@ -1,5 +1,15 @@
 # CURRENT_STATE
 
+## 2026-08-03 23:00 CEST - El Bejeque tecnicamente cerrado; espera primera copa real
+
+- Rescue Supabase sano. Run A `RETIRED`, run B `PREPARED`/inactivo, conexion
+  apagada y cero filas operativas; migracion append-only aplicada/readback OK.
+- Runtime ligado al SHA-256 exacto del grant activo; fuente limpia `2bb7c00`
+  publicada, archivada `0600` y validada con `579` tests mas gates completos.
+- 20 probes Agora HTTP 200 devolvieron 0 facturas/0 tickets. No hubo venta
+  sintetica, deploy B, stock, cursor, historico ni catalogo live.
+- Informe en audit: `STATUS_MIDDLEWARE_EL_BEJEQUE_FINALIZATION_2026-08-03_2300.md`.
+
 ## 2026-08-03 20:13 CEST - Release remoto congelado; gates externos precisos
 
 - `a80c9eb` esta publicado en

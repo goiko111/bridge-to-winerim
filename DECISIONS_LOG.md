@@ -1,5 +1,13 @@
 # DECISIONS_LOG
 
+## 2026-08-03 - Scope activo liga grant exacto y PREPARED se cierra append-only
+
+- El runtime compara los bytes exactos del grant con el SHA-256 inmutable del
+  scope `ACTIVE`; grant y proof que solo coinciden entre si no autorizan nada.
+- Un run no activado se cierra `PREPARED -> ABORTED`, retirando credenciales
+  inactivas sin borrar evidencia. Replays y reactivaciones fallan cerrados.
+- Sin venta legitima de copa no se activa el run B ni se sintetiza stock.
+
 ## 2026-08-03 - Bundle revisado debe arrancar en Workerd
 
 - Los cuatro artefactos se generan con el bundler de Wrangler bajo Node 22+,
