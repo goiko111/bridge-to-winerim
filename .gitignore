@@ -17,6 +17,7 @@ dist-ssr
 *.local
 .codex-backups/
 .wrangler/
+tmp/disabled-connection-hydration/
 
 # Editor directories and files
 .vscode/*
