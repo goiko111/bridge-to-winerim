@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "connectionId": "00000000-0000-4000-8000-000000000000",
+  "runId": "replace-with-reviewed-canary-run",
+  "holderId": "replace-with-deployment-version",
+  "proofSha256": "replace-with-sha256-of-exclusive-proof-secret",
+  "exclusiveCredentialRef": "cloudflare-secrets-store://replace/store/credential",
+  "credentialVersion": "replace-with-rotated-version",
+  "legacyWriter": {
+    "revokedAt": "2026-01-01T00:00:00.000Z",
+    "negativeProbeStatus": 401,
+    "evidenceSha256": "replace-with-sha256-of-sanitized-401-or-403-readback"
+  },
+  "issuedAt": "2026-01-01T00:01:00.000Z",
+  "expiresAt": "2026-01-01T01:01:00.000Z"
+}

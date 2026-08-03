@@ -1,0 +1,20 @@
+# TEMPLATE ONLY. Private service: no route, workers.dev or preview URL.
+name = "{{WRITER_FENCE_SERVICE_NAME}}"
+main = "cloudflare/canary-failclosed/src/writerFenceWorker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[[durable_objects.bindings]]
+name = "CONNECTION_WRITER_FENCE"
+class_name = "ConnectionWriterFence"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConnectionWriterFence"]
+
+[[secrets_store_secrets]]
+binding = "WRITER_FENCE_GRANT"
+store_id = "{{WRITER_FENCE_GRANT_STORE_ID}}"
+secret_name = "{{WRITER_FENCE_GRANT_SECRET_NAME}}"
