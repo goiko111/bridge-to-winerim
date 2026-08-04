@@ -98,6 +98,23 @@ function canonicalDate(value, label) {
   return value;
 }
 
+function closedDayCursorLagDays(maxBusinessDay, lastBusinessDaySynced) {
+  const maxBusinessDayMs = Date.parse(`${maxBusinessDay}T00:00:00.000Z`);
+  const lastBusinessDaySyncedMs = Date.parse(`${lastBusinessDaySynced}T00:00:00.000Z`);
+  return (maxBusinessDayMs - lastBusinessDaySyncedMs) / (24 * 60 * 60 * 1000);
+}
+
+function validateClosedDayCursor(maxBusinessDay, lastBusinessDaySynced) {
+  const lagDays = closedDayCursorLagDays(maxBusinessDay, lastBusinessDaySynced);
+  if (lagDays < 0) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_AHEAD_OF_SALES");
+  }
+  if (lagDays > 1) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_BEHIND_SALES");
+  }
+  return lagDays;
+}
+
 function exactObjectKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`RUNTIME_CREDENTIAL_PROVISION_INVALID_${label}`);
@@ -185,9 +202,7 @@ function shadowArtifactWatermarks(sourceArtifact, connectionId, label, options =
     connection.cursor.lastSyncAt,
     "ADOPTION_LAST_SYNC_AT",
   );
-  if (lastBusinessDaySynced < maxBusinessDay) {
-    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_BEHIND_SALES");
-  }
+  validateClosedDayCursor(maxBusinessDay, lastBusinessDaySynced);
   return {
     salesEvents,
     salesLineItems,
@@ -403,9 +418,10 @@ function validateAdoptionObject(adoption, connectionId) {
   canonicalDate(adoption.watermarks.maxBusinessDay, "ADOPTION_MAX_BUSINESS_DAY");
   canonicalDate(adoption.watermarks.lastBusinessDaySynced, "ADOPTION_CURSOR_DAY");
   canonicalTimestamp(adoption.watermarks.lastSyncAt, "ADOPTION_LAST_SYNC_AT");
-  if (adoption.watermarks.lastBusinessDaySynced < adoption.watermarks.maxBusinessDay) {
-    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_BEHIND_SALES");
-  }
+  validateClosedDayCursor(
+    adoption.watermarks.maxBusinessDay,
+    adoption.watermarks.lastBusinessDaySynced,
+  );
   if (adoptionBindingSha256(adoption) !== adoption.bindingSha256) {
     throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_BINDING_MISMATCH");
   }
@@ -767,7 +783,7 @@ export function credentialProvisioningPlan() {
     modes: {
       bootstrap: "requires no prior credential rows and no operational rows",
       rotate: "requires complete inactive historical generations and preserves them",
-      "adopt-existing": "requires exact export/reconciliation hashes and exact imported sales/cursor watermarks",
+      "adopt-existing": "requires exact export/reconciliation hashes and imported watermarks; the closed-day cursor may equal the maximum sales day or trail it by exactly one intraday day",
     },
     adoptExistingEnvironment: [
       "RUNTIME_ADOPT_EXPORT_MANIFEST",
@@ -866,6 +882,10 @@ export function prepareCredentialProvisioning({ environment = process.env, outpu
     credentialSetSha256,
     ...(adoption ? {
       adoption,
+      adoptionCursorPolicy: {
+        semantics: "lastBusinessDaySynced certifies closed business days; maxBusinessDay may include the current intraday service day",
+        acceptedLagDays: [0, 1],
+      },
       scopeGenerationMode: "bootstrap",
       activationAllowed: false,
       activationBlockReason: "ADOPT_EXISTING_ACTIVATION_REQUIRES_SEPARATE_REVIEWED_GATE",

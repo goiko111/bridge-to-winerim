@@ -50,6 +50,24 @@ describe("prepared runtime canary abort", () => {
     });
   });
 
+  it("can bind an exact non-legacy prepared scope note", () => {
+    const scopeNote = "adopt-existing:v1:210d556fa525f5eb99e86e33b071aeff242e1f09bdf4743c8f42eaccc9954cc6";
+    const sql = renderRescueCanaryPreparedAbortSql({
+      connectionId: CONNECTION_ID,
+      runId: RUN_ID,
+      scopeNote,
+    });
+
+    expect(sql).toContain(`AND note = '${scopeNote}'`);
+    expect(rescueCanaryPreparedAbortPlan({ connectionId: CONNECTION_ID, runId: RUN_ID, scopeNote }))
+      .toMatchObject({ scopeNote });
+    expect(() => renderRescueCanaryPreparedAbortSql({
+      connectionId: CONNECTION_ID,
+      runId: RUN_ID,
+      scopeNote: "unsafe note'; delete from public.pos_connections; --",
+    })).toThrow("RESCUE_CANARY_PREPARED_ABORT_INVALID_SCOPE_NOTE");
+  });
+
   it("writes a private SQL artifact outside the repository", () => {
     const outputDirectory = mkdtempSync(join(tmpdir(), "winerim-prepared-abort-test-"));
     const output = join(outputDirectory, "abort.sql");

@@ -411,9 +411,14 @@ describe("runtime credential provisioning tooling", () => {
     )).join(",")}}`;
   }
 
-  function adoptExistingEvidence(overrides: Record<string, unknown> = {}) {
+  function adoptExistingEvidence(
+    overrides: Record<string, unknown> = {},
+    days: { maxBusinessDay?: string; lastBusinessDaySynced?: string } = {},
+  ) {
+    const maxBusinessDay = days.maxBusinessDay ?? "2026-08-04";
+    const lastBusinessDaySynced = days.lastBusinessDaySynced ?? "2026-08-03";
     const events = Array.from({ length: 42 }, (_, eventIndex) => ({
-      businessDay: "2026-08-03",
+      businessDay: maxBusinessDay,
       providerDocId: `invoice-${eventIndex}`,
       docType: "INVOICE",
       orderId: `order-${eventIndex}`,
@@ -440,7 +445,7 @@ describe("runtime credential provisioning tooling", () => {
       connections: [{
         connectionId: CONNECTION_ID,
         cursor: {
-          lastBusinessDaySynced: "2026-08-03",
+          lastBusinessDaySynced,
           lastSyncAt: "2026-08-04T11:55:00.000Z",
         },
         events,
@@ -608,7 +613,7 @@ describe("runtime credential provisioning tooling", () => {
     });
 
     expect(sql).toContain("credential rotation requires a complete retired generation");
-    expect(sql).toContain("credential rotation history is incomplete or still active");
+    expect(sql).toContain("credential history is incomplete or still active");
     expect(sql).not.toMatch(/DELETE\s+FROM|ON CONFLICT|DO UPDATE/i);
     expect(sql.match(/\n {4}false\n/g)).toHaveLength(2);
   });
@@ -631,11 +636,14 @@ describe("runtime credential provisioning tooling", () => {
       adoption,
     });
 
-    expect(sql).toContain("adopt-existing requires an empty credential vault");
+    expect(sql).toContain("IN ('rotate', 'adopt-existing') AND existing_credentials <> 0");
+    expect(sql).toContain("credential history is incomplete or still active");
+    expect(sql).not.toContain("adopt-existing requires an empty credential vault");
     expect(sql).toContain("adopt-existing sales event watermark mismatch");
     expect(sql).toContain(") <> 42 THEN");
     expect(sql).toContain(") <> 137 THEN");
     expect(sql).toContain("'2026-08-03'");
+    expect(sql).toContain("'2026-08-04'");
     expect(sql).toContain("'2026-08-04T11:55:00.000Z'");
     expect(sql).toContain(`'adopt-existing:v3:${adoption.bindingSha256}'`);
     expect(sql).toContain("AND enabled = false");
@@ -695,6 +703,10 @@ describe("runtime credential provisioning tooling", () => {
         sourceDatasetSha256: evidence.exportManifestSha256,
         targetDatasetSha256: evidence.targetManifestSha256,
         watermarks: { salesEvents: 42, salesLineItems: 137 },
+      },
+      adoptionCursorPolicy: {
+        semantics: "lastBusinessDaySynced certifies closed business days; maxBusinessDay may include the current intraday service day",
+        acceptedLagDays: [0, 1],
       },
     });
     expect(statSync(output).mode & 0o777).toBe(0o600);
@@ -799,6 +811,32 @@ describe("runtime credential provisioning tooling", () => {
       credentials,
       mode: "adopt-existing",
     })).toThrow("RUNTIME_CREDENTIAL_PROVISION_INVALID_ADOPTION_EVIDENCE");
+  });
+
+  it("accepts equal closed-day watermarks and rejects stale or inverted cursor dates", () => {
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      ...adoptExistingEvidence({}, {
+        maxBusinessDay: "2026-08-04",
+        lastBusinessDaySynced: "2026-08-04",
+      }),
+    })).not.toThrow();
+
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      ...adoptExistingEvidence({}, {
+        maxBusinessDay: "2026-08-04",
+        lastBusinessDaySynced: "2026-08-02",
+      }),
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_BEHIND_SALES");
+
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      ...adoptExistingEvidence({}, {
+        maxBusinessDay: "2026-08-04",
+        lastBusinessDaySynced: "2026-08-05",
+      }),
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_AHEAD_OF_SALES");
   });
 
   it("writes a private encrypted artifact and returns only non-secret metadata", () => {

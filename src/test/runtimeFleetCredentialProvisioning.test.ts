@@ -172,6 +172,44 @@ function fixtureConnection(directory: string, connectionId: string, suffix: stri
   };
 }
 
+function rewriteFixtureBusinessDays(
+  connection: ReturnType<typeof fixtureConnection>,
+  maxBusinessDay: string,
+  lastBusinessDaySynced: string,
+) {
+  for (const artifactPath of [
+    connection.adoptionEvidence.exportManifestPath,
+    connection.adoptionEvidence.targetManifestPath,
+  ]) {
+    const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
+    artifact.connections[0].cursor.lastBusinessDaySynced = lastBusinessDaySynced;
+    for (const event of artifact.connections[0].events) event.businessDay = maxBusinessDay;
+    const source = Buffer.from(`${JSON.stringify(artifact)}\n`);
+    writeFileSync(artifactPath, source, { mode: 0o600 });
+    if (artifactPath === connection.adoptionEvidence.exportManifestPath) {
+      connection.adoptionEvidence.exportManifestSha256 = sha256(source);
+    } else {
+      connection.adoptionEvidence.targetManifestSha256 = sha256(source);
+    }
+  }
+  const reconciliation = JSON.parse(
+    readFileSync(connection.adoptionEvidence.reconciliationManifestPath, "utf8"),
+  );
+  reconciliation.inputs.lovableSha256 = connection.adoptionEvidence.exportManifestSha256;
+  reconciliation.inputs.ownSha256 = connection.adoptionEvidence.targetManifestSha256;
+  const { reportSha256: _reportSha256, ...reportBody } = reconciliation;
+  reconciliation.reportSha256 = sha256(Buffer.from(canonicalTestJson(reportBody)));
+  const reconciliationSource = Buffer.from(`${JSON.stringify(reconciliation)}\n`);
+  writeFileSync(
+    connection.adoptionEvidence.reconciliationManifestPath,
+    reconciliationSource,
+    { mode: 0o600 },
+  );
+  connection.adoptionEvidence.reconciliationManifestSha256 = sha256(reconciliationSource);
+  connection.targetEvidence.maxBusinessDay = maxBusinessDay;
+  connection.targetEvidence.lastBusinessDaySynced = lastBusinessDaySynced;
+}
+
 function fixtureInput() {
   const directory = mkdtempSync(join(tmpdir(), "runtime-fleet-input-"));
   chmodSync(directory, 0o700);
@@ -352,6 +390,22 @@ describe("fleet runtime credential provisioning", () => {
       version: 1,
       connections: fixture.connections,
     })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_RECONCILIATION_NOT_EXACT");
+  });
+
+  it("accepts a closed-day cursor one day behind intraday events and rejects larger lag", () => {
+    const intradayFixture = fixtureInput();
+    rewriteFixtureBusinessDays(intradayFixture.connections[0], "2026-08-04", "2026-08-03");
+    expect(() => validateFleetProvisioningInput({
+      version: 1,
+      connections: intradayFixture.connections,
+    })).not.toThrow();
+
+    const staleFixture = fixtureInput();
+    rewriteFixtureBusinessDays(staleFixture.connections[0], "2026-08-04", "2026-08-02");
+    expect(() => validateFleetProvisioningInput({
+      version: 1,
+      connections: staleFixture.connections,
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_CURSOR_BEHIND_SALES");
   });
 
   it("keeps the logical manifest deterministic across input order and encryption keys", () => {

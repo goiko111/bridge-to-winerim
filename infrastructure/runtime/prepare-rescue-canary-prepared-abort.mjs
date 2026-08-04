@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
+const SCOPE_NOTE_PATTERN = /^[A-Za-z0-9._:-]{3,255}$/;
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "../..");
 
@@ -19,14 +20,22 @@ function required(environment, name) {
   return value;
 }
 
-export function renderRescueCanaryPreparedAbortSql({ connectionId, runId }) {
+function normalizedScopeNote(runId, scopeNote) {
+  const normalized = String(scopeNote ?? `rescue-canary-run:${runId}`).trim();
+  if (!SCOPE_NOTE_PATTERN.test(normalized)) {
+    throw new Error("RESCUE_CANARY_PREPARED_ABORT_INVALID_SCOPE_NOTE");
+  }
+  return normalized;
+}
+
+export function renderRescueCanaryPreparedAbortSql({ connectionId, runId, scopeNote }) {
   if (!UUID_PATTERN.test(connectionId)) {
     throw new Error("RESCUE_CANARY_PREPARED_ABORT_INVALID_CONNECTION_ID");
   }
   if (!RUN_PATTERN.test(runId)) {
     throw new Error("RESCUE_CANARY_PREPARED_ABORT_INVALID_RUN_ID");
   }
-  const scopeNote = `rescue-canary-run:${runId}`;
+  const expectedScopeNote = normalizedScopeNote(runId, scopeNote);
 
   return `BEGIN;
 
@@ -59,7 +68,7 @@ BEGIN
     FROM public.runtime_canary_connections
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
-      AND note = '${scopeNote}'
+      AND note = '${expectedScopeNote}'
       AND status = 'PREPARED'
       AND active = false
       AND approved_at IS NULL
@@ -124,7 +133,7 @@ BEGIN
     FROM public.runtime_canary_connections
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
-      AND note = '${scopeNote}'
+      AND note = '${expectedScopeNote}'
       AND status = 'ABORTED'
       AND active = false
       AND approved_at IS NULL
@@ -166,19 +175,20 @@ COMMIT;
 `;
 }
 
-export function rescueCanaryPreparedAbortPlan({ connectionId, runId }) {
+export function rescueCanaryPreparedAbortPlan({ connectionId, runId, scopeNote }) {
   if (!UUID_PATTERN.test(connectionId)) {
     throw new Error("RESCUE_CANARY_PREPARED_ABORT_INVALID_CONNECTION_ID");
   }
   if (!RUN_PATTERN.test(runId)) {
     throw new Error("RESCUE_CANARY_PREPARED_ABORT_INVALID_RUN_ID");
   }
+  const expectedScopeNote = normalizedScopeNote(runId, scopeNote);
   return {
     status: "RESCUE_CANARY_PREPARED_ABORT_PLAN_READY",
     remoteMutations: 0,
     connectionId,
     runId,
-    scopeNote: `rescue-canary-run:${runId}`,
+    scopeNote: expectedScopeNote,
     database: {
       transition: "PREPARED_TO_ABORTED",
       requiresInactiveScope: true,
@@ -194,7 +204,8 @@ export function rescueCanaryPreparedAbortPlan({ connectionId, runId }) {
 export function prepareRescueCanaryPreparedAbort({ environment = process.env, output }) {
   const connectionId = required(environment, "CANARY_CONNECTION_ID");
   const runId = required(environment, "CANARY_RUN_ID");
-  const plan = rescueCanaryPreparedAbortPlan({ connectionId, runId });
+  const scopeNote = String(environment.CANARY_SCOPE_NOTE ?? "").trim() || undefined;
+  const plan = rescueCanaryPreparedAbortPlan({ connectionId, runId, scopeNote });
   const target = resolve(output);
   const relativeTarget = relative(repoRoot, target);
   if (relativeTarget === "" || (!relativeTarget.startsWith("..") && !relativeTarget.startsWith("/"))) {
@@ -206,7 +217,7 @@ export function prepareRescueCanaryPreparedAbort({ environment = process.env, ou
   if (realRelativeParent === "" || (!realRelativeParent.startsWith("..") && !realRelativeParent.startsWith("/"))) {
     throw new Error("RESCUE_CANARY_PREPARED_ABORT_OUTPUT_MUST_BE_OUTSIDE_REPOSITORY");
   }
-  const sql = renderRescueCanaryPreparedAbortSql({ connectionId, runId });
+  const sql = renderRescueCanaryPreparedAbortSql({ connectionId, runId, scopeNote });
   writeFileSync(target, sql, { encoding: "utf8", mode: 0o600, flag: "wx" });
   chmodSync(target, 0o600);
   return {
@@ -226,6 +237,7 @@ function main() {
       status: "RESCUE_CANARY_PREPARED_ABORT_PLAN_ONLY",
       remoteMutations: 0,
       requiredEnvironment: ["CANARY_CONNECTION_ID", "CANARY_RUN_ID"],
+      optionalEnvironment: ["CANARY_SCOPE_NOTE"],
       renderGate: "--render --confirm-connection=<UUID> --output=/secure/path/abort-prepared.sql",
     }, null, 2)}\n`);
     return;

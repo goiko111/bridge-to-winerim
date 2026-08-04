@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const WRITER_FENCE_MODES = new Set(["legacy-writer-revoked", "bootstrap-no-legacy-writer"]);
+const ADOPT_EXISTING_RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
+const ADOPT_EXISTING_KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const ADOPT_EXISTING_SALES_MODE = "adopt-existing-sales-no-legacy-writer";
+const ADOPT_EXISTING_SALES_JOBS = ["sales.auto-sync", "sales.sync-intraday"];
+const WRITER_FENCE_MODES = new Set([
+  "legacy-writer-revoked",
+  "bootstrap-no-legacy-writer",
+  ADOPT_EXISTING_SALES_MODE,
+]);
 const MIN_LEGACY_WRITER_DRAIN_MS = 130 * 1_000;
 const MAX_BOOTSTRAP_EVIDENCE_AGE_MS = 15 * 60 * 1_000;
 const scriptPath = fileURLToPath(import.meta.url);
@@ -31,6 +39,24 @@ function requiredFrom(environment, name) {
 
 function sha256(source) {
   return createHash("sha256").update(source).digest("hex");
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function requiredSha256(environment, name) {
+  const value = requiredFrom(environment, name).toLowerCase();
+  if (!SHA256_PATTERN.test(value)) {
+    throw new Error(`WRITER_FENCE_GRANT_INVALID_${name}`);
+  }
+  return value;
 }
 
 function fleetCredentialReference(connectionId, kind) {
@@ -123,6 +149,70 @@ function bootstrapAbsence(environment) {
   }));
 }
 
+function adoptExistingAbsence(environment) {
+  const zeroFields = {
+    activeConnectionCount: "CANARY_ADOPT_EXISTING_ACTIVE_CONNECTION_COUNT",
+    activeCredentialCount: "CANARY_ADOPT_EXISTING_ACTIVE_CREDENTIAL_COUNT",
+    activeScopeCount: "CANARY_ADOPT_EXISTING_ACTIVE_SCOPE_COUNT",
+    activeProducerCount: "CANARY_ADOPT_EXISTING_ACTIVE_PRODUCER_COUNT",
+    activeConsumerCount: "CANARY_ADOPT_EXISTING_ACTIVE_CONSUMER_COUNT",
+  };
+  const absence = Object.fromEntries(Object.entries(zeroFields).map(([key, name]) => {
+    if (requiredFrom(environment, name) !== "0") {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_ACTIVE_STATE_MUST_BE_ZERO");
+    }
+    return [key, 0];
+  }));
+  const priorRunValue = requiredFrom(environment, "CANARY_ADOPT_EXISTING_PRIOR_RUN_COUNT");
+  if (!/^\d+$/.test(priorRunValue)) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_PRIOR_RUN_COUNT_INVALID");
+  }
+  const priorRunCount = Number(priorRunValue);
+  if (!Number.isSafeInteger(priorRunCount)) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_PRIOR_RUN_COUNT_INVALID");
+  }
+  return { ...absence, priorRunCount };
+}
+
+function adoptExistingSalesRuntimePolicy(environment) {
+  let runtimeJobs;
+  try {
+    runtimeJobs = JSON.parse(requiredFrom(environment, "CANARY_RUNTIME_JOBS"));
+  } catch {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_RUNTIME_JOBS_INVALID");
+  }
+  if (
+    !Array.isArray(runtimeJobs)
+    || runtimeJobs.length !== ADOPT_EXISTING_SALES_JOBS.length
+    || runtimeJobs.some((job, index) => job !== ADOPT_EXISTING_SALES_JOBS[index])
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_JOBS_REQUIRED");
+  }
+  if (requiredFrom(environment, "CANARY_RUNTIME_LANE") !== "sales") {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_LANE_REQUIRED");
+  }
+  const disabledFeatures = {
+    openTickets: "CANARY_RUNTIME_OPEN_TICKETS_ENABLED",
+    catalog: "CANARY_RUNTIME_CATALOG_ENABLED",
+    stock: "CANARY_RUNTIME_STOCK_ENABLED",
+    outbound: "CANARY_RUNTIME_OUTBOUND_ENABLED",
+    maintenance: "CANARY_RUNTIME_MAINTENANCE_ENABLED",
+  };
+  const features = Object.fromEntries(Object.entries(disabledFeatures).map(([key, name]) => {
+    if (requiredFrom(environment, name) !== "false") {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_NON_SALES_FEATURE_MUST_BE_DISABLED");
+    }
+    return [key, false];
+  }));
+  const providerConfig = {
+    runtime_sales_job_allowlist: [...ADOPT_EXISTING_SALES_JOBS],
+    intraday_sales_sync_enabled: true,
+    open_tickets_sync_enabled: features.openTickets,
+    open_tickets_stock_sync_enabled: features.openTickets,
+  };
+  return { providerConfig, runtimePolicySha256: sha256(canonicalJson(providerConfig)) };
+}
+
 function readBoundFile(path, expectedSha256, label) {
   if (!SHA256_PATTERN.test(expectedSha256)) {
     throw new Error(`WRITER_FENCE_GRANT_INVALID_${label}_SHA256`);
@@ -156,6 +246,7 @@ export function validateExternalBootstrapWriterFenceEvidence({
   publicKeySha256,
   connectionId,
   referenceTime,
+  requireActivationEnvelope = false,
 }) {
   if (!SHA256_PATTERN.test(artifactSha256) || sha256(artifactSource) !== artifactSha256) {
     throw new Error("WRITER_FENCE_GRANT_EXTERNAL_EVIDENCE_SHA256_MISMATCH");
@@ -188,8 +279,18 @@ export function validateExternalBootstrapWriterFenceEvidence({
     throw new Error("WRITER_FENCE_GRANT_EXTERNAL_PUBLIC_KEY_MUST_BE_ED25519");
   }
   const canonicalPayload = Buffer.from(JSON.stringify(envelope.payload));
-  if (!verify(null, canonicalPayload, publicKey, Buffer.from(envelope.signatureBase64, "base64"))) {
+  const signature = Buffer.from(envelope.signatureBase64, "base64");
+  if (!verify(null, canonicalPayload, publicKey, signature)) {
     throw new Error("WRITER_FENCE_GRANT_EXTERNAL_EVIDENCE_SIGNATURE_INVALID");
+  }
+  if (requireActivationEnvelope && (
+    sha256(Buffer.from(envelope.publicKeyPem ?? "")) !== publicKeySha256
+    || !SHA256_PATTERN.test(envelope.hashes?.readbacksSourceSha256 ?? "")
+    || envelope.hashes?.publicKeySha256 !== publicKeySha256
+    || envelope.hashes?.payloadSha256 !== sha256(canonicalPayload)
+    || envelope.hashes?.signatureSha256 !== sha256(signature)
+  )) {
+    throw new Error("WRITER_FENCE_GRANT_EXTERNAL_EVIDENCE_ACTIVATION_ENVELOPE_INVALID");
   }
 
   const payload = envelope.payload;
@@ -259,10 +360,16 @@ export function validateExternalBootstrapWriterFenceEvidence({
     fenceAppliedAt: new Date(fenceAppliedMs).toISOString(),
     observedAt: new Date(observedMs).toISOString(),
     readbackObservedAt: readbackTimes.map((value) => new Date(value).toISOString()),
+    ...(requireActivationEnvelope ? { removedFromLovable: true } : {}),
   };
 }
 
-export function readExternalBootstrapWriterFenceEvidence({ environment, connectionId, referenceTime }) {
+export function readExternalBootstrapWriterFenceEvidence({
+  environment,
+  connectionId,
+  referenceTime,
+  requireActivationEnvelope = false,
+}) {
   const artifactSha256 = requiredFrom(environment, "NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256").toLowerCase();
   const publicKeySha256 = requiredFrom(environment, "NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY_SHA256").toLowerCase();
   const artifactSource = readBoundFile(
@@ -282,7 +389,60 @@ export function readExternalBootstrapWriterFenceEvidence({ environment, connecti
     publicKeySha256,
     connectionId,
     referenceTime,
+    requireActivationEnvelope,
   });
+}
+
+function prepareAdoptExistingSalesActivationScope({
+  environment,
+  connectionId,
+  runId,
+  holderId,
+  proof,
+  issuedAt,
+  expiresAt,
+  externalEvidence,
+}) {
+  const adoptionBindingSha256 = requiredSha256(
+    environment,
+    "CANARY_ADOPTION_BINDING_SHA256",
+  );
+  const deploymentManifestSha256 = requiredSha256(
+    environment,
+    "CANARY_DEPLOYMENT_MANIFEST_SHA256",
+  );
+  const finalTargetRawSha256 = requiredSha256(
+    environment,
+    "CANARY_FINAL_TARGET_RAW_SHA256",
+  );
+  const { runtimePolicySha256 } = adoptExistingSalesRuntimePolicy(environment);
+  const payload = [
+    "winerim-writer-fence-adopt-existing-sales",
+    "1",
+    connectionId,
+    runId,
+    holderId,
+    issuedAt,
+    expiresAt,
+    adoptionBindingSha256,
+    deploymentManifestSha256,
+    finalTargetRawSha256,
+    externalEvidence.artifactSha256,
+    externalEvidence.payloadSha256,
+    runtimePolicySha256,
+  ].join("|");
+  return {
+    version: 1,
+    kind: "adopt-existing-sales",
+    adoptionBindingSha256,
+    deploymentManifestSha256,
+    finalTargetRawSha256,
+    externalEvidenceSha256: externalEvidence.artifactSha256,
+    externalEvidencePayloadSha256: externalEvidence.payloadSha256,
+    runtimePolicySha256,
+    bindingSha256: sha256(payload),
+    signatureSha256: createHmac("sha256", proof).update(payload).digest("hex"),
+  };
 }
 
 function outputPath() {
@@ -309,6 +469,9 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
   if (!WRITER_FENCE_MODES.has(writerFenceMode)) {
     throw new Error("WRITER_FENCE_GRANT_INVALID_MODE");
   }
+  if (writerFenceMode === ADOPT_EXISTING_SALES_MODE && !ADOPT_EXISTING_RUN_PATTERN.test(runId)) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_INVALID_RUN_ID");
+  }
 
   const issuedMs = timestamp(issuedAt, "CANARY_FENCE_ISSUED_AT");
   const expiresMs = timestamp(expiresAt, "CANARY_FENCE_EXPIRES_AT");
@@ -325,6 +488,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
     expiresAt,
   };
   const fleetGrant = writerFenceMode === "bootstrap-no-legacy-writer"
+    || writerFenceMode === ADOPT_EXISTING_SALES_MODE
     || String(environment.CANARY_WRITER_FENCE_GRANT_VERSION ?? "") === "3";
   let legacyCredential;
   if (!fleetGrant) {
@@ -369,7 +533,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
       ...(credentialBundle ? { credentialBundle } : legacyCredential),
       legacyWriter: { revokedAt, negativeProbeStatus, evidenceSha256 },
     };
-  } else {
+  } else if (writerFenceMode === "bootstrap-no-legacy-writer") {
     const job = requiredFrom(environment, "CANARY_RUNTIME_JOB");
     const lane = requiredFrom(environment, "CANARY_RUNTIME_LANE");
     const productId = requiredFrom(environment, "CANARY_CATALOG_PRODUCT_ID");
@@ -397,6 +561,61 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
         absence: bootstrapAbsence(environment),
         externalEvidence,
       },
+    };
+  } else {
+    const externalEvidence = readExternalBootstrapWriterFenceEvidence({
+      environment,
+      connectionId,
+      referenceTime: issuedAt,
+      requireActivationEnvelope: true,
+    });
+    if (
+      externalEvidence.fenceMode !== "lovable-disabled-no-agora-rotation"
+      || externalEvidence.readbackObservedAt.length !== 2
+    ) {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_REQUIRES_NO_ROTATION_EVIDENCE");
+    }
+    adoptExistingAbsence(environment);
+    if (!ADOPT_EXISTING_KEY_VERSION_PATTERN.test(credentialBundle.keyVersion)) {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_INVALID_KEY_VERSION");
+    }
+    const internalEvidenceSha256 = requiredSha256(
+      environment,
+      "CANARY_WRITER_FENCE_EVIDENCE_SHA256",
+    );
+    const sourcePassSha256 = requiredSha256(
+      environment,
+      "CANARY_WRITER_FENCE_SOURCE_PASS_SHA256",
+    );
+    const internalVerifiedAt = new Date(timestamp(
+      requiredFrom(environment, "CANARY_WRITER_FENCE_VERIFIED_AT"),
+      "CANARY_WRITER_FENCE_VERIFIED_AT",
+    )).toISOString();
+    if (internalVerifiedAt !== externalEvidence.observedAt) {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_TIME_MISMATCH");
+    }
+    grant = {
+      version: 3,
+      grantType: "adopt-existing-sales",
+      ...common,
+      credentialBundle,
+      writerHistory: {
+        mode: "adopt-existing-sales",
+        verifiedAt: internalVerifiedAt,
+        evidenceSha256: internalEvidenceSha256,
+        cloudflareEvidenceSha256: sourcePassSha256,
+        externalEvidence,
+      },
+      activationScope: prepareAdoptExistingSalesActivationScope({
+        environment,
+        connectionId,
+        runId,
+        holderId,
+        proof,
+        issuedAt,
+        expiresAt,
+        externalEvidence,
+      }),
     };
   }
   const target = resolve(output ?? outputPath());
