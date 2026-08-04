@@ -16,6 +16,7 @@ import {
 } from "../../infrastructure/runtime/fleet-full-live-render-config.mjs";
 
 const SOURCE_COMMIT = "1234567890abcdef1234567890abcdef12345678";
+const root = resolve(import.meta.dirname, "../..");
 
 function errorCode(run: () => unknown): string | null {
   try {
@@ -48,8 +49,17 @@ describe("full fleet inactive render package", () => {
       activationAllowed: false,
       connectionsActivated: 0,
       components: {
-        executor: { name: FLEET_FULL_EXECUTOR_NAME },
-        rateLimiter: { name: FLEET_FULL_RATE_LIMITER_SERVICE },
+        catalog: { entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts" },
+        salesStock: { entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts" },
+        outbound: { entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts" },
+        executor: {
+          name: FLEET_FULL_EXECUTOR_NAME,
+          entryPoint: "cloudflare/workers/middleware-runtime-executor/src/worker.ts",
+        },
+        rateLimiter: {
+          name: FLEET_FULL_RATE_LIMITER_SERVICE,
+          entryPoint: "cloudflare/workers/middleware-outbound-rate-limiter/src/worker.ts",
+        },
       },
       nextGate: "CAPTURE_BASELINES_THEN_SEPARATE_REVIEWED_ACTIVATION",
     });
@@ -166,6 +176,26 @@ describe("full fleet inactive render package", () => {
       for (const [key, path] of Object.entries(written.outputs)) {
         expect(readFileSync(path, "utf8")).toBe(result.rendered[key as keyof typeof result.rendered]);
         expect(statSync(path).mode & 0o777).toBe(0o600);
+        const operation = manifest.operations[key];
+        expect(operation.workingDirectory).toBe(root);
+        expect(operation.configPath).toBe(path);
+        expect(operation.dryRunCommand.slice(0, 4)).toEqual([
+          "npx",
+          "wrangler",
+          "deploy",
+          operation.entryPoint,
+        ]);
+        expect(operation.dryRunCommand.slice(4, 6)).toEqual(["--config", path]);
+        expect(operation.dryRunCommand).toContain("--dry-run");
+        expect(operation.deployCommand).toEqual([
+          "npx",
+          "wrangler",
+          "deploy",
+          operation.entryPoint,
+          "--config",
+          path,
+        ]);
+        expect(statSync(resolve(root, operation.entryPoint)).isFile()).toBe(true);
       }
       expect(statSync(written.manifestPath).mode & 0o777).toBe(0o600);
     } finally {

@@ -57,6 +57,7 @@ const COMPONENTS = Object.freeze({
   catalog: Object.freeze({
     templatePath: resolve(repoRoot, "wrangler.middleware-runtime-fleet-full-catalog.toml.example"),
     outputName: "wrangler.middleware-runtime-fleet-full-catalog.toml",
+    entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts",
   }),
   salesStock: Object.freeze({
     templatePath: resolve(
@@ -64,14 +65,17 @@ const COMPONENTS = Object.freeze({
       "wrangler.middleware-runtime-fleet-full-sales-stock.toml.example",
     ),
     outputName: "wrangler.middleware-runtime-fleet-full-sales-stock.toml",
+    entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts",
   }),
   outbound: Object.freeze({
     templatePath: resolve(repoRoot, "wrangler.middleware-runtime-fleet-full-outbound.toml.example"),
     outputName: "wrangler.middleware-runtime-fleet-full-outbound.toml",
+    entryPoint: "cloudflare/workers/middleware-runtime/src/worker.ts",
   }),
   executor: Object.freeze({
     templatePath: resolve(repoRoot, "wrangler.middleware-runtime-executor-fleet-full.toml.example"),
     outputName: "wrangler.middleware-runtime-executor-fleet-full.toml",
+    entryPoint: "cloudflare/workers/middleware-runtime-executor/src/worker.ts",
   }),
   rateLimiter: Object.freeze({
     templatePath: resolve(
@@ -79,6 +83,7 @@ const COMPONENTS = Object.freeze({
       "wrangler.middleware-outbound-rate-limiter-fleet-full.toml.example",
     ),
     outputName: "wrangler.middleware-outbound-rate-limiter-fleet-full.toml",
+    entryPoint: "cloudflare/workers/middleware-outbound-rate-limiter/src/worker.ts",
   }),
 });
 
@@ -324,6 +329,7 @@ export function validateFleetFullInactiveConfigs({
 
   const components = Object.fromEntries(Object.keys(COMPONENTS).map((key) => [key, Object.freeze({
     name: assignment(rendered[key], "name"),
+    entryPoint: COMPONENTS[key].entryPoint,
     templateSha256: sha256(templates[key]),
     renderedSha256: sha256(rendered[key]),
     outputName: COMPONENTS[key].outputName,
@@ -417,15 +423,46 @@ export function writeFleetFullInactivePackage({ outputDir, result }) {
   }
   const resolvedOutputDir = resolve(String(outputDir ?? ""));
   const outputs = {};
+  const operations = {};
   for (const [key, component] of Object.entries(COMPONENTS)) {
     if (typeof result.rendered[key] !== "string") fail(`RENDERED_CONFIG_REQUIRED_${key}`);
     const path = resolve(resolvedOutputDir, component.outputName);
     writePrivate(path, result.rendered[key]);
     outputs[key] = path;
+    const dryRunOutdir = resolve(resolvedOutputDir, ".wrangler-dry-run", key);
+    operations[key] = Object.freeze({
+      workingDirectory: repoRoot,
+      entryPoint: component.entryPoint,
+      configPath: path,
+      dryRunOutdir,
+      dryRunCommand: Object.freeze([
+        "npx",
+        "wrangler",
+        "deploy",
+        component.entryPoint,
+        "--config",
+        path,
+        "--dry-run",
+        "--outdir",
+        dryRunOutdir,
+      ]),
+      deployCommand: Object.freeze([
+        "npx",
+        "wrangler",
+        "deploy",
+        component.entryPoint,
+        "--config",
+        path,
+      ]),
+    });
   }
   const manifestPath = resolve(resolvedOutputDir, "fleet-full-inactive-manifest.json");
-  writePrivate(manifestPath, `${JSON.stringify({ ...result.manifest, outputs }, null, 2)}\n`);
-  return Object.freeze({ outputs: Object.freeze(outputs), manifestPath });
+  writePrivate(manifestPath, `${JSON.stringify({ ...result.manifest, outputs, operations }, null, 2)}\n`);
+  return Object.freeze({
+    outputs: Object.freeze(outputs),
+    operations: Object.freeze(operations),
+    manifestPath,
+  });
 }
 
 function main() {
@@ -442,6 +479,7 @@ function main() {
   process.stdout.write(`${JSON.stringify({
     ...result.manifest,
     outputs: written.outputs,
+    operations: written.operations,
     manifest: written.manifestPath,
   }, null, 2)}\n`);
 }
