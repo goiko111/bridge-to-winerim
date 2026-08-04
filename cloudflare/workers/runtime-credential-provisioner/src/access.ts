@@ -55,7 +55,7 @@ function normalizedTeamDomain(value: string): string {
 
 async function defaultFetchKeys(teamDomain: string): Promise<JsonWebKey[]> {
   const response = await fetch(`${teamDomain}/cdn-cgi/access/certs`, {
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) throw new Error("ACCESS_CERTS_UNAVAILABLE");

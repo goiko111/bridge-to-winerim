@@ -26,6 +26,7 @@ import {
 import { runtimeCredentialProvisionerLifecyclePlan } from "../../../../infrastructure/runtime/plan-runtime-credential-provisioner.mjs";
 import { RuntimeCredentialChallenge } from "./challengeStore";
 import { runtimeCredentialAad } from "./crypto";
+import { verifyAccessIdentity } from "./access";
 import {
   createRuntimeCredentialProvisionerWorker,
   type RuntimeCredentialProvisionerEnv,
@@ -335,6 +336,30 @@ describe("runtime credential provisioner", () => {
 
     const oversized = await provisionFixture({ serviceToken: true, accessTtlSeconds: 961 });
     expect(oversized.challengeResponse.status).toBe(401);
+  });
+
+  it("fetches Access signing keys with a Workers-compatible redirect mode", async () => {
+    const access = await accessIdentity({ serviceToken: true, ttlSeconds: 901 });
+    const fetchSigningKeys = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.redirect).toBe("manual");
+      return new Response(JSON.stringify({ keys: [access.publicJwk] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchSigningKeys);
+    try {
+      await expect(verifyAccessIdentity(new Request("https://provision.test/v1/challenges", {
+        headers: { "CF-Access-Jwt-Assertion": access.token },
+      }), {
+        audience: ACCESS_AUD,
+        teamDomain: ACCESS_ISSUER,
+        maxTokenTtlSeconds: 960,
+      })).resolves.toMatchObject({ principalSha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(fetchSigningKeys).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("burns the one-shot challenge when Secrets Store fails", async () => {
