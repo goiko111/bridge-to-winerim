@@ -71,6 +71,7 @@ describe("PostgreSQL differential catalog change queue", () => {
     expect(claimed).toEqual([]);
     expect(fake.statements[0].text).toContain("attempt >= 20");
     expect(fake.statements[0].text).toContain("CATALOG_CHANGE_ATTEMPTS_EXHAUSTED");
+    expect(fake.statements[0].text).toContain("claimed_at = COALESCE(claimed_at, now())");
     expect(fake.statements[0].text).toContain("attempt < 20");
     expect(fake.statements[0].text).not.toContain("attempt <= 20");
   });

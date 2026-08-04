@@ -234,6 +234,7 @@ async function queueChange(
           THEN runtime_catalog_changes.claimed_at
         ELSE NULL
       END,
+      lease_expires_at = NULL,
       completed_at = CASE
         WHEN runtime_catalog_changes.source_fingerprint = EXCLUDED.source_fingerprint
           AND runtime_catalog_changes.status = 'SUCCESS'

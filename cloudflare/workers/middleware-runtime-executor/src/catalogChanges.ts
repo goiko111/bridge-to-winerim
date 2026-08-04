@@ -97,6 +97,7 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
           WITH exhausted AS (
             UPDATE public.runtime_catalog_changes
             SET status = 'BLOCKED',
+                claimed_at = COALESCE(claimed_at, now()),
                 lease_expires_at = NULL,
                 completed_at = now(),
                 last_error = 'CATALOG_CHANGE_ATTEMPTS_EXHAUSTED',

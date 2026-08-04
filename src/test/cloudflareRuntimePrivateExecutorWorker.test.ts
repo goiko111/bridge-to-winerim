@@ -749,7 +749,7 @@ describe("private runtime executor Worker", () => {
     expect(fake.query).not.toHaveBeenCalled();
   });
 
-  it("reports catalog flags truthfully while keeping generic outbound disconnected", async () => {
+  it("reports catalog flags truthfully and keeps outbound unready without its limiter binding", async () => {
     const agora = await encryptedCredentialRow("agora");
     const winerim = await encryptedCredentialRow("winerim");
     const fake = readinessDatabase({ agora: agora.row, winerim: winerim.row });
@@ -790,7 +790,7 @@ describe("private runtime executor Worker", () => {
       mutationRequested: true,
       connected: false,
       ready: false,
-      reason: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED",
+      reason: "OUTBOUND_RATE_LIMITER_NOT_CONFIGURED",
     });
   });
 
@@ -1170,7 +1170,7 @@ describe("private runtime executor Worker", () => {
     expect(remote.applyAndReadback).not.toHaveBeenCalled();
   });
 
-  it("keeps the generic outbound lane closed even when both requested flags are true", async () => {
+  it("rejects outbound when the loaded connection lacks the exact full-lanes scope", async () => {
     const fake = fakeDatabase();
     const response = await createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter }).fetch(
       executeRequest(await envelope("outbound.process", { dryRun: true })),
@@ -1180,12 +1180,12 @@ describe("private runtime executor Worker", () => {
       }),
     );
 
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(422);
     await expect(response.json()).resolves.toEqual({
       ok: false,
-      failure: { httpStatus: 503, message: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED" },
+      failure: { httpStatus: 422, message: "OUTBOUND_CONNECTION_SCOPE_REJECTED" },
     });
-    expect(fake.query).not.toHaveBeenCalled();
+    expect(fake.query).toHaveBeenCalled();
   });
 
   it("keeps the catalog lane closed by default before database access", async () => {

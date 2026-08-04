@@ -166,5 +166,6 @@ describe("full Winerim catalog refresh", () => {
     const queued = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.runtime_catalog_changes"));
     expect(queued?.values).toEqual(expect.arrayContaining(["42", "BOTTLE", "catalog-message-reopen"]));
     expect(queued?.text).toContain("ELSE 'PENDING'");
+    expect(queued?.text).toContain("lease_expires_at = NULL");
   });
 });

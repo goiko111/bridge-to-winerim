@@ -2,6 +2,99 @@
 
 BEGIN;
 
+DO $runtime_full_catalog_outbound_preflight$
+DECLARE
+  target_table text;
+  rls_enabled boolean;
+BEGIN
+  IF current_user IN ('middleware_runtime', 'middleware_readonly', 'middleware_api', 'anon', 'authenticated', 'service_role')
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_roles owner_role
+      WHERE owner_role.rolname = current_user
+        AND (owner_role.rolsuper OR owner_role.rolbypassrls)
+    )
+  THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_SCOPE_PRIVILEGED_OWNER_REQUIRED';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname = 'middleware_runtime'
+      AND rolcanlogin = false
+      AND rolsuper = false
+      AND rolbypassrls = false
+  ) THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_MIDDLEWARE_ROLE_NOT_HARDENED';
+  END IF;
+
+  IF to_regclass('public.runtime_catalog_changes') IS NOT NULL
+    OR to_regprocedure('public.runtime_full_catalog_scope(uuid)') IS NOT NULL
+  THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_OUTBOUND_ALREADY_APPLIED';
+  END IF;
+
+  FOREACH target_table IN ARRAY ARRAY[
+    'runtime_canary_connections',
+    'runtime_catalog_source_scope',
+    'winerim_wines',
+    'product_mappings',
+    'winerim_push_tracking'
+  ]
+  LOOP
+    SELECT table_class.relrowsecurity
+    INTO rls_enabled
+    FROM pg_class table_class
+    JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+    WHERE namespace.nspname = 'public'
+      AND table_class.relname = target_table
+      AND table_class.relkind = 'r';
+
+    IF rls_enabled IS DISTINCT FROM true THEN
+      RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_DEPENDENCY_RLS_REQUIRED: public.%', target_table;
+    END IF;
+  END LOOP;
+
+  IF to_regprocedure('public.enforce_runtime_catalog_wine_refresh_scope()') IS NULL
+    OR to_regprocedure('public.validate_runtime_catalog_source_scope()') IS NULL
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger trigger_row
+      JOIN pg_class table_class ON table_class.oid = trigger_row.tgrelid
+      JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+      WHERE namespace.nspname = 'public'
+        AND table_class.relname = 'winerim_wines'
+        AND trigger_row.tgname = 'enforce_runtime_catalog_wine_refresh_scope'
+        AND trigger_row.tgenabled IN ('O', 'A')
+        AND NOT trigger_row.tgisinternal
+    )
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_trigger trigger_row
+      JOIN pg_class table_class ON table_class.oid = trigger_row.tgrelid
+      JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+      WHERE namespace.nspname = 'public'
+        AND table_class.relname = 'runtime_catalog_source_scope'
+        AND trigger_row.tgname = 'validate_runtime_catalog_source_scope'
+        AND trigger_row.tgenabled IN ('O', 'A')
+        AND NOT trigger_row.tgisinternal
+    )
+  THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_MIGRATION_0014_REQUIRED';
+  END IF;
+
+  IF NOT has_table_privilege('middleware_runtime', 'public.runtime_catalog_source_scope', 'SELECT')
+    OR has_table_privilege('middleware_runtime', 'public.runtime_catalog_source_scope', 'INSERT')
+    OR has_table_privilege('middleware_runtime', 'public.runtime_catalog_source_scope', 'UPDATE')
+    OR has_function_privilege('public', 'public.enforce_runtime_catalog_wine_refresh_scope()', 'EXECUTE')
+    OR has_function_privilege('public', 'public.validate_runtime_catalog_source_scope()', 'EXECUTE')
+  THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_MIGRATION_0014_ACL_REQUIRED';
+  END IF;
+END
+$runtime_full_catalog_outbound_preflight$;
+
 CREATE OR REPLACE FUNCTION public.runtime_full_catalog_scope(target_connection_id uuid)
 RETURNS boolean
 LANGUAGE sql
@@ -66,6 +159,7 @@ CREATE TABLE public.runtime_catalog_changes (
   attempt integer NOT NULL DEFAULT 0,
   available_at timestamptz NOT NULL DEFAULT now(),
   claimed_at timestamptz,
+  lease_expires_at timestamptz,
   completed_at timestamptz,
   last_error text,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -78,15 +172,29 @@ CREATE TABLE public.runtime_catalog_changes (
   CONSTRAINT runtime_catalog_changes_status_check CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'BLOCKED')),
   CONSTRAINT runtime_catalog_changes_attempt_check CHECK (attempt BETWEEN 0 AND 20),
   CONSTRAINT runtime_catalog_changes_lifecycle_check CHECK (
-    (status = 'PENDING' AND claimed_at IS NULL AND completed_at IS NULL)
-    OR (status = 'RUNNING' AND claimed_at IS NOT NULL AND completed_at IS NULL)
-    OR (status IN ('SUCCESS', 'BLOCKED') AND claimed_at IS NOT NULL AND completed_at IS NOT NULL)
+    (status = 'PENDING' AND claimed_at IS NULL AND lease_expires_at IS NULL AND completed_at IS NULL)
+    OR (
+      status = 'RUNNING'
+      AND claimed_at IS NOT NULL
+      AND lease_expires_at > claimed_at
+      AND completed_at IS NULL
+    )
+    OR (
+      status IN ('SUCCESS', 'BLOCKED')
+      AND claimed_at IS NOT NULL
+      AND lease_expires_at IS NULL
+      AND completed_at >= claimed_at
+    )
   )
 );
 
 CREATE INDEX runtime_catalog_changes_pending_idx
   ON public.runtime_catalog_changes(connection_id, available_at, updated_at)
   WHERE status = 'PENDING';
+
+CREATE INDEX runtime_catalog_changes_running_lease_idx
+  ON public.runtime_catalog_changes(connection_id, lease_expires_at, updated_at)
+  WHERE status = 'RUNNING';
 
 ALTER TABLE public.runtime_catalog_changes ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.runtime_catalog_changes FROM PUBLIC, anon, authenticated, service_role,
@@ -102,6 +210,70 @@ CREATE POLICY middleware_runtime_full_catalog_changes
 CREATE POLICY middleware_readonly_catalog_changes
   ON public.runtime_catalog_changes FOR SELECT TO middleware_readonly
   USING (true);
+
+CREATE POLICY middleware_runtime_full_catalog_tracking_certified_insert
+  ON public.winerim_push_tracking FOR INSERT TO middleware_runtime
+  WITH CHECK (
+    public.runtime_full_catalog_scope(connection_id)
+    AND source = 'WINERIM'
+    AND sync_status IN ('VERIFIED', 'HIDDEN')
+    AND agora_product_id ~ '^[0-9]+$'
+    AND format IN ('BOTTLE', 'GLASS', 'MAGNUM')
+    AND last_error IS NULL
+    AND pushed_at IS NOT NULL
+    AND verified_at IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.product_mappings mapping
+      WHERE mapping.connection_id = winerim_push_tracking.connection_id
+        AND mapping.provider_product_id = winerim_push_tracking.agora_product_id
+        AND mapping.winerim_wine_id = winerim_push_tracking.winerim_wine_id
+        AND upper(mapping.format_type) = upper(winerim_push_tracking.format)
+        AND (
+          mapping.status = 'CONFIRMED'
+          OR (
+            mapping.status = 'PENDING'
+            AND mapping.match_method = 'RUNTIME_CATALOG_PLAN'
+            AND mapping.match_score = 1
+            AND mapping.match_reasons @> ARRAY['DB_PLAN_PREPARED']::text[]
+          )
+        )
+    )
+  );
+
+CREATE POLICY middleware_runtime_full_catalog_tracking_certified_update
+  ON public.winerim_push_tracking FOR UPDATE TO middleware_runtime
+  USING (
+    public.runtime_full_catalog_scope(connection_id)
+    AND source = 'WINERIM'
+  )
+  WITH CHECK (
+    public.runtime_full_catalog_scope(connection_id)
+    AND source = 'WINERIM'
+    AND sync_status IN ('VERIFIED', 'HIDDEN')
+    AND agora_product_id ~ '^[0-9]+$'
+    AND format IN ('BOTTLE', 'GLASS', 'MAGNUM')
+    AND last_error IS NULL
+    AND pushed_at IS NOT NULL
+    AND verified_at IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.product_mappings mapping
+      WHERE mapping.connection_id = winerim_push_tracking.connection_id
+        AND mapping.provider_product_id = winerim_push_tracking.agora_product_id
+        AND mapping.winerim_wine_id = winerim_push_tracking.winerim_wine_id
+        AND upper(mapping.format_type) = upper(winerim_push_tracking.format)
+        AND (
+          mapping.status = 'CONFIRMED'
+          OR (
+            mapping.status = 'PENDING'
+            AND mapping.match_method = 'RUNTIME_CATALOG_PLAN'
+            AND mapping.match_score = 1
+            AND mapping.match_reasons @> ARRAY['DB_PLAN_PREPARED']::text[]
+          )
+        )
+    )
+  );
 
 CREATE OR REPLACE FUNCTION public.enforce_runtime_catalog_wine_refresh_scope()
 RETURNS trigger
