@@ -20,6 +20,7 @@ RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_pl
 RUNTIME_CANARY_PREPARED_ABORT="$MIGRATIONS_DIR/20260803203800_runtime_canary_prepared_abort.sql"
 RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
 RUNTIME_FLEET_CONNECTION_SCOPE="$SCRIPT_DIR/0015_runtime_fleet_connection_scope.sql"
+RUNTIME_FULL_CATALOG_OUTBOUND="$SCRIPT_DIR/0016_runtime_full_catalog_outbound.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
 RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=0
 
@@ -101,6 +102,9 @@ RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=0
   printf '\n-- BEGIN runtime fleet connection scope\n'
   cat "$RUNTIME_FLEET_CONNECTION_SCOPE"
   printf '\n-- END runtime fleet connection scope\n'
+  printf '\n-- BEGIN runtime full catalog and outbound lanes\n'
+  cat "$RUNTIME_FULL_CATALOG_OUTBOUND"
+  printf '\n-- END runtime full catalog and outbound lanes\n'
 } > "$OUTPUT"
 
 printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"

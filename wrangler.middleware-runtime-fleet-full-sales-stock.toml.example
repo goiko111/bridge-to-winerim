@@ -1,0 +1,30 @@
+name = "winerim-middleware-runtime-rescue-prod-fleet-sales-stock"
+main = "cloudflare/workers/middleware-runtime/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "rescue-production"
+RELEASE = "fleet-full-inactive-__SOURCE_COMMIT_SHA__"
+RUNTIME_MODE = "fleet-producer"
+RUNTIME_EXECUTION_ENABLED = "false"
+FLEET_RUNTIME_LANE = "sales-stock"
+
+[[hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "bf568eb1d85a41539384f241084c2227"
+
+[[services]]
+binding = "RUNTIME_EXECUTOR"
+service = "winerim-middleware-runtime-executor-rescue-prod-fleet-full"
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[queues.producers]]
+binding = "MIDDLEWARE_SALES_STOCK_QUEUE"
+queue = "winerim-rescue-prod-sales"
+
+# Inert deploy: no queue consumer is bound until a separately reviewed activation gate.

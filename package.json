@@ -27,6 +27,7 @@
     "rescue:canary:activation:plan": "node infrastructure/runtime/prepare-rescue-canary-activation.mjs",
     "rescue:canary:prepared-abort:plan": "node infrastructure/runtime/prepare-rescue-canary-prepared-abort.mjs",
     "postgres:canary-control-plane:test": "bash infrastructure/postgres/tests/test-runtime-canary-control-plane.sh",
+    "postgres:full-catalog-outbound:test": "bash infrastructure/postgres/tests/test-runtime-full-catalog-outbound.sh",
     "rescue:canary:retirement:plan": "node infrastructure/runtime/prepare-rescue-canary-retirement.mjs",
     "cf:runtime:deploy:staging": "infrastructure/postgres/deploy-staging-runtime-component.sh runtime",
     "cf:runtime:deployments:staging": "npx wrangler deployments status --config wrangler.middleware-runtime.toml --env staging",

@@ -193,12 +193,69 @@ describe("Cloudflare runtime catalog planning", () => {
     const plan = await buildCatalogPlan(request(), context({
       wines,
       existingProducts: [
-        { productId: "500002", name: "B Old", familyId: "10", salePrice: 20 },
-        { productId: "500003", name: "B Same", familyId: "10", salePrice: 30 },
+        { productId: "500002", name: "B Old", familyId: "10", salePrice: 20, useAsDirectSale: false, saleableAsMain: true },
+        { productId: "500003", name: "B Same", familyId: "10", salePrice: 30, useAsDirectSale: false, saleableAsMain: true },
       ],
     }));
 
     expect(plan.operations.map((operation) => operation.kind)).toEqual(["create", "update", "unchanged"]);
     expect(plan.summary).toMatchObject({ create: 1, update: 1, unchanged: 1, blocked: 0 });
+  });
+
+  it("hides an existing exact variant when its Winerim price disappears", async () => {
+    const plan = await buildCatalogPlan(request(), context({
+      wines: [{
+        winerimId: "1",
+        name: "Retired bottle",
+        wineType: "tinto",
+        variants: [{
+          format: "BOTTLE",
+          salePrice: 0,
+          enabled: false,
+          explicitProductId: "500001",
+        }],
+      }],
+      existingProducts: [{
+        productId: "500001",
+        name: "B Retired bottle",
+        buttonText: "B Retired bottle",
+        familyId: "10",
+        salePrice: 24,
+        costPrice: 8,
+        useAsDirectSale: false,
+        saleableAsMain: true,
+      }],
+    }));
+
+    expect(plan.readyToApply).toBe(true);
+    expect(plan.operations).toHaveLength(1);
+    expect(plan.operations[0]).toMatchObject({
+      kind: "update",
+      desired: {
+        productId: "500001",
+        salePrice: 24,
+        useAsDirectSale: false,
+        saleableAsMain: false,
+      },
+      changedFields: ["saleableAsMain"],
+    });
+  });
+
+  it("fails closed instead of guessing a hide when exact master baseline is missing", async () => {
+    const plan = await buildCatalogPlan(request(), context({
+      wines: [{
+        winerimId: "1",
+        name: "Unknown retired bottle",
+        wineType: "tinto",
+        variants: [{ format: "BOTTLE", salePrice: 0, enabled: false, explicitProductId: "500001" }],
+      }],
+    }));
+
+    expect(plan.readyToApply).toBe(false);
+    expect(plan.operations).toEqual([]);
+    expect(plan.issues).toContainEqual(expect.objectContaining({
+      code: "HIDE_BASELINE_INCOMPLETE",
+      productId: "500001",
+    }));
   });
 });

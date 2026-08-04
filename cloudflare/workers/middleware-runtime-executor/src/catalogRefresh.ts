@@ -196,6 +196,18 @@ async function queueChange(
         ELSE 0
       END,
       available_at = now(),
+      claimed_at = CASE
+        WHEN runtime_catalog_changes.source_fingerprint = EXCLUDED.source_fingerprint
+          AND runtime_catalog_changes.status = 'SUCCESS'
+          THEN runtime_catalog_changes.claimed_at
+        ELSE NULL
+      END,
+      completed_at = CASE
+        WHEN runtime_catalog_changes.source_fingerprint = EXCLUDED.source_fingerprint
+          AND runtime_catalog_changes.status = 'SUCCESS'
+          THEN runtime_catalog_changes.completed_at
+        ELSE NULL
+      END,
       last_error = NULL,
       updated_at = now()
   `);

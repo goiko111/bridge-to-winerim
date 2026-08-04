@@ -76,12 +76,15 @@ import {
 } from "../../../canary-failclosed/src/writerFence";
 import {
   FLEET_EXECUTOR_MODE,
+  FLEET_FULL_RUNTIME_JOB_ALLOWLIST,
   FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
   isEnvelopeInsideActiveFleetScope,
   loadActiveFleetScope,
   resolveFleetWriterFenceMaterial,
   type ActiveFleetScope,
 } from "./fleetScope";
+import { createPostgresWinerimCatalogRefreshPort } from "./catalogRefresh";
+import { createPostgresCatalogChangeQueue } from "./catalogChanges";
 
 const STAGING_ENVIRONMENT = "staging";
 const RESCUE_PRODUCTION_ENVIRONMENT = "rescue-production";
@@ -779,8 +782,7 @@ async function validateWriterFenceReadiness(
 function catalogSwitches(env: MiddlewareRuntimeExecutorEnv): PrivateCatalogSwitches {
   return {
     executionEnabled: switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED),
-    // The Winerim refresh port is not connected in this Worker yet.
-    fetchEnabled: false,
+    fetchEnabled: switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED),
     applyEnabled: switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED),
   };
 }
@@ -928,7 +930,9 @@ function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
     const scope = rescueExecutorScope(env);
     return scope ? [scope.job] : [];
   }
-  if (fleetMode(env)) return FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
+  if (fleetMode(env)) return fleetFullSwitchesOpen(env)
+    ? FLEET_FULL_RUNTIME_JOB_ALLOWLIST
+    : FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
   const flags = salesLaneFlags(env);
   return [
     ...ENABLED_STOCK_JOBS,
@@ -938,16 +942,16 @@ function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
   ];
 }
 
-function fleetSalesOnlySwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
+function fleetFullSwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
   const sales = salesLaneFlags(env);
   return sales.executionEnabled
     && sales.cursorEnabled
     && sales.dlqReady
-    && !switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED)
-    && !switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED)
-    && !switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED)
-    && !switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED)
-    && !switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
+    && switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED)
+    && switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED)
+    && switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED)
+    && switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED)
+    && switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
 }
 
 type NormalizedWorkerDependencies = Readonly<{
@@ -1004,8 +1008,8 @@ function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
     if (!missingBindings.includes("WINERIM_API_TARGET")) missingBindings.push("WINERIM_API_TARGET");
   }
   const executionEnabled = switchEnabled(env.RUNTIME_EXECUTION_ENABLED);
-  const fleetPolicyOpen = fleetSalesOnlySwitchesOpen(env);
-  if (!fleetPolicyOpen) missingBindings.push("RUNTIME_FLEET_SALES_ONLY_POLICY");
+  const fleetPolicyOpen = fleetFullSwitchesOpen(env);
+  if (!fleetPolicyOpen) missingBindings.push("RUNTIME_FLEET_FULL_LANES_POLICY");
   const ready = executionEnvironmentAllowed(env)
     && executionEnabled
     && fleetPolicyOpen
@@ -1203,8 +1207,8 @@ async function readiness(
     catalog: {
       executionEnabled: switchEnabled(catalogFlags.executionEnabled),
       fetchRequested: catalogFetchRequested,
-      fetchEnabled: false,
-      fetchConnected: false,
+      fetchEnabled: switchEnabled(catalogFlags.fetchEnabled),
+      fetchConnected: switchEnabled(catalogFlags.fetchEnabled),
       applyEnabled: catalogApplyRequested,
       transportReady: catalogTransportReady,
       dryRunReady: executionEnabled
@@ -1220,9 +1224,11 @@ async function readiness(
     outbound: {
       executionRequested: outboundExecutionRequested,
       mutationRequested: outboundMutationRequested,
-      connected: false,
-      ready: false,
-      reason: "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED",
+      connected: Boolean(env.OUTBOUND_RATE_LIMITER),
+      ready: outboundExecutionRequested
+        && outboundMutationRequested
+        && Boolean(env.OUTBOUND_RATE_LIMITER),
+      reason: env.OUTBOUND_RATE_LIMITER ? null : "OUTBOUND_RATE_LIMITER_NOT_CONFIGURED",
     },
     missingBindings,
     credentials: credentialsReady ? "ready" : "not_ready",
@@ -1256,7 +1262,7 @@ function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
     );
   return executionEnvironmentAllowed(env)
     && rescueFenceReady
-    && (!fleet || fleetSalesOnlySwitchesOpen(env))
+    && (!fleet || fleetFullSwitchesOpen(env))
     && (!rescueProduction || fleet || rescueExecutorScope(env) !== null)
     && (!rescueProduction || fleet || rescueCanaryPolicy(env) !== null)
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
@@ -1424,6 +1430,18 @@ export function createMiddlewareRuntimeExecutorWorker(
             ...(resolved.catalogAdapterFactory
               ? { adapterFactory: resolved.catalogAdapterFactory }
               : {}),
+            refresh: createPostgresWinerimCatalogRefreshPort({
+              database,
+              ...allowedWinerimTarget(env),
+              request: { request: (target, init) => resolved.request(target, init) },
+              timer: {
+                now: resolved.now,
+                schedule: (callback, milliseconds) => setTimeout(callback, milliseconds),
+                cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+              },
+            }),
+            changes: createPostgresCatalogChangeQueue(database),
+            maxChangesPerRun: 5,
             agoraApply: guardedCatalogApply,
           });
 

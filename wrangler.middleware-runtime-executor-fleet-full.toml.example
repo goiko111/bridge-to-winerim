@@ -1,0 +1,47 @@
+name = "winerim-middleware-runtime-executor-rescue-prod-fleet-full"
+main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "rescue-production"
+RELEASE = "fleet-full-inactive-__SOURCE_COMMIT_SHA__"
+RUNTIME_MODE = "fleet-executor"
+RUNTIME_EXECUTION_ENABLED = "false"
+RUNTIME_VAULT_KEY_VERSION = "v1"
+WINERIM_API_BASE_URL = "https://app.winerim.com"
+WINERIM_ALLOWED_HOSTS = "app.winerim.com"
+RUNTIME_CATALOG_EXECUTION_ENABLED = "false"
+RUNTIME_CATALOG_FETCH_ENABLED = "false"
+RUNTIME_CATALOG_APPLY_ENABLED = "false"
+RUNTIME_SALES_EXECUTION_ENABLED = "false"
+RUNTIME_SALES_CURSOR_ENABLED = "false"
+RUNTIME_SALES_DLQ_READY = "false"
+RUNTIME_OUTBOUND_EXECUTION_ENABLED = "false"
+RUNTIME_OUTBOUND_MUTATION_ENABLED = "false"
+
+[[hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "bf568eb1d85a41539384f241084c2227"
+
+[[secrets_store_secrets]]
+binding = "RUNTIME_VAULT_KEY"
+store_id = "40a78272a3d044038359c6c7e15ea52e"
+secret_name = "winerim-rescue-prod-vault-key-v1"
+
+[[secrets_store_secrets]]
+binding = "RUNTIME_FLEET_WRITER_FENCE_BUNDLE"
+store_id = "40a78272a3d044038359c6c7e15ea52e"
+secret_name = "winerim-rescue-prod-fleet-writer-fence-bundle-v1"
+
+[[services]]
+binding = "WRITER_FENCE"
+service = "winerim-middleware-runtime-writer-fence-rescue-prod-fleet"
+
+[[services]]
+binding = "OUTBOUND_RATE_LIMITER"
+service = "winerim-middleware-outbound-rate-limiter-rescue-prod-fleet"
+
+# Inert deploy: all execution switches remain false and no Queue is bound here.

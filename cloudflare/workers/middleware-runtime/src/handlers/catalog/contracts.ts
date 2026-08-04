@@ -71,6 +71,8 @@ export type CatalogExistingProduct = {
   familyId?: string | null;
   salePrice?: number | null;
   costPrice?: number | null;
+  useAsDirectSale?: boolean | null;
+  saleableAsMain?: boolean | null;
 };
 
 export type CatalogPlanningContext = {
@@ -94,6 +96,7 @@ export type CatalogPlanIssueCode =
   | "FORMAT_NOT_REQUESTED"
   | "VARIANT_DISABLED"
   | "INVALID_SALE_PRICE"
+  | "HIDE_BASELINE_INCOMPLETE"
   | "INVALID_PRODUCT_ID"
   | "PRODUCT_ID_COLLISION"
   | "FAMILY_NOT_RESOLVED"
@@ -120,8 +123,8 @@ export type CatalogProductDesiredState = {
   family: CatalogFamilyRef;
   salePrice: number;
   costPrice: number;
-  useAsDirectSale: false;
-  saleableAsMain: true;
+  useAsDirectSale: boolean;
+  saleableAsMain: boolean;
 };
 
 export type CatalogChangedField =
@@ -129,7 +132,9 @@ export type CatalogChangedField =
   | "buttonText"
   | "familyId"
   | "salePrice"
-  | "costPrice";
+  | "costPrice"
+  | "useAsDirectSale"
+  | "saleableAsMain";
 
 export type CatalogIdempotencyDescriptor = {
   version: typeof CATALOG_PLAN_VERSION;

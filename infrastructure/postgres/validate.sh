@@ -19,6 +19,7 @@ RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_
 RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
 RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
 RUNTIME_FLEET_CONNECTION_SCOPE="$SCRIPT_DIR/0015_runtime_fleet_connection_scope.sql"
+RUNTIME_FULL_CATALOG_OUTBOUND="$SCRIPT_DIR/0016_runtime_full_catalog_outbound.sql"
 RESCUE_PRODUCTION_HARDENING_APPLIER="$SCRIPT_DIR/apply-rescue-production-hardening.sh"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
@@ -59,6 +60,7 @@ for required_file in \
   "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY" \
   "$RUNTIME_CATALOG_SOURCE_SCOPE" \
   "$RUNTIME_FLEET_CONNECTION_SCOPE" \
+  "$RUNTIME_FULL_CATALOG_OUTBOUND" \
   "$RESCUE_PRODUCTION_HARDENING_APPLIER" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
@@ -66,6 +68,18 @@ for required_file in \
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'CREATE TABLE public.runtime_catalog_changes' \
+  'runtime_full_catalog_scope' \
+  'middleware_runtime_full_catalog_changes' \
+  'RUNTIME_CATALOG_SOURCE_INSERT_SCOPE_REJECTED' \
+  'GRANT INSERT ('
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_FULL_CATALOG_OUTBOUND" >/dev/null; then
+    fail "runtime full catalog/outbound addendum is missing: $required_pattern"
   fi
 done
 

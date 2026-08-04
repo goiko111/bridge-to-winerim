@@ -215,6 +215,8 @@ function productFromRecord(row: Record<string, unknown>): CatalogExistingProduct
   const familyId = nullableText(field(row, "FamilyId", "familyId", "family_id"));
   const rawSalePrice = field(row, "SalePrice", "salePrice", "Price", "price");
   const rawCostPrice = field(row, "CostPrice", "costPrice", "PurchasePrice", "purchasePrice");
+  const rawUseAsDirectSale = field(row, "UseAsDirectSale", "useAsDirectSale");
+  const rawSaleableAsMain = field(row, "SaleableAsMain", "saleableAsMain");
   return {
     productId,
     name,
@@ -222,6 +224,8 @@ function productFromRecord(row: Record<string, unknown>): CatalogExistingProduct
     familyId,
     ...(rawSalePrice === undefined ? {} : { salePrice: number(rawSalePrice) }),
     ...(rawCostPrice === undefined ? {} : { costPrice: number(rawCostPrice) }),
+    ...(rawUseAsDirectSale === undefined ? {} : { useAsDirectSale: boolean(rawUseAsDirectSale) }),
+    ...(rawSaleableAsMain === undefined ? {} : { saleableAsMain: boolean(rawSaleableAsMain) }),
   };
 }
 
@@ -290,6 +294,17 @@ function wineFromRow(row: WineRow, explicitIds: Readonly<Record<string, string>>
     costPrice: number(row.magnum_purchase_price || field(raw, "magnum_purchase_price", "magnumCost")),
     explicitProductId: explicitIds[`${winerimId}:MAGNUM`],
   });
+  for (const format of ["BOTTLE", "GLASS", "MAGNUM"] as const) {
+    const explicitProductId = explicitIds[`${winerimId}:${format}`];
+    if (!explicitProductId || variants.some((variant) => variant.format === format)) continue;
+    variants.push({
+      format,
+      salePrice: 0,
+      costPrice: 0,
+      enabled: false,
+      explicitProductId,
+    });
+  }
   return {
     winerimId,
     name,

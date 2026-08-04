@@ -157,6 +157,53 @@ describe("private catalog executor composition", () => {
     expect(privateCatalogEnabledJobs(enabled.value.switches)).toEqual(["catalog.sync-master"]);
   });
 
+  it("claims differential catalog changes and applies each format as a one-product mutation", async () => {
+    const change = {
+      connectionId: CONNECTION_ID,
+      winerimWineId: "1",
+      format: "BOTTLE" as const,
+      sourceFingerprint: "a".repeat(64),
+      attempt: 1,
+    };
+    const claim = vi.fn(async () => [change]);
+    const settle = vi.fn(async () => true);
+    const peek = vi.fn();
+    const configured = fixture({
+      switches: { executionEnabled: true, applyEnabled: true },
+      changes: { claim, settle, peek },
+    });
+
+    const result = await createPrivateCatalogLaneExecutor(configured.value).execute(
+      await envelope("catalog.sync-master", { scheduled: true }),
+    );
+
+    expect(result).toEqual({ ok: true, detail: "catalog:queue:complete:1:blocked=0" });
+    expect(claim).toHaveBeenCalledWith({ connectionId: CONNECTION_ID, limit: 5 });
+    expect(configured.loadPlanningContext).toHaveBeenCalledWith(expect.objectContaining({
+      wineSelection: expect.objectContaining({ kind: "ids" }),
+      formats: ["BOTTLE"],
+    }));
+    expect(configured.applyAndReadback).toHaveBeenCalledOnce();
+    expect(settle).toHaveBeenCalledWith(change, { status: "SUCCESS" });
+  });
+
+  it("peeks but never claims or settles the differential queue during dry-run", async () => {
+    const peek = vi.fn(async () => []);
+    const claim = vi.fn();
+    const settle = vi.fn();
+    const configured = fixture({
+      switches: { executionEnabled: true },
+      changes: { claim, settle, peek },
+    });
+
+    await expect(createPrivateCatalogLaneExecutor(configured.value).execute(
+      await envelope("catalog.sync-master", { scheduled: true, dryRun: true }),
+    )).resolves.toEqual({ ok: true, detail: "catalog:queue:idle:0" });
+    expect(peek).toHaveBeenCalledOnce();
+    expect(claim).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
   it("fails closed before DB persistence when Agora readback is incomplete", async () => {
     const applyAndReadback = vi.fn(async () => ({
       ok: true as const,

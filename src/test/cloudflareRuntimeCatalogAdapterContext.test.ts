@@ -220,6 +220,90 @@ describe("PostgreSQL catalog adapter context", () => {
     expect(fake.statements).toHaveLength(2);
   });
 
+  it("keeps an exact disabled variant so a removed Winerim price can be hidden safely", async () => {
+    const fake = fakeDatabase((statement) => {
+      if (statement.text.includes("FROM public.winerim_wines")) {
+        return result([{
+          winerim_id: "1",
+          name: "Removed bottle",
+          wine_type: "tinto",
+          bottle_sale_price: null,
+          bottle_purchase_price: null,
+          glass_sale_price: null,
+          glass_cost_price: null,
+          magnum_sale_price: null,
+          magnum_purchase_price: null,
+          serve_by_glass: false,
+          is_active: true,
+          raw_payload: {},
+          updated_at: "2026-08-04T18:00:00Z",
+        }]);
+      }
+      if (statement.text.includes("FROM public.agora_master_data")) {
+        return result([{
+          families_json: [{ Id: "10", Name: "TINTOS WINERIM" }],
+          products_summary_json: [{
+            Id: "500001",
+            Name: "B Removed bottle",
+            ButtonText: "B Removed bottle",
+            FamilyId: "10",
+            SaleableAsMain: true,
+            UseAsDirectSale: false,
+          }],
+          fetched_at: "2026-08-04T18:00:00Z",
+          updated_at: "2026-08-04T18:00:00Z",
+        }]);
+      }
+      if (statement.text.includes("FROM public.product_mappings")) {
+        return result([{
+          provider_product_id: "500001",
+          provider_product_name: "B Removed bottle",
+          winerim_wine_id: "1",
+          format_type: "BOTTLE",
+          agora_product_id: "500001",
+          status: "CONFIRMED",
+        }]);
+      }
+      if (statement.text.includes("FROM public.provider_products")) {
+        return result([{
+          provider_product_id: "500001",
+          name: "B Removed bottle",
+          price: 24,
+          raw_payload: { FamilyId: "10", SaleableAsMain: true, UseAsDirectSale: false },
+        }]);
+      }
+      if (statement.text.includes("FROM public.winerim_push_tracking")) return result([]);
+      if (statement.text.includes("FROM public.pos_connections")) {
+        return result([{
+          id: CONNECTION_ID,
+          provider: "agora",
+          provider_config: {},
+          default_family_id: "10",
+          updated_at: "2026-08-04T18:00:00Z",
+        }]);
+      }
+      throw new Error(`Unexpected query: ${statement.text}`);
+    });
+
+    const loaded = await createPostgresCatalogAdapter(fake.database).loadPlanningContext(request());
+
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.context.wines[0].variants).toEqual([{
+      format: "BOTTLE",
+      salePrice: 0,
+      costPrice: 0,
+      enabled: false,
+      explicitProductId: "500001",
+    }]);
+    expect(loaded.context.existingProducts).toContainEqual(expect.objectContaining({
+      productId: "500001",
+      salePrice: 24,
+      useAsDirectSale: false,
+      saleableAsMain: true,
+    }));
+  });
+
   it("sanitizes database failures as context unavailable", async () => {
     const fake = fakeDatabase(() => {
       throw new Error("postgres://user:secret@host/database");

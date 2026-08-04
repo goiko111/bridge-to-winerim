@@ -26,13 +26,35 @@ AS $function$
       AND connection.provider_config ->> 'runtime_fleet_profile' = 'full-lanes-v1'
       AND connection.provider_config -> 'runtime_fleet_job_allowlist' =
         '["sales.auto-sync","sales.sync-intraday","catalog.fetch-winerim","catalog.sync-master","outbound.process"]'::jsonb
+      AND connection.provider_config -> 'runtime_sales_job_allowlist' =
+        '["sales.auto-sync","sales.sync-intraday"]'::jsonb
+      AND connection.provider_config ->> 'intraday_sales_sync_enabled' = 'true'
+      AND connection.provider_config ->> 'open_tickets_sync_enabled' = 'false'
+      AND connection.provider_config ->> 'open_tickets_stock_sync_enabled' = 'false'
       AND connection.provider_config ->> 'runtime_catalog_enabled' = 'true'
+      AND connection.provider_config ->> 'runtime_stock_enabled' = 'true'
       AND connection.provider_config ->> 'runtime_outbound_enabled' = 'true'
+      AND connection.provider_config ->> 'runtime_maintenance_enabled' = 'false'
   )
 $function$;
 
 REVOKE ALL ON FUNCTION public.runtime_full_catalog_scope(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.runtime_full_catalog_scope(uuid) TO middleware_runtime;
+
+DO $runtime_full_catalog_scope_owner$
+BEGIN
+  IF current_user IN ('middleware_runtime', 'middleware_readonly', 'middleware_api', 'anon', 'authenticated', 'service_role')
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_roles owner_role
+      WHERE owner_role.rolname = current_user
+        AND (owner_role.rolsuper OR owner_role.rolbypassrls)
+    )
+  THEN
+    RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_SCOPE_PRIVILEGED_OWNER_REQUIRED';
+  END IF;
+END;
+$runtime_full_catalog_scope_owner$;
 
 CREATE TABLE public.runtime_catalog_changes (
   connection_id uuid NOT NULL REFERENCES public.pos_connections(id) ON DELETE RESTRICT,

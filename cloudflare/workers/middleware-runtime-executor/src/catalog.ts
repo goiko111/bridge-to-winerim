@@ -28,6 +28,7 @@ import {
 } from "../../middleware-runtime/src/handlers/catalog";
 import type { RuntimeExecutionResult } from "../../middleware-runtime/src/queue";
 import { createAgoraOutboundTransport } from "./agoraOutboundTransport";
+import type { CatalogChangeQueuePort } from "./catalogChanges";
 
 type BooleanSwitch = boolean | string | null | undefined;
 type JsonRecord = Record<string, unknown>;
@@ -149,6 +150,8 @@ export type PrivateCatalogCompositionOptions = Readonly<{
   adapterFactory?: PostgresCatalogAdapterFactory;
   refresh?: WinerimCatalogRefreshPort;
   agoraApply?: AgoraCatalogApplyAndReadbackPort;
+  changes?: CatalogChangeQueuePort;
+  maxChangesPerRun?: number;
 }>;
 
 export type PrivateCatalogLaneExecutor = Readonly<{
@@ -592,6 +595,80 @@ async function executePlan(
   };
 }
 
+function explicitSelection(payload: JsonRecord): boolean {
+  return payload.winerimWineIds !== undefined
+    || payload.wineIds !== undefined
+    || payload.formatTypes !== undefined
+    || payload.formats !== undefined;
+}
+
+function changeLimit(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? Math.max(1, Math.min(10, parsed)) : 5;
+}
+
+async function executePendingChanges(
+  envelope: RuntimeEnvelopeV1,
+  connection: RuntimeConnectionConfiguration,
+  options: PrivateCatalogCompositionOptions,
+): Promise<RuntimeExecutionResult> {
+  if (!options.changes) return failure(503, "CATALOG_CHANGE_QUEUE_NOT_CONFIGURED");
+  const dryRun = dryRunRequested(envelope);
+  const input = {
+    connectionId: envelope.connectionId,
+    limit: changeLimit(options.maxChangesPerRun),
+  };
+  let claimed;
+  try {
+    claimed = dryRun
+      ? await options.changes.peek(input)
+      : await options.changes.claim(input);
+  } catch {
+    return failure(503, "CATALOG_CHANGE_QUEUE_UNAVAILABLE");
+  }
+  if (claimed.length === 0) return { ok: true, detail: "catalog:queue:idle:0" };
+
+  let completed = 0;
+  let blocked = 0;
+  let retry = 0;
+  for (const change of claimed) {
+    const selectedEnvelope: RuntimeEnvelopeV1 = {
+      ...envelope,
+      payload: {
+        dryRun,
+        winerimWineIds: [change.winerimWineId],
+        formatTypes: [change.format],
+      },
+    };
+    const result = await executePlan(selectedEnvelope, connection, options);
+    if (dryRun) {
+      if (result.ok) completed++;
+      else blocked++;
+      continue;
+    }
+    const decision = result.ok
+      ? { status: "SUCCESS" as const }
+      : [400, 401, 403, 404, 422].includes(result.failure.httpStatus)
+        ? { status: "BLOCKED" as const, error: result.failure.message }
+        : { status: "PENDING" as const, retryAfterSeconds: 300, error: result.failure.message };
+    let settled: boolean;
+    try {
+      settled = await options.changes.settle(change, decision);
+    } catch {
+      return failure(503, "CATALOG_CHANGE_SETTLEMENT_UNAVAILABLE", true);
+    }
+    if (!settled) return failure(409, "CATALOG_CHANGE_SUPERSEDED", true);
+    if (decision.status === "SUCCESS") completed++;
+    else if (decision.status === "BLOCKED") blocked++;
+    else retry++;
+  }
+  if (retry > 0) return failure(503, "CATALOG_CHANGE_RETRY_PENDING", true);
+  return {
+    ok: true,
+    detail: `catalog:queue:${dryRun ? "preview" : "complete"}:${completed}:blocked=${blocked}`,
+  };
+}
+
 export function privateCatalogEnabledJobs(
   switches: PrivateCatalogSwitches | undefined,
 ): readonly RuntimeJob[] {
@@ -615,7 +692,9 @@ export function createPrivateCatalogLaneExecutor(
       if (isFailure(connection)) return connection;
       return envelope.job === "catalog.fetch-winerim"
         ? executeRefresh(envelope, connection, options)
-        : executePlan(envelope, connection, options);
+        : explicitSelection(record(envelope.payload))
+          ? executePlan(envelope, connection, options)
+          : executePendingChanges(envelope, connection, options);
     },
   });
 }

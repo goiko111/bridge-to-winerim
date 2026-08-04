@@ -52,6 +52,14 @@ type ProductCandidate = {
   family: CatalogFamilyRef;
 };
 
+type HiddenProductCandidate = {
+  wine: CatalogWineInput;
+  variant: CatalogWineVariantInput;
+  productId: string;
+  existing: CatalogExistingProduct;
+  family: CatalogFamilyRef;
+};
+
 function normalizedText(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -265,6 +273,10 @@ function changedFields(
       && !numberEqual(existing.salePrice, desired.salePrice)) changed.push("salePrice");
   if (existing.costPrice !== undefined && existing.costPrice !== null
       && !numberEqual(existing.costPrice, desired.costPrice)) changed.push("costPrice");
+  if (existing.useAsDirectSale === undefined || existing.useAsDirectSale === null
+      || existing.useAsDirectSale !== desired.useAsDirectSale) changed.push("useAsDirectSale");
+  if (existing.saleableAsMain === undefined || existing.saleableAsMain === null
+      || existing.saleableAsMain !== desired.saleableAsMain) changed.push("saleableAsMain");
   return changed;
 }
 
@@ -314,6 +326,7 @@ export async function buildCatalogPlan(
   const provider = normalizedText(context.provider) || "unknown";
   const sourceRevision = normalizedText(context.sourceRevision);
   const issues: CatalogPlanIssue[] = [];
+  const existingById = new Map(context.existingProducts.map((product) => [String(product.productId), product]));
   const selectedIds = request.wineSelection.kind === "ids" ? new Set(request.wineSelection.ids) : null;
   if (selectedIds) {
     const availableIds = new Set(context.wines.map((wine) => normalizedText(wine.winerimId)));
@@ -327,6 +340,7 @@ export async function buildCatalogPlan(
   const seenWineIds = new Set<string>();
   const productOwners = new Map<string, string>();
   const candidates: ProductCandidate[] = [];
+  const hiddenCandidates: HiddenProductCandidate[] = [];
   let consideredVariants = 0;
 
   for (const wine of wines) {
@@ -344,10 +358,7 @@ export async function buildCatalogPlan(
       issue(issues, "INVALID_WINE_NAME", { winerimId });
       continue;
     }
-    if (wine.active === false) {
-      issue(issues, "WINE_INACTIVE", { winerimId }, "warning");
-      continue;
-    }
+    if (wine.active === false) issue(issues, "WINE_INACTIVE", { winerimId }, "warning");
 
     const seenFormats = new Set<CatalogFormat>();
     const variants = [...wine.variants].sort((left, right) => request.formats.indexOf(left.format) - request.formats.indexOf(right.format));
@@ -362,8 +373,25 @@ export async function buildCatalogPlan(
         issue(issues, "FORMAT_NOT_REQUESTED", { winerimId, format: variant.format }, "warning");
         continue;
       }
-      if (variant.enabled === false) {
-        issue(issues, "VARIANT_DISABLED", { winerimId, format: variant.format }, "warning");
+      if (wine.active === false || variant.enabled === false) {
+        issue(issues, variant.enabled === false ? "VARIANT_DISABLED" : "WINE_INACTIVE", {
+          winerimId,
+          format: variant.format,
+        }, "warning");
+        const productId = productIdFor(wine, variant, context.productIdPolicy);
+        const existing = productId ? existingById.get(productId) : undefined;
+        const family = existing?.familyId
+          ? context.existingFamilies.find((entry) => normalizedText(entry.id) === normalizedText(existing.familyId))
+          : undefined;
+        if (!productId || !existing || !family || !Number.isFinite(existing.salePrice) || Number(existing.salePrice) <= 0) {
+          issue(issues, "HIDE_BASELINE_INCOMPLETE", {
+            winerimId,
+            format: variant.format,
+            ...(productId ? { productId } : {}),
+          });
+          continue;
+        }
+        hiddenCandidates.push({ wine, variant, productId, existing, family });
         continue;
       }
       if (!Number.isFinite(variant.salePrice) || variant.salePrice <= 0) {
@@ -405,8 +433,8 @@ export async function buildCatalogPlan(
   }
 
   candidates.sort((left, right) => Number(left.productId) - Number(right.productId));
+  hiddenCandidates.sort((left, right) => Number(left.productId) - Number(right.productId));
   const productLabelsById = labelsFor(candidates, context.existingProducts, context.labelPolicy);
-  const existingById = new Map(context.existingProducts.map((product) => [String(product.productId), product]));
   const operations: CatalogProductOperation[] = [];
 
   for (const candidate of candidates) {
@@ -438,6 +466,40 @@ export async function buildCatalogPlan(
       }),
     });
   }
+
+  for (const candidate of hiddenCandidates) {
+    const desired: CatalogProductOperation["desired"] = {
+      productId: candidate.productId,
+      winerimId: candidate.wine.winerimId,
+      format: candidate.variant.format,
+      label: {
+        name: normalizedText(candidate.existing.name),
+        buttonText: normalizedText(candidate.existing.buttonText || candidate.existing.name).slice(0, 20),
+      },
+      family: candidate.family,
+      salePrice: Number(Number(candidate.existing.salePrice).toFixed(2)),
+      costPrice: Number(Math.max(0, Number(candidate.existing.costPrice || 0)).toFixed(2)),
+      useAsDirectSale: false,
+      saleableAsMain: false,
+    };
+    productLabelsById[candidate.productId] = desired.label;
+    const fields = changedFields(candidate.existing, desired);
+    operations.push({
+      kind: fields.length > 0 ? "update" : "unchanged",
+      desired,
+      changedFields: fields,
+      idempotency: await idempotencyDescriptor({
+        scope: "catalog-product-upsert",
+        connectionId: request.connectionId,
+        provider,
+        sourceRevision,
+        productId: candidate.productId,
+        state: desired as unknown as JsonValue,
+      }),
+    });
+  }
+
+  operations.sort((left, right) => Number(left.desired.productId) - Number(right.desired.productId));
 
   const planState: JsonValue = operations.map((operation) => ({
     kind: operation.kind,
