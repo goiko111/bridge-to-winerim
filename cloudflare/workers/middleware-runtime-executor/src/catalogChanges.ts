@@ -67,6 +67,8 @@ function boundedLimit(value: number): number {
   return Number.isInteger(value) ? Math.max(1, Math.min(10, value)) : 1;
 }
 
+const CLAIM_LEASE_SECONDS = 120;
+
 function safeError(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim().toUpperCase();
   return /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized)
@@ -83,6 +85,7 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
         WHERE connection_id = ${input.connectionId}::uuid
           AND status = 'PENDING'
           AND available_at <= now()
+          AND attempt < 20
         ORDER BY available_at, updated_at, winerim_wine_id, format
         LIMIT ${boundedLimit(input.limit)}
       `);
@@ -91,12 +94,29 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
     async claim(input) {
       return database.transaction(async (transaction) => {
         const result = await transaction.query<ChangeRow>(sql`
-          WITH candidates AS (
+          WITH exhausted AS (
+            UPDATE public.runtime_catalog_changes
+            SET status = 'BLOCKED',
+                lease_expires_at = NULL,
+                completed_at = now(),
+                last_error = 'CATALOG_CHANGE_ATTEMPTS_EXHAUSTED',
+                updated_at = now()
+            WHERE connection_id = ${input.connectionId}::uuid
+              AND attempt >= 20
+              AND (
+                (status = 'PENDING' AND available_at <= now())
+                OR (status = 'RUNNING' AND lease_expires_at <= now())
+              )
+            RETURNING connection_id
+          ), candidates AS (
             SELECT connection_id, winerim_wine_id, format
             FROM public.runtime_catalog_changes
             WHERE connection_id = ${input.connectionId}::uuid
-              AND status = 'PENDING'
-              AND available_at <= now()
+              AND attempt < 20
+              AND (
+                (status = 'PENDING' AND available_at <= now())
+                OR (status = 'RUNNING' AND lease_expires_at <= now())
+              )
             ORDER BY available_at, updated_at, winerim_wine_id, format
             FOR UPDATE SKIP LOCKED
             LIMIT ${boundedLimit(input.limit)}
@@ -105,6 +125,7 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
           SET status = 'RUNNING',
               attempt = change.attempt + 1,
               claimed_at = now(),
+              lease_expires_at = now() + (${CLAIM_LEASE_SECONDS} * interval '1 second'),
               completed_at = NULL,
               last_error = NULL,
               updated_at = now()
@@ -127,6 +148,7 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
               ? new Date(Date.now() + Math.max(1, Math.min(3600, decision.retryAfterSeconds)) * 1000).toISOString()
               : new Date().toISOString()}::timestamptz,
             claimed_at = CASE WHEN ${pending} THEN NULL ELSE claimed_at END,
+            lease_expires_at = NULL,
             completed_at = CASE WHEN ${pending} THEN NULL ELSE now() END,
             last_error = ${decision.status === "SUCCESS" ? null : safeError(decision.error)},
             updated_at = now()

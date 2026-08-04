@@ -25,6 +25,11 @@ type ExistingWineRow = Record<string, unknown> & {
   magnum_purchase_price: unknown;
 };
 
+type BlockedChangeRow = Record<string, unknown> & {
+  winerim_wine_id: unknown;
+  format: unknown;
+};
+
 export type PostgresWinerimCatalogRefreshOptions = Readonly<{
   database: DatabaseAdapter;
   baseUrl: string;
@@ -67,6 +72,10 @@ function rowFormats(row: ExistingWineRow): WinerimCatalogFormat[] {
   if (decimal(row.glass_sale_price) !== null) formats.push("GLASS");
   if (decimal(row.magnum_sale_price) !== null) formats.push("MAGNUM");
   return formats;
+}
+
+function changeKey(wineId: string, format: WinerimCatalogFormat): string {
+  return `${wineId}:${format}`;
 }
 
 async function changeFingerprint(
@@ -116,6 +125,29 @@ async function loadExisting(
     ORDER BY winerim_id
   `);
   return new Map(result.rows.map((row) => [text(row.winerim_id), row]));
+}
+
+async function loadRetryableBlockedChanges(
+  database: DatabaseAdapter,
+  connectionId: string,
+): Promise<ReadonlySet<string>> {
+  const result = await database.query<BlockedChangeRow>(sql`
+    SELECT winerim_wine_id, format
+    FROM public.runtime_catalog_changes
+    WHERE connection_id = ${connectionId}::uuid
+      AND status = 'BLOCKED'
+      AND attempt < 20
+    ORDER BY winerim_wine_id, format
+  `);
+  const retryable = new Set<string>();
+  for (const row of result.rows) {
+    const wineId = text(row.winerim_wine_id);
+    const format = text(row.format).toUpperCase() as WinerimCatalogFormat;
+    if (/^[1-9][0-9]{0,17}$/.test(wineId) && ["BOTTLE", "GLASS", "MAGNUM"].includes(format)) {
+      retryable.add(changeKey(wineId, format));
+    }
+  }
+  return retryable;
 }
 
 async function upsertWine(
@@ -233,6 +265,7 @@ export function createPostgresWinerimCatalogRefreshPort(
         return { ok: false, httpStatus: 422, message: "CATALOG_INVENTORY_LIMIT_EXCEEDED" };
       }
       const existing = await loadExisting(options.database, input.connectionId);
+      const retryableBlocked = await loadRetryableBlockedChanges(options.database, input.connectionId);
       const observed = new Set(inventory.wines.map((wine) => wine.winerimId));
       let changed = 0;
       const pending: Array<Readonly<{
@@ -251,7 +284,11 @@ export function createPostgresWinerimCatalogRefreshPort(
         const changedFormats: WinerimCatalogFormat[] = [];
         for (const format of formats) {
           fingerprints[format] = await changeFingerprint(wine, format);
-          if (!prior || fingerprints[format] !== await existingFingerprint(prior, format)) {
+          if (
+            !prior
+            || fingerprints[format] !== await existingFingerprint(prior, format)
+            || retryableBlocked.has(changeKey(wine.winerimId, format))
+          ) {
             changedFormats.push(format);
           }
         }

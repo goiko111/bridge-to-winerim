@@ -53,8 +53,26 @@ describe("PostgreSQL differential catalog change queue", () => {
     }]);
     expect(fake.statements[0].text).toContain("FOR UPDATE SKIP LOCKED");
     expect(fake.statements[0].text).toContain("attempt = change.attempt + 1");
-    expect(fake.statements[0].values).toEqual([CONNECTION_ID, 10]);
+    expect(fake.statements[0].text).toContain("status = 'RUNNING' AND lease_expires_at <= now()");
+    expect(fake.statements[0].text).toContain("lease_expires_at = now()");
+    expect(fake.statements[0].text).toContain("attempt < 20");
+    expect(fake.statements[0].values).toEqual([CONNECTION_ID, CONNECTION_ID, 10, 120]);
     expect(fake.transactionOptions).toEqual([{ isolationLevel: "read-committed" }]);
+  });
+
+  it("blocks exhausted work and never increments an attempt beyond twenty", async () => {
+    const fake = database(() => result([]));
+
+    const claimed = await createPostgresCatalogChangeQueue(fake.adapter).claim({
+      connectionId: CONNECTION_ID,
+      limit: 2,
+    });
+
+    expect(claimed).toEqual([]);
+    expect(fake.statements[0].text).toContain("attempt >= 20");
+    expect(fake.statements[0].text).toContain("CATALOG_CHANGE_ATTEMPTS_EXHAUSTED");
+    expect(fake.statements[0].text).toContain("attempt < 20");
+    expect(fake.statements[0].text).not.toContain("attempt <= 20");
   });
 
   it("settles only the still-running exact fingerprint and attempt", async () => {
@@ -71,6 +89,7 @@ describe("PostgreSQL differential catalog change queue", () => {
     expect(settled).toBe(true);
     expect(fake.statements[0].text).toContain("source_fingerprint =");
     expect(fake.statements[0].text).toContain("status = 'RUNNING'");
+    expect(fake.statements[0].text).toContain("lease_expires_at = NULL");
     expect(fake.statements[0].values).toContain("b".repeat(64));
     expect(fake.statements[0].values).toContain(2);
     expect(fake.statements[0].values).toContain("CATALOG_CHANGE_FAILED");

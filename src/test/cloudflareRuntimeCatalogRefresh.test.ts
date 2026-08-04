@@ -31,7 +31,7 @@ function json(body: unknown): Response {
   });
 }
 
-function fakeDatabase(existingPrice = 10) {
+function fakeDatabase(existingPrice = 10, blockedFormats: string[] = []) {
   const statements: SqlStatement[] = [];
   const transactionOptions: TransactionOptions[] = [];
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
@@ -50,6 +50,12 @@ function fakeDatabase(existingPrice = 10) {
         magnum_sale_price: null,
         magnum_purchase_price: null,
       }]) as QueryResult<Row>;
+    }
+    if (statement.text.includes("FROM public.runtime_catalog_changes")) {
+      return result(blockedFormats.map((format) => ({
+        winerim_wine_id: "42",
+        format,
+      }))) as QueryResult<Row>;
     }
     return result([]) as QueryResult<Row>;
   });
@@ -143,6 +149,22 @@ describe("full Winerim catalog refresh", () => {
 
     expect(outcome).toEqual({ ok: true, outcome: "complete", changed: 1 });
     expect(fake.transaction).not.toHaveBeenCalled();
-    expect(fake.statements).toHaveLength(1);
+    expect(fake.statements).toHaveLength(2);
+  });
+
+  it("reopens a retryable blocked variant even when its Winerim source did not change", async () => {
+    const fake = fakeDatabase(10, ["BOTTLE"]);
+    const outcome = await refresh(fake, request(10)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-reopen",
+      idempotencyKey: "catalog-envelope-reopen",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+
+    expect(outcome).toEqual({ ok: true, outcome: "complete", changed: 1 });
+    const queued = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.runtime_catalog_changes"));
+    expect(queued?.values).toEqual(expect.arrayContaining(["42", "BOTTLE", "catalog-message-reopen"]));
+    expect(queued?.text).toContain("ELSE 'PENDING'");
   });
 });
