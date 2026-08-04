@@ -88,6 +88,40 @@ export type WriterFenceGrantV2 = {
   expiresAt: string;
 };
 
+export type WriterFenceAdoptExistingHistory = {
+  mode: "adopt-existing-sales";
+  verifiedAt: string;
+  evidenceSha256: string;
+  cloudflareEvidenceSha256: string;
+  externalEvidence: {
+    artifactSha256: string;
+    publicKeySha256: string;
+    payloadSha256: string;
+    signatureSha256: string;
+    keyId: string;
+    projectId: string;
+    collectorRunId: string;
+    fenceMode: "lovable-disabled-no-agora-rotation";
+    fenceAppliedAt: string;
+    observedAt: string;
+    readbackObservedAt: [string, string];
+    removedFromLovable: true;
+  };
+};
+
+export type WriterFenceAdoptExistingScope = {
+  version: 1;
+  kind: "adopt-existing-sales";
+  adoptionBindingSha256: string;
+  deploymentManifestSha256: string;
+  finalTargetRawSha256: string;
+  externalEvidenceSha256: string;
+  externalEvidencePayloadSha256: string;
+  runtimePolicySha256: string;
+  bindingSha256: string;
+  signatureSha256: string;
+};
+
 export type WriterFenceGrantV3 = {
   version: 3;
   connectionId: string;
@@ -99,7 +133,9 @@ export type WriterFenceGrantV3 = {
   credentialBinding?: never;
   credentialBundle: WriterFenceCredentialBundleV1;
   legacyWriter?: WriterFenceGrantV1["legacyWriter"];
-  writerHistory?: WriterFenceGrantV2["writerHistory"];
+  grantType?: "adopt-existing-sales";
+  writerHistory?: WriterFenceGrantV2["writerHistory"] | WriterFenceAdoptExistingHistory;
+  activationScope?: WriterFenceAdoptExistingScope;
   issuedAt: string;
   expiresAt: string;
 };
@@ -109,7 +145,9 @@ export type WriterFenceGrant = WriterFenceGrantV1 | WriterFenceGrantV2 | WriterF
 type WriterFenceGrantCandidate = Partial<Omit<WriterFenceGrantV1, "version" | "legacyWriter">> & {
   version?: unknown;
   legacyWriter?: WriterFenceGrantV1["legacyWriter"];
-  writerHistory?: WriterFenceGrantV2["writerHistory"];
+  grantType?: "adopt-existing-sales";
+  writerHistory?: WriterFenceGrantV2["writerHistory"] | WriterFenceAdoptExistingHistory;
+  activationScope?: WriterFenceAdoptExistingScope;
   credentialBundle?: WriterFenceCredentialBundleV1;
 };
 
@@ -434,6 +472,88 @@ function validateBootstrapHistory(history: WriterFenceGrantV2["writerHistory"] |
   }
 }
 
+function validateAdoptExistingHistory(history: WriterFenceAdoptExistingHistory | undefined): void {
+  if (history?.mode !== "adopt-existing-sales") {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_MODE_REQUIRED");
+  }
+  if (
+    !SHA256_PATTERN.test(String(history.evidenceSha256 ?? ""))
+    || !SHA256_PATTERN.test(String(history.cloudflareEvidenceSha256 ?? ""))
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_REJECTED");
+  }
+  const verifiedAt = timestamp(
+    String(history.verifiedAt ?? ""),
+    "WRITER_FENCE_GRANT_ADOPT_EXISTING_VERIFIED_AT_REJECTED",
+  );
+  const external = history.externalEvidence;
+  if (
+    !external
+    || !SHA256_PATTERN.test(String(external.artifactSha256 ?? ""))
+    || !SHA256_PATTERN.test(String(external.publicKeySha256 ?? ""))
+    || !SHA256_PATTERN.test(String(external.payloadSha256 ?? ""))
+    || !SHA256_PATTERN.test(String(external.signatureSha256 ?? ""))
+    || !IDENTIFIER_PATTERN.test(String(external.keyId ?? ""))
+    || !UUID_PATTERN.test(String(external.projectId ?? ""))
+    || !IDENTIFIER_PATTERN.test(String(external.collectorRunId ?? ""))
+    || external.fenceMode !== "lovable-disabled-no-agora-rotation"
+    || external.removedFromLovable !== true
+    || !Array.isArray(external.readbackObservedAt)
+    || external.readbackObservedAt.length !== 2
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EXTERNAL_EVIDENCE_REJECTED");
+  }
+  const fenceAppliedAt = timestamp(
+    String(external.fenceAppliedAt ?? ""),
+    "WRITER_FENCE_GRANT_ADOPT_EXISTING_FENCE_AT_REJECTED",
+  );
+  const observedAt = timestamp(
+    String(external.observedAt ?? ""),
+    "WRITER_FENCE_GRANT_ADOPT_EXISTING_OBSERVED_AT_REJECTED",
+  );
+  const readbacks = external.readbackObservedAt.map((value) => timestamp(
+    String(value),
+    "WRITER_FENCE_GRANT_ADOPT_EXISTING_READBACK_AT_REJECTED",
+  ));
+  if (
+    verifiedAt !== observedAt
+    || fenceAppliedAt > readbacks[0]
+    || readbacks[0] > readbacks[1]
+    || readbacks[1] !== observedAt
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_ORDER_REJECTED");
+  }
+}
+
+function validateAdoptExistingScope(
+  scope: WriterFenceAdoptExistingScope | undefined,
+  history: WriterFenceAdoptExistingHistory,
+): void {
+  if (scope?.version !== 1 || scope.kind !== "adopt-existing-sales") {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_REQUIRED");
+  }
+  for (const value of [
+    scope.adoptionBindingSha256,
+    scope.deploymentManifestSha256,
+    scope.finalTargetRawSha256,
+    scope.externalEvidenceSha256,
+    scope.externalEvidencePayloadSha256,
+    scope.runtimePolicySha256,
+    scope.bindingSha256,
+    scope.signatureSha256,
+  ]) {
+    if (!SHA256_PATTERN.test(String(value ?? ""))) {
+      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_REJECTED");
+    }
+  }
+  if (
+    scope.externalEvidenceSha256 !== history.externalEvidence.artifactSha256
+    || scope.externalEvidencePayloadSha256 !== history.externalEvidence.payloadSha256
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_EVIDENCE_MISMATCH");
+  }
+}
+
 function validateFleetCredential(
   credential: WriterFenceFleetCredential | undefined,
   connectionId: string,
@@ -504,7 +624,21 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
       throw new Error("WRITER_FENCE_GRANT_FLEET_WRITER_HISTORY_AMBIGUOUS");
     }
     if (hasLegacy) validateLegacyWriterEvidence(grant.legacyWriter);
-    else validateBootstrapHistory(grant.writerHistory);
+    else if (grant.writerHistory?.mode === "adopt-existing-sales") {
+      if (grant.grantType !== "adopt-existing-sales") {
+        throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_TYPE_REQUIRED");
+      }
+      validateAdoptExistingHistory(grant.writerHistory);
+      validateAdoptExistingScope(grant.activationScope, grant.writerHistory);
+    } else {
+      if (
+        Object.prototype.hasOwnProperty.call(grant, "grantType")
+        || Object.prototype.hasOwnProperty.call(grant, "activationScope")
+      ) {
+        throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_ACTIVATION_SCOPE_FORBIDDEN");
+      }
+      validateBootstrapHistory(grant.writerHistory);
+    }
     return grant as WriterFenceGrantV3;
   }
   validateLegacyGrantCredentialFields(grant);
@@ -581,6 +715,30 @@ export async function validateWriterFenceGrant(input: {
       || expectedDigests.signatureSha256 !== grant.credentialBundle.signatureSha256
     ) {
       throw new Error("WRITER_FENCE_GRANT_FLEET_SIGNATURE_MISMATCH");
+    }
+    if (grant.writerHistory?.mode === "adopt-existing-sales") {
+      const scope = grant.activationScope!;
+      const payload = [
+        "winerim-writer-fence-adopt-existing-sales",
+        "1",
+        grant.connectionId,
+        grant.runId,
+        grant.holderId,
+        grant.issuedAt,
+        grant.expiresAt,
+        scope.adoptionBindingSha256,
+        scope.deploymentManifestSha256,
+        scope.finalTargetRawSha256,
+        scope.externalEvidenceSha256,
+        scope.externalEvidencePayloadSha256,
+        scope.runtimePolicySha256,
+      ].join("|");
+      if (
+        await sha256Hex(payload) !== scope.bindingSha256
+        || await hmacSha256Hex(input.proof, payload) !== scope.signatureSha256
+      ) {
+        throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_SIGNATURE_MISMATCH");
+      }
     }
   } else if (await writerFenceCredentialBinding({
     reference: grant.exclusiveCredentialRef,

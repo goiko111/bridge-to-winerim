@@ -112,6 +112,80 @@ async function fleetGrant(): Promise<WriterFenceGrantV3> {
   };
 }
 
+async function adoptExistingFleetGrant(): Promise<WriterFenceGrantV3> {
+  const { legacyWriter: _legacyWriter, ...base } = await fleetGrant();
+  const externalEvidence = {
+    artifactSha256: "d".repeat(64),
+    publicKeySha256: "e".repeat(64),
+    payloadSha256: "f".repeat(64),
+    signatureSha256: "1".repeat(64),
+    keyId: "lovable-fence-observer-v1",
+    projectId: "33333333-3333-4333-8333-333333333333",
+    collectorRunId: "vinatea-external-observer-a",
+    fenceMode: "lovable-disabled-no-agora-rotation" as const,
+    fenceAppliedAt: "2026-08-04T11:50:00.000Z",
+    observedAt: "2026-08-04T11:59:55.000Z",
+    readbackObservedAt: [
+      "2026-08-04T11:59:45.000Z",
+      "2026-08-04T11:59:55.000Z",
+    ] as [string, string],
+    removedFromLovable: true as const,
+  };
+  const activationScope = {
+    version: 1 as const,
+    kind: "adopt-existing-sales" as const,
+    adoptionBindingSha256: "2".repeat(64),
+    deploymentManifestSha256: "3".repeat(64),
+    finalTargetRawSha256: "4".repeat(64),
+    externalEvidenceSha256: externalEvidence.artifactSha256,
+    externalEvidencePayloadSha256: externalEvidence.payloadSha256,
+    runtimePolicySha256: "5".repeat(64),
+    bindingSha256: "",
+    signatureSha256: "",
+  };
+  const payload = [
+    "winerim-writer-fence-adopt-existing-sales",
+    "1",
+    connectionId,
+    runId,
+    holderId,
+    issuedAt,
+    expiresAt,
+    activationScope.adoptionBindingSha256,
+    activationScope.deploymentManifestSha256,
+    activationScope.finalTargetRawSha256,
+    activationScope.externalEvidenceSha256,
+    activationScope.externalEvidencePayloadSha256,
+    activationScope.runtimePolicySha256,
+  ].join("|");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(proof),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return {
+    ...base,
+    grantType: "adopt-existing-sales",
+    writerHistory: {
+      mode: "adopt-existing-sales",
+      verifiedAt: externalEvidence.observedAt,
+      evidenceSha256: "6".repeat(64),
+      cloudflareEvidenceSha256: "7".repeat(64),
+      externalEvidence,
+    },
+    activationScope: {
+      ...activationScope,
+      bindingSha256: await sha256Hex(payload),
+      signatureSha256: [...new Uint8Array(signature)]
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join(""),
+    },
+  };
+}
+
 function activeScopeDatabase(grantSha256: string, credentialSetSha256: string): DatabaseAdapter {
   const query: DatabaseAdapter["query"] = async <Row extends Record<string, unknown>>(
     statement: SqlStatement,
@@ -226,6 +300,44 @@ describe("fleet writer-fence credential bundle", () => {
       holderId,
       nowMs: Date.parse("2026-08-04T12:30:00.000Z"),
     })).resolves.toMatchObject({ version: 3, connectionId, runId });
+  });
+
+  it("accepts the signed adopt-existing-sales writer history and rejects scope drift", async () => {
+    const grant = await adoptExistingFleetGrant();
+    const rawGrant = JSON.stringify(grant);
+    await expect(validateActiveWriterFenceGrant({
+      rawGrant,
+      proof,
+      evidence: {
+        connectionId,
+        runId,
+        writerFenceGrantSha256: await sha256Hex(rawGrant),
+        credentialSetSha256: grant.credentialBundle.generationSha256,
+      },
+      connectionId,
+      runId,
+      holderId,
+      nowMs: Date.parse("2026-08-04T12:30:00.000Z"),
+    })).resolves.toMatchObject({
+      version: 3,
+      grantType: "adopt-existing-sales",
+      writerHistory: { mode: "adopt-existing-sales" },
+    });
+
+    await expect(validateWriterFenceGrant({
+      grant: {
+        ...grant,
+        activationScope: {
+          ...grant.activationScope!,
+          runtimePolicySha256: "8".repeat(64),
+        },
+      },
+      proof,
+      connectionId,
+      runId,
+      holderId,
+      nowMs: Date.parse("2026-08-04T12:30:00.000Z"),
+    })).rejects.toThrow("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_SIGNATURE_MISMATCH");
   });
 
   it("fails closed on bundle tampering, generation drift, expiry and cross-connection scope", async () => {
