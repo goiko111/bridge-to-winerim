@@ -154,7 +154,9 @@ export function createPostgresShadowClient(client) {
     } else if (table === "sales_line_items") {
       rows = await query(
         `SELECT id, sales_event_id, provider_product_id, name, family, format,
-                quantity, unit_price, total_amount, provider_sold_at, created_at,
+                quantity, unit_price, total_amount,
+                to_char(provider_sold_at, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS provider_sold_at,
+                created_at,
                 mapped, winerim_product_id
            FROM public.sales_line_items
           WHERE connection_id = $1::uuid

@@ -93,6 +93,31 @@ describe("PostgreSQL shadow baseline", () => {
     expect(localMidnight.toISOString().slice(0, 10)).toBe("2026-08-03");
   });
 
+  it("serializes timestamp-without-time-zone sale times as UTC text", async () => {
+    const query = vi.fn(async (text: string) => {
+      expect(text).toContain(
+        "to_char(provider_sold_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS provider_sold_at",
+      );
+      return {
+        rows: [{
+          id: "33333333-3333-4333-8333-333333333333",
+          sales_event_id: EVENT_ID,
+          provider_product_id: "p1",
+          provider_sold_at: "2026-08-02T14:23:53.483000Z",
+        }],
+      };
+    });
+    const client = createPostgresShadowClient({ query } as never);
+    const [line] = await client.fetchAllById({
+      table: "sales_line_items",
+      filters: {
+        connection_id: `eq.${CONNECTION_ID}`,
+        sales_event_id: `in.(${EVENT_ID})`,
+      },
+    });
+    expect(line.provider_sold_at).toBe("2026-08-02T14:23:53.483000Z");
+  });
+
   it("captures one repeatable read-only transaction and writes mode 0600", async () => {
     const directory = await mkdtemp(join(tmpdir(), "postgres-shadow-"));
     temporaryDirectories.push(directory);
@@ -102,7 +127,7 @@ describe("PostgreSQL shadow baseline", () => {
       queries.push(text);
       if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") return { rows: [] };
       if (text.includes("FROM public.pos_connections")) {
-        return { rows: [{ id: CONNECTION_ID, last_business_day_synced: "2026-08-04", last_sync_at: "2026-08-04T10:00:00Z", updated_at: "2026-08-04T10:00:00Z" }] };
+        return { rows: [{ id: CONNECTION_ID, last_business_day_synced: "2026-08-04", last_sync_at: new Date("2026-08-04T10:00:00.722Z"), updated_at: new Date("2026-08-04T10:00:00.694Z") }] };
       }
       if (text.includes("FROM public.sales_events")) {
         return { rows: [{ id: EVENT_ID, provider_doc_id: "invoice-1", business_day: "2026-08-04", doc_type: "Invoice", created_at: "2026-08-04T10:00:00Z" }] };
@@ -116,14 +141,14 @@ describe("PostgreSQL shadow baseline", () => {
           sales_event_id: EVENT_ID,
           idempotency_key: null,
           status: "SUCCESS",
-          created_at: "2026-08-04T10:01:00Z",
+          created_at: new Date("2026-08-04T10:01:00.190Z"),
           winerim_response: null,
           stock_id: "4201",
           quantity: "1.000",
           variant: "bottle",
           winerim_product_id: "wine-1",
           provider_product_id: "p1",
-          synced_at: "2026-08-04T10:02:00Z",
+          synced_at: new Date("2026-08-04T10:02:00.316Z"),
         }] };
       }
       return { rows: [] };
@@ -145,6 +170,10 @@ describe("PostgreSQL shadow baseline", () => {
     expect(queries.at(-1)).toBe("COMMIT");
     const artifact = JSON.parse(await readFile(output, "utf8"));
     expect(artifact.capture).toMatchObject({ mode: "POSTGRES_REPEATABLE_READ_ONLY", authoritative: true });
+    expect(artifact.connections[0].cursor).toMatchObject({
+      lastSyncAt: "2026-08-04T10:00:00.722Z",
+      updatedAt: "2026-08-04T10:00:00.694Z",
+    });
     expect(artifact.connections[0].events[0].lines[0].providerLineId).toMatch(/^content:[a-f0-9]{64}:1$/);
     expect(artifact.connections[0].receipts[0].receiptId).toMatch(/^content:[a-f0-9]{64}:1$/);
     const stockQueries = queries.filter((text) => text.includes("FROM public.stock_sync_log"));

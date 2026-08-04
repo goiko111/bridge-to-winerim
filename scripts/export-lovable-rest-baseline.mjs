@@ -138,6 +138,11 @@ function contentRangeTotal(value) {
 function safeIso(value, fallback) {
   const source = value || fallback;
   if (!source) throw new RestBaselineError("INVALID_SOURCE", "A source timestamp is missing");
+  if (source instanceof Date) {
+    const timestamp = source.getTime();
+    if (Number.isNaN(timestamp)) throw new RestBaselineError("INVALID_SOURCE", "A source timestamp is invalid");
+    return source.toISOString();
+  }
   const withZone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(String(source))
     ? `${source}Z`
     : String(source);
