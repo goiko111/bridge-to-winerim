@@ -1,0 +1,37 @@
+# TEMPLATE ONLY. Render to a private file before a reviewed dry-run.
+name = "winerim-albariza-catalog-producer-{{CANARY_RUN_ID}}"
+main = "cloudflare/workers/middleware-catalog-producer/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "rescue-production"
+CATALOG_PRODUCER_ENABLED = "false"
+CANARY_RUN_ID = "{{CANARY_RUN_ID}}"
+CANARY_CONNECTION_ID = "{{CANARY_CONNECTION_ID}}"
+CANARY_WINERIM_WINE_ID = "{{CANARY_WINERIM_WINE_ID}}"
+CANARY_CATALOG_FORMAT = "{{CANARY_CATALOG_FORMAT}}"
+CANARY_AGORA_PRODUCT_ID = "{{CANARY_AGORA_PRODUCT_ID}}"
+RUNTIME_VAULT_KEY_VERSION = "{{RUNTIME_VAULT_KEY_VERSION}}"
+WINERIM_API_BASE_URL = "https://app.winerim.com"
+WINERIM_ALLOWED_HOSTS = "app.winerim.com"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "{{RUNTIME_HYPERDRIVE_ID}}"
+
+[[secrets_store_secrets]]
+binding = "RUNTIME_VAULT_KEY"
+store_id = "{{RUNTIME_VAULT_STORE_ID}}"
+secret_name = "{{RUNTIME_VAULT_SECRET_NAME}}"
+
+# Exactly one producer binding and no consumer. The queue is exclusive to this
+# canary run; this Worker has no route, workers.dev URL or preview URL.
+[[queues.producers]]
+binding = "MIDDLEWARE_CATALOG_QUEUE"
+queue = "{{CANARY_QUEUE_NAME}}"

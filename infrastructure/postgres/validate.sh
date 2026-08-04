@@ -17,6 +17,7 @@ RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_bi
 RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
 RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
+RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
 RESCUE_PRODUCTION_HARDENING_APPLIER="$SCRIPT_DIR/apply-rescue-production-hardening.sh"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
@@ -55,6 +56,7 @@ for required_file in \
   "$RUNTIME_SALES_CLAIM_IDENTITY" \
   "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY" \
   "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY" \
+  "$RUNTIME_CATALOG_SOURCE_SCOPE" \
   "$RESCUE_PRODUCTION_HARDENING_APPLIER" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
@@ -62,6 +64,19 @@ for required_file in \
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'CREATE TABLE public.runtime_catalog_source_scope' \
+  'PRIMARY KEY (connection_id, run_id)' \
+  'RUNTIME_CATALOG_SOURCE_SCOPE_REQUIRES_PREPARED_RUN' \
+  'RUNTIME_CATALOG_SOURCE_FORMAT_SCOPE_REJECTED' \
+  'GRANT UPDATE (' \
+  'middleware_runtime_catalog_source_update'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_CATALOG_SOURCE_SCOPE" >/dev/null; then
+    fail "runtime catalog source scope addendum is missing: $required_pattern"
   fi
 done
 

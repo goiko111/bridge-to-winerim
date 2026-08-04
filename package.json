@@ -17,6 +17,8 @@
     "cf:runtime:dry-run:staging": "npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/winerim-middleware-runtime-staging-dryrun",
     "cf:runtime:canary:render": "node scripts/runtime-canary-config.mjs render",
     "cf:runtime:dry-run:canary": "node scripts/runtime-canary-config.mjs dry-run runtime",
+    "cf:catalog-producer:test": "vitest run src/test/cloudflareRuntimeHttpWinerimCatalog.test.ts src/test/middlewareCatalogProducer.test.ts src/test/runtimeCatalogSourceScopeMigration.test.ts --environment node --pool=forks --maxWorkers=1 --no-file-parallelism",
+    "cf:catalog-producer:typecheck": "tsc -p cloudflare/workers/middleware-catalog-producer/tsconfig.json",
     "cf:runtime:canary:remove:plan": "node scripts/remove-runtime-canary-consumer.mjs",
     "cf:runtime:canary:remove:dry-run": "node scripts/remove-runtime-canary-consumer.mjs --dry-run",
     "rescue:credentials:plan": "node infrastructure/runtime/prepare-runtime-credential-provisioning.mjs",

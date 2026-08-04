@@ -29,6 +29,7 @@ WITH expected(name) AS (
     ('provider_products'),
     ('runtime_connection_credentials'),
     ('runtime_canary_connections'),
+    ('runtime_catalog_source_scope'),
     ('runtime_execution_log'),
     ('runtime_idempotency'),
     ('sales_events'),
@@ -52,11 +53,13 @@ WITH expected(name) AS (
     ('acquire_agora_dispatch_lock'),
     ('claim_outbound_tasks'),
     ('enforce_runtime_canary_connection_window'),
+    ('enforce_runtime_catalog_wine_refresh_scope'),
     ('has_role'),
     ('release_agora_dispatch_lock'),
     ('rescue_zombie_outbound_tasks'),
     ('runtime_bind_sales_claim_identity'),
-    ('update_updated_at_column')
+    ('update_updated_at_column'),
+    ('validate_runtime_catalog_source_scope')
 )
 SELECT
   expected.name,

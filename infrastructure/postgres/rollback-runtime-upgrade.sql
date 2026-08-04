@@ -7,6 +7,7 @@ DECLARE
   environment_value text;
   credential_rows bigint;
   scope_rows bigint;
+  catalog_source_rows bigint := 0;
 BEGIN
   SELECT value INTO environment_value
   FROM public.infrastructure_metadata
@@ -16,8 +17,12 @@ BEGIN
   END IF;
   SELECT count(*) INTO credential_rows FROM public.runtime_connection_credentials;
   SELECT count(*) INTO scope_rows FROM public.runtime_canary_connections;
-  IF credential_rows <> 0 OR scope_rows <> 0 THEN
-    RAISE EXCEPTION 'runtime upgrade rollback requires empty canary and credential tables';
+  IF to_regclass('public.runtime_catalog_source_scope') IS NOT NULL THEN
+    EXECUTE 'SELECT count(*) FROM public.runtime_catalog_source_scope'
+      INTO catalog_source_rows;
+  END IF;
+  IF credential_rows <> 0 OR scope_rows <> 0 OR catalog_source_rows <> 0 THEN
+    RAISE EXCEPTION 'runtime upgrade rollback requires empty canary, credential and catalog source tables';
   END IF;
 END
 $rollback_guard$;
@@ -36,6 +41,11 @@ BEGIN
 END
 $drop_runtime_policies$;
 
+DROP TRIGGER IF EXISTS enforce_runtime_catalog_wine_refresh_scope
+  ON public.winerim_wines;
+DROP TABLE IF EXISTS public.runtime_catalog_source_scope;
+DROP FUNCTION IF EXISTS public.validate_runtime_catalog_source_scope();
+DROP FUNCTION IF EXISTS public.enforce_runtime_catalog_wine_refresh_scope();
 DROP TABLE public.runtime_canary_connections;
 DROP FUNCTION public.enforce_runtime_canary_connection_window();
 DROP TABLE public.runtime_connection_credentials;

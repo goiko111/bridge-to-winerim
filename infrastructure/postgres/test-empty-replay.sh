@@ -177,7 +177,111 @@ INSERT INTO public.runtime_canary_connections (
    'rescue-canary-run:empty-prepared-b');
 SQL
 runtime_canary_invalid_scope_hidden=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT ((SELECT count(*) FROM public.runtime_canary_connections) = 0 AND (SELECT count(*) FROM public.pos_connections) = 0)::int")
-"${PSQL[@]}" -d "$DB_NAME" -c "DELETE FROM public.runtime_canary_connections; DELETE FROM public.pos_connections WHERE id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');" >/dev/null
+
+"${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+INSERT INTO public.winerim_wines (
+  connection_id, winerim_id, name, wine_type, is_active,
+  price, bottle_sale_price, bottle_purchase_price,
+  glass_sale_price, glass_cost_price, serve_by_glass
+) VALUES
+  ('$CANARY_CONNECTION_A', '855797', 'Canary wine', 'tinto', true, 12, 12, 4, 3, 1, true),
+  ('$CANARY_CONNECTION_B', '855798', 'Outside wine', 'blanco', true, 10, 10, 3, NULL, NULL, false);
+INSERT INTO public.product_mappings (
+  connection_id, provider_product_id, provider_product_name,
+  winerim_wine_id, winerim_wine_name, status, format_type
+) VALUES (
+  '$CANARY_CONNECTION_A', '1055797', 'Canary wine',
+  '855797', 'Canary wine', 'CONFIRMED', 'BOTTLE'
+);
+INSERT INTO public.runtime_catalog_source_scope (
+  connection_id, run_id, winerim_wine_id, format, agora_product_id
+) VALUES (
+  '$CANARY_CONNECTION_A', 'empty-prepared-a', '855797', 'BOTTLE', '1055797'
+);
+SQL
+
+catalog_source_prepared_hidden=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT (count(*) = 0)::int FROM public.runtime_catalog_source_scope")
+
+"${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+UPDATE public.runtime_canary_connections
+SET status = 'ACTIVE', active = true,
+  approved_at = now(), expires_at = now() + interval '1 hour',
+  deployment_manifest_sha256 = repeat('a', 64),
+  writer_fence_grant_sha256 = repeat('b', 64),
+  credential_set_sha256 = repeat('c', 64),
+  activated_at = now()
+WHERE connection_id = '$CANARY_CONNECTION_A'
+  AND run_id = 'empty-prepared-a';
+SQL
+
+catalog_source_active_visible=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT (count(*) = 1)::int FROM public.runtime_catalog_source_scope")
+catalog_source_exact_update=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; WITH changed AS (UPDATE public.winerim_wines SET name='Canary wine refreshed', price=13, bottle_sale_price=13, bottle_purchase_price=5 WHERE connection_id='$CANARY_CONNECTION_A' AND winerim_id='855797' RETURNING 1) SELECT (count(*) = 1)::int FROM changed")
+
+"${PSQL[@]}" -q -d "$DB_NAME" >/dev/null <<SQL
+SET ROLE middleware_runtime;
+DO \$catalog_source_format_rejected\$
+DECLARE
+  rejected boolean := false;
+BEGIN
+  BEGIN
+    UPDATE public.winerim_wines
+    SET glass_sale_price = 4
+    WHERE connection_id = '$CANARY_CONNECTION_A'
+      AND winerim_id = '855797';
+  EXCEPTION WHEN raise_exception THEN
+    IF SQLERRM = 'RUNTIME_CATALOG_SOURCE_FORMAT_SCOPE_REJECTED' THEN
+      rejected := true;
+    ELSE
+      RAISE;
+    END IF;
+  END;
+  IF NOT rejected THEN
+    RAISE EXCEPTION 'off-format runtime catalog refresh was accepted';
+  END IF;
+END
+\$catalog_source_format_rejected\$;
+
+DO \$catalog_source_wine_rejected\$
+DECLARE
+  affected integer;
+BEGIN
+  UPDATE public.winerim_wines
+  SET name = 'Outside wine changed'
+  WHERE connection_id = '$CANARY_CONNECTION_B'
+    AND winerim_id = '855798';
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  IF affected <> 0 THEN
+    RAISE EXCEPTION 'out-of-scope runtime catalog wine refresh was accepted';
+  END IF;
+END
+\$catalog_source_wine_rejected\$;
+RESET ROLE;
+SQL
+
+catalog_source_privileges=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SELECT (has_table_privilege('middleware_runtime', 'public.runtime_catalog_source_scope', 'SELECT') AND NOT has_table_privilege('middleware_runtime', 'public.runtime_catalog_source_scope', 'INSERT,UPDATE,DELETE') AND has_column_privilege('middleware_runtime', 'public.winerim_wines', 'bottle_sale_price', 'UPDATE') AND has_column_privilege('middleware_runtime', 'public.winerim_wines', 'glass_sale_price', 'UPDATE') AND NOT has_column_privilege('middleware_runtime', 'public.winerim_wines', 'raw_payload', 'UPDATE') AND NOT has_table_privilege('middleware_api', 'public.runtime_catalog_source_scope', 'SELECT,INSERT,UPDATE,DELETE') AND NOT has_table_privilege('middleware_readonly', 'public.runtime_catalog_source_scope', 'SELECT,INSERT,UPDATE,DELETE'))::int")
+
+for catalog_source_gate in \
+  "$catalog_source_prepared_hidden" \
+  "$catalog_source_active_visible" \
+  "$catalog_source_exact_update" \
+  "$catalog_source_privileges"
+do
+  test "$catalog_source_gate" = "1" || {
+    printf 'RUNTIME_CATALOG_SOURCE_SCOPE_GATE_FAILED\n' >&2
+    exit 1
+  }
+done
+
+"${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+DELETE FROM public.runtime_catalog_source_scope;
+DELETE FROM public.product_mappings
+WHERE connection_id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
+DELETE FROM public.winerim_wines
+WHERE connection_id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
+DELETE FROM public.runtime_canary_connections;
+DELETE FROM public.pos_connections
+WHERE id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
+SQL
 
 rls_missing=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity")
 security_definer_public=$("${PSQL[@]}" -d "$DB_NAME" -Atc "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prosecdef AND EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl WHERE acl.grantee=0 AND acl.privilege_type='EXECUTE')")
