@@ -9,11 +9,19 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ADOPT_EXISTING_RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const ADOPT_EXISTING_KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const ADOPT_EXISTING_SALES_MODE = "adopt-existing-sales-no-legacy-writer";
+const ADOPT_EXISTING_FULL_LANES_MODE = "adopt-existing-full-lanes-no-legacy-writer";
 const ADOPT_EXISTING_SALES_JOBS = ["sales.auto-sync", "sales.sync-intraday"];
+const ADOPT_EXISTING_FULL_LANES_JOBS = [
+  ...ADOPT_EXISTING_SALES_JOBS,
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "outbound.process",
+];
 const WRITER_FENCE_MODES = new Set([
   "legacy-writer-revoked",
   "bootstrap-no-legacy-writer",
   ADOPT_EXISTING_SALES_MODE,
+  ADOPT_EXISTING_FULL_LANES_MODE,
 ]);
 const MIN_LEGACY_WRITER_DRAIN_MS = 130 * 1_000;
 const MAX_BOOTSTRAP_EVIDENCE_AGE_MS = 15 * 60 * 1_000;
@@ -174,7 +182,11 @@ function adoptExistingAbsence(environment) {
   return { ...absence, priorRunCount };
 }
 
-function adoptExistingSalesRuntimePolicy(environment) {
+function adoptExistingRuntimePolicy(environment, writerFenceMode) {
+  const fullLanes = writerFenceMode === ADOPT_EXISTING_FULL_LANES_MODE;
+  const expectedJobs = fullLanes
+    ? ADOPT_EXISTING_FULL_LANES_JOBS
+    : ADOPT_EXISTING_SALES_JOBS;
   let runtimeJobs;
   try {
     runtimeJobs = JSON.parse(requiredFrom(environment, "CANARY_RUNTIME_JOBS"));
@@ -183,34 +195,66 @@ function adoptExistingSalesRuntimePolicy(environment) {
   }
   if (
     !Array.isArray(runtimeJobs)
-    || runtimeJobs.length !== ADOPT_EXISTING_SALES_JOBS.length
-    || runtimeJobs.some((job, index) => job !== ADOPT_EXISTING_SALES_JOBS[index])
+    || runtimeJobs.length !== expectedJobs.length
+    || runtimeJobs.some((job, index) => job !== expectedJobs[index])
   ) {
-    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_JOBS_REQUIRED");
+    throw new Error(fullLanes
+      ? "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_JOBS_REQUIRED"
+      : "WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_JOBS_REQUIRED");
   }
-  if (requiredFrom(environment, "CANARY_RUNTIME_LANE") !== "sales") {
-    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_LANE_REQUIRED");
+  const expectedLane = fullLanes ? "full-lanes" : "sales";
+  if (requiredFrom(environment, "CANARY_RUNTIME_LANE") !== expectedLane) {
+    throw new Error(fullLanes
+      ? "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_LANE_REQUIRED"
+      : "WRITER_FENCE_GRANT_ADOPT_EXISTING_SALES_LANE_REQUIRED");
   }
-  const disabledFeatures = {
+  const expectedFeatures = {
+    openTickets: false,
+    catalog: fullLanes,
+    stock: fullLanes,
+    outbound: fullLanes,
+    maintenance: false,
+  };
+  const featureBindings = {
     openTickets: "CANARY_RUNTIME_OPEN_TICKETS_ENABLED",
     catalog: "CANARY_RUNTIME_CATALOG_ENABLED",
     stock: "CANARY_RUNTIME_STOCK_ENABLED",
     outbound: "CANARY_RUNTIME_OUTBOUND_ENABLED",
     maintenance: "CANARY_RUNTIME_MAINTENANCE_ENABLED",
   };
-  const features = Object.fromEntries(Object.entries(disabledFeatures).map(([key, name]) => {
-    if (requiredFrom(environment, name) !== "false") {
-      throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_NON_SALES_FEATURE_MUST_BE_DISABLED");
+  const features = Object.fromEntries(Object.entries(featureBindings).map(([key, name]) => {
+    const expected = expectedFeatures[key];
+    if (requiredFrom(environment, name) !== String(expected)) {
+      throw new Error(fullLanes
+        ? "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"
+        : "WRITER_FENCE_GRANT_ADOPT_EXISTING_NON_SALES_FEATURE_MUST_BE_DISABLED");
     }
-    return [key, false];
+    return [key, expected];
   }));
-  const providerConfig = {
-    runtime_sales_job_allowlist: [...ADOPT_EXISTING_SALES_JOBS],
-    intraday_sales_sync_enabled: true,
-    open_tickets_sync_enabled: features.openTickets,
-    open_tickets_stock_sync_enabled: features.openTickets,
+  const providerConfig = fullLanes
+    ? {
+      runtime_fleet_profile: "full-lanes-v1",
+      runtime_fleet_job_allowlist: [...ADOPT_EXISTING_FULL_LANES_JOBS],
+      runtime_sales_job_allowlist: [...ADOPT_EXISTING_SALES_JOBS],
+      intraday_sales_sync_enabled: true,
+      open_tickets_sync_enabled: features.openTickets,
+      open_tickets_stock_sync_enabled: features.openTickets,
+      runtime_catalog_enabled: features.catalog,
+      runtime_stock_enabled: features.stock,
+      runtime_outbound_enabled: features.outbound,
+      runtime_maintenance_enabled: features.maintenance,
+    }
+    : {
+      runtime_sales_job_allowlist: [...ADOPT_EXISTING_SALES_JOBS],
+      intraday_sales_sync_enabled: true,
+      open_tickets_sync_enabled: features.openTickets,
+      open_tickets_stock_sync_enabled: features.openTickets,
+    };
+  return {
+    profile: fullLanes ? "full-lanes-v1" : "sales-only-v1",
+    providerConfig,
+    runtimePolicySha256: sha256(canonicalJson(providerConfig)),
   };
-  return { providerConfig, runtimePolicySha256: sha256(canonicalJson(providerConfig)) };
 }
 
 function readBoundFile(path, expectedSha256, label) {
@@ -393,7 +437,7 @@ export function readExternalBootstrapWriterFenceEvidence({
   });
 }
 
-function prepareAdoptExistingSalesActivationScope({
+function prepareAdoptExistingActivationScope({
   environment,
   connectionId,
   runId,
@@ -402,6 +446,7 @@ function prepareAdoptExistingSalesActivationScope({
   issuedAt,
   expiresAt,
   externalEvidence,
+  runtimePolicy,
 }) {
   const adoptionBindingSha256 = requiredSha256(
     environment,
@@ -415,7 +460,6 @@ function prepareAdoptExistingSalesActivationScope({
     environment,
     "CANARY_FINAL_TARGET_RAW_SHA256",
   );
-  const { runtimePolicySha256 } = adoptExistingSalesRuntimePolicy(environment);
   const payload = [
     "winerim-writer-fence-adopt-existing-sales",
     "1",
@@ -429,7 +473,7 @@ function prepareAdoptExistingSalesActivationScope({
     finalTargetRawSha256,
     externalEvidence.artifactSha256,
     externalEvidence.payloadSha256,
-    runtimePolicySha256,
+    runtimePolicy.runtimePolicySha256,
   ].join("|");
   return {
     version: 1,
@@ -439,7 +483,11 @@ function prepareAdoptExistingSalesActivationScope({
     finalTargetRawSha256,
     externalEvidenceSha256: externalEvidence.artifactSha256,
     externalEvidencePayloadSha256: externalEvidence.payloadSha256,
-    runtimePolicySha256,
+    runtimePolicyProfile: runtimePolicy.profile,
+    runtimeJobAllowlist: runtimePolicy.profile === "full-lanes-v1"
+      ? [...ADOPT_EXISTING_FULL_LANES_JOBS]
+      : [...ADOPT_EXISTING_SALES_JOBS],
+    runtimePolicySha256: runtimePolicy.runtimePolicySha256,
     bindingSha256: sha256(payload),
     signatureSha256: createHmac("sha256", proof).update(payload).digest("hex"),
   };
@@ -472,6 +520,9 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
   if (writerFenceMode === ADOPT_EXISTING_SALES_MODE && !ADOPT_EXISTING_RUN_PATTERN.test(runId)) {
     throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_INVALID_RUN_ID");
   }
+  if (writerFenceMode === ADOPT_EXISTING_FULL_LANES_MODE && !ADOPT_EXISTING_RUN_PATTERN.test(runId)) {
+    throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_INVALID_RUN_ID");
+  }
 
   const issuedMs = timestamp(issuedAt, "CANARY_FENCE_ISSUED_AT");
   const expiresMs = timestamp(expiresAt, "CANARY_FENCE_EXPIRES_AT");
@@ -489,6 +540,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
   };
   const fleetGrant = writerFenceMode === "bootstrap-no-legacy-writer"
     || writerFenceMode === ADOPT_EXISTING_SALES_MODE
+    || writerFenceMode === ADOPT_EXISTING_FULL_LANES_MODE
     || String(environment.CANARY_WRITER_FENCE_GRANT_VERSION ?? "") === "3";
   let legacyCredential;
   if (!fleetGrant) {
@@ -594,6 +646,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
     if (internalVerifiedAt !== externalEvidence.observedAt) {
       throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_TIME_MISMATCH");
     }
+    const runtimePolicy = adoptExistingRuntimePolicy(environment, writerFenceMode);
     grant = {
       version: 3,
       grantType: "adopt-existing-sales",
@@ -606,7 +659,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
         cloudflareEvidenceSha256: sourcePassSha256,
         externalEvidence,
       },
-      activationScope: prepareAdoptExistingSalesActivationScope({
+      activationScope: prepareAdoptExistingActivationScope({
         environment,
         connectionId,
         runId,
@@ -615,6 +668,7 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
         issuedAt,
         expiresAt,
         externalEvidence,
+        runtimePolicy,
       }),
     };
   }

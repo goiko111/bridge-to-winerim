@@ -10,12 +10,14 @@ import type {
 import type { RuntimeEnvelopeV1 } from "../../middleware-runtime/src/contracts";
 import { sha256Hex } from "../../../canary-failclosed/src/writerFence";
 import {
+  FLEET_FULL_RUNTIME_JOB_ALLOWLIST,
   FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
   fleetEnvelopeEventId,
   isEnvelopeInsideActiveFleetScope,
   loadActiveFleetScope,
   resolveFleetWriterFenceMaterial,
   type ActiveFleetScope,
+  type FleetRuntimePolicyProfile,
 } from "./fleetScope";
 import {
   createMiddlewareRuntimeExecutorWorker,
@@ -44,6 +46,40 @@ function generation(connectionId: string, runId: string): string {
   ].join("|")).digest("hex");
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function providerConfig(profile: FleetRuntimePolicyProfile): Record<string, unknown> {
+  if (profile === "full-lanes-v1") {
+    return {
+      runtime_fleet_profile: "full-lanes-v1",
+      runtime_fleet_job_allowlist: [...FLEET_FULL_RUNTIME_JOB_ALLOWLIST],
+      runtime_sales_job_allowlist: [...FLEET_SALES_RUNTIME_JOB_ALLOWLIST],
+      intraday_sales_sync_enabled: true,
+      open_tickets_sync_enabled: false,
+      open_tickets_stock_sync_enabled: false,
+      runtime_catalog_enabled: true,
+      runtime_stock_enabled: true,
+      runtime_outbound_enabled: true,
+      runtime_maintenance_enabled: false,
+    };
+  }
+  return {
+    runtime_sales_job_allowlist: [...FLEET_SALES_RUNTIME_JOB_ALLOWLIST],
+    intraday_sales_sync_enabled: true,
+    open_tickets_sync_enabled: false,
+    open_tickets_stock_sync_enabled: false,
+  };
+}
+
 const GENERATION_A = generation(CONNECTION_A, "run-fleet-a");
 const GENERATION_B = generation(CONNECTION_B, "run-fleet-b");
 
@@ -52,14 +88,23 @@ function scope(
   runId: string,
   credentialSetSha256: string,
   writerFenceGrantSha256 = GRANT_HASH_A,
+  runtimePolicyProfile: FleetRuntimePolicyProfile = "sales-only-v1",
 ): ActiveFleetScope {
+  const runtimeJobAllowlist = runtimePolicyProfile === "full-lanes-v1"
+    ? FLEET_FULL_RUNTIME_JOB_ALLOWLIST
+    : FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
   return Object.freeze({
     connectionId,
     runId,
     generationMode: "rotate",
     credentialSetSha256,
     writerFenceGrantSha256,
-    runtimeSalesJobAllowlist: FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
+    runtimePolicyProfile,
+    runtimePolicySha256: createHash("sha256")
+      .update(canonicalJson(providerConfig(runtimePolicyProfile)))
+      .digest("hex"),
+    runtimeJobAllowlist,
+    runtimeSalesJobAllowlist: runtimeJobAllowlist,
   });
 }
 
@@ -103,12 +148,18 @@ function queryResult<Row extends Record<string, unknown>>(rows: Row[]): QueryRes
 
 type FleetPolicyOverrides = Readonly<{
   runtimeSalesJobAllowlist?: readonly string[];
+  runtimeFleetJobAllowlist?: readonly string[];
+  runtimeFleetProfile?: string;
   intradaySalesSyncEnabled?: boolean;
   openTicketsSyncEnabled?: boolean;
   openTicketsStockSyncEnabled?: boolean;
   catalogSyncEnabled?: boolean;
   syncMode?: string;
   writeMode?: string;
+  runtimeCatalogEnabled?: boolean;
+  runtimeStockEnabled?: boolean;
+  runtimeOutboundEnabled?: boolean;
+  runtimeMaintenanceEnabled?: boolean;
 }>;
 
 function databaseForScopes(
@@ -118,23 +169,41 @@ function databaseForScopes(
   const query = vi.fn(async (statement: SqlStatement): Promise<QueryResult<Record<string, unknown>>> => {
     if (statement.text.includes("FROM public.runtime_canary_connections")) {
       const connectionId = String(statement.values[0] ?? "");
-      return queryResult(scopes.filter((item) => item.connectionId === connectionId).map((item) => ({
-        connection_id: item.connectionId,
-        run_id: item.runId,
-        generation_mode: item.generationMode,
-        credential_set_sha256: item.credentialSetSha256,
-        writer_fence_grant_sha256: item.writerFenceGrantSha256,
-        provider_config: {
-          runtime_sales_job_allowlist: policy.runtimeSalesJobAllowlist
-            ?? [...item.runtimeSalesJobAllowlist],
-          intraday_sales_sync_enabled: policy.intradaySalesSyncEnabled ?? true,
-          open_tickets_sync_enabled: policy.openTicketsSyncEnabled ?? false,
-          open_tickets_stock_sync_enabled: policy.openTicketsStockSyncEnabled ?? false,
-        },
-        catalog_sync_enabled: policy.catalogSyncEnabled ?? false,
-        sync_mode: policy.syncMode ?? "PULL_ONLY",
-        write_mode: policy.writeMode ?? "NONE",
-      })));
+      return queryResult(scopes.filter((item) => item.connectionId === connectionId).map((item) => {
+        const config = providerConfig(item.runtimePolicyProfile);
+        if (policy.runtimeSalesJobAllowlist) {
+          config.runtime_sales_job_allowlist = [...policy.runtimeSalesJobAllowlist];
+        }
+        if (policy.runtimeFleetJobAllowlist) {
+          config.runtime_fleet_job_allowlist = [...policy.runtimeFleetJobAllowlist];
+        }
+        if (policy.runtimeFleetProfile !== undefined) {
+          config.runtime_fleet_profile = policy.runtimeFleetProfile;
+        }
+        config.intraday_sales_sync_enabled = policy.intradaySalesSyncEnabled ?? true;
+        config.open_tickets_sync_enabled = policy.openTicketsSyncEnabled ?? false;
+        config.open_tickets_stock_sync_enabled = policy.openTicketsStockSyncEnabled ?? false;
+        if (item.runtimePolicyProfile === "full-lanes-v1") {
+          config.runtime_catalog_enabled = policy.runtimeCatalogEnabled ?? true;
+          config.runtime_stock_enabled = policy.runtimeStockEnabled ?? true;
+          config.runtime_outbound_enabled = policy.runtimeOutboundEnabled ?? true;
+          config.runtime_maintenance_enabled = policy.runtimeMaintenanceEnabled ?? false;
+        }
+        return {
+          connection_id: item.connectionId,
+          run_id: item.runId,
+          generation_mode: item.generationMode,
+          credential_set_sha256: item.credentialSetSha256,
+          writer_fence_grant_sha256: item.writerFenceGrantSha256,
+          provider_config: config,
+          catalog_sync_enabled: policy.catalogSyncEnabled
+            ?? item.runtimePolicyProfile === "full-lanes-v1",
+          sync_mode: policy.syncMode
+            ?? (item.runtimePolicyProfile === "full-lanes-v1" ? "BIDIRECTIONAL" : "PULL_ONLY"),
+          write_mode: policy.writeMode
+            ?? (item.runtimePolicyProfile === "full-lanes-v1" ? "XML_IMPORT" : "NONE"),
+        };
+      }));
     }
     if (statement.text.includes("FROM public.pos_connections")) {
       const connectionId = String(statement.values[0] ?? "");
@@ -221,6 +290,76 @@ function rawGrant(connectionId: string, runId: string, holderId: string): string
   });
 }
 
+function rawAdoptGrant(
+  connectionId: string,
+  runId: string,
+  holderId: string,
+  runtimePolicySha256: string,
+): string {
+  const hash = (character: string) => character.repeat(64);
+  return JSON.stringify({
+    version: 3,
+    grantType: "adopt-existing-sales",
+    connectionId,
+    runId,
+    holderId,
+    proofSha256: hash("1"),
+    issuedAt: "2026-08-04T09:01:00.000Z",
+    expiresAt: "2026-08-04T10:01:00.000Z",
+    credentialBundle: {
+      version: 1,
+      keyVersion: "key-v1",
+      generationSha256: hash("2"),
+      bundleSha256: hash("3"),
+      signatureSha256: hash("4"),
+      credentials: Object.fromEntries((["agora", "winerim"] as const).map((kind) => [kind, {
+        kind,
+        reference: `runtime-vault://postgres/${connectionId}/agora/${kind}`,
+        version: hash(kind === "agora" ? "5" : "6"),
+        attestationSha256: hash(kind === "agora" ? "5" : "6"),
+        binding: hash(kind === "agora" ? "7" : "8"),
+      }])),
+    },
+    writerHistory: {
+      mode: "adopt-existing-sales",
+      verifiedAt: "2026-08-04T09:03:20.000Z",
+      evidenceSha256: hash("9"),
+      cloudflareEvidenceSha256: hash("a"),
+      externalEvidence: {
+        artifactSha256: hash("b"),
+        publicKeySha256: hash("c"),
+        payloadSha256: hash("d"),
+        signatureSha256: hash("e"),
+        keyId: "fixture-key-v1",
+        projectId: "33333333-3333-4333-8333-333333333333",
+        collectorRunId: "fixture-observer-v1",
+        fenceMode: "lovable-disabled-no-agora-rotation",
+        fenceAppliedAt: "2026-08-04T09:00:00.000Z",
+        observedAt: "2026-08-04T09:03:20.000Z",
+        readbackObservedAt: [
+          "2026-08-04T09:02:10.000Z",
+          "2026-08-04T09:03:20.000Z",
+        ],
+        removedFromLovable: true,
+      },
+    },
+    activationScope: {
+      version: 1,
+      kind: "adopt-existing-sales",
+      adoptionBindingSha256: hash("f"),
+      deploymentManifestSha256: hash("1"),
+      finalTargetRawSha256: hash("2"),
+      externalEvidenceSha256: hash("b"),
+      externalEvidencePayloadSha256: hash("d"),
+      runtimePolicyProfile: "full-lanes-v1",
+      runtimeJobAllowlist: [...FLEET_FULL_RUNTIME_JOB_ALLOWLIST],
+      runtimePolicySha256,
+      bindingSha256: hash("3"),
+      signatureSha256: hash("4"),
+    },
+  });
+}
+
 describe("fleet runtime scope", () => {
   it("accepts only the exact sales allowlist for independent fleet scopes", async () => {
     const scopeA = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
@@ -235,6 +374,45 @@ describe("fleet runtime scope", () => {
     expect(isEnvelopeInsideActiveFleetScope(envelope(scopeB, {
       job: "sales.sync-intraday",
     }), loadedB!)).toBe(true);
+  });
+
+  it("accepts the exact configured full-lanes policy and no job outside it", async () => {
+    const active = scope(
+      CONNECTION_A,
+      "run-fleet-a",
+      GENERATION_A,
+      GRANT_HASH_A,
+      "full-lanes-v1",
+    );
+    const fake = databaseForScopes([active]);
+    const loaded = await loadActiveFleetScope(fake.adapter, CONNECTION_A);
+
+    expect(loaded).toMatchObject({
+      runtimePolicyProfile: "full-lanes-v1",
+      runtimeJobAllowlist: [
+        "sales.auto-sync",
+        "sales.sync-intraday",
+        "catalog.fetch-winerim",
+        "catalog.sync-master",
+        "outbound.process",
+      ],
+    });
+    for (const [job, lane, retryProfile] of [
+      ["sales.auto-sync", "sales-stock", "POS_OUTBOUND"],
+      ["sales.sync-intraday", "sales-stock", "POS_OUTBOUND"],
+      ["catalog.fetch-winerim", "catalog", "CONTROL_PLANE"],
+      ["catalog.sync-master", "catalog", "POS_OUTBOUND"],
+      ["outbound.process", "outbound-queue", "POS_OUTBOUND"],
+    ] as const) {
+      expect(isEnvelopeInsideActiveFleetScope(envelope(active, {
+        job,
+        lane,
+        retryProfile,
+      }), loaded!)).toBe(true);
+    }
+    expect(isEnvelopeInsideActiveFleetScope(envelope(active, {
+      job: "sales.sync-open-tickets",
+    }), loaded!)).toBe(false);
   });
 
   it.each([
@@ -369,6 +547,85 @@ describe("fleet runtime scope", () => {
     })).rejects.toThrow("RUNTIME_FLEET_FENCE_SCOPE_NOT_FOUND");
   });
 
+  it("requires a full-lanes grant to bind the exact runtime policy hash", async () => {
+    const initial = scope(
+      CONNECTION_A,
+      "run-fleet-a",
+      GENERATION_A,
+      GRANT_HASH_A,
+      "full-lanes-v1",
+    );
+    const grant = rawAdoptGrant(
+      CONNECTION_A,
+      "run-fleet-a",
+      "holder-fleet-a",
+      initial.runtimePolicySha256,
+    );
+    const active = { ...initial, writerFenceGrantSha256: await sha256Hex(grant) };
+    const binding = {
+      get: async () => JSON.stringify({
+        version: 1,
+        entries: [{
+          connectionId: CONNECTION_A,
+          runId: "run-fleet-a",
+          generationSha256: GENERATION_A,
+          rawGrant: grant,
+          proof: "proof".repeat(8),
+        }],
+      }),
+    };
+
+    await expect(resolveFleetWriterFenceMaterial(binding, active)).resolves.toMatchObject({
+      holderId: "holder-fleet-a",
+    });
+
+    const driftedGrant = rawAdoptGrant(
+      CONNECTION_A,
+      "run-fleet-a",
+      "holder-fleet-a",
+      "0".repeat(64),
+    );
+    await expect(resolveFleetWriterFenceMaterial({
+      get: async () => JSON.stringify({
+        version: 1,
+        entries: [{
+          connectionId: CONNECTION_A,
+          runId: "run-fleet-a",
+          generationSha256: GENERATION_A,
+          rawGrant: driftedGrant,
+          proof: "proof".repeat(8),
+        }],
+      }),
+    }, {
+      ...active,
+      writerFenceGrantSha256: await sha256Hex(driftedGrant),
+    })).rejects.toThrow("RUNTIME_FLEET_FENCE_POLICY_BINDING_MISMATCH");
+
+    const driftedJobs = JSON.parse(grant) as Record<string, unknown>;
+    (driftedJobs.activationScope as Record<string, unknown>).runtimeJobAllowlist = [
+      "sales.auto-sync",
+      "sales.sync-intraday",
+      "catalog.fetch-winerim",
+      "catalog.sync-master",
+    ];
+    const driftedJobsGrant = JSON.stringify(driftedJobs);
+    await expect(resolveFleetWriterFenceMaterial({
+      get: async () => JSON.stringify({
+        version: 1,
+        entries: [{
+          connectionId: CONNECTION_A,
+          runId: "run-fleet-a",
+          generationSha256: GENERATION_A,
+          rawGrant: driftedJobsGrant,
+          proof: "proof".repeat(8),
+        }],
+      }),
+    }, {
+      ...active,
+      writerFenceGrantSha256: await sha256Hex(driftedJobsGrant),
+    })).rejects.toThrow("RUNTIME_FLEET_FENCE_POLICY_BINDING_MISMATCH");
+  });
+
   it("rejects duplicate fence entries so two writers cannot share one generation", async () => {
     const grant = rawGrant(CONNECTION_A, "run-fleet-a", "holder-fleet-a");
     const active = scope(CONNECTION_A, "run-fleet-a", GENERATION_A, await sha256Hex(grant));
@@ -436,6 +693,48 @@ describe("fleet runtime scope", () => {
     "rejects a fleet scope when provider policy opens %s",
     async (_label, policy) => {
       const active = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
+      const fake = databaseForScopes([active], policy);
+
+      await expect(loadActiveFleetScope(fake.adapter, CONNECTION_A)).resolves.toBeNull();
+    },
+  );
+
+  it.each([
+    ["missing catalog job", {
+      runtimeFleetJobAllowlist: [
+        "sales.auto-sync",
+        "sales.sync-intraday",
+        "catalog.sync-master",
+        "outbound.process",
+      ],
+    }],
+    ["reordered jobs", {
+      runtimeFleetJobAllowlist: [
+        "sales.auto-sync",
+        "sales.sync-intraday",
+        "catalog.sync-master",
+        "catalog.fetch-winerim",
+        "outbound.process",
+      ],
+    }],
+    ["unknown profile", { runtimeFleetProfile: "full-lanes-v2" }],
+    ["catalog disabled", { catalogSyncEnabled: false }],
+    ["pull-only mode", { syncMode: "PULL_ONLY" }],
+    ["write disabled", { writeMode: "NONE" }],
+    ["catalog feature disabled", { runtimeCatalogEnabled: false }],
+    ["stock feature disabled", { runtimeStockEnabled: false }],
+    ["outbound feature disabled", { runtimeOutboundEnabled: false }],
+    ["maintenance opened", { runtimeMaintenanceEnabled: true }],
+  ] satisfies readonly (readonly [string, FleetPolicyOverrides])[]) (
+    "rejects full-lanes policy drift: %s",
+    async (_label, policy) => {
+      const active = scope(
+        CONNECTION_A,
+        "run-fleet-a",
+        GENERATION_A,
+        GRANT_HASH_A,
+        "full-lanes-v1",
+      );
       const fake = databaseForScopes([active], policy);
 
       await expect(loadActiveFleetScope(fake.adapter, CONNECTION_A)).resolves.toBeNull();

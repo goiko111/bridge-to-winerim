@@ -21,8 +21,17 @@ export const FLEET_SALES_RUNTIME_JOB_ALLOWLIST = Object.freeze([
   "sales.auto-sync",
   "sales.sync-intraday",
 ] as const satisfies readonly RuntimeJob[]);
+export const FLEET_FULL_RUNTIME_JOB_ALLOWLIST = Object.freeze([
+  ...FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "outbound.process",
+] as const satisfies readonly RuntimeJob[]);
 
 export type FleetSalesRuntimeJob = typeof FLEET_SALES_RUNTIME_JOB_ALLOWLIST[number];
+export type FleetFullRuntimeJob = typeof FLEET_FULL_RUNTIME_JOB_ALLOWLIST[number];
+export type FleetRuntimeJob = FleetSalesRuntimeJob | FleetFullRuntimeJob;
+export type FleetRuntimePolicyProfile = "sales-only-v1" | "full-lanes-v1";
 
 export type ActiveFleetScope = Readonly<{
   connectionId: string;
@@ -30,7 +39,11 @@ export type ActiveFleetScope = Readonly<{
   generationMode: string;
   credentialSetSha256: string;
   writerFenceGrantSha256: string;
-  runtimeSalesJobAllowlist: readonly FleetSalesRuntimeJob[];
+  runtimePolicyProfile: FleetRuntimePolicyProfile;
+  runtimePolicySha256: string;
+  runtimeJobAllowlist: readonly FleetRuntimeJob[];
+  /** Compatibility alias until the fleet worker reads runtimeJobAllowlist directly. */
+  runtimeSalesJobAllowlist: readonly FleetRuntimeJob[];
 }>;
 
 export type FleetWriterFenceMaterial = Readonly<{
@@ -69,50 +82,127 @@ function text(value: unknown): string {
   return String(value ?? "").trim();
 }
 
-function exactFleetSalesPolicy(row: ActiveFleetScopeRow): readonly FleetSalesRuntimeJob[] | null {
+function exactJobs(
+  value: unknown,
+  expected: readonly FleetRuntimeJob[],
+): value is readonly FleetRuntimeJob[] {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((job, index) => job === expected[index]);
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(record[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+type ExactFleetRuntimePolicy = Readonly<{
+  profile: FleetRuntimePolicyProfile;
+  jobs: readonly FleetRuntimeJob[];
+  providerConfig: Readonly<Record<string, unknown>>;
+}>;
+
+function exactFleetRuntimePolicy(row: ActiveFleetScopeRow): ExactFleetRuntimePolicy | null {
   if (
-    row.catalog_sync_enabled !== false
-    || text(row.sync_mode).toUpperCase() !== "PULL_ONLY"
-    || text(row.write_mode).toUpperCase() !== "NONE"
-    || !row.provider_config
+    !row.provider_config
     || typeof row.provider_config !== "object"
     || Array.isArray(row.provider_config)
   ) return null;
   const providerConfig = row.provider_config as Record<string, unknown>;
-  const allowlist = providerConfig.runtime_sales_job_allowlist;
+  const profile = text(providerConfig.runtime_fleet_profile);
+
+  if (profile === "full-lanes-v1") {
+    if (
+      row.catalog_sync_enabled !== true
+      || text(row.sync_mode).toUpperCase() !== "BIDIRECTIONAL"
+      || text(row.write_mode).toUpperCase() !== "XML_IMPORT"
+      || !exactJobs(providerConfig.runtime_fleet_job_allowlist, FLEET_FULL_RUNTIME_JOB_ALLOWLIST)
+      || !exactJobs(providerConfig.runtime_sales_job_allowlist, FLEET_SALES_RUNTIME_JOB_ALLOWLIST)
+      || providerConfig.intraday_sales_sync_enabled !== true
+      || providerConfig.open_tickets_sync_enabled !== false
+      || providerConfig.open_tickets_stock_sync_enabled !== false
+      || providerConfig.runtime_catalog_enabled !== true
+      || providerConfig.runtime_stock_enabled !== true
+      || providerConfig.runtime_outbound_enabled !== true
+      || providerConfig.runtime_maintenance_enabled !== false
+    ) return null;
+    return Object.freeze({
+      profile: "full-lanes-v1",
+      jobs: FLEET_FULL_RUNTIME_JOB_ALLOWLIST,
+      providerConfig: Object.freeze({
+        runtime_fleet_profile: "full-lanes-v1",
+        runtime_fleet_job_allowlist: [...FLEET_FULL_RUNTIME_JOB_ALLOWLIST],
+        runtime_sales_job_allowlist: [...FLEET_SALES_RUNTIME_JOB_ALLOWLIST],
+        intraday_sales_sync_enabled: true,
+        open_tickets_sync_enabled: false,
+        open_tickets_stock_sync_enabled: false,
+        runtime_catalog_enabled: true,
+        runtime_stock_enabled: true,
+        runtime_outbound_enabled: true,
+        runtime_maintenance_enabled: false,
+      }),
+    });
+  }
+
+  const hasUnexpectedFleetPolicy = Object.prototype.hasOwnProperty.call(
+    providerConfig,
+    "runtime_fleet_job_allowlist",
+  );
   if (
-    !Array.isArray(allowlist)
-    || allowlist.length !== FLEET_SALES_RUNTIME_JOB_ALLOWLIST.length
-    || allowlist.some((job, index) => job !== FLEET_SALES_RUNTIME_JOB_ALLOWLIST[index])
+    (profile !== "" && profile !== "sales-only-v1")
+    || hasUnexpectedFleetPolicy
+    || row.catalog_sync_enabled !== false
+    || text(row.sync_mode).toUpperCase() !== "PULL_ONLY"
+    || text(row.write_mode).toUpperCase() !== "NONE"
+    || !exactJobs(providerConfig.runtime_sales_job_allowlist, FLEET_SALES_RUNTIME_JOB_ALLOWLIST)
     || providerConfig.intraday_sales_sync_enabled !== true
     || providerConfig.open_tickets_sync_enabled !== false
     || providerConfig.open_tickets_stock_sync_enabled !== false
   ) return null;
-  return FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
+  return Object.freeze({
+    profile: "sales-only-v1",
+    jobs: FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
+    providerConfig: Object.freeze({
+      runtime_sales_job_allowlist: [...FLEET_SALES_RUNTIME_JOB_ALLOWLIST],
+      intraday_sales_sync_enabled: true,
+      open_tickets_sync_enabled: false,
+      open_tickets_stock_sync_enabled: false,
+    }),
+  });
 }
 
-function validActiveFleetScope(row: ActiveFleetScopeRow): ActiveFleetScope | null {
+async function validActiveFleetScope(row: ActiveFleetScopeRow): Promise<ActiveFleetScope | null> {
   const connectionId = text(row.connection_id);
   const runId = text(row.run_id);
   const generationMode = text(row.generation_mode).toLowerCase();
   const credentialSetSha256 = text(row.credential_set_sha256).toLowerCase();
   const writerFenceGrantSha256 = text(row.writer_fence_grant_sha256).toLowerCase();
-  const runtimeSalesJobAllowlist = exactFleetSalesPolicy(row);
+  const runtimePolicy = exactFleetRuntimePolicy(row);
   if (
     !isDeployableRuntimeCanaryConnectionId(connectionId)
     || !RUN_ID_PATTERN.test(runId)
     || !GENERATION_MODE_PATTERN.test(generationMode)
     || !SHA256_PATTERN.test(credentialSetSha256)
     || !SHA256_PATTERN.test(writerFenceGrantSha256)
-    || !runtimeSalesJobAllowlist
+    || !runtimePolicy
   ) return null;
+  const runtimePolicySha256 = await sha256Hex(canonicalJson(runtimePolicy.providerConfig));
   return Object.freeze({
     connectionId,
     runId,
     generationMode,
     credentialSetSha256,
     writerFenceGrantSha256,
-    runtimeSalesJobAllowlist,
+    runtimePolicyProfile: runtimePolicy.profile,
+    runtimePolicySha256,
+    runtimeJobAllowlist: runtimePolicy.jobs,
+    runtimeSalesJobAllowlist: runtimePolicy.jobs,
   });
 }
 
@@ -147,7 +237,7 @@ export async function loadActiveFleetScope(
     LIMIT 2
   `);
   if (result.rowCount !== 1 || result.rows.length !== 1) return null;
-  const scope = validActiveFleetScope(result.rows[0]);
+  const scope = await validActiveFleetScope(result.rows[0]);
   if (!scope || scope.connectionId !== connectionId) return null;
   const credentials = await database.query<FleetCredentialGenerationRow>(sql`
     SELECT
@@ -203,7 +293,7 @@ export function isEnvelopeInsideActiveFleetScope(
   return envelope.connectionId === scope.connectionId
     && envelope.runtimeScope?.runId === scope.runId
     && envelope.runtimeScope.credentialSetSha256 === scope.credentialSetSha256
-    && scope.runtimeSalesJobAllowlist.includes(envelope.job as FleetSalesRuntimeJob)
+    && scope.runtimeJobAllowlist.includes(envelope.job as FleetRuntimeJob)
     && envelope.source.kind === "queue"
     && envelope.source.eventId === fleetEnvelopeEventId(scope, envelope.messageId);
 }
@@ -280,6 +370,27 @@ export async function resolveFleetWriterFenceMaterial(
   const grant = parseWriterFenceGrant(entry.rawGrant);
   if (grant.connectionId !== scope.connectionId || grant.runId !== scope.runId) {
     throw new Error("RUNTIME_FLEET_FENCE_GRANT_SCOPE_MISMATCH");
+  }
+  const activationScope = grant.version === 3
+    && grant.writerHistory?.mode === "adopt-existing-sales"
+    ? grant.activationScope as (typeof grant.activationScope & {
+      runtimePolicyProfile?: unknown;
+      runtimeJobAllowlist?: unknown;
+    })
+    : null;
+  const boundPolicySha256 = activationScope?.runtimePolicySha256 ?? null;
+  const hasExplicitPolicy = activationScope
+    && Object.prototype.hasOwnProperty.call(activationScope, "runtimePolicyProfile")
+    && Object.prototype.hasOwnProperty.call(activationScope, "runtimeJobAllowlist");
+  const explicitPolicyMatches = hasExplicitPolicy
+    && activationScope.runtimePolicyProfile === scope.runtimePolicyProfile
+    && exactJobs(activationScope.runtimeJobAllowlist, scope.runtimeJobAllowlist);
+  if (
+    (scope.runtimePolicyProfile === "full-lanes-v1" && (!boundPolicySha256 || !explicitPolicyMatches))
+    || (hasExplicitPolicy && !explicitPolicyMatches)
+    || (boundPolicySha256 !== null && boundPolicySha256 !== scope.runtimePolicySha256)
+  ) {
+    throw new Error("RUNTIME_FLEET_FENCE_POLICY_BINDING_MISMATCH");
   }
   return Object.freeze({
     rawGrant: entry.rawGrant,

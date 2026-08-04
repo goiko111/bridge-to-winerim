@@ -39,6 +39,25 @@ const PROVIDER_CONFIG = {
   open_tickets_sync_enabled: false,
   open_tickets_stock_sync_enabled: false,
 };
+const FULL_LANES_JOBS = [
+  "sales.auto-sync",
+  "sales.sync-intraday",
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "outbound.process",
+];
+const FULL_LANES_PROVIDER_CONFIG = {
+  runtime_fleet_profile: "full-lanes-v1",
+  runtime_fleet_job_allowlist: FULL_LANES_JOBS,
+  runtime_sales_job_allowlist: ["sales.auto-sync", "sales.sync-intraday"],
+  intraday_sales_sync_enabled: true,
+  open_tickets_sync_enabled: false,
+  open_tickets_stock_sync_enabled: false,
+  runtime_catalog_enabled: true,
+  runtime_stock_enabled: true,
+  runtime_outbound_enabled: true,
+  runtime_maintenance_enabled: false,
+};
 const temporaryDirectories: string[] = [];
 
 type EvidenceOptions = {
@@ -208,6 +227,22 @@ function grantEnvironment(
     NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256: evidence.evidenceSha256,
     NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY: evidence.publicKeyPath,
     NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY_SHA256: evidence.publicKeySha256,
+  };
+}
+
+function fullLanesGrantEnvironment(
+  directory: string,
+  overrides: Record<string, string> = {},
+) {
+  return {
+    ...grantEnvironment(directory),
+    WRITER_FENCE_MODE: "adopt-existing-full-lanes-no-legacy-writer",
+    CANARY_RUNTIME_JOBS: JSON.stringify(FULL_LANES_JOBS),
+    CANARY_RUNTIME_LANE: "full-lanes",
+    CANARY_RUNTIME_CATALOG_ENABLED: "true",
+    CANARY_RUNTIME_STOCK_ENABLED: "true",
+    CANARY_RUNTIME_OUTBOUND_ENABLED: "true",
+    ...overrides,
   };
 }
 
@@ -685,5 +720,72 @@ describe("adopt-existing sales writer-fence grant", () => {
     });
     expect(result.grant).not.toHaveProperty("runtimeScope");
     expect(result.grant).not.toHaveProperty("writerHistory");
+  });
+});
+
+describe("adopt-existing full-lanes writer-fence grant", () => {
+  it("binds the exact five-job full-lanes policy into the signed activation scope", () => {
+    const directory = temporaryDirectory("writer-fence-adopt-full-lanes");
+    const output = join(directory, "writer-fence-grant.json");
+    const result = prepareWriterFenceGrant({
+      environment: fullLanesGrantEnvironment(directory),
+      output,
+    });
+
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(result.grant).toMatchObject({
+      version: 3,
+      grantType: "adopt-existing-sales",
+      writerHistory: { mode: "adopt-existing-sales" },
+      activationScope: {
+        version: 1,
+        kind: "adopt-existing-sales",
+        runtimePolicyProfile: "full-lanes-v1",
+        runtimeJobAllowlist: FULL_LANES_JOBS,
+        runtimePolicySha256: createHash("sha256")
+          .update(canonicalJson(FULL_LANES_PROVIDER_CONFIG))
+          .digest("hex"),
+      },
+    });
+    expect(JSON.parse(readFileSync(output, "utf8"))).toEqual(result.grant);
+  });
+
+  it.each([
+    ["missing job", {
+      CANARY_RUNTIME_JOBS: JSON.stringify(FULL_LANES_JOBS.slice(0, -1)),
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_JOBS_REQUIRED"],
+    ["reordered jobs", {
+      CANARY_RUNTIME_JOBS: JSON.stringify([
+        "sales.auto-sync",
+        "sales.sync-intraday",
+        "catalog.sync-master",
+        "catalog.fetch-winerim",
+        "outbound.process",
+      ]),
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_JOBS_REQUIRED"],
+    ["wrong lane", {
+      CANARY_RUNTIME_LANE: "sales",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_LANE_REQUIRED"],
+    ["catalog closed", {
+      CANARY_RUNTIME_CATALOG_ENABLED: "false",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"],
+    ["stock closed", {
+      CANARY_RUNTIME_STOCK_ENABLED: "false",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"],
+    ["outbound closed", {
+      CANARY_RUNTIME_OUTBOUND_ENABLED: "false",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"],
+    ["open tickets opened", {
+      CANARY_RUNTIME_OPEN_TICKETS_ENABLED: "true",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"],
+    ["maintenance opened", {
+      CANARY_RUNTIME_MAINTENANCE_ENABLED: "true",
+    }, "WRITER_FENCE_GRANT_ADOPT_EXISTING_FULL_LANES_FEATURES_REQUIRED"],
+  ])("rejects %s fail-closed", (_label, overrides, expectedError) => {
+    const directory = temporaryDirectory("writer-fence-adopt-full-lanes-drift");
+    expect(() => prepareWriterFenceGrant({
+      environment: fullLanesGrantEnvironment(directory, overrides),
+      output: join(directory, "writer-fence-grant.json"),
+    })).toThrow(expectedError);
   });
 });
