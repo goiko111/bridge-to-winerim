@@ -488,6 +488,8 @@ function validateAdoptExistingHistory(history: WriterFenceAdoptExistingHistory |
   );
   const external = history.externalEvidence;
   if (
+    Object.prototype.hasOwnProperty.call(history, "absence")
+    ||
     !external
     || !SHA256_PATTERN.test(String(external.artifactSha256 ?? ""))
     || !SHA256_PATTERN.test(String(external.publicKeySha256 ?? ""))
@@ -518,7 +520,7 @@ function validateAdoptExistingHistory(history: WriterFenceAdoptExistingHistory |
   if (
     verifiedAt !== observedAt
     || fenceAppliedAt > readbacks[0]
-    || readbacks[0] > readbacks[1]
+    || readbacks[0] >= readbacks[1]
     || readbacks[1] !== observedAt
   ) {
     throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_ORDER_REJECTED");
@@ -592,6 +594,13 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
   }
   validateCommonGrantFields(grant);
   if (grant.version === 1) {
+    if (
+      Object.prototype.hasOwnProperty.call(grant, "writerHistory")
+      || Object.prototype.hasOwnProperty.call(grant, "grantType")
+      || Object.prototype.hasOwnProperty.call(grant, "activationScope")
+    ) {
+      throw new Error("WRITER_FENCE_GRANT_LEGACY_ADOPT_FIELDS_FORBIDDEN");
+    }
     validateLegacyGrantCredentialFields(grant);
     validateLegacyWriterEvidence(grant.legacyWriter);
     return grant as WriterFenceGrantV1;
@@ -623,7 +632,15 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
     if (hasLegacy === hasBootstrap) {
       throw new Error("WRITER_FENCE_GRANT_FLEET_WRITER_HISTORY_AMBIGUOUS");
     }
-    if (hasLegacy) validateLegacyWriterEvidence(grant.legacyWriter);
+    if (hasLegacy) {
+      if (
+        Object.prototype.hasOwnProperty.call(grant, "grantType")
+        || Object.prototype.hasOwnProperty.call(grant, "activationScope")
+      ) {
+        throw new Error("WRITER_FENCE_GRANT_LEGACY_ADOPT_FIELDS_FORBIDDEN");
+      }
+      validateLegacyWriterEvidence(grant.legacyWriter);
+    }
     else if (grant.writerHistory?.mode === "adopt-existing-sales") {
       if (grant.grantType !== "adopt-existing-sales") {
         throw new Error("WRITER_FENCE_GRANT_ADOPT_EXISTING_TYPE_REQUIRED");
@@ -644,6 +661,12 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
   validateLegacyGrantCredentialFields(grant);
   if (Object.prototype.hasOwnProperty.call(grant, "legacyWriter")) {
     throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_LEGACY_EVIDENCE_FORBIDDEN");
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(grant, "grantType")
+    || Object.prototype.hasOwnProperty.call(grant, "activationScope")
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_ACTIVATION_SCOPE_FORBIDDEN");
   }
   const history = grant.writerHistory;
   validateBootstrapHistory(history);

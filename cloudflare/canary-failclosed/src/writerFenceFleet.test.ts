@@ -338,6 +338,30 @@ describe("fleet writer-fence credential bundle", () => {
       holderId,
       nowMs: Date.parse("2026-08-04T12:30:00.000Z"),
     })).rejects.toThrow("WRITER_FENCE_GRANT_ADOPT_EXISTING_SCOPE_SIGNATURE_MISMATCH");
+
+    expect(() => parseWriterFenceGrant(JSON.stringify({
+      ...grant,
+      writerHistory: {
+        ...grant.writerHistory!,
+        absence: { activeConnectionCount: 0 },
+      },
+    }))).toThrow("WRITER_FENCE_GRANT_ADOPT_EXISTING_EXTERNAL_EVIDENCE_REJECTED");
+
+    const equalReadbackGrant = structuredClone(grant);
+    if (equalReadbackGrant.writerHistory?.mode === "adopt-existing-sales") {
+      equalReadbackGrant.writerHistory.externalEvidence.readbackObservedAt[0] =
+        equalReadbackGrant.writerHistory.externalEvidence.readbackObservedAt[1];
+    }
+    expect(() => parseWriterFenceGrant(JSON.stringify(equalReadbackGrant))).toThrow(
+      "WRITER_FENCE_GRANT_ADOPT_EXISTING_EVIDENCE_ORDER_REJECTED",
+    );
+
+    const legacyGrant = await fleetGrant();
+    expect(() => parseWriterFenceGrant(JSON.stringify({
+      ...legacyGrant,
+      grantType: "adopt-existing-sales",
+      activationScope: grant.activationScope,
+    }))).toThrow("WRITER_FENCE_GRANT_LEGACY_ADOPT_FIELDS_FORBIDDEN");
   });
 
   it("fails closed on bundle tampering, generation drift, expiry and cross-connection scope", async () => {
