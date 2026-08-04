@@ -234,7 +234,9 @@ describe("fleet runtime credential provisioning", () => {
       const sql = readFileSync(artifact.output, "utf8");
       const manifest = readFileSync(artifact.manifestPath, "utf8");
       expect(sql).toContain("active = false");
-      expect(sql).toContain("adopt-existing requires an empty credential vault");
+      expect(sql).toContain("IN ('rotate', 'adopt-existing') AND existing_credentials <> 0");
+      expect(sql).toContain("credential history is incomplete or still active");
+      expect(sql).not.toContain("adopt-existing requires an empty credential vault");
       expect(sql).toContain(
         `WHERE connection_id = '${artifact.connectionId}'::uuid\n    AND active = true`,
       );

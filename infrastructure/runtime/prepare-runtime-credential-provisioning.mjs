@@ -555,9 +555,6 @@ export function renderCredentialProvisioningSql({
     ? `adopt-existing:v3:${adoption.bindingSha256}`
     : `rescue-canary-run:${runId}`;
   const adoptionSql = mode === "adopt-existing" ? `
-  IF existing_credentials <> 0 THEN
-    RAISE EXCEPTION 'adopt-existing requires an empty credential vault';
-  END IF;
   IF (
     SELECT count(*) FROM public.sales_events
     WHERE connection_id = '${connectionId}'::uuid
@@ -640,7 +637,7 @@ BEGIN
   IF '${mode}' = 'bootstrap' AND existing_credentials <> 0 THEN
     RAISE EXCEPTION 'credential vault is not empty; use versioned rotate mode';
   END IF;
-  IF '${mode}' = 'rotate' THEN
+  IF '${mode}' IN ('rotate', 'adopt-existing') AND existing_credentials <> 0 THEN
     IF existing_credentials < 2 THEN
       RAISE EXCEPTION 'credential rotation requires a complete retired generation';
     END IF;
@@ -662,7 +659,7 @@ BEGIN
         OR scope.retired_at IS NULL
     ) invalid_generation;
     IF incomplete_versions <> 0 THEN
-      RAISE EXCEPTION 'credential rotation history is incomplete or still active';
+      RAISE EXCEPTION 'credential history is incomplete or still active';
     END IF;
   END IF;
 ${adoptionSql}
