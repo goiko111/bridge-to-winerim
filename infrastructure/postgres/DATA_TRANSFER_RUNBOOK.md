@@ -25,7 +25,7 @@ copies rows from the six staging-owned tables:
 The allowlist and optional subset are versioned in `data-transfer/config.json`.
 A source database may contain additional platform tables, but they are never
 dumped. The target must be provisioned by the reviewed migrations/bootstrap,
-contain exactly the 30 reviewed public tables and the sentinel
+contain exactly the 31 reviewed public tables and the sentinel
 `public.infrastructure_metadata.environment=staging`. Optional tables absent
 from the source remain present and empty on the target.
 
@@ -97,7 +97,7 @@ npx tsc --noEmit --pretty false
 ```
 
 Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, focal tests green,
-`LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty
+`LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=31 own_only=empty
 concurrent_write_abort=1`
 and typecheck
 green.

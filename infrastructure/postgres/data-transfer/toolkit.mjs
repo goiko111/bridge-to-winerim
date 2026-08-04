@@ -1126,7 +1126,7 @@ export function buildSafePlan(config) {
       "provider_credentials staging-only and required empty",
       "pos_connections exported through an exact checksummed credential-sanitizing projection",
       "only the four versioned optional source tables may be absent",
-      "target sentinel environment=staging and exact 30-table inventory",
+      "target sentinel environment=staging and exact 31-table inventory",
       "source-absent optional target tables required empty",
       "runtime staging tables empty before import",
       "target backup with advisory fence and continuous WAL stability evidence",

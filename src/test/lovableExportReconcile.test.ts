@@ -53,14 +53,16 @@ describe("Lovable export/reconcile staging toolkit", () => {
       "infrastructure_metadata",
       "provider_credentials",
       "runtime_canary_connections",
+      "runtime_catalog_source_scope",
       "runtime_connection_credentials",
       "runtime_execution_log",
       "runtime_idempotency",
     ]);
-    expect(expectedTargetTables(config)).toHaveLength(30);
+    expect(expectedTargetTables(config)).toHaveLength(31);
     expect(config.runtimeMustRemainEmpty).toEqual([
       "provider_credentials",
       "runtime_canary_connections",
+      "runtime_catalog_source_scope",
       "runtime_connection_credentials",
       "runtime_execution_log",
       "runtime_idempotency",

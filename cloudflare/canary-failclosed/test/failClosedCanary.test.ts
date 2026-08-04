@@ -492,49 +492,44 @@ describe("connection writer fence", () => {
     }
   });
 
-  it("generates a bootstrap grant only from explicit zero evidence and no legacy probe", async () => {
+  it("rejects legacy zero counters without signed external writer evidence", async () => {
     const directory = mkdtempSync(join(tmpdir(), "writer-fence-bootstrap-grant-"));
     const output = join(directory, "grant.json");
     const proof = "bootstrap-generated-proof-only-known-by-runtime-123";
     const credentialReference = `runtime-vault://postgres/${connectionId}/agora/agora`;
     try {
-      execFileSync(process.execPath, [
-        resolve("infrastructure/runtime/prepare-writer-fence-grant.mjs"),
-        `--output=${output}`,
-      ], {
-        cwd: resolve("."),
-        env: {
-          ...process.env,
-          WRITER_FENCE_MODE: "bootstrap-no-legacy-writer",
-          CANARY_CONNECTION_ID: connectionId,
-          CANARY_RUN_ID: runId,
-          CANARY_HOLDER_ID: "deploy-a",
-          CANARY_WRITER_FENCE_PROOF: proof,
-          CANARY_EXCLUSIVE_CREDENTIAL_REF: credentialReference,
-          CANARY_EXCLUSIVE_CREDENTIAL_VERSION: "f".repeat(64),
-          CANARY_RUNTIME_JOB: "catalog.sync-master",
-          CANARY_RUNTIME_LANE: "catalog",
-          CANARY_CATALOG_PRODUCT_ID: "500001",
-          NO_LEGACY_WRITER_VERIFIED_AT: "2026-08-03T05:58:00.000Z",
-          NO_LEGACY_WRITER_EVIDENCE_SHA256: "a".repeat(64),
-          NO_LEGACY_WRITER_CLOUDFLARE_EVIDENCE_SHA256: "b".repeat(64),
-          NO_LEGACY_WRITER_ACTIVE_CONNECTION_COUNT: "0",
-          NO_LEGACY_WRITER_ACTIVE_CREDENTIAL_COUNT: "0",
-          NO_LEGACY_WRITER_ACTIVE_SCOPE_COUNT: "0",
-          NO_LEGACY_WRITER_PRIOR_RUN_COUNT: "0",
-          NO_LEGACY_WRITER_ACTIVE_PRODUCER_COUNT: "0",
-          NO_LEGACY_WRITER_ACTIVE_CONSUMER_COUNT: "0",
-          CANARY_FENCE_ISSUED_AT: "2026-08-03T06:00:00.000Z",
-          CANARY_FENCE_EXPIRES_AT: "2026-08-03T07:00:00.000Z",
-        },
-        stdio: "pipe",
-      });
-      const source = readFileSync(output, "utf8");
-      const grant = parseWriterFenceGrant(source);
-      expect(grant.version).toBe(2);
-      expect(source).not.toContain("legacyWriter");
-      expect(source).not.toContain("negativeProbeStatus");
-      expect(grant.exclusiveCredentialRef).toBe(credentialReference);
+      expect(() => execFileSync(process.execPath, [
+          resolve("infrastructure/runtime/prepare-writer-fence-grant.mjs"),
+          `--output=${output}`,
+        ], {
+          cwd: resolve("."),
+          env: {
+            ...process.env,
+            WRITER_FENCE_MODE: "bootstrap-no-legacy-writer",
+            CANARY_CONNECTION_ID: connectionId,
+            CANARY_RUN_ID: runId,
+            CANARY_HOLDER_ID: "deploy-a",
+            CANARY_WRITER_FENCE_PROOF: proof,
+            CANARY_EXCLUSIVE_CREDENTIAL_REF: credentialReference,
+            CANARY_EXCLUSIVE_CREDENTIAL_VERSION: "f".repeat(64),
+            CANARY_RUNTIME_JOB: "catalog.sync-master",
+            CANARY_RUNTIME_LANE: "catalog",
+            CANARY_CATALOG_PRODUCT_ID: "500001",
+            NO_LEGACY_WRITER_VERIFIED_AT: "2026-08-03T05:58:00.000Z",
+            NO_LEGACY_WRITER_EVIDENCE_SHA256: "a".repeat(64),
+            NO_LEGACY_WRITER_CLOUDFLARE_EVIDENCE_SHA256: "b".repeat(64),
+            NO_LEGACY_WRITER_ACTIVE_CONNECTION_COUNT: "0",
+            NO_LEGACY_WRITER_ACTIVE_CREDENTIAL_COUNT: "0",
+            NO_LEGACY_WRITER_ACTIVE_SCOPE_COUNT: "0",
+            NO_LEGACY_WRITER_PRIOR_RUN_COUNT: "0",
+            NO_LEGACY_WRITER_ACTIVE_PRODUCER_COUNT: "0",
+            NO_LEGACY_WRITER_ACTIVE_CONSUMER_COUNT: "0",
+            CANARY_FENCE_ISSUED_AT: "2026-08-03T06:00:00.000Z",
+            CANARY_FENCE_EXPIRES_AT: "2026-08-03T07:00:00.000Z",
+          },
+          stdio: "pipe",
+        })).toThrow(/NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256/);
+      expect(() => readFileSync(output, "utf8")).toThrow();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

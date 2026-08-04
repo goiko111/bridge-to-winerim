@@ -335,4 +335,4 @@ fi
 psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 \
   -c "DELETE FROM public.provider_credentials WHERE merchant_id='runtime-empty-gate'"
 
-printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED concurrent_write_abort=1 idempotent=1 rollback=1 resume=1\n'
+printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=31 own_only=empty credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED concurrent_write_abort=1 idempotent=1 rollback=1 resume=1\n'
