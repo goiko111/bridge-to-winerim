@@ -41,6 +41,14 @@ import {
   type AgoraCatalogXmlProfile,
   type PrivateCatalogSwitches,
 } from "./catalog";
+import { createAgoraOutboundTransport } from "./agoraOutboundTransport";
+import {
+  createPrivateOutboundLaneExecutor,
+} from "./outbound";
+import {
+  createServiceOutboundRateLimiter,
+  type OutboundRateLimiterServiceBinding,
+} from "./outboundRateLimiter";
 import {
   executeAgoraSalesEnvelope,
   isSalesLaneJob,
@@ -113,6 +121,7 @@ export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironme
   RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS?: string;
   RUNTIME_AGORA_CATALOG_PROFILE_JSON?: string;
   RUNTIME_FLEET_CATALOG_PROFILES_JSON?: string;
+  OUTBOUND_RATE_LIMITER?: OutboundRateLimiterServiceBinding;
   RUNTIME_CANARY_CONNECTION_ID?: string;
   CANARY_RUN_ID?: string;
   CANARY_MESSAGE_ID?: string;
@@ -776,6 +785,13 @@ function catalogSwitches(env: MiddlewareRuntimeExecutorEnv): PrivateCatalogSwitc
   };
 }
 
+function outboundSwitches(env: MiddlewareRuntimeExecutorEnv) {
+  return {
+    executionEnabled: switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED),
+    mutationEnabled: switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED),
+  };
+}
+
 function catalogProfile(value: unknown): AgoraCatalogXmlProfile | null {
   if (typeof value !== "string" || !value.trim()) return null;
   let parsed: JsonRecord;
@@ -960,6 +976,8 @@ function normalizedDependencies(
 
 function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
   const catalogApplyRequested = switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED);
+  const outboundRequested = switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED)
+    || switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
   const missingBindings = [
     !env.MIDDLEWARE_DB ? "MIDDLEWARE_DB" : null,
     typeof env.RUNTIME_VAULT_KEY?.get !== "function" ? "RUNTIME_VAULT_KEY" : null,
@@ -975,6 +993,9 @@ function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
       : null,
     catalogApplyRequested && fleetCatalogProfiles(env.RUNTIME_FLEET_CATALOG_PROFILES_JSON) === null
       ? "RUNTIME_FLEET_CATALOG_PROFILES_JSON"
+      : null,
+    outboundRequested && (!env.OUTBOUND_RATE_LIMITER || typeof env.OUTBOUND_RATE_LIMITER.fetch !== "function")
+      ? "OUTBOUND_RATE_LIMITER"
       : null,
   ].filter((value): value is string => !!value);
   try {
@@ -1406,10 +1427,49 @@ export function createMiddlewareRuntimeExecutorWorker(
             agoraApply: guardedCatalogApply,
           });
 
+          const outboundExecutor = createPrivateOutboundLaneExecutor({
+            allowedConnectionId: runtimeScope.connectionId,
+            switches: outboundSwitches(env),
+            database,
+            connections: scopedConnections,
+            credentials: scopedCredentials,
+            maxBatchSize: 1,
+            limiter: env.OUTBOUND_RATE_LIMITER
+              ? createServiceOutboundRateLimiter({
+                  binding: env.OUTBOUND_RATE_LIMITER,
+                  sleep: resolved.sleep,
+                })
+              : {
+                  acquire: async () => {
+                    throw new Error("OUTBOUND_RATE_LIMITER_NOT_CONFIGURED");
+                  },
+                },
+            transport: async ({ connection, credential }) => {
+              await assertExclusiveWriterFence(
+                env,
+                database,
+                runtimeScope.connectionId,
+                credential,
+                resolved.now,
+                "agora",
+                true,
+                fenceScope,
+              );
+              return createAgoraOutboundTransport({
+                connectionId: runtimeScope.connectionId,
+                baseUrl: connection.baseUrl,
+                allowedHosts: String(env.RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS ?? "")
+                  .split(",")
+                  .map((host) => host.trim().toLowerCase())
+                  .filter(Boolean),
+                credential,
+                request: { request: (target, init) => resolved.request(target, init) },
+              });
+            },
+          });
+
           if (CATALOG_JOBS.has(envelope.job)) return catalogExecutor.execute(envelope);
-          if (envelope.job === "outbound.process") {
-            return failure(503, "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED");
-          }
+          if (envelope.job === "outbound.process") return outboundExecutor.execute(envelope);
           if (!isSalesLaneJob(envelope.job)) return stockExecutor.execute(envelope);
           const flags = salesLaneFlags(env);
           const salesGate = salesLaneGateFailure(flags, envelopeDryRun(envelope), envelope.job);

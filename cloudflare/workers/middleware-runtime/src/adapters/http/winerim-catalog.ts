@@ -10,11 +10,15 @@ import {
 import { createSafeHttpClient, redactSensitiveText } from "./safe-http";
 
 const BULK_WINES_PATH = "/api/v2/wines/bulk";
+const WINES_PATH = "/api/v2/wines";
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_WINE_ID_DIGITS = 15;
 const MAX_PRODUCT_PRICE = 1_000_000;
 const MAX_PRICES = 24;
+const INVENTORY_PAGE_SIZE = 100;
+const MAX_INVENTORY_PAGES = 100;
+const INVENTORY_BULK_SIZE = 50;
 
 export const WINERIM_CATALOG_REFRESH_VERSION = 1 as const;
 export const WINERIM_CATALOG_BULK_ENDPOINT = BULK_WINES_PATH;
@@ -48,6 +52,25 @@ export type WinerimCatalogClient = Readonly<{
     winerimWineId: string;
     format: WinerimCatalogFormat;
   }>): Promise<WinerimCatalogRead>;
+}>;
+
+export type WinerimCatalogInventoryWine = Readonly<{
+  winerimId: string;
+  name: string;
+  vintage: string | null;
+  wineType: string | null;
+  active: boolean;
+  variants: readonly WinerimCatalogVariantSnapshot[];
+  raw: Readonly<Record<string, unknown>>;
+}>;
+
+export type WinerimCatalogInventory = Readonly<{
+  wines: readonly WinerimCatalogInventoryWine[];
+  fingerprint: string;
+}>;
+
+export type WinerimCatalogInventoryClient = Readonly<{
+  fetchInventory(): Promise<WinerimCatalogInventory>;
 }>;
 
 export type WinerimCatalogClientOptions = Readonly<{
@@ -205,6 +228,47 @@ function normalizeWine(
   });
 }
 
+function inventoryWine(value: unknown, expectedWineId: string): WinerimCatalogInventoryWine {
+  const raw = record(value);
+  if (!raw || validWineId(raw.id) !== expectedWineId) {
+    throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+  }
+  const variants: WinerimCatalogVariantSnapshot[] = [];
+  let common: WinerimCatalogWineSnapshot | null = null;
+  for (const format of WINERIM_CATALOG_FORMATS) {
+    try {
+      const normalized = normalizeWine(raw, expectedWineId, format);
+      common ??= normalized;
+      variants.push(normalized.variant);
+    } catch (error) {
+      if (!(error instanceof WinerimCatalogError) || error.code !== "WINERIM_CATALOG_VARIANT_NOT_FOUND") {
+        throw error;
+      }
+    }
+  }
+  if (!common) {
+    const name = boundedText(raw.name, 200, true) as string;
+    const status = boundedText(raw.status, 32)?.toLowerCase();
+    common = {
+      winerimId: expectedWineId,
+      name,
+      vintage: boundedText(raw.vintage ?? raw.year, 16),
+      wineType: boundedText(firstDefined(raw, ["type", "wine_type", "category", "style", "color", "colour"]), 80)?.toLowerCase() ?? null,
+      active: raw.active !== false && raw.is_active !== false && status !== "inactive",
+      variant: { format: "BOTTLE", salePrice: 0, costPrice: 0, enabled: true },
+    };
+  }
+  return Object.freeze({
+    winerimId: common.winerimId,
+    name: common.name,
+    vintage: common.vintage,
+    wineType: common.wineType,
+    active: common.active,
+    variants: Object.freeze(variants.sort((left, right) => left.format.localeCompare(right.format))),
+    raw: Object.freeze({ ...raw }),
+  });
+}
+
 async function credentialHeaders(credential: SecretTextPort): Promise<Readonly<Record<string, string>>> {
   let token: string;
   try {
@@ -260,6 +324,96 @@ export function createWinerimCatalogClient(options: WinerimCatalogClientOptions)
       const wine = normalizeWine(payload.wines[0], winerimWineId, input.format);
       const fingerprint = await sha256Hex(canonicalJson(wine as unknown as JsonValue));
       return Object.freeze({ fingerprint, wine });
+    },
+  });
+}
+
+export function createWinerimCatalogInventoryClient(
+  options: WinerimCatalogClientOptions,
+): WinerimCatalogInventoryClient {
+  const http = createSafeHttpClient({
+    target: "winerim",
+    baseUrl: options.baseUrl,
+    allowedHosts: options.allowedHosts,
+    allowedProtocols: ["https:"],
+    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxResponseBytes: Math.max(options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES, 4 * 1024 * 1024),
+    request: options.request,
+    timer: options.timer,
+    logger: options.logger,
+  });
+
+  return Object.freeze({
+    async fetchInventory(): Promise<WinerimCatalogInventory> {
+      const headers = await credentialHeaders(options.credential);
+      const listed = new Map<string, Record<string, unknown>>();
+      for (let page = 1; page <= MAX_INVENTORY_PAGES; page++) {
+        const response = await http.request({
+          operation: "winerim.catalog-list",
+          method: "GET",
+          path: WINES_PATH,
+          query: { page: String(page), limit: String(INVENTORY_PAGE_SIZE) },
+          headers,
+        });
+        if (!response.ok) throw new WinerimCatalogError("WINERIM_CATALOG_HTTP_ERROR");
+        const payload = record(response.body);
+        if (!payload || payload.success !== true || !Array.isArray(payload.wines)) {
+          throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+        }
+        for (const value of payload.wines) {
+          const wine = record(value);
+          const id = validWineId(wine?.id);
+          if (!wine || !id || listed.has(id)) {
+            throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+          }
+          listed.set(id, wine);
+        }
+        const pagination = record(payload.pagination);
+        const totalPages = Number(pagination?.total_pages ?? 1);
+        if (!Number.isInteger(totalPages) || totalPages < 1 || totalPages > MAX_INVENTORY_PAGES) {
+          throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+        }
+        if (page >= totalPages) break;
+      }
+
+      const ids = [...listed.keys()].sort((left, right) => Number(left) - Number(right));
+      const detailed = new Map<string, Record<string, unknown>>();
+      for (let offset = 0; offset < ids.length; offset += INVENTORY_BULK_SIZE) {
+        const batch = ids.slice(offset, offset + INVENTORY_BULK_SIZE);
+        const response = await http.request({
+          operation: "winerim.catalog-bulk-inventory",
+          method: "POST",
+          path: BULK_WINES_PATH,
+          headers,
+          body: { ids: batch.map(Number) },
+        });
+        if (!response.ok) throw new WinerimCatalogError("WINERIM_CATALOG_HTTP_ERROR");
+        const payload = record(response.body);
+        if (!payload || payload.success !== true || !Array.isArray(payload.wines)) {
+          throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+        }
+        for (const value of payload.wines) {
+          const wine = record(value);
+          const id = validWineId(wine?.id);
+          if (!wine || !id || !listed.has(id) || detailed.has(id)) {
+            throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+          }
+          detailed.set(id, { ...listed.get(id), ...wine });
+        }
+      }
+      if (detailed.size !== ids.length) {
+        throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
+      }
+      const wines = ids.map((id) => inventoryWine(detailed.get(id), id));
+      const fingerprint = await sha256Hex(canonicalJson(wines.map((wine) => ({
+        winerimId: wine.winerimId,
+        name: wine.name,
+        vintage: wine.vintage,
+        wineType: wine.wineType,
+        active: wine.active,
+        variants: wine.variants,
+      })) as unknown as JsonValue));
+      return Object.freeze({ wines: Object.freeze(wines), fingerprint });
     },
   });
 }

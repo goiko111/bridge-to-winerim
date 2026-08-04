@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createWinerimCatalogClient,
+  createWinerimCatalogInventoryClient,
   HttpAdapterError,
   type HttpAdapterLogEvent,
   type HttpTimerPort,
@@ -172,5 +173,83 @@ describe("Winerim single-wine catalog adapter", () => {
 
     await expect(client.fetchOne({ winerimWineId: "855797", format: "BOTTLE" }))
       .rejects.toMatchObject<HttpAdapterError>({ code: "HTTP_TIMEOUT" });
+  });
+});
+
+describe("Winerim complete catalog inventory adapter", () => {
+  it("paginates the wine list and enriches all variants through bounded bulk requests", async () => {
+    const request = vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/api/v2/wines") {
+        const page = Number(parsed.searchParams.get("page"));
+        return response({
+          success: true,
+          pagination: { total_pages: 2 },
+          wines: page === 1
+            ? [{ id: 855797, name: "Canary wine" }]
+            : [{ id: 855798, name: "Second wine" }],
+        });
+      }
+      return response({
+        success: true,
+        wines: [
+          wine({
+            prices: [
+              { variant: "botella", price: 13.5 },
+              { variant: "copa", price: 3.5 },
+            ],
+          }),
+          wine({ id: 855798, name: "Second wine", prices: [{ variant: "magnum", price: 40 }] }),
+        ],
+      });
+    });
+    const client = createWinerimCatalogInventoryClient({
+      baseUrl: "https://winerim.example.test",
+      allowedHosts: ["winerim.example.test"],
+      credential: { read: () => "credential-secret" },
+      request: { request },
+      timer: timer(),
+    });
+
+    const result = await client.fetchInventory();
+
+    expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.wines).toEqual([
+      expect.objectContaining({
+        winerimId: "855797",
+        variants: [
+          { format: "BOTTLE", salePrice: 13.5, costPrice: 5, enabled: true },
+          { format: "GLASS", salePrice: 3.5, costPrice: 0, enabled: true },
+        ],
+      }),
+      expect.objectContaining({
+        winerimId: "855798",
+        name: "Second wine",
+        variants: [{ format: "MAGNUM", salePrice: 40, costPrice: 0, enabled: true }],
+      }),
+    ]);
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request.mock.calls[0][0]).toContain("page=1");
+    expect(request.mock.calls[1][0]).toContain("page=2");
+    expect(request.mock.calls[2][1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ ids: [855797, 855798] }),
+    });
+  });
+
+  it("rejects duplicate or incomplete inventory identities", async () => {
+    const duplicate = createWinerimCatalogInventoryClient({
+      baseUrl: "https://winerim.example.test",
+      allowedHosts: ["winerim.example.test"],
+      credential: { read: () => "credential" },
+      request: { request: vi.fn().mockResolvedValue(response({
+        success: true,
+        pagination: { total_pages: 1 },
+        wines: [{ id: 855797, name: "One" }, { id: 855797, name: "Duplicate" }],
+      })) },
+      timer: timer(),
+    });
+    await expect(duplicate.fetchInventory())
+      .rejects.toMatchObject<WinerimCatalogError>({ code: "WINERIM_CATALOG_INVALID_RESPONSE" });
   });
 });
