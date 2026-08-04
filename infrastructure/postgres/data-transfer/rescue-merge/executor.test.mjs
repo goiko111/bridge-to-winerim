@@ -8,11 +8,14 @@ import path from "node:path";
 
 import {
   APPLY_CONFIRMATION,
+  backupRestoreVerificationDigest,
   backupManifestDigest,
   evaluateExecutorApplyGate,
   executeRescueMerge,
+  reconcileAmbiguousCommit,
   prepareInsertRows,
   RescueMergeError,
+  sourceExportVerificationDigest,
 } from "./executor.mjs";
 import {
   canonicalJson,
@@ -23,10 +26,19 @@ import {
   sha256,
 } from "./planner.mjs";
 import { RESCUE_MERGE_POLICY_VERSION } from "./policies.mjs";
+import {
+  sourceExportBindingSha256,
+  verifySourceExportArtifact,
+} from "./secure-files.mjs";
+import {
+  RESTORE_TEST_CONFIRMATION,
+  verifyBackupRestoreAutomatically,
+} from "./restore-verifier.mjs";
 
 const execFileAsync = promisify(execFile);
 const TARGET_IDENTITY = "b".repeat(64);
 const SOURCE_IDENTITY = "a".repeat(64);
+const RESTORE_IDENTITY = "9".repeat(64);
 
 function connection() {
   return sanitizePosConnection({
@@ -112,14 +124,12 @@ function plannerInput({ sourceSale = sale(), targetSales = [] } = {}) {
 
 function backupManifest(plan, overrides = {}) {
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     environment: "rescue-production",
     storageClass: "external-encrypted",
     encrypted: true,
     restorable: true,
-    restoreTested: true,
     capturedAt: "2026-08-03T12:06:00.000Z",
-    restoreTestedAt: "2026-08-03T12:07:00.000Z",
     databaseIdentitySha256: TARGET_IDENTITY,
     targetRowsSha256: plan.targetRowsSha256,
     conflictRecheckPlanSha256: plan.planSha256,
@@ -127,11 +137,47 @@ function backupManifest(plan, overrides = {}) {
       relativePath: "target-backup.age",
       sha256: sha256("encrypted-backup"),
       bytes: Buffer.byteLength("encrypted-backup"),
+      format: "postgres-custom-age",
+    },
+    restoreTest: {
+      mode: "automatic-disposable-database",
+      disposableDatabaseName: "winerim_restore_test_executor",
+      disposableDatabaseIdentitySha256: RESTORE_IDENTITY,
+      expectedTargetRowsSha256: plan.targetRowsSha256,
     },
     ...overrides,
   };
   manifest.manifestSha256 = backupManifestDigest(manifest);
   return manifest;
+}
+
+function sourceExportVerification(input) {
+  const verification = {
+    schemaVersion: 1,
+    result: "SOURCE_EXPORT_BYTES_AND_PLANNER_INPUT_BOUND",
+    sourceExportSha256: "8".repeat(64),
+    sourceExportBytes: 123,
+    plannerInputSha256: sha256(canonicalJson(input)),
+    bindingSha256: "7".repeat(64),
+  };
+  verification.verificationSha256 = sourceExportVerificationDigest(verification);
+  return verification;
+}
+
+function backupRestoreVerification(plan, backup) {
+  const verification = {
+    schemaVersion: 1,
+    result: "AUTOMATIC_DISPOSABLE_RESTORE_VERIFIED",
+    backupManifestSha256: backup.manifestSha256,
+    backupArtifactSha256: backup.artifact.sha256,
+    backupArtifactBytes: backup.artifact.bytes,
+    disposableDatabaseIdentitySha256: RESTORE_IDENTITY,
+    targetRowsSha256: plan.targetRowsSha256,
+    planSha256: plan.planSha256,
+    verifiedAt: "2026-08-03T12:07:00.000Z",
+  };
+  verification.verificationSha256 = backupRestoreVerificationDigest(verification);
+  return verification;
 }
 
 function confirmations(plan, backup) {
@@ -144,11 +190,18 @@ function confirmations(plan, backup) {
 }
 
 class MockDatabase {
-  constructor({ targetRows, identity = TARGET_IDENTITY, mutateAfterInsert = false, failInsert = false }) {
+  constructor({
+    targetRows,
+    identity = TARGET_IDENTITY,
+    mutateAfterInsert = false,
+    failInsert = false,
+    ambiguousCommit = false,
+  }) {
     this.targetRows = structuredClone(targetRows);
     this.identity = identity;
     this.mutateAfterInsert = mutateAfterInsert;
     this.failInsert = failInsert;
+    this.ambiguousCommit = ambiguousCommit;
     this.events = [];
     this.snapshot = null;
   }
@@ -159,6 +212,10 @@ class MockDatabase {
     this.snapshot = structuredClone(this.targetRows);
   }
   async acquireAdvisoryLock() { this.events.push("lock:advisory-xact"); }
+  async beginRepeatableReadOnly() {
+    this.events.push("begin:repeatable-read-only");
+    this.snapshot = structuredClone(this.targetRows);
+  }
   async databaseIdentitySha256() { this.events.push("identity"); return this.identity; }
   async readTables(tables) {
     this.events.push("read");
@@ -171,7 +228,10 @@ class MockDatabase {
     if (this.mutateAfterInsert) this.targetRows[table].at(-1).total_amount = "999.00";
     return 1;
   }
-  async commit() { this.events.push("commit"); }
+  async commit() {
+    this.events.push("commit");
+    if (this.ambiguousCommit) throw new Error("connection lost after COMMIT send");
+  }
   async rollback() {
     this.events.push("rollback");
     this.targetRows = structuredClone(this.snapshot);
@@ -183,15 +243,23 @@ function readyFixture() {
   const input = plannerInput();
   const plan = planRescueMerge(input);
   const backup = backupManifest(plan);
-  return { input, plan, backup };
+  return {
+    input,
+    plan,
+    backup,
+    sourceVerification: sourceExportVerification(input),
+    restoreVerification: backupRestoreVerification(plan, backup),
+  };
 }
 
 test("dry-run is the default and the apply gate requires every explicit confirmation", () => {
-  const { input, plan, backup } = readyFixture();
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
   const blocked = evaluateExecutorApplyGate({
     plan,
     plannerInput: input,
+    sourceExportVerification: sourceVerification,
     backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
     now: new Date("2026-08-03T12:08:00.000Z"),
   });
   assert.equal(blocked.ready, false);
@@ -202,12 +270,14 @@ test("dry-run is the default and the apply gate requires every explicit confirma
   assert.ok(blocked.blockers.includes("BACKUP_MANIFEST_NOT_EXPLICITLY_CONFIRMED"));
 });
 
-test("opens the executor gate only for a recomputed safe plan and verified backup", () => {
-  const { input, plan, backup } = readyFixture();
+test("opens the executor gate only for a recomputed safe plan and verified source plus restored backup", () => {
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
   const gate = evaluateExecutorApplyGate({
     plan,
     plannerInput: input,
+    sourceExportVerification: sourceVerification,
     backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
     apply: true,
     confirmApply: APPLY_CONFIRMATION,
     confirmPlanSha256: plan.planSha256,
@@ -219,14 +289,16 @@ test("opens the executor gate only for a recomputed safe plan and verified backu
 });
 
 test("executes advisory-locked serializable insert-only apply and exact pre-commit reconciliation", async () => {
-  const { input, plan, backup } = readyFixture();
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
   const database = new MockDatabase({
     targetRows: Object.fromEntries(Object.entries(input.tables).map(([table, sides]) => [table, sides.target])),
   });
   const result = await executeRescueMerge({
     plan,
     plannerInput: input,
+    sourceExportVerification: sourceVerification,
     backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
     confirmations: confirmations(plan, backup),
     database,
     now: new Date("2026-08-03T12:08:00.000Z"),
@@ -248,7 +320,7 @@ test("executes advisory-locked serializable insert-only apply and exact pre-comm
 });
 
 test("rolls back automatically when the target changed after planning", async () => {
-  const { input, plan, backup } = readyFixture();
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
   const drifted = structuredClone(input.tables);
   drifted.sales_events.target.push(sale({ id: "target-new", provider_doc_id: "invoice-200" }));
   const database = new MockDatabase({
@@ -257,7 +329,9 @@ test("rolls back automatically when the target changed after planning", async ()
   await assert.rejects(() => executeRescueMerge({
     plan,
     plannerInput: input,
+    sourceExportVerification: sourceVerification,
     backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
     confirmations: confirmations(plan, backup),
     database,
     now: new Date("2026-08-03T12:08:00.000Z"),
@@ -267,7 +341,7 @@ test("rolls back automatically when the target changed after planning", async ()
 });
 
 test("rolls back before commit when exact post-reconciliation detects trigger-like drift", async () => {
-  const { input, plan, backup } = readyFixture();
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
   const database = new MockDatabase({
     targetRows: Object.fromEntries(Object.entries(input.tables).map(([table, sides]) => [table, sides.target])),
     mutateAfterInsert: true,
@@ -275,7 +349,9 @@ test("rolls back before commit when exact post-reconciliation detects trigger-li
   await assert.rejects(() => executeRescueMerge({
     plan,
     plannerInput: input,
+    sourceExportVerification: sourceVerification,
     backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
     confirmations: confirmations(plan, backup),
     database,
     now: new Date("2026-08-03T12:08:00.000Z"),
@@ -335,7 +411,7 @@ test("backup binding fails closed on target or plan mismatch", () => {
   assert.ok(gate.blockers.includes("BACKUP_TARGET_ROWS_MISMATCH"));
 });
 
-test("CLI stays offline by default and writes owner-only artifacts", async () => {
+test("CLI verifies the original Lovable export bytes and fails closed before an unconfirmed restore", async () => {
   const { input, plan, backup } = readyFixture();
   const root = await mkdtemp(path.join(os.tmpdir(), "rescue-merge-cli-"));
   const outputDir = path.join(root, "output");
@@ -344,14 +420,30 @@ test("CLI stays offline by default and writes owner-only artifacts", async () =>
     artifact: path.join(root, "artifact.json"),
     backup: path.join(root, "backup.json"),
     backupArtifact: path.join(root, "target-backup.age"),
+    sourceExport: path.join(root, "lovable-original.dump"),
   };
+  const sourceBytes = "lovable-original-export";
+  await writeFile(files.sourceExport, sourceBytes, { mode: 0o600 });
+  const artifact = {
+    schemaVersion: 2,
+    plannerInput: input,
+    sourceExport: {
+      relativePath: path.basename(files.sourceExport),
+      sha256: sha256(sourceBytes),
+      bytes: Buffer.byteLength(sourceBytes),
+      plannerInputSha256: sha256(canonicalJson(input)),
+    },
+  };
+  artifact.sourceExport.bindingSha256 = sourceExportBindingSha256(artifact);
   await writeFile(files.plan, `${JSON.stringify(plan)}\n`, { mode: 0o600 });
-  await writeFile(files.artifact, `${JSON.stringify({ schemaVersion: 1, plannerInput: input })}\n`, { mode: 0o600 });
+  await writeFile(files.artifact, `${JSON.stringify(artifact)}\n`, { mode: 0o600 });
   await writeFile(files.backupArtifact, "encrypted-backup", { mode: 0o600 });
   await writeFile(files.backup, `${JSON.stringify(backup)}\n`, { mode: 0o600 });
   await Promise.all(Object.values(files).map((file) => chmod(file, 0o600)));
 
-  const { stdout } = await execFileAsync(process.execPath, [
+  const verified = await verifySourceExportArtifact(artifact, files.artifact);
+  assert.equal(verified.sourceExportSha256, artifact.sourceExport.sha256);
+  await assert.rejects(() => execFileAsync(process.execPath, [
     new URL("./cli.mjs", import.meta.url).pathname,
     "--plan", files.plan,
     "--artifact", files.artifact,
@@ -359,14 +451,75 @@ test("CLI stays offline by default and writes owner-only artifacts", async () =>
     "--output-dir", outputDir,
   ], {
     env: { ...process.env, RESCUE_MERGE_TARGET_DATABASE_URL: "" },
+  }), (error) => error.stderr.includes("RESTORE_TEST_CONFIRMATION_REQUIRED"));
+
+  await writeFile(files.sourceExport, "tampered-original-export", { mode: 0o600 });
+  await assert.rejects(
+    () => verifySourceExportArtifact(artifact, files.artifact),
+    /SOURCE_EXPORT_(?:SIZE|DIGEST)_MISMATCH/,
+  );
+});
+
+test("automatically restores into a disposable database and recalculates targetRowsSha256", async () => {
+  const { input, plan, backup } = readyFixture();
+  const database = new MockDatabase({
+    targetRows: Object.fromEntries(Object.entries(input.tables).map(([table, sides]) => [table, sides.target])),
+    identity: RESTORE_IDENTITY,
   });
-  const report = JSON.parse(stdout);
-  assert.equal(report.result, "DRY_RUN_READY_APPLY_NOT_REQUESTED");
-  assert.equal(report.connectedToDatabase, false);
-  const reportStat = await stat(path.join(outputDir, "rescue-merge-dry-run.json"));
-  assert.equal(reportStat.mode & 0o777, 0o600);
-  assert.equal((await stat(outputDir)).mode & 0o777, 0o700);
-  assert.equal(JSON.parse(await readFile(path.join(outputDir, "rescue-merge-dry-run.json"), "utf8")).insertCount, 1);
+  let restoreCalled = false;
+  const verification = await verifyBackupRestoreAutomatically({
+    backupManifest: backup,
+    backupArtifactVerification: {
+      artifactPath: "/secure/target-backup.age",
+      sha256: backup.artifact.sha256,
+      bytes: backup.artifact.bytes,
+    },
+    plan,
+    plannerInput: input,
+    connectionString: "postgresql://redacted.invalid/winerim_restore_test_executor",
+    ageIdentityFile: "/secure/age-key",
+    confirmation: RESTORE_TEST_CONFIRMATION,
+    now: new Date("2026-08-03T12:07:00.000Z"),
+    restoreRunner: async () => { restoreCalled = true; },
+    databaseFactory: () => database,
+  });
+  assert.equal(restoreCalled, true);
+  assert.equal(verification.result, "AUTOMATIC_DISPOSABLE_RESTORE_VERIFIED");
+  assert.equal(verification.targetRowsSha256, plan.targetRowsSha256);
+  assert.ok(database.events.includes("begin:repeatable-read-only"));
+});
+
+test("classifies an ambiguous COMMIT only after read-only reconciliation", async () => {
+  const { input, plan, backup, sourceVerification, restoreVerification } = readyFixture();
+  const targetRows = Object.fromEntries(Object.entries(input.tables).map(([table, sides]) => [table, sides.target]));
+  const database = new MockDatabase({ targetRows, ambiguousCommit: true });
+  await assert.rejects(() => executeRescueMerge({
+    plan,
+    plannerInput: input,
+    sourceExportVerification: sourceVerification,
+    backupManifest: backup,
+    backupRestoreVerification: restoreVerification,
+    confirmations: confirmations(plan, backup),
+    database,
+    now: new Date("2026-08-03T12:08:00.000Z"),
+  }), (error) => error instanceof RescueMergeError && error.code === "COMMIT_OUTCOME_AMBIGUOUS");
+  assert.ok(!database.events.includes("rollback"));
+
+  const committed = await reconcileAmbiguousCommit({
+    plan,
+    plannerInput: input,
+    database: new MockDatabase({ targetRows: database.targetRows }),
+  });
+  assert.equal(committed.result, "COMMIT_CONFIRMED_AFTER_AMBIGUOUS");
+  assert.equal(committed.reconciliationMode, "REPEATABLE_READ_READ_ONLY");
+
+  const notApplied = await reconcileAmbiguousCommit({
+    plan,
+    plannerInput: input,
+    database: new MockDatabase({ targetRows }),
+  });
+  assert.equal(notApplied.result, "COMMIT_NOT_APPLIED_RETRY_REQUIRES_NEW_GATE");
+  assert.equal(notApplied.retryBlocked, true);
 });
 
 test("planner and apply artifacts remain deterministic", () => {

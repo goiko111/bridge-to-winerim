@@ -28,10 +28,11 @@ const FORBIDDEN_TABLE_SET = new Set(FORBIDDEN_APPLY_TABLES);
 const CREDENTIAL_FIELD = /(?:token|secret|password|authorization|bearer|credential|api[_-]?key)/i;
 
 export class RescueMergeError extends Error {
-  constructor(code, message = code) {
+  constructor(code, message = code, details = null) {
     super(message);
     this.name = "RescueMergeError";
     this.code = code;
+    this.details = details ? clone(details) : null;
   }
 }
 
@@ -132,12 +133,11 @@ export function validateBackupManifest(manifest, plan, {
   confirmManifestSha256,
   now = new Date(),
 } = {}) {
-  assert(manifest?.schemaVersion === 1, "BACKUP_MANIFEST_SCHEMA_UNSUPPORTED");
+  assert(manifest?.schemaVersion === 2, "BACKUP_MANIFEST_SCHEMA_UNSUPPORTED");
   assert(manifest.environment === "rescue-production", "BACKUP_TARGET_ENVIRONMENT_MISMATCH");
   assert(manifest.storageClass === "external-encrypted" && manifest.encrypted === true,
     "BACKUP_NOT_EXTERNAL_ENCRYPTED");
-  assert(manifest.restorable === true && manifest.restoreTested === true,
-    "BACKUP_NOT_RESTORE_TESTED");
+  assert(manifest.restorable === true, "BACKUP_NOT_RESTORABLE");
   assert(SHA256.test(manifest.manifestSha256 || "")
     && manifest.manifestSha256 === backupManifestDigest(manifest), "BACKUP_MANIFEST_DIGEST_MISMATCH");
   assert(confirmManifestSha256 === manifest.manifestSha256, "BACKUP_MANIFEST_NOT_EXPLICITLY_CONFIRMED");
@@ -147,10 +147,9 @@ export function validateBackupManifest(manifest, plan, {
   assert(manifest.targetRowsSha256 === plan.targetRowsSha256, "BACKUP_TARGET_ROWS_MISMATCH");
   assert(manifest.conflictRecheckPlanSha256 === plan.planSha256, "BACKUP_PLAN_BINDING_MISMATCH");
   const capturedAt = parseTimestamp(manifest.capturedAt, "BACKUP_CAPTURE_TIME_INVALID");
-  const restoreTestedAt = parseTimestamp(manifest.restoreTestedAt, "BACKUP_RESTORE_TEST_TIME_INVALID");
   const nowMillis = now.getTime();
   assert(capturedAt >= Date.parse(plan.plannedAt), "BACKUP_PREDATES_PLAN");
-  assert(restoreTestedAt >= capturedAt && restoreTestedAt <= nowMillis, "BACKUP_RESTORE_TEST_TIME_INVALID");
+  assert(capturedAt <= nowMillis, "BACKUP_CAPTURE_TIME_INVALID");
   assert(nowMillis - capturedAt <= MAX_BACKUP_AGE_MS, "BACKUP_TOO_OLD");
   assert(manifest.artifact && typeof manifest.artifact.relativePath === "string"
     && manifest.artifact.relativePath.length > 0
@@ -159,9 +158,71 @@ export function validateBackupManifest(manifest, plan, {
   "BACKUP_ARTIFACT_PATH_INVALID");
   assert(SHA256.test(manifest.artifact.sha256 || "")
     && Number.isSafeInteger(manifest.artifact.bytes)
-    && manifest.artifact.bytes > 0,
+    && manifest.artifact.bytes > 0
+    && manifest.artifact.format === "postgres-custom-age",
   "BACKUP_ARTIFACT_ATTESTATION_INVALID");
+  assert(manifest.restoreTest?.mode === "automatic-disposable-database",
+    "BACKUP_AUTOMATIC_RESTORE_TEST_REQUIRED");
+  assert(typeof manifest.restoreTest.disposableDatabaseName === "string"
+    && /^winerim_restore_test_[a-z0-9_]+$/.test(manifest.restoreTest.disposableDatabaseName),
+  "BACKUP_RESTORE_DATABASE_NAME_INVALID");
+  assert(SHA256.test(manifest.restoreTest.disposableDatabaseIdentitySha256 || "")
+    && manifest.restoreTest.disposableDatabaseIdentitySha256 !== manifest.databaseIdentitySha256,
+  "BACKUP_RESTORE_DATABASE_IDENTITY_INVALID");
+  assert(manifest.restoreTest.expectedTargetRowsSha256 === plan.targetRowsSha256,
+    "BACKUP_RESTORE_EXPECTED_ROWS_MISMATCH");
   return clone(manifest);
+}
+
+export function sourceExportVerificationDigest(verification) {
+  const unsigned = clone(verification);
+  delete unsigned.verificationSha256;
+  delete unsigned.sourceExportPath;
+  return sha256(canonicalJson(unsigned));
+}
+
+export function validateSourceExportVerification(verification, plannerInput) {
+  assert(verification?.schemaVersion === 1
+    && verification.result === "SOURCE_EXPORT_BYTES_AND_PLANNER_INPUT_BOUND",
+  "SOURCE_EXPORT_VERIFICATION_REQUIRED");
+  assert(SHA256.test(verification.sourceExportSha256 || "")
+    && Number.isSafeInteger(verification.sourceExportBytes)
+    && verification.sourceExportBytes > 0,
+  "SOURCE_EXPORT_VERIFICATION_INVALID");
+  assert(verification.plannerInputSha256 === sha256(canonicalJson(plannerInput)),
+    "SOURCE_EXPORT_PLANNER_INPUT_NOT_BOUND");
+  assert(SHA256.test(verification.bindingSha256 || ""), "SOURCE_EXPORT_BINDING_INVALID");
+  assert(verification.verificationSha256 === sourceExportVerificationDigest(verification),
+    "SOURCE_EXPORT_VERIFICATION_DIGEST_MISMATCH");
+  return clone(verification);
+}
+
+export function backupRestoreVerificationDigest(verification) {
+  const unsigned = clone(verification);
+  delete unsigned.verificationSha256;
+  return sha256(canonicalJson(unsigned));
+}
+
+export function validateBackupRestoreVerification(verification, backupManifest, plan) {
+  assert(verification?.schemaVersion === 1
+    && verification.result === "AUTOMATIC_DISPOSABLE_RESTORE_VERIFIED",
+  "BACKUP_RESTORE_VERIFICATION_REQUIRED");
+  assert(verification.backupManifestSha256 === backupManifest?.manifestSha256,
+    "BACKUP_RESTORE_MANIFEST_BINDING_MISMATCH");
+  assert(verification.backupArtifactSha256 === backupManifest?.artifact?.sha256
+    && verification.backupArtifactBytes === backupManifest?.artifact?.bytes,
+  "BACKUP_RESTORE_ARTIFACT_BINDING_MISMATCH");
+  assert(verification.disposableDatabaseIdentitySha256
+    === backupManifest?.restoreTest?.disposableDatabaseIdentitySha256,
+  "BACKUP_RESTORE_DATABASE_IDENTITY_MISMATCH");
+  assert(verification.targetRowsSha256 === plan?.targetRowsSha256,
+    "BACKUP_RESTORE_TARGET_ROWS_MISMATCH");
+  assert(verification.planSha256 === plan?.planSha256,
+    "BACKUP_RESTORE_PLAN_BINDING_MISMATCH");
+  parseTimestamp(verification.verifiedAt, "BACKUP_RESTORE_VERIFIED_AT_INVALID");
+  assert(verification.verificationSha256 === backupRestoreVerificationDigest(verification),
+    "BACKUP_RESTORE_VERIFICATION_DIGEST_MISMATCH");
+  return clone(verification);
 }
 
 export function validatePlannerBundle({ plan, plannerInput }) {
@@ -213,7 +274,9 @@ export function prepareInsertRows({ plan, plannerInput }) {
 export function evaluateExecutorApplyGate({
   plan,
   plannerInput,
+  sourceExportVerification,
   backupManifest,
+  backupRestoreVerification,
   apply = false,
   confirmApply = null,
   confirmPlanSha256 = null,
@@ -226,6 +289,11 @@ export function evaluateExecutorApplyGate({
     validatePlannerBundle({ plan, plannerInput });
   } catch (error) {
     blockers.push(error.code || "PLAN_VALIDATION_FAILED");
+  }
+  try {
+    validateSourceExportVerification(sourceExportVerification, plannerInput);
+  } catch (error) {
+    blockers.push(error.code || "SOURCE_EXPORT_VALIDATION_FAILED");
   }
   if (!apply) blockers.push("APPLY_FLAG_NOT_SET");
   if (confirmApply !== APPLY_CONFIRMATION) blockers.push("APPLY_PHRASE_NOT_CONFIRMED");
@@ -240,6 +308,11 @@ export function evaluateExecutorApplyGate({
     });
   } catch (error) {
     blockers.push(error.code || "BACKUP_VALIDATION_FAILED");
+  }
+  try {
+    validateBackupRestoreVerification(backupRestoreVerification, backupManifest, plan);
+  } catch (error) {
+    blockers.push(error.code || "BACKUP_RESTORE_VALIDATION_FAILED");
   }
   try {
     prepareInsertRows({ plan, plannerInput });
@@ -262,16 +335,81 @@ function plannerInputWithTargetRows(plannerInput, targetRows) {
   return updated;
 }
 
+export function recalculateTargetRowsSha256(plannerInput, targetRows) {
+  return planRescueMerge(plannerInputWithTargetRows(plannerInput, targetRows)).targetRowsSha256;
+}
+
 function expectedPostApplyRows(targetRows, inserts) {
   const expected = clone(targetRows);
   for (const { table, row } of inserts) expected[table].push(clone(row));
   return expected;
 }
 
+export function expectedPostApplyTargetRowsSha256({ plan, plannerInput }) {
+  const inserts = prepareInsertRows({ plan, plannerInput });
+  const beforeRows = Object.fromEntries(Object.entries(plannerInput.tables).map(([table, sides]) => [
+    table,
+    clone(sides.target),
+  ]));
+  return recalculateTargetRowsSha256(plannerInput, expectedPostApplyRows(beforeRows, inserts));
+}
+
+export async function reconcileAmbiguousCommit({
+  plan,
+  plannerInput,
+  database,
+  observedAt = new Date(),
+}) {
+  const expectedAfterTargetRowsSha256 = expectedPostApplyTargetRowsSha256({ plan, plannerInput });
+  let transactionStarted = false;
+  try {
+    await database.connect();
+    await database.beginRepeatableReadOnly();
+    transactionStarted = true;
+    const databaseIdentitySha256 = await database.databaseIdentitySha256();
+    assert(databaseIdentitySha256 === plan.targetWatermark.databaseIdentitySha256,
+      "AMBIGUOUS_RECONCILIATION_DATABASE_IDENTITY_MISMATCH");
+    const observedRows = await database.readTables(plan.requestedTables);
+    const observedTargetRowsSha256 = recalculateTargetRowsSha256(plannerInput, observedRows);
+    let result = "COMMIT_OUTCOME_DIVERGED_MANUAL_REVIEW";
+    if (observedTargetRowsSha256 === expectedAfterTargetRowsSha256) {
+      result = "COMMIT_CONFIRMED_AFTER_AMBIGUOUS";
+    } else if (observedTargetRowsSha256 === plan.targetRowsSha256) {
+      result = "COMMIT_NOT_APPLIED_RETRY_REQUIRES_NEW_GATE";
+    }
+    await database.rollback();
+    transactionStarted = false;
+    return {
+      schemaVersion: 1,
+      result,
+      reconciliationMode: "REPEATABLE_READ_READ_ONLY",
+      retryBlocked: true,
+      restoreBlocked: true,
+      planSha256: plan.planSha256,
+      databaseIdentitySha256,
+      beforeTargetRowsSha256: plan.targetRowsSha256,
+      expectedAfterTargetRowsSha256,
+      observedTargetRowsSha256,
+      observedAt: observedAt.toISOString(),
+    };
+  } catch (error) {
+    if (transactionStarted) await database.rollback().catch(() => undefined);
+    if (error instanceof RescueMergeError) throw error;
+    throw new RescueMergeError(
+      "COMMIT_AMBIGUOUS_RECONCILIATION_FAILED",
+      "Read-only reconciliation after ambiguous COMMIT failed; retry and restore remain blocked",
+    );
+  } finally {
+    await database.close().catch(() => undefined);
+  }
+}
+
 export async function executeRescueMerge({
   plan,
   plannerInput,
+  sourceExportVerification,
   backupManifest,
+  backupRestoreVerification,
   confirmations,
   database,
   now = new Date(),
@@ -279,7 +417,9 @@ export async function executeRescueMerge({
   const gate = evaluateExecutorApplyGate({
     plan,
     plannerInput,
+    sourceExportVerification,
     backupManifest,
+    backupRestoreVerification,
     apply: true,
     confirmApply: confirmations?.apply,
     confirmPlanSha256: confirmations?.planSha256,
@@ -291,6 +431,8 @@ export async function executeRescueMerge({
   const inserts = prepareInsertRows({ plan, plannerInput });
   let transactionStarted = false;
   let committed = false;
+  let commitAttempted = false;
+  let expectedAfterTargetRowsSha256 = null;
   try {
     await database.connect();
     await database.beginSerializable();
@@ -318,6 +460,7 @@ export async function executeRescueMerge({
     const afterRows = await database.readTables(plan.requestedTables);
     const expectedRows = expectedPostApplyRows(beforeRows, inserts);
     const expectedPostPlan = planRescueMerge(plannerInputWithTargetRows(plannerInput, expectedRows));
+    expectedAfterTargetRowsSha256 = expectedPostPlan.targetRowsSha256;
     const actualPostPlan = planRescueMerge(plannerInputWithTargetRows(plannerInput, afterRows));
     assert(actualPostPlan.targetRowsSha256 === expectedPostPlan.targetRowsSha256,
       "POST_RECONCILIATION_TARGET_DIGEST_MISMATCH");
@@ -333,7 +476,20 @@ export async function executeRescueMerge({
     ));
     assert(insertedNoops.length === inserts.length, "POST_RECONCILIATION_INSERT_IDENTITY_MISMATCH");
 
-    await database.commit();
+    commitAttempted = true;
+    try {
+      await database.commit();
+    } catch {
+      throw new RescueMergeError(
+        "COMMIT_OUTCOME_AMBIGUOUS",
+        "COMMIT response was lost; rollback, retry and restore are blocked until read-only reconciliation",
+        {
+          planSha256: plan.planSha256,
+          beforeTargetRowsSha256: recheckedPlan.targetRowsSha256,
+          expectedAfterTargetRowsSha256,
+        },
+      );
+    }
     committed = true;
     return {
       schemaVersion: 1,
@@ -341,6 +497,8 @@ export async function executeRescueMerge({
       planSha256: plan.planSha256,
       artifactPayloadSha256: plan.artifactPayloadSha256,
       backupManifestSha256: backupManifest.manifestSha256,
+      sourceExportVerificationSha256: sourceExportVerification.verificationSha256,
+      backupRestoreVerificationSha256: backupRestoreVerification.verificationSha256,
       databaseIdentitySha256,
       advisoryLockNamespaceSha256: sha256(ADVISORY_LOCK_NAMESPACE),
       insertedCount: inserts.length,
@@ -354,7 +512,7 @@ export async function executeRescueMerge({
       rollback: "NOT_REQUIRED",
     };
   } catch (error) {
-    if (transactionStarted && !committed) {
+    if (transactionStarted && !committed && !commitAttempted) {
       try {
         await database.rollback();
       } catch {
@@ -362,7 +520,10 @@ export async function executeRescueMerge({
       }
     }
     if (error instanceof RescueMergeError) throw error;
-    throw new RescueMergeError("DATABASE_EXECUTION_FAILED", "Database execution failed; transaction rolled back");
+    throw new RescueMergeError(
+      "DATABASE_EXECUTION_FAILED",
+      "Database execution failed before COMMIT; transaction rolled back",
+    );
   } finally {
     await database.close().catch(() => undefined);
   }

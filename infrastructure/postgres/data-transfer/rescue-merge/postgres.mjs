@@ -106,6 +106,13 @@ export class PostgresRescueMergeDatabase {
     await this.client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
   }
 
+  async beginRepeatableReadOnly() {
+    await this.client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await this.client.query("SET LOCAL lock_timeout = '10s'");
+    await this.client.query("SET LOCAL statement_timeout = '5min'");
+    await this.client.query("SET LOCAL idle_in_transaction_session_timeout = '5min'");
+  }
+
   async acquireAdvisoryLock(namespace) {
     const [left, right] = lockParts(namespace);
     await this.client.query("SELECT pg_advisory_xact_lock($1::integer, $2::integer)", [left, right]);

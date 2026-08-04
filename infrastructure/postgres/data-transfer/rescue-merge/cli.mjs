@@ -6,6 +6,7 @@ import {
   evaluateExecutorApplyGate,
   executeRescueMerge,
   prepareInsertRows,
+  reconcileAmbiguousCommit,
   RescueMergeError,
   validateBackupManifest,
   validatePlannerBundle,
@@ -13,8 +14,13 @@ import {
 import {
   readSecureJson,
   verifyBackupArtifact,
+  verifySourceExportArtifact,
   writeSecureJson,
 } from "./secure-files.mjs";
+import {
+  RESTORE_TEST_CONFIRMATION,
+  verifyBackupRestoreAutomatically,
+} from "./restore-verifier.mjs";
 
 function parseArgs(argv) {
   const options = { apply: false };
@@ -53,31 +59,42 @@ async function main() {
   const plan = await readSecureJson(planPath, "PLAN_ARTIFACT");
   const artifact = await readSecureJson(artifactPath, "SOURCE_ARTIFACT");
   const backupManifest = await readSecureJson(backupManifestPath, "BACKUP_MANIFEST");
-  if (artifact?.schemaVersion !== 1 || !artifact.plannerInput) {
-    throw new Error("SOURCE_ARTIFACT_SCHEMA_UNSUPPORTED");
-  }
+  const sourceExportVerification = await verifySourceExportArtifact(artifact, artifactPath);
   const plannerInput = artifact.plannerInput;
   validatePlannerBundle({ plan, plannerInput });
   const inserts = prepareInsertRows({ plan, plannerInput });
   validateBackupManifest(backupManifest, plan, {
     confirmManifestSha256: options["confirm-backup-manifest-sha256"] || backupManifest.manifestSha256,
   });
-  await verifyBackupArtifact(backupManifest, backupManifestPath);
+  const backupArtifactVerification = await verifyBackupArtifact(backupManifest, backupManifestPath);
+  const backupRestoreVerification = await verifyBackupRestoreAutomatically({
+    backupManifest,
+    backupArtifactVerification,
+    plan,
+    plannerInput,
+    connectionString: process.env.RESCUE_MERGE_RESTORE_TEST_DATABASE_URL,
+    ageIdentityFile: process.env.RESCUE_MERGE_BACKUP_AGE_IDENTITY_FILE,
+    confirmation: options["confirm-restore-test"],
+  });
 
   if (!options.apply) {
     const report = {
       schemaVersion: 1,
       result: "DRY_RUN_READY_APPLY_NOT_REQUESTED",
-      connectedToDatabase: false,
+      connectedToTargetDatabase: false,
+      connectedToDisposableRestoreDatabase: true,
       planSha256: plan.planSha256,
       artifactPayloadSha256: plan.artifactPayloadSha256,
+      sourceExportVerificationSha256: sourceExportVerification.verificationSha256,
       backupManifestSha256: backupManifest.manifestSha256,
+      backupRestoreVerificationSha256: backupRestoreVerification.verificationSha256,
       insertCount: inserts.length,
       insertByTable: inserts.reduce((counts, { table }) => {
         counts[table] = (counts[table] || 0) + 1;
         return counts;
       }, {}),
       applyConfirmationRequired: APPLY_CONFIRMATION,
+      restoreTestConfirmationRequired: RESTORE_TEST_CONFIRMATION,
     };
     const reportPath = await writeSecureJson(outputDir, "rescue-merge-dry-run.json", report);
     process.stdout.write(`${JSON.stringify({ ...report, reportPath }, null, 2)}\n`);
@@ -93,7 +110,9 @@ async function main() {
   const gate = evaluateExecutorApplyGate({
     plan,
     plannerInput,
+    sourceExportVerification,
     backupManifest,
+    backupRestoreVerification,
     apply: true,
     confirmApply: confirmations.apply,
     confirmPlanSha256: confirmations.planSha256,
@@ -109,16 +128,53 @@ async function main() {
     const report = await executeRescueMerge({
       plan,
       plannerInput,
+      sourceExportVerification,
       backupManifest,
+      backupRestoreVerification,
       confirmations,
       database,
     });
     const reportPath = await writeSecureJson(outputDir, "rescue-merge-apply.json", report);
     process.stdout.write(`${JSON.stringify({ ...report, reportPath }, null, 2)}\n`);
   } catch (error) {
+    if (error instanceof RescueMergeError && error.code === "COMMIT_OUTCOME_AMBIGUOUS") {
+      const reconciliationDatabase = new PostgresRescueMergeDatabase({ connectionString });
+      let reconciliation;
+      try {
+        reconciliation = await reconcileAmbiguousCommit({
+          plan,
+          plannerInput,
+          database: reconciliationDatabase,
+        });
+      } catch (reconciliationError) {
+        reconciliation = {
+          schemaVersion: 1,
+          result: "COMMIT_OUTCOME_AMBIGUOUS_RECONCILIATION_FAILED",
+          retryBlocked: true,
+          restoreBlocked: true,
+          ...safeError(reconciliationError),
+        };
+      }
+      const report = {
+        schemaVersion: 1,
+        result: reconciliation.result,
+        originalError: safeError(error),
+        reconciliation,
+      };
+      const reportPath = await writeSecureJson(
+        outputDir,
+        "rescue-merge-commit-reconciliation.json",
+        report,
+      );
+      process.stderr.write(`${JSON.stringify({ ...report, reportPath }, null, 2)}\n`);
+      process.exitCode = 2;
+      return;
+    }
     const failure = {
       schemaVersion: 1,
-      result: "APPLY_FAILED_TRANSACTION_ROLLED_BACK",
+      result: error instanceof RescueMergeError && error.code === "ROLLBACK_FAILED"
+        ? "APPLY_FAILED_ROLLBACK_UNCONFIRMED"
+        : "APPLY_FAILED_BEFORE_COMMIT_ROLLED_BACK",
       planSha256: plan.planSha256,
       ...safeError(error),
     };
