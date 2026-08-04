@@ -9,6 +9,8 @@ import {
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readExternalBootstrapWriterFenceEvidence } from "./prepare-writer-fence-grant.mjs";
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -219,6 +221,7 @@ function validateWriterFenceGrant({
   expectedCredentialRef,
   expectedCredentialBinding,
   expectedMode,
+  expectedExternalEvidence,
   approvedAt,
   expiresAt,
 }) {
@@ -268,18 +271,11 @@ function validateWriterFenceGrant({
   const history = grant.writerHistory;
   if (
     expectedMode !== "bootstrap-no-legacy-writer"
-    || grant.version !== 2
+    || grant.version !== 3
     || Object.prototype.hasOwnProperty.call(grant, "legacyWriter")
     || history?.mode !== expectedMode
-    || !SHA256_PATTERN.test(history.evidenceSha256 ?? "")
-    || !SHA256_PATTERN.test(history.cloudflareEvidenceSha256 ?? "")
-    || !history.absence
-    || history.absence.activeConnectionCount !== 0
-    || history.absence.activeCredentialCount !== 0
-    || history.absence.activeScopeCount !== 0
-    || history.absence.priorRunCount !== 0
-    || history.absence.activeProducerCount !== 0
-    || history.absence.activeConsumerCount !== 0
+    || !expectedExternalEvidence
+    || JSON.stringify(history.externalEvidence) !== JSON.stringify(expectedExternalEvidence)
     || grant.exclusiveCredentialRef !== `runtime-vault://postgres/${connectionId}/agora/agora`
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
@@ -575,6 +571,7 @@ export function rescueCanaryActivationPlan({
   credentialProvisioningManifestSha256,
   deploymentConfigSha256,
   deploymentBundleSha256,
+  externalWriterFenceEvidence = null,
 }) {
   if (!UUID_PATTERN.test(connectionId)) throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_CONNECTION_ID");
   if (!RUN_PATTERN.test(runId)) throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_RUN_ID");
@@ -631,6 +628,7 @@ export function rescueCanaryActivationPlan({
     expectedCredentialRef: deployment.writerFence.exclusiveCredentialRef,
     expectedCredentialBinding: deployment.writerFence.credentialBinding,
     expectedMode: deployment.policy.writerFenceMode,
+    expectedExternalEvidence: externalWriterFenceEvidence,
     approvedAt: approved,
     expiresAt: expires,
   });
@@ -711,6 +709,13 @@ export function prepareRescueCanaryActivation({ environment = process.env, outpu
     expectedSha256: credentialProvisioningManifestSha256,
     label: "CREDENTIAL_PROVISIONING_MANIFEST",
   });
+  const externalWriterFenceEvidence = fence.value?.writerHistory?.mode === "bootstrap-no-legacy-writer"
+    ? readExternalBootstrapWriterFenceEvidence({
+      environment,
+      connectionId,
+      referenceTime: approvedAt,
+    })
+    : null;
   const deploymentConfigSha256 = {};
   const deploymentBundleSha256 = {};
   for (const key of DEPLOYMENT_CONFIG_KEYS) {
@@ -738,6 +743,7 @@ export function prepareRescueCanaryActivation({ environment = process.env, outpu
     credentialProvisioningManifestSha256: provisioning.sha256,
     deploymentConfigSha256,
     deploymentBundleSha256,
+    externalWriterFenceEvidence,
   });
   const target = resolve(output);
   const relativeTarget = relative(repoRoot, target);

@@ -1,4 +1,9 @@
-import { createDecipheriv, createHash } from "node:crypto";
+import {
+  createDecipheriv,
+  createHash,
+  generateKeyPairSync,
+  sign,
+} from "node:crypto";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +39,11 @@ import {
   renderRescueCanaryActivationSql,
   rescueCanaryActivationPlan,
 } from "../../infrastructure/runtime/prepare-rescue-canary-activation.mjs";
+// @ts-expect-error Operational ESM script is exercised directly by Vitest.
+import {
+  prepareWriterFenceGrant,
+  validateExternalBootstrapWriterFenceEvidence,
+} from "../../infrastructure/runtime/prepare-writer-fence-grant.mjs";
 
 const CONNECTION_ID = "ba44c13a-5f48-4a49-8b3f-04049b244d94";
 const KEY_VERSION = "elbejeque-v1";
@@ -70,6 +80,89 @@ const DEPLOYMENT_BUNDLE_SHA256 = {
   fence: "7".repeat(64),
   observer: "8".repeat(64),
 };
+const EXTERNAL_FENCE_KEY_PAIR = generateKeyPairSync("ed25519");
+const EXTERNAL_FENCE_PUBLIC_KEY = EXTERNAL_FENCE_KEY_PAIR.publicKey.export({
+  type: "spki",
+  format: "pem",
+});
+
+type ExternalFenceOptions = {
+  fenceMode?: "agora-credential-rotated" | "lovable-disabled-no-agora-rotation";
+  observedAt?: string;
+  readbacks?: string[];
+};
+
+function externalFenceArtifact({
+  fenceMode = "lovable-disabled-no-agora-rotation",
+  observedAt = "2026-08-03T11:54:00.000Z",
+  readbacks,
+}: ExternalFenceOptions = {}) {
+  const defaultReadbacks = fenceMode === "lovable-disabled-no-agora-rotation"
+    ? ["2026-08-03T11:52:10.000Z", observedAt]
+    : [observedAt];
+  const payload = {
+    evidenceType: "lovable-writer-fence",
+    connectionId: CONNECTION_ID,
+    source: {
+      provider: "lovable-cloud",
+      projectId: "a61b5b89-4c36-44fc-aaf2-9c7c3f3cfd8d",
+      collectorRunId: "external-observer-20260803-a",
+    },
+    fenceMode,
+    fenceAppliedAt: "2026-08-03T11:50:00.000Z",
+    observedAt,
+    lovable: {
+      writerDisabled: true,
+      cronDisabled: true,
+      edgeMutationDisabled: true,
+    },
+    agoraCredential: fenceMode === "agora-credential-rotated"
+      ? {
+        rotated: true,
+        rotatedAt: "2026-08-03T11:50:00.000Z",
+        oldCredentialProbeStatus: 401,
+      }
+      : { rotated: false, removedFromLovable: true },
+    readbacks: (readbacks ?? defaultReadbacks).map((value) => ({
+      observedAt: value,
+      status: "FENCED_HEALTHY",
+      writerDisabled: true,
+      cronDisabled: true,
+      edgeMutationDisabled: true,
+      agoraCredentialUnavailableToLovable: true,
+    })),
+  };
+  const signature = sign(
+    null,
+    Buffer.from(JSON.stringify(payload)),
+    EXTERNAL_FENCE_KEY_PAIR.privateKey,
+  );
+  const source = Buffer.from(`${JSON.stringify({
+    version: 1,
+    algorithm: "Ed25519",
+    keyId: "lovable-fence-observer-v1",
+    payload,
+    signatureBase64: signature.toString("base64"),
+  }, null, 2)}\n`);
+  return {
+    source,
+    publicKey: Buffer.from(EXTERNAL_FENCE_PUBLIC_KEY),
+    artifactSha256: createHash("sha256").update(source).digest("hex"),
+    publicKeySha256: createHash("sha256").update(EXTERNAL_FENCE_PUBLIC_KEY).digest("hex"),
+  };
+}
+
+function externalFenceSummary(options: ExternalFenceOptions = {}) {
+  const artifact = externalFenceArtifact(options);
+  return validateExternalBootstrapWriterFenceEvidence({
+    artifactSource: artifact.source,
+    artifactSha256: artifact.artifactSha256,
+    publicKeySource: artifact.publicKey,
+    publicKeySha256: artifact.publicKeySha256,
+    connectionId: CONNECTION_ID,
+    referenceTime: "2026-08-03T11:55:00.000Z",
+  });
+}
 
 function deploymentManifest() {
   const queueName = `winerim-rescue-prod-canary-${RETIREMENT_RUN_ID}`;
@@ -389,6 +482,116 @@ describe("runtime credential provisioning tooling", () => {
   });
 });
 
+describe("writer fence external evidence tooling", () => {
+  function grantEnvironment(directory: string, options: ExternalFenceOptions = {}) {
+    const artifact = externalFenceArtifact(options);
+    const evidencePath = join(directory, "lovable-writer-fence-evidence.json");
+    const publicKeyPath = join(directory, "lovable-writer-fence-observer.pem");
+    writeFileSync(evidencePath, artifact.source, { mode: 0o600 });
+    writeFileSync(publicKeyPath, artifact.publicKey, { mode: 0o600 });
+    return {
+      environment: {
+        CANARY_CONNECTION_ID: CONNECTION_ID,
+        CANARY_RUN_ID: RETIREMENT_RUN_ID,
+        CANARY_HOLDER_ID: "release-a",
+        CANARY_WRITER_FENCE_PROOF: "fixture-proof-secret-with-more-than-32-bytes",
+        CANARY_EXCLUSIVE_CREDENTIAL_REF: `runtime-vault://postgres/${CONNECTION_ID}/agora/agora`,
+        CANARY_EXCLUSIVE_CREDENTIAL_VERSION: "a".repeat(64),
+        CANARY_FENCE_ISSUED_AT: "2026-08-03T11:55:00.000Z",
+        CANARY_FENCE_EXPIRES_AT: EXPIRES_AT,
+        WRITER_FENCE_MODE: "bootstrap-no-legacy-writer",
+        CANARY_RUNTIME_JOB: "catalog.sync-master",
+        CANARY_RUNTIME_LANE: "catalog",
+        CANARY_CATALOG_PRODUCT_ID: "500001",
+        NO_LEGACY_WRITER_EXTERNAL_EVIDENCE: evidencePath,
+        NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256: artifact.artifactSha256,
+        NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY: publicKeyPath,
+        NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY_SHA256: artifact.publicKeySha256,
+      },
+      artifact,
+      evidencePath,
+    };
+  }
+
+  it("creates a v3 bootstrap grant only from signed fresh external evidence", () => {
+    const directory = mkdtempSync(join(tmpdir(), "writer-fence-grant."));
+    const fixture = grantEnvironment(directory);
+    const output = join(directory, "writer-fence-grant.json");
+    const result = prepareWriterFenceGrant({ environment: fixture.environment, output });
+
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(result.grant).toMatchObject({
+      version: 3,
+      writerHistory: {
+        mode: "bootstrap-no-legacy-writer",
+        externalEvidence: {
+          artifactSha256: fixture.artifact.artifactSha256,
+          fenceMode: "lovable-disabled-no-agora-rotation",
+          readbackObservedAt: [
+            "2026-08-03T11:52:10.000Z",
+            "2026-08-03T11:54:00.000Z",
+          ],
+        },
+      },
+    });
+  });
+
+  it("rejects old counters, one no-rotation readback, stale evidence and a tampered payload", () => {
+    const directory = mkdtempSync(join(tmpdir(), "writer-fence-reject."));
+    const fixture = grantEnvironment(directory);
+    const legacyCounterEnvironment = {
+      ...fixture.environment,
+      NO_LEGACY_WRITER_EXTERNAL_EVIDENCE: "",
+      NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256: "",
+      NO_LEGACY_WRITER_ACTIVE_CONNECTION_COUNT: "0",
+      NO_LEGACY_WRITER_ACTIVE_CREDENTIAL_COUNT: "0",
+      NO_LEGACY_WRITER_ACTIVE_SCOPE_COUNT: "0",
+    };
+    expect(() => prepareWriterFenceGrant({
+      environment: legacyCounterEnvironment,
+      output: join(directory, "old-counters-must-not-exist.json"),
+    })).toThrow("WRITER_FENCE_GRANT_MISSING_NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256");
+
+    const oneReadback = grantEnvironment(mkdtempSync(join(tmpdir(), "writer-fence-one-readback.")), {
+      readbacks: ["2026-08-03T11:54:00.000Z"],
+    });
+    expect(() => prepareWriterFenceGrant({
+      environment: oneReadback.environment,
+      output: join(directory, "one-readback-must-not-exist.json"),
+    })).toThrow("WRITER_FENCE_GRANT_EXTERNAL_NO_ROTATION_REQUIRES_TWO_READBACKS");
+
+    expect(() => prepareWriterFenceGrant({
+      environment: {
+        ...fixture.environment,
+        CANARY_FENCE_ISSUED_AT: "2026-08-03T12:20:00.000Z",
+      },
+      output: join(directory, "stale-must-not-exist.json"),
+    })).toThrow("WRITER_FENCE_GRANT_BOOTSTRAP_EVIDENCE_MUST_BE_FRESH");
+
+    const envelope = JSON.parse(readFileSync(fixture.evidencePath, "utf8"));
+    envelope.payload.lovable.cronDisabled = false;
+    const tamperedSource = Buffer.from(`${JSON.stringify(envelope, null, 2)}\n`);
+    writeFileSync(fixture.evidencePath, tamperedSource, { mode: 0o600 });
+    expect(() => prepareWriterFenceGrant({
+      environment: {
+        ...fixture.environment,
+        NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256: createHash("sha256")
+          .update(tamperedSource)
+          .digest("hex"),
+      },
+      output: join(directory, "tampered-must-not-exist.json"),
+    })).toThrow("WRITER_FENCE_GRANT_EXTERNAL_EVIDENCE_SIGNATURE_INVALID");
+  });
+
+  it("accepts a rotated Agora credential with a rejected old credential probe", () => {
+    const summary = externalFenceSummary({ fenceMode: "agora-credential-rotated" });
+    expect(summary).toMatchObject({
+      fenceMode: "agora-credential-rotated",
+      readbackObservedAt: ["2026-08-03T11:54:00.000Z"],
+    });
+  });
+});
+
 describe("rescue canary activation tooling", () => {
   function writerFenceGrant(kind: "agora" | "winerim" = "winerim") {
     const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/${kind}`;
@@ -417,10 +620,10 @@ describe("rescue canary activation tooling", () => {
     };
   }
 
-  function bootstrapWriterFenceGrant() {
+  function bootstrapWriterFenceGrant(externalEvidence = externalFenceSummary()) {
     const manifest = bootstrapCatalogDeploymentManifest();
     return {
-      version: 2,
+      version: 3,
       connectionId: CONNECTION_ID,
       runId: RETIREMENT_RUN_ID,
       holderId: "release-a",
@@ -430,17 +633,8 @@ describe("rescue canary activation tooling", () => {
       credentialBinding: manifest.writerFence.credentialBinding,
       writerHistory: {
         mode: "bootstrap-no-legacy-writer",
-        verifiedAt: "2026-08-03T11:54:00.000Z",
-        evidenceSha256: "c".repeat(64),
-        cloudflareEvidenceSha256: "d".repeat(64),
-        absence: {
-          activeConnectionCount: 0,
-          activeCredentialCount: 0,
-          activeScopeCount: 0,
-          priorRunCount: 0,
-          activeProducerCount: 0,
-          activeConsumerCount: 0,
-        },
+        verifiedAt: externalEvidence.observedAt,
+        externalEvidence,
       },
       issuedAt: "2026-08-03T11:55:00.000Z",
       expiresAt: EXPIRES_AT,
@@ -567,7 +761,8 @@ describe("rescue canary activation tooling", () => {
     expect(plan.forbidden).not.toContain("agora-catalog-write");
   });
 
-  it("binds a no-legacy bootstrap to exact zero evidence and an exclusive Agora catalog scope", () => {
+  it("binds a no-legacy bootstrap to signed external evidence and an exclusive Agora scope", () => {
+    const externalEvidence = externalFenceSummary();
     const plan = rescueCanaryActivationPlan({
       connectionId: CONNECTION_ID,
       runId: RETIREMENT_RUN_ID,
@@ -576,12 +771,13 @@ describe("rescue canary activation tooling", () => {
       keyVersion: KEY_VERSION,
       deploymentManifest: bootstrapCatalogDeploymentManifest(),
       deploymentManifestSha256: "e".repeat(64),
-      writerFenceGrant: bootstrapWriterFenceGrant(),
+      writerFenceGrant: bootstrapWriterFenceGrant(externalEvidence),
       writerFenceGrantSha256: "f".repeat(64),
       credentialProvisioningManifest: credentialProvisioningManifest(),
       credentialProvisioningManifestSha256: "8".repeat(64),
       deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
       deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+      externalWriterFenceEvidence: externalEvidence,
     });
     const sql = renderRescueCanaryActivationSql({
       connectionId: CONNECTION_ID,
@@ -609,7 +805,8 @@ describe("rescue canary activation tooling", () => {
     expect(sql).toContain(`run_id <> '${RETIREMENT_RUN_ID}'`);
   });
 
-  it("rejects bootstrap absence evidence with a non-zero count or a sales scope", () => {
+  it("rejects a bootstrap whose external evidence binding changed or uses a sales scope", () => {
+    const externalEvidence = externalFenceSummary();
     const base = {
       connectionId: CONNECTION_ID,
       runId: RETIREMENT_RUN_ID,
@@ -623,15 +820,24 @@ describe("rescue canary activation tooling", () => {
       credentialProvisioningManifestSha256: "8".repeat(64),
       deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
       deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+      externalWriterFenceEvidence: externalEvidence,
     };
-    const grant = bootstrapWriterFenceGrant();
+    const grant = bootstrapWriterFenceGrant(externalEvidence);
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      externalWriterFenceEvidence: null,
+      writerFenceGrant: grant,
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
     expect(() => rescueCanaryActivationPlan({
       ...base,
       writerFenceGrant: {
         ...grant,
         writerHistory: {
           ...grant.writerHistory,
-          absence: { ...grant.writerHistory.absence, activeConsumerCount: 1 },
+          externalEvidence: {
+            ...grant.writerHistory.externalEvidence,
+            artifactSha256: "0".repeat(64),
+          },
         },
       },
     })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");

@@ -223,11 +223,106 @@ The `401`/`403` evidence is necessary but not sufficient: do not render or
 apply activation unless the old writer is paused, the prior grant is revoked,
 the `130 s` drain window elapsed, and the rotated read-only probe succeeded.
 
+### Catalog bootstrap external fence evidence
+
+`bootstrap-no-legacy-writer` is reserved for a one-product
+`catalog.sync-master` canary with an exclusive Agora credential. It does not
+accept operator-provided zero counters or unverified hashes. Before preparing
+the grant, an observer outside both Lovable and the new runtime must collect and
+sign one evidence envelope with an Ed25519 key pinned before the observation.
+The signed payload must bind:
+
+- the exact `connectionId`, Lovable project UUID and external collector run;
+- `writerDisabled=true`, `cronDisabled=true` and
+  `edgeMutationDisabled=true` for Lovable;
+- the fence application time and fresh, ordered health readbacks;
+- either `agora-credential-rotated`, with the old credential returning `401` or
+  `403`, or `lovable-disabled-no-agora-rotation`;
+- when the Agora token is not rotated, `removedFromLovable=true` and exactly
+  two distinct `FENCED_HEALTHY` readbacks after the full `130 s` drain. Each
+  readback must independently confirm writer, cron and Edge mutation disabled
+  and the Agora credential unavailable to Lovable.
+
+The envelope shape is:
+
+```json
+{
+  "version": 1,
+  "algorithm": "Ed25519",
+  "keyId": "lovable-fence-observer-v1",
+  "payload": {
+    "evidenceType": "lovable-writer-fence",
+    "connectionId": "<UUID>",
+    "source": {
+      "provider": "lovable-cloud",
+      "projectId": "<LOVABLE_PROJECT_UUID>",
+      "collectorRunId": "<EXTERNAL_RUN>"
+    },
+    "fenceMode": "lovable-disabled-no-agora-rotation",
+    "fenceAppliedAt": "<ISO_TIME>",
+    "observedAt": "<ISO_TIME_OF_SECOND_READBACK>",
+    "lovable": {
+      "writerDisabled": true,
+      "cronDisabled": true,
+      "edgeMutationDisabled": true
+    },
+    "agoraCredential": {
+      "rotated": false,
+      "removedFromLovable": true
+    },
+    "readbacks": [
+      {
+        "observedAt": "<ISO_TIME_AFTER_130_SECONDS>",
+        "status": "FENCED_HEALTHY",
+        "writerDisabled": true,
+        "cronDisabled": true,
+        "edgeMutationDisabled": true,
+        "agoraCredentialUnavailableToLovable": true
+      },
+      {
+        "observedAt": "<LATER_ISO_TIME>",
+        "status": "FENCED_HEALTHY",
+        "writerDisabled": true,
+        "cronDisabled": true,
+        "edgeMutationDisabled": true,
+        "agoraCredentialUnavailableToLovable": true
+      }
+    ]
+  },
+  "signatureBase64": "<ED25519_SIGNATURE_OF_JSON_STRINGIFIED_PAYLOAD>"
+}
+```
+
+Capture the SHA-256 of the exact envelope bytes and of the pinned PEM public
+key independently. Both the grant generator and activation generator reread
+the files, verify their hashes, verify the Ed25519 signature and repeat the
+semantic/freshness checks. The last readback must be at most 15 minutes old at
+each gate. Generate the v3 bootstrap grant with:
+
+```sh
+WRITER_FENCE_MODE=bootstrap-no-legacy-writer \
+CANARY_RUNTIME_JOB=catalog.sync-master \
+CANARY_RUNTIME_LANE=catalog \
+CANARY_CATALOG_PRODUCT_ID=<ONE_REVIEWED_PRODUCT_ID> \
+NO_LEGACY_WRITER_EXTERNAL_EVIDENCE=/secure/tmp/lovable-writer-fence.json \
+NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256=<CAPTURED_ARTIFACT_SHA256> \
+NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY=/secure/pins/lovable-fence-observer.pem \
+NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY_SHA256=<PINNED_PUBLIC_KEY_SHA256> \
+  node infrastructure/runtime/prepare-writer-fence-grant.mjs \
+    --output=/secure/tmp/writer-fence-grant.json
+```
+
+Do not substitute `NO_LEGACY_WRITER_*_COUNT` variables. They are intentionally
+unsupported because they do not prove that Lovable writer, cron, Edge runtime
+and Agora credential are fenced.
+
 ## Atomic activation
 
 Render the activation SQL only after credential provisioning, fail-closed
 resource rendering and writer-fence preparation are complete. Every input file
-is bound by its separately captured SHA-256:
+is bound by its separately captured SHA-256. The four
+`NO_LEGACY_WRITER_EXTERNAL_*` bindings shown below are mandatory for
+`bootstrap-no-legacy-writer` and are omitted for `legacy-writer-revoked`:
 
 ```sh
 CANARY_CONNECTION_ID=<UUID> \
@@ -247,6 +342,10 @@ CANARY_DEPLOYMENT_BUNDLE_FENCE=/secure/tmp/canary-configs/worker.fence.mjs \
 CANARY_DEPLOYMENT_BUNDLE_OBSERVER=/secure/tmp/canary-configs/worker.observer.mjs \
 CANARY_WRITER_FENCE_GRANT=/secure/tmp/writer-fence-grant.json \
 CANARY_WRITER_FENCE_GRANT_SHA256=<CAPTURED_SHA256> \
+NO_LEGACY_WRITER_EXTERNAL_EVIDENCE=/secure/tmp/lovable-writer-fence.json \
+NO_LEGACY_WRITER_EXTERNAL_EVIDENCE_SHA256=<CAPTURED_ARTIFACT_SHA256> \
+NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY=/secure/pins/lovable-fence-observer.pem \
+NO_LEGACY_WRITER_EXTERNAL_PUBLIC_KEY_SHA256=<PINNED_PUBLIC_KEY_SHA256> \
 RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST=/secure/tmp/runtime-credentials.sql.manifest.json \
 RUNTIME_CREDENTIAL_PROVISIONING_MANIFEST_SHA256=<CAPTURED_SHA256> \
   node infrastructure/runtime/prepare-rescue-canary-activation.mjs \
