@@ -549,12 +549,24 @@ export function validateFleetFullBaselineDeployments({ evidence, accountId, comp
   const seen = new Set();
   for (const [key, component] of Object.entries(components)) {
     const observed = evidence.components[key];
-    exactKeys(observed, ["workerName", "deploymentId"], `BASELINE_${key.toUpperCase()}`);
+    exactKeys(
+      observed,
+      ["workerName", "deploymentId", "versionId"],
+      `BASELINE_${key.toUpperCase()}`,
+    );
     if (observed.workerName !== component.workerName) fail(`BASELINE_${key.toUpperCase()}_WORKER_DRIFT`);
     const id = deploymentId(observed.deploymentId, `BASELINE_${key.toUpperCase()}_DEPLOYMENT_ID`);
-    if (seen.has(id)) fail("BASELINE_DEPLOYMENT_ID_REUSED");
+    const versionId = deploymentId(observed.versionId, `BASELINE_${key.toUpperCase()}_VERSION_ID`);
+    if (id === versionId || seen.has(id) || seen.has(versionId)) {
+      fail("BASELINE_DEPLOYMENT_ID_REUSED");
+    }
     seen.add(id);
-    normalized[key] = Object.freeze({ workerName: component.workerName, deploymentId: id });
+    seen.add(versionId);
+    normalized[key] = Object.freeze({
+      workerName: component.workerName,
+      deploymentId: id,
+      versionId,
+    });
   }
   return Object.freeze({
     version: 1,

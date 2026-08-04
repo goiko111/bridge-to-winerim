@@ -35,6 +35,13 @@ const BASELINE_IDS = {
   executor: "44444444-4444-4444-8444-444444444444",
   rateLimiter: "55555555-5555-4555-8555-555555555555",
 };
+const BASELINE_VERSION_IDS = {
+  catalog: "81111111-1111-4111-8111-111111111111",
+  salesStock: "82222222-2222-4222-8222-222222222222",
+  outbound: "83333333-3333-4333-8333-333333333333",
+  executor: "84444444-4444-4444-8444-444444444444",
+  rateLimiter: "85555555-5555-4555-8555-555555555555",
+};
 const LIVE_IDS = {
   catalog: "61111111-1111-4111-8111-111111111111",
   salesStock: "62222222-2222-4222-8222-222222222222",
@@ -110,6 +117,7 @@ function baselineDeployments() {
     components: Object.fromEntries(COMPONENT_KEYS.map((key) => [key, {
       workerName: names[key],
       deploymentId: BASELINE_IDS[key],
+      versionId: BASELINE_VERSION_IDS[key],
     }])),
   };
 }
@@ -301,8 +309,10 @@ describe("full fleet LIVE topology package", () => {
       expect(result.manifest.rollback.components[key]).toMatchObject({
         workerName: result.manifest.components[key].workerName,
         deploymentId: BASELINE_IDS[key],
+        versionId: BASELINE_VERSION_IDS[key],
       });
-      expect(result.manifest.rollback.components[key].command).toContain(BASELINE_IDS[key]);
+      expect(result.manifest.rollback.components[key].command).toContain(BASELINE_VERSION_IDS[key]);
+      expect(result.manifest.rollback.components[key].command).not.toContain(BASELINE_IDS[key]);
     }
 
     expect(errorCode(() => renderFleetFullLivePreparedConfigs({
@@ -319,6 +329,13 @@ describe("full fleet LIVE topology package", () => {
       ...common,
       baselineDeployments: changed,
     }))).toBe("BASELINE_EXECUTOR_WORKER_DRIFT");
+
+    const reusedVersion = structuredClone(baseline);
+    reusedVersion.components.executor.versionId = reusedVersion.components.executor.deploymentId;
+    expect(errorCode(() => renderFleetFullLivePreparedConfigs({
+      ...common,
+      baselineDeployments: reusedVersion,
+    }))).toBe("BASELINE_DEPLOYMENT_ID_REUSED");
   });
 
   it("attests activation only after fresh, complete and exclusive topology evidence", async () => {
@@ -436,7 +453,8 @@ describe("full fleet LIVE topology package", () => {
       expect(manifest.activationAllowed).toBe(false);
       for (const key of COMPONENT_KEYS) {
         expect(statSync(written.outputs[key]).mode & 0o777).toBe(0o600);
-        expect(manifest.operations[key].rollbackCommand).toContain(BASELINE_IDS[key]);
+        expect(manifest.operations[key].rollbackCommand).toContain(BASELINE_VERSION_IDS[key]);
+        expect(manifest.operations[key].rollbackCommand).not.toContain(BASELINE_IDS[key]);
       }
 
       const attestationPath = writeFleetFullLiveAttestation({

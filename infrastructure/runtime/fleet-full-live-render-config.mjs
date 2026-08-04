@@ -566,12 +566,12 @@ export function validateFleetFullInactiveConfigs({
     lanes: Object.freeze(lanes),
     rollback: Object.freeze({
       requiredBeforeDeploy: Object.freeze([
-        "capture-current-deployment-id-for-each-component",
+        "capture-current-deployment-and-version-id-for-each-component",
         "verify-rendered-sha256-against-this-manifest",
       ]),
       baselineDeploymentIds: null,
       automaticRollbackAllowed: false,
-      commandTemplate: "npx wrangler rollback <captured-deployment-id> --config <rendered-config>",
+      commandTemplate: "npx wrangler rollback <captured-version-id> --config <rendered-config>",
       sourceCommit: sourceCommit,
     }),
     nextGate: "CAPTURE_BASELINES_THEN_SEPARATE_REVIEWED_ACTIVATION",
@@ -646,6 +646,7 @@ export function validateFleetFullLivePreparedConfigs({
       inactiveSha256: sha256(inactiveRendered[key]),
       renderedSha256: deploymentContract[key].renderedSha256,
       baselineDeploymentId: baseline.components[key].deploymentId,
+      baselineVersionId: baseline.components[key].versionId,
     }),
   ])));
   const rollbackComponents = Object.freeze(Object.fromEntries(Object.entries(components).map(([key, component]) => [
@@ -653,12 +654,13 @@ export function validateFleetFullLivePreparedConfigs({
     Object.freeze({
       workerName: component.workerName,
       deploymentId: component.baselineDeploymentId,
+      versionId: component.baselineVersionId,
       configOutputName: component.outputName,
       command: Object.freeze([
         "npx",
         "wrangler",
         "rollback",
-        component.baselineDeploymentId,
+        component.baselineVersionId,
         "--config",
         component.outputName,
       ]),
@@ -966,7 +968,7 @@ export function writeFleetFullLivePreparedPackage({ outputDir, result }) {
         "npx",
         "wrangler",
         "rollback",
-        result.manifest.rollback.components[key].deploymentId,
+        result.manifest.rollback.components[key].versionId,
         "--config",
         path,
       ]),

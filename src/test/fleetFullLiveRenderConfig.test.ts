@@ -171,7 +171,7 @@ describe("full fleet inactive render package", () => {
         sourceCommit: SOURCE_COMMIT,
       });
       expect(manifest.rollback.requiredBeforeDeploy).toContain(
-        "capture-current-deployment-id-for-each-component",
+        "capture-current-deployment-and-version-id-for-each-component",
       );
       for (const [key, path] of Object.entries(written.outputs)) {
         expect(readFileSync(path, "utf8")).toBe(result.rendered[key as keyof typeof result.rendered]);
