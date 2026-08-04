@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   canonicalJson as shadowCanonicalJson,
   normalizeArtifact as normalizeShadowArtifact,
+  reconcileArtifacts,
 } from "../../scripts/agora-shadow-reconcile.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -333,6 +334,17 @@ export function validateAdoptExistingEvidence({
   const report = validateShadowReport(reconciliation, connectionId, verifiedExportSha256);
   if (report.targetDatasetSha256 !== verifiedTargetSha256) {
     throw new Error("RUNTIME_CREDENTIAL_PROVISION_SHADOW_REPORT_TARGET_SHA256_MISMATCH");
+  }
+  const recomputedReconciliation = reconcileArtifacts(sourceArtifact, targetArtifact);
+  if (
+    recomputedReconciliation.result !== "RECONCILED_EXACT"
+    || recomputedReconciliation.summary.differences !== 0
+    || recomputedReconciliation.differences.length !== 0
+    || recomputedReconciliation.connections.length !== 1
+    || recomputedReconciliation.connections[0].connectionId !== connectionId
+    || recomputedReconciliation.connections[0].status !== "RECONCILED_EXACT"
+  ) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_RECONCILIATION_NOT_EXACT");
   }
   if (
     report.connection.events !== watermarks.salesEvents

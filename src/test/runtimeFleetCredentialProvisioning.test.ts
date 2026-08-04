@@ -319,6 +319,39 @@ describe("fleet runtime credential provisioning", () => {
       .toThrow("RUNTIME_CREDENTIAL_PROVISION_EXPORT_MANIFEST_SHA256_MISMATCH");
   });
 
+  it("rejects a forged exact report when target product and quantity differ", () => {
+    const fixture = fixtureInput();
+    const connection = fixture.connections[0];
+    const targetArtifact = JSON.parse(
+      readFileSync(connection.adoptionEvidence.targetManifestPath, "utf8"),
+    );
+    targetArtifact.connections[0].events[0].lines[0].providerProductId = "forged-product";
+    targetArtifact.connections[0].events[0].lines[0].qty = 2;
+    const targetSource = Buffer.from(`${JSON.stringify(targetArtifact)}\n`);
+    const targetManifestSha256 = sha256(targetSource);
+    writeFileSync(connection.adoptionEvidence.targetManifestPath, targetSource, { mode: 0o600 });
+    connection.adoptionEvidence.targetManifestSha256 = targetManifestSha256;
+
+    const reconciliation = JSON.parse(
+      readFileSync(connection.adoptionEvidence.reconciliationManifestPath, "utf8"),
+    );
+    reconciliation.inputs.ownSha256 = targetManifestSha256;
+    const { reportSha256: _oldReportSha256, ...reportBody } = reconciliation;
+    reconciliation.reportSha256 = sha256(Buffer.from(canonicalTestJson(reportBody)));
+    const reconciliationSource = Buffer.from(`${JSON.stringify(reconciliation)}\n`);
+    writeFileSync(
+      connection.adoptionEvidence.reconciliationManifestPath,
+      reconciliationSource,
+      { mode: 0o600 },
+    );
+    connection.adoptionEvidence.reconciliationManifestSha256 = sha256(reconciliationSource);
+
+    expect(() => validateFleetProvisioningInput({
+      version: 1,
+      connections: fixture.connections,
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_RECONCILIATION_NOT_EXACT");
+  });
+
   it("keeps the logical manifest deterministic across input order and encryption keys", () => {
     const fixture = fixtureInput();
     const first = validateFleetProvisioningInput({ version: 1, connections: fixture.connections });

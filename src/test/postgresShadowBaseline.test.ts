@@ -63,6 +63,22 @@ describe("PostgreSQL shadow baseline", () => {
       if (text.includes("FROM public.sales_line_items")) {
         return { rows: [{ id: "33333333-3333-4333-8333-333333333333", sales_event_id: EVENT_ID, provider_product_id: "p1", name: "Wine", family: "WINERIM", format: "BOTTLE", quantity: 1, unit_price: 10, total_amount: 10, provider_sold_at: "2026-08-04T10:00:00Z", created_at: "2026-08-04T10:00:00Z", mapped: false, winerim_product_id: null }] };
       }
+      if (text.includes("FROM public.stock_sync_log") && !text.includes("sales_event_id IS NULL")) {
+        return { rows: [{
+          id: "44444444-4444-4444-8444-444444444444",
+          sales_event_id: EVENT_ID,
+          idempotency_key: null,
+          status: "SUCCESS",
+          created_at: "2026-08-04T10:01:00Z",
+          winerim_response: null,
+          stock_id: "4201",
+          quantity: "1.000",
+          variant: "bottle",
+          winerim_product_id: "wine-1",
+          provider_product_id: "p1",
+          synced_at: "2026-08-04T10:02:00Z",
+        }] };
+      }
       return { rows: [] };
     });
     const result = await exportPostgresShadow({
@@ -83,6 +99,12 @@ describe("PostgreSQL shadow baseline", () => {
     const artifact = JSON.parse(await readFile(output, "utf8"));
     expect(artifact.capture).toMatchObject({ mode: "POSTGRES_REPEATABLE_READ_ONLY", authoritative: true });
     expect(artifact.connections[0].events[0].lines[0].providerLineId).toMatch(/^content:[a-f0-9]{64}:1$/);
+    expect(artifact.connections[0].receipts[0].receiptId).toMatch(/^content:[a-f0-9]{64}:1$/);
+    const stockQueries = queries.filter((text) => text.includes("FROM public.stock_sync_log"));
+    expect(stockQueries).toHaveLength(2);
+    for (const text of stockQueries) {
+      expect(text).toContain("stock_id, quantity, variant, winerim_product_id, provider_product_id, synced_at");
+    }
     expect((await stat(output)).mode & 0o777).toBe(0o600);
   });
 });

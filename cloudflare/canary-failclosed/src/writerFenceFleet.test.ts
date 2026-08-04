@@ -264,6 +264,7 @@ describe("fleet writer-fence credential bundle", () => {
       connectionId,
       runId,
       holderId,
+      nowMs: Date.parse("2026-08-04T12:30:00.000Z"),
     })).rejects.toThrow("WRITER_FENCE_ACTIVE_CREDENTIAL_SET_MISMATCH");
     await expect(validateWriterFenceGrant({
       grant,

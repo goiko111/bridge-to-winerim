@@ -15,6 +15,7 @@
     "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts --environment node",
     "cf:runtime:fleet:test": "vitest run --config cloudflare/workers/middleware-runtime/vitest.config.ts",
     "cf:executor:test": "vitest run --config cloudflare/workers/middleware-runtime-executor/vitest.config.ts",
+    "cf:writer-fence:test": "vitest run --config cloudflare/canary-failclosed/vitest.config.ts",
     "cf:runtime:dry-run:staging": "npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/winerim-middleware-runtime-staging-dryrun",
     "cf:runtime:canary:render": "node scripts/runtime-canary-config.mjs render",
     "cf:runtime:dry-run:canary": "node scripts/runtime-canary-config.mjs dry-run runtime",

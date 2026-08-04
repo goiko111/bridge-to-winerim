@@ -138,6 +138,12 @@ describe("Lovable REST baseline", () => {
         idempotency_key: "stock:invoice-7:glass",
         status: "SUCCESS",
         created_at: "2026-08-04T10:01:00Z",
+        stock_id: "4201",
+        quantity: "2.000",
+        variant: "glass",
+        winerim_product_id: "wine-7",
+        provider_product_id: "product-7",
+        synced_at: "2026-08-04T10:02:00Z",
         winerim_response: {
           businessDay: "2026-08-04",
           salesImport: { orderId: "order-7", live: true, stockApplied: true },
@@ -188,7 +194,85 @@ describe("Lovable REST baseline", () => {
       live: true,
       stockApplied: true,
     });
+    expect(client.fetchAllById).toHaveBeenCalledWith(expect.objectContaining({
+      table: "stock_sync_log",
+      select: expect.stringContaining("stock_id,quantity,variant,winerim_product_id,provider_product_id,synced_at"),
+    }));
     expect(JSON.stringify(result.artifact)).not.toMatch(/api.?token|authorization|private-key/i);
+  });
+
+  it("uses stable complete stock material for synthetic receipt fingerprints", async () => {
+    const marker = {
+      id: CONNECTION_ID,
+      last_business_day_synced: "2026-08-04",
+      last_sync_at: "2026-08-04T10:00:00Z",
+      updated_at: "2026-08-04T10:00:00Z",
+    };
+    const baseReceipt = {
+      id: RECEIPT_ID,
+      sales_event_id: null,
+      idempotency_key: null,
+      status: "SUCCESS",
+      created_at: "2026-08-04T10:01:00Z",
+      winerim_response: null,
+      stock_id: "4201",
+      quantity: "2.000",
+      variant: "bottle",
+      winerim_product_id: "wine-7",
+      provider_product_id: "product-7",
+      synced_at: "2026-08-04T12:02:00+02:00",
+    };
+    const captureReceipt = async (receipt: Record<string, unknown>) => {
+      const client = {
+        metrics: { requests: 0, retries: 0, rateLimitRetries: 0, rows: 0 },
+        fetchAllById: vi.fn(async ({ table }: { table: string }) => {
+          if (table === "pos_connections") return [marker];
+          if (table === "stock_sync_log") return [receipt];
+          return [];
+        }),
+      };
+      const captured = await captureConnection({
+        client,
+        connectionId: CONNECTION_ID,
+        fromBusinessDay: "2026-08-04",
+        throughBusinessDay: "2026-08-04",
+        now: () => new Date("2026-08-04T10:03:00Z"),
+      });
+      return captured.artifact.connections[0].receipts[0];
+    };
+
+    const baseline = await captureReceipt(baseReceipt);
+    const equivalent = await captureReceipt({
+      ...baseReceipt,
+      stock_id: 4201,
+      quantity: 2,
+      variant: "BOTTLE",
+      synced_at: "2026-08-04T10:02:00Z",
+    });
+    expect(equivalent).toMatchObject({
+      receiptId: baseline.receiptId,
+      payloadSha256: baseline.payloadSha256,
+    });
+
+    const adversarial = await Promise.all([
+      captureReceipt({ ...baseReceipt, stock_id: "4202" }),
+      captureReceipt({ ...baseReceipt, quantity: "3.000" }),
+      captureReceipt({ ...baseReceipt, variant: "glass" }),
+      captureReceipt({ ...baseReceipt, winerim_product_id: "wine-8" }),
+      captureReceipt({ ...baseReceipt, provider_product_id: "product-8" }),
+      captureReceipt({ ...baseReceipt, synced_at: "2026-08-04T10:02:01Z" }),
+    ]);
+    expect(new Set([baseline, ...adversarial].map(({ receiptId }) => receiptId)).size).toBe(7);
+    expect(new Set([baseline, ...adversarial].map(({ payloadSha256 }) => payloadSha256)).size).toBe(7);
+
+    const keyedBaseline = await captureReceipt({ ...baseReceipt, idempotency_key: "stock:fixed" });
+    const keyedMutation = await captureReceipt({
+      ...baseReceipt,
+      idempotency_key: "stock:fixed",
+      stock_id: "4202",
+    });
+    expect(keyedMutation.receiptId).toBe(keyedBaseline.receiptId);
+    expect(keyedMutation.payloadSha256).not.toBe(keyedBaseline.payloadSha256);
   });
 
   it("writes private per-connection passes and never marks REST as merge eligible", async () => {

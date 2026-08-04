@@ -211,10 +211,149 @@ function validateProvisioningManifest({ manifest, connectionId, runId, keyVersio
   };
 }
 
+function legacyCredentialBinding({ reference, attestationSha256 }) {
+  return createHash("sha256").update([
+    "winerim-writer-fence-credential",
+    "1",
+    reference,
+    attestationSha256,
+  ].join("|")).digest("hex");
+}
+
+function fleetCredentialBinding({ connectionId, runId, kind, reference, version }) {
+  return createHash("sha256").update([
+    "winerim-writer-fence-fleet-credential",
+    "1",
+    connectionId,
+    runId,
+    "agora",
+    kind,
+    reference,
+    version,
+  ].join("|")).digest("hex");
+}
+
+function validateCredentialBundle({
+  grant,
+  connectionId,
+  runId,
+  expectedKeyVersion,
+  expectedGenerationSha256,
+  expectedCredentialAttestations,
+  expectedCredentialKind,
+  expectedCredentialRef,
+  expectedCredentialBinding,
+}) {
+  if (
+    Object.prototype.hasOwnProperty.call(grant, "exclusiveCredentialRef")
+    || Object.prototype.hasOwnProperty.call(grant, "credentialVersion")
+    || Object.prototype.hasOwnProperty.call(grant, "credentialBinding")
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_V3_TOP_LEVEL_CREDENTIAL_FORBIDDEN");
+  }
+  const bundle = grant.credentialBundle;
+  const credentials = bundle?.credentials;
+  if (
+    bundle?.version !== 1
+    || bundle.keyVersion !== expectedKeyVersion
+    || !SHA256_PATTERN.test(bundle.generationSha256 ?? "")
+    || !SHA256_PATTERN.test(bundle.bundleSha256 ?? "")
+    || !SHA256_PATTERN.test(bundle.signatureSha256 ?? "")
+    || !credentials
+    || Object.keys(credentials).sort().join(",") !== "agora,winerim"
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_CREDENTIAL_BUNDLE_MISMATCH");
+  }
+
+  for (const kind of ["agora", "winerim"]) {
+    const credential = credentials[kind];
+    const reference = `runtime-vault://postgres/${connectionId}/agora/${kind}`;
+    if (
+      credential?.kind !== kind
+      || credential.reference !== reference
+      || credential.version !== expectedCredentialAttestations[kind]
+      || credential.attestationSha256 !== expectedCredentialAttestations[kind]
+      || credential.binding !== fleetCredentialBinding({
+        connectionId,
+        runId,
+        kind,
+        reference,
+        version: credential.version,
+      })
+    ) {
+      throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_CREDENTIAL_BUNDLE_MISMATCH");
+    }
+  }
+
+  const generationSha256 = createHash("sha256").update([
+    "winerim-runtime-credential-set",
+    "1",
+    connectionId,
+    runId,
+    bundle.keyVersion,
+    credentials.agora.attestationSha256,
+    credentials.winerim.attestationSha256,
+  ].join("|")).digest("hex");
+  if (
+    bundle.generationSha256 !== generationSha256
+    || bundle.generationSha256 !== expectedGenerationSha256
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_CREDENTIAL_GENERATION_MISMATCH");
+  }
+
+  const bundleSha256 = createHash("sha256").update([
+    "winerim-writer-fence-credential-bundle",
+    "1",
+    connectionId,
+    runId,
+    grant.holderId,
+    grant.issuedAt,
+    grant.expiresAt,
+    bundle.keyVersion,
+    bundle.generationSha256,
+    credentials.agora.kind,
+    credentials.agora.reference,
+    credentials.agora.version,
+    credentials.agora.attestationSha256,
+    credentials.agora.binding,
+    credentials.winerim.kind,
+    credentials.winerim.reference,
+    credentials.winerim.version,
+    credentials.winerim.attestationSha256,
+    credentials.winerim.binding,
+  ].join("|")).digest("hex");
+  if (bundle.bundleSha256 !== bundleSha256) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_CREDENTIAL_BUNDLE_MISMATCH");
+  }
+
+  const selected = credentials[expectedCredentialKind];
+  if (
+    selected.reference !== expectedCredentialRef
+    || selected.attestationSha256 !== expectedCredentialAttestations[expectedCredentialKind]
+    || expectedCredentialBinding !== legacyCredentialBinding({
+      reference: selected.reference,
+      attestationSha256: selected.attestationSha256,
+    })
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+  }
+  return {
+    attestations: {
+      agora: credentials.agora.attestationSha256,
+      winerim: credentials.winerim.attestationSha256,
+    },
+    generationSha256: bundle.generationSha256,
+  };
+}
+
 function validateWriterFenceGrant({
   grant,
   connectionId,
   runId,
+  expectedKeyVersion,
+  expectedGenerationSha256,
+  expectedCredentialAttestations,
+  expectedCredentialKind,
   expectedAttestation,
   expectedHolderId,
   expectedProofSha256,
@@ -225,22 +364,12 @@ function validateWriterFenceGrant({
   approvedAt,
   expiresAt,
 }) {
-  const recomputedCredentialBinding = createHash("sha256").update([
-    "winerim-writer-fence-credential",
-    "1",
-    expectedCredentialRef,
-    expectedAttestation,
-  ].join("|")).digest("hex");
   const commonMismatch = (
     !grant
     || grant.connectionId !== connectionId
     || grant.runId !== runId
     || grant.holderId !== expectedHolderId
     || grant.proofSha256 !== expectedProofSha256
-    || grant.exclusiveCredentialRef !== expectedCredentialRef
-    || grant.credentialVersion !== expectedAttestation
-    || grant.credentialBinding !== recomputedCredentialBinding
-    || expectedCredentialBinding !== recomputedCredentialBinding
   );
   if (commonMismatch) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
@@ -250,9 +379,45 @@ function validateWriterFenceGrant({
   if (approvedAt.milliseconds < issued.milliseconds || expiresAt.milliseconds > fenceExpiry.milliseconds) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
   }
+  let credentialEvidence;
+  if (grant.version === 3) {
+    credentialEvidence = validateCredentialBundle({
+      grant,
+      connectionId,
+      runId,
+      expectedKeyVersion,
+      expectedGenerationSha256,
+      expectedCredentialAttestations,
+      expectedCredentialKind,
+      expectedCredentialRef,
+      expectedCredentialBinding,
+    });
+  } else if (grant.version === 1 && expectedMode === "legacy-writer-revoked") {
+    const recomputedCredentialBinding = legacyCredentialBinding({
+      reference: expectedCredentialRef,
+      attestationSha256: expectedAttestation,
+    });
+    if (
+      grant.exclusiveCredentialRef !== expectedCredentialRef
+      || grant.credentialVersion !== expectedAttestation
+      || grant.credentialBinding !== recomputedCredentialBinding
+      || expectedCredentialBinding !== recomputedCredentialBinding
+      || Object.prototype.hasOwnProperty.call(grant, "credentialBundle")
+      || Object.prototype.hasOwnProperty.call(grant, "writerHistory")
+    ) {
+      throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+    }
+    credentialEvidence = {
+      attestations: expectedCredentialAttestations,
+      generationSha256: expectedGenerationSha256,
+    };
+  } else {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+  }
   if (expectedMode === "legacy-writer-revoked") {
     if (
-      grant.version !== 1
+      (grant.version !== 1 && grant.version !== 3)
+      || Object.prototype.hasOwnProperty.call(grant, "writerHistory")
       || ![401, 403].includes(grant.legacyWriter?.negativeProbeStatus)
       || !SHA256_PATTERN.test(grant.legacyWriter?.evidenceSha256 ?? "")
     ) {
@@ -266,7 +431,7 @@ function validateWriterFenceGrant({
     ) {
       throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
     }
-    return { mode: expectedMode, evidenceAt: revoked.iso };
+    return { mode: expectedMode, evidenceAt: revoked.iso, ...credentialEvidence };
   }
   const history = grant.writerHistory;
   if (
@@ -276,7 +441,6 @@ function validateWriterFenceGrant({
     || history?.mode !== expectedMode
     || !expectedExternalEvidence
     || JSON.stringify(history.externalEvidence) !== JSON.stringify(expectedExternalEvidence)
-    || grant.exclusiveCredentialRef !== `runtime-vault://postgres/${connectionId}/agora/agora`
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
   }
@@ -287,7 +451,7 @@ function validateWriterFenceGrant({
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
   }
-  return { mode: expectedMode, evidenceAt: verified.iso };
+  return { mode: expectedMode, evidenceAt: verified.iso, ...credentialEvidence };
 }
 
 export function renderRescueCanaryActivationSql({
@@ -622,6 +786,10 @@ export function rescueCanaryActivationPlan({
     grant: writerFenceGrant,
     connectionId,
     runId,
+    expectedKeyVersion: keyVersion,
+    expectedGenerationSha256: provisioning.credentialSetSha256,
+    expectedCredentialAttestations: provisioning.attestations,
+    expectedCredentialKind: deployment.policy.exclusiveWriterCredentialKind,
     expectedAttestation: deployment.exclusiveAttestationSha256,
     expectedHolderId: deployment.writerFence.holderId,
     expectedProofSha256: deployment.writerFence.proofSha256,
@@ -649,8 +817,8 @@ export function rescueCanaryActivationPlan({
     credentialProvisioningManifestSha256,
     deploymentConfigSha256,
     deploymentBundleSha256,
-    credentialSetSha256: provisioning.credentialSetSha256,
-    credentialAttestations: provisioning.attestations,
+    credentialSetSha256: writerFence.generationSha256,
+    credentialAttestations: writerFence.attestations,
     activation: {
       oneConnection: true,
       job: deployment.policy.job,

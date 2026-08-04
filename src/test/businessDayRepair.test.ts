@@ -79,8 +79,105 @@ describe("business-day repair package", () => {
     expect(result.apply).toContain("BUSINESS_DAY_REPAIR_RUNTIME_ACTIVE");
     expect(result.apply).toContain("BUSINESS_DAY_REPAIR_RUNTIME_IDEMPOTENCY_PRESENT");
     expect(result.apply).toContain("UPDATE public.sales_events event SET business_day=expected.new_day");
+    expect(result.apply).toContain("BUSINESS_DAY_REPAIR_CURSOR_PREIMAGE_MISMATCH");
+    expect(result.apply).toContain("last_business_day_synced IS NOT DISTINCT FROM '2026-08-02'::date");
+    expect(result.apply).toContain("last_sync_at IS NOT DISTINCT FROM '2026-08-03T12:00:00.000Z'::timestamptz");
+    expect(result.apply).toContain("FOR UPDATE");
+    expect(result.apply).toContain("GET DIAGNOSTICS updated_rows = ROW_COUNT");
     expect(result.apply).not.toMatch(/DELETE\s+FROM|INSERT\s+INTO\s+public\.sales_(events|line_items)/i);
     expect(result.rollback).toContain("BUSINESS_DAY_ROLLBACK_PREIMAGE_MISMATCH");
+    expect(result.rollback).toContain("BUSINESS_DAY_ROLLBACK_POSTIMAGE_MISMATCH");
+    expect(result.rollback).toContain("BUSINESS_DAY_ROLLBACK_CURSOR_PREIMAGE_MISMATCH");
+    expect(result.rollback).toContain("last_business_day_synced IS NOT DISTINCT FROM '2026-08-03'::date");
+  });
+
+  it.each([
+    ["product", (target: ReturnType<typeof artifact>) => { target.connections[0].events[0].lines[0].providerProductId = "other-product"; }],
+    ["quantity", (target: ReturnType<typeof artifact>) => { target.connections[0].events[0].lines[0].qty = 2; }],
+  ])("rejects an adversarial %s change in line material", (_field, mutate) => {
+    const target = artifact({ target: true, shifted: true });
+    mutate(target);
+
+    expect(() => buildBusinessDayRepair({
+      sourceArtifact: artifact(),
+      targetArtifact: target,
+      sourceSha256: "a".repeat(64),
+      targetSha256: "b".repeat(64),
+      connectionId: CONNECTION_ID,
+      expectedEvents: 2,
+      expectedLines: 2,
+      expectedReceipts: 2,
+    })).toThrow("BUSINESS_DAY_REPAIR_LINE_MATERIAL_MISMATCH");
+  });
+
+  it("rejects any receipt material change while allowing its businessDay to differ", () => {
+    const target = artifact({ target: true, shifted: true });
+    target.connections[0].receipts[0].status = "FAILED";
+
+    expect(() => buildBusinessDayRepair({
+      sourceArtifact: artifact(),
+      targetArtifact: target,
+      sourceSha256: "a".repeat(64),
+      targetSha256: "b".repeat(64),
+      connectionId: CONNECTION_ID,
+      expectedEvents: 2,
+      expectedLines: 2,
+      expectedReceipts: 2,
+    })).toThrow("BUSINESS_DAY_REPAIR_RECEIPT_MATERIAL_MISMATCH");
+  });
+
+  it("rejects material fields outside the normalized line and receipt projection", () => {
+    const source = artifact();
+    const target = artifact({ target: true, shifted: true });
+    Object.assign(source.connections[0].events[0].lines[0], { productName: "Wine A" });
+    Object.assign(target.connections[0].events[0].lines[0], { productName: "Wine B" });
+
+    expect(() => buildBusinessDayRepair({
+      sourceArtifact: source,
+      targetArtifact: target,
+      sourceSha256: "a".repeat(64),
+      targetSha256: "b".repeat(64),
+      connectionId: CONNECTION_ID,
+      expectedEvents: 2,
+      expectedLines: 2,
+      expectedReceipts: 2,
+    })).toThrow("BUSINESS_DAY_REPAIR_LINE_MATERIAL_MISMATCH");
+
+    const receiptSource = artifact();
+    const receiptTarget = artifact({ target: true, shifted: true });
+    Object.assign(receiptSource.connections[0].receipts[0], { quantity: "1.000" });
+    Object.assign(receiptTarget.connections[0].receipts[0], { quantity: "2.000" });
+
+    expect(() => buildBusinessDayRepair({
+      sourceArtifact: receiptSource,
+      targetArtifact: receiptTarget,
+      sourceSha256: "a".repeat(64),
+      targetSha256: "b".repeat(64),
+      connectionId: CONNECTION_ID,
+      expectedEvents: 2,
+      expectedLines: 2,
+      expectedReceipts: 2,
+    })).toThrow("BUSINESS_DAY_REPAIR_RECEIPT_MATERIAL_MISMATCH");
+  });
+
+  it("pins an adversarial cursor as the exact apply preimage and reverses it", () => {
+    const target = artifact({ target: true, shifted: true });
+    target.connections[0].cursor.lastBusinessDaySynced = "2026-07-31";
+    target.connections[0].cursor.lastSyncAt = "2026-08-03T12:34:56.000Z";
+    const result = buildBusinessDayRepair({
+      sourceArtifact: artifact(),
+      targetArtifact: target,
+      sourceSha256: "a".repeat(64),
+      targetSha256: "b".repeat(64),
+      connectionId: CONNECTION_ID,
+      expectedEvents: 2,
+      expectedLines: 2,
+      expectedReceipts: 2,
+    });
+
+    expect(result.apply).toContain("last_business_day_synced IS NOT DISTINCT FROM '2026-07-31'::date");
+    expect(result.apply).toContain("last_sync_at IS NOT DISTINCT FROM '2026-08-03T12:34:56.000Z'::timestamptz");
+    expect(result.rollback).toContain("SET last_business_day_synced='2026-07-31'::date, last_sync_at='2026-08-03T12:34:56.000Z'::timestamptz");
   });
 
   it("fails closed for OpenTicket history or incomplete watermarks", () => {

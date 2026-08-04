@@ -160,7 +160,8 @@ export function createPostgresShadowClient(client) {
       );
     } else if (table === "stock_sync_log" && filters.sales_event_id === "is.null") {
       rows = await query(
-        `SELECT id, sales_event_id, idempotency_key, status, created_at, winerim_response
+        `SELECT id, sales_event_id, idempotency_key, status, created_at, winerim_response,
+                stock_id, quantity, variant, winerim_product_id, provider_product_id, synced_at
            FROM public.stock_sync_log
           WHERE connection_id = $1::uuid
             AND sales_event_id IS NULL
@@ -171,7 +172,8 @@ export function createPostgresShadowClient(client) {
       );
     } else if (table === "stock_sync_log") {
       rows = await query(
-        `SELECT id, sales_event_id, idempotency_key, status, created_at, winerim_response
+        `SELECT id, sales_event_id, idempotency_key, status, created_at, winerim_response,
+                stock_id, quantity, variant, winerim_product_id, provider_product_id, synced_at
            FROM public.stock_sync_log
           WHERE connection_id = $1::uuid
             AND sales_event_id = ANY($2::uuid[])

@@ -171,6 +171,10 @@ function nullableBoolean(value) {
   return typeof value === "boolean" ? value : null;
 }
 
+function nullableText(value) {
+  return value === undefined || value === null || value === "" ? null : String(value);
+}
+
 function salesImportSummary(response) {
   if (!response || typeof response !== "object" || Array.isArray(response)) return {};
   const liveImport = valueAt(response, ["salesImport"]);
@@ -393,7 +397,18 @@ function receiptForRow(row, eventsById, fromBusinessDay, occurrence = 1) {
   const businessDay = String(related?.business_day || valueAt(row.winerim_response, ["businessDay"]) || fromBusinessDay);
   const providerDocId = String(related?.provider_doc_id || "orphan");
   const orderId = summary.orderId || `event:${providerDocId}`;
-  const payloadSha256 = row.winerim_response == null ? null : sha256(canonicalJson(row.winerim_response));
+  const stockMaterial = {
+    stockId: nullableText(row.stock_id),
+    quantity: compactDecimal(row.quantity),
+    variant: nullableText(row.variant)?.toUpperCase() ?? null,
+    winerimProductId: nullableText(row.winerim_product_id),
+    providerProductId: nullableText(row.provider_product_id),
+    syncedAt: nullableText(row.synced_at) ? safeIso(row.synced_at) : null,
+  };
+  const payloadSha256 = sha256(canonicalJson({
+    winerimResponse: row.winerim_response ?? null,
+    stockMaterial,
+  }));
   const portableFingerprint = sha256(canonicalJson({
     businessDay,
     providerDocId,
@@ -404,6 +419,7 @@ function receiptForRow(row, eventsById, fromBusinessDay, occurrence = 1) {
     stockApplied: summary.stockApplied,
     duplicate: summary.duplicate,
     payloadSha256,
+    ...stockMaterial,
   }));
   const receiptId = String(row.idempotency_key || `content:${portableFingerprint}:${occurrence}`);
   return {
@@ -470,13 +486,13 @@ export async function captureConnection({
     }));
     receipts.push(...await client.fetchAllById({
       table: "stock_sync_log",
-      select: "id,sales_event_id,idempotency_key,status,created_at,winerim_response",
+      select: "id,sales_event_id,idempotency_key,status,created_at,winerim_response,stock_id,quantity,variant,winerim_product_id,provider_product_id,synced_at",
       filters: { connection_id: `eq.${connectionId}`, sales_event_id: `in.(${ids.join(",")})` },
     }));
   }
   receipts.push(...await client.fetchAllById({
     table: "stock_sync_log",
-    select: "id,sales_event_id,idempotency_key,status,created_at,winerim_response",
+    select: "id,sales_event_id,idempotency_key,status,created_at,winerim_response,stock_id,quantity,variant,winerim_product_id,provider_product_id,synced_at",
     filters: {
       connection_id: `eq.${connectionId}`,
       sales_event_id: "is.null",
