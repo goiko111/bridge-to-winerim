@@ -889,6 +889,7 @@ async function persistTrackingPlan(
   operation: CatalogProductOperation,
 ): Promise<void> {
   const desired = operation.desired;
+  const certifiedStatus = desired.saleableAsMain === false ? "HIDDEN" : "VERIFIED";
   await transaction.query(sql`
     INSERT INTO public.winerim_push_tracking (
       connection_id,
@@ -908,35 +909,19 @@ async function persistTrackingPlan(
       ${desired.productId},
       ${desired.family.id},
       'WINERIM',
-      'NOT_PUSHED',
+      ${certifiedStatus},
       NULL,
-      NULL,
-      NULL
+      now(),
+      now()
     )
     ON CONFLICT (connection_id, winerim_wine_id, format) DO UPDATE SET
       agora_product_id = EXCLUDED.agora_product_id,
       agora_family_id = EXCLUDED.agora_family_id,
       source = 'WINERIM',
-      sync_status = CASE
-        WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
-          THEN winerim_push_tracking.sync_status
-        ELSE 'NOT_PUSHED'
-      END,
-      last_error = CASE
-        WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
-          THEN winerim_push_tracking.last_error
-        ELSE NULL
-      END,
-      pushed_at = CASE
-        WHEN winerim_push_tracking.sync_status IN ('PUSHED', 'VERIFIED')
-          THEN winerim_push_tracking.pushed_at
-        ELSE NULL
-      END,
-      verified_at = CASE
-        WHEN winerim_push_tracking.sync_status = 'VERIFIED'
-          THEN winerim_push_tracking.verified_at
-        ELSE NULL
-      END,
+      sync_status = EXCLUDED.sync_status,
+      last_error = NULL,
+      pushed_at = EXCLUDED.pushed_at,
+      verified_at = EXCLUDED.verified_at,
       updated_at = now()
   `);
 }

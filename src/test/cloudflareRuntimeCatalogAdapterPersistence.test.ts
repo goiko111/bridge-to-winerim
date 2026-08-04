@@ -103,6 +103,24 @@ function plan(name = "B Test"): CatalogPlan {
   };
 }
 
+function hiddenPlan(): CatalogPlan {
+  const active = plan("B Hidden Test");
+  return {
+    ...active,
+    operations: active.operations.map((operation) => ({
+      ...operation,
+      kind: "update" as const,
+      changedFields: ["useAsDirectSale", "saleableAsMain"] as const,
+      desired: {
+        ...operation.desired,
+        useAsDirectSale: false,
+        saleableAsMain: false,
+      },
+    })),
+    summary: { requestedWines: 1, consideredVariants: 1, create: 0, update: 1, unchanged: 0, blocked: 0 },
+  };
+}
+
 function input(catalogPlan = plan()) {
   return {
     request: request(),
@@ -129,7 +147,7 @@ function successfulRoute(statement: SqlStatement): QueryResult<Record<string, un
 }
 
 describe("PostgreSQL catalog adapter plan persistence", () => {
-  it("persists only a pending DB plan and tracking evidence in one serializable transaction", async () => {
+  it("persists the active variant as VERIFIED only after the caller's certified apply path", async () => {
     const fake = fakeDatabase(successfulRoute);
     const applied = await createPostgresCatalogAdapter(fake.database).applyPlan(input());
 
@@ -153,10 +171,52 @@ describe("PostgreSQL catalog adapter plan persistence", () => {
     expect(mapping.text).toContain("'PENDING'");
     expect(mapping.text).not.toContain("'CONFIRMED'");
     const tracking = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.winerim_push_tracking"))!;
-    expect(tracking.text).toContain("'NOT_PUSHED'");
-    expect(tracking.text).toContain("THEN winerim_push_tracking.sync_status");
+    expect(tracking.values).toContain("VERIFIED");
+    expect(tracking.values).not.toContain("HIDDEN");
+    expect(tracking.text).toContain("sync_status = EXCLUDED.sync_status");
+    expect(tracking.text).toContain("pushed_at = EXCLUDED.pushed_at");
+    expect(tracking.text).toContain("verified_at = EXCLUDED.verified_at");
     expect(texts.join("\n")).not.toContain("provider_products");
     expect(texts.join("\n")).not.toContain("agora_master_data");
+  });
+
+  it("persists an exact certified hide as HIDDEN without preserving a stale VERIFIED state", async () => {
+    const fake = fakeDatabase((statement) => {
+      if (statement.text.includes("FROM public.pos_connections")) {
+        return result([{ id: CONNECTION_ID, provider: "agora" }]);
+      }
+      if (statement.text.includes("FROM public.product_mappings") && statement.text.includes("FOR UPDATE")) return result();
+      if (statement.text.includes("FROM public.winerim_push_tracking") && statement.text.includes("FOR UPDATE")) {
+        return result([{
+          winerim_wine_id: "1",
+          format: "BOTTLE",
+          agora_product_id: "500001",
+          agora_family_id: "10",
+          sync_status: "VERIFIED",
+          source: "WINERIM",
+        }]);
+      }
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
+        return result([{ idempotency_key: PLAN_KEY, job: "catalog.plan.db", status: "RUNNING", result: {} }]);
+      }
+      if (statement.text.includes("INSERT INTO public.product_mappings")) return result([{ provider_product_id: "500001" }]);
+      if (statement.text.includes("INSERT INTO public.winerim_push_tracking")) return result();
+      if (statement.text.includes("UPDATE public.runtime_idempotency")) {
+        return result([{ idempotency_key: PLAN_KEY, job: "catalog.plan.db", status: "SUCCESS", result: {} }]);
+      }
+      throw new Error(`Unexpected query: ${statement.text}`);
+    });
+
+    const applied = await createPostgresCatalogAdapter(fake.database).applyPlan(input(hiddenPlan()));
+
+    expect(applied).toEqual({
+      ok: true,
+      receipt: { status: "applied", appliedProductIds: ["500001"] },
+    });
+    const tracking = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.winerim_push_tracking"))!;
+    expect(tracking.values).toContain("HIDDEN");
+    expect(tracking.values).not.toContain("VERIFIED");
+    expect(tracking.text).not.toContain("THEN winerim_push_tracking.sync_status");
   });
 
   it("rejects a direct dry-run apply before opening a transaction", async () => {
