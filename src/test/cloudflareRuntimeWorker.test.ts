@@ -855,6 +855,66 @@ describe("staging-only Cloudflare middleware runtime Worker", () => {
     expect(statements.some((text) => text.includes("runtime_execution_log"))).toBe(true);
   });
 
+  it.each([
+    {
+      label: "keeps an uppercase executor code",
+      executorMessage: "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED",
+      expectedCode: "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED",
+    },
+    {
+      label: "redacts an arbitrary executor message",
+      executorMessage: "upstream token=must-never-be-persisted",
+      expectedCode: "RUNTIME_EXECUTOR_FAILED",
+    },
+  ])("$label in terminal idempotency and execution detail", async ({
+    executorMessage,
+    expectedCode,
+  }) => {
+    const statements: Array<{ text: string; values: readonly unknown[] }> = [];
+    const database = fakeDatabase((statement) => {
+      statements.push(statement);
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
+        return result([{ attempt: 1 }]);
+      }
+      if (statement.text.includes("SET status = 'TERMINAL'")) {
+        return result([{ attempt: 1 }]);
+      }
+      return result();
+    });
+    const executor = { execute: vi.fn(async () => ({
+      ok: false as const,
+      failure: { httpStatus: 422, message: executorMessage },
+    })) };
+    const body = await queueEnvelope(`terminal-code:${expectedCode}`);
+    const message = { id: "cf-terminal-code", attempts: 1, body, ack: vi.fn(), retry: vi.fn() };
+
+    await runRuntimeQueue(
+      { queue: "runtime", messages: [message] },
+      readyEnv(),
+      dependencies(database, executor),
+    );
+
+    const terminalUpdate = statements.find((statement) => statement.text.includes("SET status = 'TERMINAL'"));
+    const executionLog = statements.find((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_execution_log")
+    );
+    const persistedJson = (statement: typeof terminalUpdate) => {
+      const value = statement?.values.find((candidate) =>
+        typeof candidate === "string" && candidate.startsWith("{")
+      );
+      return JSON.parse(String(value ?? "{}")) as Record<string, unknown>;
+    };
+
+    for (const persisted of [persistedJson(terminalUpdate), persistedJson(executionLog)]) {
+      expect(persisted).toMatchObject({
+        executorCode: expectedCode,
+        errorClass: "BUSINESS_ERROR",
+        reason: "non_retryable",
+      });
+      expect(JSON.stringify(persisted)).not.toContain("must-never-be-persisted");
+    }
+  });
+
   it("persists the DLQ handoff before the final platform retry", async () => {
     const statements: Array<{ text: string; values: readonly unknown[] }> = [];
     const database = fakeDatabase((statement) => {

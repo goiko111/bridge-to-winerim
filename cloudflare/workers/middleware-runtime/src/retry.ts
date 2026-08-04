@@ -20,6 +20,7 @@ export type RuntimeFailure = {
   retryable: boolean;
   countsForCircuitBreaker: boolean;
   reason: string;
+  executorCode: string;
 };
 
 export type RuntimeQueueDisposition =
@@ -61,73 +62,87 @@ const BUSINESS_ERROR_PATTERNS = [
   "missing_magnum_sale_price",
 ];
 
+export function safeExecutorMessage(value: unknown): string {
+  const normalized = String(value || "RUNTIME_EXECUTOR_FAILED").trim();
+  return /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized)
+    ? normalized
+    : "RUNTIME_EXECUTOR_FAILED";
+}
+
+function runtimeFailure(
+  input: RuntimeFailureInput,
+  failure: Omit<RuntimeFailure, "executorCode">,
+): RuntimeFailure {
+  return { ...failure, executorCode: safeExecutorMessage(input.message) };
+}
+
 export function classifyRuntimeFailure(input: RuntimeFailureInput): RuntimeFailure {
   const message = (input.message ?? "").toLowerCase();
   const status = input.httpStatus;
 
   if (input.profile === "WINERIM_MUTATION" && status === 409) {
-    return {
+    return runtimeFailure(input, {
       class: "WINERIM_CONFLICT",
       retryable: true,
       countsForCircuitBreaker: false,
       reason: "winerim_mutation_conflict",
-    };
+    });
   }
 
   if ([400, 401, 403, 404, 422].includes(status ?? 0)) {
-    return {
+    return runtimeFailure(input, {
       class: "BUSINESS_ERROR",
       retryable: false,
       countsForCircuitBreaker: false,
       reason: "request_or_data_requires_correction",
-    };
+    });
   }
 
   if (input.retryableLine === true) {
-    return {
+    return runtimeFailure(input, {
       class: "TRANSIENT_UPSTREAM",
       retryable: true,
       countsForCircuitBreaker: false,
       reason: "upstream_line_marked_retryable",
-    };
+    });
   }
 
   if (POS_DOWN_PATTERNS.some((pattern) => message.includes(pattern)) || status === 408) {
-    return {
+    return runtimeFailure(input, {
       class: "POS_DOWN",
       retryable: true,
       countsForCircuitBreaker: input.profile === "POS_OUTBOUND",
       reason: "pos_unreachable",
-    };
+    });
   }
 
   if (status === 429 || (status !== undefined && status >= 500 && status <= 504) ||
       message.includes("sql pool") || message.includes("too many requests") ||
       message.includes("rate limit")) {
-    return {
+    return runtimeFailure(input, {
       class: input.profile === "POS_OUTBOUND" ? "POS_OVERLOADED" : "TRANSIENT_UPSTREAM",
       retryable: true,
       countsForCircuitBreaker: input.profile === "POS_OUTBOUND",
       reason: "upstream_overloaded",
-    };
+    });
   }
 
   if (status === 409 ||
       BUSINESS_ERROR_PATTERNS.some((pattern) => message.includes(pattern))) {
-    return {
+    return runtimeFailure(input, {
       class: "BUSINESS_ERROR",
       retryable: false,
       countsForCircuitBreaker: false,
       reason: "request_or_data_requires_correction",
-    };
+    });
   }
 
-  return {
+  return runtimeFailure(input, {
     class: "UNKNOWN",
     retryable: true,
     countsForCircuitBreaker: false,
     reason: "unknown_failure_bounded_retry",
-  };
+  });
 }
 
 export function retryDelaySeconds(profile: RuntimeRetryProfile, attempts: number): number {

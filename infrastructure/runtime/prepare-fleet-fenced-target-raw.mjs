@@ -521,7 +521,8 @@ export function prepareFleetFencedTargetRaw({
   const artifacts = readReferencedArtifacts(input);
   const validated = validateFleetFencedTargetRawInput({ input, artifacts });
   const artifact = buildFleetFencedTargetRawArtifact(validated);
-  const artifactSource = Buffer.from(`${JSON.stringify(artifact, null, 2)}\n`);
+  // Keep large, exact historical captures below the existing 16 MiB safety cap.
+  const artifactSource = Buffer.from(`${JSON.stringify(artifact)}\n`);
   if (artifactSource.length > MAX_INPUT_BYTES) {
     throw new Error("RUNTIME_FLEET_FENCED_TARGET_RAW_OUTPUT_TOO_LARGE");
   }

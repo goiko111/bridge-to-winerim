@@ -86,7 +86,7 @@ function fleetCredentialBinding({ connectionId, runId, kind, version }) {
 
 function prepareFleetCredentialBundle({ environment, connectionId, runId, holderId, proof, issuedAt, expiresAt }) {
   const keyVersion = requiredFrom(environment, "RUNTIME_VAULT_KEY_VERSION");
-  if (!IDENTIFIER_PATTERN.test(keyVersion)) {
+  if (!ADOPT_EXISTING_KEY_VERSION_PATTERN.test(keyVersion)) {
     throw new Error("WRITER_FENCE_GRANT_INVALID_KEY_VERSION");
   }
   const credentials = Object.fromEntries(["agora", "winerim"].map((kind) => {

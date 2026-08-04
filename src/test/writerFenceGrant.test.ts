@@ -724,6 +724,19 @@ describe("adopt-existing sales writer-fence grant", () => {
 });
 
 describe("adopt-existing full-lanes writer-fence grant", () => {
+  it("accepts the short v1 key version used by provisioned adoption credentials", () => {
+    const directory = temporaryDirectory("writer-fence-adopt-full-lanes-v1");
+    const output = join(directory, "writer-fence-grant.json");
+    const result = prepareWriterFenceGrant({
+      environment: fullLanesGrantEnvironment(directory, {
+        RUNTIME_VAULT_KEY_VERSION: "v1",
+      }),
+      output,
+    });
+
+    expect(result.grant.credentialBundle.keyVersion).toBe("v1");
+  });
+
   it("binds the exact five-job full-lanes policy into the signed activation scope", () => {
     const directory = temporaryDirectory("writer-fence-adopt-full-lanes");
     const output = join(directory, "writer-fence-grant.json");

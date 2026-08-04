@@ -21,6 +21,7 @@ import {
   type RuntimeExecutionResult,
   type RuntimeQueueHooks,
 } from "./queue";
+import { safeExecutorMessage } from "./retry";
 import { canonicalJson, sha256Hex } from "./idempotency";
 import {
   buildScheduledRuntimeMessages,
@@ -221,13 +222,6 @@ function defaultDatabase(env: MiddlewareRuntimeEnv): DatabaseAdapter {
     createClient: createPostgresClient,
     applicationName: "winerim-middleware-runtime-staging",
   });
-}
-
-function safeExecutorMessage(value: unknown): string {
-  const normalized = String(value || "RUNTIME_EXECUTOR_FAILED").trim();
-  return /^[A-Z][A-Z0-9_]{0,79}$/.test(normalized)
-    ? normalized
-    : "RUNTIME_EXECUTOR_FAILED";
 }
 
 function safeExecutorDetail(value: unknown): string | undefined {
@@ -557,6 +551,7 @@ export function createPersistentRuntimeQueueHooks(
             result = ${JSON.stringify({
               delaySeconds: disposition.delaySeconds,
               errorClass: disposition.failure.class,
+              executorCode: disposition.failure.executorCode,
               reason: disposition.failure.reason,
               state: "retry",
             })}::jsonb,
@@ -574,7 +569,12 @@ export function createPersistentRuntimeQueueHooks(
         if (!row) throw new Error("RUNTIME_RESERVATION_LOST");
         await insertExecutionLog(transaction, envelope, "RETRY", row.attempt, {
           errorClass: disposition.failure.class,
-          detail: { delaySeconds: disposition.delaySeconds, reason: disposition.failure.reason },
+          detail: {
+            delaySeconds: disposition.delaySeconds,
+            errorClass: disposition.failure.class,
+            executorCode: disposition.failure.executorCode,
+            reason: disposition.failure.reason,
+          },
         });
       }, { isolationLevel: "serializable" });
       leases.delete(envelope);
@@ -588,6 +588,7 @@ export function createPersistentRuntimeQueueHooks(
           SET status = 'RETRY', lease_expires_at = NULL,
             result = ${JSON.stringify({
               errorClass: input.disposition.failure.class,
+              executorCode: input.disposition.failure.executorCode,
               reason: input.reason,
               state: "dead_letter_pending",
             })}::jsonb,
@@ -605,7 +606,12 @@ export function createPersistentRuntimeQueueHooks(
         if (!row) throw new Error("RUNTIME_RESERVATION_LOST");
         await insertExecutionLog(transaction, envelope, "BLOCKED", row.attempt, {
           errorClass: input.disposition.failure.class,
-          detail: { reason: input.reason, state: "dead_letter_pending" },
+          detail: {
+            errorClass: input.disposition.failure.class,
+            executorCode: input.disposition.failure.executorCode,
+            reason: input.reason,
+            state: "dead_letter_pending",
+          },
         });
       }, { isolationLevel: "serializable" });
       leases.delete(envelope);
@@ -614,11 +620,17 @@ export function createPersistentRuntimeQueueHooks(
     async recordTerminal(envelope, input) {
       if (!envelope) return;
       const lease = acquiredLease(envelope);
+      const failure = input.disposition?.failure;
       await database.transaction(async (transaction) => {
         const terminal = await transaction.query<RuntimeAttemptRow>(sql`
           UPDATE public.runtime_idempotency
           SET status = 'TERMINAL', lease_expires_at = NULL,
-            result = ${JSON.stringify({ reason: input.reason, state: "terminal" })}::jsonb,
+            result = ${JSON.stringify({
+              errorClass: failure?.class ?? null,
+              executorCode: failure?.executorCode ?? "RUNTIME_EXECUTOR_FAILED",
+              reason: input.reason,
+              state: "terminal",
+            })}::jsonb,
             updated_at = now()
           WHERE idempotency_key = ${envelope.idempotencyKey}
             AND message_id = ${envelope.messageId}
@@ -632,8 +644,12 @@ export function createPersistentRuntimeQueueHooks(
         const row = terminal.rows[0];
         if (!row) throw new Error("RUNTIME_RESERVATION_LOST");
         await insertExecutionLog(transaction, envelope, "TERMINAL", row.attempt, {
-          errorClass: input.disposition?.failure.class ?? null,
-          detail: { reason: input.reason },
+          errorClass: failure?.class ?? null,
+          detail: {
+            errorClass: failure?.class ?? null,
+            executorCode: failure?.executorCode ?? "RUNTIME_EXECUTOR_FAILED",
+            reason: input.reason,
+          },
         });
       }, { isolationLevel: "serializable" });
       leases.delete(envelope);
