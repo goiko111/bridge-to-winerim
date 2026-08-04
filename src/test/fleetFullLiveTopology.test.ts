@@ -278,6 +278,32 @@ function attest(prepared: ReturnType<typeof prepare>, evidence: unknown) {
 }
 
 describe("full fleet LIVE topology package", () => {
+  it("accepts the current Cloudflare queue and deployment response shapes", async () => {
+    const evidence = await topologyEvidence({
+      mutate(kind, envelope) {
+        envelope.errors = null;
+        if (kind.startsWith("queue-consumers:")) {
+          const consumers = envelope.result as Array<Record<string, unknown>>;
+          consumers[0].script = consumers[0].script_name;
+          delete consumers[0].script_name;
+        }
+        if (kind.startsWith("worker-deployments:")) delete envelope.result_info;
+      },
+    });
+
+    expect(evidence.payload.topology.queues).toMatchObject({
+      catalog: {
+        consumers: [{ workerName: FLEET_FULL_LANES.catalog.workerName }],
+      },
+      salesStock: {
+        consumers: [{ workerName: FLEET_FULL_LANES.salesStock.workerName }],
+      },
+      outbound: {
+        consumers: [{ workerName: FLEET_FULL_LANES.outbound.workerName }],
+      },
+    });
+  });
+
   it("renders three live lane workers with one bounded consumer each and a private executor", () => {
     const result = prepare();
 

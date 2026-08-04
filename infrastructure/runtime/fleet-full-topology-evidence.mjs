@@ -238,14 +238,19 @@ function readPrivateSigningKey(path) {
   return readFileSync(path);
 }
 
-function completeResultList(envelope, label, selectResult) {
+function completeResultList(envelope, label, selectResult, { allowMissingResultInfo = false } = {}) {
+  const noErrors = envelope?.errors === null
+    || (Array.isArray(envelope?.errors) && envelope.errors.length === 0);
   if (
     envelope?.success !== true
-    || !Array.isArray(envelope?.errors)
-    || envelope.errors.length !== 0
-    || !envelope?.result_info
+    || !noErrors
+    || (!allowMissingResultInfo && !envelope?.result_info)
   ) fail(label + "_CLOUDFLARE_RESPONSE_INCOMPLETE");
   const list = selectResult(envelope.result);
+  if (allowMissingResultInfo && envelope?.result_info == null) {
+    if (!Array.isArray(list)) fail(label + "_CLOUDFLARE_RESULT_INCOMPLETE");
+    return list;
+  }
   const info = envelope.result_info;
   if (
     !Array.isArray(list)
@@ -412,9 +417,10 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
       fail("TOPOLOGY_" + laneKey.toUpperCase() + "_CONSUMER_EXCLUSIVITY_VIOLATION");
     }
     const consumer = consumers[0];
+    const consumerWorkerName = consumer?.script_name ?? consumer?.script;
     if (
       consumer?.type !== "worker"
-      || consumer?.script_name !== lane.consumerWorkerName
+      || consumerWorkerName !== lane.consumerWorkerName
       || consumer?.queue_name !== lane.queue
       || consumer?.dead_letter_queue !== lane.deadLetterQueue
       || consumer?.settings?.batch_size !== 1
@@ -426,7 +432,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
       queueId,
       queueName: lane.queue,
       consumers: [{
-        workerName: consumer.script_name,
+        workerName: consumerWorkerName,
         deploymentId: lane.consumerDeploymentId,
         versionId: lane.consumerVersionId,
         maxBatchSize: consumer.settings.batch_size,
@@ -448,6 +454,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
       consumerDeploymentsResponse.envelope,
       "TOPOLOGY_" + laneKey.toUpperCase() + "_CONSUMER_DEPLOYMENTS",
       (result) => result?.deployments,
+      { allowMissingResultInfo: true },
     );
     activeWorkerVersion(
       consumerDeployments,
@@ -467,6 +474,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
     deploymentsResponse.envelope,
     "TOPOLOGY_EXECUTOR_DEPLOYMENTS",
     (result) => result?.deployments,
+    { allowMissingResultInfo: true },
   );
   activeWorkerVersion(deployments, executorDeploymentId, executorVersionId, "EXECUTOR");
   const completedAt = timestamp(now().toISOString(), "TOPOLOGY_CAPTURE_COMPLETED_AT");
