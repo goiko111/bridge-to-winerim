@@ -71,6 +71,15 @@ new_sqlite_classes = ["ConnectionWriterFence"]
 
 const EXECUTION_DISABLED = 'RUNTIME_EXECUTION_ENABLED = "false"';
 const EXECUTION_ENABLED = 'RUNTIME_EXECUTION_ENABLED = "true"';
+const INERT_EXECUTOR_BINDINGS_COMMENT = `# RUNTIME_VAULT_KEY, RUNTIME_FLEET_WRITER_FENCE_BUNDLE and WRITER_FENCE are
+# intentionally absent. They are injected only by the separate activation
+# gate; without them, and with execution disabled, the executor is fail-closed.`;
+const LIVE_EXECUTOR_BINDINGS_COMMENT = `# Private vault, scoped writer-fence bundle and writer-fence service bindings.
+# They remain fail-closed until a matching active connection scope exists.`;
+const INERT_RUNTIME_CONSUMER_COMMENT = `# Intentionally no Queue consumer. The reviewed consumer gate must add exactly
+# one rescue Queue and its winerim-rescue-prod-dead-letter binding separately.`;
+const LIVE_RUNTIME_CONSUMER_COMMENT = `# One bounded sales consumer. With no active connection scopes it cannot enqueue
+# or execute connection work; catalog, outbound and maintenance remain disabled.`;
 const EXECUTOR_SALES_SWITCHES = Object.freeze([
   "RUNTIME_SALES_EXECUTION_ENABLED",
   "RUNTIME_SALES_CURSOR_ENABLED",
@@ -164,6 +173,31 @@ function enableExecutorSalesSwitches(source) {
     rendered = rendered.replace(disabled, enabled);
   }
   return rendered;
+}
+
+function replaceOperationalComment(source, current, replacement, label) {
+  if (occurrences(source, current) !== 1 || occurrences(source, replacement) !== 0) {
+    fail(`${label}_COMMENT_DRIFT`);
+  }
+  return source.replace(current, replacement);
+}
+
+function describeLiveRuntime(source) {
+  return replaceOperationalComment(
+    source,
+    INERT_RUNTIME_CONSUMER_COMMENT,
+    LIVE_RUNTIME_CONSUMER_COMMENT,
+    "RUNTIME_CONSUMER",
+  );
+}
+
+function describeLiveExecutor(source) {
+  return replaceOperationalComment(
+    source,
+    INERT_EXECUTOR_BINDINGS_COMMENT,
+    LIVE_EXECUTOR_BINDINGS_COMMENT,
+    "EXECUTOR_PRIVATE_BINDINGS",
+  );
 }
 
 function appendSalesConsumer(source) {
@@ -344,8 +378,12 @@ export function validateFleetSalesLiveConfigs({
   }
   validateCanonicalBase(baseRuntimeSource, baseExecutorSource);
 
-  const expectedRuntime = appendSalesConsumer(replaceExecutionFlag(baseRuntimeSource, "RUNTIME"));
-  const expectedExecutor = appendExecutorPrivateBindings(enableExecutorSalesSwitches(baseExecutorSource));
+  const expectedRuntime = appendSalesConsumer(describeLiveRuntime(
+    replaceExecutionFlag(baseRuntimeSource, "RUNTIME"),
+  ));
+  const expectedExecutor = appendExecutorPrivateBindings(describeLiveExecutor(
+    enableExecutorSalesSwitches(baseExecutorSource),
+  ));
   if (renderedRuntimeSource !== expectedRuntime) fail("RUNTIME_UNRELATED_CHANGE_DETECTED");
   if (renderedExecutorSource !== expectedExecutor) fail("EXECUTOR_UNRELATED_CHANGE_DETECTED");
 
@@ -413,8 +451,12 @@ export function renderFleetSalesLiveConfigs({ runtimeSource, executorSource }) {
     fail("FLEET_SALES_LIVE_BASE_CONFIGS_REQUIRED");
   }
   validateCanonicalBase(runtimeSource, executorSource);
-  const renderedRuntimeSource = appendSalesConsumer(replaceExecutionFlag(runtimeSource, "RUNTIME"));
-  const renderedExecutorSource = appendExecutorPrivateBindings(enableExecutorSalesSwitches(executorSource));
+  const renderedRuntimeSource = appendSalesConsumer(describeLiveRuntime(
+    replaceExecutionFlag(runtimeSource, "RUNTIME"),
+  ));
+  const renderedExecutorSource = appendExecutorPrivateBindings(describeLiveExecutor(
+    enableExecutorSalesSwitches(executorSource),
+  ));
   const renderedWriterFenceSource = FLEET_WRITER_FENCE_CONFIG;
   const manifest = validateFleetSalesLiveConfigs({
     baseRuntimeSource: runtimeSource,

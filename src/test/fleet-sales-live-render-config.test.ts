@@ -57,10 +57,12 @@ function validateRendered(
 describe("fleet sales-only live config renderer", () => {
   it("changes only the execution flags and adds the exact sales consumer", () => {
     const result = renderFleetSalesLiveConfigs({ runtimeSource, executorSource });
-    const expectedRuntime = `${runtimeSource.replace(
-      'RUNTIME_EXECUTION_ENABLED = "false"',
-      'RUNTIME_EXECUTION_ENABLED = "true"',
-    )}\n${FLEET_SALES_LIVE_CONSUMER_BLOCK}\n`;
+    const expectedRuntime = `${runtimeSource
+      .replace('RUNTIME_EXECUTION_ENABLED = "false"', 'RUNTIME_EXECUTION_ENABLED = "true"')
+      .replace(
+        "# Intentionally no Queue consumer. The reviewed consumer gate must add exactly\n# one rescue Queue and its winerim-rescue-prod-dead-letter binding separately.",
+        "# One bounded sales consumer. With no active connection scopes it cannot enqueue\n# or execute connection work; catalog, outbound and maintenance remain disabled.",
+      )}\n${FLEET_SALES_LIVE_CONSUMER_BLOCK}\n`;
     const enabledExecutor = [
       "RUNTIME_EXECUTION_ENABLED",
       "RUNTIME_SALES_EXECUTION_ENABLED",
@@ -70,7 +72,10 @@ describe("fleet sales-only live config renderer", () => {
       (source, key) => source.replace(`${key} = "false"`, `${key} = "true"`),
       executorSource,
     );
-    const expectedExecutor = `${enabledExecutor}\n${FLEET_EXECUTOR_PRIVATE_BINDINGS_BLOCK}\n`;
+    const expectedExecutor = `${enabledExecutor.replace(
+      "# RUNTIME_VAULT_KEY, RUNTIME_FLEET_WRITER_FENCE_BUNDLE and WRITER_FENCE are\n# intentionally absent. They are injected only by the separate activation\n# gate; without them, and with execution disabled, the executor is fail-closed.",
+      "# Private vault, scoped writer-fence bundle and writer-fence service bindings.\n# They remain fail-closed until a matching active connection scope exists.",
+    )}\n${FLEET_EXECUTOR_PRIVATE_BINDINGS_BLOCK}\n`;
 
     expect(result.renderedRuntimeSource).toBe(expectedRuntime);
     expect(result.renderedExecutorSource).toBe(expectedExecutor);
@@ -100,7 +105,11 @@ describe("fleet sales-only live config renderer", () => {
     });
     expect(FLEET_SALES_LIVE_JOBS).toEqual(["sales.auto-sync", "sales.sync-intraday"]);
     expect(result.renderedRuntimeSource.match(/\[\[queues\.consumers\]\]/gu)).toHaveLength(1);
+    expect(result.renderedRuntimeSource).not.toContain("Intentionally no Queue consumer");
+    expect(result.renderedRuntimeSource).toContain("One bounded sales consumer");
     expect(result.renderedExecutorSource).not.toContain("[[queues.consumers]]");
+    expect(result.renderedExecutorSource).not.toContain("intentionally absent");
+    expect(result.renderedExecutorSource).toContain("Private vault, scoped writer-fence bundle");
     expect(result.renderedExecutorSource).toContain('RUNTIME_SALES_EXECUTION_ENABLED = "true"');
     expect(result.renderedExecutorSource).toContain('RUNTIME_SALES_CURSOR_ENABLED = "true"');
     expect(result.renderedExecutorSource).toContain('RUNTIME_SALES_DLQ_READY = "true"');
