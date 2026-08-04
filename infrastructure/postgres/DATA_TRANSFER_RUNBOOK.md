@@ -58,6 +58,17 @@ from the source remain present and empty on the target.
   required-empty staging tables are non-empty.
 - Before import, the tool creates a target backup. Replacement is one
   transaction, without `CASCADE`, and aborts on the first error.
+- The target backup holds the versioned PostgreSQL advisory fence, requires all
+  replacement relations to be permanent/WAL-logged and proves that the cluster
+  WAL LSN stayed unchanged for the full backup. The restore transaction acquires
+  the same advisory fence and `ACCESS EXCLUSIVE` locks on all 29 replacement
+  tables, then verifies database identity, the backup LSN and every preimage row
+  count before `TRUNCATE`. A concurrent write before the table locks therefore
+  aborts without replacing data; a writer arriving after the locks waits.
+- WAL stability is intentionally fail-closed at cluster scope: unrelated WAL
+  activity can abort an otherwise safe maintenance window. Never bypass that
+  abort. Keep runtime/consumers/crons disabled, create a fresh target backup and
+  repeat the reviewed import.
 - Reconciliation compares schema and transfer-policy fingerprints, exact row
   counts, streaming canonical SHA-256 checksums, FK orphans and required-empty
   tables. A mismatch automatically restores and reconciles the target backup.
@@ -86,7 +97,8 @@ npx tsc --noEmit --pretty false
 ```
 
 Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, focal tests green,
-`LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty`
+`LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty
+concurrent_write_abort=1`
 and typecheck
 green.
 
@@ -123,8 +135,10 @@ Expected: `RECONCILE_OFFLINE_ARTIFACT_OK`.
 
 ## Gate 3: staging import
 
-Keep API/runtime execution disabled. Use the Supabase direct or Session Pooler
-URL for project `qpbmqvfnunkylvtvnyyx`. The target role must be able to set
+Keep API/runtime execution, Queue consumers and Cron disabled for the entire
+precheck -> target backup -> import -> reconciliation interval. Use the
+Supabase direct or Session Pooler URL for project `qpbmqvfnunkylvtvnyyx`. The
+target role must be able to acquire transaction advisory/table locks and set
 `session_replication_role=replica`; otherwise the transaction fails without
 partial import.
 
@@ -158,6 +172,14 @@ If the process is interrupted, rerun the exact command with `--resume`. The
 tool either proves the committed data already reconciles, resumes from the
 verified target snapshot, or restores that snapshot; it never guesses across
 different manifests or directories.
+
+`TARGET_QUIESCENCE_WAL_DRIFT`, `TARGET_QUIESCENCE_ROW_COUNT_DRIFT:*`, a busy
+advisory fence or a table-lock timeout are hard `NO-GO` results. They prove that
+the target was not continuously quiescent or another transfer/writer overlapped.
+The tool checks them before `TRUNCATE`; inspect the still-untouched target,
+dispose of the invalidated target-backup directory after review, and restart
+with a new empty backup directory. `--resume` deliberately cannot reuse a
+pre-race backup whose recorded LSN has become stale.
 
 A source export itself cannot resume because its exported PostgreSQL snapshot
 expires when the coordinator transaction closes. Restart a failed export in a

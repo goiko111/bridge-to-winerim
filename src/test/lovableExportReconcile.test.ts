@@ -18,6 +18,7 @@ import {
   expectedTargetTables,
   loadTransferConfig,
   manifestDigest,
+  preimageEvidenceFromManifest,
   quoteIdentifier,
   requiredEmptyTargetTables,
   requiredSourceTables,
@@ -165,17 +166,27 @@ describe("Lovable export/reconcile staging toolkit", () => {
 
   it("wraps replacement in one transaction without CASCADE and preserves the staging sentinel", async () => {
     const config = await loadTransferConfig(configPath);
+    const replaceTables = targetReplaceTables(config);
     const sql = buildAtomicRestoreSql({
       schema: config.schema,
-      replaceTables: targetReplaceTables(config),
+      replaceTables,
       restoreSqlPath: "/private/tmp/restore-data.sql",
       projectedCopies: [{
         table: "pos_connections",
         columns: ["id", "api_token"],
         filePath: "/private/tmp/projected/pos_connections.copy",
       }],
+      expectedPreimage: {
+        database: "winerim_staging_fixture",
+        walLsn: "0/16B6C50",
+        tables: replaceTables.map((table) => ({ table, rowCount: table === "pos_connections" ? 1 : 0 })),
+      },
     });
     expect(sql).toContain("BEGIN;");
+    expect(sql).toContain("pg_try_advisory_xact_lock");
+    expect(sql).toContain("IN ACCESS EXCLUSIVE MODE");
+    expect(sql).toContain("TARGET_QUIESCENCE_WAL_DRIFT");
+    expect(sql).toContain("TARGET_QUIESCENCE_ROW_COUNT_DRIFT:pos_connections");
     expect(sql).toContain("session_replication_role = replica");
     expect(sql).toContain('"public"."pos_connections"');
     expect(sql).toContain('"public"."runtime_idempotency"');
@@ -183,6 +194,41 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(sql).not.toContain("CASCADE");
     expect(sql).toContain('\\copy "public"."pos_connections" ("id", "api_token")');
     expect(sql).toContain("COMMIT;");
+    expect(sql.indexOf("IN ACCESS EXCLUSIVE MODE")).toBeLessThan(sql.indexOf("TARGET_QUIESCENCE_WAL_DRIFT"));
+    expect(sql.indexOf("TARGET_QUIESCENCE_WAL_DRIFT")).toBeLessThan(sql.indexOf("TRUNCATE TABLE"));
+    expect(() => buildAtomicRestoreSql({
+      schema: config.schema,
+      replaceTables,
+      restoreSqlPath: "/private/tmp/restore-data.sql",
+    })).toThrow(/quiescence evidence/);
+  });
+
+  it("accepts only a checksummed target backup with continuous quiescence evidence as the import preimage", async () => {
+    const config = await loadTransferConfig(configPath);
+    const replaceTables = targetReplaceTables(config);
+    const manifest = checksumManifest({
+      schemaVersion: 2,
+      kind: "staging-target-backup",
+      snapshotLsn: "0/16B6C50",
+      source: { database: "winerim_staging_fixture" },
+      quiescenceFence: {
+        schemaVersion: 1,
+        method: "advisory-lock+wal-stability+table-counts",
+        startWalLsn: "0/16B6C50",
+        endWalLsn: "0/16B6C50",
+        relationPersistence: "permanent",
+      },
+      tables: replaceTables.map((table) => ({ table, rowCount: 0 })),
+    });
+    expect(preimageEvidenceFromManifest(manifest, replaceTables)).toEqual({
+      database: "winerim_staging_fixture",
+      walLsn: "0/16B6C50",
+      tables: replaceTables.map((table) => ({ table, rowCount: 0 })),
+    });
+    expect(() => preimageEvidenceFromManifest({
+      ...manifest,
+      quiescenceFence: { ...manifest.quiescenceFence, endWalLsn: "0/16B6C51" },
+    }, replaceTables)).toThrow(/continuous quiescence/);
   });
 
   it("requires exact target inventory but permits extra source-owned platform tables", async () => {
@@ -289,6 +335,8 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(cli).toContain('process.env[name]');
     expect(cli).toContain('options.resume');
     expect(cli).toContain('sourceSchemaSha256');
+    expect(cli).toContain('WINERIM_DATA_TRANSFER_TEST_PAUSE_AFTER_BACKUP_MS');
+    expect(cli).toContain('localTest && process.env.WINERIM_DATA_TRANSFER_TEST_PAUSE_AFTER_BACKUP_MS');
     expect(cli).not.toMatch(/--(?:source|target)-(?:url|dsn)/);
     const config = await loadTransferConfig(configPath);
     expect(buildSafePlan(config).mode).toBe("dry-run");

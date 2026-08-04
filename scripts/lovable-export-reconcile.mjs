@@ -8,6 +8,7 @@ import {
   assertSourceGate,
   assertTargetGate,
   buildSafePlan,
+  captureTargetQuiescenceEvidence,
   createExportArtifact,
   expectedTargetTables,
   inspectTarget,
@@ -15,6 +16,7 @@ import {
   readAndVerifyArtifact,
   readAndVerifySourceArtifact,
   readState,
+  preimageEvidenceFromManifest,
   reconcileTarget,
   redactError,
   targetReplaceTables,
@@ -66,12 +68,15 @@ async function pathExists(filePath) {
 
 async function restoreAndReconcileBackup({ targetUrl, backupDir, backupManifest, config, state, reason }) {
   const artifactDir = path.join(backupDir, "target-before");
+  const replaceTables = targetReplaceTables(config);
+  const expectedPreimage = await captureTargetQuiescenceEvidence(targetUrl, config, replaceTables);
   await applyArtifactAtomically({
     databaseUrl: targetUrl,
     artifactDir,
     config,
-    manifestTables: targetReplaceTables(config),
-    replaceTables: targetReplaceTables(config),
+    manifestTables: replaceTables,
+    replaceTables,
+    expectedPreimage,
   });
   let reconciliation;
   try {
@@ -206,6 +211,7 @@ async function importCommand(config, options) {
   }
 
   let backup;
+  let expectedPreimage;
   if (!state) {
     await mkdir(backupDir, { recursive: false, mode: 0o700 });
     state = await writeState(statePath, {
@@ -236,6 +242,13 @@ async function importCommand(config, options) {
       artifactDir,
       backupDir,
     });
+    if (localTest && process.env.WINERIM_DATA_TRANSFER_TEST_PAUSE_AFTER_BACKUP_MS) {
+      const pauseMs = Number(process.env.WINERIM_DATA_TRANSFER_TEST_PAUSE_AFTER_BACKUP_MS);
+      if (!Number.isSafeInteger(pauseMs) || pauseMs < 1 || pauseMs > 30_000) {
+        throw new Error("Invalid local-test pause after target backup");
+      }
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    }
   } else if (!backup) {
     if (!["TARGET_SNAPSHOT_READY", "ROLLED_BACK"].includes(state.phase)) {
       throw new Error(`Unsupported resume phase: ${state.phase}`);
@@ -245,6 +258,16 @@ async function importCommand(config, options) {
     if (state.targetBackupManifestSha256 !== backup.manifest.manifestSha256) {
       throw new Error("Resume target backup manifest mismatch");
     }
+    if (state.phase === "ROLLED_BACK") {
+      const rollbackReconciliation = await reconcileTarget({
+        databaseUrl: targetUrl,
+        sourceManifest: backup.manifest,
+        config,
+        tables: targetReplaceTables(config),
+      });
+      assertRollbackReconciled(rollbackReconciliation);
+      expectedPreimage = await captureTargetQuiescenceEvidence(targetUrl, config, targetReplaceTables(config));
+    }
   }
 
   await applyArtifactAtomically({
@@ -253,6 +276,8 @@ async function importCommand(config, options) {
     config,
     manifestTables: sourceTables,
     replaceTables: targetReplaceTables(config),
+    expectedPreimage: expectedPreimage
+      || preimageEvidenceFromManifest(backup.manifest, targetReplaceTables(config)),
   });
   state = await writeState(statePath, {
     phase: "IMPORT_APPLIED",

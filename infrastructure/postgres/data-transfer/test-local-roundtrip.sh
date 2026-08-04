@@ -89,6 +89,8 @@ SQL
 
 SOURCE_ARTIFACT="$TMP_ROOT/source-artifact"
 TARGET_BACKUP="$TMP_ROOT/target-backup"
+RACE_BACKUP="$TMP_ROOT/target-backup-race"
+RACE_CONNECTION_ID=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
 
 LOVABLE_DATABASE_URL="$SOURCE_URL" \
   node "$REPO_ROOT/scripts/lovable-export-reconcile.mjs" export \
@@ -100,6 +102,84 @@ MANIFEST_SHA=$(node -e "const m=require(process.argv[1]); process.stdout.write(m
 
 if grep -R -a -E 'FAKE_(SOURCE|PROVIDER|TOAST)_[A-Z_]+_P1' "$SOURCE_ARTIFACT" >/dev/null; then
   printf 'FAIL: source artifact contains a credential marker\n' >&2
+  exit 1
+fi
+
+# Prove that a write committed after the target backup but before the atomic
+# restore is detected before TRUNCATE. The test-only pause is accepted only
+# behind the local-test gate.
+set +e
+LOVABLE_DATABASE_URL="$SOURCE_URL" \
+STAGING_DATABASE_URL="$TARGET_URL" \
+WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST=1 \
+WINERIM_DATA_TRANSFER_TEST_PAUSE_AFTER_BACKUP_MS=4000 \
+  node "$REPO_ROOT/scripts/lovable-export-reconcile.mjs" import \
+    --artifact-dir "$SOURCE_ARTIFACT" \
+    --backup-dir "$RACE_BACKUP" \
+    --confirm-manifest "$MANIFEST_SHA" \
+    --confirm-target-ref local-test \
+    --local-test \
+    --apply >"$TMP_ROOT/race-import.stdout" 2>"$TMP_ROOT/race-import.stderr" &
+RACE_IMPORT_PID=$!
+set -e
+
+for _ in $(seq 1 100); do
+  if [ -f "$RACE_BACKUP/import-state.json" ] && \
+     grep -q '"phase": "TARGET_SNAPSHOT_READY"' "$RACE_BACKUP/import-state.json"; then
+    break
+  fi
+  sleep 0.05
+done
+if [ ! -f "$RACE_BACKUP/import-state.json" ]; then
+  set +e
+  wait "$RACE_IMPORT_PID"
+  set -e
+  cat "$TMP_ROOT/race-import.stderr" >&2
+  printf 'FAIL: race import exited before creating target snapshot state\n' >&2
+  exit 1
+fi
+grep -q '"phase": "TARGET_SNAPSHOT_READY"' "$RACE_BACKUP/import-state.json"
+
+psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO public.pos_connections
+  (id, location_name, provider, base_url, api_token, enabled)
+VALUES
+  ('$RACE_CONNECTION_ID', 'Concurrent writer fixture', 'agora', 'https://race.invalid', '', false);
+SQL
+
+set +e
+wait "$RACE_IMPORT_PID"
+race_exit=$?
+set -e
+if [ "$race_exit" -eq 0 ]; then
+  printf 'FAIL: concurrent target write was silently overwritten\n' >&2
+  exit 1
+fi
+
+race_preserved=$(
+  psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM public.pos_connections WHERE id IN ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '$RACE_CONNECTION_ID')"
+)
+race_phase=$(node -e "const s=require(process.argv[1]); process.stdout.write(s.phase)" "$RACE_BACKUP/import-state.json")
+test "$race_preserved" = "2"
+test "$race_phase" = "TARGET_SNAPSHOT_READY"
+
+# The stale backup stays invalid even if the concurrent row is later removed;
+# its WAL evidence cannot be reused with --resume.
+psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 \
+  -c "DELETE FROM public.pos_connections WHERE id='$RACE_CONNECTION_ID'"
+if LOVABLE_DATABASE_URL="$SOURCE_URL" \
+  STAGING_DATABASE_URL="$TARGET_URL" \
+  WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST=1 \
+    node "$REPO_ROOT/scripts/lovable-export-reconcile.mjs" import \
+      --artifact-dir "$SOURCE_ARTIFACT" \
+      --backup-dir "$RACE_BACKUP" \
+      --confirm-manifest "$MANIFEST_SHA" \
+      --confirm-target-ref local-test \
+      --local-test \
+      --resume \
+      --apply >/dev/null 2>&1; then
+  printf 'FAIL: stale pre-race backup was accepted on resume\n' >&2
   exit 1
 fi
 
@@ -255,4 +335,4 @@ fi
 psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 \
   -c "DELETE FROM public.provider_credentials WHERE merchant_id='runtime-empty-gate'"
 
-printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED idempotent=1 rollback=1 resume=1\n'
+printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED concurrent_write_abort=1 idempotent=1 rollback=1 resume=1\n'

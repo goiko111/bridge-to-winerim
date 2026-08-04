@@ -10,9 +10,12 @@ const { Client } = pg;
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SNAPSHOT = /^[0-9a-f]{8}-[0-9a-f]{8}-[0-9]+$/i;
+const WAL_LSN = /^[0-9a-f]+\/[0-9a-f]+$/i;
 const PROJECT_REF = /^[a-z0-9]{20}$/;
 const SAFE_ERROR = /postgres(?:ql)?:\/\/[^\s]+/gi;
 const MANIFEST_SCHEMA_VERSION = 2;
+const QUIESCENCE_SCHEMA_VERSION = 1;
+const TRANSFER_ADVISORY_LOCK_KEYS = [20260804, 1001];
 const CREDENTIAL_COLUMN = /(?:token|secret|password|credential|(?:^|_)key(?:_|$)|(?:^|_)url$|endpoint|provider_config|restaurant_guid)/i;
 const REQUIRED_POS_REDACTIONS = {
   base_url: "redacted-url",
@@ -235,15 +238,87 @@ function psqlIncludePath(filePath) {
   return `'${path.resolve(filePath).replaceAll("'", "''")}'`;
 }
 
-export function buildAtomicRestoreSql({ schema, replaceTables, restoreSqlPath, projectedCopies = [] }) {
+function sqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function validateQuiescenceEvidence(evidence, replaceTables) {
+  if (!evidence || typeof evidence !== "object"
+      || !WAL_LSN.test(evidence.walLsn || "")
+      || typeof evidence.database !== "string"
+      || evidence.database.length === 0
+      || !Array.isArray(evidence.tables)) {
+    throw new Error("Target quiescence evidence is missing or invalid");
+  }
+  const expected = [...replaceTables].sort();
+  const actual = evidence.tables.map(({ table }) => table).sort();
+  assertTableInventory(actual, expected);
+  for (const entry of evidence.tables) {
+    if (!IDENTIFIER.test(entry.table) || !Number.isSafeInteger(entry.rowCount) || entry.rowCount < 0) {
+      throw new Error(`Invalid target quiescence row count for ${String(entry.table)}`);
+    }
+  }
+  return evidence;
+}
+
+export function preimageEvidenceFromManifest(manifest, replaceTables) {
+  if (manifest?.kind !== "staging-target-backup"
+      || manifest?.quiescenceFence?.schemaVersion !== QUIESCENCE_SCHEMA_VERSION
+      || manifest?.quiescenceFence?.method !== "advisory-lock+wal-stability+table-counts"
+      || manifest?.quiescenceFence?.startWalLsn !== manifest?.snapshotLsn
+      || manifest?.quiescenceFence?.endWalLsn !== manifest?.snapshotLsn
+      || manifest?.quiescenceFence?.relationPersistence !== "permanent") {
+    throw new Error("Target backup does not contain verified continuous quiescence evidence");
+  }
+  return validateQuiescenceEvidence({
+    database: manifest.source?.database,
+    walLsn: manifest.snapshotLsn,
+    tables: manifest.tables.map(({ table, rowCount }) => ({ table, rowCount })),
+  }, replaceTables);
+}
+
+export function buildAtomicRestoreSql({
+  schema,
+  replaceTables,
+  restoreSqlPath,
+  projectedCopies = [],
+  expectedPreimage,
+}) {
   if (!replaceTables.length) throw new Error("Atomic restore needs at least one table");
+  const evidence = validateQuiescenceEvidence(expectedPreimage, replaceTables);
   const tables = replaceTables.map((table) => qualifiedTable(schema, table)).join(",\n  ");
+  const rowCountChecks = evidence.tables
+    .sort((left, right) => left.table.localeCompare(right.table))
+    .map(({ table, rowCount }) => [
+      `  IF (SELECT count(*) FROM ${qualifiedTable(schema, table)}) <> ${rowCount} THEN`,
+      `    RAISE EXCEPTION 'TARGET_QUIESCENCE_ROW_COUNT_DRIFT:${table}';`,
+      "  END IF;",
+    ].join("\n"));
   return [
     "\\set ON_ERROR_STOP on",
     "BEGIN;",
     "SET LOCAL lock_timeout = '5s';",
     "SET LOCAL statement_timeout = '0';",
     "SET LOCAL idle_in_transaction_session_timeout = '10min';",
+    "DO $winerim_transfer_advisory_fence$",
+    "BEGIN",
+    `  IF NOT pg_try_advisory_xact_lock(${TRANSFER_ADVISORY_LOCK_KEYS[0]}, ${TRANSFER_ADVISORY_LOCK_KEYS[1]}) THEN`,
+    "    RAISE EXCEPTION 'TARGET_QUIESCENCE_ADVISORY_LOCK_BUSY';",
+    "  END IF;",
+    "END",
+    "$winerim_transfer_advisory_fence$;",
+    `LOCK TABLE\n  ${tables}\nIN ACCESS EXCLUSIVE MODE;`,
+    "DO $winerim_transfer_quiescence_check$",
+    "BEGIN",
+    `  IF current_database() <> ${sqlLiteral(evidence.database)} THEN`,
+    "    RAISE EXCEPTION 'TARGET_QUIESCENCE_DATABASE_MISMATCH';",
+    "  END IF;",
+    `  IF pg_current_wal_lsn() <> ${sqlLiteral(evidence.walLsn)}::pg_lsn THEN`,
+    "    RAISE EXCEPTION 'TARGET_QUIESCENCE_WAL_DRIFT';",
+    "  END IF;",
+    ...rowCountChecks,
+    "END",
+    "$winerim_transfer_quiescence_check$;",
     "SET LOCAL session_replication_role = replica;",
     `TRUNCATE TABLE\n  ${tables}\nRESTART IDENTITY;`,
     `\\ir ${psqlIncludePath(restoreSqlPath)}`,
@@ -296,6 +371,9 @@ export function verifyManifest(manifest, expectedTables, expectedPolicySha256) {
   }
   if (!SHA256.test(expectedPolicySha256 || "") || manifest.transferPolicySha256 !== expectedPolicySha256) {
     throw new Error("Manifest transfer policy mismatch");
+  }
+  if (manifest.kind === "staging-target-backup") {
+    preimageEvidenceFromManifest(manifest, expectedTables);
   }
   return manifest;
 }
@@ -565,11 +643,37 @@ async function databaseDescriptor(client) {
   return result.rows[0].descriptor;
 }
 
-export async function withExportedSnapshot(databaseUrl, callback) {
+async function assertPermanentTransferRelations(client, schema, tables) {
+  const result = await client.query(`
+    SELECT relation.relname AS table_name, relation.relpersistence AS persistence
+    FROM pg_class relation
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    WHERE namespace.nspname = $1
+      AND relation.relkind IN ('r', 'p')
+      AND relation.relname = ANY($2::text[])
+    ORDER BY relation.relname
+  `, [schema, tables]);
+  assertTableInventory(result.rows.map(({ table_name: table }) => table), [...tables].sort());
+  const nonPermanent = result.rows.filter(({ persistence }) => persistence !== "p");
+  if (nonPermanent.length) {
+    throw new Error(`Transfer tables must be permanent/WAL-logged: ${nonPermanent.map(({ table_name: table }) => table).join(",")}`);
+  }
+}
+
+async function acquireTransferAdvisoryLock(client) {
+  const result = await client.query(
+    "SELECT pg_try_advisory_xact_lock($1, $2) AS locked",
+    TRANSFER_ADVISORY_LOCK_KEYS,
+  );
+  if (result.rows[0]?.locked !== true) throw new Error("Target transfer advisory lock is busy");
+}
+
+export async function withExportedSnapshot(databaseUrl, callback, { advisoryFence = false } = {}) {
   const client = new Client({ connectionString: databaseUrl, application_name: "winerim-export-reconcile-snapshot" });
   await client.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    if (advisoryFence) await acquireTransferAdvisoryLock(client);
     const result = await client.query(`
       SELECT pg_export_snapshot() AS snapshot_id,
              pg_current_wal_lsn()::text AS snapshot_lsn,
@@ -600,10 +704,12 @@ export async function createExportArtifact({
   const manifestPath = path.join(outputDir, "manifest.json");
 
   try {
+    const targetBackup = kind === "staging-target-backup";
     return await withExportedSnapshot(databaseUrl, async ({ client, snapshot }) => {
       const descriptor = await databaseDescriptor(client);
       const transferTables = tables || resolveSourceTables(config, descriptor.tables);
       assertTableInventory(descriptor.tables, exactInventory ? expectedTargetTables(config) : transferTables, { exact: exactInventory });
+      if (targetBackup) await assertPermanentTransferRelations(client, config.schema, transferTables);
       const schemaDescriptor = scopedDescriptor(descriptor, transferTables);
       const transferPlans = transferTables.map((table) => {
         const policy = tableTransferPolicy(config, table);
@@ -656,6 +762,23 @@ export async function createExportArtifact({
       const toc = await runProcess("pg_restore", ["--list", dumpDir]);
       const archiveSha256 = await directoryDigest(dumpDir);
       const projectedDataSha256 = await directoryDigest(projectedDir);
+      let quiescenceFence;
+      if (targetBackup) {
+        const walCheck = await client.query(
+          "SELECT pg_current_wal_lsn()::text AS end_wal_lsn, pg_current_wal_lsn() = $1::pg_lsn AS stable",
+          [snapshot.snapshot_lsn],
+        );
+        if (walCheck.rows[0]?.stable !== true) {
+          throw new Error("Target WAL changed while the pre-import backup was being captured");
+        }
+        quiescenceFence = {
+          schemaVersion: QUIESCENCE_SCHEMA_VERSION,
+          method: "advisory-lock+wal-stability+table-counts",
+          startWalLsn: snapshot.snapshot_lsn,
+          endWalLsn: walCheck.rows[0].end_wal_lsn,
+          relationPersistence: "permanent",
+        };
+      }
       const manifest = checksumManifest({
         schemaVersion: MANIFEST_SCHEMA_VERSION,
         kind,
@@ -674,10 +797,11 @@ export async function createExportArtifact({
         transferPolicySha256: transferPolicyDigest(config, transferTables),
         tocSha256: sha256(toc),
         tables: tableManifests,
+        ...(quiescenceFence ? { quiescenceFence } : {}),
       });
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
       return { outputDir, dumpDir, manifestPath, manifest };
-    });
+    }, { advisoryFence: targetBackup });
   } catch (error) {
     throw new Error(`Export artifact failed; incomplete directory retained for inspection: ${redactError(error)}`);
   }
@@ -764,6 +888,37 @@ async function tableCounts(client, schema, tables) {
   return counts;
 }
 
+export async function captureTargetQuiescenceEvidence(databaseUrl, config, tables = targetReplaceTables(config)) {
+  const client = new Client({ connectionString: databaseUrl, application_name: "winerim-export-reconcile-quiescence" });
+  await client.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await acquireTransferAdvisoryLock(client);
+    await assertPermanentTransferRelations(client, config.schema, tables);
+    const start = await client.query(`
+      SELECT current_database() AS database_name,
+             pg_current_wal_lsn()::text AS wal_lsn
+    `);
+    const counts = await tableCounts(client, config.schema, tables);
+    const end = await client.query(
+      "SELECT pg_current_wal_lsn()::text AS wal_lsn, pg_current_wal_lsn() = $1::pg_lsn AS stable",
+      [start.rows[0].wal_lsn],
+    );
+    if (end.rows[0]?.stable !== true) {
+      throw new Error("Target WAL changed while quiescence evidence was being captured");
+    }
+    await client.query("ROLLBACK");
+    return validateQuiescenceEvidence({
+      database: start.rows[0].database_name,
+      walLsn: end.rows[0].wal_lsn,
+      tables: tables.map((table) => ({ table, rowCount: counts[table] })),
+    }, tables);
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    await client.end().catch(() => undefined);
+  }
+}
+
 export async function inspectTarget(databaseUrl, config, sourceTables = config.sourceTables) {
   const client = new Client({ connectionString: databaseUrl, application_name: "winerim-export-reconcile-target-check" });
   await client.connect();
@@ -801,7 +956,14 @@ async function restoreSqlFromArchive(dumpDir, restoreSqlPath) {
   await stat(restoreSqlPath);
 }
 
-export async function applyArtifactAtomically({ databaseUrl, artifactDir, config, manifestTables, replaceTables }) {
+export async function applyArtifactAtomically({
+  databaseUrl,
+  artifactDir,
+  config,
+  manifestTables,
+  replaceTables,
+  expectedPreimage,
+}) {
   const { manifest, dumpDir, projectedCopies } = await readAndVerifyArtifact(artifactDir, manifestTables, config);
   const workDir = path.join(artifactDir, ".restore-work");
   await mkdir(workDir, { recursive: true, mode: 0o700 });
@@ -814,6 +976,7 @@ export async function applyArtifactAtomically({ databaseUrl, artifactDir, config
       replaceTables,
       restoreSqlPath,
       projectedCopies,
+      expectedPreimage,
     }), { mode: 0o600 });
     await runProcess("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "--file", atomicSqlPath], {
       databaseUrl,
@@ -966,7 +1129,8 @@ export function buildSafePlan(config) {
       "target sentinel environment=staging and exact 30-table inventory",
       "source-absent optional target tables required empty",
       "runtime staging tables empty before import",
-      "target backup before one-transaction replacement",
+      "target backup with advisory fence and continuous WAL stability evidence",
+      "atomic ACCESS EXCLUSIVE lock plus preimage LSN/count checks before TRUNCATE",
       "row counts, streaming SHA-256, FK and required-empty reconciliation",
       "backup-manifest reconciliation before any ROLLED_BACK state",
     ],
