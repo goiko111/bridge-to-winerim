@@ -5,6 +5,7 @@ import {
 } from "node:crypto";
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -438,6 +439,40 @@ export function runtimeCredentialAad({ connectionId, kind, keyVersion }) {
   ].join("|");
 }
 
+export function runtimeCredentialAttestationSha256({
+  connectionId,
+  kind,
+  keyVersion,
+  nonceHex,
+  ciphertextHex,
+}) {
+  if (!UUID_PATTERN.test(connectionId)) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_CONNECTION_ID");
+  }
+  if (!KEY_VERSION_PATTERN.test(keyVersion)) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_KEY_VERSION");
+  }
+  if (!new Set(["agora", "winerim"]).has(kind)) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_KIND");
+  }
+  if (!/^[a-f0-9]{24}$/.test(nonceHex)) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_NONCE_HEX");
+  }
+  if (!/^[a-f0-9]{34,32768}$/.test(ciphertextHex)) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_CIPHERTEXT_HEX");
+  }
+  const reference = `runtime-vault://postgres/${connectionId}/agora/${kind}`;
+  return createHash("sha256").update([
+    "winerim-runtime-credential-attestation",
+    "1",
+    reference,
+    keyVersion,
+    "1",
+    Buffer.from(nonceHex, "hex").toString("base64"),
+    Buffer.from(ciphertextHex, "hex").toString("base64"),
+  ].join("|")).digest("hex");
+}
+
 export function encryptRuntimeCredential({
   connectionId,
   kind,
@@ -478,21 +513,115 @@ export function encryptRuntimeCredential({
     cipher.final(),
     cipher.getAuthTag(),
   ]);
-  const reference = `runtime-vault://postgres/${connectionId}/agora/${kind}`;
+  const nonceHex = nonce.toString("hex");
+  const ciphertextHex = ciphertext.toString("hex");
   return {
     kind,
-    nonceHex: nonce.toString("hex"),
-    ciphertextHex: ciphertext.toString("hex"),
-    attestationSha256: createHash("sha256").update([
-      "winerim-runtime-credential-attestation",
-      "1",
-      reference,
+    nonceHex,
+    ciphertextHex,
+    attestationSha256: runtimeCredentialAttestationSha256({
+      connectionId,
+      kind,
       keyVersion,
-      "1",
-      nonce.toString("base64"),
-      ciphertext.toString("base64"),
-    ].join("|")).digest("hex"),
+      nonceHex,
+      ciphertextHex,
+    }),
   };
+}
+
+function assertPrivateExternalArtifact(path, label) {
+  const target = resolve(path);
+  const relativeTarget = relative(repoRoot, target);
+  if (relativeTarget === "" || (!relativeTarget.startsWith("..") && !relativeTarget.startsWith("/"))) {
+    throw new Error(`RUNTIME_CREDENTIAL_PROVISION_${label}_MUST_BE_OUTSIDE_REPOSITORY`);
+  }
+  const metadata = lstatSync(target);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o077) !== 0) {
+    throw new Error(`RUNTIME_CREDENTIAL_PROVISION_${label}_MUST_BE_PRIVATE_0600`);
+  }
+  const realTarget = realpathSync(target);
+  const realRelativeTarget = relative(repoRoot, realTarget);
+  if (
+    realRelativeTarget === ""
+    || (!realRelativeTarget.startsWith("..") && !realRelativeTarget.startsWith("/"))
+  ) {
+    throw new Error(`RUNTIME_CREDENTIAL_PROVISION_${label}_MUST_BE_OUTSIDE_REPOSITORY`);
+  }
+  return realTarget;
+}
+
+export function validateEncryptedCredentialArtifact({
+  source,
+  connectionId,
+  runId,
+  keyVersion,
+}) {
+  if (!Buffer.isBuffer(source) || source.length === 0 || source.length > 64 * 1024) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_ENCRYPTED_ARTIFACT");
+  }
+  const artifact = parseJsonBuffer(source, "ENCRYPTED_CREDENTIAL_ARTIFACT");
+  exactObjectKeys(artifact, [
+    "version",
+    "schema",
+    "connectionId",
+    "runId",
+    "keyVersion",
+    "credentials",
+  ], "ENCRYPTED_CREDENTIAL_ARTIFACT");
+  if (
+    artifact.version !== 1
+    || artifact.schema !== "runtime-credential-provisioning-v1"
+    || artifact.connectionId !== connectionId
+    || artifact.runId !== runId
+    || artifact.keyVersion !== keyVersion
+    || !Array.isArray(artifact.credentials)
+    || artifact.credentials.length !== 2
+  ) {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_ENCRYPTED_ARTIFACT_SCOPE_MISMATCH");
+  }
+  const credentials = artifact.credentials.map((credential) => {
+    exactObjectKeys(
+      credential,
+      ["kind", "nonceHex", "ciphertextHex", "attestationSha256"],
+      "ENCRYPTED_CREDENTIAL",
+    );
+    if (!new Set(["agora", "winerim"]).has(credential.kind)) {
+      throw new Error("RUNTIME_CREDENTIAL_PROVISION_INVALID_KIND");
+    }
+    const expectedAttestation = runtimeCredentialAttestationSha256({
+      connectionId,
+      kind: credential.kind,
+      keyVersion,
+      nonceHex: credential.nonceHex,
+      ciphertextHex: credential.ciphertextHex,
+    });
+    if (credential.attestationSha256 !== expectedAttestation) {
+      throw new Error("RUNTIME_CREDENTIAL_PROVISION_ENCRYPTED_ARTIFACT_ATTESTATION_MISMATCH");
+    }
+    return {
+      kind: credential.kind,
+      nonceHex: credential.nonceHex,
+      ciphertextHex: credential.ciphertextHex,
+      attestationSha256: credential.attestationSha256,
+    };
+  });
+  if (credentials.map(({ kind }) => kind).sort().join(",") !== "agora,winerim") {
+    throw new Error("RUNTIME_CREDENTIAL_PROVISION_REQUIRES_AGORA_AND_WINERIM");
+  }
+  return credentials;
+}
+
+function loadEncryptedCredentialArtifact({ environment, connectionId, runId, keyVersion }) {
+  const path = assertPrivateExternalArtifact(
+    required(environment, "RUNTIME_ENCRYPTED_CREDENTIALS_FILE"),
+    "ENCRYPTED_ARTIFACT",
+  );
+  return validateEncryptedCredentialArtifact({
+    source: readFileSync(path),
+    connectionId,
+    runId,
+    keyVersion,
+  });
 }
 
 export function runtimeCredentialSetSha256({ connectionId, runId, keyVersion, credentials }) {
@@ -776,10 +905,15 @@ export function credentialProvisioningPlan() {
       "CANARY_CONNECTION_ID",
       "CANARY_RUN_ID",
       "RUNTIME_VAULT_KEY_VERSION",
-      "RUNTIME_VAULT_MASTER_KEY",
-      "RUNTIME_AGORA_CREDENTIAL",
-      "RUNTIME_WINERIM_CREDENTIAL",
     ],
+    credentialSources: {
+      cloudflareWorker: ["RUNTIME_ENCRYPTED_CREDENTIALS_FILE"],
+      legacyLocalEncryption: [
+        "RUNTIME_VAULT_MASTER_KEY",
+        "RUNTIME_AGORA_CREDENTIAL",
+        "RUNTIME_WINERIM_CREDENTIAL",
+      ],
+    },
     modes: {
       bootstrap: "requires no prior credential rows and no operational rows",
       rotate: "requires complete inactive historical generations and preserves them",
@@ -824,27 +958,42 @@ export function prepareCredentialProvisioning({ environment = process.env, outpu
       ),
     });
   }
-  const masterKey = decodeMasterKey(required(environment, "RUNTIME_VAULT_MASTER_KEY"));
+  const encryptedArtifactPath = String(environment.RUNTIME_ENCRYPTED_CREDENTIALS_FILE ?? "").trim();
   let credentials;
-  try {
-    credentials = [
-      encryptRuntimeCredential({
-        connectionId,
-        kind: "agora",
-        keyVersion,
-        plaintext: required(environment, "RUNTIME_AGORA_CREDENTIAL"),
-        masterKey,
-      }),
-      encryptRuntimeCredential({
-        connectionId,
-        kind: "winerim",
-        keyVersion,
-        plaintext: required(environment, "RUNTIME_WINERIM_CREDENTIAL"),
-        masterKey,
-      }),
-    ];
-  } finally {
-    masterKey.fill(0);
+  let credentialSource;
+  if (encryptedArtifactPath) {
+    if ([
+      "RUNTIME_VAULT_MASTER_KEY",
+      "RUNTIME_AGORA_CREDENTIAL",
+      "RUNTIME_WINERIM_CREDENTIAL",
+    ].some((name) => String(environment[name] ?? "").length > 0)) {
+      throw new Error("RUNTIME_CREDENTIAL_PROVISION_MIXED_CREDENTIAL_SOURCES_REJECTED");
+    }
+    credentials = loadEncryptedCredentialArtifact({ environment, connectionId, runId, keyVersion });
+    credentialSource = "cloudflare-worker";
+  } else {
+    const masterKey = decodeMasterKey(required(environment, "RUNTIME_VAULT_MASTER_KEY"));
+    try {
+      credentials = [
+        encryptRuntimeCredential({
+          connectionId,
+          kind: "agora",
+          keyVersion,
+          plaintext: required(environment, "RUNTIME_AGORA_CREDENTIAL"),
+          masterKey,
+        }),
+        encryptRuntimeCredential({
+          connectionId,
+          kind: "winerim",
+          keyVersion,
+          plaintext: required(environment, "RUNTIME_WINERIM_CREDENTIAL"),
+          masterKey,
+        }),
+      ];
+    } finally {
+      masterKey.fill(0);
+    }
+    credentialSource = "legacy-local-encryption";
   }
 
   const target = resolve(output);
@@ -876,6 +1025,7 @@ export function prepareCredentialProvisioning({ environment = process.env, outpu
     runId,
     keyVersion,
     mode,
+    credentialSource,
     active: false,
     sqlSha256: artifactSha256,
     credentialAttestations,
@@ -900,6 +1050,7 @@ export function prepareCredentialProvisioning({ environment = process.env, outpu
     runId,
     keyVersion,
     mode,
+    credentialSource,
     active: false,
     activationAllowed: false,
     output: target,

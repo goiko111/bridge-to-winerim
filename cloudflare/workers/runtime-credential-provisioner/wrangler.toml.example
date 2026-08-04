@@ -1,0 +1,32 @@
+name = "winerim-runtime-credential-provisioner"
+main = "cloudflare/workers/runtime-credential-provisioner/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+PROVISIONING_ENABLED = "false"
+CF_ACCESS_AUD = "{{CF_ACCESS_AUD}}"
+CF_ACCESS_TEAM_DOMAIN = "https://{{CF_ACCESS_TEAM_DOMAIN}}"
+ACCESS_MAX_TOKEN_TTL_SECONDS = "900"
+OPERATOR_KEY_ID = "{{OPERATOR_KEY_ID}}"
+OPERATOR_PUBLIC_KEY_JWK = '''{{OPERATOR_PUBLIC_KEY_JWK}}'''
+CHALLENGE_TTL_SECONDS = "90"
+RUNTIME_VAULT_KEY_VERSION = "{{RUNTIME_VAULT_KEY_VERSION}}"
+
+[[secrets_store_secrets]]
+binding = "RUNTIME_VAULT_KEY"
+store_id = "{{CLOUDFLARE_RUNTIME_VAULT_STORE_ID}}"
+secret_name = "{{CLOUDFLARE_RUNTIME_VAULT_SECRET_NAME}}"
+
+[[durable_objects.bindings]]
+name = "RUNTIME_CREDENTIAL_CHALLENGES"
+class_name = "RuntimeCredentialChallenge"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RuntimeCredentialChallenge"]
+
+# Add a custom route only after Cloudflare Access is configured with MFA and a
+# maximum 15-minute session. Keep this Worker unreachable while disabled.
