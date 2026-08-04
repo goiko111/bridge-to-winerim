@@ -122,8 +122,8 @@ const INERT_COMPONENT_COMMENTS = Object.freeze({
   rateLimiter: "# Inert by reachability: no public route, preview URL or workers.dev endpoint exists.",
 });
 const LIVE_COMPONENT_COMMENTS = Object.freeze({
-  runtime: "# LIVE producer: execution is enabled; the private executor owns all bounded consumers.",
-  executor: "# LIVE private executor: exactly one bounded consumer owns each managed Queue.",
+  runtime: "# LIVE lane worker: execution is enabled and it owns exactly its bounded Queue consumer.",
+  executor: "# LIVE private executor: reachable only through lane-worker service bindings.",
   rateLimiter: "# LIVE private rate limiter: reachable only through the executor service binding.",
 });
 
@@ -387,15 +387,20 @@ function enableSwitch(source, key, component) {
   );
 }
 
-function renderLiveRuntime(inactiveSource, sourceCommit, component) {
+function renderLiveRuntime(inactiveSource, sourceCommit, component, lane) {
   let rendered = liveRelease(inactiveSource, sourceCommit, component);
   rendered = enableSwitch(rendered, "RUNTIME_EXECUTION_ENABLED", component);
-  return replaceExact(
+  rendered = replaceExact(
     rendered,
     INERT_COMPONENT_COMMENTS.runtime,
     LIVE_COMPONENT_COMMENTS.runtime,
     `${component}_OPERATIONAL_COMMENT_DRIFT`,
   );
+  if (tableBlocks(rendered, "queues.consumers").length !== 0) {
+    fail(`${component}_INACTIVE_CONSUMER_FORBIDDEN`);
+  }
+  const consumer = activationContract(lane).consumerToml;
+  return `${rendered.endsWith("\n") ? rendered : `${rendered}\n`}\n${consumer}\n`;
 }
 
 function renderLiveExecutor(inactiveSource, sourceCommit) {
@@ -410,8 +415,7 @@ function renderLiveExecutor(inactiveSource, sourceCommit) {
   if (tableBlocks(rendered, "queues.consumers").length !== 0) {
     fail("EXECUTOR_INACTIVE_CONSUMER_FORBIDDEN");
   }
-  const blocks = Object.values(FLEET_FULL_LANES).map((lane) => activationContract(lane).consumerToml);
-  return `${rendered.endsWith("\n") ? rendered : `${rendered}\n`}\n${blocks.join("\n\n")}\n`;
+  return rendered;
 }
 
 function renderLiveRateLimiter(inactiveSource, sourceCommit) {
@@ -425,9 +429,24 @@ function renderLiveRateLimiter(inactiveSource, sourceCommit) {
 
 function expectedLiveRendered(inactiveRendered, sourceCommit) {
   return Object.freeze({
-    catalog: renderLiveRuntime(inactiveRendered.catalog, sourceCommit, "CATALOG"),
-    salesStock: renderLiveRuntime(inactiveRendered.salesStock, sourceCommit, "SALES_STOCK"),
-    outbound: renderLiveRuntime(inactiveRendered.outbound, sourceCommit, "OUTBOUND"),
+    catalog: renderLiveRuntime(
+      inactiveRendered.catalog,
+      sourceCommit,
+      "CATALOG",
+      FLEET_FULL_LANES.catalog,
+    ),
+    salesStock: renderLiveRuntime(
+      inactiveRendered.salesStock,
+      sourceCommit,
+      "SALES_STOCK",
+      FLEET_FULL_LANES.salesStock,
+    ),
+    outbound: renderLiveRuntime(
+      inactiveRendered.outbound,
+      sourceCommit,
+      "OUTBOUND",
+      FLEET_FULL_LANES.outbound,
+    ),
     executor: renderLiveExecutor(inactiveRendered.executor, sourceCommit),
     rateLimiter: renderLiveRateLimiter(inactiveRendered.rateLimiter, sourceCommit),
   });
@@ -461,8 +480,12 @@ function validateLiveRuntime(source, component, lane) {
     || assignment(producers[0], "binding") !== lane.queueBinding
     || assignment(producers[0], "queue") !== lane.queue
   ) fail(`${component}_QUEUE_PRODUCER_DRIFT`);
-  if (tableBlocks(source, "queues.consumers").length !== 0) {
-    fail(`${component}_CONSUMER_FORBIDDEN`);
+  const consumers = tableBlocks(source, "queues.consumers");
+  if (
+    consumers.length !== 1
+    || normalizeTomlBlock(consumers[0]) !== normalizeTomlBlock(activationContract(lane).consumerToml)
+  ) {
+    fail(`${component}_CONSUMER_CONTRACT_DRIFT`);
   }
 }
 
@@ -474,24 +497,9 @@ function validateLiveExecutor(source) {
     if (assignment(source, key) !== "true") fail(`EXECUTOR_${key}_NOT_ENABLED`);
   }
   if (tableBlocks(source, "queues.producers").length !== 0) fail("EXECUTOR_PRODUCER_FORBIDDEN");
-  const consumers = tableBlocks(source, "queues.consumers");
-  if (consumers.length !== 3) fail("EXECUTOR_CONSUMER_COUNT_MUST_BE_THREE");
-  const expectedByQueue = new Map(Object.values(FLEET_FULL_LANES).map((lane) => [
-    lane.queue,
-    normalizeTomlBlock(activationContract(lane).consumerToml),
-  ]));
-  const observedQueues = new Set();
-  for (const consumer of consumers) {
-    const queue = assignment(consumer, "queue");
-    if (!queue || !expectedByQueue.has(queue) || observedQueues.has(queue)) {
-      fail("EXECUTOR_CONSUMER_QUEUE_DRIFT");
-    }
-    observedQueues.add(queue);
-    if (normalizeTomlBlock(consumer) !== expectedByQueue.get(queue)) {
-      fail("EXECUTOR_CONSUMER_CONTRACT_DRIFT");
-    }
+  if (tableBlocks(source, "queues.consumers").length !== 0) {
+    fail("EXECUTOR_CONSUMER_FORBIDDEN");
   }
-  if (observedQueues.size !== 3) fail("EXECUTOR_CONSUMER_QUEUE_DRIFT");
 
   const secrets = tableBlocks(source, "secrets_store_secrets");
   const services = tableBlocks(source, "services");
@@ -649,13 +657,22 @@ export function validateFleetFullLivePreparedConfigs({
       baselineVersionId: baseline.components[key].versionId,
     }),
   ])));
-  const rollbackComponents = Object.freeze(Object.fromEntries(Object.entries(components).map(([key, component]) => [
-    key,
-    Object.freeze({
+  const rollbackComponents = Object.freeze(Object.fromEntries(Object.entries(components).map(([key, component]) => {
+    const lane = FLEET_FULL_LANES[key];
+    return [key, Object.freeze({
       workerName: component.workerName,
       deploymentId: component.baselineDeploymentId,
       versionId: component.baselineVersionId,
       configOutputName: component.outputName,
+      removeConsumerCommand: lane ? Object.freeze([
+        "npx",
+        "wrangler",
+        "queues",
+        "consumer",
+        "remove",
+        lane.queue,
+        lane.workerName,
+      ]) : null,
       command: Object.freeze([
         "npx",
         "wrangler",
@@ -664,8 +681,8 @@ export function validateFleetFullLivePreparedConfigs({
         "--config",
         component.outputName,
       ]),
-    }),
-  ])));
+    })];
+  })));
 
   return Object.freeze({
     schemaVersion: 1,
@@ -674,6 +691,11 @@ export function validateFleetFullLivePreparedConfigs({
     executionEnabled: true,
     activationAllowed: false,
     connectionsActivated: 0,
+    deploymentPrerequisites: Object.freeze({
+      ownDatabaseActiveRuntimeScopes: 0,
+      ownDatabaseEnabledConnections: 0,
+      mustBeReadBackImmediatelyBeforeDeploy: true,
+    }),
     jobs: FLEET_FULL_LIVE_JOBS,
     components,
     lanes: Object.freeze(Object.fromEntries(Object.entries(FLEET_FULL_LANES).map(([key, lane]) => [
@@ -681,7 +703,7 @@ export function validateFleetFullLivePreparedConfigs({
       Object.freeze({
         lane: lane.lane,
         producerWorkerName: lane.workerName,
-        consumerWorkerName: FLEET_FULL_EXECUTOR_NAME,
+        consumerWorkerName: lane.workerName,
         ...activationContract(lane),
       }),
     ]))),
@@ -691,7 +713,8 @@ export function validateFleetFullLivePreparedConfigs({
       accountId: FLEET_FULL_ACCOUNT_ID,
       inventoryCompleteForQueues: true,
       exactManagedQueueCount: 3,
-      exactExecutorConsumerCount: 3,
+      executorConsumerCountOnManagedQueues: 0,
+      laneConsumerCountOnManagedQueues: 3,
       exactConsumerCountPerQueue: 1,
       legacyConsumerCount: 0,
       competingConsumerCount: 0,
@@ -778,7 +801,15 @@ export function attestFleetFullLiveTopology({
     executorWorkerName: FLEET_FULL_EXECUTOR_NAME,
     executorDeploymentId: deployed.components.executor.deploymentId,
     executorVersionId: deployed.components.executor.versionId,
-    lanes: FLEET_FULL_LANES,
+    lanes: Object.freeze(Object.fromEntries(Object.entries(FLEET_FULL_LANES).map(
+      ([key, lane]) => [key, Object.freeze({
+        queue: lane.queue,
+        deadLetterQueue: lane.deadLetterQueue,
+        consumerWorkerName: lane.workerName,
+        consumerDeploymentId: deployed.components[key].deploymentId,
+        consumerVersionId: deployed.components[key].versionId,
+      })],
+    ))),
   }));
   if (Date.parse(queueTopology.observedAt) < Date.parse(deployed.capturedAt)) {
     fail("TOPOLOGY_EVIDENCE_PREDATES_LIVE_DEPLOYMENT");
@@ -972,6 +1003,7 @@ export function writeFleetFullLivePreparedPackage({ outputDir, result }) {
         "--config",
         path,
       ]),
+      removeConsumerCommand: result.manifest.rollback.components[key].removeConsumerCommand,
     });
   }
   const manifestPath = resolve(resolvedOutputDir, "fleet-full-live-prepared-manifest.json");

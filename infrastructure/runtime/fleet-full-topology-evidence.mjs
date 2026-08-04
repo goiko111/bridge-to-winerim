@@ -29,14 +29,17 @@ const DEFAULT_FLEET_FULL_LANES = Object.freeze({
   catalog: Object.freeze({
     queue: "winerim-rescue-prod-catalog",
     deadLetterQueue: "winerim-rescue-prod-catalog-dead-letter",
+    consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-catalog",
   }),
   salesStock: Object.freeze({
     queue: "winerim-rescue-prod-sales",
     deadLetterQueue: "winerim-rescue-prod-sales-dead-letter",
+    consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-sales-stock",
   }),
   outbound: Object.freeze({
     queue: "winerim-rescue-prod-outbound",
     deadLetterQueue: "winerim-rescue-prod-outbound-dead-letter",
+    consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-outbound",
   }),
 });
 
@@ -137,6 +140,11 @@ function validateDirectCapture({ capture, topology, accountId, lanes }) {
       "queue-consumers:" + key,
       CLOUDFLARE_API_BASE_URL + "/accounts/" + accountId + "/queues/"
         + topology.queues[key].queueId + "/consumers",
+    ]),
+    ...Object.entries(lanes).map(([key, lane]) => [
+      "worker-deployments:consumer:" + key,
+      CLOUDFLARE_API_BASE_URL + "/accounts/" + accountId
+        + "/workers/scripts/" + encodeURIComponent(lane.consumerWorkerName) + "/deployments",
     ]),
   ]);
   if (capture.requests.length !== requiredRequests.size) {
@@ -290,18 +298,18 @@ async function cloudflareGet({ fetchImpl, apiToken, url, kind }) {
   return Object.freeze({ request: Object.freeze(request), envelope });
 }
 
-function activeExecutorVersion(deployments, executorDeploymentId, executorVersionId) {
-  if (deployments.length < 1) fail("TOPOLOGY_EXECUTOR_DEPLOYMENT_MISSING");
+function activeWorkerVersion(deployments, deploymentIdValue, versionIdValue, label) {
+  if (deployments.length < 1) fail(`TOPOLOGY_${label}_DEPLOYMENT_MISSING`);
   const active = deployments[0];
   if (
-    deploymentId(active?.id, "TOPOLOGY_EXECUTOR_DEPLOYMENT_ID") !== executorDeploymentId
+    deploymentId(active?.id, `TOPOLOGY_${label}_DEPLOYMENT_ID`) !== deploymentIdValue
     || !Array.isArray(active?.versions)
     || active.versions.length !== 1
     || active.versions[0]?.percentage !== 100
-    || deploymentId(active.versions[0]?.version_id, "TOPOLOGY_EXECUTOR_VERSION_ID")
-      !== executorVersionId
-  ) fail("TOPOLOGY_EXECUTOR_DEPLOYMENT_DRIFT");
-  return Object.freeze({ deploymentId: executorDeploymentId, versionId: executorVersionId });
+    || deploymentId(active.versions[0]?.version_id, `TOPOLOGY_${label}_VERSION_ID`)
+      !== versionIdValue
+  ) fail(`TOPOLOGY_${label}_DEPLOYMENT_DRIFT`);
+  return Object.freeze({ deploymentId: deploymentIdValue, versionId: versionIdValue });
 }
 
 export async function collectFleetFullCloudflareTopologyAttestation(options) {
@@ -314,7 +322,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
     "privateKeyPath",
     "outputPath",
     "keyId",
-    ...(Object.prototype.hasOwnProperty.call(options ?? {}, "lanes") ? ["lanes"] : []),
+    "lanes",
     ...(Object.prototype.hasOwnProperty.call(options ?? {}, "fetchImpl") ? ["fetchImpl"] : []),
     ...(Object.prototype.hasOwnProperty.call(options ?? {}, "now") ? ["now"] : []),
   ];
@@ -324,7 +332,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
     executorWorkerName,
     executorDeploymentId,
     executorVersionId,
-    lanes = DEFAULT_FLEET_FULL_LANES,
+    lanes,
     apiToken,
     privateKeyPath,
     outputPath,
@@ -372,7 +380,16 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
   const requests = [queueListResponse.request];
   const queues = {};
   for (const [laneKey, lane] of Object.entries(lanes)) {
-    exactKeys(lane, ["queue", "deadLetterQueue"], "TOPOLOGY_COLLECTOR_LANE");
+    exactKeys(
+      lane,
+      ["queue", "deadLetterQueue", "consumerWorkerName", "consumerDeploymentId", "consumerVersionId"],
+      "TOPOLOGY_COLLECTOR_LANE",
+    );
+    if (
+      !IDENTIFIER_PATTERN.test(String(lane.consumerWorkerName ?? ""))
+      || !UUID_PATTERN.test(String(lane.consumerDeploymentId ?? ""))
+      || !UUID_PATTERN.test(String(lane.consumerVersionId ?? ""))
+    ) fail("TOPOLOGY_" + laneKey.toUpperCase() + "_CONSUMER_IDENTITY_INVALID");
     const matches = queueList.filter((queue) => queue?.queue_name === lane.queue);
     if (
       matches.length !== 1
@@ -397,7 +414,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
     const consumer = consumers[0];
     if (
       consumer?.type !== "worker"
-      || consumer?.script_name !== executorWorkerName
+      || consumer?.script_name !== lane.consumerWorkerName
       || consumer?.queue_name !== lane.queue
       || consumer?.dead_letter_queue !== lane.deadLetterQueue
       || consumer?.settings?.batch_size !== 1
@@ -410,8 +427,8 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
       queueName: lane.queue,
       consumers: [{
         workerName: consumer.script_name,
-        deploymentId: executorDeploymentId,
-        versionId: executorVersionId,
+        deploymentId: lane.consumerDeploymentId,
+        versionId: lane.consumerVersionId,
         maxBatchSize: consumer.settings.batch_size,
         maxBatchTimeout: consumer.settings.max_wait_time_ms / 1_000,
         maxRetries: consumer.settings.max_retries,
@@ -419,6 +436,25 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
         deadLetterQueue: consumer.dead_letter_queue,
       }],
     };
+    const consumerDeploymentsResponse = await cloudflareGet({
+      fetchImpl,
+      apiToken,
+      url: accountBase + "/workers/scripts/"
+        + encodeURIComponent(lane.consumerWorkerName) + "/deployments",
+      kind: "worker-deployments:consumer:" + laneKey,
+    });
+    requests.push(consumerDeploymentsResponse.request);
+    const consumerDeployments = completeResultList(
+      consumerDeploymentsResponse.envelope,
+      "TOPOLOGY_" + laneKey.toUpperCase() + "_CONSUMER_DEPLOYMENTS",
+      (result) => result?.deployments,
+    );
+    activeWorkerVersion(
+      consumerDeployments,
+      lane.consumerDeploymentId,
+      lane.consumerVersionId,
+      laneKey.toUpperCase() + "_CONSUMER",
+    );
   }
   const deploymentsResponse = await cloudflareGet({
     fetchImpl,
@@ -432,7 +468,7 @@ export async function collectFleetFullCloudflareTopologyAttestation(options) {
     "TOPOLOGY_EXECUTOR_DEPLOYMENTS",
     (result) => result?.deployments,
   );
-  activeExecutorVersion(deployments, executorDeploymentId, executorVersionId);
+  activeWorkerVersion(deployments, executorDeploymentId, executorVersionId, "EXECUTOR");
   const completedAt = timestamp(now().toISOString(), "TOPOLOGY_CAPTURE_COMPLETED_AT");
   if (
     completedAt.milliseconds < startedAt.milliseconds
@@ -689,6 +725,11 @@ export function validateFleetFullConsumerTopology({
   const queues = {};
   let consumerCount = 0;
   for (const [key, lane] of Object.entries(lanes)) {
+    exactKeys(
+      lane,
+      ["queue", "deadLetterQueue", "consumerWorkerName", "consumerDeploymentId", "consumerVersionId"],
+      `TOPOLOGY_${key.toUpperCase()}_LANE`,
+    );
     const queueEvidence = topology.queues[key];
     exactKeys(queueEvidence, ["queueId", "queueName", "consumers"], `TOPOLOGY_${key.toUpperCase()}`);
     if (
@@ -717,11 +758,11 @@ export function validateFleetFullConsumerTopology({
       `TOPOLOGY_${key.toUpperCase()}_CONSUMER`,
     );
     if (
-      consumer.workerName !== executorWorkerName
+      consumer.workerName !== lane.consumerWorkerName
       || deploymentId(consumer.deploymentId, `TOPOLOGY_${key.toUpperCase()}_DEPLOYMENT_ID`)
-        !== executorDeploymentId
+        !== lane.consumerDeploymentId
       || deploymentId(consumer.versionId, `TOPOLOGY_${key.toUpperCase()}_VERSION_ID`)
-        !== executorVersionId
+        !== lane.consumerVersionId
       || consumer.maxBatchSize !== 1
       || consumer.maxBatchTimeout !== 5
       || consumer.maxRetries !== 3
@@ -732,9 +773,9 @@ export function validateFleetFullConsumerTopology({
     queues[key] = Object.freeze({
       queueId: queueEvidence.queueId,
       queueName: lane.queue,
-      consumerWorkerName: executorWorkerName,
-      consumerDeploymentId: executorDeploymentId,
-      consumerVersionId: executorVersionId,
+      consumerWorkerName: lane.consumerWorkerName,
+      consumerDeploymentId: lane.consumerDeploymentId,
+      consumerVersionId: lane.consumerVersionId,
       consumerCount: 1,
       legacyConsumerCount: 0,
       competingConsumerCount: 0,
@@ -772,11 +813,26 @@ function requiredEnvironment(name) {
 }
 
 async function main() {
+  const lanes = Object.freeze(Object.fromEntries(Object.entries(DEFAULT_FLEET_FULL_LANES).map(
+    ([key, lane]) => [key, Object.freeze({
+      ...lane,
+      consumerWorkerName: requiredEnvironment(
+        `FLEET_FULL_${key === "salesStock" ? "SALES_STOCK" : key.toUpperCase()}_WORKER_NAME`,
+      ),
+      consumerDeploymentId: requiredEnvironment(
+        `FLEET_FULL_${key === "salesStock" ? "SALES_STOCK" : key.toUpperCase()}_DEPLOYMENT_ID`,
+      ),
+      consumerVersionId: requiredEnvironment(
+        `FLEET_FULL_${key === "salesStock" ? "SALES_STOCK" : key.toUpperCase()}_VERSION_ID`,
+      ),
+    })],
+  )));
   const result = await collectFleetFullCloudflareTopologyAttestation({
     accountId: requiredEnvironment("CLOUDFLARE_ACCOUNT_ID"),
     executorWorkerName: requiredEnvironment("FLEET_FULL_EXECUTOR_WORKER_NAME"),
     executorDeploymentId: requiredEnvironment("FLEET_FULL_EXECUTOR_DEPLOYMENT_ID"),
     executorVersionId: requiredEnvironment("FLEET_FULL_EXECUTOR_VERSION_ID"),
+    lanes,
     apiToken: requiredEnvironment("CLOUDFLARE_API_TOKEN"),
     privateKeyPath: resolve(requiredEnvironment("FLEET_FULL_TOPOLOGY_PRIVATE_KEY_PATH")),
     outputPath: resolve(requiredEnvironment("FLEET_FULL_TOPOLOGY_OUTPUT_PATH")),

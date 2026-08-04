@@ -366,7 +366,14 @@ function validateFullLanesQueueOwnership(
       executorWorkerName: components.executor.workerName,
       executorDeploymentId: queueOwnership.executorDeploymentId,
       executorVersionId: components.executor.versionId,
-      lanes: REQUIRED_FULL_LANES,
+      lanes: Object.fromEntries(Object.entries(REQUIRED_FULL_LANES).map(
+        ([laneName, lane]) => [laneName, {
+          ...lane,
+          consumerWorkerName: components[laneName].workerName,
+          consumerDeploymentId: queueOwnership.queues?.[laneName]?.consumerDeploymentId,
+          consumerVersionId: components[laneName].versionId,
+        }],
+      )),
       trustedPublicKeySha256,
     });
   } catch (error) {
@@ -380,11 +387,12 @@ function validateFullLanesQueueOwnership(
   if (canonicalJson(queueOwnership) !== canonicalJson(validated)) {
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT");
   }
-  for (const queue of Object.values(validated.queues)) {
+  for (const [laneName, queue] of Object.entries(validated.queues)) {
+    const component = components[laneName];
     if (
-      queue.consumerWorkerName !== components.executor.workerName
-      || queue.consumerDeploymentId !== validated.executorDeploymentId
-      || queue.consumerVersionId !== components.executor.versionId
+      queue.consumerWorkerName !== component.workerName
+      || queue.consumerWorkerName === components.executor.workerName
+      || queue.consumerVersionId !== component.versionId
       || queue.consumerCount !== 1
       || queue.legacyConsumerCount !== 0
       || queue.competingConsumerCount !== 0
@@ -440,6 +448,18 @@ function validateDeploymentManifest(
       versionId: component.versionId.toLowerCase(),
       configSha256: component.configSha256,
     };
+  }
+  if (policy.queueOwnershipRequired) {
+    const executorWorkerName = components.executor.workerName;
+    const laneWorkerNames = Object.keys(REQUIRED_FULL_LANES).map(
+      (laneName) => components[laneName].workerName,
+    );
+    if (
+      laneWorkerNames.includes(executorWorkerName)
+      || new Set(laneWorkerNames).size !== laneWorkerNames.length
+    ) {
+      throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_LANE_CONSUMER_COMPONENTS");
+    }
   }
   const queueOwnership = policy.queueOwnershipRequired
     ? validateFullLanesQueueOwnership(

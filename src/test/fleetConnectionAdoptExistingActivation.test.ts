@@ -665,6 +665,161 @@ function replaceDeploymentManifest(
   testFixture.input.deploymentManifest.sha256 = sha256(testFixture.sources.deployment);
 }
 
+async function perLaneQueueOwnership({
+  deployment,
+  privateKeySource,
+  publicKeySource,
+  outputDirectory,
+}: {
+  deployment: MutableDeploymentManifest;
+  privateKeySource: Buffer;
+  publicKeySource: Buffer;
+  outputDirectory: string;
+}) {
+  const accountId = "e75343bb63534d3d029150e90b48ec7c";
+  const observedAt = "2026-08-04T14:19:00.000Z";
+  const executorDeploymentId = "74444444-4444-4444-8444-444444444444";
+  const lanes = {
+    catalog: {
+      queue: "winerim-rescue-prod-catalog",
+      deadLetterQueue: "winerim-rescue-prod-catalog-dead-letter",
+      queueId: "a1111111111111111111111111111111",
+      consumerWorkerName: deployment.components.catalog.workerName,
+      consumerDeploymentId: "71111111-1111-4111-8111-111111111111",
+      consumerVersionId: deployment.components.catalog.versionId,
+    },
+    salesStock: {
+      queue: "winerim-rescue-prod-sales",
+      deadLetterQueue: "winerim-rescue-prod-sales-dead-letter",
+      queueId: "a2222222222222222222222222222222",
+      consumerWorkerName: deployment.components.salesStock.workerName,
+      consumerDeploymentId: "72222222-2222-4222-8222-222222222222",
+      consumerVersionId: deployment.components.salesStock.versionId,
+    },
+    outbound: {
+      queue: "winerim-rescue-prod-outbound",
+      deadLetterQueue: "winerim-rescue-prod-outbound-dead-letter",
+      queueId: "a3333333333333333333333333333333",
+      consumerWorkerName: deployment.components.outbound.workerName,
+      consumerDeploymentId: "73333333-3333-4333-8333-333333333333",
+      consumerVersionId: deployment.components.outbound.versionId,
+    },
+  } as const;
+  const responseFor = (kind: string) => {
+    let result: unknown;
+    if (kind === "queue-list") {
+      result = Object.values(lanes).map((lane) => ({
+        queue_id: lane.queueId,
+        queue_name: lane.queue,
+      }));
+    } else if (kind.startsWith("queue-consumers:")) {
+      const lane = lanes[kind.slice("queue-consumers:".length) as keyof typeof lanes];
+      result = [{
+        consumer_id: "b" + lane.queueId.slice(1),
+        type: "worker",
+        queue_name: lane.queue,
+        script_name: lane.consumerWorkerName,
+        dead_letter_queue: lane.deadLetterQueue,
+        settings: {
+          batch_size: 1,
+          max_wait_time_ms: 5_000,
+          max_retries: 3,
+          max_concurrency: 1,
+        },
+      }];
+    } else if (kind.startsWith("worker-deployments:consumer:")) {
+      const lane = lanes[
+        kind.slice("worker-deployments:consumer:".length) as keyof typeof lanes
+      ];
+      result = {
+        deployments: [{
+          id: lane.consumerDeploymentId,
+          versions: [{ percentage: 100, version_id: lane.consumerVersionId }],
+        }],
+      };
+    } else {
+      result = {
+        deployments: [{
+          id: executorDeploymentId,
+          versions: [{
+            percentage: 100,
+            version_id: deployment.components.executor.versionId,
+          }],
+        }],
+      };
+    }
+    const list = Array.isArray(result) ? result : (result as { deployments: unknown[] }).deployments;
+    return new Response(JSON.stringify({
+      success: true,
+      errors: [],
+      messages: [],
+      result,
+      result_info: {
+        page: 1,
+        per_page: 100,
+        count: list.length,
+        total_count: list.length,
+      },
+    }), {
+      status: 200,
+      headers: {
+        date: observedAt,
+        "cf-ray": "abc123def456-MAD",
+        "content-type": "application/json",
+      },
+    });
+  };
+  const fetchImpl = async (url: string) => {
+    if (url.endsWith("/queues")) return responseFor("queue-list");
+    for (const [key, lane] of Object.entries(lanes)) {
+      if (url.endsWith(`/queues/${lane.queueId}/consumers`)) {
+        return responseFor(`queue-consumers:${key}`);
+      }
+      if (url.endsWith(`/workers/scripts/${lane.consumerWorkerName}/deployments`)) {
+        return responseFor(`worker-deployments:consumer:${key}`);
+      }
+    }
+    if (url.endsWith("/deployments")) return responseFor("worker-deployments:executor");
+    throw new Error("unexpected Cloudflare URL");
+  };
+  const topologyKey = writePrivate(
+    outputDirectory,
+    "topology-private.pem",
+    privateKeySource,
+  );
+  const collectorLanes = Object.fromEntries(Object.entries(lanes).map(([key, lane]) => [key, {
+    queue: lane.queue,
+    deadLetterQueue: lane.deadLetterQueue,
+    consumerWorkerName: lane.consumerWorkerName,
+    consumerDeploymentId: lane.consumerDeploymentId,
+    consumerVersionId: lane.consumerVersionId,
+  }]));
+  const times = [new Date("2026-08-04T14:18:58.000Z"), new Date(observedAt)];
+  const topologyResult = await collectFleetFullCloudflareTopologyAttestation({
+    accountId,
+    executorWorkerName: deployment.components.executor.workerName,
+    executorDeploymentId,
+    executorVersionId: deployment.components.executor.versionId,
+    lanes: collectorLanes,
+    apiToken: "test-cloudflare-api-token-not-a-secret",
+    privateKeyPath: topologyKey.path,
+    outputPath: join(outputDirectory, "topology-attestation.json"),
+    keyId: "cloudflare-topology-test-key",
+    fetchImpl,
+    now: () => times.shift() ?? new Date(observedAt),
+  });
+  return validateFleetFullConsumerTopology({
+    evidence: topologyResult.attestation,
+    verifiedAt: APPROVED_AT,
+    accountId,
+    executorWorkerName: deployment.components.executor.workerName,
+    executorDeploymentId,
+    executorVersionId: deployment.components.executor.versionId,
+    lanes: collectorLanes,
+    trustedPublicKeySha256: sha256(publicKeySource),
+  });
+}
+
 async function fullLanesFixture(options: Parameters<typeof fixture>[0] = {}) {
   const testFixture = fixture(options);
   testFixture.input.kind = "RUNTIME_FLEET_CONNECTION_FULL_LANES_ACTIVATION";
@@ -706,125 +861,11 @@ async function fullLanesFixture(options: Parameters<typeof fixture>[0] = {}) {
       configSha256: sha256("rate-limiter-worker-config"),
     },
   };
-  const accountId = "e75343bb63534d3d029150e90b48ec7c";
-  const observedAt = "2026-08-04T14:19:00.000Z";
-  const executorDeploymentId = "74444444-4444-4444-8444-444444444444";
-  const lanes = {
-    catalog: {
-      queue: "winerim-rescue-prod-catalog",
-      deadLetterQueue: "winerim-rescue-prod-catalog-dead-letter",
-      queueId: "a1111111111111111111111111111111",
-    },
-    salesStock: {
-      queue: "winerim-rescue-prod-sales",
-      deadLetterQueue: "winerim-rescue-prod-sales-dead-letter",
-      queueId: "a2222222222222222222222222222222",
-    },
-    outbound: {
-      queue: "winerim-rescue-prod-outbound",
-      deadLetterQueue: "winerim-rescue-prod-outbound-dead-letter",
-      queueId: "a3333333333333333333333333333333",
-    },
-  };
-  const responseFor = (kind: string) => {
-    let result: unknown;
-    if (kind === "queue-list") {
-      result = Object.entries(lanes).map(([, lane]) => ({
-        queue_id: lane.queueId,
-        queue_name: lane.queue,
-      }));
-    } else if (kind.startsWith("queue-consumers:")) {
-      const lane = lanes[kind.slice("queue-consumers:".length) as keyof typeof lanes];
-      result = [{
-        consumer_id: "b" + lane.queueId.slice(1),
-        type: "worker",
-        queue_name: lane.queue,
-        script_name: deployment.components.executor.workerName,
-        dead_letter_queue: lane.deadLetterQueue,
-        settings: {
-          batch_size: 1,
-          max_wait_time_ms: 5_000,
-          max_retries: 3,
-          max_concurrency: 1,
-        },
-      }];
-    } else {
-      result = {
-        deployments: [{
-          id: executorDeploymentId,
-          versions: [{
-            percentage: 100,
-            version_id: deployment.components.executor.versionId,
-          }],
-        }],
-      };
-    }
-    const list = Array.isArray(result) ? result : (result as { deployments: unknown[] }).deployments;
-    return new Response(JSON.stringify({
-      success: true,
-      errors: [],
-      messages: [],
-      result,
-      result_info: {
-        page: 1,
-        per_page: 100,
-        count: list.length,
-        total_count: list.length,
-      },
-    }), {
-      status: 200,
-      headers: {
-        date: observedAt,
-        "cf-ray": "abc123def456-MAD",
-        "content-type": "application/json",
-      },
-    });
-  };
-  const fetchImpl = async (url: string) => {
-    if (url.endsWith("/queues")) return responseFor("queue-list");
-    for (const [key, lane] of Object.entries(lanes)) {
-      if (url.endsWith("/queues/" + lane.queueId + "/consumers")) {
-        return responseFor("queue-consumers:" + key);
-      }
-    }
-    if (url.endsWith("/deployments")) return responseFor("worker-deployments:executor");
-    throw new Error("unexpected Cloudflare URL");
-  };
-  const topologyKey = writePrivate(
-    dirname(testFixture.inputFile.path),
-    "topology-private.pem",
-    testFixture.documents.externalPrivateKeySource,
-  );
-  const times = [
-    new Date("2026-08-04T14:18:58.000Z"),
-    new Date(observedAt),
-  ];
-  const topologyResult = await collectFleetFullCloudflareTopologyAttestation({
-    accountId,
-    executorWorkerName: deployment.components.executor.workerName,
-    executorDeploymentId,
-    executorVersionId: deployment.components.executor.versionId,
-    lanes: Object.fromEntries(Object.entries(lanes).map(([key, lane]) => [key, {
-      queue: lane.queue,
-      deadLetterQueue: lane.deadLetterQueue,
-    }])),
-    apiToken: "test-cloudflare-api-token-not-a-secret",
-    privateKeyPath: topologyKey.path,
-    outputPath: join(dirname(testFixture.inputFile.path), "topology-attestation.json"),
-    keyId: "cloudflare-topology-test-key",
-    fetchImpl,
-    now: () => times.shift() ?? new Date(observedAt),
-  });
-  const topologyAttestation = topologyResult.attestation;
-  deployment.queueOwnership = validateFleetFullConsumerTopology({
-    evidence: topologyAttestation,
-    verifiedAt: APPROVED_AT,
-    accountId,
-    executorWorkerName: deployment.components.executor.workerName,
-    executorDeploymentId,
-    executorVersionId: deployment.components.executor.versionId,
-    lanes,
-    trustedPublicKeySha256: sha256(testFixture.sources.externalPublicKey),
+  deployment.queueOwnership = await perLaneQueueOwnership({
+    deployment,
+    privateKeySource: testFixture.documents.externalPrivateKeySource,
+    publicKeySource: testFixture.sources.externalPublicKey,
+    outputDirectory: dirname(testFixture.inputFile.path),
   });
   testFixture.sources.deployment = Buffer.from(`${JSON.stringify(deployment, null, 2)}\n`);
   testFixture.input.deploymentManifest.sha256 = sha256(testFixture.sources.deployment);
@@ -1214,22 +1255,25 @@ describe("fleet adopt-existing full-lanes atomic activation gate", () => {
         kind: "runtime-full-lanes-deployment",
         jobs: FULL_LANES_JOBS,
         queueOwnership: {
+          version: 2,
           executorWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+          executorDeploymentId: "74444444-4444-4444-8444-444444444444",
+          executorVersionId: "44444444-4444-4444-8444-444444444444",
           queues: {
             catalog: {
-              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-catalog",
               consumerCount: 1,
               legacyConsumerCount: 0,
               competingConsumerCount: 0,
             },
             salesStock: {
-              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-sales-stock",
               consumerCount: 1,
               legacyConsumerCount: 0,
               competingConsumerCount: 0,
             },
             outbound: {
-              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerWorkerName: "winerim-middleware-runtime-rescue-prod-fleet-outbound",
               consumerCount: 1,
               legacyConsumerCount: 0,
               competingConsumerCount: 0,
@@ -1327,13 +1371,32 @@ describe("fleet adopt-existing full-lanes atomic activation gate", () => {
       );
     }
 
-    const wrongExecutor = await fullLanesFixture();
-    replaceDeploymentManifest(wrongExecutor, (deployment) => {
+    const wrongLaneConsumer = await fullLanesFixture();
+    replaceDeploymentManifest(wrongLaneConsumer, (deployment) => {
+      const queueOwnership = deployment.queueOwnership as {
+        queues: Record<string, Record<string, unknown>>;
+      };
+      queueOwnership.queues.catalog.consumerWorkerName = deployment.components.executor.workerName;
+    });
+    expect(() => validate(wrongLaneConsumer)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT",
+    );
+
+    const wrongExecutorAttestation = await fullLanesFixture();
+    replaceDeploymentManifest(wrongExecutorAttestation, (deployment) => {
       const queueOwnership = deployment.queueOwnership as { executorWorkerName: string };
       queueOwnership.executorWorkerName = "legacy-executor";
     });
-    expect(() => validate(wrongExecutor)).toThrow(
+    expect(() => validate(wrongExecutorAttestation)).toThrow(
       "RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT",
+    );
+
+    const executorAsLaneComponent = await fullLanesFixture();
+    replaceDeploymentManifest(executorAsLaneComponent, (deployment) => {
+      deployment.components.catalog.workerName = deployment.components.executor.workerName;
+    });
+    expect(() => validate(executorAsLaneComponent)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_LANE_CONSUMER_COMPONENTS",
     );
   });
 

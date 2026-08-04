@@ -172,7 +172,7 @@ async function topologyEvidence(options: {
         consumer_id: "b" + queueIds[key].slice(1),
         type: "worker",
         queue_name: lane.queue,
-        script_name: FLEET_FULL_EXECUTOR_NAME,
+        script_name: lane.workerName,
         dead_letter_queue: lane.deadLetterQueue,
         settings: {
           batch_size: 1,
@@ -181,6 +181,14 @@ async function topologyEvidence(options: {
           max_concurrency: 1,
         },
       }];
+    } else if (kind.startsWith("worker-deployments:consumer:")) {
+      const key = kind.slice("worker-deployments:consumer:".length) as keyof typeof LIVE_IDS;
+      result = {
+        deployments: [{
+          id: LIVE_IDS[key],
+          versions: [{ percentage: 100, version_id: LIVE_VERSION_IDS[key] }],
+        }],
+      };
     } else {
       result = {
         deployments: [{
@@ -219,6 +227,11 @@ async function topologyEvidence(options: {
         return responseFor("queue-consumers:" + key);
       }
     }
+    for (const [key, lane] of Object.entries(FLEET_FULL_LANES)) {
+      if (url.endsWith("/workers/scripts/" + lane.workerName + "/deployments")) {
+        return responseFor("worker-deployments:consumer:" + key);
+      }
+    }
     if (url.endsWith("/deployments")) return responseFor("worker-deployments:executor");
     throw new Error("unexpected Cloudflare URL");
   };
@@ -235,6 +248,9 @@ async function topologyEvidence(options: {
     lanes: Object.fromEntries(Object.entries(FLEET_FULL_LANES).map(([key, lane]) => [key, {
       queue: lane.queue,
       deadLetterQueue: lane.deadLetterQueue,
+      consumerWorkerName: lane.workerName,
+      consumerDeploymentId: LIVE_IDS[key as keyof typeof LIVE_IDS],
+      consumerVersionId: LIVE_VERSION_IDS[key as keyof typeof LIVE_VERSION_IDS],
     }])),
     apiToken: "test-cloudflare-api-token-not-a-secret",
     privateKeyPath: topologyPrivateKeyPath,
@@ -262,7 +278,7 @@ function attest(prepared: ReturnType<typeof prepare>, evidence: unknown) {
 }
 
 describe("full fleet LIVE topology package", () => {
-  it("renders three live producers and one executor with exactly three bounded consumers", () => {
+  it("renders three live lane workers with one bounded consumer each and a private executor", () => {
     const result = prepare();
 
     expect(result.manifest).toMatchObject({
@@ -272,7 +288,8 @@ describe("full fleet LIVE topology package", () => {
       topologyGate: {
         evidenceStatus: "MISSING",
         exactManagedQueueCount: 3,
-        exactExecutorConsumerCount: 3,
+        executorConsumerCountOnManagedQueues: 0,
+        laneConsumerCountOnManagedQueues: 3,
         legacyConsumerCount: 0,
         competingConsumerCount: 0,
         rejectsAnyUnlistedConsumerOnManagedQueues: true,
@@ -281,15 +298,14 @@ describe("full fleet LIVE topology package", () => {
     for (const key of ["catalog", "salesStock", "outbound"] as const) {
       expect(result.rendered[key]).toContain('RUNTIME_EXECUTION_ENABLED = "true"');
       expect(result.rendered[key]).toContain(`queue = "${FLEET_FULL_LANES[key].queue}"`);
-      expect(result.rendered[key]).not.toContain("[[queues.consumers]]");
+      expect(result.rendered[key].match(/\[\[queues\.consumers\]\]/gu)).toHaveLength(1);
+      expect(result.rendered[key]).toContain(
+        `dead_letter_queue = "${FLEET_FULL_LANES[key].deadLetterQueue}"`,
+      );
+      expect(result.rendered[key].match(/^max_batch_size = 1$/gmu)).toHaveLength(1);
+      expect(result.rendered[key].match(/^max_concurrency = 1$/gmu)).toHaveLength(1);
     }
-    expect(result.rendered.executor.match(/\[\[queues\.consumers\]\]/gu)).toHaveLength(3);
-    for (const lane of Object.values(FLEET_FULL_LANES)) {
-      expect(result.rendered.executor).toContain(`queue = "${lane.queue}"`);
-      expect(result.rendered.executor).toContain(`dead_letter_queue = "${lane.deadLetterQueue}"`);
-    }
-    expect(result.rendered.executor.match(/^max_batch_size = 1$/gmu)).toHaveLength(3);
-    expect(result.rendered.executor.match(/^max_concurrency = 1$/gmu)).toHaveLength(3);
+    expect(result.rendered.executor).not.toContain("[[queues.consumers]]");
     expect(result.rendered.rateLimiter).toContain("class_name = \"OutboundRateLimiter\"");
     expect(result.rendered.rateLimiter).not.toContain("[[queues.consumers]]");
   });
@@ -313,6 +329,19 @@ describe("full fleet LIVE topology package", () => {
       });
       expect(result.manifest.rollback.components[key].command).toContain(BASELINE_VERSION_IDS[key]);
       expect(result.manifest.rollback.components[key].command).not.toContain(BASELINE_IDS[key]);
+      if (key === "catalog" || key === "salesStock" || key === "outbound") {
+        expect(result.manifest.rollback.components[key].removeConsumerCommand).toEqual([
+          "npx",
+          "wrangler",
+          "queues",
+          "consumer",
+          "remove",
+          FLEET_FULL_LANES[key].queue,
+          FLEET_FULL_LANES[key].workerName,
+        ]);
+      } else {
+        expect(result.manifest.rollback.components[key].removeConsumerCommand).toBeNull();
+      }
     }
 
     expect(errorCode(() => renderFleetFullLivePreparedConfigs({
@@ -354,7 +383,7 @@ describe("full fleet LIVE topology package", () => {
     });
     for (const key of Object.keys(FLEET_FULL_LANES)) {
       expect(result.queueOwnership.queues[key]).toMatchObject({
-        consumerWorkerName: FLEET_FULL_EXECUTOR_NAME,
+        consumerWorkerName: FLEET_FULL_LANES[key as keyof typeof FLEET_FULL_LANES].workerName,
         consumerCount: 1,
         legacyConsumerCount: 0,
         competingConsumerCount: 0,
@@ -455,6 +484,9 @@ describe("full fleet LIVE topology package", () => {
         expect(statSync(written.outputs[key]).mode & 0o777).toBe(0o600);
         expect(manifest.operations[key].rollbackCommand).toContain(BASELINE_VERSION_IDS[key]);
         expect(manifest.operations[key].rollbackCommand).not.toContain(BASELINE_IDS[key]);
+        expect(manifest.operations[key].removeConsumerCommand).toEqual(
+          manifest.rollback.components[key].removeConsumerCommand,
+        );
       }
 
       const attestationPath = writeFleetFullLiveAttestation({
