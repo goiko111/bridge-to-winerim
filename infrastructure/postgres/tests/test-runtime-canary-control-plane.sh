@@ -8,13 +8,6 @@ POSTGRES_BIN=${POSTGRES_BIN:-/opt/homebrew/opt/postgresql@17/bin}
 PATH="$POSTGRES_BIN:$PATH"
 export PATH
 
-PREPARED_ABORT_MIGRATIONS=("$REPO_ROOT"/supabase/migrations/*_runtime_canary_prepared_abort.sql)
-if [ "${#PREPARED_ABORT_MIGRATIONS[@]}" -ne 1 ] || [ ! -f "${PREPARED_ABORT_MIGRATIONS[0]}" ]; then
-  printf 'BLOCKED: expected exactly one runtime_canary_prepared_abort migration\n' >&2
-  exit 2
-fi
-PREPARED_ABORT_MIGRATION=${PREPARED_ABORT_MIGRATIONS[0]}
-
 for command_name in initdb pg_ctl createdb psql node; do
   command -v "$command_name" >/dev/null 2>&1 || {
     printf 'BLOCKED: required command is not installed: %s\n' "$command_name" >&2
@@ -44,7 +37,6 @@ createdb -h 127.0.0.1 -p "$PORT" winerim_canary_control_plane_test
 
 "$POSTGRES_DIR/build-bootstrap.sh" "$TMP_ROOT/bootstrap.sql" >/dev/null
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -v environment=rescue-production -f "$TMP_ROOT/bootstrap.sql" >/dev/null
-psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$PREPARED_ABORT_MIGRATION" >/dev/null
 
 CONNECTION_ID=ba44c13a-5f48-4a49-8b3f-04049b244d94
 psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 >/dev/null <<SQL

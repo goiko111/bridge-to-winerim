@@ -53,15 +53,37 @@ INSERT INTO public.pos_connections (
   'https://redacted.invalid', '', false, false, 'PULL_ONLY', 'NONE'
 );
 INSERT INTO public.runtime_canary_connections (
-  connection_id, run_id, active, status, approved_at, expires_at, note,
-  deployment_manifest_sha256, writer_fence_grant_sha256,
-  credential_set_sha256, activated_at
+  connection_id, run_id, active, status, note
 ) VALUES (
-  '11111111-1111-4111-8111-111111111111', 'claim-identity-test', true, 'ACTIVE',
-  now() - interval '1 minute', now() + interval '1 hour',
-  'rescue-canary-run:claim-identity-test', repeat('a',64), repeat('b',64),
-  repeat('c',64), now()
+  '11111111-1111-4111-8111-111111111111', 'claim-identity-test', false, 'PREPARED',
+  'rescue-canary-run:claim-identity-test'
 );
+INSERT INTO public.runtime_connection_credentials (
+  connection_id, provider, credential_kind, run_id, key_version,
+  ciphertext, nonce, attestation_sha256, active
+) VALUES
+  ('11111111-1111-4111-8111-111111111111', 'agora', 'agora',
+    'claim-identity-test', 'claim-key-v1', decode(repeat('11', 32), 'hex'),
+    decode(repeat('11', 12), 'hex'), repeat('d', 64), false),
+  ('11111111-1111-4111-8111-111111111111', 'agora', 'winerim',
+    'claim-identity-test', 'claim-key-v1', decode(repeat('22', 32), 'hex'),
+    decode(repeat('22', 12), 'hex'), repeat('e', 64), false);
+BEGIN;
+UPDATE public.runtime_connection_credentials
+SET active = true, activated_at = transaction_timestamp()
+WHERE connection_id = '11111111-1111-4111-8111-111111111111'::uuid
+  AND run_id = 'claim-identity-test';
+UPDATE public.runtime_canary_connections
+SET active = true, status = 'ACTIVE',
+  approved_at = statement_timestamp() - interval '1 minute',
+  expires_at = statement_timestamp() + interval '1 hour',
+  deployment_manifest_sha256 = repeat('a', 64),
+  writer_fence_grant_sha256 = repeat('b', 64),
+  credential_set_sha256 = repeat('c', 64),
+  activated_at = transaction_timestamp()
+WHERE connection_id = '11111111-1111-4111-8111-111111111111'::uuid
+  AND run_id = 'claim-identity-test';
+COMMIT;
 
 INSERT INTO public.runtime_idempotency (
   idempotency_key, message_id, connection_id, job, status, attempt,

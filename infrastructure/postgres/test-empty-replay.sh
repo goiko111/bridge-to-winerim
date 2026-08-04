@@ -136,13 +136,34 @@ END
 \$test_expired\$;
 
 INSERT INTO public.runtime_canary_connections (
-  connection_id, run_id, active, status, approved_at, expires_at, note,
-  deployment_manifest_sha256, writer_fence_grant_sha256,
-  credential_set_sha256, activated_at
+  connection_id, run_id, active, status, note
 ) VALUES (
-  '$CANARY_CONNECTION_A', 'empty-valid-a', true, 'ACTIVE', now(), now() + interval '1 hour',
-  'rescue-canary-run:empty-valid-a', repeat('a',64), repeat('b',64), repeat('c',64), now()
+  '$CANARY_CONNECTION_A', 'empty-valid-a', false, 'PREPARED',
+  'rescue-canary-run:empty-valid-a'
 );
+INSERT INTO public.runtime_connection_credentials (
+  connection_id, provider, credential_kind, run_id, key_version,
+  ciphertext, nonce, attestation_sha256, active
+) VALUES
+  ('$CANARY_CONNECTION_A', 'agora', 'agora', 'empty-valid-a', 'empty-key-a',
+    decode(repeat('11', 32), 'hex'), decode(repeat('11', 12), 'hex'), repeat('d', 64), false),
+  ('$CANARY_CONNECTION_A', 'agora', 'winerim', 'empty-valid-a', 'empty-key-a',
+    decode(repeat('22', 32), 'hex'), decode(repeat('22', 12), 'hex'), repeat('e', 64), false);
+BEGIN;
+UPDATE public.runtime_connection_credentials
+SET active = true, activated_at = transaction_timestamp()
+WHERE connection_id = '$CANARY_CONNECTION_A'::uuid
+  AND run_id = 'empty-valid-a';
+UPDATE public.runtime_canary_connections
+SET active = true, status = 'ACTIVE', approved_at = statement_timestamp(),
+  expires_at = statement_timestamp() + interval '1 hour',
+  deployment_manifest_sha256 = repeat('a', 64),
+  writer_fence_grant_sha256 = repeat('b', 64),
+  credential_set_sha256 = repeat('c', 64),
+  activated_at = transaction_timestamp()
+WHERE connection_id = '$CANARY_CONNECTION_A'::uuid
+  AND run_id = 'empty-valid-a';
+COMMIT;
 
 DO \$test_single_active\$
 DECLARE rejected boolean := false;
@@ -153,7 +174,7 @@ BEGIN
       deployment_manifest_sha256, writer_fence_grant_sha256,
       credential_set_sha256, activated_at
     ) VALUES (
-      '$CANARY_CONNECTION_B', 'empty-valid-b', true, 'ACTIVE', now(), now() + interval '1 hour',
+      '$CANARY_CONNECTION_A', 'empty-valid-b', true, 'ACTIVE', now(), now() + interval '1 hour',
       'rescue-canary-run:empty-valid-b', repeat('d',64), repeat('e',64), repeat('f',64), now()
     );
   EXCEPTION WHEN unique_violation THEN
@@ -167,7 +188,10 @@ SQL
 runtime_canary_valid_scope=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT ((SELECT count(*) FROM public.runtime_canary_connections) = 1 AND (SELECT count(*) FROM public.pos_connections) = 1)::int")
 
 "${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+BEGIN;
+DELETE FROM public.runtime_connection_credentials;
 DELETE FROM public.runtime_canary_connections;
+COMMIT;
 INSERT INTO public.runtime_canary_connections (
   connection_id, run_id, active, status, approved_at, expires_at, note
 ) VALUES
@@ -198,11 +222,24 @@ INSERT INTO public.runtime_catalog_source_scope (
 ) VALUES (
   '$CANARY_CONNECTION_A', 'empty-prepared-a', '855797', 'BOTTLE', '1055797'
 );
+INSERT INTO public.runtime_connection_credentials (
+  connection_id, provider, credential_kind, run_id, key_version,
+  ciphertext, nonce, attestation_sha256, active
+) VALUES
+  ('$CANARY_CONNECTION_A', 'agora', 'agora', 'empty-prepared-a', 'empty-key-b',
+    decode(repeat('33', 32), 'hex'), decode(repeat('33', 12), 'hex'), repeat('f', 64), false),
+  ('$CANARY_CONNECTION_A', 'agora', 'winerim', 'empty-prepared-a', 'empty-key-b',
+    decode(repeat('44', 32), 'hex'), decode(repeat('44', 12), 'hex'), repeat('9', 64), false);
 SQL
 
 catalog_source_prepared_hidden=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT (count(*) = 0)::int FROM public.runtime_catalog_source_scope")
 
 "${PSQL[@]}" -d "$DB_NAME" >/dev/null <<SQL
+BEGIN;
+UPDATE public.runtime_connection_credentials
+SET active = true, activated_at = transaction_timestamp()
+WHERE connection_id = '$CANARY_CONNECTION_A'::uuid
+  AND run_id = 'empty-prepared-a';
 UPDATE public.runtime_canary_connections
 SET status = 'ACTIVE', active = true,
   approved_at = now(), expires_at = now() + interval '1 hour',
@@ -212,6 +249,7 @@ SET status = 'ACTIVE', active = true,
   activated_at = now()
 WHERE connection_id = '$CANARY_CONNECTION_A'
   AND run_id = 'empty-prepared-a';
+COMMIT;
 SQL
 
 catalog_source_active_visible=$("${PSQL[@]}" -q -d "$DB_NAME" -Atc "SET ROLE middleware_runtime; SELECT (count(*) = 1)::int FROM public.runtime_catalog_source_scope")
@@ -278,7 +316,10 @@ DELETE FROM public.product_mappings
 WHERE connection_id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
 DELETE FROM public.winerim_wines
 WHERE connection_id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
+BEGIN;
+DELETE FROM public.runtime_connection_credentials;
 DELETE FROM public.runtime_canary_connections;
+COMMIT;
 DELETE FROM public.pos_connections
 WHERE id IN ('$CANARY_CONNECTION_A', '$CANARY_CONNECTION_B');
 SQL

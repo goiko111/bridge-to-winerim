@@ -17,9 +17,11 @@ RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_bi
 RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
 RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
+RUNTIME_CANARY_PREPARED_ABORT="$MIGRATIONS_DIR/20260803203800_runtime_canary_prepared_abort.sql"
 RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
 RUNTIME_FLEET_CONNECTION_SCOPE="$SCRIPT_DIR/0015_runtime_fleet_connection_scope.sql"
 OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
+RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=0
 
 {
   printf '%s\n' '-- Generated from reviewed migration-manifest.tsv. Do not edit by hand.'
@@ -36,12 +38,21 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
           printf 'Checksum mismatch for %s\n' "$file" >&2
           exit 1
         }
+        if [ "$MIGRATIONS_DIR/$file" = "$RUNTIME_CANARY_PREPARED_ABORT" ]; then
+          RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=$((RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES + 1))
+          continue
+        fi
         printf '\n-- BEGIN %s\n' "$file"
         cat "$MIGRATIONS_DIR/$file"
         printf '\n-- END %s\n' "$file"
         ;;
     esac
   done < "$MANIFEST"
+  test "$RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES" -eq 1 || {
+    printf 'Expected exactly one included manifest entry for %s\n' \
+      "$(basename "$RUNTIME_CANARY_PREPARED_ABORT")" >&2
+    exit 1
+  }
   printf '\n-- BEGIN infrastructure hardening\n'
   cat "$SCRIPT_DIR/0001_harden_runtime_roles.sql"
   printf '\n-- END infrastructure hardening\n'
@@ -81,6 +92,9 @@ OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
   printf '\n-- BEGIN runtime canary control-plane history\n'
   cat "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY"
   printf '\n-- END runtime canary control-plane history\n'
+  printf '\n-- BEGIN runtime canary prepared abort\n'
+  cat "$RUNTIME_CANARY_PREPARED_ABORT"
+  printf '\n-- END runtime canary prepared abort\n'
   printf '\n-- BEGIN runtime catalog source scope\n'
   cat "$RUNTIME_CATALOG_SOURCE_SCOPE"
   printf '\n-- END runtime catalog source scope\n'
