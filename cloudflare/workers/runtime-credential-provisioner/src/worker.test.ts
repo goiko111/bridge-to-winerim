@@ -140,7 +140,7 @@ function environment(input: {
     PROVISIONING_ENABLED: input.enabled ?? "true",
     CF_ACCESS_AUD: ACCESS_AUD,
     CF_ACCESS_TEAM_DOMAIN: ACCESS_ISSUER,
-    ACCESS_MAX_TOKEN_TTL_SECONDS: "900",
+    ACCESS_MAX_TOKEN_TTL_SECONDS: "960",
     OPERATOR_KEY_ID,
     OPERATOR_PUBLIC_KEY_JWK: JSON.stringify(input.operatorJwk),
     CHALLENGE_TTL_SECONDS: "90",
@@ -321,7 +321,7 @@ describe("runtime credential provisioner", () => {
     const wrongAudience = await provisionFixture({ accessAudience: "wrong-audience" });
     expect(wrongAudience.challengeResponse.status).toBe(401);
 
-    const oversizedAccessLifetime = await provisionFixture({ accessTtlSeconds: 901 });
+    const oversizedAccessLifetime = await provisionFixture({ accessTtlSeconds: 961 });
     expect(oversizedAccessLifetime.challengeResponse.status).toBe(401);
 
     const disabled = await provisionFixture({ enabled: "false" });
@@ -329,11 +329,11 @@ describe("runtime credential provisioner", () => {
   });
 
   it("accepts a signed short-lived Access service-token identity", async () => {
-    const fixture = await provisionFixture({ serviceToken: true });
+    const fixture = await provisionFixture({ serviceToken: true, accessTtlSeconds: 901 });
     expect(fixture.challengeResponse.status).toBe(201);
     expect(fixture.provisionResponse?.status).toBe(200);
 
-    const oversized = await provisionFixture({ serviceToken: true, accessTtlSeconds: 901 });
+    const oversized = await provisionFixture({ serviceToken: true, accessTtlSeconds: 961 });
     expect(oversized.challengeResponse.status).toBe(401);
   });
 
