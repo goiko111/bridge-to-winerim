@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { DatabaseAdapter } from "../../cloudflare/workers/middleware-api/src/db";
+import type {
+  DatabaseAdapter,
+  DatabaseTransaction,
+  SqlStatement,
+} from "../../cloudflare/workers/middleware-api/src/db";
 import {
   catalogProductCanonicalFingerprint,
   createPrivateCatalogLaneExecutor,
@@ -19,11 +23,60 @@ import type {
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 
-function database(): DatabaseAdapter {
+function intentDatabase() {
+  let row: (Record<string, unknown> & {
+    result: Record<string, unknown>;
+    lease_active: boolean;
+    lease_token: string | null;
+  }) | null = null;
+  const query = vi.fn(async (statement: SqlStatement) => {
+    const compact = statement.text.replace(/\s+/g, " ").trim();
+    if (compact.startsWith("INSERT INTO public.runtime_idempotency")) {
+      if (row) return { rows: [], rowCount: 0 };
+      row = {
+        idempotency_key: String(statement.values[0]),
+        connection_id: String(statement.values[2]),
+        job: String(statement.values[3]),
+        status: "RUNNING",
+        result: JSON.parse(String(statement.values[6])) as Record<string, unknown>,
+        lease_active: true,
+        lease_token: String(statement.values[5]),
+      };
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    if (compact.startsWith("SELECT") && compact.includes("FROM public.runtime_idempotency")) {
+      return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("attempt = attempt + 1")) {
+      if (!row || row.lease_active) return { rows: [], rowCount: 0 };
+      row.lease_token = String(statement.values[2]);
+      row.lease_active = true;
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("result = result ||")) {
+      if (!row || row.lease_token !== String(statement.values[4])) return { rows: [], rowCount: 0 };
+      row.result = {
+        ...row.result,
+        ...JSON.parse(String(statement.values[0])) as Record<string, unknown>,
+      };
+      if (compact.includes("status = 'SUCCESS'")) {
+        row.status = "SUCCESS";
+        row.lease_token = null;
+        row.lease_active = false;
+      }
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    throw new Error(`unexpected fixture SQL: ${compact}`);
+  });
+  const transaction = vi.fn(async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) =>
+    work({ query })
+  );
   return {
-    query: vi.fn(),
-    transaction: vi.fn(),
-  } as unknown as DatabaseAdapter;
+    database: { query, transaction } as DatabaseAdapter,
+    expireLease() {
+      if (row) row.lease_active = false;
+    },
+  };
 }
 
 async function envelope(
@@ -58,6 +111,7 @@ function planningContext(): CatalogPlanningContext {
 }
 
 function fixture(overrides: Partial<PrivateCatalogCompositionOptions> = {}) {
+  const intent = intentDatabase();
   const load = vi.fn(async () => ({
     connectionId: CONNECTION_ID,
     provider: "agora",
@@ -65,6 +119,13 @@ function fixture(overrides: Partial<PrivateCatalogCompositionOptions> = {}) {
   }));
   const open = vi.fn(async () => ({ read: vi.fn(async () => "fixture-credential") }));
   const loadPlanningContext = vi.fn(async () => ({ ok: true as const, context: planningContext() }));
+  const preflightApplyPlan = vi.fn(async ({ plan }: { plan: { operations: { desired: { productId: string } }[] } }) => ({
+    ok: true as const,
+    receipt: {
+      status: "applied" as const,
+      appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+    },
+  }));
   const applyPlan = vi.fn(async ({ plan }: { plan: { operations: { desired: { productId: string } }[] } }) => ({
     ok: true as const,
     receipt: {
@@ -83,17 +144,17 @@ function fixture(overrides: Partial<PrivateCatalogCompositionOptions> = {}) {
       ]))),
     },
   }));
-  const adapterFactory = vi.fn(() => ({ loadPlanningContext, applyPlan })) as unknown as PostgresCatalogAdapterFactory;
+  const adapterFactory = vi.fn(() => ({ loadPlanningContext, preflightApplyPlan, applyPlan })) as unknown as PostgresCatalogAdapterFactory;
   const value: PrivateCatalogCompositionOptions = {
     allowedConnectionId: CONNECTION_ID,
-    database: database(),
+    database: intent.database,
     connections: { load },
     credentials: { open },
     adapterFactory,
     agoraApply: { applyAndReadback },
     ...overrides,
   };
-  return { value, load, open, adapterFactory, loadPlanningContext, applyPlan, applyAndReadback };
+  return { value, load, open, adapterFactory, loadPlanningContext, preflightApplyPlan, applyPlan, applyAndReadback, intent };
 }
 
 describe("private catalog executor composition", () => {
@@ -155,6 +216,49 @@ describe("private catalog executor composition", () => {
     expect(enabled.applyAndReadback.mock.invocationCallOrder[0])
       .toBeLessThan(enabled.applyPlan.mock.invocationCallOrder[0]);
     expect(privateCatalogEnabledJobs(enabled.value.switches)).toEqual(["catalog.sync-master"]);
+  });
+
+  it("reports a post-readback DB failure and completes idempotently on retry", async () => {
+    const configured = fixture({ switches: { executionEnabled: true, applyEnabled: true } });
+    let remoteAttempt = 0;
+    configured.applyAndReadback.mockImplementation(async ({ plan }: { plan: CatalogPlan }) => ({
+      ok: true as const,
+      receipt: {
+        status: (remoteAttempt++ === 0 ? "applied" : "duplicate") as "applied" | "duplicate",
+        appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+        canonicalProductFingerprints: Object.fromEntries(await Promise.all(plan.operations.map(async (operation) => [
+          operation.desired.productId,
+          await catalogProductCanonicalFingerprint(operation.desired),
+        ]))),
+      },
+    }));
+    configured.applyPlan
+      .mockResolvedValueOnce({ ok: false, code: "APPLY_UNAVAILABLE" })
+      .mockImplementation(async ({ plan }: { plan: CatalogPlan }) => ({
+        ok: true as const,
+        receipt: {
+          status: "applied" as const,
+          appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+        },
+      }));
+    const runtimeEnvelope = await envelope("catalog.sync-master", {
+      formatTypes: ["BOTTLE"],
+      winerimWineIds: ["1"],
+    });
+    const executor = createPrivateCatalogLaneExecutor(configured.value);
+
+    await expect(executor.execute(runtimeEnvelope)).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    configured.intent.expireLease();
+    await expect(executor.execute(runtimeEnvelope)).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:duplicate:1:/),
+    });
+    expect(configured.preflightApplyPlan).toHaveBeenCalledTimes(2);
+    expect(configured.applyAndReadback).toHaveBeenCalledTimes(2);
+    expect(configured.applyPlan).toHaveBeenCalledTimes(2);
   });
 
   it("claims differential catalog changes and applies each format as a one-product mutation", async () => {

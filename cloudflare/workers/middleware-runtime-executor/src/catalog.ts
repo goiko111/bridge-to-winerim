@@ -29,6 +29,13 @@ import {
 import type { RuntimeExecutionResult } from "../../middleware-runtime/src/queue";
 import { createAgoraOutboundTransport } from "./agoraOutboundTransport";
 import type { CatalogChangeQueuePort } from "./catalogChanges";
+import {
+  completeCatalogRemoteIntent,
+  confirmCatalogRemoteIntentReadback,
+  markCatalogRemoteIntentUnknown,
+  prepareCatalogRemoteIntent,
+  type CatalogRemoteIntentIdentity,
+} from "./catalogRemoteIntent";
 
 type BooleanSwitch = boolean | string | null | undefined;
 type JsonRecord = Record<string, unknown>;
@@ -45,7 +52,12 @@ export const PRIVATE_CATALOG_SAFETY_CONTRACT = Object.freeze({
   planClaim: "runtime_idempotency/catalog.plan.db",
   deadLetter: "cloudflare-queue/max-attempts",
   applyIsSeparateGate: true,
+  databaseWritePreflightBeforeRemoteMutation: true,
+  durableRemoteIntentBeforeRemoteMutation: true,
+  exclusiveRemoteIntentLease: true,
   remoteReadbackBeforePersistence: true,
+  remoteSuccessDatabaseRetryIsIdempotent: true,
+  unknownRemoteOutcomeIsNeverCompensated: true,
 });
 
 export type PrivateCatalogSwitches = Readonly<{
@@ -121,6 +133,25 @@ export type AgoraCatalogXmlProfile = Readonly<{
   preparationOrderId: string;
   orderByProductId: Readonly<Record<string, string | number>>;
 }>;
+
+const HIDE_CHANGED_FIELDS = new Set(["useAsDirectSale", "saleableAsMain"]);
+
+function importEnvelope(productXml: string): string {
+  return `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productXml}\n  </Products>\n</Import>`;
+}
+
+function exactHideBaseline(
+  operation: CatalogPlan["operations"][number],
+): AgoraCatalogRenderableProductState | null {
+  const desired = operation.desired as AgoraCatalogRenderableProductState;
+  if (desired.useAsDirectSale !== false || desired.saleableAsMain !== false) return null;
+  if (operation.changedFields.some((field) => !HIDE_CHANGED_FIELDS.has(field))) return null;
+  return {
+    ...desired,
+    useAsDirectSale: operation.changedFields.includes("useAsDirectSale"),
+    saleableAsMain: operation.changedFields.includes("saleableAsMain"),
+  };
+}
 
 export type AgoraCatalogPlanTransportOptions = Readonly<{
   enabled?: BooleanSwitch;
@@ -380,10 +411,17 @@ export function createAgoraCatalogPlanApplyAndReadbackPort(
       }
 
       const [operation] = input.plan.operations;
-      let productXml: string;
+      let productXml: string | null = null;
+      let hideBaselineXml: string | null = null;
       let fingerprint: string;
       try {
-        productXml = renderAgoraCatalogProductXml(operation.desired, options.profile);
+        const hideBaseline = exactHideBaseline(operation);
+        if (operation.desired.saleableAsMain === false) {
+          if (!hideBaseline) return { ok: false, code: "APPLY_REJECTED" };
+          hideBaselineXml = renderAgoraCatalogProductXml(hideBaseline, options.profile);
+        } else {
+          productXml = renderAgoraCatalogProductXml(operation.desired, options.profile);
+        }
         fingerprint = await catalogProductCanonicalFingerprint(operation.desired);
       } catch {
         return { ok: false, code: "APPLY_REJECTED" };
@@ -412,14 +450,22 @@ export function createAgoraCatalogPlanApplyAndReadbackPort(
           id: input.messageId,
           connectionId: input.connectionId,
           provider: "agora",
-          taskType: "AGORA_XML_UPSERT_PRODUCT",
-          payload: {
-            _import_xml: `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n${productXml}\n  </Products>\n</Import>`,
-            _expected_product_ids: [operation.desired.productId],
-            _catalog_plan_key: input.plan.idempotency.key,
-            _catalog_product_fingerprint: fingerprint,
-            _envelope_idempotency_key: input.envelopeIdempotencyKey,
-          },
+          taskType: hideBaselineXml ? "AGORA_HIDE_PRODUCT" : "AGORA_XML_UPSERT_PRODUCT",
+          payload: hideBaselineXml
+            ? {
+                _product_ids: [operation.desired.productId],
+                _baseline_import_xml: importEnvelope(hideBaselineXml),
+                _catalog_plan_key: input.plan.idempotency.key,
+                _catalog_product_fingerprint: fingerprint,
+                _envelope_idempotency_key: input.envelopeIdempotencyKey,
+              }
+            : {
+                _import_xml: importEnvelope(productXml!),
+                _expected_product_ids: [operation.desired.productId],
+                _catalog_plan_key: input.plan.idempotency.key,
+                _catalog_product_fingerprint: fingerprint,
+                _envelope_idempotency_key: input.envelopeIdempotencyKey,
+              },
           status: "RUNNING",
           attempts: 1,
           maxAttempts: 1,
@@ -480,6 +526,25 @@ async function exactProductReadback(
   return observedEntries.every(([productId, fingerprint], index) =>
     productId === expectedEntries[index]?.[0] && fingerprint === expectedEntries[index]?.[1]
   );
+}
+
+async function remoteIntentIdentity(
+  envelope: RuntimeEnvelopeV1,
+  plan: CatalogPlan,
+): Promise<CatalogRemoteIntentIdentity> {
+  const productFingerprints = Object.fromEntries(await Promise.all(
+    plan.operations.map(async (operation) => [
+      operation.desired.productId,
+      await catalogProductCanonicalFingerprint(operation.desired),
+    ] as const),
+  ));
+  return {
+    connectionId: envelope.connectionId,
+    messageId: envelope.messageId,
+    planKey: plan.idempotency.key,
+    planFingerprint: plan.idempotency.fingerprint,
+    productFingerprints,
+  };
 }
 
 async function executeRefresh(
@@ -553,6 +618,33 @@ async function executePlan(
         applyPlan: async (input): Promise<CatalogApplyPortResult> => {
           if (!remoteApply || !agora) return { ok: false, code: "APPLY_UNAVAILABLE" };
           if (input.plan.operations.length !== 1) return { ok: false, code: "APPLY_REJECTED" };
+          let preflight: CatalogApplyPortResult;
+          try {
+            preflight = await adapter.preflightApplyPlan(input);
+          } catch {
+            return { ok: false, code: "APPLY_UNAVAILABLE" };
+          }
+          if (!preflight.ok) return preflight;
+
+          const intentIdentity = await remoteIntentIdentity(envelope, input.plan);
+          const prepared = await prepareCatalogRemoteIntent(options.database, intentIdentity);
+          if (!prepared.ok) {
+            return {
+              ok: false,
+              code: prepared.code === "CONFLICT" ? "APPLY_CONFLICT" : "APPLY_UNAVAILABLE",
+            };
+          }
+          if (prepared.outcome === "completed") {
+            return {
+              ok: true,
+              receipt: {
+                status: "duplicate",
+                appliedProductIds: input.plan.operations.map((operation) => operation.desired.productId),
+              },
+            };
+          }
+          const intentLease = prepared.lease;
+
           let remote: AgoraCatalogApplyAndReadbackResult;
           try {
             remote = await remoteApply.applyAndReadback({
@@ -563,13 +655,22 @@ async function executePlan(
               credential: agora,
             });
           } catch {
+            await markCatalogRemoteIntentUnknown(options.database, intentIdentity, intentLease);
             return { ok: false, code: "APPLY_UNAVAILABLE" };
           }
           if (!remote.ok || !await exactProductReadback(remote.receipt, input.plan)) {
+            await markCatalogRemoteIntentUnknown(options.database, intentIdentity, intentLease);
             return remote.ok
               ? { ok: false, code: "APPLY_CONFLICT" }
               : remote;
           }
+          const readbackRecorded = await confirmCatalogRemoteIntentReadback(
+            options.database,
+            intentIdentity,
+            intentLease,
+            remote.receipt.status,
+          );
+          if (!readbackRecorded) return { ok: false, code: "APPLY_UNAVAILABLE" };
 
           let persisted: CatalogApplyPortResult;
           try {
@@ -582,6 +683,12 @@ async function executePlan(
               ? { ok: false, code: "APPLY_CONFLICT" }
               : persisted;
           }
+          const completed = await completeCatalogRemoteIntent(
+            options.database,
+            intentIdentity,
+            intentLease,
+          );
+          if (!completed) return { ok: false, code: "APPLY_UNAVAILABLE" };
           return remote;
         },
       }

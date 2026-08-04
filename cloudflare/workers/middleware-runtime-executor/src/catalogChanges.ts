@@ -67,6 +67,10 @@ function boundedLimit(value: number): number {
   return Number.isInteger(value) ? Math.max(1, Math.min(10, value)) : 1;
 }
 
+function boundedClaimLimit(_value: number): number {
+  return 1;
+}
+
 const CLAIM_LEASE_SECONDS = 120;
 
 function safeError(value: string): string {
@@ -120,7 +124,7 @@ export function createPostgresCatalogChangeQueue(database: DatabaseAdapter): Cat
               )
             ORDER BY available_at, updated_at, winerim_wine_id, format
             FOR UPDATE SKIP LOCKED
-            LIMIT ${boundedLimit(input.limit)}
+            LIMIT ${boundedClaimLimit(input.limit)}
           )
           UPDATE public.runtime_catalog_changes change
           SET status = 'RUNNING',

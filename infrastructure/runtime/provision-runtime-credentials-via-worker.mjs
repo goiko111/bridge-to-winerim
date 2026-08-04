@@ -19,8 +19,10 @@ import { validateEncryptedCredentialArtifact } from "./prepare-runtime-credentia
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+const ACCESS_CLIENT_ID_PATTERN = /^[0-9a-f]{32}\.access$/i;
 const MAX_INPUT_BYTES = 20 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024;
+const MAX_ACCESS_SECRET_BYTES = 4 * 1024;
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "../..");
 
@@ -28,6 +30,52 @@ function required(environment, name) {
   const value = String(environment[name] ?? "").trim();
   if (!value) throw new Error(`REMOTE_CREDENTIAL_PROVISION_MISSING_${name}`);
   return value;
+}
+
+function optionalAccessSecret(environment, name) {
+  const source = environment[name];
+  if (source === undefined || source === null || source === "") return "";
+  const value = String(source);
+  if (
+    value !== value.trim()
+    || /[\r\n]/.test(value)
+    || Buffer.byteLength(value, "utf8") > MAX_ACCESS_SECRET_BYTES
+  ) throw new Error(`REMOTE_CREDENTIAL_PROVISION_INVALID_${name}`);
+  return value;
+}
+
+export function runtimeCredentialProvisioningAccess(environment = process.env) {
+  const jwt = optionalAccessSecret(environment, "CF_ACCESS_JWT");
+  const clientId = optionalAccessSecret(environment, "CF_ACCESS_CLIENT_ID");
+  const clientSecret = optionalAccessSecret(environment, "CF_ACCESS_CLIENT_SECRET");
+
+  if (jwt) {
+    return {
+      mode: "jwt",
+      headers: { "CF-Access-Jwt-Assertion": jwt },
+      disclosureSentinels: [jwt, clientId, clientSecret].filter(Boolean),
+    };
+  }
+  if (!clientId && !clientSecret) {
+    throw new Error("REMOTE_CREDENTIAL_PROVISION_ACCESS_IDENTITY_REQUIRED");
+  }
+  if (!clientId || !clientSecret) {
+    throw new Error("REMOTE_CREDENTIAL_PROVISION_ACCESS_SERVICE_TOKEN_INCOMPLETE");
+  }
+  if (!ACCESS_CLIENT_ID_PATTERN.test(clientId)) {
+    throw new Error("REMOTE_CREDENTIAL_PROVISION_INVALID_CF_ACCESS_CLIENT_ID");
+  }
+  if (Buffer.byteLength(clientSecret, "utf8") < 32) {
+    throw new Error("REMOTE_CREDENTIAL_PROVISION_INVALID_CF_ACCESS_CLIENT_SECRET");
+  }
+  return {
+    mode: "service-token",
+    headers: {
+      "CF-Access-Client-Id": clientId,
+      "CF-Access-Client-Secret": clientSecret,
+    },
+    disclosureSentinels: [clientId, clientSecret],
+  };
 }
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -177,7 +225,7 @@ export function remoteCredentialProvisioningPlan() {
     vaultKeyReadLocally: false,
     requirements: [
       "RUNTIME_CREDENTIAL_PROVISIONER_URL",
-      "CF_ACCESS_JWT",
+      "CF_ACCESS_JWT or both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET",
       "RUNTIME_CREDENTIAL_OPERATOR_KEY_ID",
       "private 0600 input JSON outside repository",
       "private 0600 Ed25519 PKCS8 key outside repository",
@@ -194,7 +242,7 @@ export async function provisionRuntimeCredentialsViaWorker({
   fetcher = fetch,
 }) {
   const baseUrl = normalizedBaseUrl(required(environment, "RUNTIME_CREDENTIAL_PROVISIONER_URL"));
-  const accessJwt = required(environment, "CF_ACCESS_JWT");
+  const access = runtimeCredentialProvisioningAccess(environment);
   const operatorKeyId = required(environment, "RUNTIME_CREDENTIAL_OPERATOR_KEY_ID");
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(operatorKeyId)) {
     throw new Error("REMOTE_CREDENTIAL_PROVISION_INVALID_OPERATOR_KEY_ID");
@@ -208,7 +256,7 @@ export async function provisionRuntimeCredentialsViaWorker({
   }
   const commonHeaders = {
     "content-type": "application/json",
-    "CF-Access-Jwt-Assertion": accessJwt,
+    ...access.headers,
     "x-operator-key-id": operatorKeyId,
   };
   const challengeBody = JSON.stringify({
@@ -253,7 +301,7 @@ export async function provisionRuntimeCredentialsViaWorker({
   if (
     serializedResponse.includes(input.credentials.agora)
     || serializedResponse.includes(input.credentials.winerim)
-    || serializedResponse.includes(accessJwt)
+    || access.disclosureSentinels.some((secret) => serializedResponse.includes(secret))
   ) throw new Error("REMOTE_CREDENTIAL_PROVISION_RESPONSE_DISCLOSED_SECRET");
   const normalizedArtifact = {
     version: responseArtifact.version,

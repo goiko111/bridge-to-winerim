@@ -1,5 +1,5 @@
 name = "winerim-runtime-credential-provisioner"
-main = "cloudflare/workers/runtime-credential-provisioner/src/worker.ts"
+main = "{{RUNTIME_CREDENTIAL_PROVISIONER_MAIN}}"
 compatibility_date = "2026-06-12"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = false
@@ -28,5 +28,11 @@ class_name = "RuntimeCredentialChallenge"
 tag = "v1"
 new_sqlite_classes = ["RuntimeCredentialChallenge"]
 
-# Add a custom route only after Cloudflare Access is configured with MFA and a
-# maximum 15-minute session. Keep this Worker unreachable while disabled.
+[[routes]]
+pattern = "{{RUNTIME_CREDENTIAL_PROVISIONER_CUSTOM_DOMAIN}}"
+custom_domain = true
+
+# Add the custom domain only after Cloudflare Access has either an MFA Allow
+# policy or a narrowly scoped Service Auth policy. Access must inject a signed
+# application JWT with a maximum 15-minute TTL; the Worker verifies that JWT.
+# Keep PROVISIONING_ENABLED=false until the bounded provisioning window opens.

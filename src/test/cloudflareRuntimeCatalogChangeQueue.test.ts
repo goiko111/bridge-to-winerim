@@ -56,7 +56,7 @@ describe("PostgreSQL differential catalog change queue", () => {
     expect(fake.statements[0].text).toContain("status = 'RUNNING' AND lease_expires_at <= now()");
     expect(fake.statements[0].text).toContain("lease_expires_at = now()");
     expect(fake.statements[0].text).toContain("attempt < 20");
-    expect(fake.statements[0].values).toEqual([CONNECTION_ID, CONNECTION_ID, 10, 120]);
+    expect(fake.statements[0].values).toEqual([CONNECTION_ID, CONNECTION_ID, 1, 120]);
     expect(fake.transactionOptions).toEqual([{ isolationLevel: "read-committed" }]);
   });
 

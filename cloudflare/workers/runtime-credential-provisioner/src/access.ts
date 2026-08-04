@@ -1,12 +1,14 @@
 type AccessJwtHeader = Readonly<{ alg?: string; kid?: string }>;
 type AccessJwtPayload = Readonly<{
   aud?: string | string[];
+  common_name?: string;
   email?: string;
   exp?: number;
   iat?: number;
   nbf?: number;
   iss?: string;
   sub?: string;
+  type?: string;
 }>;
 
 export type AccessIdentity = Readonly<{ principalSha256: string }>;
@@ -89,7 +91,9 @@ export async function verifyAccessIdentity(
     ? payload.aud.includes(audience)
     : payload.aud === audience;
   if (header.alg !== "RS256" || !header.kid) throw new Error("ACCESS_TOKEN_REJECTED");
-  if (!audienceMatches || payload.iss !== teamDomain) throw new Error("ACCESS_TOKEN_REJECTED");
+  if (!audienceMatches || payload.iss !== teamDomain || payload.type !== "app") {
+    throw new Error("ACCESS_TOKEN_REJECTED");
+  }
   if (
     typeof payload.exp !== "number"
     || typeof payload.iat !== "number"
@@ -98,8 +102,19 @@ export async function verifyAccessIdentity(
     || payload.exp - payload.iat > config.maxTokenTtlSeconds
     || (typeof payload.nbf === "number" && payload.nbf > now + 30)
   ) throw new Error("ACCESS_TOKEN_REJECTED");
-  const principal = `${String(payload.sub ?? "").trim()}|${String(payload.email ?? "").trim().toLowerCase()}`;
-  if (principal === "|") throw new Error("ACCESS_TOKEN_REJECTED");
+  const subject = String(payload.sub ?? "").trim();
+  const email = String(payload.email ?? "").trim().toLowerCase();
+  const commonName = String(payload.common_name ?? "").trim().toLowerCase();
+  let principal: string;
+  if (commonName) {
+    if (!/^[0-9a-f]{32}\.access$/.test(commonName) || subject || email) {
+      throw new Error("ACCESS_TOKEN_REJECTED");
+    }
+    principal = `service-token:${commonName}`;
+  } else {
+    if (!subject && !email) throw new Error("ACCESS_TOKEN_REJECTED");
+    principal = `identity:${subject}|${email}`;
+  }
 
   const keys = await (dependencies.fetchKeys ?? defaultFetchKeys)(teamDomain);
   const jwk = keys.find((candidate) => (

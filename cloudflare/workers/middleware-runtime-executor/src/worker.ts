@@ -954,6 +954,22 @@ function fleetFullSwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
     && switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
 }
 
+function fleetSalesOnlySwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
+  const sales = salesLaneFlags(env);
+  return sales.executionEnabled
+    && sales.cursorEnabled
+    && sales.dlqReady
+    && !switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED)
+    && !switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED)
+    && !switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED)
+    && !switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED)
+    && !switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
+}
+
+function fleetSwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
+  return fleetSalesOnlySwitchesOpen(env) || fleetFullSwitchesOpen(env);
+}
+
 type NormalizedWorkerDependencies = Readonly<{
   database: (env: MiddlewareRuntimeExecutorEnv) => DatabaseAdapter;
   catalogAdapterFactory?: PostgresCatalogAdapterFactory;
@@ -1008,8 +1024,8 @@ function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
     if (!missingBindings.includes("WINERIM_API_TARGET")) missingBindings.push("WINERIM_API_TARGET");
   }
   const executionEnabled = switchEnabled(env.RUNTIME_EXECUTION_ENABLED);
-  const fleetPolicyOpen = fleetFullSwitchesOpen(env);
-  if (!fleetPolicyOpen) missingBindings.push("RUNTIME_FLEET_FULL_LANES_POLICY");
+  const fleetPolicyOpen = fleetSwitchesOpen(env);
+  if (!fleetPolicyOpen) missingBindings.push("RUNTIME_FLEET_EXECUTION_POLICY");
   const ready = executionEnvironmentAllowed(env)
     && executionEnabled
     && fleetPolicyOpen
@@ -1262,7 +1278,7 @@ function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
     );
   return executionEnvironmentAllowed(env)
     && rescueFenceReady
-    && (!fleet || fleetFullSwitchesOpen(env))
+    && (!fleet || fleetSwitchesOpen(env))
     && (!rescueProduction || fleet || rescueExecutorScope(env) !== null)
     && (!rescueProduction || fleet || rescueCanaryPolicy(env) !== null)
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"

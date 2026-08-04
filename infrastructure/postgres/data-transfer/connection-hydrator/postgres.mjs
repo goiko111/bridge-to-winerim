@@ -170,19 +170,46 @@ export class ConnectionHydratorDatabase {
   }
 
   async runtimeActivity(connectionId) {
+    const tableExists = async (table) => {
+      const result = await this.client.query("SELECT to_regclass($1) IS NOT NULL AS present", [`public.${table}`]);
+      return Boolean(result.rows[0]?.present);
+    };
     const countActive = async (table) => {
-      const exists = await this.client.query("SELECT to_regclass($1) IS NOT NULL AS present", [`public.${table}`]);
-      if (!exists.rows[0]?.present) return 0;
+      if (!await tableExists(table)) return 0;
       const result = await this.client.query(
         `SELECT count(*)::bigint AS count FROM ${qualifiedTable(table)} WHERE connection_id = $1::uuid AND active`,
         [connectionId],
       );
       return Number(result.rows[0]?.count || 0);
     };
+    const countActiveCatalogScopes = async () => {
+      if (!await tableExists("runtime_catalog_source_scope")) return 0;
+      assert(await tableExists("runtime_canary_connections"), "RUNTIME_CATALOG_SCOPE_CANARY_TABLE_MISSING");
+      const scopeColumns = new Set((await this.tableColumns("runtime_catalog_source_scope")).map(({ column_name: name }) => name));
+      const canaryColumns = new Set((await this.tableColumns("runtime_canary_connections")).map(({ column_name: name }) => name));
+      for (const column of ["connection_id", "run_id"]) {
+        assert(scopeColumns.has(column), `RUNTIME_CATALOG_SCOPE_COLUMN_MISSING:${column}`);
+      }
+      for (const column of ["connection_id", "run_id", "active"]) {
+        assert(canaryColumns.has(column), `RUNTIME_CANARY_COLUMN_MISSING:${column}`);
+      }
+      const result = await this.client.query(`
+        SELECT
+          count(*) FILTER (WHERE canary.active)::bigint AS active_count,
+          count(*) FILTER (WHERE canary.run_id IS NULL)::bigint AS orphan_count
+        FROM public.runtime_catalog_source_scope scope
+        LEFT JOIN public.runtime_canary_connections canary
+          ON canary.connection_id = scope.connection_id
+         AND scope.run_id = canary.run_id
+        WHERE scope.connection_id = $1::uuid
+      `, [connectionId]);
+      assert(Number(result.rows[0]?.orphan_count || 0) === 0, "RUNTIME_CATALOG_SCOPE_RUN_ID_ORPHANED");
+      return Number(result.rows[0]?.active_count || 0);
+    };
     return {
       activeScopes: await countActive("runtime_canary_connections"),
       activeCredentials: await countActive("runtime_connection_credentials"),
-      activeCatalogScopes: await countActive("runtime_catalog_source_scope"),
+      activeCatalogScopes: await countActiveCatalogScopes(),
     };
   }
 

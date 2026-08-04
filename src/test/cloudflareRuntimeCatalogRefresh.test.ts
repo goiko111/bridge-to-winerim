@@ -31,7 +31,20 @@ function json(body: unknown): Response {
   });
 }
 
-function fakeDatabase(existingPrice = 10, blockedFormats: string[] = []) {
+type ChangeStateFixture = Readonly<{
+  winerim_wine_id: string;
+  format: string;
+  status: "PENDING" | "RUNNING" | "SUCCESS" | "BLOCKED";
+  source_fingerprint: string;
+}>;
+
+function fakeDatabase(options: Readonly<{
+  existingPrice?: number;
+  changeStates?: readonly ChangeStateFixture[];
+  evidenceMarker?: string;
+  unrelatedEvidenceMarker?: string;
+}> = {}) {
+  const existingPrice = options.existingPrice ?? 10;
   const statements: SqlStatement[] = [];
   const transactionOptions: TransactionOptions[] = [];
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
@@ -51,11 +64,24 @@ function fakeDatabase(existingPrice = 10, blockedFormats: string[] = []) {
         magnum_purchase_price: null,
       }]) as QueryResult<Row>;
     }
+    if (statement.text.includes("AS connection_evidence")) {
+      const marker = options.evidenceMarker ?? "stable";
+      return result([{
+        connection_evidence: { defaultFamilyId: 10 },
+        master_evidence: {
+          families: [{ Id: 10, Name: "TINTOS WINERIM" }],
+          products: [
+            { Id: "500042", marker },
+            { Id: "500999", marker: options.unrelatedEvidenceMarker ?? "stable" },
+          ],
+        },
+        mapping_evidence: [],
+        provider_product_evidence: [],
+        tracking_evidence: [],
+      }]) as QueryResult<Row>;
+    }
     if (statement.text.includes("FROM public.runtime_catalog_changes")) {
-      return result(blockedFormats.map((format) => ({
-        winerim_wine_id: "42",
-        format,
-      }))) as QueryResult<Row>;
+      return result([...(options.changeStates ?? [])]) as QueryResult<Row>;
     }
     return result([]) as QueryResult<Row>;
   });
@@ -149,23 +175,142 @@ describe("full Winerim catalog refresh", () => {
 
     expect(outcome).toEqual({ ok: true, outcome: "complete", changed: 1 });
     expect(fake.transaction).not.toHaveBeenCalled();
-    expect(fake.statements).toHaveLength(2);
+    expect(fake.statements).toHaveLength(3);
   });
 
-  it("reopens a retryable blocked variant even when its Winerim source did not change", async () => {
-    const fake = fakeDatabase(10, ["BOTTLE"]);
-    const outcome = await refresh(fake, request(10)).refresh({
+  it("keeps BLOCKED closed for identical evidence and reopens only after relevant evidence changes", async () => {
+    const initial = fakeDatabase({ existingPrice: 10 });
+    await refresh(initial, request(12)).refresh({
       connectionId: CONNECTION_ID,
-      messageId: "catalog-message-reopen",
-      idempotencyKey: "catalog-envelope-reopen",
+      messageId: "catalog-message-initial",
+      idempotencyKey: "catalog-envelope-initial",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+    const initialQueue = initial.statements.find((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )!;
+    const fingerprint = initialQueue.values.find((value) =>
+      typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
+    ) as string;
+    const blocked: ChangeStateFixture = {
+      winerim_wine_id: "42",
+      format: "BOTTLE",
+      status: "BLOCKED",
+      source_fingerprint: fingerprint,
+    };
+    const unchanged = fakeDatabase({ existingPrice: 12, changeStates: [blocked] });
+    const unchangedOutcome = await refresh(unchanged, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-blocked-same",
+      idempotencyKey: "catalog-envelope-blocked-same",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+
+    expect(unchangedOutcome).toEqual({ ok: true, outcome: "duplicate", changed: 0 });
+    expect(unchanged.statements.some((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )).toBe(false);
+
+    const changed = fakeDatabase({
+      existingPrice: 12,
+      changeStates: [blocked],
+      evidenceMarker: "provider-master-drift",
+    });
+    const changedOutcome = await refresh(changed, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-blocked-drift",
+      idempotencyKey: "catalog-envelope-blocked-drift",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+
+    expect(changedOutcome).toEqual({ ok: true, outcome: "complete", changed: 1 });
+    const queued = changed.statements.find((statement) => statement.text.includes("INSERT INTO public.runtime_catalog_changes"));
+    expect(queued?.values).toEqual(expect.arrayContaining(["42", "BOTTLE", "catalog-message-blocked-drift"]));
+    expect(queued?.text).toContain("source_fingerprint IS DISTINCT FROM EXCLUDED.source_fingerprint");
+    expect(queued?.text).toContain("lease_expires_at = NULL");
+  });
+
+  it("does not reopen BLOCKED when only another product's evidence changes", async () => {
+    const initial = fakeDatabase({ existingPrice: 10 });
+    await refresh(initial, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-unrelated-seed",
+      idempotencyKey: "catalog-envelope-unrelated-seed",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+    const initialQueue = initial.statements.find((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )!;
+    const fingerprint = initialQueue.values.find((value) =>
+      typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
+    ) as string;
+    const unchanged = fakeDatabase({
+      existingPrice: 12,
+      changeStates: [{
+        winerim_wine_id: "42",
+        format: "BOTTLE",
+        status: "BLOCKED",
+        source_fingerprint: fingerprint,
+      }],
+      unrelatedEvidenceMarker: "changed-other-product",
+    });
+
+    const outcome = await refresh(unchanged, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-unrelated-drift",
+      idempotencyKey: "catalog-envelope-unrelated-drift",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+
+    expect(outcome).toEqual({ ok: true, outcome: "duplicate", changed: 0 });
+    expect(unchanged.statements.some((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )).toBe(false);
+  });
+
+  it("revalidates a prior SUCCESS when semantic provider evidence drifts", async () => {
+    const initial = fakeDatabase({ existingPrice: 10 });
+    await refresh(initial, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-success-seed",
+      idempotencyKey: "catalog-envelope-success-seed",
+      dryRun: false,
+      credential: { read: () => "credential-secret" },
+    });
+    const initialQueue = initial.statements.find((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )!;
+    const fingerprint = initialQueue.values.find((value) =>
+      typeof value === "string" && /^[a-f0-9]{64}$/.test(value)
+    ) as string;
+    const success: ChangeStateFixture = {
+      winerim_wine_id: "42",
+      format: "BOTTLE",
+      status: "SUCCESS",
+      source_fingerprint: fingerprint,
+    };
+    const drifted = fakeDatabase({
+      existingPrice: 12,
+      changeStates: [success],
+      evidenceMarker: "changed-tracking-or-master",
+    });
+
+    const outcome = await refresh(drifted, request(12)).refresh({
+      connectionId: CONNECTION_ID,
+      messageId: "catalog-message-success-drift",
+      idempotencyKey: "catalog-envelope-success-drift",
       dryRun: false,
       credential: { read: () => "credential-secret" },
     });
 
     expect(outcome).toEqual({ ok: true, outcome: "complete", changed: 1 });
-    const queued = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.runtime_catalog_changes"));
-    expect(queued?.values).toEqual(expect.arrayContaining(["42", "BOTTLE", "catalog-message-reopen"]));
-    expect(queued?.text).toContain("ELSE 'PENDING'");
-    expect(queued?.text).toContain("lease_expires_at = NULL");
+    expect(drifted.statements.some((statement) =>
+      statement.text.includes("INSERT INTO public.runtime_catalog_changes")
+    )).toBe(true);
   });
 });

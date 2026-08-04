@@ -147,7 +147,43 @@ function successfulRoute(statement: SqlStatement): QueryResult<Record<string, un
 }
 
 describe("PostgreSQL catalog adapter plan persistence", () => {
-  it("persists the active variant as VERIFIED only after the caller's certified apply path", async () => {
+  it("executes the exact persistence path in a rollback-only preflight transaction", async () => {
+    const fake = fakeDatabase(successfulRoute);
+    const preflight = await createPostgresCatalogAdapter(fake.database).preflightApplyPlan(input());
+
+    expect(preflight).toEqual({
+      ok: true,
+      receipt: { status: "applied", appliedProductIds: ["500001"] },
+    });
+    expect(fake.transactionOptions).toEqual([{ isolationLevel: "serializable", readOnly: false }]);
+    expect(fake.statements.map((statement) => statement.text)).toEqual([
+      expect.stringContaining("FROM public.pos_connections"),
+      expect.stringContaining("FROM public.product_mappings"),
+      expect.stringContaining("FROM public.winerim_push_tracking"),
+      expect.stringContaining("INSERT INTO public.runtime_idempotency"),
+      expect.stringContaining("INSERT INTO public.product_mappings"),
+      expect.stringContaining("INSERT INTO public.winerim_push_tracking"),
+      expect.stringContaining("UPDATE public.runtime_idempotency"),
+    ]);
+  });
+
+  it("fails preflight on an RLS-like mapping denial before tracking can be certified", async () => {
+    const fake = fakeDatabase((statement) => {
+      if (statement.text.includes("INSERT INTO public.product_mappings")) {
+        throw new Error("RLS_DENIED");
+      }
+      return successfulRoute(statement);
+    });
+
+    await expect(createPostgresCatalogAdapter(fake.database).preflightApplyPlan(input())).resolves.toEqual({
+      ok: false,
+      code: "APPLY_UNAVAILABLE",
+    });
+    expect(fake.statements.some((statement) => statement.text.includes("INSERT INTO public.winerim_push_tracking")))
+      .toBe(false);
+  });
+
+  it("persists the active variant as an exact CONFIRMED sales mapping and VERIFIED tracking", async () => {
     const fake = fakeDatabase(successfulRoute);
     const applied = await createPostgresCatalogAdapter(fake.database).applyPlan(input());
 
@@ -167,9 +203,12 @@ describe("PostgreSQL catalog adapter plan persistence", () => {
       expect.stringContaining("UPDATE public.runtime_idempotency"),
     ]);
     const mapping = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.product_mappings"))!;
-    expect(mapping.text).toContain("'RUNTIME_CATALOG_PLAN'");
-    expect(mapping.text).toContain("'PENDING'");
-    expect(mapping.text).not.toContain("'CONFIRMED'");
+    expect(mapping.text).toContain("'RESCUE_EXACT_ID_WINE_VARIANT'");
+    expect(mapping.text).toContain("'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'");
+    expect(mapping.text).toContain("'CONFIRMED'");
+    expect(mapping.text).not.toContain("'RUNTIME_CATALOG_PLAN'");
+    expect(mapping.text).toContain("stock_contract.stock_count = 1");
+    expect(mapping.values).toContainEqual(["EXACT_PROVIDER_READBACK", `plan:${PLAN_KEY}`]);
     const tracking = fake.statements.find((statement) => statement.text.includes("INSERT INTO public.winerim_push_tracking"))!;
     expect(tracking.values).toContain("VERIFIED");
     expect(tracking.values).not.toContain("HIDDEN");
@@ -178,6 +217,28 @@ describe("PostgreSQL catalog adapter plan persistence", () => {
     expect(tracking.text).toContain("verified_at = EXCLUDED.verified_at");
     expect(texts.join("\n")).not.toContain("provider_products");
     expect(texts.join("\n")).not.toContain("agora_master_data");
+  });
+
+  it("fails closed when exact provider certification has no unique Winerim stock contract", async () => {
+    const fake = fakeDatabase((statement) => {
+      if (statement.text.includes("FROM public.pos_connections")) {
+        return result([{ id: CONNECTION_ID, provider: "agora" }]);
+      }
+      if (statement.text.includes("FROM public.product_mappings") && statement.text.includes("FOR UPDATE")) return result();
+      if (statement.text.includes("FROM public.winerim_push_tracking") && statement.text.includes("FOR UPDATE")) return result();
+      if (statement.text.includes("INSERT INTO public.runtime_idempotency")) {
+        return result([{ idempotency_key: PLAN_KEY, job: "catalog.plan.db", status: "RUNNING", result: {} }]);
+      }
+      if (statement.text.includes("INSERT INTO public.product_mappings")) return result();
+      throw new Error(`Unexpected query: ${statement.text}`);
+    });
+
+    await expect(createPostgresCatalogAdapter(fake.database).applyPlan(input())).resolves.toEqual({
+      ok: false,
+      code: "APPLY_REJECTED",
+    });
+    expect(fake.statements.some((statement) => statement.text.includes("INSERT INTO public.winerim_push_tracking")))
+      .toBe(false);
   });
 
   it("persists an exact certified hide as HIDDEN without preserving a stale VERIFIED state", async () => {

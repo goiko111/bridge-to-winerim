@@ -48,7 +48,7 @@
     "data:rescue-merge": "node infrastructure/postgres/data-transfer/rescue-merge/cli.mjs",
     "data:rescue-merge:test": "node --test infrastructure/postgres/data-transfer/rescue-merge/planner.test.mjs infrastructure/postgres/data-transfer/rescue-merge/executor.test.mjs",
     "data:connection-hydrator": "node infrastructure/postgres/data-transfer/connection-hydrator/cli.mjs",
-    "data:connection-hydrator:test": "node --test infrastructure/postgres/data-transfer/connection-hydrator/core.test.mjs infrastructure/postgres/data-transfer/connection-hydrator/artifacts.test.mjs",
+    "data:connection-hydrator:test": "node --test infrastructure/postgres/data-transfer/connection-hydrator/artifacts.test.mjs infrastructure/postgres/data-transfer/connection-hydrator/core.test.mjs infrastructure/postgres/data-transfer/connection-hydrator/operations.test.mjs infrastructure/postgres/data-transfer/connection-hydrator/postgres.test.mjs",
     "data:rescue:build": "node scripts/build-rescue-bootstrap.mjs",
     "data:rescue:smoke:local": "bash infrastructure/postgres/test-rescue-seed.sh",
     "lint": "eslint .",

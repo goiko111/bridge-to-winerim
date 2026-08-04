@@ -6,6 +6,7 @@ DO $runtime_full_catalog_outbound_preflight$
 DECLARE
   target_table text;
   rls_enabled boolean;
+  runtime_owns_table boolean;
 BEGIN
   IF current_user IN ('middleware_runtime', 'middleware_readonly', 'middleware_api', 'anon', 'authenticated', 'service_role')
     OR NOT EXISTS (
@@ -36,6 +37,7 @@ BEGIN
   END IF;
 
   FOREACH target_table IN ARRAY ARRAY[
+    'pos_connections',
     'runtime_canary_connections',
     'runtime_catalog_source_scope',
     'winerim_wines',
@@ -43,16 +45,23 @@ BEGIN
     'winerim_push_tracking'
   ]
   LOOP
-    SELECT table_class.relrowsecurity
-    INTO rls_enabled
+    SELECT
+      table_class.relrowsecurity,
+      table_class.relowner = runtime_role.oid
+    INTO rls_enabled, runtime_owns_table
     FROM pg_class table_class
     JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+    JOIN pg_roles runtime_role ON runtime_role.rolname = 'middleware_runtime'
     WHERE namespace.nspname = 'public'
       AND table_class.relname = target_table
       AND table_class.relkind = 'r';
 
     IF rls_enabled IS DISTINCT FROM true THEN
       RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_DEPENDENCY_RLS_REQUIRED: public.%', target_table;
+    END IF;
+
+    IF runtime_owns_table IS DISTINCT FROM false THEN
+      RAISE EXCEPTION 'RUNTIME_FULL_CATALOG_DEPENDENCY_RUNTIME_OWNER_REJECTED: public.%', target_table;
     END IF;
   END LOOP;
 
@@ -66,6 +75,8 @@ BEGIN
       WHERE namespace.nspname = 'public'
         AND table_class.relname = 'winerim_wines'
         AND trigger_row.tgname = 'enforce_runtime_catalog_wine_refresh_scope'
+        AND trigger_row.tgfoid = to_regprocedure('public.enforce_runtime_catalog_wine_refresh_scope()')
+        AND trigger_row.tgtype = 19
         AND trigger_row.tgenabled IN ('O', 'A')
         AND NOT trigger_row.tgisinternal
     )
@@ -77,6 +88,8 @@ BEGIN
       WHERE namespace.nspname = 'public'
         AND table_class.relname = 'runtime_catalog_source_scope'
         AND trigger_row.tgname = 'validate_runtime_catalog_source_scope'
+        AND trigger_row.tgfoid = to_regprocedure('public.validate_runtime_catalog_source_scope()')
+        AND trigger_row.tgtype = 23
         AND trigger_row.tgenabled IN ('O', 'A')
         AND NOT trigger_row.tgisinternal
     )
@@ -171,22 +184,173 @@ CREATE TABLE public.runtime_catalog_changes (
   CONSTRAINT runtime_catalog_changes_fingerprint_check CHECK (source_fingerprint ~ '^[a-f0-9]{64}$'),
   CONSTRAINT runtime_catalog_changes_status_check CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'BLOCKED')),
   CONSTRAINT runtime_catalog_changes_attempt_check CHECK (attempt BETWEEN 0 AND 20),
+  CONSTRAINT runtime_catalog_changes_error_check CHECK (
+    last_error IS NULL OR last_error ~ '^[A-Z][A-Z0-9_]{0,79}$'
+  ),
   CONSTRAINT runtime_catalog_changes_lifecycle_check CHECK (
     (status = 'PENDING' AND claimed_at IS NULL AND lease_expires_at IS NULL AND completed_at IS NULL)
     OR (
       status = 'RUNNING'
+      AND attempt BETWEEN 1 AND 20
       AND claimed_at IS NOT NULL
-      AND lease_expires_at > claimed_at
+      AND lease_expires_at = claimed_at + interval '120 seconds'
       AND completed_at IS NULL
+      AND last_error IS NULL
     )
     OR (
-      status IN ('SUCCESS', 'BLOCKED')
+      status = 'SUCCESS'
+      AND attempt BETWEEN 1 AND 20
       AND claimed_at IS NOT NULL
       AND lease_expires_at IS NULL
       AND completed_at >= claimed_at
+      AND last_error IS NULL
+    )
+    OR (
+      status = 'BLOCKED'
+      AND attempt BETWEEN 1 AND 20
+      AND claimed_at IS NOT NULL
+      AND lease_expires_at IS NULL
+      AND completed_at >= claimed_at
+      AND last_error IS NOT NULL
     )
   )
 );
+
+CREATE OR REPLACE FUNCTION public.validate_runtime_catalog_change_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $function$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status <> 'PENDING'
+      OR NEW.attempt <> 0
+      OR NEW.claimed_at IS NOT NULL
+      OR NEW.lease_expires_at IS NOT NULL
+      OR NEW.completed_at IS NOT NULL
+      OR NEW.last_error IS NOT NULL
+    THEN
+      RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_INITIAL_STATE_REJECTED';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.connection_id IS DISTINCT FROM OLD.connection_id
+    OR NEW.winerim_wine_id IS DISTINCT FROM OLD.winerim_wine_id
+    OR NEW.format IS DISTINCT FROM OLD.format
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_IDENTITY_IMMUTABLE';
+  END IF;
+
+  IF NEW.status = 'PENDING' THEN
+    IF NEW.claimed_at IS NOT NULL
+      OR NEW.lease_expires_at IS NOT NULL
+      OR NEW.completed_at IS NOT NULL
+      OR (
+        NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+        AND NEW.attempt <> 0
+      )
+      OR (
+        NEW.source_fingerprint IS NOT DISTINCT FROM OLD.source_fingerprint
+        AND NEW.attempt <> OLD.attempt
+      )
+      OR (
+        OLD.status IN ('SUCCESS', 'BLOCKED')
+        AND NEW.source_fingerprint IS NOT DISTINCT FROM OLD.source_fingerprint
+      )
+    THEN
+      RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_PENDING_TRANSITION_REJECTED';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'RUNNING' THEN
+    IF NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+      OR NEW.attempt <> OLD.attempt + 1
+      OR NEW.attempt > 20
+      OR NEW.claimed_at IS DISTINCT FROM transaction_timestamp()
+      OR NEW.lease_expires_at IS DISTINCT FROM NEW.claimed_at + interval '120 seconds'
+      OR NEW.completed_at IS NOT NULL
+      OR NEW.last_error IS NOT NULL
+      OR NOT (
+        (OLD.status = 'PENDING' AND OLD.available_at <= transaction_timestamp())
+        OR (
+          OLD.status = 'RUNNING'
+          AND OLD.lease_expires_at <= transaction_timestamp()
+        )
+      )
+    THEN
+      RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_CLAIM_TRANSITION_REJECTED';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'SUCCESS' THEN
+    IF OLD.status = 'SUCCESS' THEN
+      IF NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+        OR NEW.attempt <> OLD.attempt
+        OR NEW.claimed_at IS DISTINCT FROM OLD.claimed_at
+        OR NEW.lease_expires_at IS NOT NULL
+        OR NEW.completed_at IS DISTINCT FROM OLD.completed_at
+        OR NEW.last_error IS NOT NULL
+      THEN
+        RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_SUCCESS_REFRESH_REJECTED';
+      END IF;
+      RETURN NEW;
+    END IF;
+
+    IF OLD.status <> 'RUNNING'
+      OR NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+      OR NEW.attempt <> OLD.attempt
+      OR NEW.claimed_at IS DISTINCT FROM OLD.claimed_at
+      OR NEW.lease_expires_at IS NOT NULL
+      OR NEW.completed_at IS DISTINCT FROM transaction_timestamp()
+      OR NEW.last_error IS NOT NULL
+    THEN
+      RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_SUCCESS_TRANSITION_REJECTED';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'BLOCKED' THEN
+    IF OLD.status = 'PENDING' THEN
+      IF OLD.attempt <> 20
+        OR OLD.available_at > transaction_timestamp()
+        OR NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+        OR NEW.attempt <> OLD.attempt
+        OR NEW.claimed_at IS DISTINCT FROM transaction_timestamp()
+        OR NEW.lease_expires_at IS NOT NULL
+        OR NEW.completed_at IS DISTINCT FROM transaction_timestamp()
+        OR NEW.last_error <> 'CATALOG_CHANGE_ATTEMPTS_EXHAUSTED'
+      THEN
+        RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_EXHAUSTION_REJECTED';
+      END IF;
+      RETURN NEW;
+    END IF;
+
+    IF OLD.status <> 'RUNNING'
+      OR NEW.source_fingerprint IS DISTINCT FROM OLD.source_fingerprint
+      OR NEW.attempt <> OLD.attempt
+      OR NEW.claimed_at IS DISTINCT FROM OLD.claimed_at
+      OR NEW.lease_expires_at IS NOT NULL
+      OR NEW.completed_at IS DISTINCT FROM transaction_timestamp()
+      OR NEW.last_error IS NULL
+    THEN
+      RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_BLOCKED_TRANSITION_REJECTED';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'RUNTIME_CATALOG_CHANGE_STATUS_REJECTED';
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.validate_runtime_catalog_change_transition() FROM PUBLIC;
+
+CREATE TRIGGER validate_runtime_catalog_change_transition
+  BEFORE INSERT OR UPDATE ON public.runtime_catalog_changes
+  FOR EACH ROW EXECUTE FUNCTION public.validate_runtime_catalog_change_transition();
 
 CREATE INDEX runtime_catalog_changes_pending_idx
   ON public.runtime_catalog_changes(connection_id, available_at, updated_at)
@@ -197,6 +361,7 @@ CREATE INDEX runtime_catalog_changes_running_lease_idx
   WHERE status = 'RUNNING';
 
 ALTER TABLE public.runtime_catalog_changes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.runtime_catalog_changes FORCE ROW LEVEL SECURITY;
 REVOKE ALL ON public.runtime_catalog_changes FROM PUBLIC, anon, authenticated, service_role,
   middleware_api, middleware_readonly, middleware_runtime;
 GRANT SELECT, INSERT, UPDATE ON public.runtime_catalog_changes TO middleware_runtime;
@@ -210,6 +375,100 @@ CREATE POLICY middleware_runtime_full_catalog_changes
 CREATE POLICY middleware_readonly_catalog_changes
   ON public.runtime_catalog_changes FOR SELECT TO middleware_readonly
   USING (true);
+
+DROP POLICY middleware_runtime_canary_insert_product_mappings
+  ON public.product_mappings;
+DROP POLICY middleware_runtime_canary_update_product_mappings
+  ON public.product_mappings;
+
+CREATE POLICY middleware_runtime_full_catalog_mapping_exact_insert
+  ON public.product_mappings FOR INSERT TO middleware_runtime
+  WITH CHECK (
+    public.runtime_full_catalog_scope(connection_id)
+    AND status = 'CONFIRMED'
+    AND match_method IN (
+      'RESCUE_EXACT_ID_WINE_VARIANT',
+      'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'
+    )
+    AND match_score = 1
+    AND cardinality(match_reasons) = 2
+    AND match_reasons @> ARRAY['EXACT_PROVIDER_READBACK']::text[]
+    AND (
+      SELECT count(*)
+      FROM unnest(match_reasons) reason
+      WHERE reason LIKE 'plan:%' AND length(reason) > 5
+    ) = 1
+    AND format_type IN ('BOTTLE', 'GLASS', 'MAGNUM')
+    AND winerim_wine_id IS NOT NULL
+    AND agora_product_id = provider_product_id
+    AND provider_product_id ~ '^[0-9]+$'
+    AND last_synced_at IS NOT NULL
+    AND last_sync_error IS NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.winerim_wines wine
+      WHERE wine.connection_id = product_mappings.connection_id
+        AND wine.winerim_id = product_mappings.winerim_wine_id
+    )
+  );
+
+CREATE POLICY middleware_runtime_full_catalog_mapping_exact_update
+  ON public.product_mappings FOR UPDATE TO middleware_runtime
+  USING (
+    public.runtime_full_catalog_scope(connection_id)
+    AND status IN ('PENDING', 'CONFIRMED')
+  )
+  WITH CHECK (
+    public.runtime_full_catalog_scope(connection_id)
+    AND status = 'CONFIRMED'
+    AND match_method IN (
+      'RESCUE_EXACT_ID_WINE_VARIANT',
+      'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'
+    )
+    AND match_score = 1
+    AND cardinality(match_reasons) = 2
+    AND match_reasons @> ARRAY['EXACT_PROVIDER_READBACK']::text[]
+    AND (
+      SELECT count(*)
+      FROM unnest(match_reasons) reason
+      WHERE reason LIKE 'plan:%' AND length(reason) > 5
+    ) = 1
+    AND format_type IN ('BOTTLE', 'GLASS', 'MAGNUM')
+    AND winerim_wine_id IS NOT NULL
+    AND agora_product_id = provider_product_id
+    AND provider_product_id ~ '^[0-9]+$'
+    AND last_synced_at IS NOT NULL
+    AND last_sync_error IS NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.winerim_wines wine
+      WHERE wine.connection_id = product_mappings.connection_id
+        AND wine.winerim_id = product_mappings.winerim_wine_id
+    )
+  );
+
+DROP POLICY IF EXISTS middleware_runtime_canary_update_tracking
+  ON public.winerim_push_tracking;
+CREATE POLICY middleware_runtime_canary_update_tracking
+  ON public.winerim_push_tracking
+  FOR UPDATE TO middleware_runtime
+  USING (
+    source = 'WINERIM'
+    AND EXISTS (
+      SELECT 1
+      FROM public.runtime_canary_connections scope
+      WHERE scope.connection_id = winerim_push_tracking.connection_id
+        AND scope.status = 'ACTIVE'
+        AND scope.active = true
+        AND scope.approved_at <= now()
+        AND scope.expires_at > now()
+    )
+  )
+  WITH CHECK (
+    source = 'WINERIM'
+    AND agora_product_id ~ '^[0-9]+$'
+    AND sync_status IN ('NOT_PUSHED', 'PUSHED')
+  );
 
 CREATE POLICY middleware_runtime_full_catalog_tracking_certified_insert
   ON public.winerim_push_tracking FOR INSERT TO middleware_runtime
@@ -229,15 +488,19 @@ CREATE POLICY middleware_runtime_full_catalog_tracking_certified_insert
         AND mapping.provider_product_id = winerim_push_tracking.agora_product_id
         AND mapping.winerim_wine_id = winerim_push_tracking.winerim_wine_id
         AND upper(mapping.format_type) = upper(winerim_push_tracking.format)
-        AND (
-          mapping.status = 'CONFIRMED'
-          OR (
-            mapping.status = 'PENDING'
-            AND mapping.match_method = 'RUNTIME_CATALOG_PLAN'
-            AND mapping.match_score = 1
-            AND mapping.match_reasons @> ARRAY['DB_PLAN_PREPARED']::text[]
-          )
+        AND mapping.status = 'CONFIRMED'
+        AND mapping.match_method IN (
+          'RESCUE_EXACT_ID_WINE_VARIANT',
+          'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'
         )
+        AND mapping.match_score = 1
+        AND cardinality(mapping.match_reasons) = 2
+        AND mapping.match_reasons @> ARRAY['EXACT_PROVIDER_READBACK']::text[]
+        AND (
+          SELECT count(*)
+          FROM unnest(mapping.match_reasons) reason
+          WHERE reason LIKE 'plan:%' AND length(reason) > 5
+        ) = 1
     )
   );
 
@@ -263,15 +526,19 @@ CREATE POLICY middleware_runtime_full_catalog_tracking_certified_update
         AND mapping.provider_product_id = winerim_push_tracking.agora_product_id
         AND mapping.winerim_wine_id = winerim_push_tracking.winerim_wine_id
         AND upper(mapping.format_type) = upper(winerim_push_tracking.format)
-        AND (
-          mapping.status = 'CONFIRMED'
-          OR (
-            mapping.status = 'PENDING'
-            AND mapping.match_method = 'RUNTIME_CATALOG_PLAN'
-            AND mapping.match_score = 1
-            AND mapping.match_reasons @> ARRAY['DB_PLAN_PREPARED']::text[]
-          )
+        AND mapping.status = 'CONFIRMED'
+        AND mapping.match_method IN (
+          'RESCUE_EXACT_ID_WINE_VARIANT',
+          'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'
         )
+        AND mapping.match_score = 1
+        AND cardinality(mapping.match_reasons) = 2
+        AND mapping.match_reasons @> ARRAY['EXACT_PROVIDER_READBACK']::text[]
+        AND (
+          SELECT count(*)
+          FROM unnest(mapping.match_reasons) reason
+          WHERE reason LIKE 'plan:%' AND length(reason) > 5
+        ) = 1
     )
   );
 

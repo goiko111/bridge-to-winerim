@@ -48,6 +48,10 @@ directory is applied remotely by validation or replay.
 - `rollback-runtime-upgrade.sql`: fail-closed inverse for an unused canary; it
   requires empty runtime credential/scope tables and restores the verified
   28-table prestate. `test-runtime-upgrade.sh` proves `28 -> 30 -> 28` locally.
+- `0016_runtime_full_catalog_outbound.rollback.sql`: fail-closed exact inverse
+  for `0016_runtime_full_catalog_outbound.sql`. The repository validator requires
+  both artifacts and `test-runtime-full-catalog-outbound.sh` proves the apply,
+  drift rejection, exact rollback and replay rejection paths together.
 - `expected-schema.txt`: active middleware contract: 30 public tables, seven
   portable functions, two columns, two indexes and one SET NULL foreign key.
 - `build-bootstrap.sh`: concatenates the reviewed historical schema, role

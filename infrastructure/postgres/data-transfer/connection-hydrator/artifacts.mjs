@@ -1,12 +1,15 @@
 import { createReadStream } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   open,
   readFile,
   realpath,
+  rename,
+  unlink,
 } from "node:fs/promises";
 import path from "node:path";
 
@@ -55,6 +58,227 @@ export async function writeSecureText(outputDir, filename, value) {
 
 export async function writeSecureJson(outputDir, filename, value) {
   return writeSecureText(outputDir, filename, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function injectFault(faultInjector, stage) {
+  if (faultInjector) await faultInjector(stage);
+}
+
+async function fsyncFile(filePath, faultInjector, stagePrefix) {
+  const handle = await open(filePath, "r");
+  try {
+    await handle.sync();
+    await injectFault(faultInjector, `${stagePrefix}:after-file-fsync`);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function fsyncDirectory(directoryPath, faultInjector, stagePrefix) {
+  await injectFault(faultInjector, `${stagePrefix}:before-directory-fsync`);
+  const handle = await open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await injectFault(faultInjector, `${stagePrefix}:after-directory-fsync`);
+}
+
+async function unlinkIfPresent(filePath) {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
+async function publishExclusiveDurableJson(directoryPath, outputPath, value, faultInjector, stagePrefix) {
+  const temporaryPath = path.join(directoryPath, `.${path.basename(outputPath)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await injectFault(faultInjector, `${stagePrefix}:after-temp-fsync`);
+    await chmod(temporaryPath, 0o600);
+    await injectFault(faultInjector, `${stagePrefix}:after-temp-chmod`);
+    await injectFault(faultInjector, `${stagePrefix}:before-link`);
+    await link(temporaryPath, outputPath);
+    await injectFault(faultInjector, `${stagePrefix}:after-link`);
+    await chmod(outputPath, 0o600);
+    await injectFault(faultInjector, `${stagePrefix}:after-chmod`);
+    await fsyncFile(outputPath, faultInjector, stagePrefix);
+    await fsyncDirectory(directoryPath, faultInjector, stagePrefix);
+  } finally {
+    if (handle) await handle.close();
+    await unlinkIfPresent(temporaryPath);
+  }
+}
+
+async function replaceDurableJson(directoryPath, outputPath, value, faultInjector, stagePrefix) {
+  const temporaryPath = path.join(directoryPath, `.${path.basename(outputPath)}.${process.pid}.${randomUUID()}.tmp`);
+  let handle = await open(temporaryPath, "wx", 0o600);
+  let renamed = false;
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await injectFault(faultInjector, `${stagePrefix}:after-temp-fsync`);
+    await chmod(temporaryPath, 0o600);
+    await injectFault(faultInjector, `${stagePrefix}:after-temp-chmod`);
+    await injectFault(faultInjector, `${stagePrefix}:before-rename`);
+    await rename(temporaryPath, outputPath);
+    renamed = true;
+    await injectFault(faultInjector, `${stagePrefix}:after-rename`);
+    await chmod(outputPath, 0o600);
+    await injectFault(faultInjector, `${stagePrefix}:after-chmod`);
+    await fsyncFile(outputPath, faultInjector, stagePrefix);
+    await fsyncDirectory(directoryPath, faultInjector, stagePrefix);
+  } finally {
+    if (handle) await handle.close();
+    if (!renamed) await unlinkIfPresent(temporaryPath);
+  }
+}
+
+async function readSecureJsonIfPresent(outputDir, filename, label) {
+  try {
+    const file = await secureArtifactFile(outputDir, filename, label);
+    return JSON.parse(await readFile(file.path, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function journalBinding(filename, metadata) {
+  assert(metadata && typeof metadata === "object", "RESULT_JOURNAL_METADATA_REQUIRED");
+  const immutable = canonicalize({
+    schemaVersion: 1,
+    kind: "connection-hydrator-result-journal",
+    operation: metadata.operation,
+    finalFilename: filename,
+    connectionId: metadata.connectionId,
+    planSha256: metadata.planSha256,
+    planManifestSha256: metadata.planManifestSha256,
+    targetIdentitySha256: metadata.targetIdentitySha256,
+  });
+  assert(["HYDRATE", "ROLLBACK"].includes(immutable.operation), "RESULT_JOURNAL_OPERATION_INVALID");
+  for (const [field, value] of Object.entries({
+    connectionId: immutable.connectionId,
+    planSha256: immutable.planSha256,
+    targetIdentitySha256: immutable.targetIdentitySha256,
+  })) {
+    assert(typeof value === "string" && value.length > 0, `RESULT_JOURNAL_${field.toUpperCase()}_INVALID`);
+  }
+  return { ...immutable, journalId: sha256(immutable) };
+}
+
+function assertJournalMatches(journal, expected) {
+  assert(journal && typeof journal === "object", "RESULT_JOURNAL_INVALID");
+  for (const [field, value] of Object.entries(expected)) {
+    assert(journal[field] === value, `RESULT_JOURNAL_CONFLICT:${field}`);
+  }
+  assert(["PREPARED", "FINALIZED"].includes(journal.state), "RESULT_JOURNAL_STATE_INVALID");
+}
+
+export async function prepareAtomicResultArtifact(
+  outputDir,
+  filename,
+  { validateExisting, metadata, faultInjector = null },
+) {
+  assert(/^[a-z0-9][a-z0-9._-]+$/i.test(filename), "RESULT_ARTIFACT_FILENAME_INVALID");
+  assert(typeof validateExisting === "function", "RESULT_ARTIFACT_VALIDATOR_REQUIRED");
+  await ensureSecureDirectory(outputDir);
+  const outputPath = path.join(outputDir, filename);
+  const existing = await readSecureJsonIfPresent(outputDir, filename, "RESULT_ARTIFACT_EXISTING");
+  if (existing) validateExisting(existing);
+
+  const expectedJournal = journalBinding(filename, metadata);
+  const journalFilename = `${filename}.journal.json`;
+  const journalPath = path.join(outputDir, journalFilename);
+  let journal = await readSecureJsonIfPresent(outputDir, journalFilename, "RESULT_JOURNAL_EXISTING");
+  const resumedPrepared = journal?.state === "PREPARED";
+  if (journal) {
+    assertJournalMatches(journal, expectedJournal);
+  } else {
+    const prepared = canonicalize({
+      ...expectedJournal,
+      state: "PREPARED",
+      preparedAt: new Date().toISOString(),
+    });
+    try {
+      await publishExclusiveDurableJson(outputDir, journalPath, prepared, faultInjector, "journal-prepared");
+      journal = prepared;
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      journal = await readSecureJsonIfPresent(outputDir, journalFilename, "RESULT_JOURNAL_EXISTING");
+      assertJournalMatches(journal, expectedJournal);
+    }
+  }
+  await fsyncFile(journalPath, faultInjector, "existing-journal");
+  await fsyncDirectory(outputDir, faultInjector, "existing-journal");
+
+  if (journal.state === "FINALIZED" && !existing) throw new Error("RESULT_JOURNAL_FINALIZED_WITHOUT_RECEIPT");
+
+  const finalizeJournal = async (value) => {
+    const finalizedJournal = canonicalize({
+      ...expectedJournal,
+      state: "FINALIZED",
+      preparedAt: journal.preparedAt,
+      finalizedAt: new Date().toISOString(),
+      resultSha256: sha256(value),
+    });
+    await replaceDurableJson(outputDir, journalPath, finalizedJournal, faultInjector, "journal-finalized");
+    journal = finalizedJournal;
+  };
+
+  if (existing) {
+    await fsyncFile(outputPath, faultInjector, "existing-result");
+    await fsyncDirectory(outputDir, faultInjector, "existing-result");
+    if (journal.state === "FINALIZED") {
+      assert(journal.resultSha256 === sha256(existing), "RESULT_JOURNAL_RECEIPT_DIGEST_MISMATCH");
+    } else {
+      await finalizeJournal(existing);
+    }
+  }
+
+  let finalized = Boolean(existing);
+  return {
+    existing,
+    journal,
+    resumedPrepared,
+    async finalize(value) {
+      assert(!finalized, "RESULT_ARTIFACT_ALREADY_FINALIZED");
+      validateExisting(value);
+      const racedExisting = await readSecureJsonIfPresent(outputDir, filename, "RESULT_ARTIFACT_EXISTING");
+      if (racedExisting) {
+        validateExisting(racedExisting);
+        await fsyncFile(outputPath, faultInjector, "existing-result");
+        await fsyncDirectory(outputDir, faultInjector, "existing-result");
+        await finalizeJournal(racedExisting);
+        finalized = true;
+        return { path: outputPath, value: racedExisting, reusedExisting: true };
+      }
+      try {
+        await publishExclusiveDurableJson(outputDir, outputPath, value, faultInjector, "result");
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+        const concurrentResult = await readSecureJsonIfPresent(outputDir, filename, "RESULT_ARTIFACT_EXISTING");
+        validateExisting(concurrentResult);
+        await fsyncFile(outputPath, faultInjector, "existing-result");
+        await fsyncDirectory(outputDir, faultInjector, "existing-result");
+        await finalizeJournal(concurrentResult);
+        finalized = true;
+        return { path: outputPath, value: concurrentResult, reusedExisting: true };
+      }
+      await finalizeJournal(value);
+      finalized = true;
+      return { path: outputPath, value, reusedExisting: false };
+    },
+  };
 }
 
 async function fileSha256(filePath) {
@@ -215,4 +439,3 @@ export async function readPlanArtifact(planDir) {
   assert(plan.planSha256 === manifest.planSha256, "PLAN_SHA256_MANIFEST_MISMATCH");
   return { plan, manifest };
 }
-

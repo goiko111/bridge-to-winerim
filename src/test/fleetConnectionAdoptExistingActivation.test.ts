@@ -2,6 +2,7 @@ import {
   createHash,
   createHmac,
   generateKeyPairSync,
+  sign,
 } from "node:crypto";
 import {
   chmodSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -29,6 +30,11 @@ import {
   renderFleetConnectionAdoptExistingDeactivationSql,
   validateFleetConnectionAdoptExistingActivationInput,
 } from "../../infrastructure/runtime/prepare-fleet-connection-activation.mjs";
+// @ts-expect-error Operational ESM script is exercised directly by Vitest.
+import {
+  collectFleetFullCloudflareTopologyAttestation,
+  validateFleetFullConsumerTopology,
+} from "../../infrastructure/runtime/fleet-full-topology-evidence.mjs";
 
 const CONNECTION_ID = "e465872a-bff5-43de-8e4c-fe4986f0fd4f";
 const LOVABLE_PROJECT_ID = "a61b5b89-4c36-44fc-aaf2-9c7c3f3cfd8d";
@@ -43,6 +49,25 @@ const PROVIDER_CONFIG = {
   intraday_sales_sync_enabled: true,
   open_tickets_sync_enabled: false,
   open_tickets_stock_sync_enabled: false,
+};
+const FULL_LANES_JOBS = [
+  "sales.auto-sync",
+  "sales.sync-intraday",
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "outbound.process",
+];
+const FULL_LANES_PROVIDER_CONFIG = {
+  runtime_fleet_profile: "full-lanes-v1",
+  runtime_fleet_job_allowlist: FULL_LANES_JOBS,
+  runtime_sales_job_allowlist: ["sales.auto-sync", "sales.sync-intraday"],
+  intraday_sales_sync_enabled: true,
+  open_tickets_sync_enabled: false,
+  open_tickets_stock_sync_enabled: false,
+  runtime_catalog_enabled: true,
+  runtime_stock_enabled: true,
+  runtime_outbound_enabled: true,
+  runtime_maintenance_enabled: false,
 };
 const PROVIDER_CONFIG_SNAPSHOT = {
   catalog_policy: { source: "pre-activation" },
@@ -437,6 +462,7 @@ function fixture({
       fenceEvidence,
       grantDocument,
       targetCorrectedShadowSha256,
+      externalPrivateKeySource: privateKeySource,
     },
   };
 }
@@ -525,7 +551,7 @@ function activationScopePayload(values: {
   finalTargetRawSha256: string;
   externalEvidenceSha256: string;
   externalEvidencePayloadSha256: string;
-}) {
+}, providerConfig: Record<string, unknown> = PROVIDER_CONFIG) {
   return [
     "winerim-writer-fence-adopt-existing-sales",
     "1",
@@ -539,7 +565,7 @@ function activationScopePayload(values: {
     values.finalTargetRawSha256,
     values.externalEvidenceSha256,
     values.externalEvidencePayloadSha256,
-    sha256(canonicalJson(PROVIDER_CONFIG)),
+    sha256(canonicalJson(providerConfig)),
   ].join("|");
 }
 
@@ -637,6 +663,199 @@ function replaceDeploymentManifest(
   mutate(manifest);
   testFixture.sources.deployment = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   testFixture.input.deploymentManifest.sha256 = sha256(testFixture.sources.deployment);
+}
+
+async function fullLanesFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const testFixture = fixture(options);
+  testFixture.input.kind = "RUNTIME_FLEET_CONNECTION_FULL_LANES_ACTIVATION";
+  testFixture.input.providerConfig = JSON.parse(JSON.stringify(FULL_LANES_PROVIDER_CONFIG));
+
+  const deployment = JSON.parse(testFixture.sources.deployment.toString("utf8"));
+  deployment.kind = "runtime-full-lanes-deployment";
+  deployment.deploymentId = "runtime-full-lanes-20260804-a";
+  deployment.jobs = [...FULL_LANES_JOBS];
+  deployment.components = {
+    catalog: {
+      workerName: "winerim-middleware-runtime-rescue-prod-fleet-catalog",
+      versionId: "11111111-1111-4111-8111-111111111111",
+      configSha256: sha256("catalog-worker-config"),
+    },
+    salesStock: {
+      workerName: "winerim-middleware-runtime-rescue-prod-fleet-sales-stock",
+      versionId: "22222222-2222-4222-8222-222222222222",
+      configSha256: sha256("sales-stock-worker-config"),
+    },
+    outbound: {
+      workerName: "winerim-middleware-runtime-rescue-prod-fleet-outbound",
+      versionId: "33333333-3333-4333-8333-333333333333",
+      configSha256: sha256("outbound-worker-config"),
+    },
+    executor: {
+      workerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+      versionId: "44444444-4444-4444-8444-444444444444",
+      configSha256: sha256("executor-worker-config"),
+    },
+    writerFence: {
+      workerName: "winerim-middleware-runtime-writer-fence-rescue-prod-fleet",
+      versionId: "55555555-5555-4555-8555-555555555555",
+      configSha256: sha256("writer-fence-worker-config"),
+    },
+    rateLimiter: {
+      workerName: "winerim-middleware-outbound-rate-limiter-rescue-prod-fleet",
+      versionId: "66666666-6666-4666-8666-666666666666",
+      configSha256: sha256("rate-limiter-worker-config"),
+    },
+  };
+  const accountId = "e75343bb63534d3d029150e90b48ec7c";
+  const observedAt = "2026-08-04T14:19:00.000Z";
+  const executorDeploymentId = "74444444-4444-4444-8444-444444444444";
+  const lanes = {
+    catalog: {
+      queue: "winerim-rescue-prod-catalog",
+      deadLetterQueue: "winerim-rescue-prod-catalog-dead-letter",
+      queueId: "a1111111111111111111111111111111",
+    },
+    salesStock: {
+      queue: "winerim-rescue-prod-sales",
+      deadLetterQueue: "winerim-rescue-prod-sales-dead-letter",
+      queueId: "a2222222222222222222222222222222",
+    },
+    outbound: {
+      queue: "winerim-rescue-prod-outbound",
+      deadLetterQueue: "winerim-rescue-prod-outbound-dead-letter",
+      queueId: "a3333333333333333333333333333333",
+    },
+  };
+  const responseFor = (kind: string) => {
+    let result: unknown;
+    if (kind === "queue-list") {
+      result = Object.entries(lanes).map(([, lane]) => ({
+        queue_id: lane.queueId,
+        queue_name: lane.queue,
+      }));
+    } else if (kind.startsWith("queue-consumers:")) {
+      const lane = lanes[kind.slice("queue-consumers:".length) as keyof typeof lanes];
+      result = [{
+        consumer_id: "b" + lane.queueId.slice(1),
+        type: "worker",
+        queue_name: lane.queue,
+        script_name: deployment.components.executor.workerName,
+        dead_letter_queue: lane.deadLetterQueue,
+        settings: {
+          batch_size: 1,
+          max_wait_time_ms: 5_000,
+          max_retries: 3,
+          max_concurrency: 1,
+        },
+      }];
+    } else {
+      result = {
+        deployments: [{
+          id: executorDeploymentId,
+          versions: [{
+            percentage: 100,
+            version_id: deployment.components.executor.versionId,
+          }],
+        }],
+      };
+    }
+    const list = Array.isArray(result) ? result : (result as { deployments: unknown[] }).deployments;
+    return new Response(JSON.stringify({
+      success: true,
+      errors: [],
+      messages: [],
+      result,
+      result_info: {
+        page: 1,
+        per_page: 100,
+        count: list.length,
+        total_count: list.length,
+      },
+    }), {
+      status: 200,
+      headers: {
+        date: observedAt,
+        "cf-ray": "abc123def456-MAD",
+        "content-type": "application/json",
+      },
+    });
+  };
+  const fetchImpl = async (url: string) => {
+    if (url.endsWith("/queues")) return responseFor("queue-list");
+    for (const [key, lane] of Object.entries(lanes)) {
+      if (url.endsWith("/queues/" + lane.queueId + "/consumers")) {
+        return responseFor("queue-consumers:" + key);
+      }
+    }
+    if (url.endsWith("/deployments")) return responseFor("worker-deployments:executor");
+    throw new Error("unexpected Cloudflare URL");
+  };
+  const topologyKey = writePrivate(
+    dirname(testFixture.inputFile.path),
+    "topology-private.pem",
+    testFixture.documents.externalPrivateKeySource,
+  );
+  const times = [
+    new Date("2026-08-04T14:18:58.000Z"),
+    new Date(observedAt),
+  ];
+  const topologyResult = await collectFleetFullCloudflareTopologyAttestation({
+    accountId,
+    executorWorkerName: deployment.components.executor.workerName,
+    executorDeploymentId,
+    executorVersionId: deployment.components.executor.versionId,
+    lanes: Object.fromEntries(Object.entries(lanes).map(([key, lane]) => [key, {
+      queue: lane.queue,
+      deadLetterQueue: lane.deadLetterQueue,
+    }])),
+    apiToken: "test-cloudflare-api-token-not-a-secret",
+    privateKeyPath: topologyKey.path,
+    outputPath: join(dirname(testFixture.inputFile.path), "topology-attestation.json"),
+    keyId: "cloudflare-topology-test-key",
+    fetchImpl,
+    now: () => times.shift() ?? new Date(observedAt),
+  });
+  const topologyAttestation = topologyResult.attestation;
+  deployment.queueOwnership = validateFleetFullConsumerTopology({
+    evidence: topologyAttestation,
+    verifiedAt: APPROVED_AT,
+    accountId,
+    executorWorkerName: deployment.components.executor.workerName,
+    executorDeploymentId,
+    executorVersionId: deployment.components.executor.versionId,
+    lanes,
+    trustedPublicKeySha256: sha256(testFixture.sources.externalPublicKey),
+  });
+  testFixture.sources.deployment = Buffer.from(`${JSON.stringify(deployment, null, 2)}\n`);
+  testFixture.input.deploymentManifest.sha256 = sha256(testFixture.sources.deployment);
+  writeFileSync(testFixture.input.deploymentManifest.path, testFixture.sources.deployment);
+  chmodSync(testFixture.input.deploymentManifest.path, 0o600);
+
+  const grant = JSON.parse(testFixture.sources.grant.toString("utf8"));
+  grant.activationScope.deploymentManifestSha256 = testFixture.input.deploymentManifest.sha256;
+  grant.activationScope.runtimePolicyProfile = "full-lanes-v1";
+  grant.activationScope.runtimeJobAllowlist = [...FULL_LANES_JOBS];
+  grant.activationScope.runtimePolicySha256 = sha256(canonicalJson(FULL_LANES_PROVIDER_CONFIG));
+  const scopePayload = activationScopePayload({
+    adoptionBindingSha256: grant.activationScope.adoptionBindingSha256,
+    deploymentManifestSha256: grant.activationScope.deploymentManifestSha256,
+    finalTargetRawSha256: grant.activationScope.finalTargetRawSha256,
+    externalEvidenceSha256: grant.activationScope.externalEvidenceSha256,
+    externalEvidencePayloadSha256: grant.activationScope.externalEvidencePayloadSha256,
+  }, FULL_LANES_PROVIDER_CONFIG);
+  grant.activationScope.bindingSha256 = sha256(scopePayload);
+  grant.activationScope.signatureSha256 = createHmac("sha256", testFixture.sources.proof)
+    .update(scopePayload)
+    .digest("hex");
+  testFixture.sources.grant = Buffer.from(`${JSON.stringify(grant, null, 2)}\n`);
+  testFixture.input.writerFenceGrant.sha256 = sha256(testFixture.sources.grant);
+  writeFileSync(testFixture.input.writerFenceGrant.path, testFixture.sources.grant);
+  chmodSync(testFixture.input.writerFenceGrant.path, 0o600);
+  testFixture.documents.grantDocument = grant;
+
+  writeFileSync(testFixture.inputFile.path, `${JSON.stringify(testFixture.input, null, 2)}\n`);
+  chmodSync(testFixture.inputFile.path, 0o600);
+  return testFixture;
 }
 
 describe("fleet adopt-existing-sales connection activation gate", () => {
@@ -962,5 +1181,256 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
       rollbackMode: "two-phase-quiesce-then-append-only-retirement",
       rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
     });
+  });
+});
+
+describe("fleet adopt-existing full-lanes atomic activation gate", () => {
+  it("binds one reviewed generation and activates every full lane atomically", async () => {
+    const data = await fullLanesFixture();
+    const validated = validate(data);
+    const manifest = buildFleetConnectionAdoptExistingActivationManifest(validated);
+    const manifestSha256 = sha256(`${JSON.stringify(manifest, null, 2)}\n`);
+    const activationSql = renderFleetConnectionAdoptExistingActivationSql({
+      activation: validated,
+      activationManifestSha256: manifestSha256,
+    });
+    const deactivationSql = renderFleetConnectionAdoptExistingDeactivationSql({
+      activation: validated,
+      activationManifestSha256: manifestSha256,
+    });
+
+    expect(validated).toMatchObject({
+      kind: "RUNTIME_FLEET_CONNECTION_FULL_LANES_ACTIVATION",
+      activationMode: "adopt-existing-full-lanes",
+      runtimePolicyProfile: "full-lanes-v1",
+      runtimeJobAllowlist: FULL_LANES_JOBS,
+      connectionPolicy: {
+        catalogSyncEnabled: true,
+        syncMode: "BIDIRECTIONAL",
+        writeMode: "XML_IMPORT",
+      },
+      providerConfig: FULL_LANES_PROVIDER_CONFIG,
+      deploymentManifest: {
+        kind: "runtime-full-lanes-deployment",
+        jobs: FULL_LANES_JOBS,
+        queueOwnership: {
+          executorWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+          queues: {
+            catalog: {
+              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerCount: 1,
+              legacyConsumerCount: 0,
+              competingConsumerCount: 0,
+            },
+            salesStock: {
+              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerCount: 1,
+              legacyConsumerCount: 0,
+              competingConsumerCount: 0,
+            },
+            outbound: {
+              consumerWorkerName: "winerim-middleware-runtime-executor-rescue-prod-fleet-full",
+              consumerCount: 1,
+              legacyConsumerCount: 0,
+              competingConsumerCount: 0,
+            },
+          },
+        },
+      },
+      writerFenceGrant: {
+        runtimePolicyProfile: "full-lanes-v1",
+        runtimeJobAllowlist: FULL_LANES_JOBS,
+      },
+    });
+    expect(manifest).toMatchObject({
+      activationMode: "adopt-existing-full-lanes",
+      activationAllowed: true,
+      rollbackMode: "two-phase-quiesce-then-append-only-retirement",
+    });
+    expect(activationSql).toContain("SET enabled = true,\n    catalog_sync_enabled = true,\n    sync_mode = 'BIDIRECTIONAL',\n    write_mode = 'XML_IMPORT',\n    backfill_days = 0");
+    expect(activationSql).toContain('"runtime_fleet_profile":"full-lanes-v1"');
+    expect(activationSql).toContain('"runtime_catalog_enabled":true');
+    expect(activationSql).toContain('"runtime_stock_enabled":true');
+    expect(activationSql).toContain('"runtime_outbound_enabled":true');
+    expect(activationSql).toContain('"runtime_maintenance_enabled":false');
+    expect(activationSql).toContain("runtime_full_catalog_scope(uuid) is required");
+    expect(activationSql).toContain("queue consumer ownership evidence is not fresh at activation time");
+    expect(activationSql).toContain(`NOT public.runtime_full_catalog_scope('${CONNECTION_ID}'::uuid)`);
+    expect(activationSql).not.toMatch(/INSERT\s+INTO\s+public\.runtime_catalog_source_scope/i);
+    expect(activationSql.match(/UPDATE public\.runtime_canary_connections/g)).toHaveLength(1);
+    expect(activationSql).toContain("exact unique PREPARED adopt-existing scope is missing or consumed");
+    expect(activationSql).toContain("exact two inactive credential generation is missing");
+    expect(activationSql).toContain("reconciled historical watermarks changed after review");
+    expect(activationSql).not.toMatch(/DELETE\s+FROM/i);
+
+    expect(deactivationSql).toContain("-- Phase 1: persistently quiesce new runtime intake");
+    expect(deactivationSql).toContain("-- Phase 2: retire only after every runtime lease is terminal");
+    expect(deactivationSql).toContain('"runtime_fleet_job_allowlist":[]');
+    expect(deactivationSql).toContain('"runtime_catalog_enabled":false');
+    expect(deactivationSql).toContain("catalog leases remain after quiesce");
+    expect(deactivationSql).toContain(`public.runtime_full_catalog_scope('${CONNECTION_ID}'::uuid)`);
+    expect(deactivationSql).not.toMatch(/DELETE\s+FROM|activated_at\s*=\s*NULL|status\s*=\s*'PREPARED'/i);
+  });
+
+  it("rejects a sales-only grant even when every other full-lanes artifact is exact", async () => {
+    const data = await fullLanesFixture();
+    const grant = JSON.parse(data.sources.grant.toString("utf8"));
+    grant.activationScope.runtimePolicyProfile = "sales-only-v1";
+    grant.activationScope.runtimeJobAllowlist = ["sales.auto-sync", "sales.sync-intraday"];
+    data.sources.grant = Buffer.from(`${JSON.stringify(grant, null, 2)}\n`);
+    data.input.writerFenceGrant.sha256 = sha256(data.sources.grant);
+
+    expect(() => validate(data)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_WRITER_FENCE_SALES_SCOPE_MISMATCH",
+    );
+  });
+
+  it("rejects incomplete full-lanes config and deployment drift", async () => {
+    const incomplete = await fullLanesFixture();
+    delete incomplete.input.providerConfig.runtime_outbound_enabled;
+    expect(() => validate(incomplete)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_PROVIDER_CONFIG_STRUCTURE",
+    );
+
+    const deploymentDrift = await fullLanesFixture();
+    replaceDeploymentManifest(deploymentDrift, (deployment) => {
+      deployment.jobs = deployment.jobs.slice(0, -1);
+    });
+    expect(() => validate(deploymentDrift)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_JOBS",
+    );
+  });
+
+  it("requires exactly one new consumer and zero legacy or competing consumers per queue", async () => {
+    const missingEvidence = await fullLanesFixture();
+    replaceDeploymentManifest(missingEvidence, (deployment) => {
+      delete deployment.queueOwnership;
+    });
+    expect(() => validate(missingEvidence)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_MANIFEST_STRUCTURE",
+    );
+
+    for (const [field, value] of [
+      ["consumerCount", 2],
+      ["legacyConsumerCount", 1],
+      ["competingConsumerCount", 1],
+    ] as const) {
+      const ambiguous = await fullLanesFixture();
+      replaceDeploymentManifest(ambiguous, (deployment) => {
+        const queueOwnership = deployment.queueOwnership as {
+          queues: Record<string, Record<string, unknown>>;
+        };
+        queueOwnership.queues.catalog[field] = value;
+      });
+      expect(() => validate(ambiguous)).toThrow(
+        "RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT",
+      );
+    }
+
+    const wrongExecutor = await fullLanesFixture();
+    replaceDeploymentManifest(wrongExecutor, (deployment) => {
+      const queueOwnership = deployment.queueOwnership as { executorWorkerName: string };
+      queueOwnership.executorWorkerName = "legacy-executor";
+    });
+    expect(() => validate(wrongExecutor)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT",
+    );
+  });
+
+  it("rejects signed evidence when Lovable is not fenced or the drain/readbacks are incomplete", async () => {
+    const notFenced = await fullLanesFixture();
+    const envelope = JSON.parse(notFenced.sources.externalFence.toString("utf8"));
+    envelope.payload.lovable.writerDisabled = false;
+    const payloadSource = Buffer.from(JSON.stringify(envelope.payload));
+    const signature = sign(null, payloadSource, notFenced.documents.externalPrivateKeySource);
+    envelope.signatureBase64 = signature.toString("base64");
+    envelope.hashes.payloadSha256 = sha256(payloadSource);
+    envelope.hashes.signatureSha256 = sha256(signature);
+    notFenced.sources.externalFence = Buffer.from(`${JSON.stringify(envelope, null, 2)}\n`);
+    notFenced.input.externalWriterFenceEvidence.sha256 = sha256(notFenced.sources.externalFence);
+    expect(() => validate(notFenced)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_EXTERNAL_EVIDENCE_SCOPE_MISMATCH",
+    );
+
+    const oneReadback = await fullLanesFixture();
+    const oneReadbackEnvelope = JSON.parse(oneReadback.sources.externalFence.toString("utf8"));
+    oneReadbackEnvelope.payload.readbacks = [oneReadbackEnvelope.payload.readbacks[1]];
+    const oneReadbackPayload = Buffer.from(JSON.stringify(oneReadbackEnvelope.payload));
+    const oneReadbackSignature = sign(
+      null,
+      oneReadbackPayload,
+      oneReadback.documents.externalPrivateKeySource,
+    );
+    oneReadbackEnvelope.signatureBase64 = oneReadbackSignature.toString("base64");
+    oneReadbackEnvelope.hashes.payloadSha256 = sha256(oneReadbackPayload);
+    oneReadbackEnvelope.hashes.signatureSha256 = sha256(oneReadbackSignature);
+    oneReadback.sources.externalFence = Buffer.from(`${JSON.stringify(oneReadbackEnvelope, null, 2)}\n`);
+    oneReadback.input.externalWriterFenceEvidence.sha256 = sha256(oneReadback.sources.externalFence);
+    expect(() => validate(oneReadback)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_EXTERNAL_EVIDENCE_SCOPE_MISMATCH",
+    );
+
+    const shortDrain = await fullLanesFixture();
+    const fence = JSON.parse(shortDrain.sources.fence.toString("utf8"));
+    fence.drain.minimumMs = 129_999;
+    shortDrain.sources.fence = Buffer.from(`${JSON.stringify(fence, null, 2)}\n`);
+    shortDrain.input.writerFenceEvidence.sha256 = sha256(shortDrain.sources.fence);
+    expect(() => validate(shortDrain)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_WRITER_FENCE_NOT_VERIFIABLE",
+    );
+  });
+
+  it("rejects reconciled-history drift and ambiguous credential generations", async () => {
+    const historyDrift = await fullLanesFixture();
+    const reconciliation = JSON.parse(historyDrift.sources.reconciliation.toString("utf8"));
+    reconciliation.counts.events += 1;
+    historyDrift.sources.reconciliation = Buffer.from(`${JSON.stringify(reconciliation, null, 2)}\n`);
+    historyDrift.input.finalReconciliationManifest.sha256 = sha256(historyDrift.sources.reconciliation);
+    expect(() => validate(historyDrift)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_FINAL_RECONCILIATION_WATERMARK_MISMATCH",
+    );
+
+    const ambiguousCredentials = await fullLanesFixture();
+    const grant = JSON.parse(ambiguousCredentials.sources.grant.toString("utf8"));
+    grant.credentialBundle.credentials.legacy = {
+      ...grant.credentialBundle.credentials.agora,
+      kind: "legacy",
+    };
+    ambiguousCredentials.sources.grant = Buffer.from(`${JSON.stringify(grant, null, 2)}\n`);
+    ambiguousCredentials.input.writerFenceGrant.sha256 = sha256(ambiguousCredentials.sources.grant);
+    expect(() => validate(ambiguousCredentials)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_WRITER_FENCE_CREDENTIAL_BUNDLE_MISMATCH",
+    );
+  });
+
+  it("keeps cursor/history, credentials and scope ambiguity fail-closed and renders rollback", async () => {
+    const staleCursor = await fullLanesFixture({ lastBusinessDaySynced: "2026-08-02" });
+    expect(() => validate(staleCursor)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_CURSOR_BEHIND_HISTORY",
+    );
+
+    const validated = validate(await fullLanesFixture());
+    const manifestSha256 = sha256("full-lanes-manifest-review");
+    const activationSql = renderFleetConnectionAdoptExistingActivationSql({
+      activation: validated,
+      activationManifestSha256: manifestSha256,
+    });
+    const rollbackSql = renderFleetConnectionAdoptExistingDeactivationSql({
+      activation: validated,
+      activationManifestSha256: manifestSha256,
+    });
+    expect(activationSql).toContain("count(DISTINCT credential_kind)");
+    expect(activationSql).toContain("WHERE connection_id = '");
+    expect(activationSql).toContain("AND status = 'PREPARED'");
+    expect(rollbackSql.indexOf("SET enabled = false")).toBeLessThan(
+      rollbackSql.indexOf("catalog leases remain after quiesce"),
+    );
+    expect(rollbackSql.indexOf("COMMIT;")).toBeLessThan(
+      rollbackSql.indexOf("-- Phase 2: retire only after every runtime lease is terminal"),
+    );
+    expect(rollbackSql).toContain("provider_config = '");
+    expect(rollbackSql).toContain("status = 'ABORTED'");
+    expect(rollbackSql).toContain("Historical receipts, sales, mappings, and catalog outcomes are append-only");
+    expect(rollbackSql).not.toMatch(/DELETE\s+FROM/i);
   });
 });

@@ -1,5 +1,6 @@
 import type { DatabaseAdapter } from "../../../../middleware-api/src/db";
 import type {
+  CatalogApplyPortResult,
   CatalogFamilyRoutingInput,
   CatalogHandlerPorts,
   CatalogLabelPolicy,
@@ -14,7 +15,11 @@ export type PostgresCatalogAdapterOptions = {
 
 export type PostgresCatalogAdapter = Required<
   Pick<CatalogHandlerPorts, "loadPlanningContext" | "applyPlan">
->;
+> & Readonly<{
+  preflightApplyPlan(
+    input: Parameters<NonNullable<CatalogHandlerPorts["applyPlan"]>>[0],
+  ): Promise<CatalogApplyPortResult>;
+}>;
 
 export type PostgresCatalogAdapterFactory = (
   database: DatabaseAdapter,

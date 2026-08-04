@@ -258,4 +258,31 @@ describe("Cloudflare runtime catalog planning", () => {
       productId: "500001",
     }));
   });
+
+  it("fails closed when a hide baseline lacks exact price, name, family or saleability evidence", async () => {
+    const plan = await buildCatalogPlan(request(), context({
+      wines: [{
+        winerimId: "1",
+        name: "Incomplete retired bottle",
+        wineType: "tinto",
+        variants: [{ format: "BOTTLE", salePrice: 0, enabled: false, explicitProductId: "500001" }],
+      }],
+      existingProducts: [{
+        productId: "500001",
+        name: "B Incomplete retired bottle",
+        buttonText: "B Incomplete",
+        familyId: "10",
+        salePrice: 24,
+        useAsDirectSale: false,
+        saleableAsMain: true,
+      }],
+    }));
+
+    expect(plan.readyToApply).toBe(false);
+    expect(plan.operations).toEqual([]);
+    expect(plan.issues).toContainEqual(expect.objectContaining({
+      code: "HIDE_BASELINE_INCOMPLETE",
+      productId: "500001",
+    }));
+  });
 });

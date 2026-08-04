@@ -102,7 +102,7 @@ type ClaimRow = Record<string, unknown> & {
 const CATALOG_PLAN_JOB = "catalog.plan.db";
 const EXPLICIT_MAPPING_STATUSES = new Set(["CONFIRMED", "PENDING"]);
 const REMOTE_TRACKING_STATUSES = new Set(["PUSHED", "VERIFIED"]);
-const PROTECTED_MAPPING_STATUSES = new Set(["CONFIRMED", "IGNORED", "REJECTED"]);
+const REJECTED_MAPPING_STATUSES = new Set(["IGNORED", "REJECTED"]);
 const WINE_TYPE_ALIASES: Record<string, string> = {
   red: "tinto",
   white: "blanco",
@@ -826,9 +826,9 @@ async function persistMappingPlan(
   existing: MappingRow | undefined,
   planKey: string,
 ): Promise<void> {
-  if (existing && PROTECTED_MAPPING_STATUSES.has(text(existing.status).toUpperCase())) return;
+  if (existing && REJECTED_MAPPING_STATUSES.has(text(existing.status).toUpperCase())) return;
   const desired = operation.desired;
-  const reasons = ["DB_PLAN_PREPARED", `plan:${planKey}`];
+  const reasons = ["EXACT_PROVIDER_READBACK", `plan:${planKey}`];
   const result = await transaction.query<Record<string, unknown>>(sql`
     INSERT INTO public.product_mappings (
       connection_id,
@@ -851,15 +851,37 @@ async function persistMappingPlan(
       ${desired.label.name},
       ww.winerim_id,
       ww.name,
-      'RUNTIME_CATALOG_PLAN',
+      CASE
+        WHEN stock_contract.stock_active IS TRUE THEN 'RESCUE_EXACT_ID_WINE_VARIANT'
+        ELSE 'RESCUE_EXACT_ID_WINE_VARIANT_SALES_ONLY'
+      END,
       1,
       ${reasons}::text[],
-      'PENDING',
+      'CONFIRMED',
       ${desired.format},
       ${desired.productId},
-      NULL,
+      now(),
       NULL
     FROM public.winerim_wines ww
+    JOIN LATERAL (
+      SELECT
+        bool_and((stock_entry->>'stockActive')::boolean) AS stock_active,
+        count(*) AS stock_count
+      FROM jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(ww.raw_payload->'stocks') = 'array' THEN ww.raw_payload->'stocks'
+          ELSE '[]'::jsonb
+        END
+      ) stock_entry
+      WHERE stock_entry->>'id' = (
+        CASE
+          WHEN ${desired.format} = 'GLASS' THEN ww.glass_stock_id
+          WHEN ${desired.format} = 'MAGNUM' THEN ww.magnum_stock_id
+          ELSE ww.bottle_stock_id
+        END
+      )::text
+        AND jsonb_typeof(stock_entry->'stockActive') = 'boolean'
+    ) stock_contract ON stock_contract.stock_count = 1
     WHERE ww.connection_id = ${connectionId}::uuid
       AND ww.winerim_id = ${desired.winerimId}
     ON CONFLICT (connection_id, provider_product_id) DO UPDATE SET
@@ -869,13 +891,13 @@ async function persistMappingPlan(
       match_method = EXCLUDED.match_method,
       match_score = EXCLUDED.match_score,
       match_reasons = EXCLUDED.match_reasons,
-      status = 'PENDING',
+      status = 'CONFIRMED',
       format_type = EXCLUDED.format_type,
       agora_product_id = EXCLUDED.agora_product_id,
-      last_synced_at = NULL,
+      last_synced_at = now(),
       last_sync_error = NULL,
       updated_at = now()
-    WHERE product_mappings.status = 'PENDING'
+    WHERE product_mappings.status IN ('PENDING', 'CONFIRMED')
     RETURNING provider_product_id
   `);
   if (result.rowCount !== 1) {
@@ -926,6 +948,100 @@ async function persistTrackingPlan(
   `);
 }
 
+type CatalogApplyInput = Parameters<NonNullable<CatalogHandlerPorts["applyPlan"]>>[0];
+type CatalogApplySuccess = Extract<CatalogApplyPortResult, { ok: true }>;
+
+class PostgresCatalogPreflightRollback extends Error {
+  constructor(readonly result: CatalogApplySuccess) {
+    super("CATALOG_DB_PREFLIGHT_ROLLBACK");
+    this.name = "PostgresCatalogPreflightRollback";
+  }
+}
+
+function applyFailure(error: unknown): Extract<CatalogApplyPortResult, { ok: false }> {
+  if (error instanceof PostgresCatalogAdapterInvariantError) {
+    const conflict = error.code.includes("CONFLICT") || error.code.includes("SCOPE_MISMATCH");
+    return { ok: false, code: conflict ? "APPLY_CONFLICT" : "APPLY_REJECTED" };
+  }
+  return { ok: false, code: "APPLY_UNAVAILABLE" };
+}
+
+async function persistPlan(
+  transaction: DatabaseTransaction,
+  input: CatalogApplyInput,
+): Promise<CatalogApplySuccess> {
+  const connection = await transaction.query<ConnectionRow>(sql`
+    SELECT id, provider, provider_config, default_family_id, updated_at, last_catalog_sync_at
+    FROM public.pos_connections
+    WHERE id = ${input.plan.connectionId}::uuid
+    FOR SHARE
+  `);
+  if (!connection.rows[0] || text(connection.rows[0].provider) !== input.plan.provider) {
+    throw new PostgresCatalogAdapterInvariantError("CATALOG_DB_CONNECTION_SCOPE_MISMATCH");
+  }
+
+  const mappings = await lockMappings(transaction, input.plan.connectionId, input.plan.operations);
+  const tracking = await lockTracking(transaction, input.plan.connectionId, input.plan.operations);
+  assertNoIdentityConflicts(input.plan.operations, mappings, tracking);
+  const claim = await claimPlan(transaction, input.plan);
+  const productIds = input.plan.operations.map((operation) => operation.desired.productId)
+    .sort((left, right) => Number(left) - Number(right));
+  if (claim === "DUPLICATE") {
+    return { ok: true, receipt: { status: "duplicate", appliedProductIds: productIds } };
+  }
+
+  for (const operation of input.plan.operations) {
+    await persistMappingPlan(
+      transaction,
+      input.plan.connectionId,
+      operation,
+      mappings.get(operation.desired.productId),
+      input.plan.idempotency.key,
+    );
+    await persistTrackingPlan(transaction, input.plan.connectionId, operation);
+  }
+
+  const completed = await transaction.query<ClaimRow>(sql`
+    UPDATE public.runtime_idempotency
+    SET
+      status = 'SUCCESS',
+      lease_expires_at = NULL,
+      result = ${JSON.stringify(planResult(input.plan))}::jsonb,
+      updated_at = now()
+    WHERE idempotency_key = ${input.plan.idempotency.key}
+      AND connection_id = ${input.plan.connectionId}::uuid
+      AND job = ${CATALOG_PLAN_JOB}
+      AND status = 'RUNNING'
+    RETURNING idempotency_key, job, status, result
+  `);
+  if (completed.rowCount !== 1) {
+    throw new PostgresCatalogAdapterInvariantError("CATALOG_DB_PLAN_COMPLETE_NOT_OWNED");
+  }
+  return { ok: true, receipt: { status: "applied", appliedProductIds: productIds } };
+}
+
+async function preflightApplyPlan(
+  database: DatabaseAdapter,
+  input: CatalogApplyInput,
+): Promise<CatalogApplyPortResult> {
+  try {
+    assertApplyInput(input);
+  } catch (error) {
+    return applyFailure(error);
+  }
+
+  try {
+    await database.transaction(async (transaction) => {
+      const result = await persistPlan(transaction, input);
+      throw new PostgresCatalogPreflightRollback(result);
+    }, { isolationLevel: "serializable", readOnly: false });
+    return { ok: false, code: "APPLY_UNAVAILABLE" };
+  } catch (error) {
+    if (error instanceof PostgresCatalogPreflightRollback) return error.result;
+    return applyFailure(error);
+  }
+}
+
 async function applyPlan(
   database: DatabaseAdapter,
   input: Parameters<NonNullable<CatalogHandlerPorts["applyPlan"]>>[0],
@@ -938,62 +1054,12 @@ async function applyPlan(
   }
 
   try {
-    return await database.transaction(async (transaction) => {
-      const connection = await transaction.query<ConnectionRow>(sql`
-        SELECT id, provider, provider_config, default_family_id, updated_at, last_catalog_sync_at
-        FROM public.pos_connections
-        WHERE id = ${input.plan.connectionId}::uuid
-        FOR SHARE
-      `);
-      if (!connection.rows[0] || text(connection.rows[0].provider) !== input.plan.provider) {
-        throw new PostgresCatalogAdapterInvariantError("CATALOG_DB_CONNECTION_SCOPE_MISMATCH");
-      }
-
-      const mappings = await lockMappings(transaction, input.plan.connectionId, input.plan.operations);
-      const tracking = await lockTracking(transaction, input.plan.connectionId, input.plan.operations);
-      assertNoIdentityConflicts(input.plan.operations, mappings, tracking);
-      const claim = await claimPlan(transaction, input.plan);
-      const productIds = input.plan.operations.map((operation) => operation.desired.productId)
-        .sort((left, right) => Number(left) - Number(right));
-      if (claim === "DUPLICATE") {
-        return { ok: true, receipt: { status: "duplicate", appliedProductIds: productIds } };
-      }
-
-      for (const operation of input.plan.operations) {
-        await persistMappingPlan(
-          transaction,
-          input.plan.connectionId,
-          operation,
-          mappings.get(operation.desired.productId),
-          input.plan.idempotency.key,
-        );
-        await persistTrackingPlan(transaction, input.plan.connectionId, operation);
-      }
-
-      const completed = await transaction.query<ClaimRow>(sql`
-        UPDATE public.runtime_idempotency
-        SET
-          status = 'SUCCESS',
-          lease_expires_at = NULL,
-          result = ${JSON.stringify(planResult(input.plan))}::jsonb,
-          updated_at = now()
-        WHERE idempotency_key = ${input.plan.idempotency.key}
-          AND connection_id = ${input.plan.connectionId}::uuid
-          AND job = ${CATALOG_PLAN_JOB}
-          AND status = 'RUNNING'
-        RETURNING idempotency_key, job, status, result
-      `);
-      if (completed.rowCount !== 1) {
-        throw new PostgresCatalogAdapterInvariantError("CATALOG_DB_PLAN_COMPLETE_NOT_OWNED");
-      }
-      return { ok: true, receipt: { status: "applied", appliedProductIds: productIds } };
-    }, { isolationLevel: "serializable", readOnly: false });
+    return await database.transaction(
+      (transaction) => persistPlan(transaction, input),
+      { isolationLevel: "serializable", readOnly: false },
+    );
   } catch (error) {
-    if (error instanceof PostgresCatalogAdapterInvariantError) {
-      const conflict = error.code.includes("CONFLICT") || error.code.includes("SCOPE_MISMATCH");
-      return { ok: false, code: conflict ? "APPLY_CONFLICT" : "APPLY_REJECTED" };
-    }
-    return { ok: false, code: "APPLY_UNAVAILABLE" };
+    return applyFailure(error);
   }
 }
 
@@ -1003,6 +1069,7 @@ export function createPostgresCatalogAdapter(
 ): PostgresCatalogAdapter {
   return {
     loadPlanningContext: (request) => loadPlanningContext(database, request, options),
+    preflightApplyPlan: (input) => preflightApplyPlan(database, input),
     applyPlan: (input) => applyPlan(database, input),
   };
 }

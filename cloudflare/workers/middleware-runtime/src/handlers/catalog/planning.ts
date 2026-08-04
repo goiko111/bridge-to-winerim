@@ -383,7 +383,19 @@ export async function buildCatalogPlan(
         const family = existing?.familyId
           ? context.existingFamilies.find((entry) => normalizedText(entry.id) === normalizedText(existing.familyId))
           : undefined;
-        if (!productId || !existing || !family || !Number.isFinite(existing.salePrice) || Number(existing.salePrice) <= 0) {
+        if (
+          !productId
+          || !existing
+          || !family
+          || !normalizedText(existing.name)
+          || !normalizedText(existing.buttonText)
+          || !Number.isFinite(existing.salePrice)
+          || Number(existing.salePrice) <= 0
+          || !Number.isFinite(existing.costPrice)
+          || Number(existing.costPrice) < 0
+          || typeof existing.useAsDirectSale !== "boolean"
+          || typeof existing.saleableAsMain !== "boolean"
+        ) {
           issue(issues, "HIDE_BASELINE_INCOMPLETE", {
             winerimId,
             format: variant.format,

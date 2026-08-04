@@ -5,6 +5,8 @@ import {
   IMPORT_TABLES,
   buildHydrationPlan,
   buildSourceSnapshot,
+  classifyHydrationTarget,
+  classifyRollbackTarget,
   reconcilePlan,
   renderHydrationSql,
   renderRollbackSql,
@@ -206,6 +208,9 @@ test("plans insert-only hydration, produces bounded rollback and reconciles exac
   assert.match(hydrateSql, /TARGET_PREIMAGE_SHA256/);
   assert.match(hydrateSql, /HYDRATION_PREIMAGE_COUNT_MISMATCH/);
   assert.match(hydrateSql, /HYDRATION_PREIMAGE_RUNTIME_SCOPE_ACTIVE/);
+  assert.match(hydrateSql, /scope\.run_id = canary\.run_id/);
+  assert.match(hydrateSql, /RUNTIME_CATALOG_SCOPE_RUN_ID_ORPHANED/);
+  assert.doesNotMatch(hydrateSql, /runtime_catalog_source_scope WHERE connection_id = \$1 AND active/);
   assert.doesNotMatch(hydrateSql, /ON CONFLICT|DO UPDATE|outbound_tasks/i);
   assert.doesNotMatch(hydrateSql, /agora-secret-value|winerim-secret-value|never-export-payload/);
 
@@ -219,6 +224,39 @@ test("plans insert-only hydration, produces bounded rollback and reconciles exac
   const reconciliation = reconcilePlan(plan, hydrated, { activeScopes: 0, activeCredentials: 0, activeCatalogScopes: 0 });
   assert.equal(reconciliation.ok, true);
   assert.notEqual(targetRowsSha256(hydrated), plan.targetPreimageSha256);
+});
+
+test("classifies repeated hydrate and rollback against exact preimage/postimage", () => {
+  const snapshot = source();
+  const target = emptyTarget();
+  const runtimeActivity = { activeScopes: 0, activeCredentials: 0, activeCatalogScopes: 0 };
+  const plan = buildHydrationPlan({
+    source: snapshot,
+    targetTables: target,
+    targetWatermark: { capturedAt: "2026-08-04T10:06:00.000Z", databaseIdentitySha256: "c".repeat(64) },
+    runtimeActivity,
+  });
+  assert.deepEqual(classifyHydrationTarget(plan, target, runtimeActivity), {
+    state: "PREIMAGE",
+    idempotentReplay: false,
+    reconciliation: null,
+  });
+
+  const hydrated = Object.fromEntries(IMPORT_TABLES.map((table) => [table, structuredClone(plan.inserts[table])]));
+  const hydrateReplay = classifyHydrationTarget(plan, hydrated, runtimeActivity);
+  assert.equal(hydrateReplay.state, "POSTIMAGE_EXACT");
+  assert.equal(hydrateReplay.idempotentReplay, true);
+  assert.equal(hydrateReplay.reconciliation.ok, true);
+
+  const rollback = classifyRollbackTarget(plan, hydrated, runtimeActivity);
+  assert.equal(rollback.state, "POSTIMAGE_EXACT");
+  assert.equal(rollback.idempotentReplay, false);
+  assert.equal(rollback.reconciliation.ok, true);
+  assert.deepEqual(classifyRollbackTarget(plan, target, runtimeActivity), {
+    state: "PREIMAGE_EXACT",
+    idempotentReplay: true,
+    reconciliation: null,
+  });
 });
 
 test("fails closed on active destinations and UUID or natural-key collisions", () => {

@@ -14,6 +14,8 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { validateFleetFullConsumerTopology } from "./fleet-full-topology-evidence.mjs";
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -26,7 +28,43 @@ const MAX_FENCE_EVIDENCE_AGE_MS = 15 * 60 * 1_000;
 const MIN_WRITER_DRAIN_MS = 130 * 1_000;
 const MIN_EXTERNAL_READBACK_SEPARATION_MS = 5 * 1_000;
 const REQUIRED_SALES_JOBS = ["sales.auto-sync", "sales.sync-intraday"];
+const REQUIRED_FULL_LANES_JOBS = [
+  ...REQUIRED_SALES_JOBS,
+  "catalog.fetch-winerim",
+  "catalog.sync-master",
+  "outbound.process",
+];
 const REQUIRED_DEPLOYMENT_COMPONENTS = ["runtime", "executor", "writerFence"];
+const REQUIRED_FULL_LANES_DEPLOYMENT_COMPONENTS = [
+  "catalog",
+  "salesStock",
+  "outbound",
+  "executor",
+  "writerFence",
+  "rateLimiter",
+];
+const REQUIRED_FULL_LANES_QUEUES = {
+  catalog: "winerim-rescue-prod-catalog",
+  salesStock: "winerim-rescue-prod-sales",
+  outbound: "winerim-rescue-prod-outbound",
+};
+const REQUIRED_FULL_LANES_ACCOUNT_ID = "e75343bb63534d3d029150e90b48ec7c";
+const REQUIRED_FULL_LANES = Object.freeze({
+  catalog: Object.freeze({
+    queue: REQUIRED_FULL_LANES_QUEUES.catalog,
+    deadLetterQueue: "winerim-rescue-prod-catalog-dead-letter",
+  }),
+  salesStock: Object.freeze({
+    queue: REQUIRED_FULL_LANES_QUEUES.salesStock,
+    deadLetterQueue: "winerim-rescue-prod-sales-dead-letter",
+  }),
+  outbound: Object.freeze({
+    queue: REQUIRED_FULL_LANES_QUEUES.outbound,
+    deadLetterQueue: "winerim-rescue-prod-outbound-dead-letter",
+  }),
+});
+const SALES_ONLY_INPUT_KIND = "RUNTIME_FLEET_CONNECTION_ADOPT_EXISTING_ACTIVATION";
+const FULL_LANES_INPUT_KIND = "RUNTIME_FLEET_CONNECTION_FULL_LANES_ACTIVATION";
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 const FENCED_TARGET_RAW_SCHEMA_VERSION = 2;
 const FENCED_TARGET_RAW_KIND = "target-raw-corrected";
@@ -224,27 +262,66 @@ function runtimePolicySha256(providerConfig) {
   return sha256(canonicalJson(providerConfig));
 }
 
-function validateProviderConfig(providerConfig) {
-  exactKeys(providerConfig, [
-    "runtime_sales_job_allowlist",
-    "intraday_sales_sync_enabled",
-    "open_tickets_sync_enabled",
-    "open_tickets_stock_sync_enabled",
-  ], "PROVIDER_CONFIG");
-  if (
-    canonicalJson(providerConfig.runtime_sales_job_allowlist) !== canonicalJson(REQUIRED_SALES_JOBS)
-    || providerConfig.intraday_sales_sync_enabled !== true
-    || providerConfig.open_tickets_sync_enabled !== false
-    || providerConfig.open_tickets_stock_sync_enabled !== false
-  ) {
-    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_SALES_ALLOWLIST");
+function activationPolicy(inputKind) {
+  if (inputKind === SALES_ONLY_INPUT_KIND) {
+    return {
+      mode: "adopt-existing-sales",
+      profile: "sales-only-v1",
+      deploymentKind: "runtime-sales-deployment",
+      deploymentComponents: [...REQUIRED_DEPLOYMENT_COMPONENTS],
+      queueOwnershipRequired: false,
+      jobs: [...REQUIRED_SALES_JOBS],
+      connection: {
+        catalogSyncEnabled: false,
+        syncMode: "PULL_ONLY",
+        writeMode: "NONE",
+      },
+      providerConfig: {
+        runtime_sales_job_allowlist: [...REQUIRED_SALES_JOBS],
+        intraday_sales_sync_enabled: true,
+        open_tickets_sync_enabled: false,
+        open_tickets_stock_sync_enabled: false,
+      },
+    };
   }
-  return {
-    runtime_sales_job_allowlist: [...REQUIRED_SALES_JOBS],
-    intraday_sales_sync_enabled: true,
-    open_tickets_sync_enabled: false,
-    open_tickets_stock_sync_enabled: false,
-  };
+  if (inputKind === FULL_LANES_INPUT_KIND) {
+    return {
+      mode: "adopt-existing-full-lanes",
+      profile: "full-lanes-v1",
+      deploymentKind: "runtime-full-lanes-deployment",
+      deploymentComponents: [...REQUIRED_FULL_LANES_DEPLOYMENT_COMPONENTS],
+      queueOwnershipRequired: true,
+      jobs: [...REQUIRED_FULL_LANES_JOBS],
+      connection: {
+        catalogSyncEnabled: true,
+        syncMode: "BIDIRECTIONAL",
+        writeMode: "XML_IMPORT",
+      },
+      providerConfig: {
+        runtime_fleet_profile: "full-lanes-v1",
+        runtime_fleet_job_allowlist: [...REQUIRED_FULL_LANES_JOBS],
+        runtime_sales_job_allowlist: [...REQUIRED_SALES_JOBS],
+        intraday_sales_sync_enabled: true,
+        open_tickets_sync_enabled: false,
+        open_tickets_stock_sync_enabled: false,
+        runtime_catalog_enabled: true,
+        runtime_stock_enabled: true,
+        runtime_outbound_enabled: true,
+        runtime_maintenance_enabled: false,
+      },
+    };
+  }
+  throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_INPUT_CONTRACT");
+}
+
+function validateProviderConfig(providerConfig, policy) {
+  exactKeys(providerConfig, Object.keys(policy.providerConfig), "PROVIDER_CONFIG");
+  if (canonicalJson(providerConfig) !== canonicalJson(policy.providerConfig)) {
+    throw new Error(policy.profile === "full-lanes-v1"
+      ? "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_FULL_LANES_CONFIG"
+      : "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_SALES_ALLOWLIST");
+  }
+  return JSON.parse(canonicalJson(policy.providerConfig));
 }
 
 function validateProviderConfigSnapshot(providerConfigSnapshot) {
@@ -258,27 +335,93 @@ function validateProviderConfigSnapshot(providerConfigSnapshot) {
   return JSON.parse(canonicalJson(providerConfigSnapshot));
 }
 
-function validateDeploymentManifest(manifest) {
+function validateFullLanesQueueOwnership(
+  queueOwnership,
+  components,
+  approvedAt,
+  trustedPublicKeySha256,
+) {
+  exactKeys(queueOwnership, [
+    "version",
+    "observedAt",
+    "verifiedAt",
+    "inventorySha256",
+    "accountId",
+    "executorWorkerName",
+    "executorDeploymentId",
+    "executorVersionId",
+    "capture",
+    "attestation",
+    "totalConsumerCount",
+    "legacyConsumerCount",
+    "competingConsumerCount",
+    "queues",
+  ], "DEPLOYMENT_QUEUE_OWNERSHIP");
+  let validated;
+  try {
+    validated = validateFleetFullConsumerTopology({
+      evidence: queueOwnership.attestation,
+      verifiedAt: approvedAt.iso,
+      accountId: REQUIRED_FULL_LANES_ACCOUNT_ID,
+      executorWorkerName: components.executor.workerName,
+      executorDeploymentId: queueOwnership.executorDeploymentId,
+      executorVersionId: components.executor.versionId,
+      lanes: REQUIRED_FULL_LANES,
+      trustedPublicKeySha256,
+    });
+  } catch (error) {
+    const reason = error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : "UNKNOWN";
+    throw new Error(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_QUEUE_OWNERSHIP_ATTESTATION:" + reason,
+    );
+  }
+  if (canonicalJson(queueOwnership) !== canonicalJson(validated)) {
+    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_OWNERSHIP_ATTESTATION_DRIFT");
+  }
+  for (const queue of Object.values(validated.queues)) {
+    if (
+      queue.consumerWorkerName !== components.executor.workerName
+      || queue.consumerDeploymentId !== validated.executorDeploymentId
+      || queue.consumerVersionId !== components.executor.versionId
+      || queue.consumerCount !== 1
+      || queue.legacyConsumerCount !== 0
+      || queue.competingConsumerCount !== 0
+    ) {
+      throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_QUEUE_CONSUMER_EXCLUSIVITY_MISMATCH");
+    }
+  }
+  return validated;
+}
+
+function validateDeploymentManifest(
+  manifest,
+  policy,
+  approvedAt,
+  topologyTrustedPublicKeySha256,
+) {
   exactKeys(manifest, [
     "version",
     "kind",
     "deploymentId",
     "jobs",
     "components",
+    ...(policy.queueOwnershipRequired ? ["queueOwnership"] : []),
   ], "DEPLOYMENT_MANIFEST");
   if (
     manifest.version !== 1
-    || manifest.kind !== "runtime-sales-deployment"
+    || manifest.kind !== policy.deploymentKind
     || !IDENTIFIER_PATTERN.test(manifest.deploymentId ?? "")
   ) {
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_MANIFEST");
   }
-  if (canonicalJson(manifest.jobs) !== canonicalJson(REQUIRED_SALES_JOBS)) {
+  if (canonicalJson(manifest.jobs) !== canonicalJson(policy.jobs)) {
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_JOBS");
   }
-  exactKeys(manifest.components, REQUIRED_DEPLOYMENT_COMPONENTS, "DEPLOYMENT_COMPONENTS");
+  exactKeys(manifest.components, policy.deploymentComponents, "DEPLOYMENT_COMPONENTS");
   const components = {};
-  for (const componentName of REQUIRED_DEPLOYMENT_COMPONENTS) {
+  for (const componentName of policy.deploymentComponents) {
     const component = manifest.components[componentName];
     exactKeys(
       component,
@@ -298,12 +441,21 @@ function validateDeploymentManifest(manifest) {
       configSha256: component.configSha256,
     };
   }
+  const queueOwnership = policy.queueOwnershipRequired
+    ? validateFullLanesQueueOwnership(
+      manifest.queueOwnership,
+      components,
+      approvedAt,
+      topologyTrustedPublicKeySha256,
+    )
+    : undefined;
   return {
     version: 1,
-    kind: "runtime-sales-deployment",
+    kind: policy.deploymentKind,
     deploymentId: manifest.deploymentId,
-    jobs: [...REQUIRED_SALES_JOBS],
+    jobs: [...policy.jobs],
     components,
+    ...(queueOwnership ? { queueOwnership } : {}),
   };
 }
 
@@ -807,6 +959,7 @@ function validateWriterFenceGrant(grant, proofSource, {
   deploymentManifestSha256,
   finalTargetRawSha256,
   providerConfig,
+  activationPolicy: policy,
   adoptionBindingSha256: expectedAdoptionBindingSha256,
 }) {
   if (!Buffer.isBuffer(proofSource) || proofSource.length < 32 || proofSource.length > 16 * 1024) {
@@ -903,6 +1056,15 @@ function validateWriterFenceGrant(grant, proofSource, {
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_WRITER_FENCE_HISTORY_MISMATCH");
   }
   const scope = grant.activationScope;
+  const explicitRuntimePolicyMatches = (
+    scope?.runtimePolicyProfile === policy.profile
+    && canonicalJson(scope?.runtimeJobAllowlist) === canonicalJson(policy.jobs)
+  );
+  const legacySalesPolicyShape = (
+    policy.profile === "sales-only-v1"
+    && !Object.prototype.hasOwnProperty.call(scope ?? {}, "runtimePolicyProfile")
+    && !Object.prototype.hasOwnProperty.call(scope ?? {}, "runtimeJobAllowlist")
+  );
   if (
     scope?.version !== 1
     || scope.kind !== "adopt-existing-sales"
@@ -912,6 +1074,7 @@ function validateWriterFenceGrant(grant, proofSource, {
     || scope.externalEvidenceSha256 !== externalWriterFenceEvidence.artifactSha256
     || scope.externalEvidencePayloadSha256 !== externalWriterFenceEvidence.payloadSha256
     || scope.runtimePolicySha256 !== runtimePolicySha256(providerConfig)
+    || (!explicitRuntimePolicyMatches && !legacySalesPolicyShape)
     || !SHA256_PATTERN.test(scope.bindingSha256 ?? "")
     || !SHA256_PATTERN.test(scope.signatureSha256 ?? "")
   ) {
@@ -945,6 +1108,8 @@ function validateWriterFenceGrant(grant, proofSource, {
     expiresAt: grantExpiresAt.iso,
     bundleSha256: bundle.bundleSha256,
     activationScopeBindingSha256: scope.bindingSha256,
+    runtimePolicyProfile: policy.profile,
+    runtimeJobAllowlist: [...policy.jobs],
   };
 }
 
@@ -986,9 +1151,9 @@ export function validateFleetConnectionAdoptExistingActivationInput({
   const connectionId = String(input.connectionId ?? "").trim().toLowerCase();
   const runId = String(input.runId ?? "").trim();
   const keyVersion = String(input.keyVersion ?? "").trim();
+  const policy = activationPolicy(input.kind);
   if (
     input.version !== 3
-    || input.kind !== "RUNTIME_FLEET_CONNECTION_ADOPT_EXISTING_ACTIVATION"
     || !UUID_PATTERN.test(connectionId)
     || !RUN_PATTERN.test(runId)
     || !KEY_VERSION_PATTERN.test(keyVersion)
@@ -1002,7 +1167,7 @@ export function validateFleetConnectionAdoptExistingActivationInput({
   if (deactivationStaleLeaseCutoffSeconds < 60 || deactivationStaleLeaseCutoffSeconds > 86_400) {
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEACTIVATION_STALE_LEASE_CUTOFF_SECONDS");
   }
-  const providerConfig = validateProviderConfig(input.providerConfig);
+  const providerConfig = validateProviderConfig(input.providerConfig, policy);
   const providerConfigSnapshot = validateProviderConfigSnapshot(input.providerConfigSnapshot);
   const approvedAt = canonicalTimestamp(input.approvedAt, "APPROVED_AT");
   const expiresAt = canonicalTimestamp(input.expiresAt, "EXPIRES_AT");
@@ -1052,6 +1217,9 @@ export function validateFleetConnectionAdoptExistingActivationInput({
   }
   const deploymentManifest = validateDeploymentManifest(
     parseJson(deploymentManifestSource, "DEPLOYMENT_MANIFEST"),
+    policy,
+    approvedAt,
+    externalWriterFencePublicKeyReference.sha256,
   );
   const credential = validateCredentialProvisioningManifest(
     parseJson(credentialProvisioningManifestSource, "CREDENTIAL_PROVISIONING_MANIFEST"),
@@ -1115,12 +1283,17 @@ export function validateFleetConnectionAdoptExistingActivationInput({
       deploymentManifestSha256: deploymentReference.sha256,
       finalTargetRawSha256: finalTargetRawReference.sha256,
       providerConfig,
+      activationPolicy: policy,
       adoptionBindingSha256: credential.adoption.bindingSha256,
     },
   );
   return {
     version: 3,
     kind: input.kind,
+    activationMode: policy.mode,
+    runtimePolicyProfile: policy.profile,
+    runtimeJobAllowlist: [...policy.jobs],
+    connectionPolicy: { ...policy.connection },
     connectionId,
     runId,
     keyVersion,
@@ -1175,7 +1348,7 @@ export function buildFleetConnectionAdoptExistingActivationManifest(validated) {
   const core = {
     version: 3,
     kind: "RUNTIME_FLEET_CONNECTION_ADOPT_EXISTING_ACTIVATION_REVIEW",
-    activationMode: "adopt-existing-sales",
+    activationMode: validated.activationMode,
     activationAllowed: true,
     rollbackMode: "two-phase-quiesce-then-append-only-retirement",
     rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
@@ -1202,6 +1375,8 @@ export function renderFleetConnectionAdoptExistingActivationSql({
     keyVersion,
     approvedAt,
     expiresAt,
+    activationMode,
+    connectionPolicy,
     providerConfig,
     providerConfigSnapshot,
     scopeNote,
@@ -1216,11 +1391,19 @@ export function renderFleetConnectionAdoptExistingActivationSql({
   const approved = canonicalTimestamp(approvedAt, "APPROVED_AT");
   const expires = canonicalTimestamp(expiresAt, "EXPIRES_AT");
   const fenceVerified = canonicalTimestamp(writerFence.verifiedAt, "WRITER_FENCE_VERIFIED_AT");
+  const fullLanes = activationMode === "adopt-existing-full-lanes";
+  const queueOwnershipObserved = fullLanes
+    ? canonicalTimestamp(
+      activation.deploymentManifest.queueOwnership.observedAt,
+      "DEPLOYMENT_QUEUE_OWNERSHIP_OBSERVED_AT",
+    )
+    : null;
   const providerConfigSnapshotJson = canonicalJson(providerConfigSnapshot);
   const activatedProviderConfigJson = canonicalJson({
     ...providerConfigSnapshot,
     ...providerConfig,
   });
+  const expectedCatalogSyncEnabled = connectionPolicy.catalogSyncEnabled ? "true" : "false";
   return `BEGIN;
 
 SET LOCAL lock_timeout = '5s';
@@ -1240,6 +1423,9 @@ LOCK TABLE public.sales_events,
 
 DO $verify_fleet_adopt_existing_activation$
 BEGIN
+  ${fullLanes ? `IF to_regprocedure('public.runtime_full_catalog_scope(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'runtime_full_catalog_scope(uuid) is required for full-lanes activation';
+  END IF;` : ""}
   IF '${approved.iso}'::timestamptz > statement_timestamp()
     OR '${expires.iso}'::timestamptz <= statement_timestamp()
     OR '${expires.iso}'::timestamptz > '${approved.iso}'::timestamptz + interval '2 hours' THEN
@@ -1249,6 +1435,10 @@ BEGIN
     OR statement_timestamp() > '${fenceVerified.iso}'::timestamptz + interval '15 minutes' THEN
     RAISE EXCEPTION 'writer fence evidence is not fresh at activation time';
   END IF;
+  ${fullLanes ? `IF statement_timestamp() < '${queueOwnershipObserved.iso}'::timestamptz
+    OR statement_timestamp() > '${queueOwnershipObserved.iso}'::timestamptz + interval '15 minutes' THEN
+    RAISE EXCEPTION 'queue consumer ownership evidence is not fresh at activation time';
+  END IF;` : ""}
   IF (
     SELECT count(*) FROM public.pos_connections
     WHERE id = '${connectionId}'::uuid
@@ -1373,9 +1563,9 @@ WHERE connection_id = '${connectionId}'::uuid
 
 UPDATE public.pos_connections
 SET enabled = true,
-    catalog_sync_enabled = false,
-    sync_mode = 'PULL_ONLY',
-    write_mode = 'NONE',
+    catalog_sync_enabled = ${expectedCatalogSyncEnabled},
+    sync_mode = '${connectionPolicy.syncMode}',
+    write_mode = '${connectionPolicy.writeMode}',
     backfill_days = 0,
     provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb
 WHERE id = '${connectionId}'::uuid
@@ -1401,6 +1591,9 @@ BEGIN
     SELECT count(*) FROM public.runtime_connection_credentials
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
+      AND provider = 'agora'
+      AND key_version = '${keyVersion}'
+      AND credential_kind IN ('agora', 'winerim')
       AND active = true
       AND activated_at IS NOT NULL
       AND retired_at IS NULL
@@ -1408,12 +1601,12 @@ BEGIN
     SELECT count(*) FROM public.pos_connections
     WHERE id = '${connectionId}'::uuid
       AND enabled = true
-      AND catalog_sync_enabled = false
-      AND sync_mode = 'PULL_ONLY'
-      AND write_mode = 'NONE'
+      AND catalog_sync_enabled = ${expectedCatalogSyncEnabled}
+      AND sync_mode = '${connectionPolicy.syncMode}'
+      AND write_mode = '${connectionPolicy.writeMode}'
       AND backfill_days = 0
       AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb
-  ) <> 1 THEN
+  ) <> 1${fullLanes ? ` OR NOT public.runtime_full_catalog_scope('${connectionId}'::uuid)` : ""} THEN
     RAISE EXCEPTION 'fleet adopt-existing activation readback failed';
   END IF;
 END;
@@ -1433,7 +1626,11 @@ export function renderFleetConnectionAdoptExistingDeactivationSql({
   const {
     connectionId,
     runId,
+    keyVersion,
+    activationMode,
+    connectionPolicy,
     credentialSetSha256,
+    credentialAttestations,
     writerFenceGrantSha256,
     deploymentManifestSha256,
     deactivationStaleLeaseCutoffSeconds,
@@ -1445,15 +1642,26 @@ export function renderFleetConnectionAdoptExistingDeactivationSql({
     ...providerConfigSnapshot,
     ...providerConfig,
   });
-  const quiescedProviderConfigJson = canonicalJson({
+  const fullLanes = activationMode === "adopt-existing-full-lanes";
+  const quiescedProviderConfig = {
     ...providerConfigSnapshot,
     ...providerConfig,
     runtime_sales_job_allowlist: [],
     intraday_sales_sync_enabled: false,
     open_tickets_sync_enabled: false,
     open_tickets_stock_sync_enabled: false,
-  });
+  };
+  if (fullLanes) {
+    quiescedProviderConfig.runtime_fleet_job_allowlist = [];
+    quiescedProviderConfig.runtime_catalog_enabled = false;
+    quiescedProviderConfig.runtime_stock_enabled = false;
+    quiescedProviderConfig.runtime_outbound_enabled = false;
+    quiescedProviderConfig.runtime_maintenance_enabled = false;
+  }
+  const quiescedProviderConfigJson = canonicalJson(quiescedProviderConfig);
+  const activeCatalogSyncEnabled = connectionPolicy.catalogSyncEnabled ? "true" : "false";
   return `-- Phase 1: persistently quiesce new runtime intake. This phase is re-entrant.
+-- Historical receipts, sales, mappings, and catalog outcomes are append-only and are never deleted.
 BEGIN;
 
 SET LOCAL lock_timeout = '5s';
@@ -1482,6 +1690,9 @@ BEGIN
     SELECT count(*) FROM public.runtime_connection_credentials
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
+      AND provider = 'agora'
+      AND key_version = '${keyVersion}'
+      AND credential_kind IN ('agora', 'winerim')
       AND active = true
       AND activated_at IS NOT NULL
       AND retired_at IS NULL
@@ -1491,13 +1702,22 @@ BEGIN
   IF (
     SELECT count(*) FROM public.pos_connections
     WHERE id = '${connectionId}'::uuid
-      AND catalog_sync_enabled = false
-      AND sync_mode = 'PULL_ONLY'
-      AND write_mode = 'NONE'
       AND backfill_days = 0
       AND (
-        (enabled = true AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb)
-        OR (enabled = false AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb)
+        (
+          enabled = true
+          AND catalog_sync_enabled = ${activeCatalogSyncEnabled}
+          AND sync_mode = '${connectionPolicy.syncMode}'
+          AND write_mode = '${connectionPolicy.writeMode}'
+          AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb
+        )
+        OR (
+          enabled = false
+          AND catalog_sync_enabled = false
+          AND sync_mode = 'PULL_ONLY'
+          AND write_mode = 'NONE'
+          AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb
+        )
       )
   ) <> 1 THEN
     RAISE EXCEPTION 'fleet connection is neither active nor already quiesced at reviewed configuration';
@@ -1527,7 +1747,7 @@ BEGIN
       AND write_mode = 'NONE'
       AND backfill_days = 0
       AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb
-  ) <> 1 THEN
+  ) <> 1${fullLanes ? ` OR public.runtime_full_catalog_scope('${connectionId}'::uuid)` : ""} THEN
     RAISE EXCEPTION 'fleet adopt-existing quiesce readback failed';
   END IF;
 END;
@@ -1547,6 +1767,7 @@ LOCK TABLE public.pos_connections,
   public.runtime_connection_credentials
   IN SHARE ROW EXCLUSIVE MODE;
 LOCK TABLE public.runtime_idempotency IN SHARE ROW EXCLUSIVE MODE;
+${fullLanes ? "LOCK TABLE public.runtime_catalog_changes IN SHARE ROW EXCLUSIVE MODE;" : ""}
 
 UPDATE public.runtime_idempotency
 SET status = 'TERMINAL',
@@ -1580,6 +1801,13 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'runtime leases remain after quiesce; rerun retirement after they drain';
   END IF;
+  ${fullLanes ? `IF EXISTS (
+    SELECT 1 FROM public.runtime_catalog_changes
+    WHERE connection_id = '${connectionId}'::uuid
+      AND status = 'RUNNING'
+  ) THEN
+    RAISE EXCEPTION 'catalog leases remain after quiesce; rerun retirement after they drain';
+  END IF;` : ""}
   IF (
     SELECT count(*) FROM public.pos_connections
     WHERE id = '${connectionId}'::uuid
@@ -1607,6 +1835,9 @@ BEGIN
     SELECT count(*) FROM public.runtime_connection_credentials
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
+      AND provider = 'agora'
+      AND key_version = '${keyVersion}'
+      AND credential_kind IN ('agora', 'winerim')
       AND active = true
       AND activated_at IS NOT NULL
       AND retired_at IS NULL
@@ -1621,6 +1852,8 @@ SET active = false,
     retired_at = transaction_timestamp()
 WHERE connection_id = '${connectionId}'::uuid
   AND run_id = '${runId}'
+  AND key_version = '${keyVersion}'
+  AND credential_kind IN ('agora', 'winerim')
   AND active = true
   AND activated_at IS NOT NULL
   AND retired_at IS NULL;
@@ -1678,10 +1911,29 @@ BEGIN
     SELECT count(*) FROM public.runtime_connection_credentials
     WHERE connection_id = '${connectionId}'::uuid
       AND run_id = '${runId}'
+      AND provider = 'agora'
+      AND key_version = '${keyVersion}'
+      AND credential_kind IN ('agora', 'winerim')
       AND active = false
       AND activated_at IS NOT NULL
       AND retired_at IS NOT NULL
-  ) <> 2 THEN
+  ) <> 2${fullLanes ? ` OR public.runtime_full_catalog_scope('${connectionId}'::uuid)` : ""} OR NOT EXISTS (
+    SELECT 1 FROM public.runtime_connection_credentials
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND credential_kind = 'agora'
+      AND attestation_sha256 = '${credentialAttestations.agora}'
+      AND active = false
+      AND retired_at IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.runtime_connection_credentials
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND credential_kind = 'winerim'
+      AND attestation_sha256 = '${credentialAttestations.winerim}'
+      AND active = false
+      AND retired_at IS NOT NULL
+  ) THEN
     RAISE EXCEPTION 'fleet adopt-existing retirement readback failed';
   END IF;
 END;
@@ -1720,6 +1972,39 @@ export function fleetConnectionAdoptExistingActivationPlan() {
     requiresExternalEd25519WriterFence: true,
     requiredSalesJobs: [...REQUIRED_SALES_JOBS],
     openTicketsEnabled: false,
+    rollbackMode: "two-phase-quiesce-then-append-only-retirement",
+    rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
+    renderGate: "--render --input=/private/input.json --output=/private/new-directory --confirm-connection=<UUID>",
+  };
+}
+
+export function fleetConnectionFullLanesActivationPlan() {
+  return {
+    status: "RUNTIME_FLEET_FULL_LANES_ACTIVATION_PLAN_ONLY",
+    remoteMutations: 0,
+    activationMode: "adopt-existing-full-lanes",
+    runtimePolicyProfile: "full-lanes-v1",
+    requiredRuntimeJobs: [...REQUIRED_FULL_LANES_JOBS],
+    requiresNonemptyReconciledHistory: true,
+    requiresUniquePreparedScope: true,
+    requiresExactlyTwoInactiveCredentials: true,
+    requiresFreshVerifiableWriterFence: true,
+    requiresTwoExternalFenceReadbacks: true,
+    minimumLegacyWriterDrainMs: MIN_WRITER_DRAIN_MS,
+    requiresExactQueueOwnershipManifest: true,
+    requiredQueues: { ...REQUIRED_FULL_LANES_QUEUES },
+    requiredConsumersPerQueue: 1,
+    allowedLegacyConsumersPerQueue: 0,
+    allowedCompetingConsumersPerQueue: 0,
+    connectionTarget: {
+      enabled: true,
+      catalogSyncEnabled: true,
+      syncMode: "BIDIRECTIONAL",
+      writeMode: "XML_IMPORT",
+      backfillDays: 0,
+    },
+    openTicketsEnabled: false,
+    fullCatalogScope: "runtime_full_catalog_scope(connection_id)",
     rollbackMode: "two-phase-quiesce-then-append-only-retirement",
     rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
     renderGate: "--render --input=/private/input.json --output=/private/new-directory --confirm-connection=<UUID>",

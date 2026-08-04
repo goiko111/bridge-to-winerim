@@ -21,6 +21,7 @@ import {
 } from "../../../../infrastructure/runtime/prepare-runtime-credential-provisioning.mjs";
 import {
   provisionRuntimeCredentialsViaWorker,
+  runtimeCredentialProvisioningAccess,
 } from "../../../../infrastructure/runtime/provision-runtime-credentials-via-worker.mjs";
 import { runtimeCredentialProvisionerLifecyclePlan } from "../../../../infrastructure/runtime/plan-runtime-credential-provisioner.mjs";
 import { RuntimeCredentialChallenge } from "./challengeStore";
@@ -36,6 +37,8 @@ const KEY_VERSION = "fleet-v1";
 const ACCESS_AUD = "credential-provisioner-test-audience";
 const ACCESS_ISSUER = "https://credential-test.cloudflareaccess.com";
 const OPERATOR_KEY_ID = "operator-test-v1";
+const ACCESS_SERVICE_CLIENT_ID = "0123456789abcdef0123456789abcdef.access";
+const ACCESS_SERVICE_CLIENT_SECRET = "a".repeat(64);
 
 type Stored = Map<string, unknown>;
 
@@ -86,7 +89,11 @@ function base64Url(value: ArrayBuffer | Record<string, unknown>): string {
   ).toString("base64url");
 }
 
-async function accessIdentity(options: { audience?: string; ttlSeconds?: number } = {}) {
+async function accessIdentity(options: {
+  audience?: string;
+  ttlSeconds?: number;
+  serviceToken?: boolean;
+} = {}) {
   const pair = await crypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5",
     modulusLength: 2048,
@@ -100,8 +107,10 @@ async function accessIdentity(options: { audience?: string; ttlSeconds?: number 
   const payload = base64Url({
     aud: options.audience ?? ACCESS_AUD,
     iss: ACCESS_ISSUER,
-    sub: "operator-subject",
-    email: "ops@example.test",
+    type: "app",
+    ...(options.serviceToken
+      ? { common_name: ACCESS_SERVICE_CLIENT_ID, sub: "" }
+      : { sub: "operator-subject", email: "ops@example.test" }),
     iat: now,
     exp: now + (options.ttlSeconds ?? 600),
   });
@@ -148,10 +157,12 @@ async function provisionFixture(options: {
   accessTtlSeconds?: number;
   signatureValid?: boolean;
   enabled?: string;
+  serviceToken?: boolean;
 } = {}) {
   const access = await accessIdentity({
     audience: options.accessAudience,
     ttlSeconds: options.accessTtlSeconds,
+    serviceToken: options.serviceToken,
   });
   const operator = operatorIdentity();
   const envWithKey = environment({
@@ -317,6 +328,15 @@ describe("runtime credential provisioner", () => {
     expect(disabled.challengeResponse.status).toBe(503);
   });
 
+  it("accepts a signed short-lived Access service-token identity", async () => {
+    const fixture = await provisionFixture({ serviceToken: true });
+    expect(fixture.challengeResponse.status).toBe(201);
+    expect(fixture.provisionResponse?.status).toBe(200);
+
+    const oversized = await provisionFixture({ serviceToken: true, accessTtlSeconds: 901 });
+    expect(oversized.challengeResponse.status).toBe(401);
+  });
+
   it("burns the one-shot challenge when Secrets Store fails", async () => {
     const vaultGet = vi.fn(async () => { throw new Error("sensitive vault diagnostic"); });
     const fixture = await provisionFixture({ vaultGet });
@@ -422,12 +442,18 @@ describe("runtime credential provisioner", () => {
     writeFileSync(keyPath, operator.privatePem, { mode: 0o600 });
     const fetcher = (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" || input instanceof URL ? input : input.url;
+      const headers = new Headers(init?.headers);
+      expect(headers.get("CF-Access-Jwt-Assertion")).toBe(access.token);
+      expect(headers.has("CF-Access-Client-Id")).toBe(false);
+      expect(headers.has("CF-Access-Client-Secret")).toBe(false);
       return worker.fetch(new Request(url, init), workerEnv);
     };
     const result = await provisionRuntimeCredentialsViaWorker({
       environment: {
         RUNTIME_CREDENTIAL_PROVISIONER_URL: "https://provision.test",
         CF_ACCESS_JWT: access.token,
+        CF_ACCESS_CLIENT_ID: ACCESS_SERVICE_CLIENT_ID,
+        CF_ACCESS_CLIENT_SECRET: ACCESS_SERVICE_CLIENT_SECRET,
         RUNTIME_CREDENTIAL_OPERATOR_KEY_ID: OPERATOR_KEY_ID,
       },
       inputPath,
@@ -445,6 +471,91 @@ describe("runtime credential provisioner", () => {
     expect(output).not.toContain("client-agora-plaintext");
     expect(output).not.toContain("client-winerim-plaintext");
     expect(output).not.toContain(access.token);
+    expect(output).not.toContain(ACCESS_SERVICE_CLIENT_ID);
+    expect(output).not.toContain(ACCESS_SERVICE_CLIENT_SECRET);
+  });
+
+  it("uses Access service-token headers without disclosing them and retains JWT TTL enforcement", async () => {
+    const access = await accessIdentity({ serviceToken: true });
+    const operator = operatorIdentity();
+    const envWithKey = environment({ accessJwk: access.publicJwk, operatorJwk: operator.publicJwk });
+    const { accessJwk, ...workerEnv } = envWithKey;
+    const worker = createRuntimeCredentialProvisionerWorker({ fetchKeys: async () => [accessJwk] });
+    const directory = mkdtempSync(join(tmpdir(), "remote-service-token-client-"));
+    chmodSync(directory, 0o700);
+    const inputPath = join(directory, "input.json");
+    const keyPath = join(directory, "operator.pem");
+    const outputPath = join(directory, "encrypted.json");
+    writeFileSync(inputPath, `${JSON.stringify({
+      version: 1,
+      connectionId: CONNECTION_ID,
+      runId: RUN_ID,
+      keyVersion: KEY_VERSION,
+      credentials: {
+        agora: "service-client-agora-plaintext",
+        winerim: "service-client-winerim-plaintext",
+      },
+    })}\n`, { mode: 0o600 });
+    writeFileSync(keyPath, operator.privatePem, { mode: 0o600 });
+    const observedHeaders: Headers[] = [];
+    const fetcher = (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" || input instanceof URL ? input : input.url;
+      const headers = new Headers(init?.headers);
+      observedHeaders.push(headers);
+      expect(headers.get("CF-Access-Client-Id")).toBe(ACCESS_SERVICE_CLIENT_ID);
+      expect(headers.get("CF-Access-Client-Secret")).toBe(ACCESS_SERVICE_CLIENT_SECRET);
+      expect(headers.has("CF-Access-Jwt-Assertion")).toBe(false);
+      headers.set("CF-Access-Jwt-Assertion", access.token);
+      headers.delete("CF-Access-Client-Id");
+      headers.delete("CF-Access-Client-Secret");
+      return worker.fetch(new Request(url, { ...init, headers }), workerEnv);
+    };
+    const result = await provisionRuntimeCredentialsViaWorker({
+      environment: {
+        RUNTIME_CREDENTIAL_PROVISIONER_URL: "https://provision.test",
+        CF_ACCESS_CLIENT_ID: ACCESS_SERVICE_CLIENT_ID,
+        CF_ACCESS_CLIENT_SECRET: ACCESS_SERVICE_CLIENT_SECRET,
+        RUNTIME_CREDENTIAL_OPERATOR_KEY_ID: OPERATOR_KEY_ID,
+      },
+      inputPath,
+      outputPath,
+      operatorKeyPath: keyPath,
+      fetcher,
+    });
+    expect(observedHeaders).toHaveLength(2);
+    expect(result).toMatchObject({
+      status: "REMOTE_CREDENTIAL_PROVISION_ARTIFACT_READY",
+      plaintextWritten: false,
+      vaultKeyReadLocally: false,
+    });
+    const serialized = JSON.stringify(result);
+    const output = readFileSync(outputPath, "utf8");
+    for (const secret of [
+      ACCESS_SERVICE_CLIENT_ID,
+      ACCESS_SERVICE_CLIENT_SECRET,
+      "service-client-agora-plaintext",
+      "service-client-winerim-plaintext",
+    ]) {
+      expect(serialized).not.toContain(secret);
+      expect(output).not.toContain(secret);
+    }
+  });
+
+  it("fails closed on incomplete or malformed Access service-token configuration", () => {
+    expect(() => runtimeCredentialProvisioningAccess({})).toThrow(
+      "REMOTE_CREDENTIAL_PROVISION_ACCESS_IDENTITY_REQUIRED",
+    );
+    expect(() => runtimeCredentialProvisioningAccess({
+      CF_ACCESS_CLIENT_ID: ACCESS_SERVICE_CLIENT_ID,
+    })).toThrow("REMOTE_CREDENTIAL_PROVISION_ACCESS_SERVICE_TOKEN_INCOMPLETE");
+    expect(() => runtimeCredentialProvisioningAccess({
+      CF_ACCESS_CLIENT_ID: "not-a-cloudflare-client-id",
+      CF_ACCESS_CLIENT_SECRET: ACCESS_SERVICE_CLIENT_SECRET,
+    })).toThrow("REMOTE_CREDENTIAL_PROVISION_INVALID_CF_ACCESS_CLIENT_ID");
+    expect(() => runtimeCredentialProvisioningAccess({
+      CF_ACCESS_CLIENT_ID: ACCESS_SERVICE_CLIENT_ID,
+      CF_ACCESS_CLIENT_SECRET: "too-short",
+    })).toThrow("REMOTE_CREDENTIAL_PROVISION_INVALID_CF_ACCESS_CLIENT_SECRET");
   });
 
   it("ships an explicit fail-closed deployment, rollback and retirement plan", () => {

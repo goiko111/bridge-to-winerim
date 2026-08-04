@@ -34,6 +34,13 @@ const secondBottle = '<Product Id="500102" Name="B Test Two" FamilyId="10" VatId
 const migratedBottle = '<Product Id="500101" Name="B Test" FamilyId="20" VatId="1" UseAsDirectSale="true" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="25.00" /></Prices></Product>';
 const hiddenBottle = '<Product Id="500101" Name="B Test" FamilyId="10" VatId="1" UseAsDirectSale="false" SaleableAsMain="false"><Prices><Price PriceListId="1" MainPrice="25.00" /></Prices></Product>';
 
+function hidePayload(product = bottle, ids = ["500101"]): Record<string, unknown> {
+  return {
+    _product_ids: ids,
+    _baseline_import_xml: `<Import><Products>${product}</Products></Import>`,
+  };
+}
+
 function response(body: string, status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "application/xml" } });
 }
@@ -296,10 +303,8 @@ describe("Agora outbound transport", () => {
       }),
     };
 
-    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
-      _product_ids: ["500101"],
-      _wine_name: "Test",
-    }))).resolves.toMatchObject({ kind: "success", externalId: "500101" });
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", hidePayload())))
+      .resolves.toMatchObject({ kind: "success", externalId: "500101" });
     const posted = String(calls.find((call) => call.init.method === "POST")?.init.body);
     expect(posted).toContain('UseAsDirectSale="false"');
     expect(posted).toContain('SaleableAsMain="false"');
@@ -309,23 +314,35 @@ describe("Agora outbound transport", () => {
   it("does not repeat a hide after exact readback shows it already applied", async () => {
     const request: HttpRequestPort = { request: vi.fn(async () => response(master(hiddenBottle))) };
 
-    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
-      _product_ids: ["500101"],
-    }))).resolves.toMatchObject({ kind: "superseded" });
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", hidePayload(hiddenBottle))))
+      .resolves.toMatchObject({ kind: "superseded" });
     expect((request.request as ReturnType<typeof vi.fn>).mock.calls.every((call) => call[1].method === "GET")).toBe(true);
   });
 
   it("blocks a single-product hide when the requested Product.Id is absent", async () => {
     const request: HttpRequestPort = { request: vi.fn(async () => response(master(bottle))) };
 
-    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
-      _product_ids: ["500102"],
-    }))).resolves.toEqual({
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", hidePayload(secondBottle, ["500102"]))))
+      .resolves.toEqual({
       kind: "blocked",
       reason: "AGORA_MASTER_PRODUCT_MISSING",
       detail: "500102",
     });
     expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed before POST when the exact hide baseline has stale name, family or price", async () => {
+    const live = bottle.replace('Name="B Test"', 'Name="B Live"').replace('MainPrice="25.00"', 'MainPrice="27.00"');
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(live))) };
+
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", hidePayload())))
+      .resolves.toEqual({
+        kind: "blocked",
+        reason: "AGORA_PRECONDITION_DRIFT",
+        detail: "500101",
+      });
+    expect(request.request).toHaveBeenCalledOnce();
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls[0][1].method).toBe("GET");
   });
 
   it("rejects a multi-product hide before POST even when every product exists", async () => {

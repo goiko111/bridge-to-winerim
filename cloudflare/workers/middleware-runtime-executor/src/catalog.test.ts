@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { DatabaseAdapter } from "../../middleware-api/src/db";
+import type {
+  DatabaseAdapter,
+  DatabaseTransaction,
+  SqlStatement,
+} from "../../middleware-api/src/db";
 import type { PostgresCatalogAdapterFactory } from "../../middleware-runtime/src/adapters/catalog";
 import type { HttpRequestPort } from "../../middleware-runtime/src/adapters/http";
 import type { RuntimeJob } from "../../middleware-runtime/src/contracts";
@@ -24,11 +28,86 @@ import {
 
 const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 
-function database(): DatabaseAdapter {
+type MemoryIntentRow = Record<string, unknown> & {
+  idempotency_key: string;
+  connection_id: string;
+  job: string;
+  status: string;
+  result: Record<string, unknown>;
+  lease_active: boolean;
+  lease_token: string | null;
+};
+
+function intentDatabase(order: string[] = []) {
+  let row: MemoryIntentRow | null = null;
+  let failNextTransaction = false;
+  let failNextQueryFragment: string | null = null;
+  const query = vi.fn(async (statement: SqlStatement) => {
+    const compact = statement.text.replace(/\s+/g, " ").trim();
+    if (failNextQueryFragment && compact.includes(failNextQueryFragment)) {
+      failNextQueryFragment = null;
+      throw new Error("fixture DB failure");
+    }
+    if (compact.startsWith("INSERT INTO public.runtime_idempotency")) {
+      order.push("intent.prepare");
+      if (row) return { rows: [], rowCount: 0 };
+      row = {
+        idempotency_key: String(statement.values[0]),
+        connection_id: String(statement.values[2]),
+        job: String(statement.values[3]),
+        status: "RUNNING",
+        result: JSON.parse(String(statement.values[6])) as Record<string, unknown>,
+        lease_active: true,
+        lease_token: String(statement.values[5]),
+      };
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    if (compact.startsWith("SELECT") && compact.includes("FROM public.runtime_idempotency")) {
+      return { rows: row ? [{ ...row }] : [], rowCount: row ? 1 : 0 };
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("attempt = attempt + 1")) {
+      if (!row || row.lease_active) return { rows: [], rowCount: 0 };
+      row.lease_token = String(statement.values[2]);
+      row.lease_active = true;
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("result = result ||")) {
+      if (!row || row.lease_token !== String(statement.values[4])) return { rows: [], rowCount: 0 };
+      row.result = {
+        ...row.result,
+        ...JSON.parse(String(statement.values[0])) as Record<string, unknown>,
+      };
+      if (compact.includes("status = 'SUCCESS'")) {
+        row.status = "SUCCESS";
+        row.lease_token = null;
+        row.lease_active = false;
+      }
+      return { rows: [{ ...row, lease_active: false }], rowCount: 1 };
+    }
+    throw new Error(`unexpected fixture SQL: ${compact}`);
+  });
+  const transaction = vi.fn(async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => {
+    if (failNextTransaction) {
+      failNextTransaction = false;
+      throw new Error("fixture transaction failure");
+    }
+    return work({ query });
+  });
   return {
-    query: vi.fn(),
-    transaction: vi.fn(),
-  } as unknown as DatabaseAdapter;
+    database: { query, transaction } as DatabaseAdapter,
+    expireLease() {
+      if (row) row.lease_active = false;
+    },
+    failPrepare() {
+      failNextTransaction = true;
+    },
+    failNextQuery(fragment: string) {
+      failNextQueryFragment = fragment;
+    },
+    snapshot() {
+      return row ? structuredClone(row) : null;
+    },
+  };
 }
 
 async function envelope(
@@ -90,7 +169,8 @@ async function successfulRemoteReceipt(plan: CatalogPlan): Promise<AgoraCatalogA
   };
 }
 
-function fixture(remote?: AgoraCatalogApplyAndReadbackPort) {
+function fixture(remote?: AgoraCatalogApplyAndReadbackPort, order: string[] = []) {
+  const intent = intentDatabase(order);
   const loadConnection = vi.fn(async () => ({
     connectionId: CONNECTION_ID,
     provider: "agora",
@@ -103,15 +183,17 @@ function fixture(remote?: AgoraCatalogApplyAndReadbackPort) {
     ok: true as const,
     context: planningContext(),
   }));
+  const preflightPlan = vi.fn(async ({ plan }: { plan: CatalogPlan }) => successfulReceipt(plan));
   const persistPlan = vi.fn(async ({ plan }: { plan: CatalogPlan }) => successfulReceipt(plan));
   const adapterFactory = vi.fn(() => ({
     loadPlanningContext,
+    preflightApplyPlan: preflightPlan,
     applyPlan: persistPlan,
   })) as unknown as PostgresCatalogAdapterFactory;
   const options: PrivateCatalogCompositionOptions = {
     allowedConnectionId: CONNECTION_ID,
     switches: { executionEnabled: true, applyEnabled: true },
-    database: database(),
+    database: intent.database,
     connections: { load: loadConnection },
     credentials: { open: openCredential },
     adapterFactory,
@@ -122,7 +204,9 @@ function fixture(remote?: AgoraCatalogApplyAndReadbackPort) {
     loadConnection,
     openCredential,
     loadPlanningContext,
+    preflightPlan,
     persistPlan,
+    intent,
   };
 }
 
@@ -173,7 +257,11 @@ describe("private catalog remote apply gate", () => {
       order.push("remote");
       return successfulRemoteReceipt(input.plan);
     });
-    const configured = fixture({ applyAndReadback });
+    const configured = fixture({ applyAndReadback }, order);
+    configured.preflightPlan.mockImplementation(async ({ plan }: { plan: CatalogPlan }) => {
+      order.push("preflight");
+      return successfulReceipt(plan);
+    });
     configured.persistPlan.mockImplementation(async ({ plan }: { plan: CatalogPlan }) => {
       order.push("persist");
       return successfulReceipt(plan);
@@ -189,7 +277,7 @@ describe("private catalog remote apply gate", () => {
       ok: true,
       detail: expect.stringMatching(/^catalog:applied:1:catalog:v1:/),
     });
-    expect(order).toEqual(["remote", "persist"]);
+    expect(order).toEqual(["preflight", "intent.prepare", "remote", "persist"]);
     expect(applyAndReadback).toHaveBeenCalledWith(expect.objectContaining({
       connectionId: CONNECTION_ID,
       messageId: runtimeEnvelope.messageId,
@@ -203,6 +291,127 @@ describe("private catalog remote apply gate", () => {
       }),
     }));
     expect(configured.persistPlan).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when the durable intent cannot commit before Agora mutation", async () => {
+    const applyAndReadback = vi.fn(async (input: Parameters<AgoraCatalogApplyAndReadbackPort["applyAndReadback"]>[0]) =>
+      successfulRemoteReceipt(input.plan)
+    );
+    const configured = fixture({ applyAndReadback });
+    configured.intent.failPrepare();
+
+    await expect(createPrivateCatalogLaneExecutor(configured.options).execute(
+      await envelope({ winerimWineIds: ["1"], formatTypes: ["BOTTLE"] }),
+    )).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    expect(applyAndReadback).not.toHaveBeenCalled();
+    expect(configured.persistPlan).not.toHaveBeenCalled();
+    expect(configured.intent.snapshot()).toBeNull();
+  });
+
+  it("keeps a lost remote acknowledgement visible and reconciles by exact duplicate readback", async () => {
+    const applyAndReadback = vi.fn()
+      .mockRejectedValueOnce(new Error("lost acknowledgement"))
+      .mockImplementation(async (input: Parameters<AgoraCatalogApplyAndReadbackPort["applyAndReadback"]>[0]) => ({
+        ...(await successfulRemoteReceipt(input.plan)),
+        receipt: {
+          ...(await successfulRemoteReceipt(input.plan) as Extract<AgoraCatalogApplyAndReadbackResult, { ok: true }>).receipt,
+          status: "duplicate" as const,
+        },
+      }));
+    const configured = fixture({ applyAndReadback });
+    const runtimeEnvelope = await envelope({ winerimWineIds: ["1"], formatTypes: ["BOTTLE"] });
+    const executor = createPrivateCatalogLaneExecutor(configured.options);
+
+    await expect(executor.execute(runtimeEnvelope)).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    expect(configured.intent.snapshot()?.result).toMatchObject({
+      state: "REMOTE_OUTCOME_UNKNOWN",
+      remoteOutcome: "UNKNOWN",
+    });
+
+    await expect(executor.execute(runtimeEnvelope)).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    expect(applyAndReadback).toHaveBeenCalledTimes(1);
+
+    configured.intent.expireLease();
+    await expect(executor.execute(runtimeEnvelope)).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:duplicate:1:/),
+    });
+    expect(applyAndReadback).toHaveBeenCalledTimes(2);
+    expect(configured.persistPlan).toHaveBeenCalledOnce();
+    expect(configured.intent.snapshot()).toMatchObject({
+      status: "SUCCESS",
+      result: { state: "COMPLETED", remoteOutcome: "DUPLICATE" },
+    });
+  });
+
+  it("reconciles an applied remote mutation when recording its readback initially fails", async () => {
+    let remoteAttempt = 0;
+    const applyAndReadback = vi.fn(async (input: Parameters<AgoraCatalogApplyAndReadbackPort["applyAndReadback"]>[0]) => {
+      const result = await successfulRemoteReceipt(input.plan);
+      return result.ok
+        ? { ...result, receipt: { ...result.receipt, status: remoteAttempt++ === 0 ? "applied" as const : "duplicate" as const } }
+        : result;
+    });
+    const configured = fixture({ applyAndReadback });
+    configured.intent.failNextQuery("result = result ||");
+    const runtimeEnvelope = await envelope({ winerimWineIds: ["1"], formatTypes: ["BOTTLE"] });
+    const executor = createPrivateCatalogLaneExecutor(configured.options);
+
+    await expect(executor.execute(runtimeEnvelope)).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    expect(configured.intent.snapshot()?.result).toMatchObject({ state: "PREPARED" });
+    expect(configured.persistPlan).not.toHaveBeenCalled();
+
+    configured.intent.expireLease();
+    await expect(executor.execute(runtimeEnvelope)).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:duplicate:1:/),
+    });
+    expect(applyAndReadback).toHaveBeenCalledTimes(2);
+    expect(configured.persistPlan).toHaveBeenCalledOnce();
+    expect(configured.intent.snapshot()?.result).toMatchObject({ state: "COMPLETED" });
+  });
+
+  it("persists after remote readback and finishes idempotently when DB plan persistence retries", async () => {
+    let remoteAttempt = 0;
+    const applyAndReadback = vi.fn(async (input: Parameters<AgoraCatalogApplyAndReadbackPort["applyAndReadback"]>[0]) => {
+      const result = await successfulRemoteReceipt(input.plan);
+      return result.ok
+        ? { ...result, receipt: { ...result.receipt, status: remoteAttempt++ === 0 ? "applied" as const : "duplicate" as const } }
+        : result;
+    });
+    const configured = fixture({ applyAndReadback });
+    configured.persistPlan
+      .mockResolvedValueOnce({ ok: false, code: "APPLY_UNAVAILABLE" })
+      .mockImplementation(async ({ plan }: { plan: CatalogPlan }) => successfulReceipt(plan));
+    const runtimeEnvelope = await envelope({ winerimWineIds: ["1"], formatTypes: ["BOTTLE"] });
+    const executor = createPrivateCatalogLaneExecutor(configured.options);
+
+    await expect(executor.execute(runtimeEnvelope)).resolves.toEqual({
+      ok: false,
+      failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
+    });
+    expect(configured.intent.snapshot()?.result).toMatchObject({ state: "REMOTE_CONFIRMED" });
+
+    configured.intent.expireLease();
+    await expect(executor.execute(runtimeEnvelope)).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:duplicate:1:/),
+    });
+    expect(applyAndReadback).toHaveBeenCalledTimes(2);
+    expect(configured.persistPlan).toHaveBeenCalledTimes(2);
+    expect(configured.intent.snapshot()?.result).toMatchObject({ state: "COMPLETED" });
   });
 
   it("rejects a matching Product.Id with a mismatched canonical remote fingerprint", async () => {
@@ -281,11 +490,12 @@ describe("private catalog remote apply gate", () => {
     expect(configured.persistPlan).not.toHaveBeenCalled();
   });
 
-  it("fails closed on remote timeout and never persists", async () => {
-    const applyAndReadback = vi.fn(async () => {
-      throw new Error("upstream timeout with sensitive diagnostics");
-    });
+  it("fails closed on DB/RLS preflight denial before any remote mutation", async () => {
+    const applyAndReadback = vi.fn(async (input: Parameters<AgoraCatalogApplyAndReadbackPort["applyAndReadback"]>[0]) =>
+      successfulRemoteReceipt(input.plan)
+    );
     const configured = fixture({ applyAndReadback });
+    configured.preflightPlan.mockResolvedValue({ ok: false, code: "APPLY_UNAVAILABLE" });
 
     const result = await createPrivateCatalogLaneExecutor(configured.options).execute(
       await envelope({ winerimWineIds: ["1"], formatTypes: ["BOTTLE"] }),
@@ -295,8 +505,9 @@ describe("private catalog remote apply gate", () => {
       ok: false,
       failure: { httpStatus: 503, message: "CATALOG_APPLY_UNAVAILABLE" },
     });
+    expect(configured.preflightPlan).toHaveBeenCalledOnce();
+    expect(applyAndReadback).not.toHaveBeenCalled();
     expect(configured.persistPlan).not.toHaveBeenCalled();
-    expect(JSON.stringify(result)).not.toContain("sensitive diagnostics");
   });
 });
 
@@ -479,6 +690,43 @@ describe("single-product Agora catalog plan transport", () => {
     expect(xml).toContain('MainPrice="25.00"');
     expect(xml).toContain('UseAsDirectSale="false"');
     expect(xml).toContain('SaleableAsMain="false"');
+  });
+
+  it("hides through an exact live baseline and certifies the resulting desired fingerprint", async () => {
+    const hidden = catalogProduct("BOTTLE", { saleableAsMain: false, useAsDirectSale: false });
+    const activeBaseline = { ...hidden, saleableAsMain: true };
+    const baselineXml = renderAgoraCatalogProductXml(activeBaseline, xmlProfile());
+    const hiddenXml = renderAgoraCatalogProductXml(hidden, xmlProfile());
+    const basePlan = catalogPlan(hidden);
+    const plan: CatalogPlan = {
+      ...basePlan,
+      operations: [{
+        ...basePlan.operations[0],
+        changedFields: ["saleableAsMain"],
+      }],
+    };
+    const responses = [
+      xmlResponse(agoraMaster(baselineXml)),
+      xmlResponse(agoraMaster(baselineXml)),
+      xmlResponse('<ImportResult Success="true" />'),
+      xmlResponse(agoraMaster(hiddenXml)),
+    ];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+
+    await expect(applyCatalogPlan(catalogTransport(request), plan)).resolves.toEqual({
+      ok: true,
+      receipt: {
+        status: "applied",
+        appliedProductIds: ["500001"],
+        canonicalProductFingerprints: {
+          "500001": await catalogProductCanonicalFingerprint(hidden),
+        },
+      },
+    });
+    const post = (request.request as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[1].method === "POST");
+    expect(String(post?.[1].body)).toContain('MainPrice="25.00"');
+    expect(String(post?.[1].body)).toContain('FamilyId="10"');
+    expect(String(post?.[1].body)).toContain('SaleableAsMain="false"');
   });
 
   it("rejects a multi-product plan before credentials or transport", async () => {

@@ -426,10 +426,53 @@ function renderRuntimeInactiveAssertions(plan, label) {
     IF runtime_active_count <> 0 THEN RAISE EXCEPTION '${label}_RUNTIME_CREDENTIAL_ACTIVE'; END IF;
   END IF;
   IF to_regclass('public.runtime_catalog_source_scope') IS NOT NULL THEN
-    EXECUTE 'SELECT count(*) FROM public.runtime_catalog_source_scope WHERE connection_id = $1 AND active'
+    IF to_regclass('public.runtime_canary_connections') IS NULL THEN
+      RAISE EXCEPTION '${label}_RUNTIME_CATALOG_SCOPE_CANARY_TABLE_MISSING';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'runtime_catalog_source_scope' AND column_name = 'run_id'
+    ) THEN
+      RAISE EXCEPTION '${label}_RUNTIME_CATALOG_SCOPE_RUN_ID_MISSING';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'runtime_canary_connections' AND column_name = 'run_id'
+    ) OR NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'runtime_canary_connections' AND column_name = 'active'
+    ) THEN
+      RAISE EXCEPTION '${label}_RUNTIME_CANARY_RUN_STATE_COLUMNS_MISSING';
+    END IF;
+    EXECUTE 'SELECT count(*) FROM public.runtime_catalog_source_scope scope JOIN public.runtime_canary_connections canary ON canary.connection_id = scope.connection_id AND scope.run_id = canary.run_id WHERE scope.connection_id = $1 AND canary.active'
       INTO runtime_active_count USING ${sqlLiteral(plan.connectionId)}::uuid;
     IF runtime_active_count <> 0 THEN RAISE EXCEPTION '${label}_RUNTIME_CATALOG_SCOPE_ACTIVE'; END IF;
+    EXECUTE 'SELECT count(*) FROM public.runtime_catalog_source_scope scope LEFT JOIN public.runtime_canary_connections canary ON canary.connection_id = scope.connection_id AND scope.run_id = canary.run_id WHERE scope.connection_id = $1 AND canary.run_id IS NULL'
+      INTO runtime_orphan_count USING ${sqlLiteral(plan.connectionId)}::uuid;
+    IF runtime_orphan_count <> 0 THEN RAISE EXCEPTION '${label}_RUNTIME_CATALOG_SCOPE_RUN_ID_ORPHANED'; END IF;
   END IF;`;
+}
+
+export function classifyHydrationTarget(plan, targetTables, runtimeActivity = {}) {
+  const targetConnection = (targetTables.pos_connections || [])[0] || null;
+  assertTargetInactive({ targetConnection, runtimeActivity });
+  if (targetRowsSha256(targetTables) === plan.targetPreimageSha256) {
+    return { state: "PREIMAGE", idempotentReplay: false, reconciliation: null };
+  }
+  const reconciliation = reconcilePlan(plan, targetTables, runtimeActivity);
+  assert(reconciliation.ok, `TARGET_PREIMAGE_CHANGED:${reconciliation.reconciliationSha256}:${reconciliation.mismatches.slice(0, 20).join(",")}`);
+  return { state: "POSTIMAGE_EXACT", idempotentReplay: true, reconciliation };
+}
+
+export function classifyRollbackTarget(plan, targetTables, runtimeActivity = {}) {
+  const targetConnection = (targetTables.pos_connections || [])[0] || null;
+  assertTargetInactive({ targetConnection, runtimeActivity });
+  if (targetRowsSha256(targetTables) === plan.targetPreimageSha256) {
+    return { state: "PREIMAGE_EXACT", idempotentReplay: true, reconciliation: null };
+  }
+  const reconciliation = reconcilePlan(plan, targetTables, runtimeActivity);
+  assert(reconciliation.ok, `ROLLBACK_PREIMAGE_NOT_EXACT:${reconciliation.reconciliationSha256}:${reconciliation.mismatches.slice(0, 20).join(",")}`);
+  return { state: "POSTIMAGE_EXACT", idempotentReplay: false, reconciliation };
 }
 
 export function renderHydrationSql(plan) {
@@ -444,7 +487,7 @@ SET LOCAL statement_timeout = '5min';
 SELECT pg_advisory_xact_lock(hashtext('winerim-connection-hydrator'), hashtext(${sqlLiteral(plan.connectionId)}));
 
 DO $hydration_guard$
-DECLARE connection_enabled boolean; catalog_enabled boolean; connection_write_mode text; runtime_active_count bigint;
+DECLARE connection_enabled boolean; catalog_enabled boolean; connection_write_mode text; runtime_active_count bigint; runtime_orphan_count bigint;
 BEGIN
 ${renderCountAssertions(plan, plan.targetPreimageCounts, "HYDRATION_PREIMAGE")}
 ${renderRuntimeInactiveAssertions(plan, "HYDRATION_PREIMAGE")}
@@ -498,7 +541,7 @@ SET LOCAL lock_timeout = '10s';
 SET LOCAL statement_timeout = '5min';
 SELECT pg_advisory_xact_lock(hashtext('winerim-connection-hydrator'), hashtext(${sqlLiteral(plan.connectionId)}));
 DO $rollback_guard$
-DECLARE connection_enabled boolean; catalog_enabled boolean; connection_write_mode text; runtime_active_count bigint;
+DECLARE connection_enabled boolean; catalog_enabled boolean; connection_write_mode text; runtime_active_count bigint; runtime_orphan_count bigint;
 BEGIN
 ${renderCountAssertions(plan, Object.fromEntries(IMPORT_TABLES.map((table) => [table,
     Number(plan.targetPreimageCounts[table] || 0) + Number(plan.inserts[table]?.length || 0),

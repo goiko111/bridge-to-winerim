@@ -94,8 +94,46 @@ function fakeDatabase(rows: Record<string, unknown>[] = []) {
 function readinessDatabase(
   rows: Partial<Record<"agora" | "winerim", Record<string, unknown>>>,
   activeGrantSha256?: string,
+  catalogOrder?: string[],
 ) {
+  let intent: (Record<string, unknown> & {
+    result: Record<string, unknown>;
+    lease_token: string | null;
+  }) | null = null;
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
+    const compact = statement.text.replace(/\s+/g, " ").trim();
+    if (compact.startsWith("INSERT INTO public.runtime_idempotency")) {
+      catalogOrder?.push("intent");
+      if (intent) return result([] as Row[]);
+      intent = {
+        idempotency_key: String(statement.values[0]),
+        connection_id: String(statement.values[2]),
+        job: String(statement.values[3]),
+        status: "RUNNING",
+        result: JSON.parse(String(statement.values[6])) as Record<string, unknown>,
+        lease_active: false,
+        lease_token: String(statement.values[5]),
+      };
+      return result([{ ...intent }] as Row[]);
+    }
+    if (compact.startsWith("SELECT") && compact.includes("FROM public.runtime_idempotency")) {
+      return result((intent ? [{ ...intent, lease_active: true }] : []) as Row[]);
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("attempt = attempt + 1")) {
+      return result([] as Row[]);
+    }
+    if (compact.startsWith("UPDATE public.runtime_idempotency") && compact.includes("result = result ||")) {
+      if (!intent || intent.lease_token !== String(statement.values[4])) return result([] as Row[]);
+      intent.result = {
+        ...intent.result,
+        ...JSON.parse(String(statement.values[0])) as Record<string, unknown>,
+      };
+      if (compact.includes("status = 'SUCCESS'")) {
+        intent.status = "SUCCESS";
+        intent.lease_token = null;
+      }
+      return result([{ ...intent, lease_active: false }] as Row[]);
+    }
     if (statement.text.includes("FROM public.runtime_canary_connections")) {
       return result((activeGrantSha256 ? [{
         connection_id: CONNECTION_ID,
@@ -283,6 +321,13 @@ function catalogAdapter(
     loadPlanningContext: vi.fn(async () => ({
       ok: true as const,
       context: catalogPlanningContext(wines),
+    })),
+    preflightApplyPlan: vi.fn(async ({ plan }: { plan: CatalogPlan }) => ({
+      ok: true as const,
+      receipt: {
+        status: "applied" as const,
+        appliedProductIds: plan.operations.map((operation) => operation.desired.productId),
+      },
     })),
     applyPlan: vi.fn(async ({ plan }: { plan: CatalogPlan }) => {
       order?.push("persist");
@@ -891,8 +936,8 @@ describe("private runtime executor Worker", () => {
   it("fences an exact rescue canary before the single-product Agora apply and DB persistence", async () => {
     const agora = await encryptedCredentialRow("agora");
     const credentialFence = await credentialFenceFor(agora, "agora");
-    const fake = readinessDatabase({ agora: agora.row });
     const order: string[] = [];
+    const fake = readinessDatabase({ agora: agora.row }, undefined, order);
     const remote: AgoraCatalogApplyAndReadbackPort = {
       applyAndReadback: vi.fn(async ({ plan }) => {
         order.push("post");
@@ -946,7 +991,7 @@ describe("private runtime executor Worker", () => {
       ok: true,
       detail: expect.stringMatching(/^catalog:applied:1:/),
     });
-    expect(order).toEqual(["fence", "post", "persist"]);
+    expect(order).toEqual(["intent", "fence", "post", "persist"]);
     expect(fence).toHaveBeenCalledOnce();
     expect(remote.applyAndReadback).toHaveBeenCalledOnce();
   });
@@ -955,8 +1000,8 @@ describe("private runtime executor Worker", () => {
     const agora = await encryptedCredentialRow("agora");
     const credentialFence = await credentialFenceFor(agora, "agora");
     const activeFence = await activeGrantFor(credentialFence);
-    const fake = readinessDatabase({ agora: agora.row }, activeFence.grantSha256);
     const order: string[] = [];
+    const fake = readinessDatabase({ agora: agora.row }, activeFence.grantSha256, order);
     const remote: AgoraCatalogApplyAndReadbackPort = {
       applyAndReadback: vi.fn(async ({ plan }) => ({
         ok: true as const,
@@ -1014,7 +1059,7 @@ describe("private runtime executor Worker", () => {
       ok: true,
       detail: expect.stringMatching(/^catalog:applied:1:/),
     });
-    expect(order).toEqual(["persist"]);
+    expect(order).toEqual(["intent", "persist"]);
     expect(remote.applyAndReadback).toHaveBeenCalledOnce();
   });
 
@@ -1059,8 +1104,8 @@ describe("private runtime executor Worker", () => {
   it("wires the reviewed Agora transport behind the fence and exact readback", async () => {
     const agora = await encryptedCredentialRow("agora");
     const credentialFence = await credentialFenceFor(agora, "agora");
-    const fake = readinessDatabase({ agora: agora.row });
     const order: string[] = [];
+    const fake = readinessDatabase({ agora: agora.row }, undefined, order);
     let importedProduct = "";
     const request = vi.fn<typeof fetch>(async (_target, init) => {
       if (init?.method === "POST") {
@@ -1110,7 +1155,7 @@ describe("private runtime executor Worker", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true });
-    expect(order).toEqual(["fence", "read", "post", "read", "persist"]);
+    expect(order).toEqual(["intent", "fence", "read", "post", "read", "persist"]);
     expect(importedProduct).toContain('Id="500001"');
     expect(importedProduct).toContain('FamilyId="10"');
     expect(request).toHaveBeenCalledTimes(3);

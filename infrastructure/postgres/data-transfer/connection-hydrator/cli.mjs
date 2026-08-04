@@ -5,10 +5,11 @@ import {
   HYDRATE_CONFIRMATION,
   IMPORT_TABLES,
   ROLLBACK_CONFIRMATION,
-  assertTargetInactive,
   buildHydrationPlan,
   buildSourceSnapshot,
   canonicalize,
+  classifyHydrationTarget,
+  classifyRollbackTarget,
   reconcilePlan,
   renderHydrationSql,
   renderReconcileSql,
@@ -18,10 +19,11 @@ import {
 import {
   readPlanArtifact,
   readSourceArtifact,
+  prepareAtomicResultArtifact,
   writePlanArtifact,
-  writeSecureJson,
   writeSourceArtifact,
 } from "./artifacts.mjs";
+import { executeWriteTransaction, runJournaledMutation } from "./operations.mjs";
 import { ConnectionHydratorDatabase, isLocalDatabaseUrl } from "./postgres.mjs";
 
 function parseArgs(argv) {
@@ -165,48 +167,76 @@ function assertApplyConfirmations(options, plan, expectedPhrase) {
   }
 }
 
+function validateExistingResult(existing, expectedResult, plan) {
+  if (!existing || typeof existing !== "object") throw new Error("RESULT_ARTIFACT_INVALID");
+  if (existing.result !== expectedResult
+    || existing.connectionId !== plan.connectionId
+    || existing.planSha256 !== plan.planSha256) {
+    throw new Error("RESULT_ARTIFACT_CONFLICT");
+  }
+}
+
 async function hydrateCommand(options) {
   const planDir = path.resolve(required(options, "plan-dir"));
   const { plan, manifest } = await readPlanArtifact(planDir);
   assertApplyConfirmations(options, plan, HYDRATE_CONFIRMATION);
   const targetUrl = databaseUrl("CONNECTION_HYDRATOR_TARGET_DATABASE_URL");
   nonLocalApplyGate(targetUrl);
-  const result = await withDatabase(targetUrl, "winerim-connection-hydrator-apply", async (database) => {
-    await database.beginWrite();
-    try {
-      await database.acquireLock(plan.connectionId);
-      const [targetWatermark, targetTables, runtimeActivity] = await Promise.all([
-        database.watermark(),
-        database.readTargetTables(plan.connectionId),
-        database.runtimeActivity(plan.connectionId),
-      ]);
-      if (targetWatermark.databaseIdentitySha256 !== plan.targetWatermark.databaseIdentitySha256) throw new Error("TARGET_IDENTITY_CHANGED");
-      if (targetRowsSha256(targetTables) !== plan.targetPreimageSha256) throw new Error("TARGET_PREIMAGE_CHANGED");
-      assertTargetInactive({ targetConnection: (targetTables.pos_connections || [])[0] || null, runtimeActivity });
-      const inserted = {};
-      for (const table of IMPORT_TABLES) inserted[table] = await database.insertRows(table, plan.inserts[table]);
-      const afterTables = await database.readTargetTables(plan.connectionId);
-      const reconciliation = reconcilePlan(plan, afterTables, await database.runtimeActivity(plan.connectionId));
-      if (!reconciliation.ok) {
-        throw new Error(`POST_HYDRATION_RECONCILIATION_FAILED:${reconciliation.reconciliationSha256}:${reconciliation.mismatches.slice(0, 20).join(",")}`);
-      }
-      await database.commit();
-      return { inserted, reconciliation };
-    } catch (error) {
-      await database.rollback();
-      throw error;
-    }
+  const artifact = await prepareAtomicResultArtifact(planDir, "apply-result.json", {
+    validateExisting: (existing) => {
+      validateExistingResult(existing, "INACTIVE_HYDRATION_APPLIED", plan);
+    },
+    metadata: {
+      operation: "HYDRATE",
+      connectionId: plan.connectionId,
+      planSha256: plan.planSha256,
+      planManifestSha256: manifest.manifestSha256,
+      targetIdentitySha256: plan.targetWatermark.databaseIdentitySha256,
+    },
   });
-  const applyResult = canonicalize({
-    result: "INACTIVE_HYDRATION_APPLIED",
-    connectionId: plan.connectionId,
-    planSha256: plan.planSha256,
-    planManifestSha256: manifest.manifestSha256,
-    inserted: result.inserted,
-    reconciliationSha256: result.reconciliation.reconciliationSha256,
+  const execution = await runJournaledMutation({
+    artifact,
+    executeCommittedMutation: () => withDatabase(targetUrl, "winerim-connection-hydrator-apply", async (database) => (
+      executeWriteTransaction(database, async () => {
+        await database.acquireLock(plan.connectionId);
+        const [targetWatermark, targetTables, runtimeActivity] = await Promise.all([
+          database.watermark(),
+          database.readTargetTables(plan.connectionId),
+          database.runtimeActivity(plan.connectionId),
+        ]);
+        if (targetWatermark.databaseIdentitySha256 !== plan.targetWatermark.databaseIdentitySha256) throw new Error("TARGET_IDENTITY_CHANGED");
+        const targetState = classifyHydrationTarget(plan, targetTables, runtimeActivity);
+        if (targetState.idempotentReplay) {
+          return {
+            inserted: Object.fromEntries(IMPORT_TABLES.map((table) => [table, 0])),
+            reconciliation: targetState.reconciliation,
+            idempotentReplay: true,
+          };
+        }
+        const inserted = {};
+        for (const table of IMPORT_TABLES) inserted[table] = await database.insertRows(table, plan.inserts[table]);
+        const afterTables = await database.readTargetTables(plan.connectionId);
+        const reconciliation = reconcilePlan(plan, afterTables, await database.runtimeActivity(plan.connectionId));
+        if (!reconciliation.ok) {
+          throw new Error(`POST_HYDRATION_RECONCILIATION_FAILED:${reconciliation.reconciliationSha256}:${reconciliation.mismatches.slice(0, 20).join(",")}`);
+        }
+        return { inserted, reconciliation, idempotentReplay: false };
+      })
+    )),
+    buildReceipt: (result, journalContext) => canonicalize({
+      result: "INACTIVE_HYDRATION_APPLIED",
+      connectionId: plan.connectionId,
+      planSha256: plan.planSha256,
+      planManifestSha256: manifest.manifestSha256,
+      databaseCommitState: "CONFIRMED",
+      journalId: journalContext.journalId,
+      recoveredFromPreparedJournal: journalContext.recoveredFromPreparedJournal,
+      inserted: result.inserted,
+      idempotentReplay: result.idempotentReplay,
+      reconciliationSha256: result.reconciliation.reconciliationSha256,
+    }),
   });
-  await writeSecureJson(planDir, "apply-result.json", applyResult);
-  print(applyResult);
+  print(execution.receipt);
 }
 
 async function reconcileCommand(options) {
@@ -234,35 +264,60 @@ async function reconcileCommand(options) {
 
 async function rollbackCommand(options) {
   const planDir = path.resolve(required(options, "plan-dir"));
-  const { plan } = await readPlanArtifact(planDir);
+  const { plan, manifest } = await readPlanArtifact(planDir);
   assertApplyConfirmations(options, plan, ROLLBACK_CONFIRMATION);
   const targetUrl = databaseUrl("CONNECTION_HYDRATOR_TARGET_DATABASE_URL");
   nonLocalApplyGate(targetUrl);
-  const result = await withDatabase(targetUrl, "winerim-connection-hydrator-rollback", async (database) => {
-    await database.beginWrite();
-    try {
-      await database.acquireLock(plan.connectionId);
-      const targetWatermark = await database.watermark();
-      if (targetWatermark.databaseIdentitySha256 !== plan.targetWatermark.databaseIdentitySha256) throw new Error("TARGET_IDENTITY_CHANGED");
-      const before = await database.readTargetTables(plan.connectionId);
-      const current = reconcilePlan(plan, before, await database.runtimeActivity(plan.connectionId));
-      if (!current.ok) throw new Error(`ROLLBACK_PREIMAGE_NOT_EXACT:${current.reconciliationSha256}`);
-      const deleted = {};
-      for (const table of ["stock_sync_log", "sales_line_items", "winerim_push_tracking", "sales_events", "product_mappings", "provider_products", "agora_master_data", "pos_connections"]) {
-        deleted[table] = await database.deleteIds(table, plan.rollbackIds[table] || []);
-      }
-      const after = await database.readTargetTables(plan.connectionId);
-      if (targetRowsSha256(after) !== plan.targetPreimageSha256) throw new Error("ROLLBACK_TARGET_PREIMAGE_MISMATCH");
-      await database.commit();
-      return deleted;
-    } catch (error) {
-      await database.rollback();
-      throw error;
-    }
+  const artifact = await prepareAtomicResultArtifact(planDir, "rollback-result.json", {
+    validateExisting: (existing) => {
+      validateExistingResult(existing, "INACTIVE_HYDRATION_ROLLED_BACK", plan);
+    },
+    metadata: {
+      operation: "ROLLBACK",
+      connectionId: plan.connectionId,
+      planSha256: plan.planSha256,
+      planManifestSha256: manifest.manifestSha256,
+      targetIdentitySha256: plan.targetWatermark.databaseIdentitySha256,
+    },
   });
-  const rollbackResult = canonicalize({ result: "INACTIVE_HYDRATION_ROLLED_BACK", connectionId: plan.connectionId, planSha256: plan.planSha256, deleted: result });
-  await writeSecureJson(planDir, "rollback-result.json", rollbackResult);
-  print(rollbackResult);
+  const execution = await runJournaledMutation({
+    artifact,
+    executeCommittedMutation: () => withDatabase(targetUrl, "winerim-connection-hydrator-rollback", async (database) => (
+      executeWriteTransaction(database, async () => {
+        await database.acquireLock(plan.connectionId);
+        const targetWatermark = await database.watermark();
+        if (targetWatermark.databaseIdentitySha256 !== plan.targetWatermark.databaseIdentitySha256) throw new Error("TARGET_IDENTITY_CHANGED");
+        const before = await database.readTargetTables(plan.connectionId);
+        const runtimeActivity = await database.runtimeActivity(plan.connectionId);
+        const targetState = classifyRollbackTarget(plan, before, runtimeActivity);
+        if (targetState.idempotentReplay) {
+          return {
+            deleted: Object.fromEntries(IMPORT_TABLES.map((table) => [table, 0])),
+            idempotentReplay: true,
+          };
+        }
+        const deleted = {};
+        for (const table of ["stock_sync_log", "sales_line_items", "winerim_push_tracking", "sales_events", "product_mappings", "provider_products", "agora_master_data", "pos_connections"]) {
+          deleted[table] = await database.deleteIds(table, plan.rollbackIds[table] || []);
+        }
+        const after = await database.readTargetTables(plan.connectionId);
+        if (targetRowsSha256(after) !== plan.targetPreimageSha256) throw new Error("ROLLBACK_TARGET_PREIMAGE_MISMATCH");
+        return { deleted, idempotentReplay: false };
+      })
+    )),
+    buildReceipt: (result, journalContext) => canonicalize({
+      result: "INACTIVE_HYDRATION_ROLLED_BACK",
+      connectionId: plan.connectionId,
+      planSha256: plan.planSha256,
+      planManifestSha256: manifest.manifestSha256,
+      databaseCommitState: "CONFIRMED",
+      journalId: journalContext.journalId,
+      recoveredFromPreparedJournal: journalContext.recoveredFromPreparedJournal,
+      deleted: result.deleted,
+      idempotentReplay: result.idempotentReplay,
+    }),
+  });
+  print(execution.receipt);
 }
 
 function help() {

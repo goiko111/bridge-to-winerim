@@ -459,6 +459,26 @@ function prepareUpsert(payload: JsonRecord): PreparedMutation {
   return { xml, expected };
 }
 
+function exactBaseline(payload: JsonRecord, expectedIds: readonly string[]): XmlProduct[] {
+  const xml = typeof payload._baseline_import_xml === "string"
+    ? payload._baseline_import_xml.trim()
+    : "";
+  if (!xml) throw new TransportBlocked("AGORA_HIDE_BASELINE_REQUIRED");
+  if (new TextEncoder().encode(xml).byteLength > MAX_IMPORT_BYTES) {
+    throw new TransportBlocked("AGORA_HIDE_BASELINE_TOO_LARGE");
+  }
+  const baseline = extractProducts(xml, {
+    expectedRoot: "Import",
+    onlyProductsRootChild: true,
+  });
+  const baselineIds = baseline.map((product) => product.id)
+    .sort((left, right) => Number(left) - Number(right));
+  if (!sameIds(expectedIds, baselineIds)) {
+    throw new TransportBlocked("AGORA_HIDE_BASELINE_IDS_MISMATCH");
+  }
+  return baseline;
+}
+
 function requiredId(value: unknown, reason: string): string {
   const id = String(value ?? "").trim();
   if (!/^\d+$/.test(id)) throw new TransportBlocked(reason);
@@ -486,10 +506,15 @@ function prepareFromMaster(task: OutboundTask, payload: JsonRecord, master: Read
   if (task.taskType === "AGORA_HIDE_PRODUCT") {
     const ids = exactIds(payload._product_ids);
     if (ids.length !== 1) throw new TransportBlocked("AGORA_MULTI_PRODUCT_MUTATION_REJECTED");
-    const expected = findAllProducts(master, ids).map((product) =>
+    const current = findAllProducts(master, ids);
+    const baseline = exactBaseline(payload, ids);
+    if (!productsMatch(baseline, master)) {
+      throw new TransportBlocked("AGORA_PRECONDITION_DRIFT", ids.join(","));
+    }
+    const expected = current.map((product) =>
       setProductAttribute(setProductAttribute(product, "UseAsDirectSale", "false"), "SaleableAsMain", "false")
     );
-    return { xml: importEnvelope(expected), expected, baseline: findAllProducts(master, ids) };
+    return { xml: importEnvelope(expected), expected, baseline };
   }
 
   throw new TransportBlocked("AGORA_OUTBOUND_PREPARATION_INVALID");
