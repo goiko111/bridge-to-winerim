@@ -1233,7 +1233,7 @@ LOCK TABLE public.pos_connections,
   IN SHARE ROW EXCLUSIVE MODE;
 LOCK TABLE public.sales_events,
   public.sales_line_items,
-  public.winerim_sync_receipts,
+  public.stock_sync_log,
   public.product_mappings,
   public.runtime_idempotency
   IN SHARE MODE;
@@ -1330,7 +1330,7 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM public.sales_events WHERE connection_id = '${connectionId}'::uuid) <> ${finalDelta.after.events}
     OR (SELECT count(*) FROM public.sales_line_items WHERE connection_id = '${connectionId}'::uuid) <> ${finalDelta.after.lines}
-    OR (SELECT count(*) FROM public.winerim_sync_receipts WHERE connection_id = '${connectionId}'::uuid) <> ${finalDelta.after.receipts}
+    OR (SELECT count(*) FROM public.stock_sync_log WHERE connection_id = '${connectionId}'::uuid) <> ${finalDelta.after.receipts}
     OR (SELECT count(*) FROM public.product_mappings WHERE connection_id = '${connectionId}'::uuid) <> ${finalDelta.after.mappings}
     OR COALESCE((SELECT max(business_day)::text FROM public.sales_events WHERE connection_id = '${connectionId}'::uuid), '') <> '${adoption.watermarks.maxBusinessDay}' THEN
     RAISE EXCEPTION 'reconciled historical watermarks changed after review';

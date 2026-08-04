@@ -689,6 +689,8 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     expect(data.documents.targetCorrectedShadowSha256).not.toBe(data.input.finalTargetRaw.sha256);
     expect(activationSql).toContain(`deployment_manifest_sha256 = '${data.input.deploymentManifest.sha256}'`);
     expect(activationSql).not.toContain(`deployment_manifest_sha256 = '${localReviewManifestSha256}'`);
+    expect(activationSql).toContain("public.stock_sync_log");
+    expect(activationSql).not.toContain("public.winerim_sync_receipts");
     expect(activationSql).toContain('"runtime_sales_job_allowlist":["sales.auto-sync","sales.sync-intraday"]');
     expect(activationSql).toContain(`COALESCE(provider_config, '{}'::jsonb) = '${canonicalJson(PROVIDER_CONFIG_SNAPSHOT)}'::jsonb`);
     expect(deactivationSql).toContain("-- Phase 1: persistently quiesce new runtime intake");
