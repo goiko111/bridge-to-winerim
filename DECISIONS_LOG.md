@@ -1,5 +1,22 @@
 # DECISIONS_LOG
 
+## 2026-08-04 - Baseline oficial, restore real y writer exclusivo
+
+- Todo plan de merge se liga a los bytes/SHA-256 del export Lovable y a un
+  backup restaurado en PostgreSQL descartable.
+- El import aborta ante WAL/conteos concurrentes; un COMMIT ambiguo exige
+  reconciliacion read-only antes de retry o restore.
+- Rotar solo Winerim no cerca Agora: cada cutover necesita evidencia externa
+  firmada de que el writer Lovable de esa conexion esta fuera del circuito.
+
+## 2026-08-04 - Albariza separa catalogo live de activacion del runtime
+
+- El catalogo se congela desde stock IDs completos + `wines/bulk`; la
+  paginacion general no autoriza writes.
+- Sin precio se excluye y stale se oculta con rollback, nunca se borra.
+- Tener familias/productos en Agora no abre consumer, cron, ventas ni stock;
+  esos gates requieren provision cifrado, fence y canary real independiente.
+
 ## 2026-08-03 - Scope activo liga grant exacto y PREPARED se cierra append-only
 
 - El runtime compara los bytes exactos del grant con el SHA-256 inmutable del

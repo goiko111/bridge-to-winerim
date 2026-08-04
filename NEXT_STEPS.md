@@ -1,5 +1,21 @@
 # NEXT_STEPS
 
+## P0 - Import Lovable y cutover serial - 2026-08-04 13:05 CEST
+
+- [x] Cerrar contrato `20 -> 31`, restore real y fence de concurrencia.
+- [x] Exigir evidencia externa Ed25519 del writer Lovable cercado.
+- [ ] Descargar/hashear el export oficial y probar restore descartable.
+- [ ] Reconciliar staging con rollback; no importar con runtime activo.
+- [ ] Cortar una conexion piloto con drain `>=130 s`, dos lecturas y canary.
+
+## P0 - Albariza runtime tras catalogo live - 2026-08-04 11:42 CEST
+
+- [x] Publicar siete familias y `748/748` variantes con canary/readback.
+- [x] Excluir `20` sin precio y ocultar tres stale con XML inverso.
+- [ ] Provision cifrado inactivo y readback exacto de la fila/conexion.
+- [ ] Writer fence, shadow read-only y activacion serial sin backfill.
+- [ ] Primera venta real B+C y SLA alta/precio `<5 min`, con rollback.
+
 ## P0 - El Bejeque: unico gate operativo restante - 2026-08-03 23:00 CEST
 
 - [x] Cerrar hashes manifest/grant/proof, aborto append-only y lectura DB.

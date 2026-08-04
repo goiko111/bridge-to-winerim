@@ -1,5 +1,26 @@
 # CURRENT_STATE
 
+## 2026-08-04 13:05 CEST - Transferencia Lovable preparada; runtime sigue inerte
+
+- Lovable se recupero tras ampliar Cloud y vuelve a originar ventas de las
+  conexiones antiguas; own-infra no tiene consumers/conexiones live activas.
+- Rama integra export `20 -> 31`, restore descartable verificado, aborto por
+  write concurrente, commit ambiguo reconciliado y writer fence externo firmado.
+- Productor catalogo aislado por un solo producto/credencial queda local y sin
+  deploy. Falta export oficial descargable y cutover serial por conexion.
+- Validaciones: transferencia `17`, rescue `35`, fail-closed `20`,
+  executor/tooling `79`, catalogo `13`, runtime `293`, TypeScript/build/PG OK.
+
+## 2026-08-04 11:42 CEST - Albariza catalogo Agora completo; own-infra inerte
+
+- Se aplicaron fuera del runtime propio siete familias por colores y `748/748`
+  variantes Winerim con snapshot, canary, lotes, readback y rollback. El
+  catalogo general previo quedo intacto.
+- Tres IDs transitorios se ocultaron reversiblemente y `20` variantes sin
+  precio quedaron excluidas. No hubo ventas, stock, historico, cursor o cron.
+- La conexion own-infra no esta activa: faltan provision cifrado, writer fence,
+  primera venta real B+C y SLA de catalogo antes de `OK_100`.
+
 ## 2026-08-03 23:00 CEST - El Bejeque tecnicamente cerrado; espera primera copa real
 
 - Rescue Supabase sano. Run A `RETIRED`, run B `PREPARED`/inactivo, conexion
