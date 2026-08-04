@@ -104,7 +104,11 @@ function idsFilter(filters) {
 export function createPostgresShadowClient(client) {
   const metrics = { requests: 0, retries: 0, rateLimitRetries: 0, rows: 0 };
   const dateText = (value) => value instanceof Date
-    ? value.toISOString().slice(0, 10)
+    ? [
+      String(value.getFullYear()).padStart(4, "0"),
+      String(value.getMonth() + 1).padStart(2, "0"),
+      String(value.getDate()).padStart(2, "0"),
+    ].join("-")
     : value;
   async function query(text, values) {
     metrics.requests += 1;

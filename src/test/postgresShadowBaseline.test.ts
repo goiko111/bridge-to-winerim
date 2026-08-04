@@ -46,6 +46,53 @@ describe("PostgreSQL shadow baseline", () => {
       .rejects.toMatchObject({ code: "QUERY_SCOPE" });
   });
 
+  it("preserves PostgreSQL DATE values as local calendar dates", async () => {
+    const localMidnight = new Date("2026-08-03T22:00:00.000Z");
+    vi.spyOn(localMidnight, "getFullYear").mockReturnValue(2026);
+    vi.spyOn(localMidnight, "getMonth").mockReturnValue(7);
+    vi.spyOn(localMidnight, "getDate").mockReturnValue(4);
+    const query = vi.fn(async (text: string) => {
+      if (text.includes("FROM public.pos_connections")) {
+        return {
+          rows: [{
+            id: CONNECTION_ID,
+            last_business_day_synced: localMidnight,
+            last_sync_at: "2026-08-04T10:00:00Z",
+            updated_at: "2026-08-04T10:00:00Z",
+          }],
+        };
+      }
+      if (text.includes("FROM public.sales_events")) {
+        return {
+          rows: [{
+            id: EVENT_ID,
+            provider_doc_id: "invoice-1",
+            business_day: localMidnight,
+            doc_type: "Invoice",
+            created_at: "2026-08-04T10:00:00Z",
+          }],
+        };
+      }
+      return { rows: [] };
+    });
+    const client = createPostgresShadowClient({ query } as never);
+    const [connection] = await client.fetchAllById({
+      table: "pos_connections",
+      filters: { id: `eq.${CONNECTION_ID}` },
+    });
+    const [event] = await client.fetchAllById({
+      table: "sales_events",
+      filters: {
+        connection_id: `eq.${CONNECTION_ID}`,
+        business_day: "gte.2026-08-01",
+        and: "(business_day.lte.2026-08-04)",
+      },
+    });
+    expect(connection.last_business_day_synced).toBe("2026-08-04");
+    expect(event.business_day).toBe("2026-08-04");
+    expect(localMidnight.toISOString().slice(0, 10)).toBe("2026-08-03");
+  });
+
   it("captures one repeatable read-only transaction and writes mode 0600", async () => {
     const directory = await mkdtemp(join(tmpdir(), "postgres-shadow-"));
     temporaryDirectories.push(directory);
