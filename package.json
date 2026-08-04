@@ -37,6 +37,8 @@
     "data:transfer:rollback": "node scripts/lovable-export-reconcile.mjs rollback",
     "data:transfer:test": "vitest run src/test/lovableExportReconcile.test.ts --pool=forks --maxWorkers=1 --no-file-parallelism",
     "data:transfer:smoke:local": "bash infrastructure/postgres/data-transfer/test-local-roundtrip.sh",
+    "data:rescue-merge": "node infrastructure/postgres/data-transfer/rescue-merge/cli.mjs",
+    "data:rescue-merge:test": "node --test infrastructure/postgres/data-transfer/rescue-merge/planner.test.mjs infrastructure/postgres/data-transfer/rescue-merge/executor.test.mjs",
     "data:rescue:build": "node scripts/build-rescue-bootstrap.mjs",
     "data:rescue:smoke:local": "bash infrastructure/postgres/test-rescue-seed.sh",
     "lint": "eslint .",
