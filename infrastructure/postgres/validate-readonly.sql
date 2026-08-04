@@ -99,7 +99,7 @@ SELECT
     AS provider_sold_at_index_present;
 
 SELECT
-  to_regclass('public.runtime_canary_connections_single_active_idx') IS NOT NULL
+  to_regclass('public.runtime_canary_connections_one_active_per_connection_idx') IS NOT NULL
     AS runtime_canary_index_present,
   to_regclass('public.uq_runtime_sales_claim_identity') IS NOT NULL
     AS runtime_sales_claim_identity_index_present,

@@ -84,15 +84,15 @@ fi
 
 check_equals \
   'public_tables' \
-  '30' \
+  '31' \
   "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'"
 
 actual_tables=$(query_scalar \
   'public_table_inventory' \
   "SELECT string_agg(c.relname, E'\\n' ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r'") || actual_tables=''
-expected_tables=$(cat "$SCRIPT_DIR/expected-tables-runtime-postupgrade.txt")
+expected_tables=$(awk '$1 == "TABLE" { print $2 }' "$SCRIPT_DIR/expected-schema.txt" | sort)
 if [ "$actual_tables" != "$expected_tables" ]; then
-  printf 'FAIL: public_table_inventory does not match the reviewed 30-table contract\n' >&2
+  printf 'FAIL: public_table_inventory does not match the reviewed 31-table contract\n' >&2
   FAILURES=$((FAILURES + 1))
 else
   printf 'OK: public_table_inventory=exact\n'
@@ -116,7 +116,7 @@ check_equals \
 check_equals \
   'runtime_canary_unique_index' \
   '1' \
-  "SELECT count(*) FROM pg_class index_class JOIN pg_namespace n ON n.oid=index_class.relnamespace WHERE n.nspname='public' AND index_class.relkind='i' AND index_class.relname='runtime_canary_connections_single_active_idx'"
+  "SELECT count(*) FROM pg_class index_class JOIN pg_namespace n ON n.oid=index_class.relnamespace WHERE n.nspname='public' AND index_class.relkind='i' AND index_class.relname='runtime_canary_connections_one_active_per_connection_idx'"
 
 check_equals \
   'runtime_idempotency_hardening_columns' \

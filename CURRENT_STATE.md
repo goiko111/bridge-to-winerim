@@ -1,5 +1,27 @@
 # CURRENT_STATE
 
+## 2026-08-04 13:50 CEST - Baseline REST por conexion listo y smoke live OK
+
+- Productor PostgREST secuencial/rate-limited genera artefactos privados
+  `agora-shadow-v1` por conexion/pasada sin solicitar credenciales ni raw JSON.
+- Smoke Sa Pedrera: 9 GET a 1 req/s, 0 retries/429, marcador estable y
+  self-reconcile exacto; cero writes remotos.
+- Validacion: 13 tests, ESLint, TypeScript, node check y diff check OK.
+- Durante servicio es solo observacional. Merge/cursor/cutover siguen
+  bloqueados hasta writer fence, drain >=130 s y dos capturas identicas.
+
+## 2026-08-04 13:31 CEST - Export oficial valido; staging bloqueado en 30/31
+
+- Export Lovable `bridge-to-winerim_260804.backup` validado como PostgreSQL
+  custom `1.16`, restaurado localmente con PG17 y fijado por SHA-256.
+- Artefacto sanitizado schema `2` generado desde restore descartable; `20`
+  tablas y reconciliacion offline OK. El import dry-run exige target `31` y
+  reemplazaria `30`, preservando el sentinel de infraestructura.
+- Staging fresh: PostgreSQL 17, sentinel `staging`, `30` tablas, `0`
+  conexiones/runtime; falta `runtime_catalog_source_scope` (`0014`).
+- Cero writes remotos. Falta almacenamiento cifrado, DSN staging seguro,
+  aplicar/verificar `0014` y ejecutar import serial quiescente.
+
 ## 2026-08-04 13:05 CEST - Transferencia Lovable preparada; runtime sigue inerte
 
 - Lovable se recupero tras ampliar Cloud y vuelve a originar ventas de las

@@ -11,6 +11,7 @@ import {
 } from "../../middleware-api/src/db";
 import {
   isDeployableRuntimeCanaryConnectionId,
+  isRuntimeEnvelope,
   type RuntimeEnvelopeV1,
   type RuntimeLane,
 } from "./contracts";
@@ -26,6 +27,14 @@ import {
   DEFAULT_RUNTIME_SCHEDULER_PLAN,
   type RuntimeScheduledConnection,
 } from "./scheduler";
+import {
+  buildFleetScheduledRuntimeMessages,
+  FLEET_PRODUCER_MODE,
+  isEnvelopeInsideFleetGeneration,
+  parseFleetScheduledLane,
+  resolveActiveFleetScheduledScopes,
+  type FleetScopeDatabaseRow,
+} from "./fleet";
 import {
   guardExclusiveCanaryBatch,
   resolveExclusiveCanaryJobLane,
@@ -69,6 +78,7 @@ export interface MiddlewareRuntimeEnv extends WriterFenceClientEnvironment {
   RELEASE?: string;
   RUNTIME_EXECUTION_ENABLED?: string;
   RUNTIME_MODE?: string;
+  FLEET_RUNTIME_LANE?: string;
   RUNTIME_CANARY_CONNECTION_ID?: string;
   CANARY_RUN_ID?: string;
   CANARY_EXCLUSIVE_QUEUE_NAME?: string;
@@ -144,6 +154,10 @@ function isExclusiveCanaryConsumer(env: MiddlewareRuntimeEnv): boolean {
   return env.RUNTIME_MODE?.trim().toLowerCase() === EXCLUSIVE_CANARY_CONSUMER_MODE;
 }
 
+function isFleetProducer(env: MiddlewareRuntimeEnv): boolean {
+  return env.RUNTIME_MODE?.trim().toLowerCase() === FLEET_PRODUCER_MODE;
+}
+
 function canaryConnectionId(env: MiddlewareRuntimeEnv): string | null {
   const value = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
   return isDeployableRuntimeCanaryConnectionId(value) ? value : null;
@@ -183,13 +197,16 @@ function executionEnvironmentAllowed(env: MiddlewareRuntimeEnv): boolean {
   if (environment === STAGING_ENVIRONMENT) {
     return env.RUNTIME_MODE?.trim().toLowerCase() !== LEGACY_CANARY_CONSUMER_MODE;
   }
-  return environment === RESCUE_PRODUCTION_ENVIRONMENT && isExclusiveCanaryConsumer(env);
+  return environment === RESCUE_PRODUCTION_ENVIRONMENT
+    && (isExclusiveCanaryConsumer(env) || isFleetProducer(env));
 }
 
 const createPostgresClient: PostgresClientFactory = ({ connectionString, applicationName }) => {
   const client = new Client({ connectionString, application_name: applicationName });
   return {
-    connect: () => client.connect(),
+    connect: async () => {
+      await client.connect();
+    },
     query: async <Row extends Record<string, unknown>>(query: string | DriverQueryConfig) => {
       const result = await client.query<Row>(query);
       return { rows: result.rows, rowCount: result.rowCount };
@@ -307,11 +324,17 @@ function queueBindings(env: MiddlewareRuntimeEnv): Record<string, RuntimeQueuePr
 }
 
 function missingBindingNames(env: MiddlewareRuntimeEnv, executor?: RuntimeExecutor | null): string[] {
+  const fleetLane = isFleetProducer(env) ? parseFleetScheduledLane(env.FLEET_RUNTIME_LANE) : null;
   const missing = isCanaryConsumer(env)
     ? []
-    : Object.entries(queueBindings(env))
-      .filter(([, binding]) => !binding)
-      .map(([name]) => name);
+    : isFleetProducer(env)
+      ? [
+          !fleetLane ? "FLEET_RUNTIME_LANE" : null,
+          fleetLane && !queueForLane(env, fleetLane) ? `FLEET_QUEUE_${fleetLane.toUpperCase()}` : null,
+        ].filter((value): value is string => !!value)
+      : Object.entries(queueBindings(env))
+        .filter(([, binding]) => !binding)
+        .map(([name]) => name);
   if (!env.MIDDLEWARE_DB) missing.push("MIDDLEWARE_DB");
   if (!env.RUNTIME_EXECUTOR && !executor) missing.push("RUNTIME_EXECUTOR");
   if (isCanaryConsumer(env) && !canaryConnectionId(env)) {
@@ -641,12 +664,51 @@ async function loadScheduledConnections(database: DatabaseAdapter): Promise<Runt
   }));
 }
 
+async function loadFleetScheduledConnections(database: DatabaseAdapter) {
+  const result = await database.query<FleetScopeDatabaseRow>(sql`
+    SELECT
+      scope.connection_id::text AS connection_id,
+      scope.run_id,
+      scope.generation_mode,
+      scope.deployment_manifest_sha256,
+      scope.writer_fence_grant_sha256,
+      scope.credential_set_sha256,
+      connection.enabled AS connection_enabled,
+      connection.circuit_breaker_paused_until,
+      lower(coalesce(connection.provider_config->>'intraday_sales_sync_enabled', 'false'))
+        IN ('true', '1', 'yes') AS intraday_sales_sync_enabled,
+      lower(coalesce(connection.provider_config->>'open_tickets_sync_enabled', 'false'))
+        IN ('true', '1', 'yes') AS open_tickets_sync_enabled,
+      credentials.credential_kind,
+      credentials.provider AS credential_provider,
+      credentials.key_version,
+      credentials.attestation_sha256
+    FROM public.runtime_canary_connections scope
+    JOIN public.pos_connections connection
+      ON connection.id = scope.connection_id
+     AND connection.provider = 'agora'
+    LEFT JOIN public.runtime_connection_credentials credentials
+      ON credentials.connection_id = scope.connection_id
+     AND credentials.run_id = scope.run_id
+     AND credentials.active = true
+     AND credentials.retired_at IS NULL
+    WHERE scope.status = 'ACTIVE'
+      AND scope.active = true
+      AND scope.approved_at IS NOT NULL
+      AND scope.approved_at <= now()
+      AND scope.expires_at IS NOT NULL
+      AND scope.expires_at > now()
+    ORDER BY scope.connection_id, scope.run_id, credentials.credential_kind
+  `);
+  return resolveActiveFleetScheduledScopes(result.rows);
+}
+
 export async function runRuntimeScheduled(
   controller: ScheduledControllerLike,
   env: MiddlewareRuntimeEnv,
   dependencies: Required<RuntimeWorkerDependencies>,
 ): Promise<RuntimeScheduleDispatchResult> {
-  if (!isStaging(env)) {
+  if (!isStaging(env) && !isFleetProducer(env)) {
     return { status: "inactive", reason: "NOT_STAGING", connections: 0, messages: 0 };
   }
   const executor = dependencies.executor(env);
@@ -657,12 +719,28 @@ export async function runRuntimeScheduled(
     return { status: "inactive", reason: "RUNTIME_BINDINGS_INCOMPLETE", connections: 0, messages: 0 };
   }
 
-  const connections = await loadScheduledConnections(dependencies.database(env));
-  const messages = await buildScheduledRuntimeMessages({
-    cron: controller.cron,
-    scheduledTimeMs: controller.scheduledTime,
-    connections,
-  });
+  const database = dependencies.database(env);
+  const fleetLane = isFleetProducer(env) ? parseFleetScheduledLane(env.FLEET_RUNTIME_LANE) : null;
+  let connectionCount: number;
+  let messages;
+  if (fleetLane) {
+    const scopes = await loadFleetScheduledConnections(database);
+    connectionCount = scopes.length;
+    messages = await buildFleetScheduledRuntimeMessages({
+        cron: controller.cron,
+        scheduledTimeMs: controller.scheduledTime,
+        lane: fleetLane,
+        scopes,
+      });
+  } else {
+    const connections = await loadScheduledConnections(database);
+    connectionCount = connections.length;
+    messages = await buildScheduledRuntimeMessages({
+        cron: controller.cron,
+        scheduledTimeMs: controller.scheduledTime,
+        connections,
+      });
+  }
   const messagesByLane = new Map<RuntimeLane, RuntimeQueueSendMessage[]>();
   for (const message of messages) {
     const laneMessages = messagesByLane.get(message.envelope.lane) ?? [];
@@ -677,7 +755,7 @@ export async function runRuntimeScheduled(
       await queue.sendBatch(batch);
     }
   }
-  return { status: "dispatched", connections: connections.length, messages: messages.length };
+  return { status: "dispatched", connections: connectionCount, messages: messages.length };
 }
 
 export async function runRuntimeQueue(
@@ -697,6 +775,23 @@ export async function runRuntimeQueue(
   }
 
   let scopedBatch = batch;
+  if (isFleetProducer(env)) {
+    const fleetLane = parseFleetScheduledLane(env.FLEET_RUNTIME_LANE);
+    if (!fleetLane) {
+      retryBatchFailClosed(batch);
+      return;
+    }
+    const accepted = batch.messages.filter((message) => {
+      if (!isRuntimeEnvelope(message.body)
+        || !isEnvelopeInsideFleetGeneration(message.body, fleetLane)) {
+        message.retry({ delaySeconds: FAIL_CLOSED_RETRY_SECONDS });
+        return false;
+      }
+      return true;
+    });
+    if (accepted.length === 0) return;
+    scopedBatch = { queue: batch.queue, messages: accepted };
+  }
   if (isExclusiveCanaryConsumer(env)) {
     const scope = exclusiveCanaryScope(env);
     const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);

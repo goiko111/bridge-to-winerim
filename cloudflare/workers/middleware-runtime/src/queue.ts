@@ -107,7 +107,7 @@ export async function consumeRuntimeQueueBatch(
       };
     }
 
-    if (result.ok) {
+    if (result.ok === true) {
       await hooks.complete(envelope, result);
       message.ack();
       summary.acknowledged++;

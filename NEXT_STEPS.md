@@ -1,11 +1,32 @@
 # NEXT_STEPS
 
+## P0 - Baseline REST por conexion - 2026-08-04 13:50 CEST
+
+- [x] Implementar productor GET secuencial, rate-limit/backoff y artefactos
+  privados por conexion.
+- [x] Validar con 13 tests y smoke live de una conexion a 1 req/s.
+- [ ] Guardar capturas reales en volumen cifrado durable, no `/private/tmp`.
+- [ ] Tras importar el export oficial: fence firmado por conexion, drain
+  `>=130 s`, dos capturas identicas y reconcile exacto antes de cualquier merge.
+
+## P0 - Import oficial preparado; gate schema staging - 2026-08-04 13:31 CEST
+
+- [x] Descargar y hashear `bridge-to-winerim_260804.backup` en local privado.
+- [x] Restaurar con PostgreSQL 17 y generar artefacto sanitizado schema `2`.
+- [x] Reconciliar offline y validar target `31`/reemplazo `30` sin writes.
+- [ ] Copiar fuente/artefacto/backup target a volumen cifrado durable.
+- [ ] Obtener DSN directa/Session Pooler de staging por canal seguro.
+- [ ] Aplicar/readback `0014_runtime_catalog_source_scope.sql` (`30 -> 31`).
+- [ ] Ejecutar import quiescente, reconciliar y conservar rollback antes de
+  provisionar credenciales o activar runtime.
+
 ## P0 - Import Lovable y cutover serial - 2026-08-04 13:05 CEST
 
 - [x] Cerrar contrato `20 -> 31`, restore real y fence de concurrencia.
 - [x] Exigir evidencia externa Ed25519 del writer Lovable cercado.
-- [ ] Descargar/hashear el export oficial y probar restore descartable.
-- [ ] Reconciliar staging con rollback; no importar con runtime activo.
+- [x] Descargar/hashear el export oficial y probar restore descartable.
+- [ ] Completar `0014` y reconciliar staging con rollback; no importar con
+  runtime activo.
 - [ ] Cortar una conexion piloto con drain `>=130 s`, dos lecturas y canary.
 
 ## P0 - Albariza runtime tras catalogo live - 2026-08-04 11:42 CEST

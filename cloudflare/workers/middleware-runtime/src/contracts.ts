@@ -45,6 +45,11 @@ export type RuntimeSource = {
   trigger?: string;
 };
 
+export type RuntimeGenerationScope = {
+  runId: string;
+  credentialSetSha256: string;
+};
+
 export type RuntimeEnvelopeV1<TPayload extends JsonValue = JsonValue> = {
   name: typeof RUNTIME_ENVELOPE_NAME;
   version: typeof RUNTIME_ENVELOPE_VERSION;
@@ -59,6 +64,7 @@ export type RuntimeEnvelopeV1<TPayload extends JsonValue = JsonValue> = {
   createdAt: string;
   availableAt: string;
   source: RuntimeSource;
+  runtimeScope?: RuntimeGenerationScope;
   payload: TPayload;
 };
 
@@ -182,5 +188,12 @@ export function isRuntimeEnvelope(value: unknown): value is RuntimeEnvelopeV1 {
     typeof candidate.availableAt === "string" &&
     !!candidate.source &&
     ["cron", "api", "queue"].includes(candidate.source.kind ?? "") &&
-    typeof candidate.source.eventId === "string";
+    typeof candidate.source.eventId === "string" &&
+    (
+      candidate.runtimeScope === undefined
+      || (
+        typeof candidate.runtimeScope.runId === "string"
+        && typeof candidate.runtimeScope.credentialSetSha256 === "string"
+      )
+    );
 }

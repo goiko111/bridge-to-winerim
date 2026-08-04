@@ -18,6 +18,7 @@ RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
 RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
 RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
 RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
+RUNTIME_FLEET_CONNECTION_SCOPE="$SCRIPT_DIR/0015_runtime_fleet_connection_scope.sql"
 RESCUE_PRODUCTION_HARDENING_APPLIER="$SCRIPT_DIR/apply-rescue-production-hardening.sh"
 RELEASE_ADDENDUM="$SCRIPT_DIR/release-migration-manifest-addendum.tsv"
 EXPECTED_RELEASE_ADDENDUM="$SCRIPT_DIR/expected-schema-release-addendum.txt"
@@ -57,6 +58,7 @@ for required_file in \
   "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY" \
   "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY" \
   "$RUNTIME_CATALOG_SOURCE_SCOPE" \
+  "$RUNTIME_FLEET_CONNECTION_SCOPE" \
   "$RESCUE_PRODUCTION_HARDENING_APPLIER" \
   "$RELEASE_ADDENDUM" \
   "$EXPECTED_RELEASE_ADDENDUM" \
@@ -64,6 +66,19 @@ for required_file in \
 do
   if [ ! -f "$required_file" ]; then
     fail "missing artifact $required_file"
+  fi
+done
+
+for required_pattern in \
+  'runtime_canary_connections_one_active_per_connection_idx' \
+  'RUNTIME_FLEET_SCOPE_PREFLIGHT_INCOMPLETE_CREDENTIALS' \
+  'RUNTIME_FLEET_SCOPE_CREDENTIALS_INVALID' \
+  'CREATE CONSTRAINT TRIGGER validate_runtime_fleet_scope_transition' \
+  'CREATE CONSTRAINT TRIGGER validate_runtime_fleet_credential_transition' \
+  'DEFERRABLE INITIALLY DEFERRED'
+do
+  if ! rg -F "$required_pattern" "$RUNTIME_FLEET_CONNECTION_SCOPE" >/dev/null; then
+    fail "runtime fleet connection scope addendum is missing: $required_pattern"
   fi
 done
 

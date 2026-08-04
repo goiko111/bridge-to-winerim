@@ -17,6 +17,10 @@ import type {
   SqlStatement,
 } from "../../cloudflare/workers/middleware-api/src/db";
 import { createPostgresEncryptedCredentialPort } from "../../cloudflare/workers/middleware-runtime/src/executor";
+import {
+  parseWriterFenceGrant,
+  validateWriterFenceGrant,
+} from "../../cloudflare/canary-failclosed/src/writerFence";
 
 // @ts-expect-error Operational ESM script is exercised directly by Vitest.
 import {
@@ -26,6 +30,7 @@ import {
   renderCredentialProvisioningSql,
   runtimeCredentialAad,
   runtimeCredentialSetSha256,
+  validateAdoptExistingEvidence,
 } from "../../infrastructure/runtime/prepare-runtime-credential-provisioning.mjs";
 // @ts-expect-error Operational ESM script is exercised directly by Vitest.
 import {
@@ -337,6 +342,112 @@ describe("fail-closed canary packaging", () => {
 });
 
 describe("runtime credential provisioning tooling", () => {
+  function canonicalTestJson(value: unknown): string {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(canonicalTestJson).join(",")}]`;
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalTestJson(record[key])}`
+    )).join(",")}}`;
+  }
+
+  function adoptExistingEvidence(overrides: Record<string, unknown> = {}) {
+    const events = Array.from({ length: 42 }, (_, eventIndex) => ({
+      businessDay: "2026-08-03",
+      providerDocId: `invoice-${eventIndex}`,
+      docType: "INVOICE",
+      orderId: `order-${eventIndex}`,
+      soldAt: "2026-08-03T20:00:00.000Z",
+      lines: Array.from({ length: eventIndex < 11 ? 4 : 3 }, (_, lineIndex) => ({
+        providerLineId: `line-${eventIndex}-${lineIndex}`,
+        providerProductId: `product-${eventIndex}-${lineIndex}`,
+        format: "BOTTLE",
+        qty: 1,
+        soldAt: "2026-08-03T20:00:00.000Z",
+        mapping: { mapped: false, status: "UNMAPPED" },
+      })),
+    }));
+    const sourceArtifact = {
+      schemaVersion: "agora-shadow-v2",
+      capture: {
+        mode: "OBSERVATIONAL_READ_ONLY",
+        authoritative: false,
+        captureStartedAt: "2026-08-04T11:54:00.000Z",
+        captureEndedAt: "2026-08-04T11:55:00.000Z",
+        sourceMarkerStable: true,
+        consistencyBlocker: "REST_NON_TRANSACTIONAL_AND_WRITER_NOT_FENCED",
+      },
+      connections: [{
+        connectionId: CONNECTION_ID,
+        cursor: {
+          lastBusinessDaySynced: "2026-08-03",
+          lastSyncAt: "2026-08-04T11:55:00.000Z",
+        },
+        events,
+        receipts: Array.from({ length: 43 }, (_, index) => ({
+          receiptId: `receipt-${index}`,
+          businessDay: "2026-08-03",
+          providerDocId: `invoice-${index}`,
+          orderId: `order-${index}`,
+          status: "SUCCESS",
+          live: true,
+          stockApplied: true,
+          duplicate: false,
+          payloadSha256: "a".repeat(64),
+        })),
+      }],
+    };
+    const exportManifestSource = Buffer.from(`${JSON.stringify(sourceArtifact)}\n`);
+    const exportManifestSha256 = createHash("sha256").update(exportManifestSource).digest("hex");
+    const targetArtifact = {
+      ...sourceArtifact,
+      capture: {
+        mode: "POSTGRES_REPEATABLE_READ_ONLY",
+        authoritative: true,
+        captureStartedAt: "2026-08-04T11:54:00.000Z",
+        captureEndedAt: "2026-08-04T11:55:00.000Z",
+        sourceMarkerStable: true,
+        consistencyBlocker: null,
+      },
+    };
+    const targetManifestSource = Buffer.from(`${JSON.stringify(targetArtifact)}\n`);
+    const targetManifestSha256 = createHash("sha256").update(targetManifestSource).digest("hex");
+    const reportBody = {
+      schemaVersion: "agora-shadow-v2",
+      result: "RECONCILED_EXACT",
+      dryRun: true,
+      writes: false,
+      scope: { connectionCount: 1, connectionIds: [CONNECTION_ID] },
+      summary: { reconciledConnections: 1, differingConnections: 0, differences: 0 },
+      connections: [{
+        connectionId: CONNECTION_ID,
+        status: "RECONCILED_EXACT",
+        events: 42,
+        lines: 137,
+        receipts: 43,
+      }],
+      differences: [],
+      inputs: {
+        lovableSha256: exportManifestSha256,
+        ownSha256: targetManifestSha256,
+      },
+      ...overrides,
+    };
+    const reconciliation = {
+      ...reportBody,
+      reportSha256: createHash("sha256").update(canonicalTestJson(reportBody)).digest("hex"),
+    };
+    const reconciliationManifestSource = Buffer.from(`${JSON.stringify(reconciliation)}\n`);
+    return {
+      exportManifestSource,
+      exportManifestSha256,
+      targetManifestSource,
+      targetManifestSha256,
+      reconciliationManifestSource,
+      reconciliationManifestSha256: createHash("sha256").update(reconciliationManifestSource).digest("hex"),
+    };
+  }
+
   it("encrypts with the exact vault AAD and keeps credentials inactive", () => {
     const masterKey = Buffer.alloc(32, 7);
     const nonce = Buffer.alloc(12, 3);
@@ -442,6 +553,194 @@ describe("runtime credential provisioning tooling", () => {
     expect(sql.match(/\n {4}false\n/g)).toHaveLength(2);
   });
 
+  it("renders adopt-existing only when exact historical and cursor evidence is bound", () => {
+    const evidence = adoptExistingEvidence();
+    const adoption = validateAdoptExistingEvidence({ connectionId: CONNECTION_ID, ...evidence });
+    const credentials = ["agora", "winerim"].map((kind, index) => ({
+      kind,
+      nonceHex: Buffer.alloc(12, index + 1).toString("hex"),
+      ciphertextHex: Buffer.alloc(32, index + 4).toString("hex"),
+      attestationSha256: String.fromCharCode(97 + index).repeat(64),
+    }));
+    const sql = renderCredentialProvisioningSql({
+      connectionId: CONNECTION_ID,
+      runId: "imported-20260804-a",
+      keyVersion: "imported-v1",
+      credentials,
+      mode: "adopt-existing",
+      adoption,
+    });
+
+    expect(sql).toContain("adopt-existing requires an empty credential vault");
+    expect(sql).toContain("adopt-existing sales event watermark mismatch");
+    expect(sql).toContain(") <> 42 THEN");
+    expect(sql).toContain(") <> 137 THEN");
+    expect(sql).toContain("'2026-08-03'");
+    expect(sql).toContain("'2026-08-04T11:55:00.000Z'");
+    expect(sql).toContain(`'adopt-existing:v3:${adoption.bindingSha256}'`);
+    expect(sql).toContain("AND enabled = false");
+    expect(sql).toContain("AND catalog_sync_enabled = false");
+    expect(sql).toContain("active = false");
+    expect(sql).toContain(`WHERE connection_id = '${CONNECTION_ID}'::uuid\n    AND active = true`);
+    expect(sql).toContain("runtime canary or credential is already active for connection");
+    expect(sql).not.toMatch(/ON CONFLICT|DO UPDATE|DELETE\s+FROM/i);
+  });
+
+  it("writes an inactive encrypted adopt-existing artifact with exact evidence hashes", () => {
+    const directory = mkdtempSync(join(tmpdir(), "runtime-adopt-existing."));
+    const output = join(directory, "credentials.sql");
+    const exportPath = join(directory, "export-manifest.json");
+    const targetPath = join(directory, "target-manifest.json");
+    const reconciliationPath = join(directory, "reconciliation.json");
+    const evidence = adoptExistingEvidence();
+    writeFileSync(exportPath, evidence.exportManifestSource, { mode: 0o600 });
+    writeFileSync(targetPath, evidence.targetManifestSource, { mode: 0o600 });
+    writeFileSync(reconciliationPath, evidence.reconciliationManifestSource, { mode: 0o600 });
+    const result = prepareCredentialProvisioning({
+      mode: "adopt-existing",
+      output,
+      environment: {
+        CANARY_CONNECTION_ID: CONNECTION_ID,
+        CANARY_RUN_ID: "imported-20260804-a",
+        RUNTIME_VAULT_KEY_VERSION: "imported-v1",
+        RUNTIME_VAULT_MASTER_KEY: Buffer.alloc(32, 9).toString("base64"),
+        RUNTIME_AGORA_CREDENTIAL: "fixture-agora-sensitive",
+        RUNTIME_WINERIM_CREDENTIAL: "fixture-winerim-sensitive",
+        RUNTIME_ADOPT_EXPORT_MANIFEST: exportPath,
+        RUNTIME_ADOPT_EXPORT_MANIFEST_SHA256: evidence.exportManifestSha256,
+        RUNTIME_ADOPT_TARGET_MANIFEST: targetPath,
+        RUNTIME_ADOPT_TARGET_MANIFEST_SHA256: evidence.targetManifestSha256,
+        RUNTIME_ADOPT_RECONCILIATION_MANIFEST: reconciliationPath,
+        RUNTIME_ADOPT_RECONCILIATION_MANIFEST_SHA256: evidence.reconciliationManifestSha256,
+      },
+    });
+    const manifest = JSON.parse(readFileSync(result.manifestPath, "utf8"));
+
+    expect(result).toMatchObject({ mode: "adopt-existing", active: false, remoteMutations: 0 });
+    expect(manifest).toMatchObject({
+      version: 3,
+      mode: "adopt-existing",
+      active: false,
+      activationAllowed: false,
+      activationBlockReason: "ADOPT_EXISTING_ACTIVATION_REQUIRES_SEPARATE_REVIEWED_GATE",
+      scopeGenerationMode: "bootstrap",
+      adoption: {
+        version: 3,
+        kind: "AGORA_SHADOW_RECONCILIATION_EVIDENCE",
+        schemaVersion: "agora-shadow-v2",
+        connectionId: CONNECTION_ID,
+        exportManifestSha256: evidence.exportManifestSha256,
+        reconciliationManifestSha256: evidence.reconciliationManifestSha256,
+        reconciliationReportSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sourceDatasetSha256: evidence.exportManifestSha256,
+        targetDatasetSha256: evidence.targetManifestSha256,
+        watermarks: { salesEvents: 42, salesLineItems: 137 },
+      },
+    });
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(statSync(result.manifestPath).mode & 0o777).toBe(0o600);
+    expect(readFileSync(output, "utf8")).not.toContain("fixture-agora-sensitive");
+    expect(readFileSync(output, "utf8")).not.toContain("fixture-winerim-sensitive");
+  });
+
+  it("rejects adopt-existing on hash mismatch, non-v2 reports, dataset self-comparison, or forged bindings", () => {
+    const evidence = adoptExistingEvidence();
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      ...evidence,
+      exportManifestSha256: "0".repeat(64),
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_EXPORT_MANIFEST_SHA256_MISMATCH");
+
+    const legacy = adoptExistingEvidence({ schemaVersion: "agora-shadow-v1" });
+    expect(() => validateAdoptExistingEvidence({ connectionId: CONNECTION_ID, ...legacy }))
+      .toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_RECONCILIATION_NOT_EXACT");
+
+    const writes = adoptExistingEvidence({ writes: true });
+    expect(() => validateAdoptExistingEvidence({ connectionId: CONNECTION_ID, ...writes }))
+      .toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_RECONCILIATION_NOT_EXACT");
+
+    const selfCompared = adoptExistingEvidence({
+      inputs: {
+        lovableSha256: adoptExistingEvidence().exportManifestSha256,
+        ownSha256: adoptExistingEvidence().exportManifestSha256,
+      },
+    });
+    expect(() => validateAdoptExistingEvidence({ connectionId: CONNECTION_ID, ...selfCompared }))
+      .toThrow("RUNTIME_CREDENTIAL_PROVISION_INVALID_SHADOW_REPORT_DATASET_HASHES");
+
+    const forgedDigest = adoptExistingEvidence();
+    const forgedReport = JSON.parse(forgedDigest.reconciliationManifestSource.toString("utf8"));
+    forgedReport.reportSha256 = "f".repeat(64);
+    const forgedReportSource = Buffer.from(`${JSON.stringify(forgedReport)}\n`);
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      exportManifestSource: forgedDigest.exportManifestSource,
+      exportManifestSha256: forgedDigest.exportManifestSha256,
+      targetManifestSource: forgedDigest.targetManifestSource,
+      targetManifestSha256: forgedDigest.targetManifestSha256,
+      reconciliationManifestSource: forgedReportSource,
+      reconciliationManifestSha256: createHash("sha256").update(forgedReportSource).digest("hex"),
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_SHADOW_REPORT_SHA256_MISMATCH");
+
+    const declarativeSource = Buffer.from(`${JSON.stringify({
+      version: 1,
+      status: "RECONCILED_EXACT",
+      connectionId: CONNECTION_ID,
+      watermarks: { salesEvents: 42, salesLineItems: 137 },
+    })}\n`);
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      exportManifestSource: declarativeSource,
+      exportManifestSha256: createHash("sha256").update(declarativeSource).digest("hex"),
+      targetManifestSource: evidence.targetManifestSource,
+      targetManifestSha256: evidence.targetManifestSha256,
+      reconciliationManifestSource: evidence.reconciliationManifestSource,
+      reconciliationManifestSha256: evidence.reconciliationManifestSha256,
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_INVALID_SHADOW_SOURCE_STRUCTURE");
+
+    const declarativeReportSource = Buffer.from(`${JSON.stringify({
+      version: 1,
+      status: "RECONCILED_EXACT",
+      connectionId: CONNECTION_ID,
+      exportManifestSha256: evidence.exportManifestSha256,
+      watermarks: { salesEvents: 42, salesLineItems: 137 },
+    })}\n`);
+    expect(() => validateAdoptExistingEvidence({
+      connectionId: CONNECTION_ID,
+      exportManifestSource: evidence.exportManifestSource,
+      exportManifestSha256: evidence.exportManifestSha256,
+      targetManifestSource: evidence.targetManifestSource,
+      targetManifestSha256: evidence.targetManifestSha256,
+      reconciliationManifestSource: declarativeReportSource,
+      reconciliationManifestSha256: createHash("sha256")
+        .update(declarativeReportSource)
+        .digest("hex"),
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_INVALID_SHADOW_REPORT_STRUCTURE");
+
+    const adoption = validateAdoptExistingEvidence({ connectionId: CONNECTION_ID, ...evidence });
+    const credentials = ["agora", "winerim"].map((kind) => ({
+      kind,
+      nonceHex: "1".repeat(24),
+      ciphertextHex: "2".repeat(64),
+      attestationSha256: "3".repeat(64),
+    }));
+    expect(() => renderCredentialProvisioningSql({
+      connectionId: CONNECTION_ID,
+      runId: "imported-20260804-a",
+      keyVersion: "imported-v1",
+      credentials,
+      mode: "adopt-existing",
+      adoption: { ...adoption, bindingSha256: "f".repeat(64) },
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_ADOPTION_BINDING_MISMATCH");
+    expect(() => renderCredentialProvisioningSql({
+      connectionId: CONNECTION_ID,
+      runId: "imported-20260804-a",
+      keyVersion: "imported-v1",
+      credentials,
+      mode: "adopt-existing",
+    })).toThrow("RUNTIME_CREDENTIAL_PROVISION_INVALID_ADOPTION_EVIDENCE");
+  });
+
   it("writes a private encrypted artifact and returns only non-secret metadata", () => {
     const directory = mkdtempSync(join(tmpdir(), "runtime-credential-provision."));
     const output = join(directory, "credentials.sql");
@@ -497,6 +796,15 @@ describe("writer fence external evidence tooling", () => {
         CANARY_WRITER_FENCE_PROOF: "fixture-proof-secret-with-more-than-32-bytes",
         CANARY_EXCLUSIVE_CREDENTIAL_REF: `runtime-vault://postgres/${CONNECTION_ID}/agora/agora`,
         CANARY_EXCLUSIVE_CREDENTIAL_VERSION: "a".repeat(64),
+        RUNTIME_VAULT_KEY_VERSION: KEY_VERSION,
+        CANARY_AGORA_CREDENTIAL_VERSION: "a".repeat(64),
+        CANARY_WINERIM_CREDENTIAL_VERSION: "b".repeat(64),
+        CANARY_BOOTSTRAP_ACTIVE_CONNECTION_COUNT: "0",
+        CANARY_BOOTSTRAP_ACTIVE_CREDENTIAL_COUNT: "0",
+        CANARY_BOOTSTRAP_ACTIVE_SCOPE_COUNT: "0",
+        CANARY_BOOTSTRAP_PRIOR_RUN_COUNT: "0",
+        CANARY_BOOTSTRAP_ACTIVE_PRODUCER_COUNT: "0",
+        CANARY_BOOTSTRAP_ACTIVE_CONSUMER_COUNT: "0",
         CANARY_FENCE_ISSUED_AT: "2026-08-03T11:55:00.000Z",
         CANARY_FENCE_EXPIRES_AT: EXPIRES_AT,
         WRITER_FENCE_MODE: "bootstrap-no-legacy-writer",
@@ -513,7 +821,7 @@ describe("writer fence external evidence tooling", () => {
     };
   }
 
-  it("creates a v3 bootstrap grant only from signed fresh external evidence", () => {
+  it("creates a parser-valid v3 bootstrap grant with both credential attestations", async () => {
     const directory = mkdtempSync(join(tmpdir(), "writer-fence-grant."));
     const fixture = grantEnvironment(directory);
     const output = join(directory, "writer-fence-grant.json");
@@ -522,8 +830,24 @@ describe("writer fence external evidence tooling", () => {
     expect(statSync(output).mode & 0o777).toBe(0o600);
     expect(result.grant).toMatchObject({
       version: 3,
+      credentialBundle: {
+        version: 1,
+        keyVersion: KEY_VERSION,
+        credentials: {
+          agora: { kind: "agora", attestationSha256: "a".repeat(64) },
+          winerim: { kind: "winerim", attestationSha256: "b".repeat(64) },
+        },
+      },
       writerHistory: {
         mode: "bootstrap-no-legacy-writer",
+        absence: {
+          activeConnectionCount: 0,
+          activeCredentialCount: 0,
+          activeScopeCount: 0,
+          priorRunCount: 0,
+          activeProducerCount: 0,
+          activeConsumerCount: 0,
+        },
         externalEvidence: {
           artifactSha256: fixture.artifact.artifactSha256,
           fenceMode: "lovable-disabled-no-agora-rotation",
@@ -534,6 +858,15 @@ describe("writer fence external evidence tooling", () => {
         },
       },
     });
+    const parsed = parseWriterFenceGrant(readFileSync(output, "utf8"));
+    await expect(validateWriterFenceGrant({
+      grant: parsed,
+      proof: fixture.environment.CANARY_WRITER_FENCE_PROOF,
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      holderId: "release-a",
+      nowMs: Date.parse("2026-08-03T11:56:00.000Z"),
+    })).resolves.toBeUndefined();
   });
 
   it("rejects old counters, one no-rotation readback, stale evidence and a tampered payload", () => {

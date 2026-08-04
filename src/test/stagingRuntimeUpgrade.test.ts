@@ -78,7 +78,7 @@ describe("staging runtime schema upgrade gates", () => {
     expect(upgrade).toContain("BACKUP_RESTORE_TEST_FAILED");
     expect(upgrade).toContain("pg_advisory_xact_lock");
     expect(upgrade).toContain("combined_migration");
-    expect(rollback).toContain("runtime upgrade rollback requires empty canary and credential tables");
+    expect(rollback).toContain("runtime upgrade rollback requires empty canary, credential and catalog source tables");
     expect(validate).toContain('STAGING_VERIFIER="$SCRIPT_DIR/verify-staging.sh"');
     expect(validate).toContain('&& "$STAGING_VERIFIER" "$DATABASE_URL"');
     expect(`${workflow}\n${upgrade}\n${rollback}`).not.toMatch(/production_database|prod-project/i);

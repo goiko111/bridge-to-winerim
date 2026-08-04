@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash, createHmac, createPublicKey, verify } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,96 @@ function requiredFrom(environment, name) {
 
 function sha256(source) {
   return createHash("sha256").update(source).digest("hex");
+}
+
+function fleetCredentialReference(connectionId, kind) {
+  return `runtime-vault://postgres/${connectionId}/agora/${kind}`;
+}
+
+function fleetCredentialBinding({ connectionId, runId, kind, version }) {
+  return sha256([
+    "winerim-writer-fence-fleet-credential",
+    "1",
+    connectionId,
+    runId,
+    "agora",
+    kind,
+    fleetCredentialReference(connectionId, kind),
+    version,
+  ].join("|"));
+}
+
+function prepareFleetCredentialBundle({ environment, connectionId, runId, holderId, proof, issuedAt, expiresAt }) {
+  const keyVersion = requiredFrom(environment, "RUNTIME_VAULT_KEY_VERSION");
+  if (!IDENTIFIER_PATTERN.test(keyVersion)) {
+    throw new Error("WRITER_FENCE_GRANT_INVALID_KEY_VERSION");
+  }
+  const credentials = Object.fromEntries(["agora", "winerim"].map((kind) => {
+    const version = requiredFrom(environment, `CANARY_${kind.toUpperCase()}_CREDENTIAL_VERSION`).toLowerCase();
+    if (!SHA256_PATTERN.test(version)) {
+      throw new Error(`WRITER_FENCE_GRANT_INVALID_${kind.toUpperCase()}_CREDENTIAL_VERSION`);
+    }
+    return [kind, {
+      kind,
+      reference: fleetCredentialReference(connectionId, kind),
+      version,
+      attestationSha256: version,
+      binding: fleetCredentialBinding({ connectionId, runId, kind, version }),
+    }];
+  }));
+  const generationSha256 = sha256([
+    "winerim-runtime-credential-set",
+    "1",
+    connectionId,
+    runId,
+    keyVersion,
+    credentials.agora.attestationSha256,
+    credentials.winerim.attestationSha256,
+  ].join("|"));
+  const unsigned = { version: 1, keyVersion, generationSha256, credentials };
+  const payload = [
+    "winerim-writer-fence-credential-bundle",
+    "1",
+    connectionId,
+    runId,
+    holderId,
+    issuedAt,
+    expiresAt,
+    keyVersion,
+    generationSha256,
+    credentials.agora.kind,
+    credentials.agora.reference,
+    credentials.agora.version,
+    credentials.agora.attestationSha256,
+    credentials.agora.binding,
+    credentials.winerim.kind,
+    credentials.winerim.reference,
+    credentials.winerim.version,
+    credentials.winerim.attestationSha256,
+    credentials.winerim.binding,
+  ].join("|");
+  return {
+    ...unsigned,
+    bundleSha256: sha256(payload),
+    signatureSha256: createHmac("sha256", proof).update(payload).digest("hex"),
+  };
+}
+
+function bootstrapAbsence(environment) {
+  const fields = {
+    activeConnectionCount: "CANARY_BOOTSTRAP_ACTIVE_CONNECTION_COUNT",
+    activeCredentialCount: "CANARY_BOOTSTRAP_ACTIVE_CREDENTIAL_COUNT",
+    activeScopeCount: "CANARY_BOOTSTRAP_ACTIVE_SCOPE_COUNT",
+    priorRunCount: "CANARY_BOOTSTRAP_PRIOR_RUN_COUNT",
+    activeProducerCount: "CANARY_BOOTSTRAP_ACTIVE_PRODUCER_COUNT",
+    activeConsumerCount: "CANARY_BOOTSTRAP_ACTIVE_CONSUMER_COUNT",
+  };
+  return Object.fromEntries(Object.entries(fields).map(([key, name]) => {
+    if (requiredFrom(environment, name) !== "0") {
+      throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_ABSENCE_REQUIRED");
+    }
+    return [key, 0];
+  }));
 }
 
 function readBoundFile(path, expectedSha256, label) {
@@ -206,8 +296,6 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
   const runId = requiredFrom(environment, "CANARY_RUN_ID");
   const holderId = requiredFrom(environment, "CANARY_HOLDER_ID");
   const proof = requiredFrom(environment, "CANARY_WRITER_FENCE_PROOF");
-  const exclusiveCredentialRef = requiredFrom(environment, "CANARY_EXCLUSIVE_CREDENTIAL_REF");
-  const credentialVersion = requiredFrom(environment, "CANARY_EXCLUSIVE_CREDENTIAL_VERSION");
   const writerFenceMode = String(
     environment.WRITER_FENCE_MODE ?? "legacy-writer-revoked",
   ).trim();
@@ -218,12 +306,6 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
   if (!IDENTIFIER_PATTERN.test(runId)) throw new Error("WRITER_FENCE_GRANT_INVALID_RUN_ID");
   if (!IDENTIFIER_PATTERN.test(holderId)) throw new Error("WRITER_FENCE_GRANT_INVALID_HOLDER_ID");
   if (proof.length < 32) throw new Error("WRITER_FENCE_GRANT_PROOF_TOO_SHORT");
-  if (!exclusiveCredentialRef.startsWith("runtime-vault://postgres/")) {
-    throw new Error("WRITER_FENCE_GRANT_EXCLUSIVE_CREDENTIAL_REF_REQUIRED");
-  }
-  if (!SHA256_PATTERN.test(credentialVersion)) {
-    throw new Error("WRITER_FENCE_GRANT_INVALID_CREDENTIAL_VERSION");
-  }
   if (!WRITER_FENCE_MODES.has(writerFenceMode)) {
     throw new Error("WRITER_FENCE_GRANT_INVALID_MODE");
   }
@@ -239,17 +321,35 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
     runId,
     holderId,
     proofSha256: createHash("sha256").update(proof).digest("hex"),
-    exclusiveCredentialRef,
-    credentialVersion,
-    credentialBinding: createHash("sha256").update([
-      "winerim-writer-fence-credential",
-      "1",
-      exclusiveCredentialRef,
-      credentialVersion,
-    ].join("|")).digest("hex"),
     issuedAt,
     expiresAt,
   };
+  const fleetGrant = writerFenceMode === "bootstrap-no-legacy-writer"
+    || String(environment.CANARY_WRITER_FENCE_GRANT_VERSION ?? "") === "3";
+  let legacyCredential;
+  if (!fleetGrant) {
+    const exclusiveCredentialRef = requiredFrom(environment, "CANARY_EXCLUSIVE_CREDENTIAL_REF");
+    const credentialVersion = requiredFrom(environment, "CANARY_EXCLUSIVE_CREDENTIAL_VERSION").toLowerCase();
+    if (!exclusiveCredentialRef.startsWith("runtime-vault://postgres/")) {
+      throw new Error("WRITER_FENCE_GRANT_EXCLUSIVE_CREDENTIAL_REF_REQUIRED");
+    }
+    if (!SHA256_PATTERN.test(credentialVersion)) {
+      throw new Error("WRITER_FENCE_GRANT_INVALID_CREDENTIAL_VERSION");
+    }
+    legacyCredential = {
+      exclusiveCredentialRef,
+      credentialVersion,
+      credentialBinding: sha256([
+        "winerim-writer-fence-credential",
+        "1",
+        exclusiveCredentialRef,
+        credentialVersion,
+      ].join("|")),
+    };
+  }
+  const credentialBundle = fleetGrant
+    ? prepareFleetCredentialBundle({ environment, connectionId, runId, holderId, proof, issuedAt, expiresAt })
+    : null;
   let grant;
   if (writerFenceMode === "legacy-writer-revoked") {
     const revokedAt = requiredFrom(environment, "LEGACY_WRITER_REVOKED_AT");
@@ -264,12 +364,12 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
     const revokedMs = timestamp(revokedAt, "LEGACY_WRITER_REVOKED_AT");
     if (revokedMs > issuedMs) throw new Error("WRITER_FENCE_GRANT_REVOKE_AFTER_ISSUE");
     grant = {
-      version: 1,
+      version: fleetGrant ? 3 : 1,
       ...common,
+      ...(credentialBundle ? { credentialBundle } : legacyCredential),
       legacyWriter: { revokedAt, negativeProbeStatus, evidenceSha256 },
     };
   } else {
-    const expectedCredentialRef = `runtime-vault://postgres/${connectionId}/agora/agora`;
     const job = requiredFrom(environment, "CANARY_RUNTIME_JOB");
     const lane = requiredFrom(environment, "CANARY_RUNTIME_LANE");
     const productId = requiredFrom(environment, "CANARY_CATALOG_PRODUCT_ID");
@@ -277,7 +377,6 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
       job !== "catalog.sync-master"
       || lane !== "catalog"
       || !/^\d+$/.test(productId)
-      || exclusiveCredentialRef !== expectedCredentialRef
     ) {
       throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_CATALOG_AGORA_SCOPE_REQUIRED");
     }
@@ -289,9 +388,13 @@ export function prepareWriterFenceGrant({ environment = process.env, output } = 
     grant = {
       version: 3,
       ...common,
+      credentialBundle,
       writerHistory: {
         mode: "bootstrap-no-legacy-writer",
         verifiedAt: externalEvidence.observedAt,
+        evidenceSha256: externalEvidence.artifactSha256,
+        cloudflareEvidenceSha256: externalEvidence.payloadSha256,
+        absence: bootstrapAbsence(environment),
         externalEvidence,
       },
     };

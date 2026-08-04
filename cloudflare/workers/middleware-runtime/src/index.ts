@@ -6,6 +6,7 @@ export * from "./handlers/outbound";
 export * from "./handlers/sales";
 export * from "./handlers/stock";
 export * from "./idempotency";
+export * from "./fleet";
 export * from "./queue";
 export * from "./retry";
 export * from "./scheduler";

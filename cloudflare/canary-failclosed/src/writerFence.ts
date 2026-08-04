@@ -18,7 +18,30 @@ export type WriterFenceServiceLike = {
 export type WriterFenceClientEnvironment = {
   WRITER_FENCE?: WriterFenceServiceLike;
   CANARY_WRITER_FENCE_PROOF?: SecretsStoreSecretLike;
+  CANARY_WRITER_FENCE_GRANT?: SecretsStoreSecretLike;
 };
+
+export type WriterFenceCredentialKind = "agora" | "winerim";
+
+export type WriterFenceFleetCredential = Readonly<{
+  kind: WriterFenceCredentialKind;
+  reference: string;
+  version: string;
+  attestationSha256: string;
+  binding: string;
+}>;
+
+export type WriterFenceCredentialBundleV1 = Readonly<{
+  version: 1;
+  keyVersion: string;
+  generationSha256: string;
+  bundleSha256: string;
+  signatureSha256: string;
+  credentials: Readonly<{
+    agora: WriterFenceFleetCredential;
+    winerim: WriterFenceFleetCredential;
+  }>;
+}>;
 
 export type WriterFenceGrantV1 = {
   version: 1;
@@ -65,12 +88,29 @@ export type WriterFenceGrantV2 = {
   expiresAt: string;
 };
 
-export type WriterFenceGrant = WriterFenceGrantV1 | WriterFenceGrantV2;
+export type WriterFenceGrantV3 = {
+  version: 3;
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  proofSha256: string;
+  exclusiveCredentialRef?: never;
+  credentialVersion?: never;
+  credentialBinding?: never;
+  credentialBundle: WriterFenceCredentialBundleV1;
+  legacyWriter?: WriterFenceGrantV1["legacyWriter"];
+  writerHistory?: WriterFenceGrantV2["writerHistory"];
+  issuedAt: string;
+  expiresAt: string;
+};
+
+export type WriterFenceGrant = WriterFenceGrantV1 | WriterFenceGrantV2 | WriterFenceGrantV3;
 
 type WriterFenceGrantCandidate = Partial<Omit<WriterFenceGrantV1, "version" | "legacyWriter">> & {
   version?: unknown;
   legacyWriter?: WriterFenceGrantV1["legacyWriter"];
   writerHistory?: WriterFenceGrantV2["writerHistory"];
+  credentialBundle?: WriterFenceCredentialBundleV1;
 };
 
 export type WriterFenceLease = {
@@ -81,18 +121,27 @@ export type WriterFenceLease = {
   credentialReference: string;
   credentialVersion: string;
   credentialBinding: string;
+  credentialKind?: WriterFenceCredentialKind;
+  credentialAttestationSha256?: string;
+  credentialBundleSha256?: string;
+  requestNonce?: string;
   expiresAt: string;
 };
 
 export type WriterFenceCredentialAttestation = Readonly<{
   reference: string;
   version: string;
+  connectionId?: string;
+  runId?: string;
+  provider?: string;
+  kind?: WriterFenceCredentialKind;
 }>;
 
 export type WriterFenceActiveScopeEvidence = Readonly<{
   connectionId: string;
   runId: string;
   writerFenceGrantSha256: string;
+  credentialSetSha256?: string;
 }>;
 
 export type WriterFenceMutationAuthorization = Readonly<{
@@ -103,6 +152,9 @@ export type WriterFenceMutationAuthorization = Readonly<{
   credentialReference: string;
   credentialVersion: string;
   credentialBinding: string;
+  credentialKind?: WriterFenceCredentialKind;
+  credentialAttestationSha256?: string;
+  credentialBundleSha256?: string;
   authorizedAt: string;
   expiresAt: string;
 }>;
@@ -132,6 +184,122 @@ export async function writerFenceCredentialBinding(
   ].join("|"));
 }
 
+function fleetCredentialReference(connectionId: string, kind: WriterFenceCredentialKind): string {
+  return `runtime-vault://postgres/${connectionId}/agora/${kind}`;
+}
+
+function fleetCredentialCandidate(
+  credential: WriterFenceCredentialAttestation,
+  connectionId: string,
+  runId: string,
+): Required<Pick<WriterFenceCredentialAttestation, "reference" | "version" | "connectionId" | "runId" | "provider" | "kind">> {
+  const kind = credential.kind;
+  if (kind !== "agora" && kind !== "winerim") {
+    throw new Error("WRITER_FENCE_CREDENTIAL_KIND_REJECTED");
+  }
+  if (credential.connectionId !== connectionId || credential.runId !== runId) {
+    throw new Error("WRITER_FENCE_CREDENTIAL_SCOPE_REJECTED");
+  }
+  if (credential.provider !== "agora") {
+    throw new Error("WRITER_FENCE_CREDENTIAL_PROVIDER_REJECTED");
+  }
+  if (credential.reference !== fleetCredentialReference(connectionId, kind)) {
+    throw new Error("WRITER_FENCE_CREDENTIAL_REFERENCE_REJECTED");
+  }
+  if (!SHA256_PATTERN.test(credential.version)) {
+    throw new Error("WRITER_FENCE_CREDENTIAL_VERSION_REJECTED");
+  }
+  return {
+    reference: credential.reference,
+    version: credential.version,
+    connectionId,
+    runId,
+    provider: "agora",
+    kind,
+  };
+}
+
+export async function writerFenceFleetCredentialBinding(input: {
+  credential: WriterFenceCredentialAttestation;
+  connectionId: string;
+  runId: string;
+}): Promise<string> {
+  const credential = fleetCredentialCandidate(input.credential, input.connectionId, input.runId);
+  return sha256Hex([
+    "winerim-writer-fence-fleet-credential",
+    "1",
+    credential.connectionId,
+    credential.runId,
+    credential.provider,
+    credential.kind,
+    credential.reference,
+    credential.version,
+  ].join("|"));
+}
+
+function credentialBundlePayload(input: {
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  issuedAt: string;
+  expiresAt: string;
+  bundle: Pick<WriterFenceCredentialBundleV1, "version" | "keyVersion" | "generationSha256" | "credentials">;
+}): string {
+  const { agora, winerim } = input.bundle.credentials;
+  return [
+    "winerim-writer-fence-credential-bundle",
+    String(input.bundle.version),
+    input.connectionId,
+    input.runId,
+    input.holderId,
+    input.issuedAt,
+    input.expiresAt,
+    input.bundle.keyVersion,
+    input.bundle.generationSha256,
+    agora.kind,
+    agora.reference,
+    agora.version,
+    agora.attestationSha256,
+    agora.binding,
+    winerim.kind,
+    winerim.reference,
+    winerim.version,
+    winerim.attestationSha256,
+    winerim.binding,
+  ].join("|");
+}
+
+async function hmacSha256Hex(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function writerFenceCredentialBundleDigests(input: {
+  proof: string;
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  issuedAt: string;
+  expiresAt: string;
+  bundle: Pick<WriterFenceCredentialBundleV1, "version" | "keyVersion" | "generationSha256" | "credentials">;
+}): Promise<Readonly<{ bundleSha256: string; signatureSha256: string }>> {
+  if (input.proof.length < 32) throw new Error("WRITER_FENCE_EXCLUSIVE_PROOF_TOO_SHORT");
+  const payload = credentialBundlePayload(input);
+  return Object.freeze({
+    bundleSha256: await sha256Hex(payload),
+    signatureSha256: await hmacSha256Hex(input.proof, payload),
+  });
+}
+
 export async function authorizeWriterFenceMutation(input: {
   lease: WriterFenceLease;
   credential: WriterFenceCredentialAttestation;
@@ -143,7 +311,17 @@ export async function authorizeWriterFenceMutation(input: {
   if (!Number.isFinite(minimumRemainingMs) || minimumRemainingMs < 0) {
     throw new Error("WRITER_FENCE_MINIMUM_REMAINING_INVALID");
   }
-  const credentialBinding = await writerFenceCredentialBinding(input.credential);
+  const fleetLease = input.lease.credentialKind !== undefined;
+  const credentialBinding = fleetLease
+    ? await writerFenceFleetCredentialBinding({
+      credential: input.credential,
+      connectionId: input.lease.connectionId,
+      runId: input.lease.runId,
+    })
+    : await writerFenceCredentialBinding(input.credential);
+  if (fleetLease && input.lease.credentialKind !== input.credential.kind) {
+    throw new Error("WRITER_FENCE_CREDENTIAL_KIND_DRIFT");
+  }
   if (input.lease.credentialReference !== input.credential.reference) {
     throw new Error("WRITER_FENCE_CREDENTIAL_REFERENCE_DRIFT");
   }
@@ -152,6 +330,14 @@ export async function authorizeWriterFenceMutation(input: {
   }
   if (input.lease.credentialBinding !== credentialBinding) {
     throw new Error("WRITER_FENCE_CREDENTIAL_BINDING_DRIFT");
+  }
+  if (fleetLease) {
+    if (
+      input.lease.credentialAttestationSha256 !== input.credential.version
+      || !SHA256_PATTERN.test(String(input.lease.credentialBundleSha256 ?? ""))
+    ) {
+      throw new Error("WRITER_FENCE_CREDENTIAL_ATTESTATION_DRIFT");
+    }
   }
   const expiresAtMs = timestamp(input.lease.expiresAt, "WRITER_FENCE_LEASE_EXPIRES_AT_REJECTED");
   if (expiresAtMs - nowMs < minimumRemainingMs) {
@@ -168,6 +354,11 @@ export async function authorizeWriterFenceMutation(input: {
     credentialReference: input.credential.reference,
     credentialVersion: input.credential.version,
     credentialBinding,
+    ...(fleetLease ? {
+      credentialKind: input.lease.credentialKind,
+      credentialAttestationSha256: input.lease.credentialAttestationSha256,
+      credentialBundleSha256: input.lease.credentialBundleSha256,
+    } : {}),
     authorizedAt: new Date(nowMs).toISOString(),
     expiresAt: input.lease.expiresAt,
   });
@@ -192,6 +383,11 @@ function validateCommonGrantFields(grant: WriterFenceGrantCandidate): void {
   if (!SHA256_PATTERN.test(String(grant.proofSha256 ?? ""))) {
     throw new Error("WRITER_FENCE_GRANT_PROOF_REJECTED");
   }
+  timestamp(String(grant.issuedAt ?? ""), "WRITER_FENCE_GRANT_ISSUED_AT_REJECTED");
+  timestamp(String(grant.expiresAt ?? ""), "WRITER_FENCE_GRANT_EXPIRES_AT_REJECTED");
+}
+
+function validateLegacyGrantCredentialFields(grant: WriterFenceGrantCandidate): void {
   if (!String(grant.exclusiveCredentialRef ?? "").startsWith("runtime-vault://postgres/")) {
     throw new Error("WRITER_FENCE_GRANT_EXCLUSIVE_CREDENTIAL_REQUIRED");
   }
@@ -201,39 +397,19 @@ function validateCommonGrantFields(grant: WriterFenceGrantCandidate): void {
   if (!SHA256_PATTERN.test(String(grant.credentialBinding ?? ""))) {
     throw new Error("WRITER_FENCE_GRANT_CREDENTIAL_BINDING_REJECTED");
   }
-  timestamp(String(grant.issuedAt ?? ""), "WRITER_FENCE_GRANT_ISSUED_AT_REJECTED");
-  timestamp(String(grant.expiresAt ?? ""), "WRITER_FENCE_GRANT_EXPIRES_AT_REJECTED");
 }
 
-export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(raw);
-  } catch {
-    throw new Error("WRITER_FENCE_GRANT_INVALID_JSON");
+function validateLegacyWriterEvidence(legacyWriter: WriterFenceGrantV1["legacyWriter"] | undefined): void {
+  if (!legacyWriter || ![401, 403].includes(legacyWriter.negativeProbeStatus ?? 0)) {
+    throw new Error("WRITER_FENCE_GRANT_LEGACY_NEGATIVE_PROBE_REQUIRED");
   }
-  if (!candidate || typeof candidate !== "object") {
-    throw new Error("WRITER_FENCE_GRANT_INVALID_OBJECT");
+  if (!SHA256_PATTERN.test(String(legacyWriter.evidenceSha256 ?? ""))) {
+    throw new Error("WRITER_FENCE_GRANT_LEGACY_EVIDENCE_REJECTED");
   }
-  const grant = candidate as WriterFenceGrantCandidate;
-  if (grant.version !== 1 && grant.version !== 2) {
-    throw new Error("WRITER_FENCE_GRANT_VERSION_REJECTED");
-  }
-  validateCommonGrantFields(grant);
-  if (grant.version === 1) {
-    if (!grant.legacyWriter || ![401, 403].includes(grant.legacyWriter.negativeProbeStatus ?? 0)) {
-      throw new Error("WRITER_FENCE_GRANT_LEGACY_NEGATIVE_PROBE_REQUIRED");
-    }
-    if (!SHA256_PATTERN.test(String(grant.legacyWriter.evidenceSha256 ?? ""))) {
-      throw new Error("WRITER_FENCE_GRANT_LEGACY_EVIDENCE_REJECTED");
-    }
-    timestamp(String(grant.legacyWriter.revokedAt ?? ""), "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
-    return grant as WriterFenceGrantV1;
-  }
-  if (Object.prototype.hasOwnProperty.call(grant, "legacyWriter")) {
-    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_LEGACY_EVIDENCE_FORBIDDEN");
-  }
-  const history = grant.writerHistory;
+  timestamp(String(legacyWriter.revokedAt ?? ""), "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
+}
+
+function validateBootstrapHistory(history: WriterFenceGrantV2["writerHistory"] | undefined): void {
   if (history?.mode !== "bootstrap-no-legacy-writer") {
     throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_MODE_REQUIRED");
   }
@@ -256,6 +432,87 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
   ) {
     throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_ABSENCE_REQUIRED");
   }
+}
+
+function validateFleetCredential(
+  credential: WriterFenceFleetCredential | undefined,
+  connectionId: string,
+  runId: string,
+  kind: WriterFenceCredentialKind,
+): void {
+  if (!credential || credential.kind !== kind) {
+    throw new Error("WRITER_FENCE_GRANT_FLEET_CREDENTIAL_KIND_REJECTED");
+  }
+  if (credential.reference !== fleetCredentialReference(connectionId, kind)) {
+    throw new Error("WRITER_FENCE_GRANT_FLEET_CREDENTIAL_REFERENCE_REJECTED");
+  }
+  if (
+    !SHA256_PATTERN.test(credential.version)
+    || credential.attestationSha256 !== credential.version
+    || !SHA256_PATTERN.test(credential.binding)
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_FLEET_CREDENTIAL_ATTESTATION_REJECTED");
+  }
+  void runId;
+}
+
+export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(raw);
+  } catch {
+    throw new Error("WRITER_FENCE_GRANT_INVALID_JSON");
+  }
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("WRITER_FENCE_GRANT_INVALID_OBJECT");
+  }
+  const grant = candidate as WriterFenceGrantCandidate;
+  if (grant.version !== 1 && grant.version !== 2 && grant.version !== 3) {
+    throw new Error("WRITER_FENCE_GRANT_VERSION_REJECTED");
+  }
+  validateCommonGrantFields(grant);
+  if (grant.version === 1) {
+    validateLegacyGrantCredentialFields(grant);
+    validateLegacyWriterEvidence(grant.legacyWriter);
+    return grant as WriterFenceGrantV1;
+  }
+  if (grant.version === 3) {
+    if (
+      Object.prototype.hasOwnProperty.call(grant, "exclusiveCredentialRef")
+      || Object.prototype.hasOwnProperty.call(grant, "credentialVersion")
+      || Object.prototype.hasOwnProperty.call(grant, "credentialBinding")
+    ) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_SINGLE_CREDENTIAL_FORBIDDEN");
+    }
+    if (!grant.credentialBundle || grant.credentialBundle.version !== 1) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_BUNDLE_REQUIRED");
+    }
+    const bundle = grant.credentialBundle;
+    if (
+      !IDENTIFIER_PATTERN.test(String(bundle.keyVersion ?? ""))
+      || !SHA256_PATTERN.test(String(bundle.generationSha256 ?? ""))
+      || !SHA256_PATTERN.test(String(bundle.bundleSha256 ?? ""))
+      || !SHA256_PATTERN.test(String(bundle.signatureSha256 ?? ""))
+    ) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_BUNDLE_REJECTED");
+    }
+    validateFleetCredential(bundle.credentials?.agora, String(grant.connectionId), String(grant.runId), "agora");
+    validateFleetCredential(bundle.credentials?.winerim, String(grant.connectionId), String(grant.runId), "winerim");
+    const hasLegacy = Object.prototype.hasOwnProperty.call(grant, "legacyWriter");
+    const hasBootstrap = Object.prototype.hasOwnProperty.call(grant, "writerHistory");
+    if (hasLegacy === hasBootstrap) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_WRITER_HISTORY_AMBIGUOUS");
+    }
+    if (hasLegacy) validateLegacyWriterEvidence(grant.legacyWriter);
+    else validateBootstrapHistory(grant.writerHistory);
+    return grant as WriterFenceGrantV3;
+  }
+  validateLegacyGrantCredentialFields(grant);
+  if (Object.prototype.hasOwnProperty.call(grant, "legacyWriter")) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_LEGACY_EVIDENCE_FORBIDDEN");
+  }
+  const history = grant.writerHistory;
+  validateBootstrapHistory(history);
   const expectedCredentialRef = `runtime-vault://postgres/${grant.connectionId}/agora/agora`;
   if (grant.exclusiveCredentialRef !== expectedCredentialRef) {
     throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_AGORA_CREDENTIAL_REQUIRED");
@@ -280,7 +537,52 @@ export async function validateWriterFenceGrant(input: {
   if (await sha256Hex(input.proof) !== grant.proofSha256) {
     throw new Error("WRITER_FENCE_EXCLUSIVE_PROOF_MISMATCH");
   }
-  if (await writerFenceCredentialBinding({
+  if (grant.version === 3) {
+    for (const kind of ["agora", "winerim"] as const) {
+      const credential = grant.credentialBundle.credentials[kind];
+      if (await writerFenceFleetCredentialBinding({
+        credential: {
+          reference: credential.reference,
+          version: credential.version,
+          connectionId: grant.connectionId,
+          runId: grant.runId,
+          provider: "agora",
+          kind,
+        },
+        connectionId: grant.connectionId,
+        runId: grant.runId,
+      }) !== credential.binding) {
+        throw new Error("WRITER_FENCE_GRANT_CREDENTIAL_BINDING_MISMATCH");
+      }
+    }
+    const expectedGeneration = await sha256Hex([
+      "winerim-runtime-credential-set",
+      "1",
+      grant.connectionId,
+      grant.runId,
+      grant.credentialBundle.keyVersion,
+      grant.credentialBundle.credentials.agora.attestationSha256,
+      grant.credentialBundle.credentials.winerim.attestationSha256,
+    ].join("|"));
+    if (expectedGeneration !== grant.credentialBundle.generationSha256) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_GENERATION_MISMATCH");
+    }
+    const expectedDigests = await writerFenceCredentialBundleDigests({
+      proof: input.proof,
+      connectionId: grant.connectionId,
+      runId: grant.runId,
+      holderId: grant.holderId,
+      issuedAt: grant.issuedAt,
+      expiresAt: grant.expiresAt,
+      bundle: grant.credentialBundle,
+    });
+    if (
+      expectedDigests.bundleSha256 !== grant.credentialBundle.bundleSha256
+      || expectedDigests.signatureSha256 !== grant.credentialBundle.signatureSha256
+    ) {
+      throw new Error("WRITER_FENCE_GRANT_FLEET_SIGNATURE_MISMATCH");
+    }
+  } else if (await writerFenceCredentialBinding({
     reference: grant.exclusiveCredentialRef,
     version: grant.credentialVersion,
   }) !== grant.credentialBinding) {
@@ -293,15 +595,16 @@ export async function validateWriterFenceGrant(input: {
   if (expiresAt <= issuedAt) throw new Error("WRITER_FENCE_GRANT_WINDOW_INVALID");
   if (expiresAt <= nowMs) throw new Error("WRITER_FENCE_GRANT_EXPIRED");
   if (expiresAt - issuedAt > 2 * 60 * 60 * 1_000) throw new Error("WRITER_FENCE_GRANT_WINDOW_TOO_WIDE");
-  if (grant.version === 1) {
-    const revokedAt = timestamp(grant.legacyWriter.revokedAt, "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
+  if (grant.version === 1 || (grant.version === 3 && grant.legacyWriter)) {
+    const revokedAt = timestamp(grant.legacyWriter!.revokedAt, "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
     if (revokedAt > issuedAt || revokedAt > nowMs) {
       throw new Error("WRITER_FENCE_LEGACY_REVOKE_ORDER_INVALID");
     }
     return;
   }
+  const writerHistory = grant.writerHistory!;
   const verifiedAt = timestamp(
-    grant.writerHistory.verifiedAt,
+    writerHistory.verifiedAt,
     "WRITER_FENCE_GRANT_BOOTSTRAP_VERIFIED_AT_REJECTED",
   );
   if (verifiedAt > issuedAt || verifiedAt > nowMs) {
@@ -343,6 +646,14 @@ export async function validateActiveWriterFenceGrant(input: {
     holderId: input.holderId,
     ...(input.nowMs === undefined ? {} : { nowMs: input.nowMs }),
   });
+  if (grant.version === 3) {
+    if (
+      !SHA256_PATTERN.test(String(input.evidence.credentialSetSha256 ?? ""))
+      || input.evidence.credentialSetSha256 !== grant.credentialBundle.generationSha256
+    ) {
+      throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_SET_MISMATCH");
+    }
+  }
   return grant;
 }
 
@@ -351,6 +662,7 @@ export async function acquireExclusiveWriterFence(input: {
   connectionId: string;
   runId: string;
   holderId: string;
+  credential?: WriterFenceCredentialAttestation;
   ttlSeconds?: number;
 }): Promise<WriterFenceLease> {
   if (!input.env.WRITER_FENCE || typeof input.env.WRITER_FENCE.fetch !== "function") {
@@ -366,6 +678,14 @@ export async function acquireExclusiveWriterFence(input: {
     throw new Error("WRITER_FENCE_LEASE_TTL_REJECTED");
   }
   const requestedAt = Date.now();
+  const rawGrant = typeof input.env.CANARY_WRITER_FENCE_GRANT?.get === "function"
+    ? await input.env.CANARY_WRITER_FENCE_GRANT.get()
+    : undefined;
+  const parsedGrant = rawGrant === undefined ? undefined : parseWriterFenceGrant(rawGrant);
+  if (parsedGrant?.version === 3 && !input.credential) {
+    throw new Error("WRITER_FENCE_FLEET_CREDENTIAL_REQUIRED");
+  }
+  const requestNonce = parsedGrant?.version === 3 ? crypto.randomUUID() : undefined;
 
   const response = await input.env.WRITER_FENCE.fetch(
     "https://writer-fence.internal/v1/leases/acquire",
@@ -380,6 +700,9 @@ export async function acquireExclusiveWriterFence(input: {
         runId: input.runId,
         holderId: input.holderId,
         ttlSeconds,
+        ...(rawGrant === undefined ? {} : { rawGrant }),
+        ...(input.credential === undefined ? {} : { credential: input.credential }),
+        ...(requestNonce === undefined ? {} : { requestNonce }),
       }),
     },
   );
@@ -402,7 +725,21 @@ export async function acquireExclusiveWriterFence(input: {
   ) {
     throw new Error("WRITER_FENCE_LEASE_RESPONSE_INVALID");
   }
-  if (await writerFenceCredentialBinding({
+  if (parsedGrant?.version === 3) {
+    if (
+      lease.credentialKind !== input.credential?.kind
+      || lease.credentialAttestationSha256 !== input.credential?.version
+      || lease.credentialBundleSha256 !== parsedGrant.credentialBundle.bundleSha256
+      || lease.requestNonce !== requestNonce
+      || await writerFenceFleetCredentialBinding({
+        credential: input.credential!,
+        connectionId: input.connectionId,
+        runId: input.runId,
+      }) !== lease.credentialBinding
+    ) {
+      throw new Error("WRITER_FENCE_LEASE_FLEET_BINDING_MISMATCH");
+    }
+  } else if (await writerFenceCredentialBinding({
     reference: lease.credentialReference,
     version: lease.credentialVersion,
   }) !== lease.credentialBinding) {

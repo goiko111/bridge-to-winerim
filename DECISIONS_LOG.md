@@ -1,5 +1,14 @@
 # DECISIONS_LOG
 
+## 2026-08-04 - REST por conexion es observacional durante servicio
+
+- El export REST se limita a GET secuencial/rate-limited, ventanas <=31 dias
+  y artefactos privados por conexion.
+- Aunque dos pasadas coincidan, no autoriza merge, cursor ni cutover porque
+  PostgREST no comparte snapshot transaccional entre tablas/paginas.
+- La consistencia autoritativa exige export oficial en staging, writer fence
+  externo, drain >=130 s y reconcile exacto de dos capturas estables.
+
 ## 2026-08-04 - Baseline oficial, restore real y writer exclusivo
 
 - Todo plan de merge se liga a los bytes/SHA-256 del export Lovable y a un

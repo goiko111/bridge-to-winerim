@@ -58,10 +58,21 @@ import {
   authorizeWriterFenceMutation,
   validateActiveWriterFenceGrant,
   writerFenceCredentialBinding,
+  writerFenceFleetCredentialBinding,
   type WriterFenceActiveScopeEvidence,
   type WriterFenceClientEnvironment,
+  type WriterFenceCredentialAttestation,
+  type WriterFenceCredentialKind,
+  type WriterFenceGrant,
   type WriterFenceMutationAuthorization,
 } from "../../../canary-failclosed/src/writerFence";
+import {
+  FLEET_EXECUTOR_MODE,
+  isEnvelopeInsideActiveFleetScope,
+  loadActiveFleetScope,
+  resolveFleetWriterFenceMaterial,
+  type ActiveFleetScope,
+} from "./fleetScope";
 
 const STAGING_ENVIRONMENT = "staging";
 const RESCUE_PRODUCTION_ENVIRONMENT = "rescue-production";
@@ -100,6 +111,7 @@ export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironme
   RUNTIME_AGORA_CATALOG_BASE_URL?: string;
   RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS?: string;
   RUNTIME_AGORA_CATALOG_PROFILE_JSON?: string;
+  RUNTIME_FLEET_CATALOG_PROFILES_JSON?: string;
   RUNTIME_CANARY_CONNECTION_ID?: string;
   CANARY_RUN_ID?: string;
   CANARY_MESSAGE_ID?: string;
@@ -112,6 +124,7 @@ export interface MiddlewareRuntimeExecutorEnv extends WriterFenceClientEnvironme
   MIDDLEWARE_DB?: HyperdriveBinding;
   RUNTIME_VAULT_KEY?: RuntimeVaultSecretBinding;
   CANARY_WRITER_FENCE_GRANT?: RuntimeVaultSecretBinding;
+  RUNTIME_FLEET_WRITER_FENCE_BUNDLE?: RuntimeVaultSecretBinding;
 }
 
 const CANARY_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
@@ -151,6 +164,32 @@ function rescueExecutorScope(env: MiddlewareRuntimeExecutorEnv): ExclusiveCanary
   };
 }
 
+function runtimeMode(env: MiddlewareRuntimeExecutorEnv): string {
+  return String(env.RUNTIME_MODE ?? "").trim().toLowerCase();
+}
+
+function rescueCanaryMode(env: MiddlewareRuntimeExecutorEnv): boolean {
+  return runtimeMode(env) === EXCLUSIVE_CANARY_EXECUTOR_MODE;
+}
+
+function fleetMode(env: MiddlewareRuntimeExecutorEnv): boolean {
+  return runtimeMode(env) === FLEET_EXECUTOR_MODE;
+}
+
+export type WriterFenceExecutionScope = Readonly<{
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  credentialSetSha256?: string;
+  env: MiddlewareRuntimeExecutorEnv;
+}>;
+
+type ResolvedRuntimeScope = Readonly<{
+  connectionId: string;
+  runId: string;
+  fleet: ActiveFleetScope | null;
+}>;
+
 async function rescueRequestEnvelope(request: Request): Promise<unknown> {
   const declaredLength = Number(request.headers.get("content-length") || "0");
   if (Number.isFinite(declaredLength) && declaredLength > MAX_EXECUTOR_SCOPE_REQUEST_BYTES) return null;
@@ -167,6 +206,7 @@ interface ActiveWriterFenceScopeRow extends Record<string, unknown> {
   connection_id: string;
   run_id: string;
   writer_fence_grant_sha256: string;
+  credential_set_sha256: string | null;
 }
 
 async function loadActiveWriterFenceEvidence(
@@ -178,12 +218,15 @@ async function loadActiveWriterFenceEvidence(
     SELECT
       scope.connection_id::text AS connection_id,
       scope.run_id,
-      scope.writer_fence_grant_sha256
+      scope.writer_fence_grant_sha256,
+      scope.credential_set_sha256
     FROM public.runtime_canary_connections scope
     WHERE scope.connection_id = ${connectionId}::uuid
       AND scope.run_id = ${runId}
       AND scope.active = true
       AND scope.status = 'ACTIVE'
+      AND scope.approved_at <= now()
+      AND scope.expires_at > now()
       AND scope.writer_fence_grant_sha256 IS NOT NULL
     LIMIT 2
   `);
@@ -193,7 +236,70 @@ async function loadActiveWriterFenceEvidence(
     connectionId: String(row.connection_id),
     runId: String(row.run_id),
     writerFenceGrantSha256: String(row.writer_fence_grant_sha256),
+    ...(row.credential_set_sha256 == null
+      ? {}
+      : { credentialSetSha256: String(row.credential_set_sha256) }),
   };
+}
+
+async function resolveRuntimeScope(
+  env: MiddlewareRuntimeExecutorEnv,
+  database: DatabaseAdapter,
+  envelope: RuntimeEnvelopeV1,
+): Promise<ResolvedRuntimeScope | null> {
+  const environment = String(env.ENVIRONMENT ?? "").trim().toLowerCase();
+  if (environment !== RESCUE_PRODUCTION_ENVIRONMENT) {
+    const connectionId = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
+    const runId = canaryIdentifier(env.CANARY_RUN_ID);
+    return connectionId === envelope.connectionId && runId
+      ? Object.freeze({ connectionId, runId, fleet: null })
+      : null;
+  }
+  if (rescueCanaryMode(env)) {
+    const scope = rescueExecutorScope(env);
+    return scope && await isEnvelopeInsideExclusiveCanaryScope(envelope, scope)
+      ? Object.freeze({ connectionId: scope.connectionId, runId: scope.runId, fleet: null })
+      : null;
+  }
+  if (!fleetMode(env)) return null;
+  const scope = await loadActiveFleetScope(database, envelope.connectionId);
+  return scope && isEnvelopeInsideActiveFleetScope(envelope, scope)
+    ? Object.freeze({ connectionId: scope.connectionId, runId: scope.runId, fleet: scope })
+    : null;
+}
+
+async function writerFenceExecutionScope(
+  env: MiddlewareRuntimeExecutorEnv,
+  scope: ResolvedRuntimeScope,
+): Promise<WriterFenceExecutionScope> {
+  if (scope.fleet) {
+    if (typeof env.RUNTIME_FLEET_WRITER_FENCE_BUNDLE?.get !== "function") {
+      throw new Error("RUNTIME_FLEET_FENCE_BUNDLE_MISSING");
+    }
+    const material = await resolveFleetWriterFenceMaterial(
+      env.RUNTIME_FLEET_WRITER_FENCE_BUNDLE,
+      scope.fleet,
+    );
+    return Object.freeze({
+      connectionId: scope.connectionId,
+      runId: scope.runId,
+      holderId: material.holderId,
+      credentialSetSha256: scope.fleet.credentialSetSha256,
+      env: {
+        ...env,
+        CANARY_WRITER_FENCE_GRANT: { get: async () => material.rawGrant },
+        CANARY_WRITER_FENCE_PROOF: { get: async () => material.proof },
+      },
+    });
+  }
+  const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
+  if (!holderId) throw new Error("WRITER_FENCE_EXECUTOR_SCOPE_MISSING");
+  return Object.freeze({
+    connectionId: scope.connectionId,
+    runId: scope.runId,
+    holderId,
+    env,
+  });
 }
 
 async function activeWriterFenceGrant(input: {
@@ -203,6 +309,7 @@ async function activeWriterFenceGrant(input: {
   runId: string;
   holderId: string;
   nowMs: number;
+  expectedCredentialSetSha256?: string;
 }) {
   if (
     typeof input.env.CANARY_WRITER_FENCE_PROOF?.get !== "function"
@@ -216,6 +323,12 @@ async function activeWriterFenceGrant(input: {
     input.runId,
   );
   if (!evidence) throw new Error("WRITER_FENCE_ACTIVE_SCOPE_NOT_FOUND");
+  if (
+    input.expectedCredentialSetSha256 !== undefined
+    && evidence.credentialSetSha256 !== input.expectedCredentialSetSha256
+  ) {
+    throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_SET_MISMATCH");
+  }
   const rawGrant = await input.env.CANARY_WRITER_FENCE_GRANT.get();
   const proof = await input.env.CANARY_WRITER_FENCE_PROOF.get();
   return validateActiveWriterFenceGrant({
@@ -229,37 +342,12 @@ async function activeWriterFenceGrant(input: {
   });
 }
 
-async function assertExclusiveWriterFence(
-  env: MiddlewareRuntimeExecutorEnv,
-  database: DatabaseAdapter,
+function scopedFleetAttestation(
+  attestation: ReturnType<typeof runtimeCredentialAttestation>,
   connectionId: string,
-  credential: SecretTextPort,
-  now: () => number,
-  expectedCredentialKind: "agora" | "winerim" = "winerim",
-  requireFence = false,
-): Promise<WriterFenceMutationAuthorization | null> {
-  if (
-    !requireFence
-    && String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
-  ) return null;
-  const runId = canaryIdentifier(env.CANARY_RUN_ID);
-  const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
-  if (!runId || !holderId) {
-    throw new Error("WRITER_FENCE_EXECUTOR_SCOPE_MISSING");
-  }
-  const rescueProduction = String(env.ENVIRONMENT ?? "").trim().toLowerCase()
-    === RESCUE_PRODUCTION_ENVIRONMENT;
-  const grant = rescueProduction
-    ? await activeWriterFenceGrant({
-      env,
-      database,
-      connectionId,
-      runId,
-      holderId,
-      nowMs: now(),
-    })
-    : null;
-  const attestation = runtimeCredentialAttestation(credential);
+  runId: string,
+  expectedCredentialKind: WriterFenceCredentialKind,
+): WriterFenceCredentialAttestation {
   if (
     attestation.connectionId !== connectionId
     || attestation.provider !== "agora"
@@ -267,14 +355,108 @@ async function assertExclusiveWriterFence(
   ) {
     throw new Error("WRITER_FENCE_CREDENTIAL_SCOPE_MISMATCH");
   }
-  if (grant && (
-    grant.exclusiveCredentialRef !== attestation.reference
-    || grant.credentialVersion !== attestation.version
-    || grant.credentialBinding !== await writerFenceCredentialBinding(attestation)
-  )) {
+  return Object.freeze({ ...attestation, runId });
+}
+
+async function assertCredentialSelectedByGrant(input: {
+  grant: WriterFenceGrant;
+  attestation: WriterFenceCredentialAttestation;
+  expectedCredentialKind: WriterFenceCredentialKind;
+  credentialSetSha256?: string;
+}): Promise<void> {
+  if (input.grant.version === 3) {
+    if (
+      input.credentialSetSha256 === undefined
+      || input.grant.credentialBundle.generationSha256 !== input.credentialSetSha256
+    ) {
+      throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_SET_MISMATCH");
+    }
+    const selected = input.grant.credentialBundle.credentials[input.expectedCredentialKind];
+    if (
+      selected.kind !== input.expectedCredentialKind
+      || selected.reference !== input.attestation.reference
+      || selected.version !== input.attestation.version
+      || selected.attestationSha256 !== input.attestation.version
+      || selected.binding !== await writerFenceFleetCredentialBinding({
+        credential: input.attestation,
+        connectionId: input.grant.connectionId,
+        runId: input.grant.runId,
+      })
+    ) {
+      throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_MISMATCH");
+    }
+    return;
+  }
+  if (input.credentialSetSha256 !== undefined) {
+    throw new Error("WRITER_FENCE_FLEET_GRANT_V3_REQUIRED");
+  }
+  if (
+    input.grant.exclusiveCredentialRef !== input.attestation.reference
+    || input.grant.credentialVersion !== input.attestation.version
+    || input.grant.credentialBinding !== await writerFenceCredentialBinding(input.attestation)
+  ) {
     throw new Error("WRITER_FENCE_ACTIVE_CREDENTIAL_MISMATCH");
   }
-  const lease = await acquireExclusiveWriterFence({ env, connectionId, runId, holderId });
+}
+
+export async function assertExclusiveWriterFence(
+  env: MiddlewareRuntimeExecutorEnv,
+  database: DatabaseAdapter,
+  connectionId: string,
+  credential: SecretTextPort,
+  now: () => number,
+  expectedCredentialKind: "agora" | "winerim" = "winerim",
+  requireFence = false,
+  executionScope?: WriterFenceExecutionScope,
+): Promise<WriterFenceMutationAuthorization | null> {
+  if (
+    !requireFence
+    && String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
+  ) return null;
+  const runId = executionScope?.runId ?? canaryIdentifier(env.CANARY_RUN_ID);
+  const holderId = executionScope?.holderId ?? canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
+  const fenceEnv = executionScope?.env ?? env;
+  if (!runId || !holderId || (executionScope && executionScope.connectionId !== connectionId)) {
+    throw new Error("WRITER_FENCE_EXECUTOR_SCOPE_MISSING");
+  }
+  const rescueProduction = String(env.ENVIRONMENT ?? "").trim().toLowerCase()
+    === RESCUE_PRODUCTION_ENVIRONMENT;
+  const grant = rescueProduction
+    ? await activeWriterFenceGrant({
+      env: fenceEnv,
+      database,
+      connectionId,
+      runId,
+      holderId,
+      nowMs: now(),
+      ...(executionScope?.credentialSetSha256 === undefined
+        ? {}
+        : { expectedCredentialSetSha256: executionScope.credentialSetSha256 }),
+    })
+    : null;
+  const attestation = scopedFleetAttestation(
+    runtimeCredentialAttestation(credential),
+    connectionId,
+    runId,
+    expectedCredentialKind,
+  );
+  if (grant) {
+    await assertCredentialSelectedByGrant({
+      grant,
+      attestation,
+      expectedCredentialKind,
+      ...(executionScope?.credentialSetSha256 === undefined
+        ? {}
+        : { credentialSetSha256: executionScope.credentialSetSha256 }),
+    });
+  }
+  const lease = await acquireExclusiveWriterFence({
+    env: fenceEnv,
+    connectionId,
+    runId,
+    holderId,
+    ...(grant?.version === 3 ? { credential: attestation } : {}),
+  });
   const authorization = await authorizeWriterFenceMutation({
     lease,
     credential: attestation,
@@ -288,7 +470,7 @@ function executionEnvironmentAllowed(env: MiddlewareRuntimeExecutorEnv): boolean
   const environment = String(env.ENVIRONMENT ?? "").trim().toLowerCase();
   if (environment === STAGING_ENVIRONMENT) return true;
   return environment === RESCUE_PRODUCTION_ENVIRONMENT
-    && String(env.RUNTIME_MODE ?? "").trim().toLowerCase() === EXCLUSIVE_CANARY_EXECUTOR_MODE;
+    && [EXCLUSIVE_CANARY_EXECUTOR_MODE, FLEET_EXECUTOR_MODE].includes(runtimeMode(env));
 }
 
 export interface RuntimeExecutorWorkerDependencies {
@@ -410,6 +592,7 @@ function createStockPorts(
   env: MiddlewareRuntimeExecutorEnv,
   database: DatabaseAdapter,
   dependencies: Required<Pick<RuntimeExecutorWorkerDependencies, "request" | "now" | "sleep">>,
+  executionScope?: WriterFenceExecutionScope,
 ): ProviderNeutralRuntimeExecutorPorts {
   const target = allowedWinerimTarget(env);
   const credential = context.credentials.winerim ?? unavailableCredential();
@@ -438,6 +621,9 @@ function createStockPorts(
             context.envelope.connectionId,
             credential,
             dependencies.now,
+            "winerim",
+            false,
+            executionScope,
           );
           return transport.send(request);
         },
@@ -638,12 +824,42 @@ function catalogProfile(value: unknown): AgoraCatalogXmlProfile | null {
   };
 }
 
+function fleetCatalogProfiles(value: unknown): Readonly<Record<string, AgoraCatalogXmlProfile>> | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+  const profiles: Record<string, AgoraCatalogXmlProfile> = {};
+  for (const [connectionId, profileValue] of Object.entries(candidate as Record<string, unknown>)) {
+    if (!isDeployableRuntimeCanaryConnectionId(connectionId)) return null;
+    const profile = catalogProfile(JSON.stringify(profileValue));
+    if (!profile) return null;
+    profiles[connectionId] = profile;
+  }
+  return Object.keys(profiles).length > 0 ? Object.freeze(profiles) : null;
+}
+
+function catalogProfileForConnection(
+  env: MiddlewareRuntimeExecutorEnv,
+  connectionId: string,
+): AgoraCatalogXmlProfile | null {
+  if (!fleetMode(env)) return catalogProfile(env.RUNTIME_AGORA_CATALOG_PROFILE_JSON);
+  return fleetCatalogProfiles(env.RUNTIME_FLEET_CATALOG_PROFILES_JSON)?.[connectionId] ?? null;
+}
+
 function catalogTransportConfigurationReady(
   env: MiddlewareRuntimeExecutorEnv,
   connectionBaseUrl?: string,
+  connectionId?: string,
 ): boolean {
-  const baseUrl = String(env.RUNTIME_AGORA_CATALOG_BASE_URL ?? "").trim();
   const expectedBaseUrl = String(connectionBaseUrl ?? "").trim();
+  const baseUrl = fleetMode(env)
+    ? expectedBaseUrl
+    : String(env.RUNTIME_AGORA_CATALOG_BASE_URL ?? "").trim();
   const allowedHosts = String(env.RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS ?? "")
     .split(",")
     .map((host) => host.trim().toLowerCase())
@@ -659,7 +875,7 @@ function catalogTransportConfigurationReady(
       && !parsed.hash
       && (parsed.pathname === "/" || parsed.pathname === "")
       && allowedHosts.includes(parsed.host.toLowerCase())
-      && catalogProfile(env.RUNTIME_AGORA_CATALOG_PROFILE_JSON) !== null;
+      && catalogProfileForConnection(env, String(connectionId ?? "").trim()) !== null;
   } catch {
     return false;
   }
@@ -671,8 +887,8 @@ function defaultCatalogApply(input: Readonly<{
   baseUrl: string;
   request: HttpRequestPort;
 }>): AgoraCatalogApplyAndReadbackPort | null {
-  const profile = catalogProfile(input.env.RUNTIME_AGORA_CATALOG_PROFILE_JSON);
-  if (!profile || !catalogTransportConfigurationReady(input.env, input.baseUrl)) return null;
+  const profile = catalogProfileForConnection(input.env, input.connectionId);
+  if (!profile || !catalogTransportConfigurationReady(input.env, input.baseUrl, input.connectionId)) return null;
   return createAgoraCatalogPlanApplyAndReadbackPort({
     enabled: input.env.RUNTIME_CATALOG_APPLY_ENABLED,
     connectionId: input.connectionId,
@@ -688,7 +904,10 @@ function defaultCatalogApply(input: Readonly<{
 
 function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
   if (!executionGateOpen(env)) return [];
-  if (String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT) {
+  if (
+    String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
+    && rescueCanaryMode(env)
+  ) {
     const scope = rescueExecutorScope(env);
     return scope ? [scope.job] : [];
   }
@@ -725,11 +944,62 @@ function normalizedDependencies(
   };
 }
 
+function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
+  const catalogApplyRequested = switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED);
+  const missingBindings = [
+    !env.MIDDLEWARE_DB ? "MIDDLEWARE_DB" : null,
+    typeof env.RUNTIME_VAULT_KEY?.get !== "function" ? "RUNTIME_VAULT_KEY" : null,
+    !String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim() ? "RUNTIME_VAULT_KEY_VERSION" : null,
+    !String(env.WINERIM_API_BASE_URL ?? "").trim() ? "WINERIM_API_BASE_URL" : null,
+    !String(env.WINERIM_ALLOWED_HOSTS ?? "").trim() ? "WINERIM_ALLOWED_HOSTS" : null,
+    !env.WRITER_FENCE || typeof env.WRITER_FENCE.fetch !== "function" ? "WRITER_FENCE" : null,
+    typeof env.RUNTIME_FLEET_WRITER_FENCE_BUNDLE?.get !== "function"
+      ? "RUNTIME_FLEET_WRITER_FENCE_BUNDLE"
+      : null,
+    catalogApplyRequested && !String(env.RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS ?? "").trim()
+      ? "RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS"
+      : null,
+    catalogApplyRequested && fleetCatalogProfiles(env.RUNTIME_FLEET_CATALOG_PROFILES_JSON) === null
+      ? "RUNTIME_FLEET_CATALOG_PROFILES_JSON"
+      : null,
+  ].filter((value): value is string => !!value);
+  try {
+    allowedWinerimTarget(env);
+  } catch {
+    if (!missingBindings.includes("WINERIM_API_TARGET")) missingBindings.push("WINERIM_API_TARGET");
+  }
+  const executionEnabled = switchEnabled(env.RUNTIME_EXECUTION_ENABLED);
+  const ready = executionEnvironmentAllowed(env)
+    && executionEnabled
+    && missingBindings.length === 0;
+  return json({
+    ok: ready,
+    service: "winerim-middleware-runtime-executor",
+    connectionId: null,
+    environment: env.ENVIRONMENT ?? null,
+    release: env.RELEASE ?? null,
+    stagingOnly: false,
+    executionScope: "fleet-per-message",
+    scopeBinding: "connectionId+runId+credentialSetSha256",
+    writerFenceReady: ready,
+    exactCanaryScopeReady: false,
+    fleetScopeReady: ready,
+    executionEnabled,
+    enabledJobs: enabledJobs(env),
+    missingBindings,
+    credentials: "validated-per-message",
+    reason: ready ? null : "RUNTIME_EXECUTOR_NOT_READY",
+  }, ready ? 200 : 503);
+}
+
 async function readiness(
   env: MiddlewareRuntimeExecutorEnv,
   dependencies: NormalizedWorkerDependencies,
 ): Promise<Response> {
   const environment = String(env.ENVIRONMENT ?? "").trim().toLowerCase();
+  if (environment === RESCUE_PRODUCTION_ENVIRONMENT && fleetMode(env)) {
+    return fleetReadiness(env);
+  }
   const executionEnabled = String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true";
   const salesFlags = salesLaneFlags(env);
   const catalogFlags = catalogSwitches(env);
@@ -929,26 +1199,29 @@ async function readiness(
 function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
   const rescueProduction = String(env.ENVIRONMENT ?? "").trim().toLowerCase()
     === RESCUE_PRODUCTION_ENVIRONMENT;
+  const fleet = rescueProduction && fleetMode(env);
   const rescueFenceReady = String(env.ENVIRONMENT ?? "").trim().toLowerCase() !== RESCUE_PRODUCTION_ENVIRONMENT
     || (
-      canaryIdentifier(env.CANARY_RUN_ID) !== null
-      && canaryIdentifier(env.WRITER_FENCE_HOLDER_ID) !== null
-      && !!env.WRITER_FENCE
+      !!env.WRITER_FENCE
       && typeof env.WRITER_FENCE.fetch === "function"
-      && !!env.CANARY_WRITER_FENCE_PROOF
-      && typeof env.CANARY_WRITER_FENCE_PROOF.get === "function"
-      && !!env.CANARY_WRITER_FENCE_GRANT
-      && typeof env.CANARY_WRITER_FENCE_GRANT.get === "function"
-      && /^[a-f0-9]{64}$/.test(
-        String(env.CANARY_EXCLUSIVE_CREDENTIAL_VERSION ?? "").trim().toLowerCase(),
-      )
+      && (fleet
+        ? typeof env.RUNTIME_FLEET_WRITER_FENCE_BUNDLE?.get === "function"
+        : (
+          canaryIdentifier(env.CANARY_RUN_ID) !== null
+          && canaryIdentifier(env.WRITER_FENCE_HOLDER_ID) !== null
+          && typeof env.CANARY_WRITER_FENCE_PROOF?.get === "function"
+          && typeof env.CANARY_WRITER_FENCE_GRANT?.get === "function"
+          && /^[a-f0-9]{64}$/.test(
+            String(env.CANARY_EXCLUSIVE_CREDENTIAL_VERSION ?? "").trim().toLowerCase(),
+          )
+        ))
     );
   return executionEnvironmentAllowed(env)
     && rescueFenceReady
-    && (!rescueProduction || rescueExecutorScope(env) !== null)
-    && (!rescueProduction || rescueCanaryPolicy(env) !== null)
+    && (!rescueProduction || fleet || rescueExecutorScope(env) !== null)
+    && (!rescueProduction || fleet || rescueCanaryPolicy(env) !== null)
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
-    && isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID)
+    && (fleet || isDeployableRuntimeCanaryConnectionId(env.RUNTIME_CANARY_CONNECTION_ID))
     && typeof env.RUNTIME_VAULT_KEY?.get === "function";
 }
 
@@ -969,7 +1242,10 @@ export function createMiddlewareRuntimeExecutorWorker(
         }).fetch(request);
       }
 
-      if (String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT) {
+      if (
+        String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
+        && rescueCanaryMode(env)
+      ) {
         const scope = rescueExecutorScope(env);
         const envelope = await rescueRequestEnvelope(request);
         if (!scope || !isRuntimeEnvelope(envelope)
@@ -989,116 +1265,134 @@ export function createMiddlewareRuntimeExecutorWorker(
       if (typeof env.RUNTIME_VAULT_KEY?.get !== "function") {
         return json({ ok: false, failure: { httpStatus: 503, message: "RUNTIME_VAULT_UNAVAILABLE" } }, 503);
       }
-      const options: RuntimeExecutorCompositionOptions = {
-        environment: env.ENVIRONMENT,
-        executionScope: String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
-          ? "exclusive-canary"
-          : "staging",
-        executionEnabled: env.RUNTIME_EXECUTION_ENABLED,
-        allowedConnectionId: String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim(),
-        enabledJobs: enabledJobs(env),
-        connections: createPostgresRuntimeConnectionPort(database),
-        credentials: createPostgresEncryptedCredentialPort(database, {
-          masterKey: env.RUNTIME_VAULT_KEY,
-          keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
-          runId: String(env.CANARY_RUN_ID ?? "").trim(),
-        }),
-        ports: {
-          create: (context) => createStockPorts(context, env, database, resolved),
-        },
-      };
-      const stockExecutor = createConnectionScopedRuntimeExecutor(options);
-      const scopedConnections = createPostgresRuntimeConnectionPort(database);
-      const scopedCredentials = createPostgresEncryptedCredentialPort(database, {
-        masterKey: env.RUNTIME_VAULT_KEY,
-        keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
-        runId: String(env.CANARY_RUN_ID ?? "").trim(),
-      });
-      const guardedCatalogApply: AgoraCatalogApplyAndReadbackPort = {
-        async applyAndReadback(input) {
-          const expectedProductId = String(env.ENVIRONMENT ?? "").trim().toLowerCase()
-            === RESCUE_PRODUCTION_ENVIRONMENT
-            ? configuredCatalogProductId(env)
-            : input.plan.operations[0]?.desired.productId ?? null;
-          if (
-            input.plan.operations.length !== 1
-            || !expectedProductId
-            || input.plan.operations[0]?.desired.productId !== expectedProductId
-          ) {
-            return { ok: false, code: "APPLY_REJECTED" };
-          }
-          const connection = await scopedConnections.load(input.connectionId);
-          if (!connection || connection.connectionId !== input.connectionId) {
-            return { ok: false, code: "APPLY_REJECTED" };
-          }
-          if (
-            String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
-            && !catalogTransportConfigurationReady(env, connection.baseUrl)
-          ) {
-            return { ok: false, code: "APPLY_REJECTED" };
-          }
-          const rawCatalogApply = resolved.catalogApply({
-            env,
-            connectionId: input.connectionId,
-            baseUrl: connection.baseUrl,
-            request: { request: (target, init) => resolved.request(target, init) },
-          });
-          if (!rawCatalogApply) return { ok: false, code: "APPLY_REJECTED" };
-          await assertExclusiveWriterFence(
-            env,
-            database,
-            input.connectionId,
-            input.credential,
-            resolved.now,
-            "agora",
-            true,
-          );
-          return rawCatalogApply.applyAndReadback(input);
-        },
-      };
-      const catalogExecutor = createPrivateCatalogLaneExecutor({
-        allowedConnectionId: String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim(),
-        switches: catalogSwitches(env),
-        database,
-        connections: scopedConnections,
-        credentials: scopedCredentials,
-        ...(resolved.catalogAdapterFactory
-          ? { adapterFactory: resolved.catalogAdapterFactory }
-          : {}),
-        agoraApply: guardedCatalogApply,
-      });
       return createRuntimeExecutorService({
         async execute(envelope): Promise<RuntimeExecutionResult> {
+          let runtimeScope: ResolvedRuntimeScope | null;
+          try {
+            runtimeScope = await resolveRuntimeScope(env, database, envelope);
+          } catch {
+            return failure(503, "RUNTIME_SCOPE_LOOKUP_UNAVAILABLE", true);
+          }
+          if (!runtimeScope) {
+            const configuredConnectionId = String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim();
+            return failure(422, fleetMode(env)
+              ? "RUNTIME_FLEET_SCOPE_REJECTED"
+              : configuredConnectionId !== envelope.connectionId
+                ? "RUNTIME_CANARY_CONNECTION_REJECTED"
+                : "RUNTIME_CANARY_SCOPE_REJECTED");
+          }
+
+          const scopedConnections = createPostgresRuntimeConnectionPort(database);
+          const scopedCredentials = createPostgresEncryptedCredentialPort(database, {
+            masterKey: env.RUNTIME_VAULT_KEY!,
+            keyVersion: String(env.RUNTIME_VAULT_KEY_VERSION ?? "").trim(),
+            runId: runtimeScope.runId,
+          });
+          let fenceScope: WriterFenceExecutionScope | undefined;
           if (
             String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
             && !envelopeDryRun(envelope)
           ) {
-            const runId = canaryIdentifier(env.CANARY_RUN_ID);
-            const holderId = canaryIdentifier(env.WRITER_FENCE_HOLDER_ID);
-            if (!runId || !holderId) {
-              return failure(403, "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED");
-            }
             try {
+              fenceScope = await writerFenceExecutionScope(env, runtimeScope);
               await activeWriterFenceGrant({
-                env,
+                env: fenceScope.env,
                 database,
                 connectionId: envelope.connectionId,
-                runId,
-                holderId,
+                runId: fenceScope.runId,
+                holderId: fenceScope.holderId,
                 nowMs: resolved.now(),
+                ...(fenceScope.credentialSetSha256 === undefined
+                  ? {}
+                  : { expectedCredentialSetSha256: fenceScope.credentialSetSha256 }),
               });
             } catch {
               return failure(403, "WRITER_FENCE_ACTIVE_SCOPE_EVIDENCE_REJECTED");
             }
           }
+
+          const options: RuntimeExecutorCompositionOptions = {
+            environment: env.ENVIRONMENT,
+            executionScope: String(env.ENVIRONMENT ?? "").trim().toLowerCase()
+              === RESCUE_PRODUCTION_ENVIRONMENT
+              ? "exclusive-canary"
+              : "staging",
+            executionEnabled: env.RUNTIME_EXECUTION_ENABLED,
+            allowedConnectionId: runtimeScope.connectionId,
+            enabledJobs: enabledJobs(env),
+            connections: scopedConnections,
+            credentials: scopedCredentials,
+            ports: {
+              create: (context) => createStockPorts(
+                context,
+                env,
+                database,
+                resolved,
+                fenceScope,
+              ),
+            },
+          };
+          const stockExecutor = createConnectionScopedRuntimeExecutor(options);
+          const guardedCatalogApply: AgoraCatalogApplyAndReadbackPort = {
+            async applyAndReadback(input) {
+              const expectedProductId = rescueCanaryMode(env)
+                ? configuredCatalogProductId(env)
+                : input.plan.operations[0]?.desired.productId ?? null;
+              if (
+                input.connectionId !== runtimeScope.connectionId
+                || input.plan.operations.length !== 1
+                || !expectedProductId
+                || input.plan.operations[0]?.desired.productId !== expectedProductId
+              ) {
+                return { ok: false, code: "APPLY_REJECTED" };
+              }
+              const connection = await scopedConnections.load(input.connectionId);
+              if (!connection || connection.connectionId !== input.connectionId) {
+                return { ok: false, code: "APPLY_REJECTED" };
+              }
+              if (
+                String(env.ENVIRONMENT ?? "").trim().toLowerCase() === RESCUE_PRODUCTION_ENVIRONMENT
+                && !catalogTransportConfigurationReady(env, connection.baseUrl, input.connectionId)
+              ) {
+                return { ok: false, code: "APPLY_REJECTED" };
+              }
+              const rawCatalogApply = resolved.catalogApply({
+                env,
+                connectionId: input.connectionId,
+                baseUrl: connection.baseUrl,
+                request: { request: (target, init) => resolved.request(target, init) },
+              });
+              if (!rawCatalogApply) return { ok: false, code: "APPLY_REJECTED" };
+              await assertExclusiveWriterFence(
+                env,
+                database,
+                input.connectionId,
+                input.credential,
+                resolved.now,
+                "agora",
+                true,
+                fenceScope,
+              );
+              return rawCatalogApply.applyAndReadback(input);
+            },
+          };
+          const catalogExecutor = createPrivateCatalogLaneExecutor({
+            allowedConnectionId: runtimeScope.connectionId,
+            switches: catalogSwitches(env),
+            database,
+            connections: scopedConnections,
+            credentials: scopedCredentials,
+            ...(resolved.catalogAdapterFactory
+              ? { adapterFactory: resolved.catalogAdapterFactory }
+              : {}),
+            agoraApply: guardedCatalogApply,
+          });
+
           if (CATALOG_JOBS.has(envelope.job)) return catalogExecutor.execute(envelope);
           if (envelope.job === "outbound.process") {
             return failure(503, "OUTBOUND_EXCLUSIVE_QUEUE_NOT_CONFIGURED");
           }
           if (!isSalesLaneJob(envelope.job)) return stockExecutor.execute(envelope);
-          if (envelope.connectionId !== String(env.RUNTIME_CANARY_CONNECTION_ID ?? "").trim()) {
-            return failure(422, "RUNTIME_CANARY_CONNECTION_REJECTED");
-          }
           const flags = salesLaneFlags(env);
           const salesGate = salesLaneGateFailure(flags, envelopeDryRun(envelope), envelope.job);
           if (salesGate) return failure(503, salesGate, true);
@@ -1139,6 +1433,8 @@ export function createMiddlewareRuntimeExecutorWorker(
                 winerim,
                 resolved.now,
                 "winerim",
+                false,
+                fenceScope,
               ).then(() => undefined),
             });
           } catch {
