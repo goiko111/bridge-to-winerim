@@ -2,6 +2,7 @@ import { sql, type DatabaseAdapter } from "../../middleware-api/src/db";
 import {
   isDeployableRuntimeCanaryConnectionId,
   type RuntimeEnvelopeV1,
+  type RuntimeJob,
 } from "../../middleware-runtime/src/contracts";
 import {
   parseWriterFenceGrant,
@@ -16,6 +17,12 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_FLEET_FENCE_BUNDLE_BYTES = 512 * 1024;
 
 export const FLEET_EXECUTOR_MODE = "fleet-executor" as const;
+export const FLEET_SALES_RUNTIME_JOB_ALLOWLIST = Object.freeze([
+  "sales.auto-sync",
+  "sales.sync-intraday",
+] as const satisfies readonly RuntimeJob[]);
+
+export type FleetSalesRuntimeJob = typeof FLEET_SALES_RUNTIME_JOB_ALLOWLIST[number];
 
 export type ActiveFleetScope = Readonly<{
   connectionId: string;
@@ -23,6 +30,7 @@ export type ActiveFleetScope = Readonly<{
   generationMode: string;
   credentialSetSha256: string;
   writerFenceGrantSha256: string;
+  runtimeSalesJobAllowlist: readonly FleetSalesRuntimeJob[];
 }>;
 
 export type FleetWriterFenceMaterial = Readonly<{
@@ -37,6 +45,10 @@ type ActiveFleetScopeRow = Record<string, unknown> & {
   generation_mode: unknown;
   credential_set_sha256: unknown;
   writer_fence_grant_sha256: unknown;
+  provider_config: unknown;
+  catalog_sync_enabled: unknown;
+  sync_mode: unknown;
+  write_mode: unknown;
 };
 
 type FleetCredentialGenerationRow = Record<string, unknown> & {
@@ -57,18 +69,42 @@ function text(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function exactFleetSalesPolicy(row: ActiveFleetScopeRow): readonly FleetSalesRuntimeJob[] | null {
+  if (
+    row.catalog_sync_enabled !== false
+    || text(row.sync_mode).toUpperCase() !== "PULL_ONLY"
+    || text(row.write_mode).toUpperCase() !== "NONE"
+    || !row.provider_config
+    || typeof row.provider_config !== "object"
+    || Array.isArray(row.provider_config)
+  ) return null;
+  const providerConfig = row.provider_config as Record<string, unknown>;
+  const allowlist = providerConfig.runtime_sales_job_allowlist;
+  if (
+    !Array.isArray(allowlist)
+    || allowlist.length !== FLEET_SALES_RUNTIME_JOB_ALLOWLIST.length
+    || allowlist.some((job, index) => job !== FLEET_SALES_RUNTIME_JOB_ALLOWLIST[index])
+    || providerConfig.intraday_sales_sync_enabled !== true
+    || providerConfig.open_tickets_sync_enabled !== false
+    || providerConfig.open_tickets_stock_sync_enabled !== false
+  ) return null;
+  return FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
+}
+
 function validActiveFleetScope(row: ActiveFleetScopeRow): ActiveFleetScope | null {
   const connectionId = text(row.connection_id);
   const runId = text(row.run_id);
   const generationMode = text(row.generation_mode).toLowerCase();
   const credentialSetSha256 = text(row.credential_set_sha256).toLowerCase();
   const writerFenceGrantSha256 = text(row.writer_fence_grant_sha256).toLowerCase();
+  const runtimeSalesJobAllowlist = exactFleetSalesPolicy(row);
   if (
     !isDeployableRuntimeCanaryConnectionId(connectionId)
     || !RUN_ID_PATTERN.test(runId)
     || !GENERATION_MODE_PATTERN.test(generationMode)
     || !SHA256_PATTERN.test(credentialSetSha256)
     || !SHA256_PATTERN.test(writerFenceGrantSha256)
+    || !runtimeSalesJobAllowlist
   ) return null;
   return Object.freeze({
     connectionId,
@@ -76,6 +112,7 @@ function validActiveFleetScope(row: ActiveFleetScopeRow): ActiveFleetScope | nul
     generationMode,
     credentialSetSha256,
     writerFenceGrantSha256,
+    runtimeSalesJobAllowlist,
   });
 }
 
@@ -90,8 +127,16 @@ export async function loadActiveFleetScope(
       scope.run_id,
       scope.generation_mode,
       scope.credential_set_sha256,
-      scope.writer_fence_grant_sha256
+      scope.writer_fence_grant_sha256,
+      connection.provider_config,
+      connection.catalog_sync_enabled,
+      connection.sync_mode,
+      connection.write_mode
     FROM public.runtime_canary_connections scope
+    JOIN public.pos_connections connection
+      ON connection.id = scope.connection_id
+     AND connection.provider = 'agora'
+     AND connection.enabled = true
     WHERE scope.connection_id = ${connectionId}::uuid
       AND scope.active = true
       AND scope.status = 'ACTIVE'
@@ -156,6 +201,9 @@ export function isEnvelopeInsideActiveFleetScope(
   scope: ActiveFleetScope,
 ): boolean {
   return envelope.connectionId === scope.connectionId
+    && envelope.runtimeScope?.runId === scope.runId
+    && envelope.runtimeScope.credentialSetSha256 === scope.credentialSetSha256
+    && scope.runtimeSalesJobAllowlist.includes(envelope.job as FleetSalesRuntimeJob)
     && envelope.source.kind === "queue"
     && envelope.source.eventId === fleetEnvelopeEventId(scope, envelope.messageId);
 }

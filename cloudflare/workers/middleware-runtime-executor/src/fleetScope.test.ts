@@ -10,6 +10,7 @@ import type {
 import type { RuntimeEnvelopeV1 } from "../../middleware-runtime/src/contracts";
 import { sha256Hex } from "../../../canary-failclosed/src/writerFence";
 import {
+  FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
   fleetEnvelopeEventId,
   isEnvelopeInsideActiveFleetScope,
   loadActiveFleetScope,
@@ -58,6 +59,7 @@ function scope(
     generationMode: "rotate",
     credentialSetSha256,
     writerFenceGrantSha256,
+    runtimeSalesJobAllowlist: FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
   });
 }
 
@@ -72,9 +74,9 @@ function envelope(
     messageId,
     idempotencyKey: `idempotency-${activeScope.runId}`,
     connectionId: activeScope.connectionId,
-    lane: "sales-import",
-    job: "winerim.sales-import-live",
-    retryProfile: "WINERIM_MUTATION",
+    lane: "sales-stock",
+    job: "sales.auto-sync",
+    retryProfile: "POS_OUTBOUND",
     attempt: 0,
     maxAttempts: 3,
     createdAt: "2026-08-04T10:00:00.000Z",
@@ -85,12 +87,11 @@ function envelope(
     },
     payload: {
       dryRun: true,
-      mode: "operational",
-      orderId: `order-${activeScope.runId}`,
-      soldAt: "2026-08-04T10:00:00.000Z",
-      quantity: 1,
-      soldStock: { wineId: "42", stockId: 4202, variant: "glass" },
-      stockSource: { wineId: "42", stockId: 4201, variant: "bottle" },
+      businessDay: "2026-08-03",
+    },
+    runtimeScope: {
+      runId: activeScope.runId,
+      credentialSetSha256: activeScope.credentialSetSha256,
     },
     ...overrides,
   };
@@ -100,8 +101,21 @@ function queryResult<Row extends Record<string, unknown>>(rows: Row[]): QueryRes
   return { rows, rowCount: rows.length };
 }
 
-function databaseForScopes(scopes: readonly ActiveFleetScope[]) {
-  const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
+type FleetPolicyOverrides = Readonly<{
+  runtimeSalesJobAllowlist?: readonly string[];
+  intradaySalesSyncEnabled?: boolean;
+  openTicketsSyncEnabled?: boolean;
+  openTicketsStockSyncEnabled?: boolean;
+  catalogSyncEnabled?: boolean;
+  syncMode?: string;
+  writeMode?: string;
+}>;
+
+function databaseForScopes(
+  scopes: readonly ActiveFleetScope[],
+  policy: FleetPolicyOverrides = {},
+) {
+  const query = vi.fn(async (statement: SqlStatement): Promise<QueryResult<Record<string, unknown>>> => {
     if (statement.text.includes("FROM public.runtime_canary_connections")) {
       const connectionId = String(statement.values[0] ?? "");
       return queryResult(scopes.filter((item) => item.connectionId === connectionId).map((item) => ({
@@ -110,7 +124,17 @@ function databaseForScopes(scopes: readonly ActiveFleetScope[]) {
         generation_mode: item.generationMode,
         credential_set_sha256: item.credentialSetSha256,
         writer_fence_grant_sha256: item.writerFenceGrantSha256,
-      })) as Row[]);
+        provider_config: {
+          runtime_sales_job_allowlist: policy.runtimeSalesJobAllowlist
+            ?? [...item.runtimeSalesJobAllowlist],
+          intraday_sales_sync_enabled: policy.intradaySalesSyncEnabled ?? true,
+          open_tickets_sync_enabled: policy.openTicketsSyncEnabled ?? false,
+          open_tickets_stock_sync_enabled: policy.openTicketsStockSyncEnabled ?? false,
+        },
+        catalog_sync_enabled: policy.catalogSyncEnabled ?? false,
+        sync_mode: policy.syncMode ?? "PULL_ONLY",
+        write_mode: policy.writeMode ?? "NONE",
+      })));
     }
     if (statement.text.includes("FROM public.pos_connections")) {
       const connectionId = String(statement.values[0] ?? "");
@@ -119,7 +143,7 @@ function databaseForScopes(scopes: readonly ActiveFleetScope[]) {
         provider: "agora",
         enabled: true,
         base_url: `https://${connectionId.slice(0, 8)}.agora.example`,
-      }] as Row[] : []);
+      }] : []);
     }
     if (statement.text.includes("FROM public.runtime_connection_credentials")) {
       const connectionId = String(statement.values[0] ?? "");
@@ -130,13 +154,18 @@ function databaseForScopes(scopes: readonly ActiveFleetScope[]) {
         credential_kind: kind,
         key_version: KEY_VERSION,
         attestation_sha256: attestation(runId, kind),
-      })) as Row[] : []);
+      })) : []);
     }
-    return queryResult([] as Row[]);
+    return queryResult([]);
   });
+  const typedQuery: DatabaseAdapter["query"] = async <Row extends Record<string, unknown>>(
+    statement: SqlStatement,
+  ) => query(statement) as Promise<QueryResult<Row>>;
   const adapter: DatabaseAdapter = {
-    query,
-    transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({ query }),
+    query: typedQuery,
+    transaction: async <T>(work: (transaction: DatabaseTransaction) => Promise<T>) => work({
+      query: typedQuery,
+    }),
   };
   return { adapter, query };
 }
@@ -146,6 +175,14 @@ function fleetEnv(): MiddlewareRuntimeExecutorEnv {
     ENVIRONMENT: "rescue-production",
     RUNTIME_MODE: "fleet-executor",
     RUNTIME_EXECUTION_ENABLED: "true",
+    RUNTIME_SALES_EXECUTION_ENABLED: "true",
+    RUNTIME_SALES_CURSOR_ENABLED: "true",
+    RUNTIME_SALES_DLQ_READY: "true",
+    RUNTIME_CATALOG_EXECUTION_ENABLED: "false",
+    RUNTIME_CATALOG_FETCH_ENABLED: "false",
+    RUNTIME_CATALOG_APPLY_ENABLED: "false",
+    RUNTIME_OUTBOUND_EXECUTION_ENABLED: "false",
+    RUNTIME_OUTBOUND_MUTATION_ENABLED: "false",
     RUNTIME_VAULT_KEY_VERSION: "v1",
     WINERIM_API_BASE_URL: "https://app.winerim.com",
     WINERIM_ALLOWED_HOSTS: "app.winerim.com",
@@ -185,23 +222,83 @@ function rawGrant(connectionId: string, runId: string, holderId: string): string
 }
 
 describe("fleet runtime scope", () => {
-  it("executes two connections independently in the same fleet worker", async () => {
+  it("accepts only the exact sales allowlist for independent fleet scopes", async () => {
     const scopeA = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
     const scopeB = scope(CONNECTION_B, "run-fleet-b", GENERATION_B, GRANT_HASH_B);
     const fake = databaseForScopes([scopeA, scopeB]);
+
+    const loadedA = await loadActiveFleetScope(fake.adapter, CONNECTION_A);
+    const loadedB = await loadActiveFleetScope(fake.adapter, CONNECTION_B);
+    expect(loadedA?.runtimeSalesJobAllowlist).toEqual(["sales.auto-sync", "sales.sync-intraday"]);
+    expect(loadedB?.runtimeSalesJobAllowlist).toEqual(["sales.auto-sync", "sales.sync-intraday"]);
+    expect(isEnvelopeInsideActiveFleetScope(envelope(scopeA), loadedA!)).toBe(true);
+    expect(isEnvelopeInsideActiveFleetScope(envelope(scopeB, {
+      job: "sales.sync-intraday",
+    }), loadedB!)).toBe(true);
+  });
+
+  it.each([
+    ["open tickets", "sales.sync-open-tickets", "sales-stock", "POS_OUTBOUND"],
+    ["live stock", "winerim.sales-import-live", "sales-import", "WINERIM_MUTATION"],
+    ["catalog", "catalog.sync-master", "catalog", "POS_OUTBOUND"],
+    ["outbound", "outbound.process", "outbound-queue", "POS_OUTBOUND"],
+  ] as const)("rejects %s outside the fleet sales allowlist before connection execution", async (
+    _label,
+    job,
+    lane,
+    retryProfile,
+  ) => {
+    const active = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
+    const fake = databaseForScopes([active]);
     const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
+    const response = await worker.fetch(executeRequest(envelope(active, {
+      job,
+      lane,
+      retryProfile,
+    })), fleetEnv());
 
-    const responseA = await worker.fetch(executeRequest(envelope(scopeA)), fleetEnv());
-    const responseB = await worker.fetch(executeRequest(envelope(scopeB)), fleetEnv());
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "RUNTIME_FLEET_SCOPE_REJECTED" },
+    });
+    expect(fake.query.mock.calls.some(([statement]) => (
+      statement.text.includes("FROM public.pos_connections")
+    ))).toBe(false);
+  });
 
-    expect(responseA.status).toBe(200);
-    expect(responseB.status).toBe(200);
-    await expect(responseA.json()).resolves.toEqual({ ok: true, detail: "stock:dry-run:sales-import" });
-    await expect(responseB.json()).resolves.toEqual({ ok: true, detail: "stock:dry-run:sales-import" });
-    const scopedLookups = fake.query.mock.calls.filter(([statement]) => (
-      statement.text.includes("FROM public.runtime_canary_connections")
-    ));
-    expect(scopedLookups.map(([statement]) => statement.values[0])).toEqual([CONNECTION_A, CONNECTION_B]);
+  it.each([
+    ["catalog execution", { RUNTIME_CATALOG_EXECUTION_ENABLED: "true" }],
+    ["catalog fetch", { RUNTIME_CATALOG_FETCH_ENABLED: "true" }],
+    ["catalog apply", { RUNTIME_CATALOG_APPLY_ENABLED: "true" }],
+    ["outbound execution", { RUNTIME_OUTBOUND_EXECUTION_ENABLED: "true" }],
+    ["outbound mutation", { RUNTIME_OUTBOUND_MUTATION_ENABLED: "true" }],
+    ["open sales switch", { RUNTIME_SALES_EXECUTION_ENABLED: "false" }],
+  ])("fails closed when the fleet %s switch drifts", async (_label, override) => {
+    const active = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
+    const fake = databaseForScopes([active]);
+    const worker = createMiddlewareRuntimeExecutorWorker({ database: () => fake.adapter });
+    const response = await worker.fetch(executeRequest(envelope(active)), {
+      ...fleetEnv(),
+      ...override,
+    });
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "RUNTIME_EXECUTION_DISABLED" },
+    });
+    expect(fake.query).not.toHaveBeenCalled();
+  });
+
+  it("reports only the two approved jobs in fleet readiness", async () => {
+    const worker = createMiddlewareRuntimeExecutorWorker();
+    const response = await worker.fetch(new Request("https://executor.example/ready"), fleetEnv());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      enabledJobs: ["sales.auto-sync", "sales.sync-intraday"],
+      missingBindings: [],
+    });
   });
 
   it("rejects a message carrying another connection generation before loading the connection", async () => {
@@ -303,6 +400,14 @@ describe("fleet runtime scope", () => {
       ...valid,
       source: { kind: "queue", eventId: `fleet:${active.runId}:${GENERATION_B}:${valid.messageId}` },
     }, active)).toBe(false);
+    expect(isEnvelopeInsideActiveFleetScope({
+      ...valid,
+      job: "sales.sync-open-tickets",
+    }, active)).toBe(false);
+    expect(isEnvelopeInsideActiveFleetScope({
+      ...valid,
+      runtimeScope: undefined,
+    }, active)).toBe(false);
   });
 
   it("loads exactly one valid active scope and rejects malformed generations", async () => {
@@ -313,4 +418,27 @@ describe("fleet runtime scope", () => {
     const malformed = databaseForScopes([{ ...active, credentialSetSha256: "not-a-hash" }]);
     await expect(loadActiveFleetScope(malformed.adapter, CONNECTION_A)).resolves.toBeNull();
   });
+
+  it.each([
+    ["extra job", { runtimeSalesJobAllowlist: [
+      "sales.auto-sync",
+      "sales.sync-intraday",
+      "sales.sync-open-tickets",
+    ] }],
+    ["missing job", { runtimeSalesJobAllowlist: ["sales.auto-sync"] }],
+    ["reordered jobs", { runtimeSalesJobAllowlist: ["sales.sync-intraday", "sales.auto-sync"] }],
+    ["open tickets", { openTicketsSyncEnabled: true }],
+    ["open-ticket stock", { openTicketsStockSyncEnabled: true }],
+    ["catalog sync", { catalogSyncEnabled: true }],
+    ["bidirectional mode", { syncMode: "BIDIRECTIONAL" }],
+    ["XML write mode", { writeMode: "XML_IMPORT" }],
+  ] satisfies readonly (readonly [string, FleetPolicyOverrides])[])(
+    "rejects a fleet scope when provider policy opens %s",
+    async (_label, policy) => {
+      const active = scope(CONNECTION_A, "run-fleet-a", GENERATION_A);
+      const fake = databaseForScopes([active], policy);
+
+      await expect(loadActiveFleetScope(fake.adapter, CONNECTION_A)).resolves.toBeNull();
+    },
+  );
 });

@@ -44,6 +44,13 @@ const PROVIDER_CONFIG = {
   open_tickets_sync_enabled: false,
   open_tickets_stock_sync_enabled: false,
 };
+const PROVIDER_CONFIG_SNAPSHOT = {
+  catalog_policy: { source: "pre-activation" },
+  runtime_sales_job_allowlist: ["legacy.sales-job"],
+  intraday_sales_sync_enabled: false,
+  open_tickets_sync_enabled: true,
+  open_tickets_stock_sync_enabled: false,
+};
 
 type AdoptionFixture = {
   version: number;
@@ -187,7 +194,7 @@ function fixture({
       last_business_day_synced: lastBusinessDaySynced,
       last_sync_at: "2026-08-04T13:40:25.722Z",
       updated_at: "2026-08-04T13:40:25.722Z",
-      provider_config: {},
+      provider_config: JSON.parse(JSON.stringify(PROVIDER_CONFIG_SNAPSHOT)),
     }],
     tables: {
       sales_events: Array.from({ length: 133 }, (_, index) => ({
@@ -396,6 +403,7 @@ function fixture({
     expiresAt: EXPIRES_AT,
     deactivationStaleLeaseCutoffSeconds: 900,
     providerConfig: JSON.parse(JSON.stringify(PROVIDER_CONFIG)),
+    providerConfigSnapshot: JSON.parse(JSON.stringify(PROVIDER_CONFIG_SNAPSHOT)),
     deploymentManifest: reference(deployment),
     finalTargetRaw: reference(finalTargetRaw),
     credentialProvisioningManifest: reference(credential),
@@ -672,6 +680,8 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
         semanticLineage: "FINAL_DELTA_CORRECTED_SUCCESSOR",
       },
       providerConfig: PROVIDER_CONFIG,
+      providerConfigSnapshot: PROVIDER_CONFIG_SNAPSHOT,
+      providerConfigSnapshotSha256: sha256(canonicalJson(PROVIDER_CONFIG_SNAPSHOT)),
       externalWriterFence: { removedFromLovable: true, readbackObservedAt: expect.any(Array) },
       writerFenceGrant: { activationScopeBindingSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
     });
@@ -680,11 +690,23 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     expect(activationSql).toContain(`deployment_manifest_sha256 = '${data.input.deploymentManifest.sha256}'`);
     expect(activationSql).not.toContain(`deployment_manifest_sha256 = '${localReviewManifestSha256}'`);
     expect(activationSql).toContain('"runtime_sales_job_allowlist":["sales.auto-sync","sales.sync-intraday"]');
-    expect(activationSql).toContain("provider_config -> 'open_tickets_sync_enabled' = 'false'::jsonb");
+    expect(activationSql).toContain(`COALESCE(provider_config, '{}'::jsonb) = '${canonicalJson(PROVIDER_CONFIG_SNAPSHOT)}'::jsonb`);
+    expect(deactivationSql).toContain("-- Phase 1: persistently quiesce new runtime intake");
+    expect(deactivationSql).toContain("-- Phase 2: retire only after every runtime lease is terminal");
     expect(deactivationSql).toContain("SET status = 'TERMINAL'");
     expect(deactivationSql).toContain("staleLeaseCutoffSeconds', 900");
     expect(deactivationSql).toContain("updated_at <= statement_timestamp() - interval '900 seconds'");
-    expect(deactivationSql).not.toContain("lease_expires_at IS NULL OR lease_expires_at > statement_timestamp()");
+    expect(deactivationSql).toContain("runtime leases remain after quiesce; rerun retirement after they drain");
+    expect(deactivationSql).toContain(`provider_config = '${canonicalJson(PROVIDER_CONFIG_SNAPSHOT)}'::jsonb`);
+    expect(deactivationSql.indexOf("SET enabled = false")).toBeLessThan(
+      deactivationSql.indexOf("runtime leases remain after quiesce"),
+    );
+    expect(deactivationSql.indexOf("COMMIT;")).toBeLessThan(
+      deactivationSql.indexOf("-- Phase 2: retire only after every runtime lease is terminal"),
+    );
+    expect(deactivationSql.indexOf("runtime leases remain after quiesce")).toBeLessThan(
+      deactivationSql.indexOf("UPDATE public.runtime_connection_credentials"),
+    );
   });
 
   it("reads every bound artifact and writes one private atomic package", () => {
@@ -710,6 +732,17 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     }
     const packageManifest = JSON.parse(readFileSync(result.manifestPath, "utf8"));
     expect(packageManifest.deploymentManifestSha256).toBe(data.input.deploymentManifest.sha256);
+    expect(packageManifest.providerConfigSnapshot).toEqual(PROVIDER_CONFIG_SNAPSHOT);
+    expect(packageManifest.providerConfigSnapshotSha256).toBe(
+      sha256(canonicalJson(PROVIDER_CONFIG_SNAPSHOT)),
+    );
+    expect(packageManifest.rollbackMode).toBe(
+      "two-phase-quiesce-then-append-only-retirement",
+    );
+    expect(packageManifest.rollbackPhases).toEqual([
+      "quiesce-intake",
+      "drain-leases-and-retire",
+    ]);
     expect(packageManifest.finalTargetRawSha256).toBe(data.input.finalTargetRaw.sha256);
     expect(packageManifest.finalTargetRaw.targetCorrectedShadowSha256).toBe(
       data.documents.targetCorrectedShadowSha256,
@@ -721,6 +754,20 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     expect(validate(fixture({ lastBusinessDaySynced: "2026-08-04" })).adoption.watermarks.cursorLagDays).toBe(0);
     expect(() => validate(fixture({ lastBusinessDaySynced: "2026-08-02" }))).toThrow(
       "RUNTIME_FLEET_ADOPT_ACTIVATION_CURSOR_BEHIND_HISTORY",
+    );
+  });
+
+  it("binds rollback provider_config to the fenced pre-activation snapshot", () => {
+    const driftedSnapshot = fixture();
+    driftedSnapshot.input.providerConfigSnapshot.catalog_policy.source = "unreviewed";
+    expect(() => validate(driftedSnapshot)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_PROVIDER_CONFIG_SNAPSHOT_MISMATCH",
+    );
+
+    const invalidSnapshot = fixture();
+    invalidSnapshot.input.providerConfigSnapshot = [];
+    expect(() => validate(invalidSnapshot)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_PROVIDER_CONFIG_SNAPSHOT",
     );
   });
 
@@ -910,7 +957,8 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
       remoteMutations: 0,
       activationMode: "adopt-existing-sales",
       requiresExternalEd25519WriterFence: true,
-      rollbackMode: "append-only-deactivation",
+      rollbackMode: "two-phase-quiesce-then-append-only-retirement",
+      rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
     });
   });
 });

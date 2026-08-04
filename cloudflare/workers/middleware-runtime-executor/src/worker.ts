@@ -68,6 +68,7 @@ import {
 } from "../../../canary-failclosed/src/writerFence";
 import {
   FLEET_EXECUTOR_MODE,
+  FLEET_SALES_RUNTIME_JOB_ALLOWLIST,
   isEnvelopeInsideActiveFleetScope,
   loadActiveFleetScope,
   resolveFleetWriterFenceMaterial,
@@ -911,6 +912,7 @@ function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
     const scope = rescueExecutorScope(env);
     return scope ? [scope.job] : [];
   }
+  if (fleetMode(env)) return FLEET_SALES_RUNTIME_JOB_ALLOWLIST;
   const flags = salesLaneFlags(env);
   return [
     ...ENABLED_STOCK_JOBS,
@@ -918,6 +920,18 @@ function enabledJobs(env: MiddlewareRuntimeExecutorEnv): readonly RuntimeJob[] {
     ...(flags.executionEnabled && flags.dlqReady ? ["sales.sync-open-tickets" as const] : []),
     ...(flags.executionEnabled && flags.cursorEnabled && flags.dlqReady ? CURSORED_SALES_JOBS : []),
   ];
+}
+
+function fleetSalesOnlySwitchesOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
+  const sales = salesLaneFlags(env);
+  return sales.executionEnabled
+    && sales.cursorEnabled
+    && sales.dlqReady
+    && !switchEnabled(env.RUNTIME_CATALOG_EXECUTION_ENABLED)
+    && !switchEnabled(env.RUNTIME_CATALOG_FETCH_ENABLED)
+    && !switchEnabled(env.RUNTIME_CATALOG_APPLY_ENABLED)
+    && !switchEnabled(env.RUNTIME_OUTBOUND_EXECUTION_ENABLED)
+    && !switchEnabled(env.RUNTIME_OUTBOUND_MUTATION_ENABLED);
 }
 
 type NormalizedWorkerDependencies = Readonly<{
@@ -969,8 +983,11 @@ function fleetReadiness(env: MiddlewareRuntimeExecutorEnv): Response {
     if (!missingBindings.includes("WINERIM_API_TARGET")) missingBindings.push("WINERIM_API_TARGET");
   }
   const executionEnabled = switchEnabled(env.RUNTIME_EXECUTION_ENABLED);
+  const fleetPolicyOpen = fleetSalesOnlySwitchesOpen(env);
+  if (!fleetPolicyOpen) missingBindings.push("RUNTIME_FLEET_SALES_ONLY_POLICY");
   const ready = executionEnvironmentAllowed(env)
     && executionEnabled
+    && fleetPolicyOpen
     && missingBindings.length === 0;
   return json({
     ok: ready,
@@ -1218,6 +1235,7 @@ function executionGateOpen(env: MiddlewareRuntimeExecutorEnv): boolean {
     );
   return executionEnvironmentAllowed(env)
     && rescueFenceReady
+    && (!fleet || fleetSalesOnlySwitchesOpen(env))
     && (!rescueProduction || fleet || rescueExecutorScope(env) !== null)
     && (!rescueProduction || fleet || rescueCanaryPolicy(env) !== null)
     && String(env.RUNTIME_EXECUTION_ENABLED ?? "").trim().toLowerCase() === "true"
@@ -1319,7 +1337,7 @@ export function createMiddlewareRuntimeExecutorWorker(
               : "staging",
             executionEnabled: env.RUNTIME_EXECUTION_ENABLED,
             allowedConnectionId: runtimeScope.connectionId,
-            enabledJobs: enabledJobs(env),
+            enabledJobs: runtimeScope.fleet?.runtimeSalesJobAllowlist ?? enabledJobs(env),
             connections: scopedConnections,
             credentials: scopedCredentials,
             ports: {

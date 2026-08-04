@@ -289,7 +289,25 @@ describe("adopt-existing sales writer-fence grant", () => {
     const deployment = writePrivateJson(directory, "deployment.json", {
       version: 1,
       kind: "runtime-sales-deployment",
+      deploymentId: "runtime-sales-20260804-writer-fence-integration",
       jobs: ["sales.auto-sync", "sales.sync-intraday"],
+      components: {
+        runtime: {
+          workerName: "middleware-runtime-fleet-sales",
+          versionId: "11111111-1111-4111-8111-111111111111",
+          configSha256: sha256("runtime-worker-config"),
+        },
+        executor: {
+          workerName: "middleware-runtime-executor-fleet-sales",
+          versionId: "22222222-2222-4222-8222-222222222222",
+          configSha256: sha256("executor-worker-config"),
+        },
+        writerFence: {
+          workerName: "middleware-runtime-writer-fence-fleet",
+          versionId: "33333333-3333-4333-8333-333333333333",
+          configSha256: sha256("writer-fence-worker-config"),
+        },
+      },
     });
     const targetCorrectedShadowSha256 = sha256("target-corrected-shadow-semantic");
     const finalTargetRaw = writePrivateJson(directory, "final-target-raw.json", {
@@ -521,6 +539,7 @@ describe("adopt-existing sales writer-fence grant", () => {
       expiresAt: EXPIRES_AT,
       deactivationStaleLeaseCutoffSeconds: 900,
       providerConfig: PROVIDER_CONFIG,
+      providerConfigSnapshot: {},
       deploymentManifest: { path: deployment.path, sha256: deployment.sha256 },
       finalTargetRaw: { path: finalTargetRaw.path, sha256: finalTargetRaw.sha256 },
       credentialProvisioningManifest: { path: credential.path, sha256: credential.sha256 },

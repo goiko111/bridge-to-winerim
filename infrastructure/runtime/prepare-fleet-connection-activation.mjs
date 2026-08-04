@@ -247,6 +247,17 @@ function validateProviderConfig(providerConfig) {
   };
 }
 
+function validateProviderConfigSnapshot(providerConfigSnapshot) {
+  if (
+    !providerConfigSnapshot
+    || typeof providerConfigSnapshot !== "object"
+    || Array.isArray(providerConfigSnapshot)
+  ) {
+    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_PROVIDER_CONFIG_SNAPSHOT");
+  }
+  return JSON.parse(canonicalJson(providerConfigSnapshot));
+}
+
 function validateDeploymentManifest(manifest) {
   exactKeys(manifest, [
     "version",
@@ -599,6 +610,7 @@ function validateFencedTargetRawV1(raw, { connectionId, adoption }) {
     maxBusinessDay,
     cursorDay,
     cursorSync,
+    providerConfig: JSON.parse(canonicalJson(marker.provider_config)),
   };
 }
 
@@ -959,6 +971,7 @@ export function validateFleetConnectionAdoptExistingActivationInput({
     "expiresAt",
     "deactivationStaleLeaseCutoffSeconds",
     "providerConfig",
+    "providerConfigSnapshot",
     "deploymentManifest",
     "finalTargetRaw",
     "credentialProvisioningManifest",
@@ -990,6 +1003,7 @@ export function validateFleetConnectionAdoptExistingActivationInput({
     throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEACTIVATION_STALE_LEASE_CUTOFF_SECONDS");
   }
   const providerConfig = validateProviderConfig(input.providerConfig);
+  const providerConfigSnapshot = validateProviderConfigSnapshot(input.providerConfigSnapshot);
   const approvedAt = canonicalTimestamp(input.approvedAt, "APPROVED_AT");
   const expiresAt = canonicalTimestamp(input.expiresAt, "EXPIRES_AT");
   if (
@@ -1047,6 +1061,9 @@ export function validateFleetConnectionAdoptExistingActivationInput({
     parseJson(finalTargetRawSource, "FINAL_TARGET_RAW"),
     { connectionId, adoption: credential.adoption },
   );
+  if (canonicalJson(finalTargetRaw.providerConfig) !== canonicalJson(providerConfigSnapshot)) {
+    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_PROVIDER_CONFIG_SNAPSHOT_MISMATCH");
+  }
   const finalDeltaManifest = parseJson(finalDeltaManifestSource, "FINAL_DELTA_MANIFEST");
   const finalDelta = validateFinalDeltaManifest(finalDeltaManifest, {
     connectionId,
@@ -1111,6 +1128,8 @@ export function validateFleetConnectionAdoptExistingActivationInput({
     expiresAt: expiresAt.iso,
     deactivationStaleLeaseCutoffSeconds,
     providerConfig,
+    providerConfigSnapshot,
+    providerConfigSnapshotSha256: sha256(canonicalJson(providerConfigSnapshot)),
     runtimePolicySha256: runtimePolicySha256(providerConfig),
     scopeNote: `adopt-existing:v3:${credential.adoption.bindingSha256}`,
     deploymentManifestSha256: deploymentReference.sha256,
@@ -1158,7 +1177,8 @@ export function buildFleetConnectionAdoptExistingActivationManifest(validated) {
     kind: "RUNTIME_FLEET_CONNECTION_ADOPT_EXISTING_ACTIVATION_REVIEW",
     activationMode: "adopt-existing-sales",
     activationAllowed: true,
-    rollbackMode: "append-only-deactivation",
+    rollbackMode: "two-phase-quiesce-then-append-only-retirement",
+    rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
     remoteMutations: 0,
     ...validated,
   };
@@ -1183,6 +1203,7 @@ export function renderFleetConnectionAdoptExistingActivationSql({
     approvedAt,
     expiresAt,
     providerConfig,
+    providerConfigSnapshot,
     scopeNote,
     deploymentManifestSha256,
     credentialSetSha256,
@@ -1195,6 +1216,11 @@ export function renderFleetConnectionAdoptExistingActivationSql({
   const approved = canonicalTimestamp(approvedAt, "APPROVED_AT");
   const expires = canonicalTimestamp(expiresAt, "EXPIRES_AT");
   const fenceVerified = canonicalTimestamp(writerFence.verifiedAt, "WRITER_FENCE_VERIFIED_AT");
+  const providerConfigSnapshotJson = canonicalJson(providerConfigSnapshot);
+  const activatedProviderConfigJson = canonicalJson({
+    ...providerConfigSnapshot,
+    ...providerConfig,
+  });
   return `BEGIN;
 
 SET LOCAL lock_timeout = '5s';
@@ -1232,6 +1258,7 @@ BEGIN
       AND sync_mode = 'PULL_ONLY'
       AND write_mode = 'NONE'
       AND backfill_days = 0
+      AND COALESCE(provider_config, '{}'::jsonb) = '${sqlLiteral(providerConfigSnapshotJson)}'::jsonb
       AND last_business_day_synced::text = '${adoption.watermarks.lastBusinessDaySynced}'
       AND to_char(last_sync_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') = '${adoption.watermarks.lastSyncAt}'
   ) <> 1 THEN
@@ -1350,7 +1377,7 @@ SET enabled = true,
     sync_mode = 'PULL_ONLY',
     write_mode = 'NONE',
     backfill_days = 0,
-    provider_config = COALESCE(provider_config, '{}'::jsonb) || '${sqlLiteral(canonicalJson(providerConfig))}'::jsonb
+    provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb
 WHERE id = '${connectionId}'::uuid
   AND enabled = false;
 
@@ -1385,10 +1412,7 @@ BEGIN
       AND sync_mode = 'PULL_ONLY'
       AND write_mode = 'NONE'
       AND backfill_days = 0
-      AND provider_config -> 'runtime_sales_job_allowlist' = '["sales.auto-sync","sales.sync-intraday"]'::jsonb
-      AND provider_config -> 'intraday_sales_sync_enabled' = 'true'::jsonb
-      AND provider_config -> 'open_tickets_sync_enabled' = 'false'::jsonb
-      AND provider_config -> 'open_tickets_stock_sync_enabled' = 'false'::jsonb
+      AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb
   ) <> 1 THEN
     RAISE EXCEPTION 'fleet adopt-existing activation readback failed';
   END IF;
@@ -1413,8 +1437,106 @@ export function renderFleetConnectionAdoptExistingDeactivationSql({
     writerFenceGrantSha256,
     deploymentManifestSha256,
     deactivationStaleLeaseCutoffSeconds,
+    providerConfig,
+    providerConfigSnapshot,
   } = activation;
-  return `BEGIN;
+  const providerConfigSnapshotJson = canonicalJson(providerConfigSnapshot);
+  const activatedProviderConfigJson = canonicalJson({
+    ...providerConfigSnapshot,
+    ...providerConfig,
+  });
+  const quiescedProviderConfigJson = canonicalJson({
+    ...providerConfigSnapshot,
+    ...providerConfig,
+    runtime_sales_job_allowlist: [],
+    intraday_sales_sync_enabled: false,
+    open_tickets_sync_enabled: false,
+    open_tickets_stock_sync_enabled: false,
+  });
+  return `-- Phase 1: persistently quiesce new runtime intake. This phase is re-entrant.
+BEGIN;
+
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '20s';
+SELECT pg_advisory_xact_lock(hashtextextended('runtime-fleet-connection-activation', 0));
+
+LOCK TABLE public.pos_connections,
+  public.runtime_canary_connections,
+  public.runtime_connection_credentials
+  IN SHARE ROW EXCLUSIVE MODE;
+
+DO $verify_fleet_adopt_existing_quiesce$
+BEGIN
+  IF (
+    SELECT count(*) FROM public.runtime_canary_connections
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND status = 'ACTIVE'
+      AND active = true
+      AND deployment_manifest_sha256 = '${deploymentManifestSha256}'
+      AND writer_fence_grant_sha256 = '${writerFenceGrantSha256}'
+      AND credential_set_sha256 = '${credentialSetSha256}'
+      AND activated_at IS NOT NULL
+      AND retired_at IS NULL
+  ) <> 1 OR (
+    SELECT count(*) FROM public.runtime_connection_credentials
+    WHERE connection_id = '${connectionId}'::uuid
+      AND run_id = '${runId}'
+      AND active = true
+      AND activated_at IS NOT NULL
+      AND retired_at IS NULL
+  ) <> 2 THEN
+    RAISE EXCEPTION 'exact active generation is missing, mismatched, or already consumed';
+  END IF;
+  IF (
+    SELECT count(*) FROM public.pos_connections
+    WHERE id = '${connectionId}'::uuid
+      AND catalog_sync_enabled = false
+      AND sync_mode = 'PULL_ONLY'
+      AND write_mode = 'NONE'
+      AND backfill_days = 0
+      AND (
+        (enabled = true AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb)
+        OR (enabled = false AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb)
+      )
+  ) <> 1 THEN
+    RAISE EXCEPTION 'fleet connection is neither active nor already quiesced at reviewed configuration';
+  END IF;
+END;
+$verify_fleet_adopt_existing_quiesce$;
+
+UPDATE public.pos_connections
+SET enabled = false,
+    catalog_sync_enabled = false,
+    sync_mode = 'PULL_ONLY',
+    write_mode = 'NONE',
+    backfill_days = 0,
+    provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb
+WHERE id = '${connectionId}'::uuid
+  AND enabled = true
+  AND provider_config = '${sqlLiteral(activatedProviderConfigJson)}'::jsonb;
+
+DO $readback_fleet_adopt_existing_quiesce$
+BEGIN
+  IF (
+    SELECT count(*) FROM public.pos_connections
+    WHERE id = '${connectionId}'::uuid
+      AND enabled = false
+      AND catalog_sync_enabled = false
+      AND sync_mode = 'PULL_ONLY'
+      AND write_mode = 'NONE'
+      AND backfill_days = 0
+      AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb
+  ) <> 1 THEN
+    RAISE EXCEPTION 'fleet adopt-existing quiesce readback failed';
+  END IF;
+END;
+$readback_fleet_adopt_existing_quiesce$;
+
+COMMIT;
+
+-- Phase 2: retire only after every runtime lease is terminal.
+BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '20s';
@@ -1449,21 +1571,26 @@ WHERE connection_id = '${connectionId}'::uuid
     )
   );
 
-DO $verify_fleet_adopt_existing_deactivation$
+DO $verify_fleet_adopt_existing_retirement$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM public.runtime_idempotency
     WHERE connection_id = '${connectionId}'::uuid
       AND status = 'RUNNING'
-      AND (
-        lease_expires_at > statement_timestamp()
-        OR (
-          lease_expires_at IS NULL
-          AND updated_at > statement_timestamp() - interval '${deactivationStaleLeaseCutoffSeconds} seconds'
-        )
-      )
   ) THEN
-    RAISE EXCEPTION 'active runtime execution blocks append-only deactivation';
+    RAISE EXCEPTION 'runtime leases remain after quiesce; rerun retirement after they drain';
+  END IF;
+  IF (
+    SELECT count(*) FROM public.pos_connections
+    WHERE id = '${connectionId}'::uuid
+      AND enabled = false
+      AND catalog_sync_enabled = false
+      AND sync_mode = 'PULL_ONLY'
+      AND write_mode = 'NONE'
+      AND backfill_days = 0
+      AND provider_config = '${sqlLiteral(quiescedProviderConfigJson)}'::jsonb
+  ) <> 1 THEN
+    RAISE EXCEPTION 'fleet connection must remain quiesced before retirement';
   END IF;
   IF (
     SELECT count(*) FROM public.runtime_canary_connections
@@ -1484,10 +1611,10 @@ BEGIN
       AND activated_at IS NOT NULL
       AND retired_at IS NULL
   ) <> 2 THEN
-    RAISE EXCEPTION 'exact active generation is missing, mismatched, or already consumed';
+    RAISE EXCEPTION 'exact quiesced generation is missing, mismatched, or already consumed';
   END IF;
 END;
-$verify_fleet_adopt_existing_deactivation$;
+$verify_fleet_adopt_existing_retirement$;
 
 UPDATE public.runtime_connection_credentials
 SET active = false,
@@ -1514,7 +1641,7 @@ SET enabled = false,
     sync_mode = 'PULL_ONLY',
     write_mode = 'NONE',
     backfill_days = 0,
-    provider_config = COALESCE(provider_config, '{}'::jsonb) || '{"runtime_sales_job_allowlist":[],"intraday_sales_sync_enabled":false,"open_tickets_sync_enabled":false,"open_tickets_stock_sync_enabled":false}'::jsonb
+    provider_config = '${sqlLiteral(providerConfigSnapshotJson)}'::jsonb
 WHERE id = '${connectionId}'::uuid;
 
 DO $readback_fleet_adopt_existing_deactivation$
@@ -1534,10 +1661,7 @@ BEGIN
         OR sync_mode <> 'PULL_ONLY'
         OR write_mode <> 'NONE'
         OR backfill_days <> 0
-        OR provider_config -> 'runtime_sales_job_allowlist' <> '[]'::jsonb
-        OR provider_config -> 'intraday_sales_sync_enabled' <> 'false'::jsonb
-        OR provider_config -> 'open_tickets_sync_enabled' <> 'false'::jsonb
-        OR provider_config -> 'open_tickets_stock_sync_enabled' <> 'false'::jsonb
+        OR provider_config <> '${sqlLiteral(providerConfigSnapshotJson)}'::jsonb
       )
   ) OR (
     SELECT count(*) FROM public.runtime_canary_connections
@@ -1558,7 +1682,7 @@ BEGIN
       AND activated_at IS NOT NULL
       AND retired_at IS NOT NULL
   ) <> 2 THEN
-    RAISE EXCEPTION 'fleet adopt-existing append-only deactivation readback failed';
+    RAISE EXCEPTION 'fleet adopt-existing retirement readback failed';
   END IF;
 END;
 $readback_fleet_adopt_existing_deactivation$;
@@ -1596,7 +1720,8 @@ export function fleetConnectionAdoptExistingActivationPlan() {
     requiresExternalEd25519WriterFence: true,
     requiredSalesJobs: [...REQUIRED_SALES_JOBS],
     openTicketsEnabled: false,
-    rollbackMode: "append-only-deactivation",
+    rollbackMode: "two-phase-quiesce-then-append-only-retirement",
+    rollbackPhases: ["quiesce-intake", "drain-leases-and-retire"],
     renderGate: "--render --input=/private/input.json --output=/private/new-directory --confirm-connection=<UUID>",
   };
 }
