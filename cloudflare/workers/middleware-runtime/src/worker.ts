@@ -28,6 +28,7 @@ import {
 } from "./scheduler";
 import {
   guardExclusiveCanaryBatch,
+  resolveExclusiveCanaryJobLane,
   type ExclusiveCanaryScope,
 } from "../../../canary-failclosed/src/exclusiveScope";
 import {
@@ -43,8 +44,6 @@ const IDEMPOTENCY_LEASE_MINUTES = 2;
 const EXECUTOR_TIMEOUT_MS = 15_000;
 const LEGACY_CANARY_CONSUMER_MODE = "canary-consumer";
 const EXCLUSIVE_CANARY_CONSUMER_MODE = "exclusive-canary-consumer";
-const CANARY_RUNTIME_JOB = "winerim.sales-import-live";
-const CANARY_RUNTIME_LANE = "sales-import";
 const CANARY_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -76,6 +75,8 @@ export interface MiddlewareRuntimeEnv extends WriterFenceClientEnvironment {
   CANARY_MESSAGE_ID?: string;
   CANARY_IDEMPOTENCY_KEY?: string;
   CANARY_PAYLOAD_SHA256?: string;
+  CANARY_RUNTIME_JOB?: string;
+  CANARY_RUNTIME_LANE?: string;
   WRITER_FENCE_HOLDER_ID?: string;
   MIDDLEWARE_DB?: HyperdriveBinding;
   RUNTIME_EXECUTOR?: RuntimeExecutorServiceBinding;
@@ -160,8 +161,12 @@ function exclusiveCanaryScope(env: MiddlewareRuntimeEnv): ExclusiveCanaryScope |
   const messageId = canaryIdentifier(env.CANARY_MESSAGE_ID);
   const idempotencyKey = canaryIdentifier(env.CANARY_IDEMPOTENCY_KEY);
   const payloadSha256 = String(env.CANARY_PAYLOAD_SHA256 ?? "").trim().toLowerCase();
+  const configuredScope = resolveExclusiveCanaryJobLane(
+    env.CANARY_RUNTIME_JOB,
+    env.CANARY_RUNTIME_LANE,
+  );
   if (!connectionId || !runId || !queueName || !messageId || !idempotencyKey
-    || !SHA256_PATTERN.test(payloadSha256)) return null;
+    || !SHA256_PATTERN.test(payloadSha256) || !configuredScope) return null;
   return {
     queueName,
     connectionId,
@@ -169,8 +174,7 @@ function exclusiveCanaryScope(env: MiddlewareRuntimeEnv): ExclusiveCanaryScope |
     messageId,
     idempotencyKey,
     payloadSha256,
-    job: CANARY_RUNTIME_JOB,
-    lane: CANARY_RUNTIME_LANE,
+    ...configuredScope,
   };
 }
 

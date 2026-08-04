@@ -17,6 +17,7 @@ import { observeCanaryDlqBatch } from "../src/dlqObserver";
 import {
   CanaryQueueMessageLike,
   guardExclusiveCanaryBatch,
+  resolveExclusiveCanaryJobLane,
   runtimePayloadSha256,
 } from "../src/exclusiveScope";
 import {
@@ -27,6 +28,7 @@ import {
   validateWriterFenceGrant,
   writerFenceCredentialBinding,
   WriterFenceGrantV1,
+  WriterFenceGrantV2,
 } from "../src/writerFence";
 import { ConnectionWriterFence } from "../src/writerFenceWorker";
 
@@ -75,6 +77,31 @@ async function scope() {
   };
 }
 
+function catalogEnvelope(overrides: Partial<RuntimeEnvelopeV1> = {}): RuntimeEnvelopeV1 {
+  return envelope({
+    lane: "catalog",
+    job: "catalog.sync-master",
+    retryProfile: "POS_OUTBOUND",
+    maxAttempts: 5,
+    payload: { winerimWineIds: ["1"], formatTypes: ["BOTTLE"] },
+    ...overrides,
+  });
+}
+
+async function catalogScope() {
+  const reviewed = catalogEnvelope();
+  return {
+    queueName,
+    connectionId,
+    runId,
+    messageId: reviewed.messageId,
+    idempotencyKey: reviewed.idempotencyKey,
+    payloadSha256: await runtimePayloadSha256(reviewed.payload),
+    job: "catalog.sync-master" as const,
+    lane: "catalog" as const,
+  };
+}
+
 function activeScopeDatabase(writerFenceGrantSha256: string): DatabaseAdapter {
   const query = vi.fn(async <Row extends Record<string, unknown>>(statement: SqlStatement) => {
     if (!statement.text.includes("FROM public.runtime_canary_connections")) {
@@ -96,6 +123,19 @@ function activeScopeDatabase(writerFenceGrantSha256: string): DatabaseAdapter {
 }
 
 describe("exclusive physical canary queue", () => {
+  it("defaults to the live-sales scope and accepts only the allowlisted catalog pair", () => {
+    expect(resolveExclusiveCanaryJobLane(undefined, undefined)).toEqual({
+      job: "winerim.sales-import-live",
+      lane: "sales-import",
+    });
+    expect(resolveExclusiveCanaryJobLane("catalog.sync-master", "catalog")).toEqual({
+      job: "catalog.sync-master",
+      lane: "catalog",
+    });
+    expect(resolveExclusiveCanaryJobLane("catalog.sync-master", "sales-import")).toBeNull();
+    expect(resolveExclusiveCanaryJobLane("outbound.process", "outbound-queue")).toBeNull();
+  });
+
   it("accepts only the exact physical queue, connection, lane, job and run", async () => {
     const accepted = message();
     const result = await guardExclusiveCanaryBatch({ queue: queueName, messages: [accepted] }, await scope());
@@ -130,6 +170,23 @@ describe("exclusive physical canary queue", () => {
     expect(result.accepted).toHaveLength(0);
     expect(altered.ack).not.toHaveBeenCalled();
     expect(altered.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
+  });
+
+  it("accepts one exact catalog envelope and rejects a sales envelope from that run", async () => {
+    const accepted = message(catalogEnvelope());
+    const catalogResult = await guardExclusiveCanaryBatch(
+      { queue: queueName, messages: [accepted] },
+      await catalogScope(),
+    );
+    expect(catalogResult.accepted).toEqual([accepted]);
+
+    const rejected = message(envelope());
+    const salesResult = await guardExclusiveCanaryBatch(
+      { queue: queueName, messages: [rejected] },
+      await catalogScope(),
+    );
+    expect(salesResult.accepted).toHaveLength(0);
+    expect(rejected.retry).toHaveBeenCalledWith({ delaySeconds: 300 });
   });
 });
 
@@ -309,6 +366,82 @@ describe("connection writer fence", () => {
     })).rejects.toThrow("WRITER_FENCE_GRANT_WINDOW_INVALID");
   });
 
+  it("accepts exact fresh bootstrap absence evidence without inventing a legacy 401", async () => {
+    const proof = "bootstrap-proof-only-known-by-runtime-123456789";
+    const credential = {
+      reference: `runtime-vault://postgres/${connectionId}/agora/agora`,
+      version: "e".repeat(64),
+    };
+    const grant: WriterFenceGrantV2 = {
+      version: 2,
+      connectionId,
+      runId,
+      holderId: "deploy-a",
+      proofSha256: await sha256Hex(proof),
+      exclusiveCredentialRef: credential.reference,
+      credentialVersion: credential.version,
+      credentialBinding: await writerFenceCredentialBinding(credential),
+      writerHistory: {
+        mode: "bootstrap-no-legacy-writer",
+        verifiedAt: "2026-08-03T05:58:00.000Z",
+        evidenceSha256: "a".repeat(64),
+        cloudflareEvidenceSha256: "b".repeat(64),
+        absence: {
+          activeConnectionCount: 0,
+          activeCredentialCount: 0,
+          activeScopeCount: 0,
+          priorRunCount: 0,
+          activeProducerCount: 0,
+          activeConsumerCount: 0,
+        },
+      },
+      issuedAt: "2026-08-03T06:00:00.000Z",
+      expiresAt: "2026-08-03T07:00:00.000Z",
+    };
+    const parsed = parseWriterFenceGrant(JSON.stringify(grant));
+    expect(parsed.version).toBe(2);
+    expect(parsed).not.toHaveProperty("legacyWriter");
+    await expect(validateWriterFenceGrant({
+      grant: parsed,
+      proof,
+      connectionId,
+      runId,
+      holderId: "deploy-a",
+      nowMs: Date.parse("2026-08-03T06:30:00.000Z"),
+    })).resolves.toBeUndefined();
+
+    expect(() => parseWriterFenceGrant(JSON.stringify({
+      ...grant,
+      writerHistory: {
+        ...grant.writerHistory,
+        absence: { ...grant.writerHistory.absence, activeProducerCount: 1 },
+      },
+    }))).toThrow("WRITER_FENCE_GRANT_BOOTSTRAP_ABSENCE_REQUIRED");
+    expect(() => parseWriterFenceGrant(JSON.stringify({
+      ...grant,
+      legacyWriter: {
+        revokedAt: "2026-08-03T05:59:00.000Z",
+        negativeProbeStatus: 401,
+        evidenceSha256: "c".repeat(64),
+      },
+    }))).toThrow("WRITER_FENCE_GRANT_BOOTSTRAP_LEGACY_EVIDENCE_FORBIDDEN");
+    expect(() => parseWriterFenceGrant(JSON.stringify({
+      ...grant,
+      exclusiveCredentialRef: `runtime-vault://postgres/${connectionId}/agora/winerim`,
+    }))).toThrow("WRITER_FENCE_GRANT_BOOTSTRAP_AGORA_CREDENTIAL_REQUIRED");
+    await expect(validateWriterFenceGrant({
+      grant: {
+        ...grant,
+        writerHistory: { ...grant.writerHistory, verifiedAt: "2026-08-03T05:40:00.000Z" },
+      },
+      proof,
+      connectionId,
+      runId,
+      holderId: "deploy-a",
+      nowMs: Date.parse("2026-08-03T06:30:00.000Z"),
+    })).rejects.toThrow("WRITER_FENCE_BOOTSTRAP_EVIDENCE_STALE");
+  });
+
   it("keeps the real credential version separate in a generated grant", async () => {
     const directory = mkdtempSync(join(tmpdir(), "writer-fence-grant-"));
     const output = join(directory, "grant.json");
@@ -354,6 +487,54 @@ describe("connection writer fence", () => {
         holderId: "deploy-a",
         nowMs: Date.parse("2026-08-03T06:30:00.000Z"),
       })).resolves.toBeUndefined();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("generates a bootstrap grant only from explicit zero evidence and no legacy probe", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "writer-fence-bootstrap-grant-"));
+    const output = join(directory, "grant.json");
+    const proof = "bootstrap-generated-proof-only-known-by-runtime-123";
+    const credentialReference = `runtime-vault://postgres/${connectionId}/agora/agora`;
+    try {
+      execFileSync(process.execPath, [
+        resolve("infrastructure/runtime/prepare-writer-fence-grant.mjs"),
+        `--output=${output}`,
+      ], {
+        cwd: resolve("."),
+        env: {
+          ...process.env,
+          WRITER_FENCE_MODE: "bootstrap-no-legacy-writer",
+          CANARY_CONNECTION_ID: connectionId,
+          CANARY_RUN_ID: runId,
+          CANARY_HOLDER_ID: "deploy-a",
+          CANARY_WRITER_FENCE_PROOF: proof,
+          CANARY_EXCLUSIVE_CREDENTIAL_REF: credentialReference,
+          CANARY_EXCLUSIVE_CREDENTIAL_VERSION: "f".repeat(64),
+          CANARY_RUNTIME_JOB: "catalog.sync-master",
+          CANARY_RUNTIME_LANE: "catalog",
+          CANARY_CATALOG_PRODUCT_ID: "500001",
+          NO_LEGACY_WRITER_VERIFIED_AT: "2026-08-03T05:58:00.000Z",
+          NO_LEGACY_WRITER_EVIDENCE_SHA256: "a".repeat(64),
+          NO_LEGACY_WRITER_CLOUDFLARE_EVIDENCE_SHA256: "b".repeat(64),
+          NO_LEGACY_WRITER_ACTIVE_CONNECTION_COUNT: "0",
+          NO_LEGACY_WRITER_ACTIVE_CREDENTIAL_COUNT: "0",
+          NO_LEGACY_WRITER_ACTIVE_SCOPE_COUNT: "0",
+          NO_LEGACY_WRITER_PRIOR_RUN_COUNT: "0",
+          NO_LEGACY_WRITER_ACTIVE_PRODUCER_COUNT: "0",
+          NO_LEGACY_WRITER_ACTIVE_CONSUMER_COUNT: "0",
+          CANARY_FENCE_ISSUED_AT: "2026-08-03T06:00:00.000Z",
+          CANARY_FENCE_EXPIRES_AT: "2026-08-03T07:00:00.000Z",
+        },
+        stdio: "pipe",
+      });
+      const source = readFileSync(output, "utf8");
+      const grant = parseWriterFenceGrant(source);
+      expect(grant.version).toBe(2);
+      expect(source).not.toContain("legacyWriter");
+      expect(source).not.toContain("negativeProbeStatus");
+      expect(grant.exclusiveCredentialRef).toBe(credentialReference);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

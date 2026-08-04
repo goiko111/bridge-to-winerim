@@ -21,6 +21,24 @@ const CANARY_MESSAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,199}$/;
 const RUN_PATTERN = /^[a-z0-9][a-z0-9-]{2,31}$/;
 const HEX32_PATTERN = /^[a-f0-9]{32}$/;
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{2,62}$/;
+const CATALOG_PRODUCT_ID_PATTERN = /^\d+$/;
+const WRITER_FENCE_MODES = new Set(["legacy-writer-revoked", "bootstrap-no-legacy-writer"]);
+const CANARY_POLICIES = Object.freeze({
+  "winerim.sales-import-live": Object.freeze({
+    lane: "sales-import",
+    exclusiveWriterCredentialKind: "winerim",
+    agoraCredentialMode: "shared-read-only",
+    agoraCatalogApply: false,
+    winerimMutation: true,
+  }),
+  "catalog.sync-master": Object.freeze({
+    lane: "catalog",
+    exclusiveWriterCredentialKind: "agora",
+    agoraCredentialMode: "exclusive-writer",
+    agoraCatalogApply: true,
+    winerimMutation: false,
+  }),
+});
 
 function required(environment, name) {
   const value = String(environment[name] ?? "").trim();
@@ -43,6 +61,83 @@ function render(template, values) {
     throw new Error(`FAILCLOSED_CANARY_RENDER_UNRESOLVED_${[...new Set(unresolved)].join("_")}`);
   }
   return rendered;
+}
+
+function configuredPolicy(environment) {
+  const job = String(environment.CANARY_RUNTIME_JOB ?? "winerim.sales-import-live").trim();
+  const policy = CANARY_POLICIES[job];
+  if (!policy) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_RUNTIME_JOB");
+  const lane = String(environment.CANARY_RUNTIME_LANE ?? policy.lane).trim();
+  if (lane !== policy.lane) throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_RUNTIME_JOB_LANE");
+  const writerFenceMode = String(
+    environment.CANARY_WRITER_FENCE_MODE ?? "legacy-writer-revoked",
+  ).trim();
+  if (!WRITER_FENCE_MODES.has(writerFenceMode)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_WRITER_FENCE_MODE");
+  }
+  if (writerFenceMode === "bootstrap-no-legacy-writer" && job !== "catalog.sync-master") {
+    throw new Error("FAILCLOSED_CANARY_RENDER_BOOTSTRAP_REQUIRES_CATALOG_SCOPE");
+  }
+
+  if (job !== "catalog.sync-master") {
+    return {
+      job,
+      ...policy,
+      writerFenceMode,
+      catalogProductId: "",
+      catalogBaseUrl: "",
+      catalogAllowedHosts: "",
+      catalogProfileJson: "",
+    };
+  }
+
+  const catalogProductId = required(environment, "CANARY_CATALOG_PRODUCT_ID");
+  const catalogBaseUrl = required(environment, "RUNTIME_AGORA_CATALOG_BASE_URL");
+  const catalogAllowedHosts = required(environment, "RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const rawProfile = required(environment, "RUNTIME_AGORA_CATALOG_PROFILE_JSON");
+  if (!CATALOG_PRODUCT_ID_PATTERN.test(catalogProductId)) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CATALOG_PRODUCT_ID");
+  }
+  let target;
+  let catalogProfile;
+  try {
+    target = new URL(catalogBaseUrl);
+    catalogProfile = JSON.parse(rawProfile);
+  } catch {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CATALOG_CONFIGURATION");
+  }
+  if (
+    !["http:", "https:"].includes(target.protocol)
+    || target.username
+    || target.password
+    || target.search
+    || target.hash
+    || (target.pathname !== "/" && target.pathname !== "")
+    || !catalogAllowedHosts.includes(target.host.toLowerCase())
+    || !catalogProfile
+    || typeof catalogProfile !== "object"
+    || Array.isArray(catalogProfile)
+  ) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_INVALID_CATALOG_CONFIGURATION");
+  }
+  const catalogProfileJson = JSON.stringify(catalogProfile);
+  if ([catalogBaseUrl, catalogAllowedHosts.join(","), catalogProfileJson].some((value) => (
+    /['\0\r\n]/.test(value)
+  ))) {
+    throw new Error("FAILCLOSED_CANARY_RENDER_UNSAFE_CATALOG_CONFIGURATION");
+  }
+  return {
+    job,
+    ...policy,
+    writerFenceMode,
+    catalogProductId,
+    catalogBaseUrl,
+    catalogAllowedHosts: catalogAllowedHosts.join(","),
+    catalogProfileJson,
+  };
 }
 
 function bundleWithWrangler({ key, entrypoint, renderedConfig, outputDir }) {
@@ -94,6 +189,7 @@ export function renderFailclosedCanaryConfigs({
   environment = process.env,
   outputDir = outputDirectory(),
 } = {}) {
+  const policy = configuredPolicy(environment);
   const runId = required(environment, "CANARY_RUN_ID");
   const connectionId = required(environment, "CANARY_CONNECTION_ID");
   const messageId = required(environment, "CANARY_MESSAGE_ID");
@@ -166,6 +262,15 @@ export function renderFailclosedCanaryConfigs({
     CANARY_MESSAGE_ID: messageId,
     CANARY_IDEMPOTENCY_KEY: idempotencyKey,
     CANARY_PAYLOAD_SHA256: payloadSha256,
+    CANARY_RUNTIME_JOB: policy.job,
+    CANARY_RUNTIME_LANE: policy.lane,
+    CANARY_CATALOG_PRODUCT_ID: policy.catalogProductId,
+    RUNTIME_AGORA_CREDENTIAL_MODE: policy.agoraCredentialMode,
+    RUNTIME_CATALOG_EXECUTION_ENABLED: String(policy.agoraCatalogApply),
+    RUNTIME_CATALOG_APPLY_ENABLED: String(policy.agoraCatalogApply),
+    RUNTIME_AGORA_CATALOG_BASE_URL: policy.catalogBaseUrl,
+    RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: policy.catalogAllowedHosts,
+    RUNTIME_AGORA_CATALOG_PROFILE_JSON: policy.catalogProfileJson,
     CANARY_EXCLUSIVE_CREDENTIAL_VERSION: exclusiveCredentialVersion,
     CANARY_CREDENTIAL_SET_SHA256: credentialSetSha256,
     RELEASE: release,
@@ -219,7 +324,7 @@ export function renderFailclosedCanaryConfigs({
     bundles[key] = bundlePath;
   }
   const deploymentManifest = {
-    version: 3,
+    version: 4,
     runId,
     connectionId,
     scopeNote: `rescue-canary-run:${runId}`,
@@ -229,24 +334,32 @@ export function renderFailclosedCanaryConfigs({
       credentialSetSha256,
     },
     writerFence: {
+      mode: policy.writerFenceMode,
       holderId,
       proofSha256,
-      exclusiveCredentialRef: `runtime-vault://postgres/${connectionId}/agora/winerim`,
+      exclusiveCredentialRef:
+        `runtime-vault://postgres/${connectionId}/agora/${policy.exclusiveWriterCredentialKind}`,
       credentialBinding: createHash("sha256").update([
         "winerim-writer-fence-credential",
         "1",
-        `runtime-vault://postgres/${connectionId}/agora/winerim`,
+        `runtime-vault://postgres/${connectionId}/agora/${policy.exclusiveWriterCredentialKind}`,
         exclusiveCredentialVersion,
       ].join("|")).digest("hex"),
     },
+    scopePolicy: {
+      job: policy.job,
+      lane: policy.lane,
+      maxOperations: 1,
+      productId: policy.catalogProductId || null,
+    },
     credentialPolicy: {
-      exclusiveWriterCredentialKind: "winerim",
-      agoraCredentialMode: "shared-read-only",
+      exclusiveWriterCredentialKind: policy.exclusiveWriterCredentialKind,
+      agoraCredentialMode: policy.agoraCredentialMode,
     },
     mutationPolicy: {
-      agoraCatalogApply: false,
+      agoraCatalogApply: policy.agoraCatalogApply,
       agoraOutboundMutation: false,
-      winerimMutation: true,
+      winerimMutation: policy.winerimMutation,
     },
     resources: {
       queues: {

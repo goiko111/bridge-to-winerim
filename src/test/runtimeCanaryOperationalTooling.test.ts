@@ -130,6 +130,72 @@ function deploymentManifest() {
   };
 }
 
+function catalogDeploymentManifest() {
+  const manifest = deploymentManifest();
+  const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/agora`;
+  return {
+    ...manifest,
+    version: 4,
+    credentialBinding: {
+      ...manifest.credentialBinding,
+      exclusiveAttestationSha256: "a".repeat(64),
+    },
+    writerFence: {
+      ...manifest.writerFence,
+      exclusiveCredentialRef,
+      credentialBinding: createHash("sha256").update([
+        "winerim-writer-fence-credential",
+        "1",
+        exclusiveCredentialRef,
+        "a".repeat(64),
+      ].join("|")).digest("hex"),
+    },
+    scopePolicy: {
+      job: "catalog.sync-master",
+      lane: "catalog",
+      maxOperations: 1,
+      productId: "500001",
+    },
+    credentialPolicy: {
+      exclusiveWriterCredentialKind: "agora",
+      agoraCredentialMode: "exclusive-writer",
+    },
+    mutationPolicy: {
+      agoraCatalogApply: true,
+      agoraOutboundMutation: false,
+      winerimMutation: false,
+    },
+  };
+}
+
+function salesV4DeploymentManifest() {
+  return {
+    ...deploymentManifest(),
+    version: 4,
+    writerFence: {
+      ...deploymentManifest().writerFence,
+      mode: "legacy-writer-revoked",
+    },
+    scopePolicy: {
+      job: "winerim.sales-import-live",
+      lane: "sales-import",
+      maxOperations: 1,
+      productId: null,
+    },
+  };
+}
+
+function bootstrapCatalogDeploymentManifest() {
+  const manifest = catalogDeploymentManifest();
+  return {
+    ...manifest,
+    writerFence: {
+      ...manifest.writerFence,
+      mode: "bootstrap-no-legacy-writer",
+    },
+  };
+}
+
 function credentialProvisioningManifest(mode = "bootstrap") {
   return {
     version: 1,
@@ -324,8 +390,9 @@ describe("runtime credential provisioning tooling", () => {
 });
 
 describe("rescue canary activation tooling", () => {
-  function writerFenceGrant() {
-    const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/winerim`;
+  function writerFenceGrant(kind: "agora" | "winerim" = "winerim") {
+    const exclusiveCredentialRef = `runtime-vault://postgres/${CONNECTION_ID}/agora/${kind}`;
+    const credentialVersion = kind === "agora" ? "a".repeat(64) : "b".repeat(64);
     return {
       version: 1,
       connectionId: CONNECTION_ID,
@@ -333,17 +400,47 @@ describe("rescue canary activation tooling", () => {
       holderId: "release-a",
       proofSha256: "a".repeat(64),
       exclusiveCredentialRef,
-      credentialVersion: "b".repeat(64),
+      credentialVersion,
       credentialBinding: createHash("sha256").update([
         "winerim-writer-fence-credential",
         "1",
         exclusiveCredentialRef,
-        "b".repeat(64),
+        credentialVersion,
       ].join("|")).digest("hex"),
       legacyWriter: {
         revokedAt: "2026-08-03T11:50:00.000Z",
         negativeProbeStatus: 401,
         evidenceSha256: "d".repeat(64),
+      },
+      issuedAt: "2026-08-03T11:55:00.000Z",
+      expiresAt: EXPIRES_AT,
+    };
+  }
+
+  function bootstrapWriterFenceGrant() {
+    const manifest = bootstrapCatalogDeploymentManifest();
+    return {
+      version: 2,
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      holderId: "release-a",
+      proofSha256: "a".repeat(64),
+      exclusiveCredentialRef: manifest.writerFence.exclusiveCredentialRef,
+      credentialVersion: "a".repeat(64),
+      credentialBinding: manifest.writerFence.credentialBinding,
+      writerHistory: {
+        mode: "bootstrap-no-legacy-writer",
+        verifiedAt: "2026-08-03T11:54:00.000Z",
+        evidenceSha256: "c".repeat(64),
+        cloudflareEvidenceSha256: "d".repeat(64),
+        absence: {
+          activeConnectionCount: 0,
+          activeCredentialCount: 0,
+          activeScopeCount: 0,
+          priorRunCount: 0,
+          activeProducerCount: 0,
+          activeConsumerCount: 0,
+        },
       },
       issuedAt: "2026-08-03T11:55:00.000Z",
       expiresAt: EXPIRES_AT,
@@ -403,6 +500,153 @@ describe("rescue canary activation tooling", () => {
         firstCanaryRequiresZeroOperationalRows: true,
       },
     });
+  });
+
+  it.each([
+    ["v3", deploymentManifest()],
+    ["v4", salesV4DeploymentManifest()],
+  ])("keeps live-sales %s compatible with the legacy writer grant", (_version, manifest) => {
+    const plan = rescueCanaryActivationPlan({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: manifest,
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrant: writerFenceGrant(),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    });
+
+    expect(plan).toMatchObject({
+      writerFenceMode: "legacy-writer-revoked",
+      activation: {
+        job: "winerim.sales-import-live",
+        lane: "sales-import",
+        exclusiveWriterCredentialKind: "winerim",
+      },
+    });
+  });
+
+  it("binds a versioned catalog canary to one product and the exclusive Agora credential", () => {
+    const plan = rescueCanaryActivationPlan({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: catalogDeploymentManifest(),
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrant: writerFenceGrant("agora"),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    });
+
+    expect(plan.activation).toMatchObject({
+      job: "catalog.sync-master",
+      lane: "catalog",
+      maxOperations: 1,
+      productId: "500001",
+      catalogDisabled: false,
+      exclusiveWriterCredentialKind: "agora",
+      agoraCredentialMode: "exclusive-writer",
+      winerimMutation: false,
+    });
+    expect(plan.forbidden).toEqual(expect.arrayContaining([
+      "agora-outbound-write",
+      "winerim-mutation",
+      "shared-queue",
+    ]));
+    expect(plan.forbidden).not.toContain("agora-catalog-write");
+  });
+
+  it("binds a no-legacy bootstrap to exact zero evidence and an exclusive Agora catalog scope", () => {
+    const plan = rescueCanaryActivationPlan({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: bootstrapCatalogDeploymentManifest(),
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrant: bootstrapWriterFenceGrant(),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    });
+    const sql = renderRescueCanaryActivationSql({
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      writerFenceMode: plan.writerFenceMode,
+      writerFenceEvidenceAt: plan.writerFenceEvidenceAt,
+      credentialAttestations: CREDENTIAL_ATTESTATIONS,
+      credentialSetSha256: CREDENTIAL_SET_SHA256,
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrantSha256: "f".repeat(64),
+    });
+
+    expect(plan).toMatchObject({
+      writerFenceMode: "bootstrap-no-legacy-writer",
+      activation: {
+        job: "catalog.sync-master",
+        productId: "500001",
+        exclusiveWriterCredentialKind: "agora",
+      },
+    });
+    expect(sql).toContain("bootstrap-no-legacy-writer requires zero prior scopes, runs, or credentials");
+    expect(sql).toContain(`run_id <> '${RETIREMENT_RUN_ID}'`);
+  });
+
+  it("rejects bootstrap absence evidence with a non-zero count or a sales scope", () => {
+    const base = {
+      connectionId: CONNECTION_ID,
+      runId: RETIREMENT_RUN_ID,
+      approvedAt: APPROVED_AT,
+      expiresAt: EXPIRES_AT,
+      keyVersion: KEY_VERSION,
+      deploymentManifest: bootstrapCatalogDeploymentManifest(),
+      deploymentManifestSha256: "e".repeat(64),
+      writerFenceGrantSha256: "f".repeat(64),
+      credentialProvisioningManifest: credentialProvisioningManifest(),
+      credentialProvisioningManifestSha256: "8".repeat(64),
+      deploymentConfigSha256: DEPLOYMENT_CONFIG_SHA256,
+      deploymentBundleSha256: DEPLOYMENT_BUNDLE_SHA256,
+    };
+    const grant = bootstrapWriterFenceGrant();
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      writerFenceGrant: {
+        ...grant,
+        writerHistory: {
+          ...grant.writerHistory,
+          absence: { ...grant.writerHistory.absence, activeConsumerCount: 1 },
+        },
+      },
+    })).toThrow("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+
+    expect(() => rescueCanaryActivationPlan({
+      ...base,
+      deploymentManifest: {
+        ...salesV4DeploymentManifest(),
+        writerFence: {
+          ...salesV4DeploymentManifest().writerFence,
+          mode: "bootstrap-no-legacy-writer",
+        },
+      },
+      writerFenceGrant: grant,
+    })).toThrow("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_MANIFEST_SCOPE_MISMATCH");
   });
 
   it("rejects activation when the deployment could mutate Agora with a shared credential", () => {

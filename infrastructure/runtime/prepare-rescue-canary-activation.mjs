@@ -19,6 +19,23 @@ const MIN_LEGACY_WRITER_DRAIN_MS = 130 * 1_000;
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = resolve(dirname(scriptPath), "../..");
 const DEPLOYMENT_CONFIG_KEYS = Object.freeze(["consumer", "executor", "fence", "observer"]);
+const WRITER_FENCE_MODES = new Set(["legacy-writer-revoked", "bootstrap-no-legacy-writer"]);
+const DEPLOYMENT_POLICIES = Object.freeze({
+  "winerim.sales-import-live": Object.freeze({
+    lane: "sales-import",
+    exclusiveWriterCredentialKind: "winerim",
+    agoraCredentialMode: "shared-read-only",
+    agoraCatalogApply: false,
+    winerimMutation: true,
+  }),
+  "catalog.sync-master": Object.freeze({
+    lane: "catalog",
+    exclusiveWriterCredentialKind: "agora",
+    agoraCredentialMode: "exclusive-writer",
+    agoraCatalogApply: true,
+    winerimMutation: false,
+  }),
+});
 
 function required(environment, name) {
   const value = String(environment[name] ?? "").trim();
@@ -48,6 +65,32 @@ function readBoundJson({ path, expectedSha256, label }) {
   }
 }
 
+function deploymentPolicy(manifest) {
+  if (manifest?.version === 3) {
+    return {
+      job: "winerim.sales-import-live",
+      ...DEPLOYMENT_POLICIES["winerim.sales-import-live"],
+      productId: null,
+      writerFenceMode: "legacy-writer-revoked",
+    };
+  }
+  if (manifest?.version !== 4) return null;
+  const job = String(manifest.scopePolicy?.job ?? "");
+  const policy = DEPLOYMENT_POLICIES[job];
+  if (!policy) return null;
+  const productId = manifest.scopePolicy?.productId;
+  const writerFenceMode = String(manifest.writerFence?.mode ?? "legacy-writer-revoked");
+  if (
+    manifest.scopePolicy?.lane !== policy.lane
+    || manifest.scopePolicy?.maxOperations !== 1
+    || (job === "catalog.sync-master" && !/^\d+$/.test(String(productId ?? "")))
+    || (job !== "catalog.sync-master" && productId !== null)
+    || !WRITER_FENCE_MODES.has(writerFenceMode)
+    || (writerFenceMode === "bootstrap-no-legacy-writer" && job !== "catalog.sync-master")
+  ) return null;
+  return { job, ...policy, productId, writerFenceMode };
+}
+
 function validateDeploymentManifest({
   manifest,
   connectionId,
@@ -57,8 +100,12 @@ function validateDeploymentManifest({
   deploymentConfigSha256,
   deploymentBundleSha256,
 }) {
+  const policy = deploymentPolicy(manifest);
+  const exclusiveCredentialRef = policy
+    ? `runtime-vault://postgres/${connectionId}/agora/${policy.exclusiveWriterCredentialKind}`
+    : "";
   if (
-    manifest?.version !== 3
+    !policy
     || manifest.connectionId !== connectionId
     || manifest.runId !== runId
     || manifest.scopeNote !== `rescue-canary-run:${runId}`
@@ -67,14 +114,13 @@ function validateDeploymentManifest({
     || !SHA256_PATTERN.test(manifest.credentialBinding?.exclusiveAttestationSha256 ?? "")
     || !RESOURCE_PATTERN.test(manifest.writerFence?.holderId ?? "")
     || !SHA256_PATTERN.test(manifest.writerFence?.proofSha256 ?? "")
-    || manifest.writerFence?.exclusiveCredentialRef
-      !== `runtime-vault://postgres/${connectionId}/agora/winerim`
+    || manifest.writerFence?.exclusiveCredentialRef !== exclusiveCredentialRef
     || !SHA256_PATTERN.test(manifest.writerFence?.credentialBinding ?? "")
-    || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== "winerim"
-    || manifest.credentialPolicy?.agoraCredentialMode !== "shared-read-only"
-    || manifest.mutationPolicy?.agoraCatalogApply !== false
+    || manifest.credentialPolicy?.exclusiveWriterCredentialKind !== policy.exclusiveWriterCredentialKind
+    || manifest.credentialPolicy?.agoraCredentialMode !== policy.agoraCredentialMode
+    || manifest.mutationPolicy?.agoraCatalogApply !== policy.agoraCatalogApply
     || manifest.mutationPolicy?.agoraOutboundMutation !== false
-    || manifest.mutationPolicy?.winerimMutation !== true
+    || manifest.mutationPolicy?.winerimMutation !== policy.winerimMutation
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_DEPLOYMENT_MANIFEST_SCOPE_MISMATCH");
   }
@@ -125,6 +171,7 @@ function validateDeploymentManifest({
   return {
     exclusiveAttestationSha256: manifest.credentialBinding.exclusiveAttestationSha256,
     writerFence: manifest.writerFence,
+    policy,
   };
 }
 
@@ -171,6 +218,7 @@ function validateWriterFenceGrant({
   expectedProofSha256,
   expectedCredentialRef,
   expectedCredentialBinding,
+  expectedMode,
   approvedAt,
   expiresAt,
 }) {
@@ -180,8 +228,8 @@ function validateWriterFenceGrant({
     expectedCredentialRef,
     expectedAttestation,
   ].join("|")).digest("hex");
-  if (
-    grant?.version !== 1
+  const commonMismatch = (
+    !grant
     || grant.connectionId !== connectionId
     || grant.runId !== runId
     || grant.holderId !== expectedHolderId
@@ -190,24 +238,60 @@ function validateWriterFenceGrant({
     || grant.credentialVersion !== expectedAttestation
     || grant.credentialBinding !== recomputedCredentialBinding
     || expectedCredentialBinding !== recomputedCredentialBinding
-    || ![401, 403].includes(grant.legacyWriter?.negativeProbeStatus)
-    || !SHA256_PATTERN.test(grant.legacyWriter?.evidenceSha256 ?? "")
-  ) {
+  );
+  if (commonMismatch) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
   }
   const issued = parseTimestamp(grant.issuedAt, "WRITER_FENCE_ISSUED_AT");
-  const revoked = parseTimestamp(grant.legacyWriter.revokedAt, "LEGACY_WRITER_REVOKED_AT");
   const fenceExpiry = parseTimestamp(grant.expiresAt, "WRITER_FENCE_EXPIRES_AT");
+  if (approvedAt.milliseconds < issued.milliseconds || expiresAt.milliseconds > fenceExpiry.milliseconds) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
+  }
+  if (expectedMode === "legacy-writer-revoked") {
+    if (
+      grant.version !== 1
+      || ![401, 403].includes(grant.legacyWriter?.negativeProbeStatus)
+      || !SHA256_PATTERN.test(grant.legacyWriter?.evidenceSha256 ?? "")
+    ) {
+      throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+    }
+    const revoked = parseTimestamp(grant.legacyWriter.revokedAt, "LEGACY_WRITER_REVOKED_AT");
+    if (
+      revoked.milliseconds > issued.milliseconds
+      || issued.milliseconds < revoked.milliseconds + MIN_LEGACY_WRITER_DRAIN_MS
+      || approvedAt.milliseconds < revoked.milliseconds + MIN_LEGACY_WRITER_DRAIN_MS
+    ) {
+      throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
+    }
+    return { mode: expectedMode, evidenceAt: revoked.iso };
+  }
+  const history = grant.writerHistory;
   if (
-    revoked.milliseconds > issued.milliseconds
-    || issued.milliseconds < revoked.milliseconds + MIN_LEGACY_WRITER_DRAIN_MS
-    || approvedAt.milliseconds < issued.milliseconds
-    || approvedAt.milliseconds < revoked.milliseconds + MIN_LEGACY_WRITER_DRAIN_MS
-    || expiresAt.milliseconds > fenceExpiry.milliseconds
+    expectedMode !== "bootstrap-no-legacy-writer"
+    || grant.version !== 2
+    || Object.prototype.hasOwnProperty.call(grant, "legacyWriter")
+    || history?.mode !== expectedMode
+    || !SHA256_PATTERN.test(history.evidenceSha256 ?? "")
+    || !SHA256_PATTERN.test(history.cloudflareEvidenceSha256 ?? "")
+    || !history.absence
+    || history.absence.activeConnectionCount !== 0
+    || history.absence.activeCredentialCount !== 0
+    || history.absence.activeScopeCount !== 0
+    || history.absence.priorRunCount !== 0
+    || history.absence.activeProducerCount !== 0
+    || history.absence.activeConsumerCount !== 0
+    || grant.exclusiveCredentialRef !== `runtime-vault://postgres/${connectionId}/agora/agora`
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_GRANT_MISMATCH");
+  }
+  const verified = parseTimestamp(history.verifiedAt, "NO_LEGACY_WRITER_VERIFIED_AT");
+  if (
+    verified.milliseconds > issued.milliseconds
+    || issued.milliseconds - verified.milliseconds > 15 * 60 * 1_000
   ) {
     throw new Error("RESCUE_CANARY_ACTIVATION_WRITER_FENCE_WINDOW_MISMATCH");
   }
-  return { revokedAt: revoked.iso };
+  return { mode: expectedMode, evidenceAt: verified.iso };
 }
 
 export function renderRescueCanaryActivationSql({
@@ -217,7 +301,9 @@ export function renderRescueCanaryActivationSql({
   expiresAt,
   keyVersion,
   mode = "bootstrap",
+  writerFenceMode = "legacy-writer-revoked",
   legacyWriterRevokedAt,
+  writerFenceEvidenceAt = legacyWriterRevokedAt,
   credentialAttestations,
   credentialSetSha256,
   deploymentManifestSha256,
@@ -229,7 +315,10 @@ export function renderRescueCanaryActivationSql({
   if (!new Set(["bootstrap", "rotate"]).has(mode)) {
     throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_MODE");
   }
-  const revoked = parseTimestamp(legacyWriterRevokedAt, "LEGACY_WRITER_REVOKED_AT");
+  if (!WRITER_FENCE_MODES.has(writerFenceMode)) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_INVALID_WRITER_FENCE_MODE");
+  }
+  const writerEvidence = parseTimestamp(writerFenceEvidenceAt, "WRITER_FENCE_EVIDENCE_AT");
   if (
     !SHA256_PATTERN.test(credentialAttestations?.agora ?? "")
     || !SHA256_PATTERN.test(credentialAttestations?.winerim ?? "")
@@ -261,7 +350,8 @@ LOCK TABLE public.pos_connections,
 
 DO $verify_rescue_canary_activation$
 BEGIN
-  IF statement_timestamp() < '${revoked.iso}'::timestamptz + interval '130 seconds' THEN
+  IF '${writerFenceMode}' = 'legacy-writer-revoked'
+    AND statement_timestamp() < '${writerEvidence.iso}'::timestamptz + interval '130 seconds' THEN
     RAISE EXCEPTION 'legacy writer lease and network drain has not elapsed';
   END IF;
   IF '${approved.iso}'::timestamptz > statement_timestamp()
@@ -302,6 +392,20 @@ BEGIN
       AND retired_at IS NULL
   ) THEN
     RAISE EXCEPTION 'exact prepared canary run is missing or already consumed';
+  END IF;
+  IF '${writerFenceMode}' = 'bootstrap-no-legacy-writer' AND (
+    EXISTS (
+      SELECT 1 FROM public.runtime_canary_connections
+      WHERE connection_id = '${connectionId}'::uuid
+        AND run_id <> '${runId}'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.runtime_connection_credentials
+      WHERE connection_id = '${connectionId}'::uuid
+        AND run_id <> '${runId}'
+    )
+  ) THEN
+    RAISE EXCEPTION 'bootstrap-no-legacy-writer requires zero prior scopes, runs, or credentials';
   END IF;
   IF (
     SELECT count(*)
@@ -505,7 +609,16 @@ export function rescueCanaryActivationPlan({
     deploymentConfigSha256,
     deploymentBundleSha256,
   });
-  if (deployment.exclusiveAttestationSha256 !== provisioning.attestations.winerim) {
+  if (
+    deployment.policy.writerFenceMode === "bootstrap-no-legacy-writer"
+    && provisioning.mode !== "bootstrap"
+  ) {
+    throw new Error("RESCUE_CANARY_ACTIVATION_BOOTSTRAP_WRITER_REQUIRES_BOOTSTRAP_GENERATION");
+  }
+  const exclusiveAttestation = provisioning.attestations[
+    deployment.policy.exclusiveWriterCredentialKind
+  ];
+  if (deployment.exclusiveAttestationSha256 !== exclusiveAttestation) {
     throw new Error("RESCUE_CANARY_ACTIVATION_EXCLUSIVE_CREDENTIAL_ATTESTATION_MISMATCH");
   }
   const writerFence = validateWriterFenceGrant({
@@ -517,6 +630,7 @@ export function rescueCanaryActivationPlan({
     expectedProofSha256: deployment.writerFence.proofSha256,
     expectedCredentialRef: deployment.writerFence.exclusiveCredentialRef,
     expectedCredentialBinding: deployment.writerFence.credentialBinding,
+    expectedMode: deployment.policy.writerFenceMode,
     approvedAt: approved,
     expiresAt: expires,
   });
@@ -529,7 +643,8 @@ export function rescueCanaryActivationPlan({
     expiresAt: expires.iso,
     keyVersion,
     mode: provisioning.mode,
-    legacyWriterRevokedAt: writerFence.revokedAt,
+    writerFenceMode: writerFence.mode,
+    writerFenceEvidenceAt: writerFence.evidenceAt,
     scopeNote: `rescue-canary-run:${runId}`,
     deploymentManifestSha256,
     writerFenceGrantSha256,
@@ -540,22 +655,27 @@ export function rescueCanaryActivationPlan({
     credentialAttestations: provisioning.attestations,
     activation: {
       oneConnection: true,
-      catalogDisabled: true,
+      job: deployment.policy.job,
+      lane: deployment.policy.lane,
+      maxOperations: 1,
+      productId: deployment.policy.productId,
+      catalogDisabled: !deployment.policy.agoraCatalogApply,
       syncMode: "PULL_ONLY",
       writeMode: "NONE",
-      exclusiveWriterCredentialKind: "winerim",
-      agoraCredentialMode: "shared-read-only",
+      exclusiveWriterCredentialKind: deployment.policy.exclusiveWriterCredentialKind,
+      agoraCredentialMode: deployment.policy.agoraCredentialMode,
+      winerimMutation: deployment.policy.winerimMutation,
       credentialKinds: ["agora", "winerim"],
       firstCanaryRequiresZeroOperationalRows: true,
       preservesPriorOperationalRowsOnRotation: provisioning.mode === "rotate",
     },
     forbidden: [
-      "agora-catalog-write",
+      ...(!deployment.policy.agoraCatalogApply ? ["agora-catalog-write"] : []),
       "agora-outbound-write",
-      "catalog-enable",
+      ...(deployment.policy.agoraCatalogApply ? [] : ["catalog-enable"]),
       "backfill",
       "cursor-write",
-      "stock-write",
+      ...(!deployment.policy.winerimMutation ? ["winerim-mutation"] : []),
       "shared-queue",
     ],
   };
@@ -637,7 +757,8 @@ export function prepareRescueCanaryActivation({ environment = process.env, outpu
     expiresAt,
     keyVersion,
     mode: plan.mode,
-    legacyWriterRevokedAt: plan.legacyWriterRevokedAt,
+    writerFenceMode: plan.writerFenceMode,
+    writerFenceEvidenceAt: plan.writerFenceEvidenceAt,
     credentialAttestations: plan.credentialAttestations,
     credentialSetSha256: plan.credentialSetSha256,
     deploymentManifestSha256: plan.deploymentManifestSha256,

@@ -143,6 +143,14 @@ async function rescueEnvelope(payload: Record<string, unknown>): Promise<Runtime
   };
 }
 
+async function rescueCatalogEnvelope(payload: Record<string, unknown>): Promise<RuntimeEnvelopeV1> {
+  const candidate = await envelope("catalog.sync-master", payload);
+  return {
+    ...candidate,
+    source: { kind: "queue", eventId: `canary:run-20260803-a:${candidate.messageId}` },
+  };
+}
+
 function enabledEnv(overrides: Partial<MiddlewareRuntimeExecutorEnv> = {}): MiddlewareRuntimeExecutorEnv {
   return {
     ENVIRONMENT: "staging",
@@ -713,7 +721,7 @@ describe("private runtime executor Worker", () => {
       agoraCredentialMode: "shared-read-only",
       agoraReadOnlyPolicyOpen: false,
       enabledJobs: [],
-      missingBindings: expect.arrayContaining(["RUNTIME_AGORA_READ_ONLY_POLICY"]),
+      missingBindings: expect.arrayContaining(["RUNTIME_CANARY_POLICY"]),
     });
     expect(execute.status).toBe(503);
     expect(await execute.json()).toMatchObject({
@@ -941,6 +949,111 @@ describe("private runtime executor Worker", () => {
     expect(order).toEqual(["fence", "post", "persist"]);
     expect(fence).toHaveBeenCalledOnce();
     expect(remote.applyAndReadback).toHaveBeenCalledOnce();
+  });
+
+  it("runs one exact rescue catalog product with the exclusive Agora fence and exact readback", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const credentialFence = await credentialFenceFor(agora, "agora");
+    const activeFence = await activeGrantFor(credentialFence);
+    const fake = readinessDatabase({ agora: agora.row }, activeFence.grantSha256);
+    const order: string[] = [];
+    const remote: AgoraCatalogApplyAndReadbackPort = {
+      applyAndReadback: vi.fn(async ({ plan }) => ({
+        ok: true as const,
+        receipt: {
+          status: "applied" as const,
+          appliedProductIds: [plan.operations[0]!.desired.productId],
+          canonicalProductFingerprints: {
+            [plan.operations[0]!.desired.productId]: await catalogProductCanonicalFingerprint(
+              plan.operations[0]!.desired,
+            ),
+          },
+        },
+      })),
+    };
+    const canary = await rescueCatalogEnvelope({
+      winerimWineIds: ["1"],
+      formatTypes: ["BOTTLE"],
+    });
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(order),
+      catalogApply: () => remote,
+    });
+    const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
+      CANARY_RUNTIME_JOB: "catalog.sync-master",
+      CANARY_RUNTIME_LANE: "catalog",
+      CANARY_CATALOG_PRODUCT_ID: "500001",
+      RUNTIME_AGORA_CREDENTIAL_MODE: "exclusive-writer",
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+      RUNTIME_AGORA_CATALOG_BASE_URL: AGORA_BASE_URL,
+      RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "agora.example.test",
+      RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => activeFence.rawGrant },
+      WRITER_FENCE: {
+        fetch: async (_input, init) => {
+          const body = JSON.parse(String(init?.body ?? "{}"));
+          return Response.json({
+            ...body,
+            fencingToken: 21,
+            credentialReference: credentialFence.attestation.reference,
+            credentialVersion: credentialFence.attestation.version,
+            credentialBinding: credentialFence.binding,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        },
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringMatching(/^catalog:applied:1:/),
+    });
+    expect(order).toEqual(["persist"]);
+    expect(remote.applyAndReadback).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a rescue catalog plan for a product outside the exact canary scope", async () => {
+    const agora = await encryptedCredentialRow("agora");
+    const credentialFence = await credentialFenceFor(agora, "agora");
+    const activeFence = await activeGrantFor(credentialFence);
+    const fake = readinessDatabase({ agora: agora.row }, activeFence.grantSha256);
+    const remote = { applyAndReadback: vi.fn() } satisfies AgoraCatalogApplyAndReadbackPort;
+    const canary = await rescueCatalogEnvelope({
+      winerimWineIds: ["1"],
+      formatTypes: ["BOTTLE"],
+    });
+    const worker = createMiddlewareRuntimeExecutorWorker({
+      database: () => fake.adapter,
+      catalogAdapterFactory: catalogAdapter(),
+      catalogApply: () => remote,
+    });
+    const response = await worker.fetch(executeRequest(canary), await rescueCanaryEnvFor(canary, {
+      CANARY_RUNTIME_JOB: "catalog.sync-master",
+      CANARY_RUNTIME_LANE: "catalog",
+      CANARY_CATALOG_PRODUCT_ID: "500002",
+      RUNTIME_AGORA_CREDENTIAL_MODE: "exclusive-writer",
+      RUNTIME_CATALOG_EXECUTION_ENABLED: "true",
+      RUNTIME_CATALOG_APPLY_ENABLED: "true",
+      RUNTIME_AGORA_CATALOG_BASE_URL: AGORA_BASE_URL,
+      RUNTIME_AGORA_CATALOG_ALLOWED_HOSTS: "agora.example.test",
+      RUNTIME_AGORA_CATALOG_PROFILE_JSON: catalogTransportProfile(),
+      RUNTIME_VAULT_KEY: { get: async () => agora.master },
+      CANARY_EXCLUSIVE_CREDENTIAL_VERSION: activeFence.credentialVersion,
+      CANARY_WRITER_FENCE_PROOF: { get: async () => activeFence.proof },
+      CANARY_WRITER_FENCE_GRANT: { get: async () => activeFence.rawGrant },
+    }));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      failure: { message: "CATALOG_APPLY_REJECTED" },
+    });
+    expect(remote.applyAndReadback).not.toHaveBeenCalled();
   });
 
   it("wires the reviewed Agora transport behind the fence and exact readback", async () => {

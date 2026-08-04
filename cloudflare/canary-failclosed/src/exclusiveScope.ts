@@ -1,5 +1,7 @@
 import {
   isRuntimeEnvelope,
+  RuntimeJob,
+  RuntimeLane,
   RuntimeEnvelopeV1,
 } from "../../workers/middleware-runtime/src/contracts";
 import { sha256Hex } from "./writerFence";
@@ -26,9 +28,36 @@ export type ExclusiveCanaryScope = {
   messageId: string;
   idempotencyKey: string;
   payloadSha256: string;
-  job: "winerim.sales-import-live";
-  lane: "sales-import";
+  job: ExclusiveCanaryJob;
+  lane: ExclusiveCanaryLane;
 };
+
+export type ExclusiveCanaryJob = "winerim.sales-import-live" | "catalog.sync-master";
+export type ExclusiveCanaryLane = "sales-import" | "catalog";
+
+export const DEFAULT_EXCLUSIVE_CANARY_JOB = "winerim.sales-import-live" as const;
+export const DEFAULT_EXCLUSIVE_CANARY_LANE = "sales-import" as const;
+
+const EXCLUSIVE_CANARY_JOB_LANES: Readonly<Record<ExclusiveCanaryJob, ExclusiveCanaryLane>> =
+  Object.freeze({
+    "winerim.sales-import-live": "sales-import",
+    "catalog.sync-master": "catalog",
+  });
+
+export function resolveExclusiveCanaryJobLane(
+  jobValue: unknown,
+  laneValue: unknown,
+): Readonly<{ job: ExclusiveCanaryJob; lane: ExclusiveCanaryLane }> | null {
+  const rawJob = String(jobValue ?? "").trim();
+  const rawLane = String(laneValue ?? "").trim();
+  const job = (rawJob || DEFAULT_EXCLUSIVE_CANARY_JOB) as RuntimeJob;
+  const expectedLane = EXCLUSIVE_CANARY_JOB_LANES[job as ExclusiveCanaryJob];
+  if (!expectedLane) return null;
+  const lane = (rawLane || expectedLane) as RuntimeLane;
+  return lane === expectedLane
+    ? { job: job as ExclusiveCanaryJob, lane: lane as ExclusiveCanaryLane }
+    : null;
+}
 
 export type ExclusiveScopeResult = {
   accepted: CanaryQueueMessageLike[];

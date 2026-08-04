@@ -167,7 +167,7 @@ COMMIT;
 
 function deploymentResources(deploymentManifest, connectionId, runId) {
   if (
-    !new Set([2, 3]).has(deploymentManifest?.version)
+    !new Set([2, 3, 4]).has(deploymentManifest?.version)
     || deploymentManifest.connectionId !== connectionId
     || deploymentManifest.runId !== runId
     || deploymentManifest.scopeNote !== `rescue-canary-run:${runId}`

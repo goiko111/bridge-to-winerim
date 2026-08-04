@@ -5,6 +5,7 @@ const MIN_LEASE_TTL_SECONDS = 30;
 const MAX_LEASE_TTL_SECONDS = 120;
 const LEASE_RESPONSE_CLOCK_SKEW_MS = 5_000;
 const MUTATION_LEASE_MIN_REMAINING_MS = 15_000;
+const MAX_BOOTSTRAP_EVIDENCE_AGE_MS = 15 * 60 * 1_000;
 
 export type SecretsStoreSecretLike = {
   get(): Promise<string>;
@@ -35,6 +36,41 @@ export type WriterFenceGrantV1 = {
   };
   issuedAt: string;
   expiresAt: string;
+};
+
+export type WriterFenceGrantV2 = {
+  version: 2;
+  connectionId: string;
+  runId: string;
+  holderId: string;
+  proofSha256: string;
+  exclusiveCredentialRef: string;
+  credentialVersion: string;
+  credentialBinding: string;
+  writerHistory: {
+    mode: "bootstrap-no-legacy-writer";
+    verifiedAt: string;
+    evidenceSha256: string;
+    cloudflareEvidenceSha256: string;
+    absence: {
+      activeConnectionCount: 0;
+      activeCredentialCount: 0;
+      activeScopeCount: 0;
+      priorRunCount: 0;
+      activeProducerCount: 0;
+      activeConsumerCount: 0;
+    };
+  };
+  issuedAt: string;
+  expiresAt: string;
+};
+
+export type WriterFenceGrant = WriterFenceGrantV1 | WriterFenceGrantV2;
+
+type WriterFenceGrantCandidate = Partial<Omit<WriterFenceGrantV1, "version" | "legacyWriter">> & {
+  version?: unknown;
+  legacyWriter?: WriterFenceGrantV1["legacyWriter"];
+  writerHistory?: WriterFenceGrantV2["writerHistory"];
 };
 
 export type WriterFenceLease = {
@@ -143,18 +179,7 @@ function timestamp(value: string, code: string): number {
   return parsed;
 }
 
-export function parseWriterFenceGrant(raw: string): WriterFenceGrantV1 {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(raw);
-  } catch {
-    throw new Error("WRITER_FENCE_GRANT_INVALID_JSON");
-  }
-  if (!candidate || typeof candidate !== "object") {
-    throw new Error("WRITER_FENCE_GRANT_INVALID_OBJECT");
-  }
-  const grant = candidate as Partial<WriterFenceGrantV1>;
-  if (grant.version !== 1) throw new Error("WRITER_FENCE_GRANT_VERSION_REJECTED");
+function validateCommonGrantFields(grant: WriterFenceGrantCandidate): void {
   if (!UUID_PATTERN.test(String(grant.connectionId ?? ""))) {
     throw new Error("WRITER_FENCE_GRANT_CONNECTION_REJECTED");
   }
@@ -176,20 +201,70 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrantV1 {
   if (!SHA256_PATTERN.test(String(grant.credentialBinding ?? ""))) {
     throw new Error("WRITER_FENCE_GRANT_CREDENTIAL_BINDING_REJECTED");
   }
-  if (!grant.legacyWriter || ![401, 403].includes(grant.legacyWriter.negativeProbeStatus ?? 0)) {
-    throw new Error("WRITER_FENCE_GRANT_LEGACY_NEGATIVE_PROBE_REQUIRED");
-  }
-  if (!SHA256_PATTERN.test(String(grant.legacyWriter.evidenceSha256 ?? ""))) {
-    throw new Error("WRITER_FENCE_GRANT_LEGACY_EVIDENCE_REJECTED");
-  }
-  timestamp(String(grant.legacyWriter.revokedAt ?? ""), "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
   timestamp(String(grant.issuedAt ?? ""), "WRITER_FENCE_GRANT_ISSUED_AT_REJECTED");
   timestamp(String(grant.expiresAt ?? ""), "WRITER_FENCE_GRANT_EXPIRES_AT_REJECTED");
-  return grant as WriterFenceGrantV1;
+}
+
+export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(raw);
+  } catch {
+    throw new Error("WRITER_FENCE_GRANT_INVALID_JSON");
+  }
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("WRITER_FENCE_GRANT_INVALID_OBJECT");
+  }
+  const grant = candidate as WriterFenceGrantCandidate;
+  if (grant.version !== 1 && grant.version !== 2) {
+    throw new Error("WRITER_FENCE_GRANT_VERSION_REJECTED");
+  }
+  validateCommonGrantFields(grant);
+  if (grant.version === 1) {
+    if (!grant.legacyWriter || ![401, 403].includes(grant.legacyWriter.negativeProbeStatus ?? 0)) {
+      throw new Error("WRITER_FENCE_GRANT_LEGACY_NEGATIVE_PROBE_REQUIRED");
+    }
+    if (!SHA256_PATTERN.test(String(grant.legacyWriter.evidenceSha256 ?? ""))) {
+      throw new Error("WRITER_FENCE_GRANT_LEGACY_EVIDENCE_REJECTED");
+    }
+    timestamp(String(grant.legacyWriter.revokedAt ?? ""), "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
+    return grant as WriterFenceGrantV1;
+  }
+  if (Object.prototype.hasOwnProperty.call(grant, "legacyWriter")) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_LEGACY_EVIDENCE_FORBIDDEN");
+  }
+  const history = grant.writerHistory;
+  if (history?.mode !== "bootstrap-no-legacy-writer") {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_MODE_REQUIRED");
+  }
+  if (
+    !SHA256_PATTERN.test(String(history.evidenceSha256 ?? ""))
+    || !SHA256_PATTERN.test(String(history.cloudflareEvidenceSha256 ?? ""))
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_EVIDENCE_REJECTED");
+  }
+  timestamp(String(history.verifiedAt ?? ""), "WRITER_FENCE_GRANT_BOOTSTRAP_VERIFIED_AT_REJECTED");
+  const absence = history.absence;
+  if (
+    !absence
+    || absence.activeConnectionCount !== 0
+    || absence.activeCredentialCount !== 0
+    || absence.activeScopeCount !== 0
+    || absence.priorRunCount !== 0
+    || absence.activeProducerCount !== 0
+    || absence.activeConsumerCount !== 0
+  ) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_ABSENCE_REQUIRED");
+  }
+  const expectedCredentialRef = `runtime-vault://postgres/${grant.connectionId}/agora/agora`;
+  if (grant.exclusiveCredentialRef !== expectedCredentialRef) {
+    throw new Error("WRITER_FENCE_GRANT_BOOTSTRAP_AGORA_CREDENTIAL_REQUIRED");
+  }
+  return grant as WriterFenceGrantV2;
 }
 
 export async function validateWriterFenceGrant(input: {
-  grant: WriterFenceGrantV1;
+  grant: WriterFenceGrant;
   proof: string;
   connectionId: string;
   runId: string;
@@ -214,12 +289,27 @@ export async function validateWriterFenceGrant(input: {
 
   const issuedAt = timestamp(grant.issuedAt, "WRITER_FENCE_GRANT_ISSUED_AT_REJECTED");
   const expiresAt = timestamp(grant.expiresAt, "WRITER_FENCE_GRANT_EXPIRES_AT_REJECTED");
-  const revokedAt = timestamp(grant.legacyWriter.revokedAt, "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
   if (issuedAt > nowMs + 30_000) throw new Error("WRITER_FENCE_GRANT_NOT_YET_VALID");
   if (expiresAt <= issuedAt) throw new Error("WRITER_FENCE_GRANT_WINDOW_INVALID");
   if (expiresAt <= nowMs) throw new Error("WRITER_FENCE_GRANT_EXPIRED");
   if (expiresAt - issuedAt > 2 * 60 * 60 * 1_000) throw new Error("WRITER_FENCE_GRANT_WINDOW_TOO_WIDE");
-  if (revokedAt > issuedAt || revokedAt > nowMs) throw new Error("WRITER_FENCE_LEGACY_REVOKE_ORDER_INVALID");
+  if (grant.version === 1) {
+    const revokedAt = timestamp(grant.legacyWriter.revokedAt, "WRITER_FENCE_GRANT_REVOKED_AT_REJECTED");
+    if (revokedAt > issuedAt || revokedAt > nowMs) {
+      throw new Error("WRITER_FENCE_LEGACY_REVOKE_ORDER_INVALID");
+    }
+    return;
+  }
+  const verifiedAt = timestamp(
+    grant.writerHistory.verifiedAt,
+    "WRITER_FENCE_GRANT_BOOTSTRAP_VERIFIED_AT_REJECTED",
+  );
+  if (verifiedAt > issuedAt || verifiedAt > nowMs) {
+    throw new Error("WRITER_FENCE_BOOTSTRAP_EVIDENCE_ORDER_INVALID");
+  }
+  if (issuedAt - verifiedAt > MAX_BOOTSTRAP_EVIDENCE_AGE_MS) {
+    throw new Error("WRITER_FENCE_BOOTSTRAP_EVIDENCE_STALE");
+  }
 }
 
 export async function validateActiveWriterFenceGrant(input: {
@@ -230,7 +320,7 @@ export async function validateActiveWriterFenceGrant(input: {
   runId: string;
   holderId: string;
   nowMs?: number;
-}): Promise<WriterFenceGrantV1> {
+}): Promise<WriterFenceGrant> {
   if (
     input.evidence.connectionId !== input.connectionId
     || input.evidence.runId !== input.runId

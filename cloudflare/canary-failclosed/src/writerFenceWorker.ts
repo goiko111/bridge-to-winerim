@@ -12,7 +12,7 @@ import {
   SecretsStoreSecretLike,
   validateActiveWriterFenceGrant,
   WriterFenceActiveScopeEvidence,
-  WriterFenceGrantV1,
+  WriterFenceGrant,
   WriterFenceLease,
 } from "./writerFence";
 
@@ -48,7 +48,7 @@ type AcquireRequest = {
 
 type StoredLease = WriterFenceLease & { acquiredAt: string };
 type LeaseCredential = Pick<
-  WriterFenceGrantV1,
+  WriterFenceGrant,
   "exclusiveCredentialRef" | "credentialVersion" | "credentialBinding"
 >;
 
