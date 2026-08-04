@@ -158,6 +158,46 @@ describe("Winerim single-wine catalog adapter", () => {
     }
   });
 
+  it("treats a literal zero sale price as a disabled or absent variant", async () => {
+    const zeroPriceSources = [
+      wine({ prices: [{ variant: "botella", price: 0 }] }),
+      wine({ prices: undefined, bottle_sale_price: 0 }),
+    ];
+
+    for (const zeroPriceWine of zeroPriceSources) {
+      const client = createWinerimCatalogClient({
+        baseUrl: "https://winerim.example.test",
+        allowedHosts: ["winerim.example.test"],
+        credential: { read: () => "credential" },
+        request: { request: vi.fn().mockResolvedValue(response({ success: true, wines: [zeroPriceWine] })) },
+        timer: timer(),
+      });
+
+      await expect(client.fetchOne({ winerimWineId: "855797", format: "BOTTLE" }))
+        .rejects.toMatchObject<WinerimCatalogError>({ code: "WINERIM_CATALOG_VARIANT_NOT_FOUND" });
+    }
+  });
+
+  it("rejects negative, NaN and non-finite sale price representations", async () => {
+    for (const invalidPrice of [-1, "NaN", "Infinity", "-Infinity", "1e309"]) {
+      const client = createWinerimCatalogClient({
+        baseUrl: "https://winerim.example.test",
+        allowedHosts: ["winerim.example.test"],
+        credential: { read: () => "credential" },
+        request: {
+          request: vi.fn().mockResolvedValue(response({
+            success: true,
+            wines: [wine({ prices: [{ variant: "botella", price: invalidPrice }] })],
+          })),
+        },
+        timer: timer(),
+      });
+
+      await expect(client.fetchOne({ winerimWineId: "855797", format: "BOTTLE" }))
+        .rejects.toMatchObject<WinerimCatalogError>({ code: "WINERIM_CATALOG_INVALID_RESPONSE" });
+    }
+  });
+
   it("keeps the hard timeout active through the bulk response", async () => {
     const request = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init.signal?.addEventListener("abort", () => reject(new Error("Bearer must-not-leak")));
@@ -235,6 +275,41 @@ describe("Winerim complete catalog inventory adapter", () => {
       method: "POST",
       body: JSON.stringify({ ids: [855797, 855798] }),
     });
+  });
+
+  it("omits zero-priced variants while preserving valid variants of the same wine", async () => {
+    const request = vi.fn(async (url: string) => {
+      if (new URL(url).pathname === "/api/v2/wines") {
+        return response({
+          success: true,
+          pagination: { total_pages: 1 },
+          wines: [{ id: 855797, name: "Canary wine" }],
+        });
+      }
+      return response({
+        success: true,
+        wines: [wine({
+          prices: [
+            { variant: "botella", price: 0 },
+            { variant: "copa", price: 3.5 },
+          ],
+        })],
+      });
+    });
+    const client = createWinerimCatalogInventoryClient({
+      baseUrl: "https://winerim.example.test",
+      allowedHosts: ["winerim.example.test"],
+      credential: { read: () => "credential" },
+      request: { request },
+      timer: timer(),
+    });
+
+    const result = await client.fetchInventory();
+
+    expect(result.wines).toHaveLength(1);
+    expect(result.wines[0]?.variants).toEqual([
+      { format: "GLASS", salePrice: 3.5, costPrice: 0, enabled: true },
+    ]);
   });
 
   it("rejects duplicate or incomplete inventory identities", async () => {

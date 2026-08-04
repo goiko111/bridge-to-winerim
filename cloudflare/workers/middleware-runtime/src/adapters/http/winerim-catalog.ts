@@ -132,7 +132,7 @@ function boundedText(value: unknown, maximum: number, required = false): string 
   return normalized || null;
 }
 
-function decimal(value: unknown, positive: boolean): number | null {
+function decimal(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "number" && typeof value !== "string") {
     throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
@@ -142,7 +142,7 @@ function decimal(value: unknown, positive: boolean): number | null {
     throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
   }
   const normalized = Number(raw);
-  if (!Number.isFinite(normalized) || normalized > MAX_PRODUCT_PRICE || (positive ? normalized <= 0 : normalized < 0)) {
+  if (!Number.isFinite(normalized) || normalized > MAX_PRODUCT_PRICE || normalized < 0) {
     throw new WinerimCatalogError("WINERIM_CATALOG_INVALID_RESPONSE");
   }
   return normalized;
@@ -174,7 +174,7 @@ function priceEntries(wine: Record<string, unknown>): PriceEntry[] {
     const variant = boundedText(entry.variant, 32, true);
     return {
       variant: variant as string,
-      price: decimal(entry.price, true),
+      price: decimal(entry.price),
     };
   });
 }
@@ -205,11 +205,11 @@ function normalizeWine(
   if (matching.length > 1) {
     throw new WinerimCatalogError("WINERIM_CATALOG_AMBIGUOUS_RESPONSE");
   }
-  const salePrice = matching[0]?.price ?? decimal(firstDefined(wine, salePriceFields(format)), true);
-  if (salePrice === null) {
+  const salePrice = matching[0]?.price ?? decimal(firstDefined(wine, salePriceFields(format)));
+  if (salePrice === null || salePrice === 0) {
     throw new WinerimCatalogError("WINERIM_CATALOG_VARIANT_NOT_FOUND");
   }
-  const costPrice = decimal(firstDefined(wine, costPriceFields(format)), false) ?? 0;
+  const costPrice = decimal(firstDefined(wine, costPriceFields(format))) ?? 0;
   const rawType = firstDefined(wine, ["type", "wine_type", "category", "style", "color", "colour"]);
   const status = boundedText(wine.status, 32)?.toLowerCase();
   if (wine.active !== undefined && typeof wine.active !== "boolean") {
