@@ -2,9 +2,19 @@
 
 `EXPORT_RESULT=TOOLING_READY_LOCAL_ONLY`
 
-This runbook transfers only the 24 approved middleware-owned data tables from
-Lovable Postgres into the independent Supabase staging database. It never
-copies rows from the five staging-owned tables:
+This runbook transfers only the approved middleware-owned data tables from
+Lovable Postgres into the independent Supabase staging database. The versioned
+allowlist has 20 required source tables and four optional tables introduced
+after the official legacy Lovable schema:
+
+- `integration_onboarding_requests`
+- `middleware_incident_email_attempts`
+- `middleware_incident_events`
+- `middleware_incidents`
+
+Only those four tables may be absent. In particular, an inaccessible or
+missing `agora_dispatch_locks` still fails the source inventory gate. It never
+copies rows from the six staging-owned tables:
 
 - `infrastructure_metadata`
 - `provider_credentials`
@@ -12,10 +22,12 @@ copies rows from the five staging-owned tables:
 - `runtime_execution_log`
 - `runtime_idempotency`
 
-The allowlist is versioned in `data-transfer/config.json`. A source database
-may contain additional platform tables, but they are never dumped. The target
-must contain exactly the 30 reviewed public tables and the sentinel
-`public.infrastructure_metadata.environment=staging`.
+The allowlist and optional subset are versioned in `data-transfer/config.json`.
+A source database may contain additional platform tables, but they are never
+dumped. The target must be provisioned by the reviewed migrations/bootstrap,
+contain exactly the 30 reviewed public tables and the sentinel
+`public.infrastructure_metadata.environment=staging`. Optional tables absent
+from the source remain present and empty on the target.
 
 ## Safety contract
 
@@ -25,6 +37,10 @@ must contain exactly the 30 reviewed public tables and the sentinel
   fields.
 - `provider_credentials` is staging-owned and required empty before and after
   import. Production rows from that table are never selected or archived.
+- A legacy source artifact must contain exactly the 20 required tables. A
+  current artifact may additionally contain any of the four optional tables;
+  omitted optional tables are required empty on the target before and after
+  import.
 - `pos_connections` is excluded from raw `pg_dump` table data. A checksummed,
   exact-column projection writes a binary copy with `api_token=''`, a fixed
   non-routable `base_url`, and nullable token, endpoint, provider-config and
@@ -69,8 +85,9 @@ npm run data:transfer:smoke:local
 npx tsc --noEmit --pretty false
 ```
 
-Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, 15 focal tests green,
-`LOCAL_TRANSFER_ROUNDTRIP_OK tables=24 credentials=sanitized` and typecheck
+Expected: `TRANSFER_PLAN`, `EXPORT_DRY_RUN`, focal tests green,
+`LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty`
+and typecheck
 green.
 
 ## Gate 1: consistent source export
@@ -87,9 +104,10 @@ npm run data:transfer:export -- \
 unset LOVABLE_DATABASE_URL
 ```
 
-Record `manifestSha256`, `snapshotAt`, `snapshotLsn`, the 24 counts/checksums
+Record `manifestSha256`, `snapshotAt`, `snapshotLsn`, all emitted counts/checksums
 and the encrypted artifact location. Do not continue if any allowlisted table
-is absent or the source cannot export a repeatable read-only snapshot.
+other than the four configured optional tables is absent, or the source cannot
+export a repeatable read-only snapshot.
 
 Only manifest schema version 2 artifacts are accepted. Older artifacts did not
 prove the sanitizing projection and must not be imported.

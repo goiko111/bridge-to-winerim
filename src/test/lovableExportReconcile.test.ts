@@ -19,12 +19,15 @@ import {
   loadTransferConfig,
   manifestDigest,
   quoteIdentifier,
+  requiredEmptyTargetTables,
+  requiredSourceTables,
   readState,
   redactError,
   checksumManifest,
   tableTransferPolicy,
   targetReplaceTables,
   transferPolicyDigest,
+  resolveSourceTables,
   validateTransferConfig,
   verifyManifest,
   writeState,
@@ -34,9 +37,16 @@ const root = process.cwd();
 const configPath = resolve(root, "infrastructure/postgres/data-transfer/config.json");
 
 describe("Lovable export/reconcile staging toolkit", () => {
-  it("has a 24-table source allowlist and keeps credentials staging-owned and empty", async () => {
+  it("has a 24-table allowlist with a fail-closed 20-table Lovable legacy inventory", async () => {
     const config = await loadTransferConfig(configPath);
     expect(config.sourceTables).toHaveLength(24);
+    expect(config.optionalSourceTables).toEqual([
+      "integration_onboarding_requests",
+      "middleware_incident_email_attempts",
+      "middleware_incident_events",
+      "middleware_incidents",
+    ]);
+    expect(requiredSourceTables(config)).toHaveLength(20);
     expect(config.sourceTables).not.toContain("provider_credentials");
     expect(config.stagingOnlyTables).toEqual([
       "infrastructure_metadata",
@@ -57,13 +67,34 @@ describe("Lovable export/reconcile staging toolkit", () => {
     expect(targetReplaceTables(config)).not.toContain("infrastructure_metadata");
     expect(targetReplaceTables(config)).toContain("runtime_idempotency");
     expect(targetReplaceTables(config)).toContain("provider_credentials");
+    expect(targetReplaceTables(config)).toEqual(expect.arrayContaining(config.optionalSourceTables));
     expect(tableTransferPolicy(config, "provider_credentials").mode).toBe("empty");
+  });
+
+  it("accepts only the four versioned source omissions and requires their target rows empty", async () => {
+    const config = await loadTransferConfig(configPath);
+    const legacyTables = requiredSourceTables(config);
+    expect(resolveSourceTables(config, [...legacyTables, "platform_internal"])).toEqual(legacyTables);
+    expect(requiredEmptyTargetTables(config, legacyTables)).toEqual([
+      ...config.runtimeMustRemainEmpty,
+      ...config.optionalSourceTables,
+    ].sort());
+    expect(() => resolveSourceTables(
+      config,
+      legacyTables.filter((table) => table !== "agora_dispatch_locks"),
+    )).toThrow(/missing=agora_dispatch_locks/);
+    expect(() => resolveSourceTables(
+      config,
+      [...legacyTables, "platform_internal"],
+      { rejectUnexpected: true },
+    )).toThrow(/unexpected=platform_internal/);
   });
 
   it("rejects duplicate, unsafe and cross-owned table configuration", async () => {
     const config = await loadTransferConfig(configPath);
     expect(() => validateTransferConfig({ ...config, sourceTables: [...config.sourceTables, config.sourceTables[0]] })).toThrow(/duplicates/);
     expect(() => validateTransferConfig({ ...config, sourceTables: ["pos_connections; drop table x"] })).toThrow(/unsafe/);
+    expect(() => validateTransferConfig({ ...config, optionalSourceTables: ["provider_credentials"] })).toThrow(/Optional source/);
     expect(() => validateTransferConfig({ ...config, runtimeMustRemainEmpty: ["pos_connections"] })).toThrow(/staging-only subset/);
     expect(() => validateTransferConfig({
       ...config,

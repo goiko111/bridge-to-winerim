@@ -40,6 +40,15 @@ psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U postgres -d "$SOURCE_DB
 psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U postgres -d "$TARGET_DB" \
   -v environment=staging -f "$BOOTSTRAP_SQL"
 
+# The official Lovable copy predates these own-infrastructure control-plane
+# tables. The independently bootstrapped target intentionally keeps them.
+psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PORT" -U postgres -d "$SOURCE_DB" <<SQL
+DROP TABLE public.middleware_incident_email_attempts;
+DROP TABLE public.middleware_incident_events;
+DROP TABLE public.middleware_incidents;
+DROP TABLE public.integration_onboarding_requests;
+SQL
+
 SOURCE_URL="postgresql://postgres@127.0.0.1:$PORT/$SOURCE_DB"
 TARGET_URL="postgresql://postgres@127.0.0.1:$PORT/$TARGET_DB"
 CONNECTION_ID=11111111-1111-4111-8111-111111111111
@@ -143,6 +152,11 @@ provider_credentials_count=$(
   psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
     -c "SELECT count(*) FROM public.provider_credentials"
 )
+own_only_count=$(
+  psql "$TARGET_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+    -c "SELECT (SELECT count(*) FROM public.integration_onboarding_requests) + (SELECT count(*) FROM public.middleware_incident_email_attempts) + (SELECT count(*) FROM public.middleware_incident_events) + (SELECT count(*) FROM public.middleware_incidents)"
+)
+manifest_table_count=$(node -e "const m=require(process.argv[1]); process.stdout.write(String(m.tables.length))" "$SOURCE_ARTIFACT/manifest.json")
 
 test "$source_connection" = "1"
 test "$old_connection" = "0"
@@ -151,6 +165,8 @@ test "$sentinel" = "staging"
 test "$phase" = "RECONCILED"
 test "$sanitized_connection" = "1"
 test "$provider_credentials_count" = "0"
+test "$own_only_count" = "0"
+test "$manifest_table_count" = "20"
 
 # Re-running the same confirmed artifact is a read-only idempotent no-op.
 resume_result=$(
@@ -239,4 +255,4 @@ fi
 psql "$TARGET_URL" -X -q -v ON_ERROR_STOP=1 \
   -c "DELETE FROM public.provider_credentials WHERE merchant_id='runtime-empty-gate'"
 
-printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK tables=24 credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED idempotent=1 rollback=1 resume=1\n'
+printf 'RESULT=LOCAL_TRANSFER_ROUNDTRIP_OK source_tables=20 target_tables=30 own_only=empty credentials=sanitized provider_credentials=empty sentinel=staging phase=RECONCILED idempotent=1 rollback=1 resume=1\n'

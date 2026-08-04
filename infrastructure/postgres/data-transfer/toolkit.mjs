@@ -60,17 +60,22 @@ export async function loadTransferConfig(configPath = DEFAULT_CONFIG_PATH) {
 }
 
 export function validateTransferConfig(config) {
-  if (config?.schemaVersion !== 2 || !IDENTIFIER.test(config?.schema || "")) {
+  if (config?.schemaVersion !== 3 || !IDENTIFIER.test(config?.schema || "")) {
     throw new Error("Unsupported data-transfer config");
   }
   const source = config.sourceTables;
+  const optionalSource = config.optionalSourceTables;
   const stagingOnly = config.stagingOnlyTables;
-  if (!Array.isArray(source) || source.length === 0 || !Array.isArray(stagingOnly)) {
+  if (!Array.isArray(source) || source.length === 0 || !Array.isArray(optionalSource) || !Array.isArray(stagingOnly)) {
     throw new Error("Data-transfer table lists are required");
   }
   const all = [...source, ...stagingOnly];
   if (new Set(all).size !== all.length || all.some((name) => !IDENTIFIER.test(name))) {
     throw new Error("Data-transfer table allowlist contains duplicates or unsafe names");
+  }
+  if (new Set(optionalSource).size !== optionalSource.length
+      || optionalSource.some((name) => !IDENTIFIER.test(name) || !source.includes(name))) {
+    throw new Error("Optional source tables must be a unique safe subset of the source allowlist");
   }
   if (!Array.isArray(config.runtimeMustRemainEmpty)
       || config.runtimeMustRemainEmpty.some((name) => !stagingOnly.includes(name))) {
@@ -121,6 +126,33 @@ export function validateTransferConfig(config) {
 
 export function expectedTargetTables(config) {
   return [...config.sourceTables, ...config.stagingOnlyTables].sort();
+}
+
+export function requiredSourceTables(config) {
+  const optional = new Set(config.optionalSourceTables);
+  return config.sourceTables.filter((table) => !optional.has(table));
+}
+
+export function resolveSourceTables(config, actualTables, { rejectUnexpected = false } = {}) {
+  if (!Array.isArray(actualTables) || new Set(actualTables).size !== actualTables.length) {
+    throw new Error("Source table inventory is missing or contains duplicates");
+  }
+  const actual = new Set(actualTables);
+  const allowed = new Set(config.sourceTables);
+  const missing = requiredSourceTables(config).filter((table) => !actual.has(table));
+  const unexpected = rejectUnexpected ? actualTables.filter((table) => !allowed.has(table)) : [];
+  if (missing.length || unexpected.length) {
+    throw new Error(`Source table inventory mismatch: missing=${missing.join(",") || "none"}; unexpected=${unexpected.join(",") || "none"}`);
+  }
+  return config.sourceTables.filter((table) => actual.has(table));
+}
+
+export function requiredEmptyTargetTables(config, sourceTables = config.sourceTables) {
+  const selected = new Set(sourceTables);
+  return [
+    ...config.runtimeMustRemainEmpty,
+    ...config.optionalSourceTables.filter((table) => !selected.has(table)),
+  ].sort();
 }
 
 export function targetReplaceTables(config) {
@@ -558,7 +590,7 @@ export async function createExportArtifact({
   databaseUrl,
   outputDir,
   config,
-  tables = config.sourceTables,
+  tables = null,
   kind = "lovable-source",
   exactInventory = false,
 }) {
@@ -570,9 +602,10 @@ export async function createExportArtifact({
   try {
     return await withExportedSnapshot(databaseUrl, async ({ client, snapshot }) => {
       const descriptor = await databaseDescriptor(client);
-      assertTableInventory(descriptor.tables, exactInventory ? expectedTargetTables(config) : tables, { exact: exactInventory });
-      const schemaDescriptor = scopedDescriptor(descriptor, tables);
-      const transferPlans = tables.map((table) => {
+      const transferTables = tables || resolveSourceTables(config, descriptor.tables);
+      assertTableInventory(descriptor.tables, exactInventory ? expectedTargetTables(config) : transferTables, { exact: exactInventory });
+      const schemaDescriptor = scopedDescriptor(descriptor, transferTables);
+      const transferPlans = transferTables.map((table) => {
         const policy = tableTransferPolicy(config, table);
         return { table, policy, columns: assertProjectionColumns(descriptor, table, policy) };
       });
@@ -588,7 +621,7 @@ export async function createExportArtifact({
       const args = buildPgDumpArgs({
         outputDir: dumpDir,
         schema: config.schema,
-        tables,
+        tables: transferTables,
         snapshotId: snapshot.snapshot_id,
         excludedTableData: projectedPlans.map(({ table }) => table),
       });
@@ -638,7 +671,7 @@ export async function createExportArtifact({
         schemaSha256: sha256(canonicalJson(schemaDescriptor)),
         archiveSha256,
         projectedDataSha256,
-        transferPolicySha256: transferPolicyDigest(config, tables),
+        transferPolicySha256: transferPolicyDigest(config, transferTables),
         tocSha256: sha256(toc),
         tables: tableManifests,
       });
@@ -706,6 +739,16 @@ export async function readAndVerifyArtifact(artifactDir, expectedTables, config)
   return { manifest, manifestPath, dumpDir, projectedCopies };
 }
 
+export async function readAndVerifySourceArtifact(artifactDir, config) {
+  const manifestPath = path.join(artifactDir, "manifest.json");
+  const candidate = JSON.parse(await readFile(manifestPath, "utf8"));
+  const candidateTables = Array.isArray(candidate?.tables)
+    ? candidate.tables.map((table) => table?.table)
+    : null;
+  const sourceTables = resolveSourceTables(config, candidateTables, { rejectUnexpected: true });
+  return await readAndVerifyArtifact(artifactDir, sourceTables, config);
+}
+
 async function targetSentinel(client, config) {
   const table = qualifiedTable(config.schema, config.sentinel.table);
   const result = await client.query(`SELECT value FROM ${table} WHERE key = $1`, [config.sentinel.key]);
@@ -721,7 +764,7 @@ async function tableCounts(client, schema, tables) {
   return counts;
 }
 
-export async function inspectTarget(databaseUrl, config) {
+export async function inspectTarget(databaseUrl, config, sourceTables = config.sourceTables) {
   const client = new Client({ connectionString: databaseUrl, application_name: "winerim-export-reconcile-target-check" });
   await client.connect();
   try {
@@ -729,6 +772,8 @@ export async function inspectTarget(databaseUrl, config) {
     const descriptor = await databaseDescriptor(client);
     const sentinel = await targetSentinel(client, config);
     const runtimeCounts = await tableCounts(client, config.schema, config.runtimeMustRemainEmpty);
+    const absentOptionalTables = config.optionalSourceTables.filter((table) => !sourceTables.includes(table));
+    const absentOptionalCounts = await tableCounts(client, config.schema, absentOptionalTables);
     await client.query("ROLLBACK");
     assertTableInventory(descriptor.tables, expectedTargetTables(config));
     if (sentinel !== config.sentinel.value) throw new Error("Target staging sentinel mismatch");
@@ -736,7 +781,8 @@ export async function inspectTarget(databaseUrl, config) {
       descriptor,
       sentinel,
       runtimeCounts,
-      sourceSchemaSha256: sha256(canonicalJson(scopedDescriptor(descriptor, config.sourceTables))),
+      absentOptionalCounts,
+      sourceSchemaSha256: sha256(canonicalJson(scopedDescriptor(descriptor, sourceTables))),
     };
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -783,8 +829,13 @@ function checksumMap(manifest) {
   return new Map(manifest.tables.map((table) => [table.table, table]));
 }
 
-export async function reconcileTarget({ databaseUrl, sourceManifest, config, tables = config.sourceTables }) {
-  const inspection = await inspectTarget(databaseUrl, config);
+export async function reconcileTarget({
+  databaseUrl,
+  sourceManifest,
+  config,
+  tables = sourceManifest.tables.map(({ table }) => table),
+}) {
+  const inspection = await inspectTarget(databaseUrl, config, tables);
   assertTableInventory(sourceManifest.tables.map(({ table }) => table), tables);
   const targetSchema = scopedDescriptor(inspection.descriptor, tables);
   const schemaSha256 = sha256(canonicalJson(targetSchema));
@@ -802,6 +853,7 @@ export async function reconcileTarget({ databaseUrl, sourceManifest, config, tab
   }).map((table) => ({ table: table.table, source: expected.get(table.table), target: table }));
   const foreignKeyViolations = await checkForeignKeys(databaseUrl, inspection.descriptor.foreignKeys, config);
   const emptyTableViolations = Object.entries(inspection.runtimeCounts)
+    .concat(Object.entries(inspection.absentOptionalCounts))
     .filter(([, count]) => count !== 0)
     .map(([table, count]) => ({ table, count }));
   return {
@@ -816,6 +868,7 @@ export async function reconcileTarget({ databaseUrl, sourceManifest, config, tab
     foreignKeyViolations,
     emptyTableViolations,
     runtimeCounts: inspection.runtimeCounts,
+    absentOptionalCounts: inspection.absentOptionalCounts,
   };
 }
 
@@ -900,6 +953,8 @@ export function buildSafePlan(config) {
     targetEnvironment: config.targetEnvironment,
     targetProjectRef: config.targetProjectRef,
     sourceTables: config.sourceTables,
+    optionalSourceTables: config.optionalSourceTables,
+    requiredSourceTables: requiredSourceTables(config),
     stagingOnlyTables: config.stagingOnlyTables,
     gates: [
       "source URL only through LOVABLE_DATABASE_URL",
@@ -907,7 +962,9 @@ export function buildSafePlan(config) {
       "exported repeatable-read snapshot with LSN/timestamp",
       "provider_credentials staging-only and required empty",
       "pos_connections exported through an exact checksummed credential-sanitizing projection",
+      "only the four versioned optional source tables may be absent",
       "target sentinel environment=staging and exact 30-table inventory",
+      "source-absent optional target tables required empty",
       "runtime staging tables empty before import",
       "target backup before one-transaction replacement",
       "row counts, streaming SHA-256, FK and required-empty reconciliation",

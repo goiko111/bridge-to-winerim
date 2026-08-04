@@ -13,6 +13,7 @@ import {
   inspectTarget,
   loadTransferConfig,
   readAndVerifyArtifact,
+  readAndVerifySourceArtifact,
   readState,
   reconcileTarget,
   redactError,
@@ -121,7 +122,7 @@ async function exportCommand(config, options) {
 
 async function reconcileCommand(config, options) {
   const artifactDir = path.resolve(requireOption(options, "artifact-dir"));
-  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables, config);
+  const { manifest } = await readAndVerifySourceArtifact(artifactDir, config);
   if (!options["read-live"]) {
     print({ result: "RECONCILE_OFFLINE_ARTIFACT_OK", manifestSha256: manifest.manifestSha256, tables: manifest.tables.length });
     return;
@@ -138,7 +139,8 @@ async function importCommand(config, options) {
   const artifactDir = path.resolve(requireOption(options, "artifact-dir"));
   const backupDir = path.resolve(requireOption(options, "backup-dir"));
   const statePath = path.join(backupDir, "import-state.json");
-  const { manifest } = await readAndVerifyArtifact(artifactDir, config.sourceTables, config);
+  const { manifest } = await readAndVerifySourceArtifact(artifactDir, config);
+  const sourceTables = manifest.tables.map(({ table }) => table);
   if (options["confirm-manifest"] !== manifest.manifestSha256) throw new Error("Source manifest confirmation gate failed");
   if (!options.apply) {
     const existingState = await readState(statePath);
@@ -158,12 +160,16 @@ async function importCommand(config, options) {
   const targetUrl = databaseUrl("STAGING_DATABASE_URL");
   const localTest = options["local-test"] === true && process.env.WINERIM_DATA_TRANSFER_ALLOW_LOCAL_TEST === "1";
   assertTargetGate(targetUrl, options["confirm-target-ref"], config, sourceUrl, { localTest });
-  const inspection = await inspectTarget(targetUrl, config);
+  const inspection = await inspectTarget(targetUrl, config, sourceTables);
   if (inspection.sourceSchemaSha256 !== manifest.schemaSha256) {
     throw new Error(`Target/source schema fingerprint mismatch: source=${manifest.schemaSha256} target=${inspection.sourceSchemaSha256}`);
   }
   const busyRuntime = Object.entries(inspection.runtimeCounts).filter(([, count]) => count !== 0);
   if (busyRuntime.length) throw new Error(`Runtime tables are not empty: ${busyRuntime.map(([table, count]) => `${table}=${count}`).join(",")}`);
+  const busyAbsentOptional = Object.entries(inspection.absentOptionalCounts).filter(([, count]) => count !== 0);
+  if (busyAbsentOptional.length) {
+    throw new Error(`Source-absent optional target tables are not empty: ${busyAbsentOptional.map(([table, count]) => `${table}=${count}`).join(",")}`);
+  }
 
   let state = await readState(statePath);
   if (state && !options.resume) throw new Error("Backup directory already has state; pass --resume after reviewing it");
@@ -245,7 +251,7 @@ async function importCommand(config, options) {
     databaseUrl: targetUrl,
     artifactDir,
     config,
-    manifestTables: config.sourceTables,
+    manifestTables: sourceTables,
     replaceTables: targetReplaceTables(config),
   });
   state = await writeState(statePath, {

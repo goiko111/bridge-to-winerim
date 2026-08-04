@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "schema": "public",
   "sourceEnvironment": "lovable-production",
   "targetEnvironment": "staging",
@@ -34,6 +34,12 @@
     "wine_type_family_mappings",
     "winerim_push_tracking",
     "winerim_wines"
+  ],
+  "optionalSourceTables": [
+    "integration_onboarding_requests",
+    "middleware_incident_email_attempts",
+    "middleware_incident_events",
+    "middleware_incidents"
   ],
   "stagingOnlyTables": [
     "infrastructure_metadata",
