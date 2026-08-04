@@ -15,12 +15,12 @@ const GENERATION = "3".repeat(64);
 function fixture(directory, runId = "donquijote-20260804-c") {
   const grant = join(directory, "grant.json");
   const proof = join(directory, "proof.txt");
-  writeFileSync(grant, JSON.stringify({
+  writeFileSync(grant, `${JSON.stringify({
     version: 3,
     connectionId: CONNECTION,
     runId,
     credentialBundle: { generationSha256: GENERATION },
-  }));
+  })}\n`);
   writeFileSync(proof, "p".repeat(64));
   return { grant, proof, runId };
 }
@@ -38,6 +38,7 @@ test("renders the exact fleet writer-fence entry without exposing it in the mani
   });
   const parsed = JSON.parse(prepared.source);
   assert.equal(parsed.entries[0].runId, value.runId);
+  assert.equal(parsed.entries[0].rawGrant.endsWith("\n"), true);
   assert.equal(prepared.manifest.entryCount, 1);
   assert.equal(JSON.stringify(prepared.manifest).includes("p".repeat(32)), false);
   assert.equal(Object.hasOwn(prepared.manifest.entries[0], "rawGrant"), false);

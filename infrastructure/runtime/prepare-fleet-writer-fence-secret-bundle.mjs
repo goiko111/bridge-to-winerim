@@ -61,7 +61,7 @@ export function prepareFleetWriterFenceSecretBundle(input) {
   if (!SHA256_PATTERN.test(generationSha256)) throw new Error("FLEET_FENCE_GENERATION_INVALID");
   if (input.confirmConnection !== connectionId) throw new Error("FLEET_FENCE_CONFIRMATION_MISMATCH");
 
-  const rawGrant = readFileSync(input.grantPath, "utf8").trim();
+  const rawGrant = readFileSync(input.grantPath, "utf8");
   const proof = readFileSync(input.proofPath, "utf8").trim();
   const grant = JSON.parse(rawGrant);
   if (

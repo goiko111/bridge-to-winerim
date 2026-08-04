@@ -1,6 +1,7 @@
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$/;
+const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const MIN_LEASE_TTL_SECONDS = 30;
 const MAX_LEASE_TTL_SECONDS = 120;
 const LEASE_RESPONSE_CLOCK_SKEW_MS = 5_000;
@@ -618,7 +619,7 @@ export function parseWriterFenceGrant(raw: string): WriterFenceGrant {
     }
     const bundle = grant.credentialBundle;
     if (
-      !IDENTIFIER_PATTERN.test(String(bundle.keyVersion ?? ""))
+      !KEY_VERSION_PATTERN.test(String(bundle.keyVersion ?? ""))
       || !SHA256_PATTERN.test(String(bundle.generationSha256 ?? ""))
       || !SHA256_PATTERN.test(String(bundle.bundleSha256 ?? ""))
       || !SHA256_PATTERN.test(String(bundle.signatureSha256 ?? ""))

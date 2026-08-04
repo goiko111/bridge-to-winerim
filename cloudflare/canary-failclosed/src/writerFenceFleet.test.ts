@@ -46,7 +46,7 @@ function attestation(
 async function fleetGrant(): Promise<WriterFenceGrantV3> {
   const agoraAttestation = attestation("agora");
   const winerimAttestation = attestation("winerim");
-  const keyVersion = "fleet-key-v1";
+  const keyVersion = "v1";
   const credentials = {
     agora: {
       kind: "agora" as const,
