@@ -26,6 +26,7 @@ const MAX_FENCE_EVIDENCE_AGE_MS = 15 * 60 * 1_000;
 const MIN_WRITER_DRAIN_MS = 130 * 1_000;
 const MIN_EXTERNAL_READBACK_SEPARATION_MS = 5 * 1_000;
 const REQUIRED_SALES_JOBS = ["sales.auto-sync", "sales.sync-intraday"];
+const REQUIRED_DEPLOYMENT_COMPONENTS = ["runtime", "executor", "writerFence"];
 const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 const FENCED_TARGET_RAW_SCHEMA_VERSION = 2;
 const FENCED_TARGET_RAW_KIND = "target-raw-corrected";
@@ -243,6 +244,55 @@ function validateProviderConfig(providerConfig) {
     intraday_sales_sync_enabled: true,
     open_tickets_sync_enabled: false,
     open_tickets_stock_sync_enabled: false,
+  };
+}
+
+function validateDeploymentManifest(manifest) {
+  exactKeys(manifest, [
+    "version",
+    "kind",
+    "deploymentId",
+    "jobs",
+    "components",
+  ], "DEPLOYMENT_MANIFEST");
+  if (
+    manifest.version !== 1
+    || manifest.kind !== "runtime-sales-deployment"
+    || !IDENTIFIER_PATTERN.test(manifest.deploymentId ?? "")
+  ) {
+    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_MANIFEST");
+  }
+  if (canonicalJson(manifest.jobs) !== canonicalJson(REQUIRED_SALES_JOBS)) {
+    throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_JOBS");
+  }
+  exactKeys(manifest.components, REQUIRED_DEPLOYMENT_COMPONENTS, "DEPLOYMENT_COMPONENTS");
+  const components = {};
+  for (const componentName of REQUIRED_DEPLOYMENT_COMPONENTS) {
+    const component = manifest.components[componentName];
+    exactKeys(
+      component,
+      ["workerName", "versionId", "configSha256"],
+      `DEPLOYMENT_COMPONENT_${componentName.toUpperCase()}`,
+    );
+    if (
+      !IDENTIFIER_PATTERN.test(component.workerName ?? "")
+      || !UUID_PATTERN.test(component.versionId ?? "")
+      || !SHA256_PATTERN.test(component.configSha256 ?? "")
+    ) {
+      throw new Error("RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENT");
+    }
+    components[componentName] = {
+      workerName: component.workerName,
+      versionId: component.versionId.toLowerCase(),
+      configSha256: component.configSha256,
+    };
+  }
+  return {
+    version: 1,
+    kind: "runtime-sales-deployment",
+    deploymentId: manifest.deploymentId,
+    jobs: [...REQUIRED_SALES_JOBS],
+    components,
   };
 }
 
@@ -986,6 +1036,9 @@ export function validateFleetConnectionAdoptExistingActivationInput({
       throw new Error(`RUNTIME_FLEET_ADOPT_ACTIVATION_${label}_SHA256_MISMATCH`);
     }
   }
+  const deploymentManifest = validateDeploymentManifest(
+    parseJson(deploymentManifestSource, "DEPLOYMENT_MANIFEST"),
+  );
   const credential = validateCredentialProvisioningManifest(
     parseJson(credentialProvisioningManifestSource, "CREDENTIAL_PROVISIONING_MANIFEST"),
     { connectionId, runId, keyVersion },
@@ -1061,6 +1114,7 @@ export function validateFleetConnectionAdoptExistingActivationInput({
     runtimePolicySha256: runtimePolicySha256(providerConfig),
     scopeNote: `adopt-existing:v3:${credential.adoption.bindingSha256}`,
     deploymentManifestSha256: deploymentReference.sha256,
+    deploymentManifest,
     finalTargetRawSha256: finalTargetRawReference.sha256,
     finalTargetRaw: {
       ...finalTargetRaw,

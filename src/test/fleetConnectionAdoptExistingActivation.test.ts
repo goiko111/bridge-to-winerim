@@ -152,6 +152,23 @@ function fixture({
     kind: "runtime-sales-deployment",
     deploymentId: "runtime-sales-20260804-a",
     jobs: ["sales.auto-sync", "sales.sync-intraday"],
+    components: {
+      runtime: {
+        workerName: "middleware-runtime-fleet-sales",
+        versionId: "11111111-1111-4111-8111-111111111111",
+        configSha256: sha256("runtime-worker-config"),
+      },
+      executor: {
+        workerName: "middleware-runtime-executor-fleet-sales",
+        versionId: "22222222-2222-4222-8222-222222222222",
+        configSha256: sha256("executor-worker-config"),
+      },
+      writerFence: {
+        workerName: "middleware-runtime-writer-fence-fleet",
+        versionId: "33333333-3333-4333-8333-333333333333",
+        configSha256: sha256("writer-fence-worker-config"),
+      },
+    },
   });
   const targetCorrectedShadowSha256 = sha256("target-corrected-shadow-semantic");
   const finalTargetRaw = writePrivateJson(directory, "final-target-raw.json", {
@@ -588,6 +605,32 @@ function validate(testFixture: ReturnType<typeof fixture>) {
   });
 }
 
+type MutableDeploymentManifest = {
+  version: number;
+  kind: string;
+  deploymentId: string;
+  jobs: string[];
+  components: Record<string, {
+    workerName: string;
+    versionId: string;
+    configSha256: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+function replaceDeploymentManifest(
+  testFixture: ReturnType<typeof fixture>,
+  mutate: (manifest: MutableDeploymentManifest) => void,
+) {
+  const manifest = JSON.parse(
+    testFixture.sources.deployment.toString("utf8"),
+  ) as MutableDeploymentManifest;
+  mutate(manifest);
+  testFixture.sources.deployment = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  testFixture.input.deploymentManifest.sha256 = sha256(testFixture.sources.deployment);
+}
+
 describe("fleet adopt-existing-sales connection activation gate", () => {
   it("accepts real Ed25519 evidence and renders the exact sales-only activation", () => {
     const data = fixture();
@@ -606,6 +649,17 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     expect(validated).toMatchObject({
       connectionId: CONNECTION_ID,
       deploymentManifestSha256: data.input.deploymentManifest.sha256,
+      deploymentManifest: {
+        version: 1,
+        kind: "runtime-sales-deployment",
+        deploymentId: "runtime-sales-20260804-a",
+        jobs: ["sales.auto-sync", "sales.sync-intraday"],
+        components: {
+          runtime: { versionId: "11111111-1111-4111-8111-111111111111" },
+          executor: { versionId: "22222222-2222-4222-8222-222222222222" },
+          writerFence: { versionId: "33333333-3333-4333-8333-333333333333" },
+        },
+      },
       finalTargetRawSha256: data.input.finalTargetRaw.sha256,
       finalTargetRaw: {
         contract: "fenced-target-raw-v1",
@@ -752,6 +806,85 @@ describe("fleet adopt-existing-sales connection activation gate", () => {
     openTickets.input.providerConfig.open_tickets_sync_enabled = true;
     expect(() => validate(openTickets)).toThrow(
       "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_SALES_ALLOWLIST",
+    );
+  });
+
+  it("rejects deployment manifest key, job and component drift", () => {
+    const extraTopLevel = fixture();
+    replaceDeploymentManifest(extraTopLevel, (manifest) => {
+      manifest.notes = "not reviewed";
+    });
+    expect(() => validate(extraTopLevel)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_MANIFEST_STRUCTURE",
+    );
+
+    for (const [field, value] of [
+      ["version", 2],
+      ["kind", "runtime-catalog-deployment"],
+      ["deploymentId", "invalid deployment id"],
+    ] as const) {
+      const invalidIdentity = fixture();
+      replaceDeploymentManifest(invalidIdentity, (manifest) => {
+        manifest[field] = value;
+      });
+      expect(() => validate(invalidIdentity)).toThrow(
+        "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_MANIFEST",
+      );
+    }
+
+    for (const jobs of [
+      ["sales.auto-sync"],
+      ["sales.auto-sync", "sales.sync-intraday", "catalog.sync"],
+    ]) {
+      const invalidJobs = fixture();
+      replaceDeploymentManifest(invalidJobs, (manifest) => {
+        manifest.jobs = jobs;
+      });
+      expect(() => validate(invalidJobs)).toThrow(
+        "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_JOBS",
+      );
+    }
+
+    const missingComponent = fixture();
+    replaceDeploymentManifest(missingComponent, (manifest) => {
+      delete manifest.components.executor;
+    });
+    expect(() => validate(missingComponent)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENTS_STRUCTURE",
+    );
+
+    const extraComponent = fixture();
+    replaceDeploymentManifest(extraComponent, (manifest) => {
+      manifest.components.catalog = manifest.components.runtime;
+    });
+    expect(() => validate(extraComponent)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENTS_STRUCTURE",
+    );
+  });
+
+  it("rejects deployment component extra fields and invalid UUID/hash values", () => {
+    const extraComponentField = fixture();
+    replaceDeploymentManifest(extraComponentField, (manifest) => {
+      manifest.components.runtime.route = "/runtime";
+    });
+    expect(() => validate(extraComponentField)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENT_RUNTIME_STRUCTURE",
+    );
+
+    const invalidUuid = fixture();
+    replaceDeploymentManifest(invalidUuid, (manifest) => {
+      manifest.components.executor.versionId = "not-a-uuid";
+    });
+    expect(() => validate(invalidUuid)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENT",
+    );
+
+    const invalidHash = fixture();
+    replaceDeploymentManifest(invalidHash, (manifest) => {
+      manifest.components.writerFence.configSha256 = "not-a-sha256";
+    });
+    expect(() => validate(invalidHash)).toThrow(
+      "RUNTIME_FLEET_ADOPT_ACTIVATION_INVALID_DEPLOYMENT_COMPONENT",
     );
   });
 
