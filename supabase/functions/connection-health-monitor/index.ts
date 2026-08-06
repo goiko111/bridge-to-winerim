@@ -812,7 +812,7 @@ async function maybeNotifyAlert(supabase: any, connection: any, alert: any, send
   const updates: Record<string, unknown> = {};
   const result: Record<string, unknown> = {};
 
-  if (!alert.internal_notified_at && (alert.occurrences >= internalAfter || alert.severity === "critical")) {
+  if (!alert.internal_notified_at) {
     const to = uniq(envList("ALERT_INTERNAL_EMAILS", "MONITOR_INTERNAL_EMAILS", "INTERNAL_ALERT_EMAILS"));
     const { text, html } = alertEmailBody(connection, alert, "internal");
     const sent = await sendEmail(to, `[Winerim TPV] ${alert.title}`, text, html);
