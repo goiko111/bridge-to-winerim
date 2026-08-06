@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
 import { classifyPosError } from "../_shared/resilience.ts";
+import { evaluateUrgentAlert, shouldNotifyRecovery } from "../_shared/connectionHealthAlertPolicy.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -797,14 +799,22 @@ function alertEmailBody(connection: any, alert: any, audience: "internal" | "cli
 async function maybeNotifyAlert(supabase: any, connection: any, alert: any, sendEmails: boolean, notifyClients: boolean) {
   if (!sendEmails) return { internal: "disabled", client: "disabled" };
 
-  const internalAfter = envNumber("ALERT_INTERNAL_AFTER_OCCURRENCES", 2);
-  const clientAfter = envNumber("ALERT_CLIENT_AFTER_OCCURRENCES", 3);
-  const clientAfterMinutes = envNumber("ALERT_CLIENT_AFTER_MINUTES", 30);
-  const minutesOpen = (Date.now() - new Date(alert.first_seen_at).getTime()) / 60_000;
+  // URGENT-ONLY EMAIL GATE (dashboard-only types never email).
+  const decision = evaluateUrgentAlert(alert, Date.now(), {
+    authAfterOccurrences: envNumber("ALERT_URGENT_AUTH_AFTER_OCCURRENCES", 2),
+    connectivityAfterOccurrences: envNumber("ALERT_URGENT_CONNECTIVITY_AFTER_OCCURRENCES", 3),
+    connectivityAfterMinutes: envNumber("ALERT_URGENT_CONNECTIVITY_AFTER_MINUTES", 240),
+  });
+  if (!decision.urgent) {
+    return { internal: `suppressed:${decision.reason}`, client: `suppressed:${decision.reason}` };
+  }
+
+  const minutesOpen = decision.minutesOpen ?? 0;
+
   const updates: Record<string, unknown> = {};
   const result: Record<string, unknown> = {};
 
-  if (!alert.internal_notified_at && (alert.occurrences >= internalAfter || alert.severity === "critical")) {
+  if (!alert.internal_notified_at) {
     const to = uniq(envList("ALERT_INTERNAL_EMAILS", "MONITOR_INTERNAL_EMAILS", "INTERNAL_ALERT_EMAILS"));
     const { text, html } = alertEmailBody(connection, alert, "internal");
     const sent = await sendEmail(to, `[Winerim TPV] ${alert.title}`, text, html);
@@ -817,7 +827,7 @@ async function maybeNotifyAlert(supabase: any, connection: any, alert: any, send
     }
   }
 
-  if (notifyClients && !alert.client_notified_at && alert.occurrences >= clientAfter && minutesOpen >= clientAfterMinutes) {
+  if (notifyClients && !alert.client_notified_at && minutesOpen >= 0) {
     const to = await loadClientEmails(supabase, connection, alert.alert_type, alert.severity);
     if (to.length > 0) {
       const { text, html } = alertEmailBody(connection, alert, "client");
@@ -842,7 +852,8 @@ async function maybeNotifyAlert(supabase: any, connection: any, alert: any, send
 }
 
 async function notifyRecovery(supabase: any, connection: any, alert: any) {
-  if (alert.recovery_notified_at) return;
+  // No recovery email if the incident never generated an email.
+  if (!shouldNotifyRecovery(alert)) return;
   const updates: Record<string, unknown> = {};
   const internalTo = uniq(envList("ALERT_INTERNAL_EMAILS", "MONITOR_INTERNAL_EMAILS", "INTERNAL_ALERT_EMAILS"));
   if (alert.internal_notified_at && internalTo.length > 0) {
