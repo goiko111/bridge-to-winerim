@@ -825,7 +825,7 @@ async function maybeNotifyAlert(supabase: any, connection: any, alert: any, send
     }
   }
 
-  if (notifyClients && !alert.client_notified_at && alert.occurrences >= clientAfter && minutesOpen >= clientAfterMinutes) {
+  if (notifyClients && !alert.client_notified_at && minutesOpen >= 0) {
     const to = await loadClientEmails(supabase, connection, alert.alert_type, alert.severity);
     if (to.length > 0) {
       const { text, html } = alertEmailBody(connection, alert, "client");
