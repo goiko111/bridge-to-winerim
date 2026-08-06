@@ -797,10 +797,18 @@ function alertEmailBody(connection: any, alert: any, audience: "internal" | "cli
 async function maybeNotifyAlert(supabase: any, connection: any, alert: any, sendEmails: boolean, notifyClients: boolean) {
   if (!sendEmails) return { internal: "disabled", client: "disabled" };
 
-  const internalAfter = envNumber("ALERT_INTERNAL_AFTER_OCCURRENCES", 2);
-  const clientAfter = envNumber("ALERT_CLIENT_AFTER_OCCURRENCES", 3);
-  const clientAfterMinutes = envNumber("ALERT_CLIENT_AFTER_MINUTES", 30);
-  const minutesOpen = (Date.now() - new Date(alert.first_seen_at).getTime()) / 60_000;
+  // URGENT-ONLY EMAIL GATE (dashboard-only types never email).
+  const decision = evaluateUrgentAlert(alert, Date.now(), {
+    authAfterOccurrences: envNumber("ALERT_URGENT_AUTH_AFTER_OCCURRENCES", 2),
+    connectivityAfterOccurrences: envNumber("ALERT_URGENT_CONNECTIVITY_AFTER_OCCURRENCES", 3),
+    connectivityAfterMinutes: envNumber("ALERT_URGENT_CONNECTIVITY_AFTER_MINUTES", 240),
+  });
+  if (!decision.urgent) {
+    return { internal: `suppressed:${decision.reason}`, client: `suppressed:${decision.reason}` };
+  }
+
+  const minutesOpen = decision.minutesOpen ?? 0;
+
   const updates: Record<string, unknown> = {};
   const result: Record<string, unknown> = {};
 
