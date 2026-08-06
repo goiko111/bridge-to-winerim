@@ -852,7 +852,8 @@ async function maybeNotifyAlert(supabase: any, connection: any, alert: any, send
 }
 
 async function notifyRecovery(supabase: any, connection: any, alert: any) {
-  if (alert.recovery_notified_at) return;
+  // No recovery email if the incident never generated an email.
+  if (!shouldNotifyRecovery(alert)) return;
   const updates: Record<string, unknown> = {};
   const internalTo = uniq(envList("ALERT_INTERNAL_EMAILS", "MONITOR_INTERNAL_EMAILS", "INTERNAL_ALERT_EMAILS"));
   if (alert.internal_notified_at && internalTo.length > 0) {
