@@ -6637,8 +6637,8 @@ serve(async (req) => {
     if (action === "debug-sales-resolution") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const requestedIds: string[] = [
-        ...(body.productId ? [String(body.productId)] : []),
-        ...(Array.isArray(body.productIds) ? body.productIds.map((id: unknown) => String(id)) : []),
+        ...(payload.productId ? [String(payload.productId)] : []),
+        ...(Array.isArray(payload.productIds) ? payload.productIds.map((id: unknown) => String(id)) : []),
       ].map((id) => id.trim()).filter(Boolean);
 
       const { count: unresolvedCandidateCount } = await supabase
