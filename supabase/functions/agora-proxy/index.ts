@@ -784,6 +784,64 @@ function buildSalesResolutionMap(trackingRows: any[] | null | undefined, mapping
   return resolutionMap;
 }
 
+const SALES_RESOLUTION_PAGE_SIZE = 1000;
+const SALES_RESOLUTION_MAX_ROWS_PER_TABLE = 25000;
+
+// Sales resolution must never rely on an unpaginated read: Supabase caps rows
+// per request, so a partial page silently drops existing mappings.
+// deno-lint-ignore no-explicit-any
+async function selectAllConnectionRows(
+  supabaseClient: any,
+  tableName: string,
+  columns: string,
+  connectionId: string,
+): Promise<any[]> {
+  const rows: any[] = [];
+  let from = 0;
+  while (true) {
+    const to = from + SALES_RESOLUTION_PAGE_SIZE - 1;
+    const { data, error } = await supabaseClient
+      .from(tableName)
+      .select(columns)
+      .eq("connection_id", connectionId)
+      .order("id", { ascending: true })
+      .range(from, to);
+    if (error) throw new Error(`Could not page ${tableName} for sales resolution: ${error.message}`);
+    const page = data || [];
+    rows.push(...page);
+    if (rows.length > SALES_RESOLUTION_MAX_ROWS_PER_TABLE) {
+      throw new Error(
+        `${tableName} exceeded ${SALES_RESOLUTION_MAX_ROWS_PER_TABLE} rows for connection ${connectionId}; refusing partial sales resolution`,
+      );
+    }
+    if (page.length < SALES_RESOLUTION_PAGE_SIZE) break;
+    from += SALES_RESOLUTION_PAGE_SIZE;
+  }
+  return rows;
+}
+
+// deno-lint-ignore no-explicit-any
+async function buildSalesResolutionMapFromDb(
+  supabaseClient: any,
+  connectionId: string,
+): Promise<Map<string, { winerim_wine_id: string; format: string }>> {
+  const [trackingRows, mappingRows] = await Promise.all([
+    selectAllConnectionRows(
+      supabaseClient,
+      "winerim_push_tracking",
+      "id, agora_product_id, winerim_wine_id, format, sync_status",
+      connectionId,
+    ),
+    selectAllConnectionRows(
+      supabaseClient,
+      "product_mappings",
+      "id, provider_product_id, winerim_wine_id, format_type, status",
+      connectionId,
+    ),
+  ]);
+  return buildSalesResolutionMap(trackingRows, mappingRows);
+}
+
 // deno-lint-ignore no-explicit-any
 function parseInvoices(raw: any): any[] {
   if (!raw) return [];
@@ -5363,15 +5421,7 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -5671,15 +5721,7 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       const ACTION_DEADLINE_MS = 120_000;
       const actionStart = Date.now();
@@ -5888,17 +5930,7 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      // ── Build resolution lookup: agora_product_id -> { winerim_wine_id, format } ──
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6085,15 +6117,7 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6378,16 +6402,7 @@ serve(async (req) => {
         .map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       const syncedDays: string[] = [];
@@ -6618,19 +6633,41 @@ serve(async (req) => {
       );
     }
 
+    // ── READ-ONLY SALES RESOLUTION DEBUG (no writes, no TPV calls) ──
+    if (action === "debug-sales-resolution") {
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
+      const requestedIds: string[] = [
+        ...(body.productId ? [String(body.productId)] : []),
+        ...(Array.isArray(body.productIds) ? body.productIds.map((id: unknown) => String(id)) : []),
+      ].map((id) => id.trim()).filter(Boolean);
+
+      const { count: unresolvedCandidateCount } = await supabase
+        .from("sales_line_items")
+        .select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId)
+        .eq("is_wine_candidate", true)
+        .is("winerim_product_id", null);
+
+      const results = requestedIds.map((productId) => {
+        const resolution = resolutionMap.get(productId) || null;
+        return { provider_product_id: productId, resolved: Boolean(resolution), resolution };
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          connectionId,
+          resolutionMapSize: resolutionMap.size,
+          unresolvedCandidateCount: unresolvedCandidateCount ?? 0,
+          results,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── RESOLVE EXISTING SALES LINES (re-resolution pass) ──
     if (action === "resolve-sales") {
-      // Build resolution lookup
-      const { data: trackingRows } = await supabase
-        .from("winerim_push_tracking")
-        .select("agora_product_id, winerim_wine_id, format, sync_status")
-        .eq("connection_id", connectionId);
-      const { data: mappingRows } = await supabase
-        .from("product_mappings")
-        .select("provider_product_id, winerim_wine_id, format_type, status")
-        .eq("connection_id", connectionId);
-
-      const resolutionMap = buildSalesResolutionMap(trackingRows, mappingRows);
+      const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       // Fetch unresolved wine candidate lines
       const { data: unresolvedLines } = await supabase
