@@ -142,3 +142,42 @@ export function buildAgoraInvoiceDocId(
     ? `refund:${normalizedIdPart(businessDay)}:fallback:${invoiceIndex}`
     : legacyFallback;
 }
+
+export type StoredAgoraSalesEventCompleteness = {
+  provider_doc_id?: unknown;
+  line_count?: unknown;
+  sales_line_items?: unknown;
+};
+
+function embeddedSalesLineCount(value: unknown): number | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const first = value[0];
+  if (!first || typeof first !== "object") return null;
+  const count = Number((first as Record<string, unknown>).count);
+  return Number.isInteger(count) && count >= 0 ? count : null;
+}
+
+// A sales event is a durable checkpoint only when all of its lines exist.
+// This keeps a crash between event upsert and line replacement resumable.
+export function completeAgoraSalesEventDocIds(
+  rows: StoredAgoraSalesEventCompleteness[],
+): Set<string> {
+  const complete = new Set<string>();
+  for (const row of rows) {
+    const docId = String(row.provider_doc_id ?? "").trim();
+    const expected = Number(row.line_count);
+    const actual = embeddedSalesLineCount(row.sales_line_items);
+    if (!docId || !Number.isInteger(expected) || expected < 0 || actual === null) continue;
+    if (expected === actual) complete.add(docId);
+  }
+  return complete;
+}
+
+export function shouldPauseAgoraInvoiceProcessing(
+  elapsedMs: number,
+  actionDeadlineMs: number,
+  reserveMs = 15_000,
+): boolean {
+  const safeDeadline = Math.max(0, actionDeadlineMs - Math.max(0, reserveMs));
+  return elapsedMs >= safeDeadline;
+}
