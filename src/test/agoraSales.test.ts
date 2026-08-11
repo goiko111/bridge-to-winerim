@@ -1,9 +1,11 @@
 import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
+  completeAgoraSalesEventDocIds,
   isAgoraDocumentWithinBusinessDay,
   isAgoraRefundDocument,
   normalizeAgoraLineFormat,
+  shouldPauseAgoraInvoiceProcessing,
   withAgoraOperationalMetadata,
 } from "../../supabase/functions/_shared/agoraSales";
 
@@ -89,5 +91,56 @@ describe("Agora sales document identity and refunds", () => {
     expect(normalizeAgoraLineFormat("C SEIS+SEIS", "")).toBe("COPA");
     expect(normalizeAgoraLineFormat("B. Emilio Moro", "")).toBe("BOT");
     expect(normalizeAgoraLineFormat("M. Prado Enea", "")).toBe("MAGNUM");
+  });
+
+  it("uses only events with all persisted lines as resume checkpoints", () => {
+    const completed = completeAgoraSalesEventDocIds([
+      { provider_doc_id: "complete", line_count: 3, sales_line_items: [{ count: 3 }] },
+      { provider_doc_id: "empty-complete", line_count: 0, sales_line_items: [{ count: 0 }] },
+      { provider_doc_id: "insert-crashed", line_count: 4, sales_line_items: [{ count: 0 }] },
+      { provider_doc_id: "partial", line_count: 4, sales_line_items: [{ count: 2 }] },
+      { provider_doc_id: "missing-count", line_count: 1 },
+      { provider_doc_id: "", line_count: 1, sales_line_items: [{ count: 1 }] },
+    ]);
+
+    expect([...completed]).toEqual(["complete", "empty-complete"]);
+  });
+
+  it("resumes a day with more than one thousand invoices", () => {
+    const invoices = Array.from({ length: 1214 }, (_, index) => ({ Number: index + 1 }));
+    const firstCycleRows = invoices.slice(0, 915).map((invoice) => ({
+      provider_doc_id: String(invoice.Number),
+      line_count: 1,
+      sales_line_items: [{ count: 1 }],
+    }));
+    const firstCompleted = completeAgoraSalesEventDocIds(firstCycleRows);
+    const firstPending = invoices.filter((invoice, index) => (
+      !firstCompleted.has(buildAgoraInvoiceDocId(invoice, "2026-08-03", index))
+    ));
+
+    expect(firstPending).toHaveLength(299);
+
+    const secondCycleRows = [
+      ...firstCycleRows,
+      ...firstPending.slice(0, 175).map((invoice) => ({
+        provider_doc_id: String(invoice.Number),
+        line_count: 1,
+        sales_line_items: [{ count: 1 }],
+      })),
+    ];
+    const secondCompleted = completeAgoraSalesEventDocIds(secondCycleRows);
+    const secondPending = invoices.filter((invoice, index) => (
+      !secondCompleted.has(buildAgoraInvoiceDocId(invoice, "2026-08-03", index))
+    ));
+
+    expect(secondPending).toHaveLength(124);
+    expect(secondPending[0]).toEqual({ Number: 1091 });
+  });
+
+  it("stops invoice work with time left for a fail-closed response", () => {
+    expect(shouldPauseAgoraInvoiceProcessing(104_999, 120_000)).toBe(false);
+    expect(shouldPauseAgoraInvoiceProcessing(105_000, 120_000)).toBe(true);
+    expect(shouldPauseAgoraInvoiceProcessing(119_999, 120_000, 0)).toBe(false);
+    expect(shouldPauseAgoraInvoiceProcessing(120_000, 120_000, 0)).toBe(true);
   });
 });

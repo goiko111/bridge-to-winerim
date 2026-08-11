@@ -18,7 +18,9 @@ import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
 import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
+  completeAgoraSalesEventDocIds,
   normalizeAgoraLineFormat,
+  shouldPauseAgoraInvoiceProcessing,
   withAgoraOperationalMetadata,
 } from "../_shared/agoraSales.ts";
 import {
@@ -818,6 +820,40 @@ async function selectAllConnectionRows(
     from += SALES_RESOLUTION_PAGE_SIZE;
   }
   return rows;
+}
+
+// Fully persisted sales events are durable checkpoints for large business
+// days. Paginating the read lets later cron invocations resume safely.
+// deno-lint-ignore no-explicit-any
+async function loadCompleteSalesEventDocIdsForDay(
+  supabaseClient: any,
+  connectionId: string,
+  businessDay: string,
+): Promise<Set<string>> {
+  const rows: any[] = [];
+
+  for (let from = 0; from < SALES_RESOLUTION_MAX_ROWS_PER_TABLE; from += SALES_RESOLUTION_PAGE_SIZE) {
+    const to = from + SALES_RESOLUTION_PAGE_SIZE - 1;
+    const { data, error } = await supabaseClient
+      .from("sales_events")
+      .select("id,provider_doc_id,line_count,sales_line_items(count)")
+      .eq("connection_id", connectionId)
+      .eq("business_day", businessDay)
+      .order("id", { ascending: true })
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to load sales resume checkpoint for ${businessDay}: ${error.message || String(error)}`);
+    }
+
+    const page = data || [];
+    rows.push(...page);
+    if (page.length < SALES_RESOLUTION_PAGE_SIZE) {
+      return completeAgoraSalesEventDocIds(rows);
+    }
+  }
+
+  throw new Error(`Sales resume checkpoint exceeded ${SALES_RESOLUTION_MAX_ROWS_PER_TABLE} events for ${connectionId}/${businessDay}`);
 }
 
 // deno-lint-ignore no-explicit-any
@@ -6294,6 +6330,7 @@ serve(async (req) => {
       // Scan from startDate to yesterday (closed days only)
       // Wall-clock guard: bail out before edge runtime 150s idle timeout (504 IDLE_TIMEOUT)
       const ACTION_DEADLINE_MS = 120_000;
+      const INVOICE_DEADLINE_RESERVE_MS = 15_000;
       const actionStart = Date.now();
       const pendingDays: string[] = [];
       const current = new Date(startDate);
@@ -6405,6 +6442,7 @@ serve(async (req) => {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
+      let resumedExistingEvents = 0;
       const syncedDays: string[] = [];
       const stockDaysAttempted = new Set<string>();
       let stockBlockedDay: string | null = null;
@@ -6440,10 +6478,26 @@ serve(async (req) => {
         }
         const rawData = await res.json();
         const invoices = parseInvoices(rawData);
+        let completeDocIds: Set<string>;
+        try {
+          completeDocIds = await loadCompleteSalesEventDocIdsForDay(supabase, connectionId, day);
+        } catch (error) {
+          saveBlockedDay = day;
+          saveBlockedReason = `resume_checkpoint_failed:${error instanceof Error ? error.message : String(error)}`;
+          break;
+        }
         let dayEvents = 0;
         let dayResolvedLines = 0;
 
         for (let invIdx = 0; invIdx < invoices.length; invIdx++) {
+          if (shouldPauseAgoraInvoiceProcessing(
+            Date.now() - actionStart,
+            ACTION_DEADLINE_MS,
+            INVOICE_DEADLINE_RESERVE_MS,
+          )) {
+            processingAborted = true;
+            break;
+          }
           const inv = invoices[invIdx];
           const docId = buildAgoraInvoiceDocId(inv, day, invIdx);
           const items = inv.InvoiceItems || [];
@@ -6490,6 +6544,17 @@ serve(async (req) => {
             }
           }
 
+          if (completeDocIds.has(docId)) {
+            totalEvents++;
+            dayEvents++;
+            totalLines += lineData.length;
+            resolvedLines += invoiceResolvedLines;
+            unresolvedLines += invoiceUnresolvedLines;
+            dayResolvedLines += invoiceResolvedLines;
+            resumedExistingEvents++;
+            continue;
+          }
+
           const { data: eventRow, error: eventErr } = await supabase
             .from("sales_events")
             .upsert({
@@ -6524,12 +6589,14 @@ serve(async (req) => {
           resolvedLines += invoiceResolvedLines;
           unresolvedLines += invoiceUnresolvedLines;
           dayResolvedLines += invoiceResolvedLines;
+          completeDocIds.add(docId);
         }
 
+        if (processingAborted) break;
         if (saveBlockedDay) break;
-        if (invoices.length > 0 && dayEvents === 0) {
+        if (invoices.length > 0 && dayEvents !== invoices.length) {
           saveBlockedDay = day;
-          saveBlockedReason = "no_invoice_persisted";
+          saveBlockedReason = `incomplete_day:${dayEvents}/${invoices.length}`;
           break;
         }
 
@@ -6608,6 +6675,7 @@ serve(async (req) => {
           totalLines,
           resolvedLines,
           unresolvedLines,
+          resumedExistingEvents,
           stockSync: stockSyncResult,
           cursorAdvancedTo,
           activeOpenTicketDays,
@@ -6626,7 +6694,7 @@ serve(async (req) => {
               : scanBlockedDay
                 ? `Agora sales scan failed for ${scanBlockedDay}. Cursor was advanced only through successfully checked days.`
               : processingAborted
-                ? "Processing deadline reached. Cursor was advanced only through completed days."
+                ? "Processing deadline reached. Completed invoices are durable checkpoints; cursor was advanced only through completed days."
                 : undefined,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
