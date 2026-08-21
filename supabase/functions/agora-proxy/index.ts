@@ -10928,11 +10928,7 @@ ${costPricesXml}
             }
 
             taskVerification = {
-              ...verifyAgoraProductsAgainstScope(
-                verifyXml, productsToVerify,
-                effectivePriceLists,
-                effectivePlToSc,
-              ),
+              ...runTaskVerification(verifyXml),
               selected_sale_centers: effectiveSaleCenters,
               selected_price_lists: effectivePriceLists,
               ignored_price_lists: effectiveIgnoredPriceLists,
