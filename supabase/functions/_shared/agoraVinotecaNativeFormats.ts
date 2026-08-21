@@ -55,6 +55,27 @@ export function vinotecaFormatId(format: unknown, wineId: unknown): string | nul
   return String(base + id);
 }
 
+/**
+ * Inverse of vinotecaFormatId: recognises ONLY ids inside our deterministic
+ * namespaces (BOTTLE 2M+id, GLASS 3M+id, MAGNUM 4M+id). Any legacy/low Agora id
+ * returns null so it can never be used as a preferred flat lookup key.
+ */
+export function parseVinotecaNativeId(
+  value: unknown,
+): { format: VinotecaFormat; wineId: string; agoraId: string } | null {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) return null;
+  const numeric = Number(raw);
+  if (!Number.isInteger(numeric)) return null;
+  for (const [format, base] of Object.entries(VINOTECA_FORMAT_ID_BASE)) {
+    const wineId = numeric - base;
+    if (wineId > 0 && wineId < 1_000_000) {
+      return { format: format as VinotecaFormat, wineId: String(wineId), agoraId: String(numeric) };
+    }
+  }
+  return null;
+}
+
 export function normalizeVinotecaRegion(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
 }
