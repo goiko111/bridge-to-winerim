@@ -235,7 +235,20 @@ Deno.serve(async (req: Request) => {
 
         for (const dispatch of buildRequests(connection)) {
           if (lockHeartbeatError) throw lockHeartbeatError;
-          results.push(await invokeOne(dispatch));
+          const result = await invokeOne(dispatch);
+          results.push(result);
+          // Fail-closed sequencing for the catalog job: never evaluate auto-push
+          // against a stale Agora snapshot.
+          if (job === "catalog" && dispatch.body.action === "sync-master-data" && !result.ok) {
+            results.push({
+              connection_id: connection.id,
+              name: connection.location_name,
+              ok: false,
+              skipped: true,
+              reason: "SKIPPED_FETCH_CATALOG_STALE_AGORA_MASTER",
+            });
+            break;
+          }
         }
       } finally {
         lockHeartbeatStopped = true;
