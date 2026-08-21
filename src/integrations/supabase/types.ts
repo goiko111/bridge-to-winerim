@@ -108,6 +108,62 @@ export type Database = {
           },
         ]
       }
+      agora_sales_variant_mappings: {
+        Row: {
+          connection_id: string
+          created_at: string
+          evidence: Json
+          format_type: string
+          id: string
+          match_method: string
+          provider_product_id: string
+          provider_product_name: string
+          provider_sale_format_name: string
+          sale_format_id: string
+          status: string
+          updated_at: string
+          winerim_wine_id: string
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          evidence?: Json
+          format_type: string
+          id?: string
+          match_method: string
+          provider_product_id: string
+          provider_product_name: string
+          provider_sale_format_name: string
+          sale_format_id: string
+          status?: string
+          updated_at?: string
+          winerim_wine_id: string
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          evidence?: Json
+          format_type?: string
+          id?: string
+          match_method?: string
+          provider_product_id?: string
+          provider_product_name?: string
+          provider_sale_format_name?: string
+          sale_format_id?: string
+          status?: string
+          updated_at?: string
+          winerim_wine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agora_sales_variant_mappings_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       classification_config: {
         Row: {
           connection_id: string
