@@ -20,6 +20,16 @@ export interface AgoraProductNamingPolicy {
   preferVintageForDuplicateNames?: boolean;
 }
 
+export function configuredAgoraProductNameOverride(
+  providerConfig: Record<string, unknown> | null | undefined,
+  productId: string | number,
+): string | null {
+  const rawOverrides = providerConfig?.agora_product_name_overrides;
+  if (!rawOverrides || typeof rawOverrides !== "object" || Array.isArray(rawOverrides)) return null;
+  const value = (rawOverrides as Record<string, unknown>)[String(productId)];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export function normalizeAgoraProductNameKey(name: string): string {
   return String(name || "")
     .normalize("NFD")
