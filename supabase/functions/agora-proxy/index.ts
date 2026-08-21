@@ -9,6 +9,7 @@ import {
   VINOTECA_PREPARATION_TYPE_ID,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
   VINOTECA_ROOT_FAMILY_NAME,
+  vinotecaFormatId,
   vinotecaRegionKey,
   type VinotecaReferencePlan,
   type VinotecaSkippedReference,
@@ -17,6 +18,7 @@ import {
   baseProductPriceMap,
   saleFormatDifferenceReasons,
 } from "../_shared/agoraVinotecaProductDiff.ts";
+import { verifyVinotecaNativeFormatsImport } from "../_shared/agoraVinotecaPostImportVerify.ts";
 
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
@@ -10571,8 +10573,19 @@ ${costPricesXml}
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // In VINOTECA_REGION_REFERENCE_NATIVE_FORMATS the identities are the
+        // builder's deterministic ones (BOTTLE ProductId 2M+id, GLASS/MAGNUM
+        // SaleFormatId 3M/4M+id), never the generic 500k/700k/900k scheme.
+        const vinotecaNativeFormatsTask = isVinotecaNativeFormatsConnection(
+          connection.id,
+          (connection.provider_config || {}) as Record<string, unknown>,
+        );
         const productIdByFormat = Object.fromEntries(
-          fmtTypes.map((fmt: string) => [fmt, deterministicAgoraProductId(connection, wineArr[0], fmt)]),
+          fmtTypes.map((fmt: string) => [
+            fmt,
+            (vinotecaNativeFormatsTask ? vinotecaFormatId(fmt, winerimWineId) : null)
+              || deterministicAgoraProductId(connection, wineArr[0], fmt),
+          ]),
         ) as Record<string, string>;
 
         // Resolve duplicate names against Agora's current product catalog. A
@@ -10629,7 +10642,7 @@ ${costPricesXml}
         const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
         const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
         const frozenPriceListIds = normalizeStringArray(taskPayload._effective_price_list_ids);
-        const { xml, validationResults } = generateImportXml(
+        const { xml, validationResults, vinoteca: vinotecaTaskMeta } = generateImportXml(
           wineArr,
           masterData,
           connection,
@@ -10870,6 +10883,27 @@ ${costPricesXml}
             };
           });
 
+          // ── VINOTECA native formats: verify the builder's own identities ──
+          const vinotecaPlanForTask = vinotecaNativeFormatsTask
+            ? ((vinotecaTaskMeta?.plans as VinotecaReferencePlan[] | undefined) || [])
+              .find((plan) => plan.winerimWineId === String(winerimWineId || "")) || null
+            : null;
+          const runTaskVerification = (currentVerifyXml: string) =>
+            vinotecaPlanForTask
+              ? verifyVinotecaNativeFormatsImport({
+                plan: vinotecaPlanForTask,
+                sentXml: xml,
+                actualXml: currentVerifyXml,
+                scopedPriceLists: effectivePriceLists,
+                priceListToSaleCenters: effectivePlToSc,
+              })
+              : verifyAgoraProductsAgainstScope(
+                currentVerifyXml, productsToVerify,
+                effectivePriceLists,
+                effectivePlToSc,
+              );
+
+
           if (verifyRes.ok) {
             let verifyXml = await verifyRes.text();
 
@@ -10894,11 +10928,7 @@ ${costPricesXml}
             }
 
             taskVerification = {
-              ...verifyAgoraProductsAgainstScope(
-                verifyXml, productsToVerify,
-                effectivePriceLists,
-                effectivePlToSc,
-              ),
+              ...runTaskVerification(verifyXml),
               selected_sale_centers: effectiveSaleCenters,
               selected_price_lists: effectivePriceLists,
               ignored_price_lists: effectiveIgnoredPriceLists,
@@ -10916,7 +10946,8 @@ ${costPricesXml}
               !taskVerification.success &&
               verificationAttempts < 3 &&
               taskVerification.errors.length > 0 &&
-              taskVerification.errors.every((issue: AgoraVerificationIssue) => issue.code === "NOT_FOUND")
+              taskVerification.errors.every((issue: AgoraVerificationIssue) =>
+                issue.code === "NOT_FOUND" || issue.code === "SALE_FORMAT_NOT_FOUND")
             ) {
               verificationAttempts++;
               await new Promise((resolve) => setTimeout(resolve, verificationAttempts * 1_500));
@@ -10942,11 +10973,7 @@ ${costPricesXml}
                 actualPricesByProduct[p.productId] = actualPrices;
               }
               taskVerification = {
-                ...verifyAgoraProductsAgainstScope(
-                  verifyXml, productsToVerify,
-                  effectivePriceLists,
-                  effectivePlToSc,
-                ),
+                ...runTaskVerification(verifyXml),
                 selected_sale_centers: effectiveSaleCenters,
                 selected_price_lists: effectivePriceLists,
                 ignored_price_lists: effectiveIgnoredPriceLists,
