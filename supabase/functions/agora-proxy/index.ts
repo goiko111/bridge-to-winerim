@@ -5852,7 +5852,7 @@ serve(async (req) => {
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
       const daysWithSavedTickets = Object.keys(savedEventIdsByDay);
-      if (stockSyncEnabled && winerimToken) {
+      if (stockFence.allowed && stockSyncEnabled && winerimToken) {
         staleOpenTicketRestore = await restoreStaleOpenTicketStock(
           supabase,
           connectionId,
@@ -5862,7 +5862,7 @@ serve(async (req) => {
           currentOpenDocIds,
         );
       }
-      if (resolvedLines > 0 && stockSyncEnabled) {
+      if (stockFence.allowed && resolvedLines > 0 && stockSyncEnabled) {
         if (!winerimToken) {
           warning = "Open tickets saved but Winerim stock was not synced: missing Winerim API token.";
           stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: ["missing Winerim API token"] };
@@ -6374,8 +6374,8 @@ serve(async (req) => {
       let stockSyncResult: StockSyncTotals | null = null;
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
-      const skipStockSync = payload.skipStockSync === true;
-      const shouldSyncStock = !skipStockSync && resolvedLines > 0;
+      const skipStockSync = !stockFence.allowed;
+      const shouldSyncStock = stockFence.allowed && resolvedLines > 0;
 
       if (shouldSyncStock && winerimToken) {
         stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken);
@@ -6560,7 +6560,7 @@ serve(async (req) => {
       let stockSyncResult: StockSyncTotals | null = null;
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
-      if (resolvedLines > 0) {
+      if (stockFence.allowed && resolvedLines > 0) {
         if (!winerimToken) {
           warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
           stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: [`${day}: missing Winerim API token`] };
@@ -6604,6 +6604,8 @@ serve(async (req) => {
           unresolvedLines,
           ingestionErrors,
           stockSync: stockSyncResult,
+          stockSyncSkipped: stockFence.skipped,
+          stockSyncSkippedReason: stockFence.reason,
           cursorAdvanced: false,
           warning,
         }),
@@ -6692,7 +6694,7 @@ serve(async (req) => {
         const winerimToken = (connection.winerim_api_token || "").trim();
         let stockSyncResult: StockSyncTotals | null = null;
 
-        if (winerimToken) {
+        if (stockFence.allowed && winerimToken) {
           const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
           const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
           const toDay = yesterday.toISOString().split("T")[0];
@@ -6924,7 +6926,7 @@ serve(async (req) => {
         }
 
         let stockOk = true;
-        if (dayResolvedLines > 0 && isStockSyncDayAllowed(day, providerConfig)) {
+        if (stockFence.allowed && dayResolvedLines > 0 && isStockSyncDayAllowed(day, providerConfig)) {
           if (!winerimToken) {
             stockOk = false;
             stockSyncTotals.failed++;
@@ -6956,7 +6958,7 @@ serve(async (req) => {
         syncedDays.push(day);
       }
 
-      if (!stockBlockedDay && !saveBlockedDay && winerimToken && Date.now() - actionStart < ACTION_DEADLINE_MS) {
+      if (stockFence.allowed && !stockBlockedDay && !saveBlockedDay && winerimToken && Date.now() - actionStart < ACTION_DEADLINE_MS) {
         const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
         const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
         const toDay = yesterday.toISOString().split("T")[0];
