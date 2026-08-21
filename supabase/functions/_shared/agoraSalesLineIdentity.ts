@@ -134,12 +134,16 @@ export function resolveForwardAgoraSalesLineIdentity(input: {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// SALE-FORMAT-FIRST RESOLUTION (Don Bernardo only, strict allowlist)
+// VINOTECA NATIVE-NAMESPACE RESOLUTION (Don Bernardo only, strict allowlist)
 // ─────────────────────────────────────────────────────────────────────
-// Don Bernardo publishes GLASS/MAGNUM as native Agora sale formats of the
-// bottle reference, so the SaleFormatId carries the precise identity and must
-// win over the ProductId. Every other connection keeps its exact legacy
-// identity untouched.
+// Don Bernardo publishes GLASS/MAGNUM as native Agora sale formats created by
+// us with deterministic ids (BOTTLE 2M+wineId, GLASS 3M+wineId, MAGNUM
+// 4M+wineId). Only ids inside that namespace may be preferred; a legacy/low
+// SaleFormatId (e.g. water 1855) must NEVER be used as a flat lookup key,
+// otherwise unrelated legacy mappings resolve as wine. Every other connection
+// keeps its exact legacy identity untouched.
+import { parseVinotecaNativeId } from "./agoraVinotecaNativeFormats.ts";
+
 export const AGORA_SALE_FORMAT_FIRST_CONNECTION_IDS: readonly string[] = [
   "a700d425-9194-4758-95ff-7fee86419e14", // Don Bernardo Ponzano
   "79280cb8-0fe7-4a57-93a4-04172205ac70", // Don Bernardo Santander
@@ -155,11 +159,23 @@ export type AgoraConnectionSalesLineIdentity = {
   providerProductId: string;
   resolution: AgoraSalesResolution | null;
   source: "sale_format_first" | "product_first" | "legacy";
+  blockedReason?: string;
 };
 
+function isSameFormat(a: unknown, b: unknown): boolean {
+  const norm = (value: unknown) => {
+    const upper = String(value ?? "").trim().toUpperCase();
+    return upper === "COPA" ? "GLASS" : upper;
+  };
+  return norm(a) === norm(b);
+}
+
 /**
- * Allowlisted connections resolve SaleFormatId before ProductId. Everyone else
- * keeps the caller's legacy identity and lookup, byte-for-byte.
+ * Allowlisted connections resolve native SaleFormatId, then native ProductId,
+ * then a plain ProductId lookup. Non-native SaleFormatIds are ignored for
+ * preference. Native ids resolve deterministically (id - base = wineId) and are
+ * fail-closed: the wine must be active for THIS connection with a positive
+ * price for that format, and any existing mapping row must agree.
  */
 export function resolveAgoraSalesLineIdentityForConnection(input: {
   connectionId: unknown;
@@ -167,6 +183,11 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   saleFormatId: unknown;
   legacyProviderProductId: string;
   resolutionMap: ReadonlyMap<string, AgoraSalesResolution>;
+  /**
+   * Active winerim wines of this connection: wineId -> formats with a positive
+   * price (BOTTLE/GLASS/MAGNUM). Omit to skip the activity/price check.
+   */
+  activeWineFormats?: ReadonlyMap<string, ReadonlySet<string>>;
 }): AgoraConnectionSalesLineIdentity {
   const legacyId = String(input.legacyProviderProductId ?? "");
   if (!isAgoraSaleFormatFirstConnection(input.connectionId)) {
@@ -177,25 +198,63 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
     };
   }
 
-  const saleFormatId = normalizeProviderProductId(input.saleFormatId);
-  if (saleFormatId) {
-    const saleFormatResolution = input.resolutionMap.get(saleFormatId) || null;
-    if (saleFormatResolution) {
-      return { providerProductId: saleFormatId, resolution: saleFormatResolution, source: "sale_format_first" };
-    }
-  }
+  const resolveNative = (
+    value: unknown,
+    source: "sale_format_first" | "product_first",
+  ): AgoraConnectionSalesLineIdentity | null => {
+    const native = parseVinotecaNativeId(value);
+    if (!native) return null;
+    const blocked = (blockedReason: string) => ({
+      providerProductId: native.agoraId,
+      resolution: null,
+      source,
+      blockedReason,
+    });
 
+    const mapped = input.resolutionMap.get(native.agoraId) || null;
+    if (
+      mapped
+      && (String(mapped.winerim_wine_id || "").trim() !== native.wineId
+        || !isSameFormat(mapped.format, native.format))
+    ) {
+      return blocked("native_identity_mismatch");
+    }
+
+    if (input.activeWineFormats) {
+      const formats = input.activeWineFormats.get(native.wineId);
+      if (!formats) return blocked("winerim_wine_inactive");
+      if (!formats.has(native.format)) return blocked("winerim_format_price_missing");
+    }
+
+    return {
+      providerProductId: native.agoraId,
+      resolution: { winerim_wine_id: native.wineId, format: native.format },
+      source,
+    };
+  };
+
+
+  const nativeSaleFormat = resolveNative(input.saleFormatId, "sale_format_first");
+  if (nativeSaleFormat?.resolution) return nativeSaleFormat;
+
+  const nativeProduct = resolveNative(input.productId, "product_first");
+  if (nativeProduct?.resolution) return nativeProduct;
+  if (nativeSaleFormat) return nativeSaleFormat;
+  if (nativeProduct) return nativeProduct;
+
+  // No native identity at all: never prefer the legacy SaleFormatId.
   const productId = normalizeProviderProductId(input.productId);
   if (productId) {
-    const productResolution = input.resolutionMap.get(productId) || null;
-    if (productResolution) {
-      return { providerProductId: productId, resolution: productResolution, source: "product_first" };
-    }
+    return {
+      providerProductId: productId,
+      resolution: input.resolutionMap.get(productId) || null,
+      source: "product_first",
+    };
   }
 
   return {
-    providerProductId: saleFormatId || productId || legacyId,
-    resolution: null,
-    source: saleFormatId ? "sale_format_first" : "product_first",
+    providerProductId: legacyId,
+    resolution: input.resolutionMap.get(legacyId) || null,
+    source: "product_first",
   };
 }
