@@ -181,6 +181,12 @@ export function buildVinotecaReferencePlan(
     return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
   }
 
+  // A retired/inactive reference is never rebuilt, so a hidden Agora product
+  // outside the active Winerim catalog can never be turned visible again.
+  if (input.isActive === false) {
+    return { plan: null, skipped: { winerimWineId, wineName, reason: "inactive_wine" } };
+  }
+
   if (normalizedId === null) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "invalid_winerim_id" } };
   }
