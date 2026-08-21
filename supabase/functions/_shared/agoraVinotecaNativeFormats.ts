@@ -218,3 +218,23 @@ export function buildVinotecaMappingRows(
     format_type: format.format,
   }));
 }
+
+/**
+ * Identity that MUST be persisted in winerim_push_tracking.agora_product_id.
+ * In VINOTECA_REGION_REFERENCE_NATIVE_FORMATS it is the builder's deterministic
+ * identity (BOTTLE 2M+id, GLASS 3M+id, MAGNUM 4M+id) — never the generic
+ * 500k/700k/900k scheme. Any other connection keeps its exact legacy fallback.
+ */
+export function trackingAgoraProductIdForFormat(args: {
+  vinotecaNativeFormats: boolean;
+  format: unknown;
+  winerimWineId: unknown;
+  genericFallback: string | null | undefined;
+}): string | null {
+  if (args.vinotecaNativeFormats) {
+    const nativeId = vinotecaFormatId(args.format, args.winerimWineId);
+    if (nativeId) return nativeId;
+  }
+  const fallback = String(args.genericFallback ?? "").trim();
+  return fallback || null;
+}
