@@ -5755,8 +5755,8 @@ serve(async (req) => {
             saleFormatId: line.SaleFormatId,
             legacyProviderProductId,
             resolutionMap,
-          pairMappings: salesPairMappings,
-          activeWineFormats: salesActiveWineFormats,
+            pairMappings: salesPairMappings,
+            activeWineFormats: salesActiveWineFormats,
           });
           const productId = salesIdentity.providerProductId;
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
@@ -6107,8 +6107,8 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-          pairMappings: salesPairMappings,
-          activeWineFormats: salesActiveWineFormats,
+                pairMappings: salesPairMappings,
+                activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6286,8 +6286,8 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-          pairMappings: salesPairMappings,
-          activeWineFormats: salesActiveWineFormats,
+              pairMappings: salesPairMappings,
+              activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6483,8 +6483,8 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-          pairMappings: salesPairMappings,
-          activeWineFormats: salesActiveWineFormats,
+              pairMappings: salesPairMappings,
+              activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6832,8 +6832,8 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-          pairMappings: salesPairMappings,
-          activeWineFormats: salesActiveWineFormats,
+                pairMappings: salesPairMappings,
+                activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
