@@ -547,6 +547,14 @@ serve(async (req) => {
       let listWinesUpserted = 0;
       let totalWines = 0;
       let batchWineIds: string[] = [];
+      // ── OSCILLATION GUARD (list vs detail) ──
+      // The list payload is sparser than the enriched row (no prices, sometimes no
+      // type). Classifying right after the list upsert made every identical pass
+      // look "changed" (list wipes prices ⇒ diff, detail restores them ⇒ diff).
+      // So in mode=start we snapshot the PRE-upsert row and the list payload, and
+      // classify exactly ONCE against the FINAL merged list+detail state.
+      let preUpsertRows = new Map<string, Record<string, unknown>>();
+      const listPayloadsById = new Map<string, Record<string, unknown>>();
       // Cursor advance must follow the paginated page size, never the promoted
       // priority extras, so no wine is skipped by the walk.
       let batchPageSize = 0;
@@ -586,7 +594,8 @@ serve(async (req) => {
         const wines = await fetchAllWines(winerimHeaders);
         listWinesFetched = wines.length;
         totalWines = wines.length;
-        const existingBeforeList = await loadExistingWineRows(
+        // Pre-upsert snapshot: the only valid "previous" state for this cycle.
+        preUpsertRows = await loadExistingWineRows(
           wines.map((w) => String(w.id || "")).filter(Boolean),
         );
 
@@ -657,8 +666,10 @@ serve(async (req) => {
           if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
-          const previous = existingBeforeList.get(winerimId);
-          classifyWineChange(winerimId, previous, upsertPayload, pricingStatus === "READY");
+          // No classification here on purpose: the list row is sparse and would
+          // oscillate against the enriched state. Only remember it.
+          listPayloadsById.set(winerimId, { ...upsertPayload });
+
 
 
           await supabase
@@ -834,8 +845,16 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
-        const previous = existingBeforeDetails.get(winerimId);
-        classifyWineChange(winerimId, previous, updateData, pricingStatus === "READY");
+        // Single classification point of the cycle, against the FINAL state.
+        // start ⇒ previous is the pre-list-upsert row and the payload is the
+        // merged list+detail state; enrich ⇒ previous is the pre-enrich row.
+        const previous = mode === "start"
+          ? preUpsertRows.get(winerimId)
+          : existingBeforeDetails.get(winerimId);
+        const finalPayload = mode === "start"
+          ? { ...(listPayloadsById.get(winerimId) || {}), ...updateData }
+          : updateData;
+        classifyWineChange(winerimId, previous, finalPayload, pricingStatus === "READY");
 
         await supabase
           .from("winerim_wines")
