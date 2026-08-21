@@ -5022,13 +5022,17 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
           return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${bottleCost}">
+      <Barcodes />
       <Prices>
 ${pricesXml}
       </Prices>
-      <CostPrices>
+      <StorageOptions>
+        <StorageOption WarehouseId="1" Location="" MinStock="0.00" MaxStock="0.00" />
+      </StorageOptions>
+${saleFormatsXml}      <CostPrices>
 ${costPricesXml}
       </CostPrices>
-${saleFormatsXml}    </Product>`;
+    </Product>`;
 
         },
       });
