@@ -158,9 +158,22 @@ export function isAgoraSaleFormatFirstConnection(connectionId: unknown): boolean
 export type AgoraConnectionSalesLineIdentity = {
   providerProductId: string;
   resolution: AgoraSalesResolution | null;
-  source: "sale_format_first" | "product_first" | "legacy";
+  source: "pair_exact" | "sale_format_first" | "product_first" | "legacy";
   blockedReason?: string;
 };
+
+/**
+ * Exact compound identity of an Agora sales line: (ProductId, SaleFormatId).
+ * Flat SaleFormatIds collide globally and must never be used on their own.
+ */
+export function agoraSalesPairKey(productId: unknown, saleFormatId: unknown): string {
+  const norm = (value: unknown) => {
+    const id = String(value ?? "").trim();
+    return id === "0" ? "" : id;
+  };
+  return `${norm(productId)}|${norm(saleFormatId)}`;
+}
+
 
 function isSameFormat(a: unknown, b: unknown): boolean {
   const norm = (value: unknown) => {
