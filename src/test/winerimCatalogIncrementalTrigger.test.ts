@@ -128,13 +128,106 @@ describe("winerim fetch-catalog incremental auto-push trigger", () => {
     expect(decision.reason).toBe("fingerprint_unavailable");
   });
 
-  it("wires the gate into fetch-catalog for both start and enrich, and drops the bulk backfill", () => {
+  it("classifies exactly once per cycle, after detail, and drops the bulk backfill", () => {
     expect(winerimSource).toContain('from "../_shared/winerimCatalogFingerprint.ts"');
-    expect(winerimSource.match(/classifyWineChange\(winerimId, previous/g) || []).toHaveLength(2);
+    // single classification point (post-detail), never after the list upsert
+    expect(winerimSource.match(/classifyWineChange\(/g) || []).toHaveLength(2); // definition + 1 call
+    expect(winerimSource).toContain("classifyWineChange(winerimId, previous, finalPayload");
+    expect(winerimSource).toContain("preUpsertRows");
+    expect(winerimSource).not.toContain("existingBeforeList");
     expect(winerimSource).not.toContain("readyProcessedIds");
     expect(winerimSource).not.toContain("hasRelevantCatalogChange");
     expect(winerimSource).toContain('reason: "no_source_changes_detected"');
     // DELETE reconciliation stays untouched
     expect(winerimSource).toContain('winerimWineIds: missingFromWinerim, eventType: "DELETE"');
+  });
+});
+
+// ── Regression for the live defect: sparse list payload vs full detail row ──
+// mode=start writes a list row without prices, then the detail update restores
+// them. Classifying twice (or once against the post-list state) made an
+// unchanged wine look changed and queued 27 tasks on Ponzano.
+describe("sparse-list / full-detail oscillation", () => {
+  const enrichedRow: Row = { ...baseRow, name: "Mauro VS", region: "Castilla y León", vintage: "2019" };
+  // what the list upsert would persist: no prices, no vintage/type detail
+  const sparseListPayload: Row = {
+    name: "Mauro VS",
+    region: "Castilla y León",
+    vintage: "2019",
+    is_active: true,
+    serve_by_glass: false,
+  };
+  // what the detail update writes afterwards (authoritative prices)
+  const detailPayload: Row = {
+    name: "Mauro VS",
+    is_active: true,
+    serve_by_glass: true,
+    wine_type: "tinto",
+    bottle_sale_price: 25,
+    glass_sale_price: 3.1,
+    magnum_sale_price: null,
+  };
+
+  // Emulates the fixed cycle: previous = PRE-upsert row, payload = list+detail.
+  function fixedStartCycle(previous: Row | undefined) {
+    return decideCatalogChange({
+      previous,
+      payload: { ...sparseListPayload, ...detailPayload },
+      pricingReady: true,
+    });
+  }
+
+  it("would have oscillated with the old post-list classification", () => {
+    const listStep = decideCatalogChange({ previous: enrichedRow, payload: sparseListPayload, pricingReady: false });
+    expect(listStep.outcome).toBe("changed"); // the live defect
+  });
+
+  it("is unchanged once classified against the final list+detail state", () => {
+    expect(fixedStartCycle(enrichedRow).outcome).toBe("unchanged");
+  });
+
+  it("still detects a real price change on the final state", () => {
+    const changed = decideCatalogChange({
+      previous: enrichedRow,
+      payload: { ...sparseListPayload, ...detailPayload, bottle_sale_price: 26 },
+      pricingReady: true,
+    });
+    expect(changed.outcome).toBe("changed");
+  });
+
+  it("treats a brand-new wine as CREATE only with an exportable final state", () => {
+    expect(fixedStartCycle(undefined).outcome).toBe("new");
+    expect(
+      decideCatalogChange({
+        previous: undefined,
+        payload: { ...sparseListPayload, ...detailPayload, bottle_sale_price: null, glass_sale_price: null },
+        pricingReady: false,
+      }).outcome,
+    ).toBe("skipped");
+  });
+
+  it("runs two identical 100-wine start cycles with zero evaluations", () => {
+    const stored = new Map<string, Row>();
+    for (let i = 0; i < 100; i++) stored.set(String(400000 + i), { ...enrichedRow, name: `Wine ${i}` });
+
+    const runCycle = () => {
+      let evaluated = 0;
+      for (const [id, previous] of stored) {
+        const decision = decideCatalogChange({
+          previous,
+          payload: { ...sparseListPayload, ...detailPayload, name: `Wine ${id.slice(-2) === "00" ? 0 : Number(id) - 400000}` },
+          pricingReady: true,
+        });
+        if (decision.outcome === "new" || decision.outcome === "changed") evaluated++;
+        stored.set(id, {
+          ...previous,
+          ...buildNextCatalogFingerprintRow(previous, { ...sparseListPayload, ...detailPayload, name: previous.name }),
+        });
+      }
+      return evaluated;
+    };
+
+    expect(runCycle()).toBe(0);
+    expect(runCycle()).toBe(0);
   });
 });
