@@ -3669,6 +3669,20 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+/**
+ * Reversible quarantine for ambiguous Agora identities.
+ * provider_config.auto_push_fail_closed_winerim_ids lists Winerim wine ids that must NEVER
+ * be evaluated by auto-push (no CREATE/UPDATE/HIDE/DELETE, no per-wine task queries).
+ * Absent/empty config = no behaviour change for any connection or mode.
+ * This list is quarantine only: it must never be used to resolve or adopt an Agora identity.
+ */
+function autoPushFailClosedWinerimIds(providerConfig: unknown): string[] {
+  const config = (providerConfig || {}) as Record<string, unknown>;
+  return normalizeStringArray(config.auto_push_fail_closed_winerim_ids);
+}
+
+
+
 function agoraVintageDisambiguationProductIds(connection: any): string[] {
   const config = (connection?.provider_config && typeof connection.provider_config === "object")
     ? connection.provider_config as Record<string, unknown>
