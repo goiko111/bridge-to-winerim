@@ -10477,6 +10477,26 @@ ${costPricesXml}
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
       const dryRun = payload.dryRun || false;
+      // VINOTECA connections MUST persist native identities (BOTTLE 2M / GLASS 3M /
+      // MAGNUM 4M) — never the generic 500k/700k/900k scheme.
+      const vinotecaNativeImport = isVinotecaNativeFormatsConnection(
+        connectionId,
+        (connection.provider_config || {}) as Record<string, unknown>,
+      );
+      const importAgoraIdFor = (fmt: string, wineId: unknown): string => {
+        const numericId = Number(wineId || 0);
+        const genericFallback = fmt === "MAGNUM"
+          ? String(900000 + numericId)
+          : fmt === "GLASS"
+          ? String(700000 + numericId)
+          : String(500000 + numericId);
+        return trackingAgoraProductIdForFormat({
+          vinotecaNativeFormats: vinotecaNativeImport,
+          format: fmt,
+          winerimWineId: wineId,
+          genericFallback,
+        }) || genericFallback;
+      };
 
       const { data: masterData } = await supabase
         .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
