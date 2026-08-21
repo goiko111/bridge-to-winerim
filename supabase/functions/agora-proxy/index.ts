@@ -14,6 +14,11 @@ import {
   type VinotecaSkippedReference,
 } from "../_shared/agoraVinotecaNativeFormats.ts";
 import {
+  baseProductPriceMap,
+  saleFormatDifferenceReasons,
+} from "../_shared/agoraVinotecaProductDiff.ts";
+
+import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
   AGORA_SORT_ALPHABETICAL_WINE_NAME,
@@ -581,13 +586,12 @@ function normalizeAgoraMoney(value: unknown): string {
 }
 
 function productPriceMap(productXml: string): Record<string, string> {
-  const prices: Record<string, string> = {};
-  for (const priceEl of extractXmlElementsWithAttrs(productXml, "Price")) {
-    const id = String(priceEl.attrs.PriceListId || "");
-    if (id) prices[id] = normalizeAgoraMoney(priceEl.attrs.MainPrice);
-  }
-  return prices;
+  // Base Product prices only. <Price> nodes nested inside
+  // <AdditionalSaleFormats><SaleFormat> must never overwrite the bottle price
+  // (that collapse produced the false "no_agora_changes" skip).
+  return baseProductPriceMap(productXml);
 }
+
 
 function normalizeAgoraTextAttribute(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -684,17 +688,25 @@ function agoraProductDifferenceReasons(
     ? scopedPriceListIds.filter((id) => Object.prototype.hasOwnProperty.call(expectedPrices, id))
     : Object.keys(expectedPrices);
 
+  const hasSaleFormats = /<AdditionalSaleFormats\b/i.test(expected.xml);
+  const basePriceLabel = hasSaleFormats ? "BOTTLE_PRICE_LIST" : "PRICE_LIST";
+
   for (const priceListId of priceListIds) {
     if (!Object.prototype.hasOwnProperty.call(actualPrices, priceListId)) {
-      differences.push(`PRICE_LIST_${priceListId}_MISSING`);
+      differences.push(`${basePriceLabel}_${priceListId}_MISSING`);
     } else if (expectedPrices[priceListId] !== actualPrices[priceListId]) {
-      differences.push(`PRICE_LIST_${priceListId}_MISMATCH`);
+      differences.push(`${basePriceLabel}_${priceListId}_MISMATCH`);
     }
   }
+
+  // GLASS/MAGNUM live inside AdditionalSaleFormats and are compared by
+  // SaleFormatId, never as independent Products.
+  differences.push(...saleFormatDifferenceReasons(expected.xml, actual.xml, scopedPriceListIds));
 
   if (priceListIds.length === 0) differences.push("NO_SCOPED_PRICE_LIST");
   return differences;
 }
+
 
 function agoraProductMatchesExpectedXml(
   expected: { xml: string; attrs: Record<string, string> },
@@ -12843,16 +12855,23 @@ ${costPricesXml}
             expectedUpdateNameOverrides,
           );
           const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
+          const updateDiffReasons: string[] = [];
           const allExpectedProductsMatch = expectedProducts.length > 0 && expectedProducts.every((expectedProduct) => {
             const productId = String(expectedProduct.attrs.Id || "");
             const actualProduct = productId
               ? findXmlElementByAttr(updateDiffCurrentXml!, "Product", "Id", productId)
               : null;
-            return Boolean(actualProduct && agoraProductMatchesExpectedXml(
+            if (!actualProduct) {
+              updateDiffReasons.push(`PRODUCT_${productId || "UNKNOWN"}_MISSING`);
+              return false;
+            }
+            const reasons = agoraProductDifferenceReasons(
               expectedProduct,
               actualProduct,
               updateDiffScopedPriceListIds,
-            ));
+            );
+            for (const reason of reasons) updateDiffReasons.push(`PRODUCT_${productId}:${reason}`);
+            return reasons.length === 0;
           });
 
           if (allExpectedProductsMatch) {
@@ -12860,7 +12879,12 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
             continue;
           }
+          skippedReasons.push({
+            winerim_id: wine.winerim_id,
+            reason: `update_diff_detected:${updateDiffReasons.slice(0, 6).join(",")}`,
+          });
         } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate) {
+
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
