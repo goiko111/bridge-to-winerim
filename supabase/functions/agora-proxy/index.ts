@@ -10946,7 +10946,8 @@ ${costPricesXml}
               !taskVerification.success &&
               verificationAttempts < 3 &&
               taskVerification.errors.length > 0 &&
-              taskVerification.errors.every((issue: AgoraVerificationIssue) => issue.code === "NOT_FOUND")
+              taskVerification.errors.every((issue: AgoraVerificationIssue) =>
+                issue.code === "NOT_FOUND" || issue.code === "SALE_FORMAT_NOT_FOUND")
             ) {
               verificationAttempts++;
               await new Promise((resolve) => setTimeout(resolve, verificationAttempts * 1_500));
