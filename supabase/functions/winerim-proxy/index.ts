@@ -594,7 +594,8 @@ serve(async (req) => {
         const wines = await fetchAllWines(winerimHeaders);
         listWinesFetched = wines.length;
         totalWines = wines.length;
-        const existingBeforeList = await loadExistingWineRows(
+        // Pre-upsert snapshot: the only valid "previous" state for this cycle.
+        preUpsertRows = await loadExistingWineRows(
           wines.map((w) => String(w.id || "")).filter(Boolean),
         );
 
