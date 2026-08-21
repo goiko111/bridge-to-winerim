@@ -714,10 +714,11 @@ serve(async (req) => {
           }
         }
 
-        batchWineIds = wines
-          .map((w) => String(w.id || ""))
-          .filter(Boolean)
-          .slice(detailOffset, detailOffset + detailBatchSize);
+        const allListedIds = wines.map((w) => String(w.id || "")).filter(Boolean);
+        batchWineIds = prioritizeFirstBatch(
+          allListedIds.slice(detailOffset, detailOffset + detailBatchSize),
+          new Set(allListedIds),
+        );
       } else {
         const { count } = await supabase
           .from("winerim_wines")
@@ -734,9 +735,23 @@ serve(async (req) => {
           .range(detailOffset, detailOffset + detailBatchSize - 1);
 
         const rows = batchRows || [];
-        batchWineIds = rows.map((r: any) => String(r.winerim_id)).filter(Boolean);
+        batchWineIds = prioritizeFirstBatch(
+          rows.map((r: any) => String(r.winerim_id)).filter(Boolean),
+        );
         for (const row of rows) {
           baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+        }
+        const missingPriorityIds = batchWineIds.filter((id) => !baseWineMap.has(id));
+        if (missingPriorityIds.length > 0) {
+          const { data: priorityRows } = await supabase
+            .from("winerim_wines")
+            .select("winerim_id, raw_payload")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", missingPriorityIds);
+          for (const row of (priorityRows || []) as any[]) {
+            baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+          }
+          batchWineIds = batchWineIds.filter((id) => baseWineMap.has(id));
         }
 
         console.log(
