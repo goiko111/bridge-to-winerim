@@ -11134,7 +11134,7 @@ ${costPricesXml}
 
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,
-          external_id: productIdByFormat[fmtTypes[0]] || null,
+          external_id: (vinotecaPlanForTask?.productId || productIdByFormat[fmtTypes[0]]) || null,
         }).eq("id", task.id);
 
         // auto_push_verified_ready is NOT set here — manual verification required
@@ -11143,9 +11143,16 @@ ${costPricesXml}
         const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
         for (const fmt of fmtTypes) {
           const fmtProductId = productIdByFormat[fmt];
+          const trackedProductId = trackingAgoraProductIdForFormat({
+            vinotecaNativeFormats: vinotecaNativeFormatsTask,
+            format: fmt,
+            winerimWineId,
+            genericFallback: fmtProductId,
+          });
           await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
             sync_status: pushStatus,
             task_id: task.id,
+            agora_product_id: trackedProductId || undefined,
             agora_family_id: expectedFamilies[fmtProductId] || undefined,
             pushed_at: new Date().toISOString(),
             verified_at: taskVerification.success ? new Date().toISOString() : null,
