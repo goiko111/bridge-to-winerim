@@ -12520,6 +12520,40 @@ ${costPricesXml}
       const requireReview = connection.require_manual_review_before_push ?? true;
       const providerConfig = (connection.provider_config || {}) as Record<string, unknown>;
 
+      // ── FAIL-CLOSED IDENTITY QUARANTINE ──
+      // Ambiguous Agora identities (multiple products/vintages for the same wine) can never be
+      // created or adopted deterministically. Drop those Winerim ids here, before ANY
+      // CREATE/UPDATE/HIDE/DELETE decision or per-wine task lookup: zero tasks, zero writes.
+      const failClosedWinerimIds = autoPushFailClosedWinerimIds(providerConfig);
+      const failClosedExcluded: string[] = [];
+      if (failClosedWinerimIds.length > 0) {
+        const quarantined = new Set(failClosedWinerimIds);
+        const kept: string[] = [];
+        for (const id of winerimWineIds) {
+          if (quarantined.has(id)) failClosedExcluded.push(id);
+          else kept.push(id);
+        }
+        winerimWineIds = kept;
+        if (winerimWineIds.length === 0) {
+          return new Response(JSON.stringify({
+            success: true,
+            queued: 0,
+            wouldQueue: 0,
+            skipped: failClosedExcluded.length,
+            hidQueued: 0,
+            skippedReasons: failClosedExcluded.map((id) => ({
+              winerim_id: id,
+              reason: "auto_push_fail_closed_identity_excluded",
+            })),
+            totalWines: 0,
+            eventType: evtType,
+            failClosedExcluded,
+          }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      }
+
+
+
       // UPDATE canary guard: only allow listed Winerim IDs through when provider_config has an update allowlist.
       if (evtType === "UPDATE") {
         const updateAllowlist = normalizeStringArray(
