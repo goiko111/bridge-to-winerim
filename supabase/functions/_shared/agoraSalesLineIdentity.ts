@@ -173,8 +173,9 @@ function isSameFormat(a: unknown, b: unknown): boolean {
 /**
  * Allowlisted connections resolve native SaleFormatId, then native ProductId,
  * then a plain ProductId lookup. Non-native SaleFormatIds are ignored for
- * preference. Native ids are fail-closed: the mapping must match the
- * deterministic wineId/format and the wine must be active for the connection.
+ * preference. Native ids resolve deterministically (id - base = wineId) and are
+ * fail-closed: the wine must be active for THIS connection with a positive
+ * price for that format, and any existing mapping row must agree.
  */
 export function resolveAgoraSalesLineIdentityForConnection(input: {
   connectionId: unknown;
@@ -182,8 +183,11 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   saleFormatId: unknown;
   legacyProviderProductId: string;
   resolutionMap: ReadonlyMap<string, AgoraSalesResolution>;
-  /** Active winerim_wines ids of this connection. Omit to skip the check. */
-  activeWineIds?: ReadonlySet<string>;
+  /**
+   * Active winerim wines of this connection: wineId -> formats with a positive
+   * price (BOTTLE/GLASS/MAGNUM). Omit to skip the activity/price check.
+   */
+  activeWineFormats?: ReadonlyMap<string, ReadonlySet<string>>;
 }): AgoraConnectionSalesLineIdentity {
   const legacyId = String(input.legacyProviderProductId ?? "");
   if (!isAgoraSaleFormatFirstConnection(input.connectionId)) {
@@ -200,25 +204,35 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   ): AgoraConnectionSalesLineIdentity | null => {
     const native = parseVinotecaNativeId(value);
     if (!native) return null;
-    const mapped = input.resolutionMap.get(native.agoraId) || null;
-    const wineActive = !input.activeWineIds || input.activeWineIds.has(native.wineId);
-    const identityOk = !!mapped
-      && String(mapped.winerim_wine_id || "").trim() === native.wineId
-      && isSameFormat(mapped.format, native.format);
-    if (identityOk && wineActive) {
-      return { providerProductId: native.agoraId, resolution: mapped, source };
-    }
-    return {
+    const blocked = (blockedReason: string) => ({
       providerProductId: native.agoraId,
       resolution: null,
       source,
-      blockedReason: !mapped
-        ? "native_mapping_missing"
-        : !identityOk
-        ? "native_identity_mismatch"
-        : "winerim_wine_inactive",
+      blockedReason,
+    });
+
+    const mapped = input.resolutionMap.get(native.agoraId) || null;
+    if (
+      mapped
+      && (String(mapped.winerim_wine_id || "").trim() !== native.wineId
+        || !isSameFormat(mapped.format, native.format))
+    ) {
+      return blocked("native_identity_mismatch");
+    }
+
+    if (input.activeWineFormats) {
+      const formats = input.activeWineFormats.get(native.wineId);
+      if (!formats) return blocked("winerim_wine_inactive");
+      if (!formats.has(native.format)) return blocked("winerim_format_price_missing");
+    }
+
+    return {
+      providerProductId: native.agoraId,
+      resolution: { winerim_wine_id: native.wineId, format: native.format },
+      source,
     };
   };
+
 
   const nativeSaleFormat = resolveNative(input.saleFormatId, "sale_format_first");
   if (nativeSaleFormat?.resolution) return nativeSaleFormat;
