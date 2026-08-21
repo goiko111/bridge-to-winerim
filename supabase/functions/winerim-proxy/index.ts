@@ -8,6 +8,8 @@ import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
+import { decideCatalogChange } from "../_shared/winerimCatalogFingerprint.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
