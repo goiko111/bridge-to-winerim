@@ -139,7 +139,9 @@ export type VinotecaSkippedReference = {
     | "missing_bottle_price"
     | "missing_product_id"
     | "missing_name"
-    | "incomplete_adopted_route";
+    | "incomplete_adopted_route"
+    | "adopted_format_would_be_lost"
+    | "inactive_wine";
 };
 
 export type VinotecaPriceInput = {
@@ -152,6 +154,8 @@ export type VinotecaPriceInput = {
   glassCostPrice?: unknown;
   magnumSalePrice?: unknown;
   magnumCostPrice?: unknown;
+  /** Explicit false retires the reference: no XML, never reactivated. */
+  isActive?: unknown;
 };
 
 function positiveAmount(value: unknown): number {
