@@ -12644,7 +12644,7 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPushesToHide.map(p => p.agora_product_id).filter(Boolean);
-              if (!forceEvaluate && !dryRun) {
+              if (autoPushWritesEnabled) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
                   task_type: "AGORA_HIDE_PRODUCT",
@@ -12699,7 +12699,7 @@ ${costPricesXml}
 
           if (!existingHide || existingHide.length === 0) {
             const productIds = formatsToHide.map((push: any) => push.agora_product_id).filter(Boolean);
-            if (!forceEvaluate) {
+            if (autoPushWritesEnabled) {
               await supabase.from("outbound_tasks").insert({
                 connection_id: connectionId,
                 task_type: "AGORA_HIDE_PRODUCT",
@@ -12818,7 +12818,7 @@ ${costPricesXml}
           }
         }
 
-        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate && !dryRun) {
+        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate) {
           const normalizedUpdateWineName = normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase("es");
           const updateHomonymousWines = updateDiffActiveWines.filter((candidate) =>
             normalizeAgoraTextAttribute(candidate.name).toLocaleLowerCase("es") === normalizedUpdateWineName
@@ -12860,7 +12860,7 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
             continue;
           }
-        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate && !dryRun) {
+        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate) {
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
@@ -12896,7 +12896,7 @@ ${costPricesXml}
           continue;
         }
 
-        if (forceEvaluate) {
+        if (!autoPushWritesEnabled) {
           wouldQueue++;
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
           continue;
