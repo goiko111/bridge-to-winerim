@@ -7027,7 +7027,9 @@ serve(async (req) => {
           connectionId,
           resolutionMapSize: resolutionMap.size,
           unresolvedCandidateCount: unresolvedCandidateCount ?? 0,
+          activeWineIdCount: salesActiveWineIds ? salesActiveWineIds.size : null,
           results,
+          lineResults,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
