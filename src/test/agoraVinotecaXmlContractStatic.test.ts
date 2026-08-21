@@ -15,15 +15,28 @@ describe("VINOTECA native formats XML contract", () => {
     expect(SOURCE).not.toContain("</SaleFormats>");
   });
 
-  it("keeps deterministic SaleFormatId, prices and preparation ids inside the formats", () => {
+  it("keeps deterministic SaleFormatId and prices, with a required deterministic Ratio", () => {
     const block = SOURCE.slice(
       SOURCE.indexOf("<AdditionalSaleFormats>"),
       SOURCE.indexOf("</AdditionalSaleFormats>") + 30,
     );
     expect(block).toContain('Id="${format.agoraId}"');
     expect(block).toContain("format.salePrice.toFixed(2)");
-    expect(block).toContain('PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}"');
-    expect(block).toContain('PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}"');
+    expect(block).toContain('const ratio = format.format === "GLASS" ? "0.20" : "2.00"');
+    expect(block).toContain('Ratio="${ratio}"');
+  });
+
+  it("never emits Product-only preparation or cost attributes on SaleFormat", () => {
+    const saleFormatStart = SOURCE.indexOf('return `        <SaleFormat Id="${format.agoraId}"');
+    const saleFormatOpenEnd = SOURCE.indexOf(">", saleFormatStart);
+    const saleFormatOpeningTag = SOURCE.slice(saleFormatStart, saleFormatOpenEnd + 1);
+
+    expect(saleFormatStart).toBeGreaterThan(-1);
+    expect(saleFormatOpenEnd).toBeGreaterThan(saleFormatStart);
+    expect(saleFormatOpeningTag).toContain('Ratio="${ratio}"');
+    expect(saleFormatOpeningTag).not.toContain("PreparationTypeId=");
+    expect(saleFormatOpeningTag).not.toContain("PreparationOrderId=");
+    expect(saleFormatOpeningTag).not.toContain("CostPrice=");
   });
 
   it("keeps the exact accepted BOTTLE child order and StorageOptions contract", () => {
@@ -45,6 +58,9 @@ describe("VINOTECA native formats XML contract", () => {
     expect(product).toContain(
       '<StorageOption WarehouseId="1" Location="" MinStock="0.00" MaxStock="0.00" />',
     );
+    expect(product).toContain('PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}"');
+    expect(product).toContain('PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}"');
+    expect(product).toContain('CostPrice="${bottleCost}"');
   });
 
   it("stays gated by the Don Bernardo allowlist", () => {

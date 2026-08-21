@@ -5018,7 +5018,8 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
                 `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
               ).join("\n");
               const formatLabel = formatProductName(format.format, plan.wineName);
-              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" SaleableAsMain="true" SaleableAsAddin="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${format.costPrice.toFixed(2)}">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
+              const ratio = format.format === "GLASS" ? "0.20" : "2.00";
+              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
           return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${bottleCost}">
