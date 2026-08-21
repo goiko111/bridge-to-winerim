@@ -557,6 +557,9 @@ serve(async (req) => {
       let listWinesUpserted = 0;
       let totalWines = 0;
       let batchWineIds: string[] = [];
+      // Cursor advance must follow the paginated page size, never the promoted
+      // priority extras, so no wine is skipped by the walk.
+      let batchPageSize = 0;
       const baseWineMap = new Map<string, Record<string, unknown>>();
 
       // ── CATALOG PRIORITY (canary / update allowlist) ──
@@ -715,10 +718,9 @@ serve(async (req) => {
         }
 
         const allListedIds = wines.map((w) => String(w.id || "")).filter(Boolean);
-        batchWineIds = prioritizeFirstBatch(
-          allListedIds.slice(detailOffset, detailOffset + detailBatchSize),
-          new Set(allListedIds),
-        );
+        const listPage = allListedIds.slice(detailOffset, detailOffset + detailBatchSize);
+        batchPageSize = listPage.length;
+        batchWineIds = prioritizeFirstBatch(listPage, new Set(allListedIds));
       } else {
         const { count } = await supabase
           .from("winerim_wines")
@@ -735,9 +737,9 @@ serve(async (req) => {
           .range(detailOffset, detailOffset + detailBatchSize - 1);
 
         const rows = batchRows || [];
-        batchWineIds = prioritizeFirstBatch(
-          rows.map((r: any) => String(r.winerim_id)).filter(Boolean),
-        );
+        const enrichPage = rows.map((r: any) => String(r.winerim_id)).filter(Boolean);
+        batchPageSize = enrichPage.length;
+        batchWineIds = prioritizeFirstBatch(enrichPage);
         for (const row of rows) {
           baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
         }
@@ -865,7 +867,7 @@ serve(async (req) => {
         detailsUpdated++;
       }
 
-      const processedDetails = Math.min(totalWines, detailOffset + batchWineIds.length);
+      const processedDetails = Math.min(totalWines, detailOffset + batchPageSize);
       const remainingDetails = Math.max(totalWines - processedDetails, 0);
       const complete = remainingDetails === 0;
 
@@ -966,10 +968,10 @@ serve(async (req) => {
             fn_url: fnUrl,
             service_key: supabaseKey,
             conn_id: connectionId,
-            next_offset: detailOffset + batchWineIds.length,
+            next_offset: detailOffset + batchPageSize,
             next_batch_size: detailBatchSize,
           } as never);
-          console.log(`[winerim-proxy] chained next batch: offset=${detailOffset + batchWineIds.length}`);
+          console.log(`[winerim-proxy] chained next batch: offset=${detailOffset + batchPageSize}`);
         } catch (e) {
           console.error("[winerim-proxy] chain next batch failed:", e);
         }
