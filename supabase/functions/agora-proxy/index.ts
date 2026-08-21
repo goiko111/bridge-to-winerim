@@ -12442,6 +12442,8 @@ ${costPricesXml}
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
       const dryRun = payload.dryRun === true;
+      // Single write barrier: forceEvaluate and dryRun are both read-only modes.
+      const autoPushWritesEnabled = !forceEvaluate && !dryRun;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
