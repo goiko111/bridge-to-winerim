@@ -886,22 +886,28 @@ async function loadCompleteSalesEventDocIdsForDay(
 // Active winerim wine ids, only needed for VINOTECA native-namespace connections
 // (fail-closed sales resolution). Other connections get undefined = unchanged.
 // deno-lint-ignore no-explicit-any
-async function loadSalesActiveWineIds(
+async function loadSalesActiveWineFormats(
   supabaseClient: any,
   connectionId: string,
-): Promise<Set<string> | undefined> {
+): Promise<Map<string, Set<string>> | undefined> {
   if (!isAgoraSaleFormatFirstConnection(connectionId)) return undefined;
   const rows = await selectAllConnectionRows(
     supabaseClient,
     "winerim_wines",
-    "id, winerim_id, is_active",
+    "id, winerim_id, is_active, bottle_sale_price, glass_sale_price, magnum_sale_price",
     connectionId,
   );
-  const active = new Set<string>();
+  const active = new Map<string, Set<string>>();
   for (const row of (rows || []) as Record<string, unknown>[]) {
     if (row.is_active === false) continue;
     const id = String(row.winerim_id ?? "").trim();
-    if (id) active.add(id);
+    if (!id) continue;
+    const formats = new Set<string>();
+    const positive = (value: unknown) => Number(value) > 0;
+    if (positive(row.bottle_sale_price)) formats.add("BOTTLE");
+    if (positive(row.glass_sale_price)) formats.add("GLASS");
+    if (positive(row.magnum_sale_price)) formats.add("MAGNUM");
+    if (formats.size > 0) active.set(id, formats);
   }
   return active;
 }
@@ -5681,7 +5687,7 @@ serve(async (req) => {
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -5719,7 +5725,7 @@ serve(async (req) => {
             saleFormatId: line.SaleFormatId,
             legacyProviderProductId,
             resolutionMap,
-            activeWineIds: salesActiveWineIds,
+            activeWineFormats: salesActiveWineFormats,
           });
           const productId = salesIdentity.providerProductId;
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
@@ -5991,7 +5997,7 @@ serve(async (req) => {
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       const ACTION_DEADLINE_MS = 120_000;
       const actionStart = Date.now();
@@ -6069,7 +6075,7 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                activeWineIds: salesActiveWineIds,
+                activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6210,7 +6216,7 @@ serve(async (req) => {
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6246,7 +6252,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              activeWineIds: salesActiveWineIds,
+              activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6407,7 +6413,7 @@ serve(async (req) => {
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6441,7 +6447,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              activeWineIds: salesActiveWineIds,
+              activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6703,7 +6709,7 @@ serve(async (req) => {
       const wineFamilies = [...DEFAULT_WINE_FAMILIES, ...customWineFamilies];
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       let resumedExistingEvents = 0;
@@ -6788,7 +6794,7 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                activeWineIds: salesActiveWineIds,
+                activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6977,7 +6983,7 @@ serve(async (req) => {
     // ── READ-ONLY SALES RESOLUTION DEBUG (no writes, no TPV calls) ──
     if (action === "debug-sales-resolution") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
       const requestedIds: string[] = [
         ...(payload.productId ? [String(payload.productId)] : []),
         ...(Array.isArray(payload.productIds) ? payload.productIds.map((id: unknown) => String(id)) : []),
@@ -7004,7 +7010,7 @@ serve(async (req) => {
           saleFormatId: probe.SaleFormatId ?? probe.saleFormatId,
           legacyProviderProductId: String(probe.ProductId ?? probe.productId ?? ""),
           resolutionMap,
-          activeWineIds: salesActiveWineIds,
+          activeWineFormats: salesActiveWineFormats,
         });
         return {
           input: {
@@ -7027,7 +7033,7 @@ serve(async (req) => {
           connectionId,
           resolutionMapSize: resolutionMap.size,
           unresolvedCandidateCount: unresolvedCandidateCount ?? 0,
-          activeWineIdCount: salesActiveWineIds ? salesActiveWineIds.size : null,
+          activeWineCount: salesActiveWineFormats ? salesActiveWineFormats.size : null,
           results,
           lineResults,
         }),
@@ -7114,7 +7120,7 @@ serve(async (req) => {
     // ── RESOLVE EXISTING SALES LINES (re-resolution pass) ──
     if (action === "resolve-sales") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
-      const salesActiveWineIds = await loadSalesActiveWineIds(supabase, connectionId);
+      const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
 
       // Fetch unresolved wine candidate lines
       const { data: unresolvedLines } = await supabase
