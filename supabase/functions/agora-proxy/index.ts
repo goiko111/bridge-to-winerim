@@ -7061,6 +7061,9 @@ serve(async (req) => {
           },
           providerProductId: identity.providerProductId,
           source: identity.source,
+          kind: identity.resolution
+            ? (identity.source === "pair_exact" ? "pair_exact" : "native")
+            : "unresolved",
           blockedReason: identity.blockedReason ?? null,
           resolved: Boolean(identity.resolution),
           winerim_wine_id: identity.resolution?.winerim_wine_id ?? null,
@@ -7073,6 +7076,7 @@ serve(async (req) => {
           success: true,
           connectionId,
           resolutionMapSize: resolutionMap.size,
+          pairMappingCount: salesPairMappings ? salesPairMappings.size : null,
           unresolvedCandidateCount: unresolvedCandidateCount ?? 0,
           activeWineCount: salesActiveWineFormats ? salesActiveWineFormats.size : null,
           results,
@@ -7081,6 +7085,7 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
 
     // ── VINOTECA NATIVE FORMATS DRY-RUN (read-only, never sends XML) ──
     if (action === "vinoteca-dry-run") {
