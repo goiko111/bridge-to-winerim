@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!--
+  ROLLBACK inverso del canary Don Bernardo Ponzano wineId 363716 (2026-08-21).
+  Restaura el estado exacto previo: Product 2363716 vuelve a FamilyId 123 y la
+  familia 900284 queda oculta (nunca se borra). No toca la legacy 123 ni otros
+  productos. Enviar via agora-proxy action "xml-import" NO es posible con XML
+  arbitrario: aplicar con `set-product-visibility` / `create-family` equivalente
+  o POST directo a /api/import/ con este cuerpo.
+-->
+<Import>
+  <Families>
+    <Family Id="900284" Name="VINOTECA ABIERTA - Cava" ShowInPos="false" ButtonText="Cava" Color="#8B0000" Order="100" ParentFamilyId="112" />
+  </Families>
+  <Products>
+    <Product Order="1" Id="2363716" Name="Reserva Heredad Brut" ButtonText="Reserva Heredad Brut" Color="#8B0000" PLU="" FamilyId="123" VatId="3" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="6" PreparationOrderId="2" CostPrice="0.00">
+      <Barcodes />
+      <Prices>
+        <Price PriceListId="1" MainPrice="35.00" AddinPrice="0.00" MenuItemPrice="0.00" />
+        <Price PriceListId="3" MainPrice="35.00" AddinPrice="0.00" MenuItemPrice="0.00" />
+      </Prices>
+      <StorageOptions>
+        <StorageOption WarehouseId="1" Location="" MinStock="0.00" MaxStock="0.00" />
+      </StorageOptions>
+      <AdditionalSaleFormats>
+        <SaleFormat Id="3363716" Name="C Reserva Heredad Brut" ButtonText="C Reserva Heredad Br" Ratio="0.20" SaleableAsMain="true" SaleableAsAddin="false">
+          <Prices>
+            <Price PriceListId="1" MainPrice="7.00" AddinPrice="0.00" MenuItemPrice="0.00" />
+            <Price PriceListId="3" MainPrice="7.00" AddinPrice="0.00" MenuItemPrice="0.00" />
+          </Prices>
+        </SaleFormat>
+      </AdditionalSaleFormats>
+      <CostPrices>
+        <CostPrice WarehouseId="1" CostPrice="0.00" />
+      </CostPrices>
+    </Product>
+  </Products>
+</Import>
