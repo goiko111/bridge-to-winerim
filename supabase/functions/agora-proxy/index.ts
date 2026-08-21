@@ -10571,8 +10571,19 @@ ${costPricesXml}
             { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // In VINOTECA_REGION_REFERENCE_NATIVE_FORMATS the identities are the
+        // builder's deterministic ones (BOTTLE ProductId 2M+id, GLASS/MAGNUM
+        // SaleFormatId 3M/4M+id), never the generic 500k/700k/900k scheme.
+        const vinotecaNativeFormatsTask = isVinotecaNativeFormatsConnection(
+          connection.id,
+          (connection.provider_config || {}) as Record<string, unknown>,
+        );
         const productIdByFormat = Object.fromEntries(
-          fmtTypes.map((fmt: string) => [fmt, deterministicAgoraProductId(connection, wineArr[0], fmt)]),
+          fmtTypes.map((fmt: string) => [
+            fmt,
+            (vinotecaNativeFormatsTask ? vinotecaFormatId(fmt, winerimWineId) : null)
+              || deterministicAgoraProductId(connection, wineArr[0], fmt),
+          ]),
         ) as Record<string, string>;
 
         // Resolve duplicate names against Agora's current product catalog. A
