@@ -237,6 +237,17 @@ export function buildVinotecaReferencePlan(
   if (!formats.some((format) => format.isBase)) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
   }
+  // Fail-closed: an adopted route exposes an existing Agora sale format that
+  // this Winerim state would silently drop (no positive price). Never rewrite
+  // the reference in that case.
+  if (adoptedRoute) {
+    for (const format of Object.keys(adoptedRoute.formatIds) as VinotecaFormat[]) {
+      if (!adoptedRoute.formatIds[format]) continue;
+      if (!formats.some((planned) => planned.format === format)) {
+        return { plan: null, skipped: { winerimWineId, wineName, reason: "adopted_format_would_be_lost" } };
+      }
+    }
+  }
   formats.sort((left, right) => Number(right.isBase) - Number(left.isBase));
 
   return {
