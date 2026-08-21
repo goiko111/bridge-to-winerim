@@ -215,7 +215,7 @@ describe("sparse-list / full-detail oscillation", () => {
       for (const [id, previous] of stored) {
         const decision = decideCatalogChange({
           previous,
-          payload: { ...sparseListPayload, ...detailPayload, name: `Wine ${id.slice(-2) === "00" ? 0 : Number(id) - 400000}` },
+          payload: { ...sparseListPayload, ...detailPayload, name: previous.name },
           pricingReady: true,
         });
         if (decision.outcome === "new" || decision.outcome === "changed") evaluated++;
