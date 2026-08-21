@@ -26,14 +26,25 @@ describe("VINOTECA native formats XML contract", () => {
     expect(block).toContain('PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}"');
   });
 
-  it("keeps the base BOTTLE product child order Prices then CostPrices then formats", () => {
+  it("keeps the exact accepted BOTTLE child order and StorageOptions contract", () => {
     const product = SOURCE.slice(
       SOURCE.indexOf('<Product Id="${plan.productId}"'),
-      SOURCE.indexOf("${saleFormatsXml}    </Product>") + 40,
+      SOURCE.indexOf("    </Product>`;", SOURCE.indexOf('<Product Id="${plan.productId}"')),
     );
-    expect(product.indexOf("<Prices>")).toBeGreaterThan(-1);
-    expect(product.indexOf("<CostPrices>")).toBeGreaterThan(product.indexOf("<Prices>"));
-    expect(product.indexOf("${saleFormatsXml}")).toBeGreaterThan(product.indexOf("<CostPrices>"));
+    const barcodes = product.indexOf("<Barcodes />");
+    const prices = product.indexOf("<Prices>");
+    const storage = product.indexOf("<StorageOptions>");
+    const formats = product.indexOf("${saleFormatsXml}");
+    const costs = product.indexOf("<CostPrices>");
+
+    expect(barcodes).toBeGreaterThan(-1);
+    expect(prices).toBeGreaterThan(barcodes);
+    expect(storage).toBeGreaterThan(prices);
+    expect(formats).toBeGreaterThan(storage);
+    expect(costs).toBeGreaterThan(formats);
+    expect(product).toContain(
+      '<StorageOption WarehouseId="1" Location="" MinStock="0.00" MaxStock="0.00" />',
+    );
   });
 
   it("stays gated by the Don Bernardo allowlist", () => {
