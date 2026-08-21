@@ -9,6 +9,7 @@ import {
   VINOTECA_PREPARATION_TYPE_ID,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
   VINOTECA_ROOT_FAMILY_NAME,
+  trackingAgoraProductIdForFormat,
   vinotecaFormatId,
   vinotecaRegionKey,
   type VinotecaReferencePlan,
