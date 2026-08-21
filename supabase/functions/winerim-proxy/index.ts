@@ -547,6 +547,14 @@ serve(async (req) => {
       let listWinesUpserted = 0;
       let totalWines = 0;
       let batchWineIds: string[] = [];
+      // ── OSCILLATION GUARD (list vs detail) ──
+      // The list payload is sparser than the enriched row (no prices, sometimes no
+      // type). Classifying right after the list upsert made every identical pass
+      // look "changed" (list wipes prices ⇒ diff, detail restores them ⇒ diff).
+      // So in mode=start we snapshot the PRE-upsert row and the list payload, and
+      // classify exactly ONCE against the FINAL merged list+detail state.
+      let preUpsertRows = new Map<string, Record<string, unknown>>();
+      const listPayloadsById = new Map<string, Record<string, unknown>>();
       // Cursor advance must follow the paginated page size, never the promoted
       // priority extras, so no wine is skipped by the walk.
       let batchPageSize = 0;
