@@ -296,3 +296,66 @@ export function trackingAgoraProductIdForFormat(args: {
   const fallback = String(args.genericFallback ?? "").trim();
   return fallback || null;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Region family adoption (fail-closed)
+// ─────────────────────────────────────────────────────────────────────
+// A homonymous Agora family may only be adopted as the region node when it is
+// simultaneously: a direct child of THIS connection's exact VINOTECA ABIERTA
+// root, visible in POS, and not deleted. Legacy rootless/hidden/deleted
+// homonyms (e.g. Ponzano FamilyId 123 "CAVA") must never be reactivated or
+// adopted; the caller creates a deterministic sibling under the root instead.
+export type AgoraFamilyLike = {
+  Id?: unknown;
+  Name?: unknown;
+  ParentFamilyId?: unknown;
+  ShowInPos?: unknown;
+  DeletionDate?: unknown;
+};
+
+export function isVinotecaRegionFamilyAdoptable(
+  family: AgoraFamilyLike,
+  rootFamilyId: unknown,
+): boolean {
+  const rootId = String(rootFamilyId ?? "").trim();
+  if (!rootId) return false;
+  const id = String(family?.Id ?? "").trim();
+  if (!id || id === rootId) return false;
+  if (String(family?.ParentFamilyId ?? "").trim() !== rootId) return false;
+  const showInPos = String(family?.ShowInPos ?? "").trim().toLowerCase();
+  if (showInPos !== "true" && showInPos !== "1") return false;
+  const deletionDate = String(family?.DeletionDate ?? "").trim();
+  if (deletionDate) return false;
+  return true;
+}
+
+export function vinotecaRegionFamilyNameMatches(family: AgoraFamilyLike, regionKey: string): boolean {
+  const name = String(family?.Name ?? "");
+  if (!name) return false;
+  const bare = vinotecaRegionKey(name);
+  const suffixed = vinotecaRegionKey(name.split(/\s[-–]\s/).pop() || name);
+  return bare === regionKey || suffixed === regionKey;
+}
+
+/**
+ * Returns the single adoptable region family, null when none qualifies, or
+ * throws when more than one valid candidate exists (ambiguous hierarchy).
+ */
+export function findAdoptableVinotecaRegionFamily(
+  families: AgoraFamilyLike[],
+  rootFamilyId: unknown,
+  regionKey: string,
+): AgoraFamilyLike | null {
+  const candidates = (families || []).filter((family) =>
+    vinotecaRegionFamilyNameMatches(family, regionKey) &&
+    isVinotecaRegionFamilyAdoptable(family, rootFamilyId)
+  );
+  if (candidates.length > 1) {
+    throw new Error(
+      `${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: ambiguous region family for "${regionKey}" (${
+        candidates.map((c) => String(c.Id)).join(", ")
+      })`,
+    );
+  }
+  return candidates[0] ?? null;
+}
