@@ -5063,13 +5063,11 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     const cached = vinotecaRegionFamilies.get(key);
     if (cached) return cached;
 
-    const existingRegion = families.find((family) => {
-      if (String(family.Id) === rootId) return false;
-      const name = String(family.Name || "");
-      const bare = vinotecaRegionKey(name);
-      const suffixed = vinotecaRegionKey(name.split(/\s[-–]\s/).pop() || name);
-      return bare === key || suffixed === key;
-    });
+    // Only a family that is simultaneously a direct child of THIS connection's
+    // root, visible in POS and not deleted may be adopted. Legacy rootless /
+    // hidden / deleted homonyms are left untouched. Ambiguity fails closed.
+    const existingRegion = findAdoptableVinotecaRegionFamily(families, rootId, key);
+
 
     let regionId = String(existingRegion?.Id || "");
     const technicalName = existingRegion?.Name || `${VINOTECA_ROOT_FAMILY_NAME} - ${region}`;
