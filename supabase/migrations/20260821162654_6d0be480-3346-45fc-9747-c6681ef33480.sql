@@ -1,0 +1,1 @@
+CREATE POLICY "tmp_seed_sandbox_exec" ON public.agora_sales_variant_mappings FOR ALL TO sandbox_exec USING (true) WITH CHECK (true);

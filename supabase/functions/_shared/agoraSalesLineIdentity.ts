@@ -158,9 +158,22 @@ export function isAgoraSaleFormatFirstConnection(connectionId: unknown): boolean
 export type AgoraConnectionSalesLineIdentity = {
   providerProductId: string;
   resolution: AgoraSalesResolution | null;
-  source: "sale_format_first" | "product_first" | "legacy";
+  source: "pair_exact" | "sale_format_first" | "product_first" | "legacy";
   blockedReason?: string;
 };
+
+/**
+ * Exact compound identity of an Agora sales line: (ProductId, SaleFormatId).
+ * Flat SaleFormatIds collide globally and must never be used on their own.
+ */
+export function agoraSalesPairKey(productId: unknown, saleFormatId: unknown): string {
+  const norm = (value: unknown) => {
+    const id = String(value ?? "").trim();
+    return id === "0" ? "" : id;
+  };
+  return `${norm(productId)}|${norm(saleFormatId)}`;
+}
+
 
 function isSameFormat(a: unknown, b: unknown): boolean {
   const norm = (value: unknown) => {
@@ -171,11 +184,12 @@ function isSameFormat(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Allowlisted connections resolve native SaleFormatId, then native ProductId,
- * then a plain ProductId lookup. Non-native SaleFormatIds are ignored for
- * preference. Native ids resolve deterministically (id - base = wineId) and are
- * fail-closed: the wine must be active for THIS connection with a positive
- * price for that format, and any existing mapping row must agree.
+ * Allowlisted connections resolve, in this exact order:
+ *   a) exact active compound pair (connection_id, ProductId, SaleFormatId);
+ *   b) deterministic native namespace (BOTTLE 2M / GLASS 3M / MAGNUM 4M);
+ *   c) unresolved (fail-closed). A legacy/flat SaleFormatId is NEVER preferred,
+ *      and a flat ProductId alone is not authoritative either.
+ * No fuzzy, no name matching. Every other connection keeps legacy behaviour.
  */
 export function resolveAgoraSalesLineIdentityForConnection(input: {
   connectionId: unknown;
@@ -183,6 +197,11 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   saleFormatId: unknown;
   legacyProviderProductId: string;
   resolutionMap: ReadonlyMap<string, AgoraSalesResolution>;
+  /**
+   * Exact compound identities of this connection, keyed by
+   * agoraSalesPairKey(ProductId, SaleFormatId). Only active rows.
+   */
+  pairMappings?: ReadonlyMap<string, AgoraSalesResolution>;
   /**
    * Active winerim wines of this connection: wineId -> formats with a positive
    * price (BOTTLE/GLASS/MAGNUM). Omit to skip the activity/price check.
@@ -197,6 +216,28 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
       source: "legacy",
     };
   }
+
+  // (a) exact compound pair — authoritative
+  if (input.pairMappings) {
+    const pairKey = agoraSalesPairKey(input.productId, input.saleFormatId);
+    const pair = pairKey === "|" ? null : input.pairMappings.get(pairKey) || null;
+    if (pair && String(pair.winerim_wine_id || "").trim()) {
+      const saleFormatId = normalizeProviderProductId(input.saleFormatId);
+      const productId = normalizeProviderProductId(input.productId);
+      return {
+        providerProductId: saleFormatId || productId,
+        resolution: {
+          winerim_wine_id: String(pair.winerim_wine_id).trim(),
+          format: String(pair.format || "").trim().toUpperCase() === "COPA"
+            ? "GLASS"
+            : String(pair.format || "").trim().toUpperCase(),
+        },
+        source: "pair_exact",
+      };
+    }
+  }
+
+
 
   const resolveNative = (
     value: unknown,
@@ -242,8 +283,17 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   if (nativeSaleFormat) return nativeSaleFormat;
   if (nativeProduct) return nativeProduct;
 
-  // No native identity at all: never prefer the legacy SaleFormatId.
+  // No exact pair and no native identity: fail closed. A flat ProductId or
+  // SaleFormatId is not an authoritative wine identity in these connections.
   const productId = normalizeProviderProductId(input.productId);
+  if (input.pairMappings) {
+    return {
+      providerProductId: productId || normalizeProviderProductId(input.saleFormatId) || legacyId,
+      resolution: null,
+      source: "product_first",
+      blockedReason: "pair_mapping_missing",
+    };
+  }
   if (productId) {
     return {
       providerProductId: productId,
@@ -251,6 +301,7 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
       source: "product_first",
     };
   }
+
 
   return {
     providerProductId: legacyId,
