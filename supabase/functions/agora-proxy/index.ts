@@ -7027,6 +7027,26 @@ serve(async (req) => {
     }
 
     // ── READ-ONLY SALES RESOLUTION DEBUG (no writes, no TPV calls) ──
+    // ── STOCK FENCE DRY-RUN (read-only, proves skip/fence blocks side effects) ──
+    if (action === "debug-stock-fence") {
+      const providerConfigForFence = (connection.provider_config || {}) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          connectionId,
+          force: payload.force === true,
+          skipStockSyncRequested: payload.skipStockSync === true,
+          salesStockSyncEnabled: providerConfigForFence.sales_stock_sync_enabled !== false,
+          stockSyncAllowed: stockFence.allowed,
+          stockSyncSkipped: stockFence.skipped,
+          stockSyncSkippedReason: stockFence.reason,
+          wouldCallSyncStockForDays: stockFence.allowed,
+          wouldCallWinerimSalesImport: stockFence.allowed,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     if (action === "debug-sales-resolution") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
@@ -7075,6 +7095,18 @@ serve(async (req) => {
           resolved: Boolean(identity.resolution),
           winerim_wine_id: identity.resolution?.winerim_wine_id ?? null,
           format: identity.resolution?.format ?? null,
+          normalizedFormat: normalizeAgoraLineFormat(
+            String(probe.ProductName ?? probe.productName ?? ""),
+            String(probe.SaleFormatName ?? probe.saleFormatName ?? ""),
+          ),
+          persistedFormat: canonicalAgoraSalesLineFormat({
+            connectionId,
+            identity,
+            fallbackFormat: normalizeAgoraLineFormat(
+              String(probe.ProductName ?? probe.productName ?? ""),
+              String(probe.SaleFormatName ?? probe.saleFormatName ?? ""),
+            ),
+          }),
         };
       });
 
