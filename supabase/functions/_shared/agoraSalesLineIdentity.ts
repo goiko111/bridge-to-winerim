@@ -283,8 +283,17 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   if (nativeSaleFormat) return nativeSaleFormat;
   if (nativeProduct) return nativeProduct;
 
-  // No native identity at all: never prefer the legacy SaleFormatId.
+  // No exact pair and no native identity: fail closed. A flat ProductId or
+  // SaleFormatId is not an authoritative wine identity in these connections.
   const productId = normalizeProviderProductId(input.productId);
+  if (input.pairMappings) {
+    return {
+      providerProductId: productId || normalizeProviderProductId(input.saleFormatId) || legacyId,
+      resolution: null,
+      source: "product_first",
+      blockedReason: "pair_mapping_missing",
+    };
+  }
   if (productId) {
     return {
       providerProductId: productId,
@@ -292,6 +301,7 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
       source: "product_first",
     };
   }
+
 
   return {
     providerProductId: legacyId,
