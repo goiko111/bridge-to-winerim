@@ -1,7 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
-import { agoraSalesPairKey, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
+import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
+import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
+
 import {
   buildVinotecaReferencePlan,
   isVinotecaNativeFormatsConnection,
@@ -5440,6 +5442,9 @@ serve(async (req) => {
     const apiTokenClean = api_token.trim();
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
+    // Absolute dry boundary for stock/sales-import. `force` never bypasses it.
+    const stockFence = decideAgoraStockFence({ payload, providerConfig: connection.provider_config });
+
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
       // RATE LIMIT: never exceed POS_MAX_REQS_PER_SECOND requests/sec to a single POS
       await throttleConnection(connectionId);
@@ -5787,7 +5792,7 @@ serve(async (req) => {
           lineData.push({
             provider_product_id: productId,
             name: productName,
-            format: normalizedFmt,
+            format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
             family,
             quantity: qty,
             unit_price: unitPrice,
@@ -5847,7 +5852,7 @@ serve(async (req) => {
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
       const daysWithSavedTickets = Object.keys(savedEventIdsByDay);
-      if (stockSyncEnabled && winerimToken) {
+      if (stockFence.allowed && stockSyncEnabled && winerimToken) {
         staleOpenTicketRestore = await restoreStaleOpenTicketStock(
           supabase,
           connectionId,
@@ -5857,7 +5862,7 @@ serve(async (req) => {
           currentOpenDocIds,
         );
       }
-      if (resolvedLines > 0 && stockSyncEnabled) {
+      if (stockFence.allowed && resolvedLines > 0 && stockSyncEnabled) {
         if (!winerimToken) {
           warning = "Open tickets saved but Winerim stock was not synced: missing Winerim API token.";
           stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: ["missing Winerim API token"] };
@@ -6128,7 +6133,7 @@ serve(async (req) => {
               lineData.push({
                 provider_product_id: productId,
                 name: pName,
-                format: normalizedFmt,
+                format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
                 family: fam,
                 quantity: qty,
                 unit_price: uP,
@@ -6303,7 +6308,7 @@ serve(async (req) => {
 
             lineData.push({
               provider_product_id: productId,
-              name: pName, format: normalizedFmt, family: fam,
+              name: pName, format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }), family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               provider_sold_at: providerSoldAt.value,
               provider_sold_at_source: providerSoldAt.source,
@@ -6369,8 +6374,8 @@ serve(async (req) => {
       let stockSyncResult: StockSyncTotals | null = null;
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
-      const skipStockSync = payload.skipStockSync === true;
-      const shouldSyncStock = !skipStockSync && resolvedLines > 0;
+      const skipStockSync = !stockFence.allowed;
+      const shouldSyncStock = stockFence.allowed && resolvedLines > 0;
 
       if (shouldSyncStock && winerimToken) {
         stockSyncResult = await syncStockForDays(supabase, connectionId, [day], winerimToken);
@@ -6502,7 +6507,7 @@ serve(async (req) => {
             lineData.push({
               provider_product_id: productId,
               name: pName,
-              format: normalizedFmt,
+              format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
               family: fam,
               quantity: qty,
               unit_price: uP,
@@ -6555,7 +6560,7 @@ serve(async (req) => {
       let stockSyncResult: StockSyncTotals | null = null;
       let warning: string | null = null;
       const winerimToken = (connection.winerim_api_token || "").trim();
-      if (resolvedLines > 0) {
+      if (stockFence.allowed && resolvedLines > 0) {
         if (!winerimToken) {
           warning = "Sales saved but Winerim stock was not synced: missing Winerim API token.";
           stockSyncResult = { synced: 0, skipped: 0, failed: 1, checkedDays: 0, errors: [`${day}: missing Winerim API token`] };
@@ -6599,6 +6604,8 @@ serve(async (req) => {
           unresolvedLines,
           ingestionErrors,
           stockSync: stockSyncResult,
+          stockSyncSkipped: stockFence.skipped,
+          stockSyncSkippedReason: stockFence.reason,
           cursorAdvanced: false,
           warning,
         }),
@@ -6687,7 +6694,7 @@ serve(async (req) => {
         const winerimToken = (connection.winerim_api_token || "").trim();
         let stockSyncResult: StockSyncTotals | null = null;
 
-        if (winerimToken) {
+        if (stockFence.allowed && winerimToken) {
           const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
           const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
           const toDay = yesterday.toISOString().split("T")[0];
@@ -6851,7 +6858,7 @@ serve(async (req) => {
 
               lineData.push({
                 provider_product_id: productId,
-                name: pName, format: normalizedFmt, family: fam,
+                name: pName, format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }), family: fam,
                 quantity: qty, unit_price: uP, total_amount: lineTotal,
                 provider_sold_at: providerSoldAt.value,
                 provider_sold_at_source: providerSoldAt.source,
@@ -6919,7 +6926,7 @@ serve(async (req) => {
         }
 
         let stockOk = true;
-        if (dayResolvedLines > 0 && isStockSyncDayAllowed(day, providerConfig)) {
+        if (stockFence.allowed && dayResolvedLines > 0 && isStockSyncDayAllowed(day, providerConfig)) {
           if (!winerimToken) {
             stockOk = false;
             stockSyncTotals.failed++;
@@ -6951,7 +6958,7 @@ serve(async (req) => {
         syncedDays.push(day);
       }
 
-      if (!stockBlockedDay && !saveBlockedDay && winerimToken && Date.now() - actionStart < ACTION_DEADLINE_MS) {
+      if (stockFence.allowed && !stockBlockedDay && !saveBlockedDay && winerimToken && Date.now() - actionStart < ACTION_DEADLINE_MS) {
         const lookbackDays = Math.min(Math.max(Number(connection.backfill_days || 30), 1), 30);
         const fromDay = new Date(yesterday.getTime() - (lookbackDays - 1) * 86400000).toISOString().split("T")[0];
         const toDay = yesterday.toISOString().split("T")[0];
@@ -7020,6 +7027,26 @@ serve(async (req) => {
     }
 
     // ── READ-ONLY SALES RESOLUTION DEBUG (no writes, no TPV calls) ──
+    // ── STOCK FENCE DRY-RUN (read-only, proves skip/fence blocks side effects) ──
+    if (action === "debug-stock-fence") {
+      const providerConfigForFence = (connection.provider_config || {}) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          connectionId,
+          force: payload.force === true,
+          skipStockSyncRequested: payload.skipStockSync === true,
+          salesStockSyncEnabled: providerConfigForFence.sales_stock_sync_enabled !== false,
+          stockSyncAllowed: stockFence.allowed,
+          stockSyncSkipped: stockFence.skipped,
+          stockSyncSkippedReason: stockFence.reason,
+          wouldCallSyncStockForDays: stockFence.allowed,
+          wouldCallWinerimSalesImport: stockFence.allowed,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     if (action === "debug-sales-resolution") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
@@ -7068,6 +7095,18 @@ serve(async (req) => {
           resolved: Boolean(identity.resolution),
           winerim_wine_id: identity.resolution?.winerim_wine_id ?? null,
           format: identity.resolution?.format ?? null,
+          normalizedFormat: normalizeAgoraLineFormat(
+            String(probe.ProductName ?? probe.productName ?? ""),
+            String(probe.SaleFormatName ?? probe.saleFormatName ?? ""),
+          ),
+          persistedFormat: canonicalAgoraSalesLineFormat({
+            connectionId,
+            identity,
+            fallbackFormat: normalizeAgoraLineFormat(
+              String(probe.ProductName ?? probe.productName ?? ""),
+              String(probe.SaleFormatName ?? probe.saleFormatName ?? ""),
+            ),
+          }),
         };
       });
 

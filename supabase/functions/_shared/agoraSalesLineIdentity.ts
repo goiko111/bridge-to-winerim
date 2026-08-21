@@ -174,6 +174,29 @@ export function agoraSalesPairKey(productId: unknown, saleFormatId: unknown): st
   return `${norm(productId)}|${norm(saleFormatId)}`;
 }
 
+const AGORA_CANONICAL_LINE_FORMATS = new Set(["BOTTLE", "GLASS", "MAGNUM", "OTHER"]);
+
+/**
+ * Canonical persisted format of a sales line. For allowlisted (VINOTECA)
+ * connections the resolved identity carries the authoritative format_type, and
+ * it must prevail over the name-derived normalizeAgoraLineFormat heuristic
+ * (which turned "RAMON BILBAO VERDEJO" GLASS buttons into BOTTLE).
+ * Every other connection keeps the fallback format untouched.
+ */
+export function canonicalAgoraSalesLineFormat(input: {
+  connectionId: unknown;
+  identity: Pick<AgoraConnectionSalesLineIdentity, "resolution" | "source">;
+  fallbackFormat: unknown;
+}): string {
+  const fallback = String(input.fallbackFormat ?? "");
+  if (!isAgoraSaleFormatFirstConnection(input.connectionId)) return fallback;
+  const resolution = input.identity.resolution;
+  if (!resolution || !String(resolution.winerim_wine_id || "").trim()) return fallback;
+  const raw = String(resolution.format || "").trim().toUpperCase();
+  const canonical = raw === "COPA" ? "GLASS" : raw;
+  return AGORA_CANONICAL_LINE_FORMATS.has(canonical) ? canonical : fallback;
+}
+
 
 function isSameFormat(a: unknown, b: unknown): boolean {
   const norm = (value: unknown) => {
