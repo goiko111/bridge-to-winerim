@@ -559,6 +559,36 @@ serve(async (req) => {
       let batchWineIds: string[] = [];
       const baseWineMap = new Map<string, Record<string, unknown>>();
 
+      // ── CATALOG PRIORITY (canary / update allowlist) ──
+      // Wines listed in provider_config.auto_push_update_winerim_ids (or the canary
+      // alias) must be evaluated in the FIRST batch of the cycle. Otherwise a price
+      // change on a wine sitting late in the pagination waits for the whole walk and
+      // the SLA is missed. Fail-closed: empty allowlist ⇒ unchanged legacy ordering.
+      const catalogProviderConfig = (connection.provider_config || {}) as Record<string, unknown>;
+      const catalogPriorityWineIds = Array.from(new Set(
+        [
+          ...(Array.isArray(catalogProviderConfig.auto_push_update_winerim_ids)
+            ? catalogProviderConfig.auto_push_update_winerim_ids as unknown[]
+            : []),
+          ...(Array.isArray(catalogProviderConfig.auto_push_update_canary_winerim_ids)
+            ? catalogProviderConfig.auto_push_update_canary_winerim_ids as unknown[]
+            : []),
+        ].map((id) => String(id ?? "").trim()).filter(Boolean),
+      ));
+      const prioritizeFirstBatch = (ids: string[], allowedIds?: Set<string>): string[] => {
+        if (catalogPriorityWineIds.length === 0 || detailOffset !== 0) return ids;
+        const already = new Set(ids);
+        const promoted = catalogPriorityWineIds.filter((id) =>
+          !already.has(id) && (!allowedIds || allowedIds.has(id))
+        );
+        const priorityFirst = [
+          ...catalogPriorityWineIds.filter((id) => already.has(id)),
+          ...promoted,
+          ...ids.filter((id) => !catalogPriorityWineIds.includes(id)),
+        ];
+        return priorityFirst.slice(0, Math.max(detailBatchSize, catalogPriorityWineIds.length));
+      };
+
       if (mode === "start") {
         const wines = await fetchAllWines(winerimHeaders);
         listWinesFetched = wines.length;
