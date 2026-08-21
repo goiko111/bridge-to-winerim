@@ -912,6 +912,35 @@ async function loadSalesActiveWineFormats(
   return active;
 }
 
+// Exact compound sales identities (connection_id, ProductId, SaleFormatId).
+// Only allowlisted VINOTECA connections use them; others get undefined.
+// deno-lint-ignore no-explicit-any
+async function loadSalesPairMappings(
+  supabaseClient: any,
+  connectionId: string,
+): Promise<Map<string, { winerim_wine_id: string; format: string }> | undefined> {
+  if (!isAgoraSaleFormatFirstConnection(connectionId)) return undefined;
+  const rows = await selectAllConnectionRows(
+    supabaseClient,
+    "agora_sales_variant_mappings",
+    "id, provider_product_id, sale_format_id, winerim_wine_id, format_type, status",
+    connectionId,
+  );
+  const pairs = new Map<string, { winerim_wine_id: string; format: string }>();
+  for (const row of (rows || []) as Record<string, unknown>[]) {
+    const status = String(row.status ?? "").trim().toUpperCase();
+    if (status && status !== "CONFIRMED" && status !== "ACTIVE") continue;
+    const wineId = String(row.winerim_wine_id ?? "").trim();
+    if (!wineId) continue;
+    pairs.set(
+      agoraSalesPairKey(row.provider_product_id, row.sale_format_id),
+      { winerim_wine_id: wineId, format: String(row.format_type ?? "").trim().toUpperCase() },
+    );
+  }
+  return pairs;
+}
+
+
 // deno-lint-ignore no-explicit-any
 async function buildSalesResolutionMapFromDb(
   supabaseClient: any,
