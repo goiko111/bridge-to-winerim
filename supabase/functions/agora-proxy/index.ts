@@ -581,13 +581,12 @@ function normalizeAgoraMoney(value: unknown): string {
 }
 
 function productPriceMap(productXml: string): Record<string, string> {
-  const prices: Record<string, string> = {};
-  for (const priceEl of extractXmlElementsWithAttrs(productXml, "Price")) {
-    const id = String(priceEl.attrs.PriceListId || "");
-    if (id) prices[id] = normalizeAgoraMoney(priceEl.attrs.MainPrice);
-  }
-  return prices;
+  // Base Product prices only. <Price> nodes nested inside
+  // <AdditionalSaleFormats><SaleFormat> must never overwrite the bottle price
+  // (that collapse produced the false "no_agora_changes" skip).
+  return baseProductPriceMap(productXml);
 }
+
 
 function normalizeAgoraTextAttribute(value: unknown): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
