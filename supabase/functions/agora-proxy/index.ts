@@ -5717,6 +5717,7 @@ serve(async (req) => {
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -5754,7 +5755,9 @@ serve(async (req) => {
             saleFormatId: line.SaleFormatId,
             legacyProviderProductId,
             resolutionMap,
-            activeWineFormats: salesActiveWineFormats,
+            pairMappings: salesPairMappings,
+            pairMappings: salesPairMappings,
+          activeWineFormats: salesActiveWineFormats,
           });
           const productId = salesIdentity.providerProductId;
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
@@ -6027,6 +6030,7 @@ serve(async (req) => {
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       const ACTION_DEADLINE_MS = 120_000;
       const actionStart = Date.now();
@@ -6104,7 +6108,11 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                activeWineFormats: salesActiveWineFormats,
+                pairMappings: salesPairMappings,
+                pairMappings: salesPairMappings,
+              pairMappings: salesPairMappings,
+            pairMappings: salesPairMappings,
+          activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6246,6 +6254,7 @@ serve(async (req) => {
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6281,7 +6290,10 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              activeWineFormats: salesActiveWineFormats,
+              pairMappings: salesPairMappings,
+              pairMappings: salesPairMappings,
+            pairMappings: salesPairMappings,
+          activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6443,6 +6455,7 @@ serve(async (req) => {
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       let savedEvents = 0;
       let savedLines = 0;
@@ -6476,7 +6489,10 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              activeWineFormats: salesActiveWineFormats,
+              pairMappings: salesPairMappings,
+              pairMappings: salesPairMappings,
+            pairMappings: salesPairMappings,
+          activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6739,6 +6755,7 @@ serve(async (req) => {
 
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       let totalEvents = 0, totalLines = 0, resolvedLines = 0, unresolvedLines = 0;
       let resumedExistingEvents = 0;
@@ -6823,7 +6840,11 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                activeWineFormats: salesActiveWineFormats,
+                pairMappings: salesPairMappings,
+                pairMappings: salesPairMappings,
+              pairMappings: salesPairMappings,
+            pairMappings: salesPairMappings,
+          activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -7013,6 +7034,7 @@ serve(async (req) => {
     if (action === "debug-sales-resolution") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
       const requestedIds: string[] = [
         ...(payload.productId ? [String(payload.productId)] : []),
         ...(Array.isArray(payload.productIds) ? payload.productIds.map((id: unknown) => String(id)) : []),
@@ -7039,6 +7061,7 @@ serve(async (req) => {
           saleFormatId: probe.SaleFormatId ?? probe.saleFormatId,
           legacyProviderProductId: String(probe.ProductId ?? probe.productId ?? ""),
           resolutionMap,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
         });
         return {
@@ -7150,6 +7173,7 @@ serve(async (req) => {
     if (action === "resolve-sales") {
       const resolutionMap = await buildSalesResolutionMapFromDb(supabase, connectionId);
       const salesActiveWineFormats = await loadSalesActiveWineFormats(supabase, connectionId);
+      const salesPairMappings = await loadSalesPairMappings(supabase, connectionId);
 
       // Fetch unresolved wine candidate lines
       const { data: unresolvedLines } = await supabase
