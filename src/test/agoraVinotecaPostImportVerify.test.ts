@@ -103,4 +103,28 @@ describe("VINOTECA post-import verification", () => {
     expect(run(productXml("26.00", "3.10", { prepTypeId: "1" })).errors.map((e) => e.code))
       .toContain("PREPARATION_MISMATCH");
   });
+
+  it("verifies an adopted product whose base format is GLASS", () => {
+    const adopted = buildVinotecaReferencePlan({
+      winerimWineId: 41079,
+      wineName: "Cruz de Alba Roble",
+      region: "Ribera del Duero",
+      bottleSalePrice: 25,
+      glassSalePrice: 3.2,
+    }, {
+      productId: "1368",
+      baseFormat: "GLASS",
+      formatIds: { GLASS: "1368", BOTTLE: "1405" },
+    }).plan!;
+    const xml = `<Products><Product Id="1368" Name="Cruz de Alba Roble" FamilyId="950809" SaleableAsMain="true" PreparationTypeId="6" PreparationOrderId="2"><Prices><Price PriceListId="13" MainPrice="3.20"/><Price PriceListId="16" MainPrice="3.20"/></Prices><AdditionalSaleFormats><SaleFormat Id="1405" Name="Botella" Ratio="2.00" SaleableAsMain="true"><Prices><Price PriceListId="13" MainPrice="25.00"/><Price PriceListId="16" MainPrice="25.00"/></Prices></SaleFormat></AdditionalSaleFormats></Product></Products>`;
+    const result = verifyVinotecaNativeFormatsImport({
+      plan: adopted,
+      sentXml: xml,
+      actualXml: xml,
+      scopedPriceLists: PRICE_LISTS,
+      priceListToSaleCenters: PL_TO_SC,
+    });
+    expect(result.success).toBe(true);
+    expect(result.summary).toEqual({ checked: 2, ok: 2, failed: 0 });
+  });
 });
