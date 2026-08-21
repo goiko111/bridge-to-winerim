@@ -1,6 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import { resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
+import {
+  buildVinotecaReferencePlan,
+  isVinotecaNativeFormatsConnection,
+  VINOTECA_PREPARATION_ORDER_ID,
+  VINOTECA_PREPARATION_TYPE_ID,
+  VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
+  VINOTECA_ROOT_FAMILY_NAME,
+  vinotecaRegionKey,
+  type VinotecaReferencePlan,
+  type VinotecaSkippedReference,
+} from "../_shared/agoraVinotecaNativeFormats.ts";
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
@@ -4511,7 +4523,7 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }> } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }>; vinoteca?: Record<string, unknown> | null } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
@@ -4883,7 +4895,147 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     renderXml: (finalProductName: string, finalButtonText: string) => string;
   }[] = [];
 
-  for (const wine of wines) {
+  // ── VINOTECA_REGION_REFERENCE_NATIVE_FORMATS (Don Bernardo allowlist only) ──
+  const vinotecaNativeFormats = isVinotecaNativeFormatsConnection(connection.id, providerConfig);
+  const vinotecaPlans: VinotecaReferencePlan[] = [];
+  const vinotecaSkipped: VinotecaSkippedReference[] = [];
+  const vinotecaRegionFamilies = new Map<string, { id: string; name: string }>();
+
+  function vinotecaFamilyForRegion(region: string): { id: string; name: string } {
+    const rootFamily = families.find((family) =>
+      normalizeRoutingText(family.Name) === normalizeRoutingText(VINOTECA_ROOT_FAMILY_NAME)
+    );
+    if (!rootFamily) {
+      throw new Error(`${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: root family "${VINOTECA_ROOT_FAMILY_NAME}" not found in Agora master data`);
+    }
+    const rootId = String(rootFamily.Id);
+    const key = vinotecaRegionKey(region);
+    const cached = vinotecaRegionFamilies.get(key);
+    if (cached) return cached;
+
+    const existingRegion = families.find((family) => {
+      if (String(family.Id) === rootId) return false;
+      const name = String(family.Name || "");
+      const bare = vinotecaRegionKey(name);
+      const suffixed = vinotecaRegionKey(name.split(/\s[-–]\s/).pop() || name);
+      return bare === key || suffixed === key;
+    });
+
+    let regionId = String(existingRegion?.Id || "");
+    const technicalName = existingRegion?.Name || `${VINOTECA_ROOT_FAMILY_NAME} - ${region}`;
+    if (!regionId) {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const candidate = stableFamilyId(attempt === 0 ? technicalName : `${technicalName}#${attempt}`);
+        const liveCollision = families.find((family) => String(family.Id) === candidate);
+        const plannedCollision = newFamilyHierarchy.find((family) => family.id === candidate);
+        if (!liveCollision && !plannedCollision) {
+          regionId = candidate;
+          break;
+        }
+      }
+      if (!regionId) {
+        throw new Error(`${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: could not allocate a collision-free family ID for ${technicalName}`);
+      }
+      newFamilyHierarchy.push({
+        id: regionId,
+        name: technicalName,
+        parentId: rootId,
+        color: agoraProductColor(connection, null),
+        buttonText: region,
+      });
+    }
+
+    const resolved = { id: regionId, name: existingRegion?.Name || technicalName };
+    vinotecaRegionFamilies.set(key, resolved);
+    return resolved;
+  }
+
+  if (vinotecaNativeFormats) {
+    for (const wine of wines) {
+      const { plan, skipped } = buildVinotecaReferencePlan({
+        winerimWineId: wine.winerim_id || wine.id,
+        wineName: wine.name,
+        region: wine.region ?? wine.raw_payload?.region,
+        bottleSalePrice: extractBottleSalePrice(wine),
+        bottleCostPrice: extractBottleCostPrice(wine),
+        glassSalePrice: extractGlassSalePrice(wine),
+        glassCostPrice: extractGlassCostPrice(wine, connection),
+        magnumSalePrice: wine.magnum_sale_price,
+        magnumCostPrice: wine.magnum_purchase_price,
+      });
+
+      if (!plan) {
+        if (skipped) vinotecaSkipped.push(skipped);
+        validationResults.push({
+          winerimId: String(skipped?.winerimWineId || wine.winerim_id || wine.id || ""),
+          formatType: "BOTTLE",
+          validation: {
+            valid: false,
+            warnings: [],
+            missingFields: [],
+            error: {
+              code: "VINOTECA_REFERENCE_FAIL_CLOSED",
+              message: `Skipped: ${skipped?.reason || "unknown_reason"}`,
+            },
+          },
+        });
+        continue;
+      }
+
+      vinotecaPlans.push(plan);
+      const familyResult = vinotecaFamilyForRegion(plan.region);
+      const bottleFormat = plan.formats[0];
+      const extraFormats = plan.formats.slice(1);
+      const productColor = agoraProductColor(connection, extractWineType(wine));
+      const bottleCost = bottleFormat.costPrice.toFixed(2);
+
+      validationResults.push({
+        winerimId: plan.winerimWineId,
+        formatType: "BOTTLE",
+        validation: { valid: true, warnings: [], missingFields: [] },
+      });
+
+      productEntries.push({
+        wineName: plan.wineName.toLowerCase(),
+        formatOrder: 0,
+        familyId: familyResult.id,
+        commercialCode: commercialGenericCode(plan.wineName),
+        productId: plan.productId,
+        productName: plan.wineName,
+        winerimId: plan.winerimWineId,
+        vintage: wine.vintage ?? wine.raw_payload?.vintage ?? null,
+        renderXml: (finalProductName: string, finalButtonText: string) => {
+          const buttonText = String(finalButtonText || "").slice(0, 20);
+          const pricesXml = priceLists.map((pl) =>
+            `        <Price PriceListId="${pl.Id}" MainPrice="${bottleFormat.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+          ).join("\n");
+          const costPricesXml = warehouses.map((wh) =>
+            `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${bottleCost}" />`
+          ).join("\n");
+          const saleFormatsXml = extraFormats.length > 0
+            ? `      <SaleFormats>\n${extraFormats.map((format) => {
+              const formatPrices = priceLists.map((pl) =>
+                `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+              ).join("\n");
+              const formatLabel = formatProductName(format.format, plan.wineName);
+              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" SaleableAsMain="true">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
+            }).join("\n")}\n      </SaleFormats>\n`
+            : "";
+          return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${bottleCost}">
+      <Prices>
+${pricesXml}
+      </Prices>
+      <CostPrices>
+${costPricesXml}
+      </CostPrices>
+${saleFormatsXml}    </Product>`;
+        },
+      });
+    }
+  }
+
+  for (const wine of vinotecaNativeFormats ? [] : wines) {
+
     const winerimId = Number(wine.winerim_id || wine.id || 0);
     const orderedDulceCode = saPedreraDulceCode(connection, wine);
     const orderedDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null;
@@ -5058,7 +5210,20 @@ ${costPricesXml}
   }
   xml += `</Import>`;
 
-  return { xml, validationResults, productLabelsById };
+  return {
+    xml,
+    validationResults,
+    productLabelsById,
+    vinoteca: vinotecaNativeFormats
+      ? {
+        mode: VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
+        plans: vinotecaPlans,
+        skipped: vinotecaSkipped,
+        regionFamilies: [...vinotecaRegionFamilies.values()],
+        newFamilies: newFamilyHierarchy.map((family) => ({ id: family.id, name: family.name, parentId: family.parentId })),
+      }
+      : null,
+  };
 }
 
 // ── PARSE AGORA IMPORT RESPONSE ──
@@ -5488,11 +5653,19 @@ serve(async (req) => {
           const productName = String(line.ProductName || "");
           const formatName = String(line.SaleFormatName || "");
           const family = String(line.FamilyName || "");
-          const productId = String(line.ProductId || line.SaleFormatId || "");
+          const legacyProviderProductId = String(line.ProductId || line.SaleFormatId || "");
+          const salesIdentity = resolveAgoraSalesLineIdentityForConnection({
+            connectionId,
+            productId: line.ProductId,
+            saleFormatId: line.SaleFormatId,
+            legacyProviderProductId,
+            resolutionMap,
+          });
+          const productId = salesIdentity.providerProductId;
           const normalizedFmt = normalizeAgoraLineFormat(productName, formatName);
           const providerSoldAt = extractAgoraProviderSoldAt(line, null, ticket, day);
           const wr = isWineCandidate(family, productName, formatName, unitPrice, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-          const resolution = resolutionMap.get(productId);
+          const resolution = salesIdentity.resolution || undefined;
           const winerimProductId = resolution?.winerim_wine_id || null;
           const isResolved = !!winerimProductId;
           const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
@@ -5828,10 +6001,18 @@ serve(async (req) => {
               const fName = String(line.SaleFormatName || "");
               const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
-              const productId = String(line.ProductId || "");
+              const legacyProviderProductId = String(line.ProductId || "");
+              const salesIdentity = resolveAgoraSalesLineIdentityForConnection({
+                connectionId,
+                productId: line.ProductId,
+                saleFormatId: line.SaleFormatId,
+                legacyProviderProductId,
+                resolutionMap,
+              });
+              const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-              const resolution = resolutionMap.get(productId);
+              const resolution = salesIdentity.resolution || undefined;
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
               const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
@@ -5995,12 +6176,20 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
-            const productId = String(line.ProductId || "");
+            const legacyProviderProductId = String(line.ProductId || "");
+            const salesIdentity = resolveAgoraSalesLineIdentityForConnection({
+              connectionId,
+              productId: line.ProductId,
+              saleFormatId: line.SaleFormatId,
+              legacyProviderProductId,
+              resolutionMap,
+            });
+            const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
             // Resolve to winerim wine
-            const resolution = resolutionMap.get(productId);
+            const resolution = salesIdentity.resolution || undefined;
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
             const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
@@ -6180,10 +6369,18 @@ serve(async (req) => {
             const fName = String(line.SaleFormatName || "");
             const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
             const fam = String(line.FamilyName || "");
-            const productId = String(line.ProductId || "");
+            const legacyProviderProductId = String(line.ProductId || "");
+            const salesIdentity = resolveAgoraSalesLineIdentityForConnection({
+              connectionId,
+              productId: line.ProductId,
+              saleFormatId: line.SaleFormatId,
+              legacyProviderProductId,
+              resolutionMap,
+            });
+            const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
             const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
-            const resolution = resolutionMap.get(productId);
+            const resolution = salesIdentity.resolution || undefined;
             const winerimProductId = resolution?.winerim_wine_id || null;
             const isResolved = !!winerimProductId;
             const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
@@ -6517,11 +6714,19 @@ serve(async (req) => {
               const fName = String(line.SaleFormatName || "");
               const normalizedFmt = normalizeAgoraLineFormat(pName, fName);
               const fam = String(line.FamilyName || "");
-              const productId = String(line.ProductId || "");
+              const legacyProviderProductId = String(line.ProductId || "");
+              const salesIdentity = resolveAgoraSalesLineIdentityForConnection({
+                connectionId,
+                productId: line.ProductId,
+                saleFormatId: line.SaleFormatId,
+                legacyProviderProductId,
+                resolutionMap,
+              });
+              const productId = salesIdentity.providerProductId;
               const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
               const wr = isWineCandidate(fam, pName, fName, uP, wineFamilies, DEFAULT_NON_WINE_FAMILIES);
 
-              const resolution = resolutionMap.get(productId);
+              const resolution = salesIdentity.resolution || undefined;
               const winerimProductId = resolution?.winerim_wine_id || null;
               const isResolved = !!winerimProductId;
               const effectiveWineCandidate = isResolvedWineCandidate(winerimProductId, wr.candidate);
@@ -6730,6 +6935,82 @@ serve(async (req) => {
           results,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── VINOTECA NATIVE FORMATS DRY-RUN (read-only, never sends XML) ──
+    if (action === "vinoteca-dry-run") {
+      if (!isVinotecaNativeFormatsConnection(connectionId, (connection.provider_config || {}) as Record<string, unknown>)) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: `Connection is not in the ${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS} allowlist or the mode is not configured`,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const requestedWineIds = [
+        ...(payload.winerimWineId ? [String(payload.winerimWineId)] : []),
+        ...(Array.isArray(payload.winerimWineIds) ? payload.winerimWineIds.map((id: unknown) => String(id)) : []),
+      ].map((id) => id.trim()).filter(Boolean);
+
+      const { data: masterData } = await supabase
+        .from("agora_master_data").select("*").eq("connection_id", connectionId).single();
+      if (!masterData) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No master data cached for this connection" }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      let winesQuery = supabase.from("winerim_wines").select("*").eq("connection_id", connectionId);
+      if (requestedWineIds.length > 0) winesQuery = winesQuery.in("winerim_id", requestedWineIds);
+      const { data: dryRunWines } = await winesQuery.limit(requestedWineIds.length > 0 ? requestedWineIds.length : 200);
+
+      if (!dryRunWines || dryRunWines.length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: "No wines found for the requested winerimWineIds" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const dryRun = generateImportXml(
+        dryRunWines,
+        masterData,
+        connection,
+        ["BOTTLE", "GLASS", "MAGNUM"],
+        await loadCustomFamilyMappings(connectionId),
+      );
+
+      const existingIdentityIds = (dryRun.vinoteca?.plans as VinotecaReferencePlan[] | undefined || [])
+        .flatMap((plan) => plan.formats.map((format) => format.agoraId));
+      const { data: existingMappings } = existingIdentityIds.length > 0
+        ? await supabase.from("product_mappings")
+          .select("provider_product_id, winerim_wine_id, format_type, status")
+          .eq("connection_id", connectionId).in("provider_product_id", existingIdentityIds)
+        : { data: [] as Record<string, unknown>[] };
+      const { data: existingTracking } = existingIdentityIds.length > 0
+        ? await supabase.from("winerim_push_tracking")
+          .select("agora_product_id, winerim_wine_id, format, sync_status")
+          .eq("connection_id", connectionId).in("agora_product_id", existingIdentityIds)
+        : { data: [] as Record<string, unknown>[] };
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          dryRun: true,
+          sent: false,
+          connectionId,
+          mode: VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
+          winesEvaluated: dryRunWines.length,
+          vinoteca: dryRun.vinoteca,
+          validationResults: dryRun.validationResults,
+          existingMappings: existingMappings || [],
+          existingTracking: existingTracking || [],
+          xml: dryRun.xml,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 

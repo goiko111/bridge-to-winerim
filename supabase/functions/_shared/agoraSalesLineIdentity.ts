@@ -132,3 +132,70 @@ export function resolveForwardAgoraSalesLineIdentity(input: {
     source: "sa_vida_guimaro_exact",
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// SALE-FORMAT-FIRST RESOLUTION (Don Bernardo only, strict allowlist)
+// ─────────────────────────────────────────────────────────────────────
+// Don Bernardo publishes GLASS/MAGNUM as native Agora sale formats of the
+// bottle reference, so the SaleFormatId carries the precise identity and must
+// win over the ProductId. Every other connection keeps its exact legacy
+// identity untouched.
+export const AGORA_SALE_FORMAT_FIRST_CONNECTION_IDS: readonly string[] = [
+  "a700d425-9194-4758-95ff-7fee86419e14", // Don Bernardo Ponzano
+  "79280cb8-0fe7-4a57-93a4-04172205ac70", // Don Bernardo Santander
+];
+
+export function isAgoraSaleFormatFirstConnection(connectionId: unknown): boolean {
+  return AGORA_SALE_FORMAT_FIRST_CONNECTION_IDS.includes(
+    String(connectionId ?? "").trim().toLowerCase(),
+  );
+}
+
+export type AgoraConnectionSalesLineIdentity = {
+  providerProductId: string;
+  resolution: AgoraSalesResolution | null;
+  source: "sale_format_first" | "product_first" | "legacy";
+};
+
+/**
+ * Allowlisted connections resolve SaleFormatId before ProductId. Everyone else
+ * keeps the caller's legacy identity and lookup, byte-for-byte.
+ */
+export function resolveAgoraSalesLineIdentityForConnection(input: {
+  connectionId: unknown;
+  productId: unknown;
+  saleFormatId: unknown;
+  legacyProviderProductId: string;
+  resolutionMap: ReadonlyMap<string, AgoraSalesResolution>;
+}): AgoraConnectionSalesLineIdentity {
+  const legacyId = String(input.legacyProviderProductId ?? "");
+  if (!isAgoraSaleFormatFirstConnection(input.connectionId)) {
+    return {
+      providerProductId: legacyId,
+      resolution: input.resolutionMap.get(legacyId) || null,
+      source: "legacy",
+    };
+  }
+
+  const saleFormatId = normalizeProviderProductId(input.saleFormatId);
+  if (saleFormatId) {
+    const saleFormatResolution = input.resolutionMap.get(saleFormatId) || null;
+    if (saleFormatResolution) {
+      return { providerProductId: saleFormatId, resolution: saleFormatResolution, source: "sale_format_first" };
+    }
+  }
+
+  const productId = normalizeProviderProductId(input.productId);
+  if (productId) {
+    const productResolution = input.resolutionMap.get(productId) || null;
+    if (productResolution) {
+      return { providerProductId: productId, resolution: productResolution, source: "product_first" };
+    }
+  }
+
+  return {
+    providerProductId: saleFormatId || productId || legacyId,
+    resolution: null,
+    source: saleFormatId ? "sale_format_first" : "product_first",
+  };
+}
