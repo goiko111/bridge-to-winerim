@@ -102,6 +102,11 @@ Deno.serve(async (req: Request) => {
 
     // Map job → one or more target function calls.
     // Catalog sync must refresh BOTH sides: Winerim wines and Agora master data.
+    // ORDER IS PART OF THE CONTRACT: the Agora master/products read (sync-master-data)
+    // must finish BEFORE fetch-catalog triggers evaluate-auto-push, otherwise the
+    // evaluator can compare against a stale Agora snapshot. Requests for one
+    // connection are executed strictly sequentially (see invokeConnection) and the
+    // catalog walk is skipped (fail-closed) if the master read did not succeed.
     const buildRequests = (connection: AgoraConnection): DispatchRequest[] => {
       if (job === "catalog") {
         return [
@@ -230,7 +235,20 @@ Deno.serve(async (req: Request) => {
 
         for (const dispatch of buildRequests(connection)) {
           if (lockHeartbeatError) throw lockHeartbeatError;
-          results.push(await invokeOne(dispatch));
+          const result = await invokeOne(dispatch);
+          results.push(result);
+          // Fail-closed sequencing for the catalog job: never evaluate auto-push
+          // against a stale Agora snapshot.
+          if (job === "catalog" && dispatch.body.action === "sync-master-data" && !result.ok) {
+            results.push({
+              connection_id: connection.id,
+              name: connection.location_name,
+              ok: false,
+              skipped: true,
+              reason: "SKIPPED_FETCH_CATALOG_STALE_AGORA_MASTER",
+            });
+            break;
+          }
         }
       } finally {
         lockHeartbeatStopped = true;

@@ -557,7 +557,40 @@ serve(async (req) => {
       let listWinesUpserted = 0;
       let totalWines = 0;
       let batchWineIds: string[] = [];
+      // Cursor advance must follow the paginated page size, never the promoted
+      // priority extras, so no wine is skipped by the walk.
+      let batchPageSize = 0;
       const baseWineMap = new Map<string, Record<string, unknown>>();
+
+      // ── CATALOG PRIORITY (canary / update allowlist) ──
+      // Wines listed in provider_config.auto_push_update_winerim_ids (or the canary
+      // alias) must be evaluated in the FIRST batch of the cycle. Otherwise a price
+      // change on a wine sitting late in the pagination waits for the whole walk and
+      // the SLA is missed. Fail-closed: empty allowlist ⇒ unchanged legacy ordering.
+      const catalogProviderConfig = (connection.provider_config || {}) as Record<string, unknown>;
+      const catalogPriorityWineIds = Array.from(new Set(
+        [
+          ...(Array.isArray(catalogProviderConfig.auto_push_update_winerim_ids)
+            ? catalogProviderConfig.auto_push_update_winerim_ids as unknown[]
+            : []),
+          ...(Array.isArray(catalogProviderConfig.auto_push_update_canary_winerim_ids)
+            ? catalogProviderConfig.auto_push_update_canary_winerim_ids as unknown[]
+            : []),
+        ].map((id) => String(id ?? "").trim()).filter(Boolean),
+      ));
+      const prioritizeFirstBatch = (ids: string[], allowedIds?: Set<string>): string[] => {
+        if (catalogPriorityWineIds.length === 0 || detailOffset !== 0) return ids;
+        const already = new Set(ids);
+        const promoted = catalogPriorityWineIds.filter((id) =>
+          !already.has(id) && (!allowedIds || allowedIds.has(id))
+        );
+        const priorityFirst = [
+          ...catalogPriorityWineIds.filter((id) => already.has(id)),
+          ...promoted,
+          ...ids.filter((id) => !catalogPriorityWineIds.includes(id)),
+        ];
+        return priorityFirst.slice(0, Math.max(detailBatchSize, catalogPriorityWineIds.length));
+      };
 
       if (mode === "start") {
         const wines = await fetchAllWines(winerimHeaders);
@@ -684,10 +717,10 @@ serve(async (req) => {
           }
         }
 
-        batchWineIds = wines
-          .map((w) => String(w.id || ""))
-          .filter(Boolean)
-          .slice(detailOffset, detailOffset + detailBatchSize);
+        const allListedIds = wines.map((w) => String(w.id || "")).filter(Boolean);
+        const listPage = allListedIds.slice(detailOffset, detailOffset + detailBatchSize);
+        batchPageSize = listPage.length;
+        batchWineIds = prioritizeFirstBatch(listPage, new Set(allListedIds));
       } else {
         const { count } = await supabase
           .from("winerim_wines")
@@ -704,9 +737,23 @@ serve(async (req) => {
           .range(detailOffset, detailOffset + detailBatchSize - 1);
 
         const rows = batchRows || [];
-        batchWineIds = rows.map((r: any) => String(r.winerim_id)).filter(Boolean);
+        const enrichPage = rows.map((r: any) => String(r.winerim_id)).filter(Boolean);
+        batchPageSize = enrichPage.length;
+        batchWineIds = prioritizeFirstBatch(enrichPage);
         for (const row of rows) {
           baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+        }
+        const missingPriorityIds = batchWineIds.filter((id) => !baseWineMap.has(id));
+        if (missingPriorityIds.length > 0) {
+          const { data: priorityRows } = await supabase
+            .from("winerim_wines")
+            .select("winerim_id, raw_payload")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", missingPriorityIds);
+          for (const row of (priorityRows || []) as any[]) {
+            baseWineMap.set(String(row.winerim_id), (row.raw_payload as Record<string, unknown>) || {});
+          }
+          batchWineIds = batchWineIds.filter((id) => baseWineMap.has(id));
         }
 
         console.log(
@@ -820,7 +867,7 @@ serve(async (req) => {
         detailsUpdated++;
       }
 
-      const processedDetails = Math.min(totalWines, detailOffset + batchWineIds.length);
+      const processedDetails = Math.min(totalWines, detailOffset + batchPageSize);
       const remainingDetails = Math.max(totalWines - processedDetails, 0);
       const complete = remainingDetails === 0;
 
@@ -921,10 +968,10 @@ serve(async (req) => {
             fn_url: fnUrl,
             service_key: supabaseKey,
             conn_id: connectionId,
-            next_offset: detailOffset + batchWineIds.length,
+            next_offset: detailOffset + batchPageSize,
             next_batch_size: detailBatchSize,
           } as never);
-          console.log(`[winerim-proxy] chained next batch: offset=${detailOffset + batchWineIds.length}`);
+          console.log(`[winerim-proxy] chained next batch: offset=${detailOffset + batchPageSize}`);
         } catch (e) {
           console.error("[winerim-proxy] chain next batch failed:", e);
         }

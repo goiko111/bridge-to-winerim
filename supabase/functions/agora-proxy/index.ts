@@ -12442,6 +12442,8 @@ ${costPricesXml}
       const evtType = payload.eventType || "CREATE";
       const forceEvaluate = payload.forceEvaluate === true;
       const dryRun = payload.dryRun === true;
+      // Single write barrier: forceEvaluate and dryRun are both read-only modes.
+      const autoPushWritesEnabled = !forceEvaluate && !dryRun;
 
       const autoPushOnCreate = connection.auto_push_on_create ?? false;
       const autoPushOnUpdate = connection.auto_push_on_update ?? false;
@@ -12575,7 +12577,10 @@ ${costPricesXml}
       const updateDiffIsGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && updateDiffGeoConfig;
       if (updateDiffEnabled) {
         try {
-          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          // Fresh read ONCE per evaluation (never per product): deciding
+          // "no_agora_changes" against a stale Products cache silently drops
+          // real price updates. forceRefresh=true here, and only here.
+          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
           if (cachedForDiff && cachedForDiff.ok && cachedForDiff.xml && cachedForDiff.xml.includes("<Product")) {
             updateDiffCurrentXml = cachedForDiff.xml;
             updateDiffExistingProducts = extractXmlElementsWithAttrs(cachedForDiff.xml, "Product")
@@ -12639,7 +12644,7 @@ ${costPricesXml}
             
             if (!existingHide || existingHide.length === 0) {
               const productIds = existingPushesToHide.map(p => p.agora_product_id).filter(Boolean);
-              if (!forceEvaluate && !dryRun) {
+              if (autoPushWritesEnabled) {
                 await supabase.from("outbound_tasks").insert({
                   connection_id: connectionId,
                   task_type: "AGORA_HIDE_PRODUCT",
@@ -12694,7 +12699,7 @@ ${costPricesXml}
 
           if (!existingHide || existingHide.length === 0) {
             const productIds = formatsToHide.map((push: any) => push.agora_product_id).filter(Boolean);
-            if (!forceEvaluate) {
+            if (autoPushWritesEnabled) {
               await supabase.from("outbound_tasks").insert({
                 connection_id: connectionId,
                 task_type: "AGORA_HIDE_PRODUCT",
@@ -12718,7 +12723,7 @@ ${costPricesXml}
             hidQueued++;
             skippedReasons.push({
               winerim_id: wine.winerim_id,
-              reason: forceEvaluate
+              reason: !autoPushWritesEnabled
                 ? `price_missing_would_hide:${hideFormats.join("+")}`
                 : `price_missing_hide_queued:${hideFormats.join("+")}`,
             });
@@ -12813,7 +12818,7 @@ ${costPricesXml}
           }
         }
 
-        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate && !dryRun) {
+        if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate) {
           const normalizedUpdateWineName = normalizeAgoraTextAttribute(wine.name).toLocaleLowerCase("es");
           const updateHomonymousWines = updateDiffActiveWines.filter((candidate) =>
             normalizeAgoraTextAttribute(candidate.name).toLocaleLowerCase("es") === normalizedUpdateWineName
@@ -12855,7 +12860,7 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
             continue;
           }
-        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate && !dryRun) {
+        } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate) {
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
@@ -12891,9 +12896,12 @@ ${costPricesXml}
           continue;
         }
 
-        if (forceEvaluate) {
+        if (!autoPushWritesEnabled) {
           wouldQueue++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
+          skippedReasons.push({
+            winerim_id: wine.winerim_id,
+            reason: `${dryRun ? "dry_run_would_queue" : "would_queue"}:${formatTypes.join("+")}`,
+          });
           continue;
         }
 
@@ -12913,11 +12921,11 @@ ${costPricesXml}
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} dryRun=${dryRun} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType, forceEvaluate,
+        totalWines: wines.length, eventType: evtType, forceEvaluate, dryRun,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
