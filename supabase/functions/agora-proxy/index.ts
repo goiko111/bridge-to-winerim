@@ -5442,6 +5442,9 @@ serve(async (req) => {
     const apiTokenClean = api_token.trim();
     const headers: Record<string, string> = { "Api-Token": apiTokenClean, Accept: "*/*" };
 
+    // Absolute dry boundary for stock/sales-import. `force` never bypasses it.
+    const stockFence = decideAgoraStockFence({ payload, providerConfig: connection.provider_config });
+
     async function fetchWithRetry(url: string, opts: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
       // RATE LIMIT: never exceed POS_MAX_REQS_PER_SECOND requests/sec to a single POS
       await throttleConnection(connectionId);
