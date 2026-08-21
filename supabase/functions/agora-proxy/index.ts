@@ -10883,6 +10883,27 @@ ${costPricesXml}
             };
           });
 
+          // ── VINOTECA native formats: verify the builder's own identities ──
+          const vinotecaPlanForTask = vinotecaNativeFormatsTask
+            ? ((vinotecaTaskMeta?.plans as VinotecaReferencePlan[] | undefined) || [])
+              .find((plan) => plan.winerimWineId === String(winerimWineId || "")) || null
+            : null;
+          const runTaskVerification = (currentVerifyXml: string) =>
+            vinotecaPlanForTask
+              ? verifyVinotecaNativeFormatsImport({
+                plan: vinotecaPlanForTask,
+                sentXml: xml,
+                actualXml: currentVerifyXml,
+                scopedPriceLists: effectivePriceLists,
+                priceListToSaleCenters: effectivePlToSc,
+              })
+              : verifyAgoraProductsAgainstScope(
+                currentVerifyXml, productsToVerify,
+                effectivePriceLists,
+                effectivePlToSc,
+              );
+
+
           if (verifyRes.ok) {
             let verifyXml = await verifyRes.text();
 
