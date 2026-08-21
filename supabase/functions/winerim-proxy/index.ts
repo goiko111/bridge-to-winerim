@@ -499,43 +499,31 @@ serve(async (req) => {
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
-      const readyProcessedIds = new Set<string>();
+      const fingerprintSkippedIds = new Set<string>();
 
-      const comparableCatalogFields = [
-        "name",
-        "wine_type",
-        "region",
-        "vintage",
-        "winery",
-        "serve_by_glass",
-        "is_active",
-        "bottle_sale_price",
-        "glass_sale_price",
-        "magnum_sale_price",
-      ];
-
-      const normalizeComparable = (value: unknown): string => {
-        if (value === undefined) return "__undefined__";
-        if (value === null) return "__null__";
-        if (typeof value === "boolean") return value ? "true" : "false";
-        if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(4) : String(value);
-        const numeric = Number(value);
-        if (typeof value === "string" && value.trim() !== "" && Number.isFinite(numeric)) {
-          return numeric.toFixed(4);
-        }
-        return String(value).trim();
-      };
-
-      const hasRelevantCatalogChange = (
+      // ── SOURCE-CHANGE GATE (deterministic fingerprint) ──
+      // Auto-push is only triggered for wineIds whose exportable Winerim fields
+      // really changed (or that are brand new). Anything else — inherited Agora
+      // drift, unpublished-but-unchanged wines, raw_payload/updated_at churn —
+      // must NOT enter the evaluation, or enabling UPDATE would fire a bulk wave
+      // during service. Fail-closed: an uncomputable fingerprint skips that wine.
+      const classifyWineChange = (
+        winerimId: string,
         previous: Record<string, unknown> | undefined,
-        next: Record<string, unknown>,
-      ): boolean => {
-        if (!previous) return false;
-        return comparableCatalogFields.some((field) => {
-          if (!(field in next)) return false;
-          return normalizeComparable(previous[field]) !== normalizeComparable(next[field]);
-        });
+        payload: Record<string, unknown>,
+        pricingReady: boolean,
+      ) => {
+        const decision = decideCatalogChange({ previous, payload, pricingReady });
+        if (decision.outcome === "new") autoCreateCandidateIds.add(winerimId);
+        else if (decision.outcome === "changed") autoUpdateCandidateIds.add(winerimId);
+        else if (decision.outcome === "skipped" && decision.reason === "fingerprint_unavailable") {
+          fingerprintSkippedIds.add(winerimId);
+        } else if (decision.outcome === "skipped" && decision.reason === "previous_fingerprint_unavailable") {
+          fingerprintSkippedIds.add(winerimId);
+        }
+        return decision;
       };
+
 
       const loadExistingWineRows = async (ids: string[]): Promise<Map<string, Record<string, unknown>>> => {
         const result = new Map<string, Record<string, unknown>>();
