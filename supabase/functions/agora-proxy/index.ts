@@ -12723,7 +12723,7 @@ ${costPricesXml}
             hidQueued++;
             skippedReasons.push({
               winerim_id: wine.winerim_id,
-              reason: forceEvaluate
+              reason: !autoPushWritesEnabled
                 ? `price_missing_would_hide:${hideFormats.join("+")}`
                 : `price_missing_hide_queued:${hideFormats.join("+")}`,
             });
