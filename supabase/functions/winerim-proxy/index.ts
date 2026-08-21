@@ -658,11 +658,8 @@ serve(async (req) => {
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
           const previous = existingBeforeList.get(winerimId);
-          if (!previous && pricingStatus === "READY") {
-            autoCreateCandidateIds.add(winerimId);
-          } else if (hasRelevantCatalogChange(previous, upsertPayload)) {
-            autoUpdateCandidateIds.add(winerimId);
-          }
+          classifyWineChange(winerimId, previous, upsertPayload, pricingStatus === "READY");
+
 
           await supabase
             .from("winerim_wines")
