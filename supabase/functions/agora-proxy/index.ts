@@ -5013,13 +5013,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
             `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${bottleCost}" />`
           ).join("\n");
           const saleFormatsXml = extraFormats.length > 0
-            ? `      <SaleFormats>\n${extraFormats.map((format) => {
+            ? `      <AdditionalSaleFormats>\n${extraFormats.map((format) => {
               const formatPrices = priceLists.map((pl) =>
                 `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
               ).join("\n");
               const formatLabel = formatProductName(format.format, plan.wineName);
-              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" SaleableAsMain="true">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
-            }).join("\n")}\n      </SaleFormats>\n`
+              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" SaleableAsMain="true" SaleableAsAddin="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${format.costPrice.toFixed(2)}">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
+            }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
           return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${bottleCost}">
       <Prices>
@@ -5029,6 +5029,7 @@ ${pricesXml}
 ${costPricesXml}
       </CostPrices>
 ${saleFormatsXml}    </Product>`;
+
         },
       });
     }
