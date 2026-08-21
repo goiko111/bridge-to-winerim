@@ -10577,11 +10577,7 @@ ${costPricesXml}
       // Update mappings
       for (const wine of wines) {
         for (const fmt of formatTypes) {
-          const agoraProductId = fmt === "MAGNUM"
-            ? String(900000 + Number(wine.winerim_id || 0))
-            : fmt === "GLASS" 
-            ? String(700000 + Number(wine.winerim_id || 0))
-            : String(500000 + Number(wine.winerim_id || 0));
+          const agoraProductId = importAgoraIdFor(fmt, wine.winerim_id);
           const productName = productLabelsById[agoraProductId]?.name || formatProductName(fmt, wine.name);
 
           await supabase.from("product_mappings").upsert({
