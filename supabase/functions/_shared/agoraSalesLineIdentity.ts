@@ -184,11 +184,12 @@ function isSameFormat(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Allowlisted connections resolve native SaleFormatId, then native ProductId,
- * then a plain ProductId lookup. Non-native SaleFormatIds are ignored for
- * preference. Native ids resolve deterministically (id - base = wineId) and are
- * fail-closed: the wine must be active for THIS connection with a positive
- * price for that format, and any existing mapping row must agree.
+ * Allowlisted connections resolve, in this exact order:
+ *   a) exact active compound pair (connection_id, ProductId, SaleFormatId);
+ *   b) deterministic native namespace (BOTTLE 2M / GLASS 3M / MAGNUM 4M);
+ *   c) unresolved (fail-closed). A legacy/flat SaleFormatId is NEVER preferred,
+ *      and a flat ProductId alone is not authoritative either.
+ * No fuzzy, no name matching. Every other connection keeps legacy behaviour.
  */
 export function resolveAgoraSalesLineIdentityForConnection(input: {
   connectionId: unknown;
@@ -196,6 +197,11 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
   saleFormatId: unknown;
   legacyProviderProductId: string;
   resolutionMap: ReadonlyMap<string, AgoraSalesResolution>;
+  /**
+   * Exact compound identities of this connection, keyed by
+   * agoraSalesPairKey(ProductId, SaleFormatId). Only active rows.
+   */
+  pairMappings?: ReadonlyMap<string, AgoraSalesResolution>;
   /**
    * Active winerim wines of this connection: wineId -> formats with a positive
    * price (BOTTLE/GLASS/MAGNUM). Omit to skip the activity/price check.
@@ -210,6 +216,28 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
       source: "legacy",
     };
   }
+
+  // (a) exact compound pair — authoritative
+  if (input.pairMappings) {
+    const pairKey = agoraSalesPairKey(input.productId, input.saleFormatId);
+    const pair = pairKey === "|" ? null : input.pairMappings.get(pairKey) || null;
+    if (pair && String(pair.winerim_wine_id || "").trim()) {
+      const saleFormatId = normalizeProviderProductId(input.saleFormatId);
+      const productId = normalizeProviderProductId(input.productId);
+      return {
+        providerProductId: saleFormatId || productId,
+        resolution: {
+          winerim_wine_id: String(pair.winerim_wine_id).trim(),
+          format: String(pair.format || "").trim().toUpperCase() === "COPA"
+            ? "GLASS"
+            : String(pair.format || "").trim().toUpperCase(),
+        },
+        source: "pair_exact",
+      };
+    }
+  }
+
+
 
   const resolveNative = (
     value: unknown,
