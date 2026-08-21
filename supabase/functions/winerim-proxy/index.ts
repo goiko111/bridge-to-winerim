@@ -8,6 +8,8 @@ import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
+import { decideCatalogChange } from "../_shared/winerimCatalogFingerprint.ts";
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -497,43 +499,31 @@ serve(async (req) => {
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
-      const readyProcessedIds = new Set<string>();
+      const fingerprintSkippedIds = new Set<string>();
 
-      const comparableCatalogFields = [
-        "name",
-        "wine_type",
-        "region",
-        "vintage",
-        "winery",
-        "serve_by_glass",
-        "is_active",
-        "bottle_sale_price",
-        "glass_sale_price",
-        "magnum_sale_price",
-      ];
-
-      const normalizeComparable = (value: unknown): string => {
-        if (value === undefined) return "__undefined__";
-        if (value === null) return "__null__";
-        if (typeof value === "boolean") return value ? "true" : "false";
-        if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(4) : String(value);
-        const numeric = Number(value);
-        if (typeof value === "string" && value.trim() !== "" && Number.isFinite(numeric)) {
-          return numeric.toFixed(4);
-        }
-        return String(value).trim();
-      };
-
-      const hasRelevantCatalogChange = (
+      // ── SOURCE-CHANGE GATE (deterministic fingerprint) ──
+      // Auto-push is only triggered for wineIds whose exportable Winerim fields
+      // really changed (or that are brand new). Anything else — inherited Agora
+      // drift, unpublished-but-unchanged wines, raw_payload/updated_at churn —
+      // must NOT enter the evaluation, or enabling UPDATE would fire a bulk wave
+      // during service. Fail-closed: an uncomputable fingerprint skips that wine.
+      const classifyWineChange = (
+        winerimId: string,
         previous: Record<string, unknown> | undefined,
-        next: Record<string, unknown>,
-      ): boolean => {
-        if (!previous) return false;
-        return comparableCatalogFields.some((field) => {
-          if (!(field in next)) return false;
-          return normalizeComparable(previous[field]) !== normalizeComparable(next[field]);
-        });
+        payload: Record<string, unknown>,
+        pricingReady: boolean,
+      ) => {
+        const decision = decideCatalogChange({ previous, payload, pricingReady });
+        if (decision.outcome === "new") autoCreateCandidateIds.add(winerimId);
+        else if (decision.outcome === "changed") autoUpdateCandidateIds.add(winerimId);
+        else if (decision.outcome === "skipped" && decision.reason === "fingerprint_unavailable") {
+          fingerprintSkippedIds.add(winerimId);
+        } else if (decision.outcome === "skipped" && decision.reason === "previous_fingerprint_unavailable") {
+          fingerprintSkippedIds.add(winerimId);
+        }
+        return decision;
       };
+
 
       const loadExistingWineRows = async (ids: string[]): Promise<Map<string, Record<string, unknown>>> => {
         const result = new Map<string, Record<string, unknown>>();
@@ -668,11 +658,8 @@ serve(async (req) => {
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
           const previous = existingBeforeList.get(winerimId);
-          if (!previous && pricingStatus === "READY") {
-            autoCreateCandidateIds.add(winerimId);
-          } else if (hasRelevantCatalogChange(previous, upsertPayload)) {
-            autoUpdateCandidateIds.add(winerimId);
-          }
+          classifyWineChange(winerimId, previous, upsertPayload, pricingStatus === "READY");
+
 
           await supabase
             .from("winerim_wines")
@@ -847,16 +834,8 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
-        if (pricingStatus === "READY") {
-          readyProcessedIds.add(winerimId);
-        }
-
         const previous = existingBeforeDetails.get(winerimId);
-        if (!previous && pricingStatus === "READY") {
-          autoCreateCandidateIds.add(winerimId);
-        } else if (hasRelevantCatalogChange(previous, updateData)) {
-          autoUpdateCandidateIds.add(winerimId);
-        }
+        classifyWineChange(winerimId, previous, updateData, pricingStatus === "READY");
 
         await supabase
           .from("winerim_wines")
@@ -873,25 +852,12 @@ serve(async (req) => {
 
       const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
 
-      if (readyProcessedIds.size > 0) {
-        const readyIds = Array.from(readyProcessedIds);
-        const publishedOrQueued = new Set<string>();
-        for (let i = 0; i < readyIds.length; i += 500) {
-          const chunk = readyIds.slice(i, i + 500);
-          const { data: trackedRows } = await supabase
-            .from("winerim_push_tracking")
-            .select("winerim_wine_id, sync_status")
-            .eq("connection_id", connectionId)
-            .in("winerim_wine_id", chunk)
-            .in("sync_status", ["QUEUED", "PUSHED", "VERIFIED"]);
-          for (const row of (trackedRows || []) as { winerim_wine_id: string }[]) {
-            publishedOrQueued.add(String(row.winerim_wine_id));
-          }
-        }
-        for (const id of readyIds) {
-          if (!publishedOrQueued.has(String(id))) autoCreateCandidateIds.add(String(id));
-        }
-      }
+      // NOTE: the former "READY but not tracked ⇒ CREATE" backfill was removed on
+      // purpose. It re-evaluated every unpublished wine on every pass, which is
+      // exactly the bulk wave we must not fire during service. Brand-new wines
+      // still reach CREATE through the fingerprint gate above; deliberate mass
+      // publishing stays a manual/explicit operation.
+
 
       // ── AUTO-PUSH TRIGGER (INCREMENTAL, differential) ──
       // Only queue wines that are new/unpublished or whose catalog-visible fields
@@ -936,11 +902,13 @@ serve(async (req) => {
             autoPushResult = {
               success: true,
               differential: true,
+              sourceChangeGated: true,
               createCandidates: autoCreateIds.length,
               updateCandidates: autoUpdateIds.length,
+              fingerprintSkipped: fingerprintSkippedIds.size,
               parts,
             };
-            console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
+            console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} fingerprintSkipped=${fingerprintSkippedIds.size} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
 
             if (queuedTotal > 0 || hidQueuedTotal > 0) {
               await supabase.functions.invoke("agora-proxy", {
@@ -955,8 +923,13 @@ serve(async (req) => {
           console.error("[winerim-proxy] auto-push trigger failed:", e);
         }
       } else {
-        autoPushResult = { skipped: true, reason: "no_catalog_changes_detected" };
+        autoPushResult = {
+          skipped: true,
+          reason: "no_source_changes_detected",
+          fingerprintSkipped: fingerprintSkippedIds.size,
+        };
       }
+
 
       // ── CHAIN NEXT BATCH via pg_net (fire-and-forget) ──
       // Without this, cron always restarts at offset=0 and only the first 100 wines ever get
