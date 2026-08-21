@@ -12662,6 +12662,11 @@ ${costPricesXml}
       let wouldQueue = 0;
       let skipped = 0;
       const skippedReasons: { winerim_id: string; reason: string }[] = [];
+      for (const excludedId of failClosedExcluded) {
+        skipped++;
+        skippedReasons.push({ winerim_id: excludedId, reason: "auto_push_fail_closed_identity_excluded" });
+      }
+
 
       // ── UPDATE differential guard precompute ──
       // Read the current Agora Products XML ONCE and load custom family mappings ONCE.
