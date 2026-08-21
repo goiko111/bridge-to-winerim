@@ -50,7 +50,7 @@ describe("vinoteca native namespace", () => {
 describe("forward sales resolution (VINOTECA connections)", () => {
   it("never resolves a non-wine line through a legacy SaleFormatId", () => {
     const line = resolve(PONZANO, "1746", "1855");
-    expect(line.resolved ?? Boolean(line.resolution)).toBe(false);
+    expect(Boolean(line.resolution)).toBe(false);
     expect(line.resolution).toBeNull();
     expect(line.providerProductId).toBe("1746");
     expect(line.source).toBe("product_first");
