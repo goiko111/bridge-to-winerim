@@ -131,7 +131,7 @@ describe("winerim fetch-catalog incremental auto-push trigger", () => {
   it("classifies exactly once per cycle, after detail, and drops the bulk backfill", () => {
     expect(winerimSource).toContain('from "../_shared/winerimCatalogFingerprint.ts"');
     // single classification point (post-detail), never after the list upsert
-    expect(winerimSource.match(/classifyWineChange\(/g) || []).toHaveLength(2); // definition + 1 call
+    expect(winerimSource.match(/classifyWineChange\(/g) || []).toHaveLength(1); // single call site (arrow definition has no paren match)
     expect(winerimSource).toContain("classifyWineChange(winerimId, previous, finalPayload");
     expect(winerimSource).toContain("preUpsertRows");
     expect(winerimSource).not.toContain("existingBeforeList");
