@@ -45,9 +45,9 @@ export type VinotecaVerifyResult = {
     price_list_id: string;
     price_list_name: string;
     issue: "missing" | "zero" | "invalid";
-    name?: string;
-    format?: string;
-    affected_sale_centers?: string[];
+    name: string;
+    format: string;
+    affected_sale_centers: string[];
   }[];
   affected_sale_centers: string[];
   summary: { checked: number; ok: number; failed: number };
