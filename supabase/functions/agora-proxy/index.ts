@@ -12855,16 +12855,23 @@ ${costPricesXml}
             expectedUpdateNameOverrides,
           );
           const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
+          const updateDiffReasons: string[] = [];
           const allExpectedProductsMatch = expectedProducts.length > 0 && expectedProducts.every((expectedProduct) => {
             const productId = String(expectedProduct.attrs.Id || "");
             const actualProduct = productId
               ? findXmlElementByAttr(updateDiffCurrentXml!, "Product", "Id", productId)
               : null;
-            return Boolean(actualProduct && agoraProductMatchesExpectedXml(
+            if (!actualProduct) {
+              updateDiffReasons.push(`PRODUCT_${productId || "UNKNOWN"}_MISSING`);
+              return false;
+            }
+            const reasons = agoraProductDifferenceReasons(
               expectedProduct,
               actualProduct,
               updateDiffScopedPriceListIds,
-            ));
+            );
+            for (const reason of reasons) updateDiffReasons.push(`PRODUCT_${productId}:${reason}`);
+            return reasons.length === 0;
           });
 
           if (allExpectedProductsMatch) {
@@ -12872,7 +12879,12 @@ ${costPricesXml}
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: "update_skipped:no_agora_changes" });
             continue;
           }
+          skippedReasons.push({
+            winerim_id: wine.winerim_id,
+            reason: `update_diff_detected:${updateDiffReasons.slice(0, 6).join(",")}`,
+          });
         } else if (evtType === "UPDATE" && updateDiffEnabled && updateDiffError && !forceEvaluate) {
+
           skippedReasons.push({ winerim_id: wine.winerim_id, reason: `update_diff_unavailable:${updateDiffError}` });
         }
 
