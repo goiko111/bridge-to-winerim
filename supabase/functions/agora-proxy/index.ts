@@ -10673,11 +10673,7 @@ ${costPricesXml}
             const productsToVerify: AgoraProductToVerify[] = [];
             for (const wine of wines) {
               for (const fmt of formatTypes) {
-                const productId = fmt === "MAGNUM"
-                  ? String(900000 + Number(wine.winerim_id || 0))
-                  : fmt === "GLASS"
-                  ? String(700000 + Number(wine.winerim_id || 0))
-                  : String(500000 + Number(wine.winerim_id || 0));
+                const productId = importAgoraIdFor(fmt, wine.winerim_id);
                 productsToVerify.push({
                   productId,
                   productName: formatProductName(fmt, wine.name),
