@@ -102,6 +102,11 @@ Deno.serve(async (req: Request) => {
 
     // Map job → one or more target function calls.
     // Catalog sync must refresh BOTH sides: Winerim wines and Agora master data.
+    // ORDER IS PART OF THE CONTRACT: the Agora master/products read (sync-master-data)
+    // must finish BEFORE fetch-catalog triggers evaluate-auto-push, otherwise the
+    // evaluator can compare against a stale Agora snapshot. Requests for one
+    // connection are executed strictly sequentially (see invokeConnection) and the
+    // catalog walk is skipped (fail-closed) if the master read did not succeed.
     const buildRequests = (connection: AgoraConnection): DispatchRequest[] => {
       if (job === "catalog") {
         return [
