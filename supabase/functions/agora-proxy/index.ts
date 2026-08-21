@@ -11134,7 +11134,8 @@ ${costPricesXml}
 
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,
-          external_id: (vinotecaPlanForTask?.productId || productIdByFormat[fmtTypes[0]]) || null,
+          external_id: ((vinotecaNativeFormatsTask ? vinotecaFormatId("BOTTLE", winerimWineId) : null)
+            || productIdByFormat[fmtTypes[0]]) || null,
         }).eq("id", task.id);
 
         // auto_push_verified_ready is NOT set here — manual verification required
