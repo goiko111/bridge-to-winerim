@@ -10642,7 +10642,7 @@ ${costPricesXml}
         const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
         const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
         const frozenPriceListIds = normalizeStringArray(taskPayload._effective_price_list_ids);
-        const { xml, validationResults } = generateImportXml(
+        const { xml, validationResults, vinoteca: vinotecaTaskMeta } = generateImportXml(
           wineArr,
           masterData,
           connection,
