@@ -11079,6 +11079,12 @@ ${costPricesXml}
             await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
               sync_status: "FAILED",
               task_id: task.id,
+              agora_product_id: trackingAgoraProductIdForFormat({
+                vinotecaNativeFormats: vinotecaNativeFormatsTask,
+                format: fmt,
+                winerimWineId,
+                genericFallback: productIdByFormat[fmt],
+              }) || undefined,
               last_error: failMsg.substring(0, 500),
               pushed_at: new Date().toISOString(),
             });
