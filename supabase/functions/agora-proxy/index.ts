@@ -12577,7 +12577,10 @@ ${costPricesXml}
       const updateDiffIsGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && updateDiffGeoConfig;
       if (updateDiffEnabled) {
         try {
-          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
+          // Fresh read ONCE per evaluation (never per product): deciding
+          // "no_agora_changes" against a stale Products cache silently drops
+          // real price updates. forceRefresh=true here, and only here.
+          const cachedForDiff = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
           if (cachedForDiff && cachedForDiff.ok && cachedForDiff.xml && cachedForDiff.xml.includes("<Product")) {
             updateDiffCurrentXml = cachedForDiff.xml;
             updateDiffExistingProducts = extractXmlElementsWithAttrs(cachedForDiff.xml, "Product")
