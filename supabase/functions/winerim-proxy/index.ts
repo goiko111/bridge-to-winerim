@@ -902,11 +902,13 @@ serve(async (req) => {
             autoPushResult = {
               success: true,
               differential: true,
+              sourceChangeGated: true,
               createCandidates: autoCreateIds.length,
               updateCandidates: autoUpdateIds.length,
+              fingerprintSkipped: fingerprintSkippedIds.size,
               parts,
             };
-            console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
+            console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} fingerprintSkipped=${fingerprintSkippedIds.size} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
 
             if (queuedTotal > 0 || hidQueuedTotal > 0) {
               await supabase.functions.invoke("agora-proxy", {
@@ -921,8 +923,13 @@ serve(async (req) => {
           console.error("[winerim-proxy] auto-push trigger failed:", e);
         }
       } else {
-        autoPushResult = { skipped: true, reason: "no_catalog_changes_detected" };
+        autoPushResult = {
+          skipped: true,
+          reason: "no_source_changes_detected",
+          fingerprintSkipped: fingerprintSkippedIds.size,
+        };
       }
+
 
       // ── CHAIN NEXT BATCH via pg_net (fire-and-forget) ──
       // Without this, cron always restarts at offset=0 and only the first 100 wines ever get
