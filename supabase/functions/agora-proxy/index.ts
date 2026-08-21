@@ -5755,8 +5755,7 @@ serve(async (req) => {
             saleFormatId: line.SaleFormatId,
             legacyProviderProductId,
             resolutionMap,
-            pairMappings: salesPairMappings,
-            pairMappings: salesPairMappings,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
           });
           const productId = salesIdentity.providerProductId;
@@ -6108,10 +6107,7 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                pairMappings: salesPairMappings,
-                pairMappings: salesPairMappings,
-              pairMappings: salesPairMappings,
-            pairMappings: salesPairMappings,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
@@ -6290,9 +6286,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              pairMappings: salesPairMappings,
-              pairMappings: salesPairMappings,
-            pairMappings: salesPairMappings,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
@@ -6489,9 +6483,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
-              pairMappings: salesPairMappings,
-              pairMappings: salesPairMappings,
-            pairMappings: salesPairMappings,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
             });
             const productId = salesIdentity.providerProductId;
@@ -6840,10 +6832,7 @@ serve(async (req) => {
                 saleFormatId: line.SaleFormatId,
                 legacyProviderProductId,
                 resolutionMap,
-                pairMappings: salesPairMappings,
-                pairMappings: salesPairMappings,
-              pairMappings: salesPairMappings,
-            pairMappings: salesPairMappings,
+          pairMappings: salesPairMappings,
           activeWineFormats: salesActiveWineFormats,
               });
               const productId = salesIdentity.providerProductId;
