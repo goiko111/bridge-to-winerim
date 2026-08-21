@@ -107,10 +107,11 @@ export function isValidVinotecaRegion(value: unknown): boolean {
 
 export type VinotecaFormatPlan = {
   format: VinotecaFormat;
-  /** ProductId for BOTTLE, SaleFormatId for GLASS/MAGNUM. */
+  /** ProductId for the base format, SaleFormatId for additional formats. */
   agoraId: string;
   salePrice: number;
   costPrice: number;
+  isBase: boolean;
 };
 
 export type VinotecaReferencePlan = {
@@ -119,7 +120,14 @@ export type VinotecaReferencePlan = {
   region: string;
   regionKey: string;
   productId: string;
+  baseFormat: VinotecaFormat;
   formats: VinotecaFormatPlan[];
+};
+
+export type VinotecaCatalogRoute = {
+  productId: string;
+  baseFormat: VinotecaFormat;
+  formatIds: Partial<Record<VinotecaFormat, string>>;
 };
 
 export type VinotecaSkippedReference = {
@@ -130,7 +138,8 @@ export type VinotecaSkippedReference = {
     | "missing_region"
     | "missing_bottle_price"
     | "missing_product_id"
-    | "missing_name";
+    | "missing_name"
+    | "incomplete_adopted_route";
 };
 
 export type VinotecaPriceInput = {
@@ -158,10 +167,15 @@ function nonNegativeAmount(value: unknown): number {
 /** Builds the fail-closed reference plan for a single wine. */
 export function buildVinotecaReferencePlan(
   input: VinotecaPriceInput,
+  adoptedRoute?: VinotecaCatalogRoute | null,
 ): { plan: VinotecaReferencePlan | null; skipped: VinotecaSkippedReference | null } {
   const wineName = String(input.wineName ?? "").replace(/\s+/g, " ").trim();
   const winerimWineId = String(input.winerimWineId ?? "").trim();
   const normalizedId = normalizeVinotecaWineId(input.winerimWineId);
+
+  if (adoptedRoute === null) {
+    return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
+  }
 
   if (normalizedId === null) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "invalid_winerim_id" } };
@@ -180,39 +194,40 @@ export function buildVinotecaReferencePlan(
     return { plan: null, skipped: { winerimWineId, wineName, reason: "missing_bottle_price" } };
   }
 
-  const productId = vinotecaFormatId("BOTTLE", normalizedId);
+  const productId = adoptedRoute?.productId || vinotecaFormatId("BOTTLE", normalizedId);
   if (!productId) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "missing_product_id" } };
   }
 
-  const formats: VinotecaFormatPlan[] = [{
-    format: "BOTTLE",
-    agoraId: productId,
-    salePrice: bottlePrice,
-    costPrice: nonNegativeAmount(input.bottleCostPrice),
+  const desiredFormats: { format: VinotecaFormat; salePrice: number; costPrice: number }[] = [{
+    format: "BOTTLE", salePrice: bottlePrice, costPrice: nonNegativeAmount(input.bottleCostPrice),
   }];
 
   const glassPrice = positiveAmount(input.glassSalePrice);
-  const glassId = vinotecaFormatId("GLASS", normalizedId);
-  if (glassPrice && glassId) {
-    formats.push({
-      format: "GLASS",
-      agoraId: glassId,
-      salePrice: glassPrice,
-      costPrice: nonNegativeAmount(input.glassCostPrice),
-    });
+  if (glassPrice) {
+    desiredFormats.push({ format: "GLASS", salePrice: glassPrice, costPrice: nonNegativeAmount(input.glassCostPrice) });
   }
 
   const magnumPrice = positiveAmount(input.magnumSalePrice);
-  const magnumId = vinotecaFormatId("MAGNUM", normalizedId);
-  if (magnumPrice && magnumId) {
-    formats.push({
-      format: "MAGNUM",
-      agoraId: magnumId,
-      salePrice: magnumPrice,
-      costPrice: nonNegativeAmount(input.magnumCostPrice),
-    });
+  if (magnumPrice) {
+    desiredFormats.push({ format: "MAGNUM", salePrice: magnumPrice, costPrice: nonNegativeAmount(input.magnumCostPrice) });
   }
+
+  const baseFormat = adoptedRoute?.baseFormat || "BOTTLE";
+  const formats: VinotecaFormatPlan[] = [];
+  for (const desired of desiredFormats) {
+    const agoraId = adoptedRoute
+      ? adoptedRoute.formatIds[desired.format]
+      : vinotecaFormatId(desired.format, normalizedId);
+    if (!agoraId) {
+      return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
+    }
+    formats.push({ ...desired, agoraId, isBase: desired.format === baseFormat });
+  }
+  if (!formats.some((format) => format.isBase)) {
+    return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
+  }
+  formats.sort((left, right) => Number(right.isBase) - Number(left.isBase));
 
   return {
     plan: {
@@ -221,6 +236,7 @@ export function buildVinotecaReferencePlan(
       region,
       regionKey: vinotecaRegionKey(region),
       productId,
+      baseFormat,
       formats,
     },
     skipped: null,

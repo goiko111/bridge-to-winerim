@@ -69,7 +69,34 @@ describe("new reference intake", () => {
       agoraId: "4363449",
       salePrice: 340,
       costPrice: 250,
+      isBase: false,
     });
+  });
+
+  it("preserves an adopted Agora parent whose base format is GLASS", () => {
+    const { plan, skipped } = buildVinotecaReferencePlan(wine(), {
+      productId: "1368",
+      baseFormat: "GLASS",
+      formatIds: { GLASS: "1368", BOTTLE: "1405" },
+    });
+    expect(skipped).toBeNull();
+    expect(plan?.productId).toBe("1368");
+    expect(plan?.baseFormat).toBe("GLASS");
+    expect(plan?.formats.map((format) => [format.format, format.agoraId, format.isBase, format.salePrice])).toEqual([
+      ["GLASS", "1368", true, 24],
+      ["BOTTLE", "1405", false, 180],
+    ]);
+  });
+
+  it("fails closed when an adopted route omits an active format", () => {
+    const { plan, skipped } = buildVinotecaReferencePlan(wine(), {
+      productId: "1368",
+      baseFormat: "GLASS",
+      formatIds: { GLASS: "1368" },
+    });
+    expect(plan).toBeNull();
+    expect(skipped?.reason).toBe("incomplete_adopted_route");
+    expect(buildVinotecaReferencePlan(wine(), null).skipped?.reason).toBe("incomplete_adopted_route");
   });
 
   it("is idempotent across a second cycle (same identities, no duplicates)", () => {
