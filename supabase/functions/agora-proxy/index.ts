@@ -6995,6 +6995,32 @@ serve(async (req) => {
         return { provider_product_id: productId, resolved: Boolean(resolution), resolution };
       });
 
+      // Read-only forward-resolution probe for concrete ticket lines.
+      const probeLines = Array.isArray(payload.lines) ? payload.lines as Record<string, unknown>[] : [];
+      const lineResults = probeLines.map((probe) => {
+        const identity = resolveAgoraSalesLineIdentityForConnection({
+          connectionId,
+          productId: probe.ProductId ?? probe.productId,
+          saleFormatId: probe.SaleFormatId ?? probe.saleFormatId,
+          legacyProviderProductId: String(probe.ProductId ?? probe.productId ?? ""),
+          resolutionMap,
+          activeWineIds: salesActiveWineIds,
+        });
+        return {
+          input: {
+            ProductId: String(probe.ProductId ?? probe.productId ?? ""),
+            SaleFormatId: String(probe.SaleFormatId ?? probe.saleFormatId ?? ""),
+            ProductName: String(probe.ProductName ?? probe.productName ?? ""),
+          },
+          providerProductId: identity.providerProductId,
+          source: identity.source,
+          blockedReason: identity.blockedReason ?? null,
+          resolved: Boolean(identity.resolution),
+          winerim_wine_id: identity.resolution?.winerim_wine_id ?? null,
+          format: identity.resolution?.format ?? null,
+        };
+      });
+
       return new Response(
         JSON.stringify({
           success: true,
