@@ -90,9 +90,16 @@ describe("adopted VINOTECA reference plans", () => {
     expect(
       buildVinotecaReferencePlan(wine({ magnumSalePrice: 60 }), CRUZ_DE_ALBA_ROBLE).skipped?.reason,
     ).toBe("incomplete_adopted_route");
-    // Adopted GLASS exists in Agora but Winerim has no positive glass price.
+    // The adopted base format itself has no positive price.
     expect(
       buildVinotecaReferencePlan(wine({ glassSalePrice: 0 }), CRUZ_DE_ALBA_ROBLE).skipped?.reason,
+    ).toBe("incomplete_adopted_route");
+    // Adopted additional GLASS exists in Agora but Winerim has no glass price.
+    expect(
+      buildVinotecaReferencePlan(
+        wine({ winerimWineId: "51122", wineName: "Macan Clasico", bottleSalePrice: 90, glassSalePrice: 0 }),
+        MACAN_CLASICO,
+      ).skipped?.reason,
     ).toBe("adopted_format_would_be_lost");
   });
 
