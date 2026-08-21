@@ -845,8 +845,16 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
-        const previous = existingBeforeDetails.get(winerimId);
-        classifyWineChange(winerimId, previous, updateData, pricingStatus === "READY");
+        // Single classification point of the cycle, against the FINAL state.
+        // start ⇒ previous is the pre-list-upsert row and the payload is the
+        // merged list+detail state; enrich ⇒ previous is the pre-enrich row.
+        const previous = mode === "start"
+          ? preUpsertRows.get(winerimId)
+          : existingBeforeDetails.get(winerimId);
+        const finalPayload = mode === "start"
+          ? { ...(listPayloadsById.get(winerimId) || {}), ...updateData }
+          : updateData;
+        classifyWineChange(winerimId, previous, finalPayload, pricingStatus === "READY");
 
         await supabase
           .from("winerim_wines")
