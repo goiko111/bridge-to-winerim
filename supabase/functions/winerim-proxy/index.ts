@@ -834,16 +834,8 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
-        if (pricingStatus === "READY") {
-          readyProcessedIds.add(winerimId);
-        }
-
         const previous = existingBeforeDetails.get(winerimId);
-        if (!previous && pricingStatus === "READY") {
-          autoCreateCandidateIds.add(winerimId);
-        } else if (hasRelevantCatalogChange(previous, updateData)) {
-          autoUpdateCandidateIds.add(winerimId);
-        }
+        classifyWineChange(winerimId, previous, updateData, pricingStatus === "READY");
 
         await supabase
           .from("winerim_wines")
@@ -860,25 +852,12 @@ serve(async (req) => {
 
       const enrichmentCompletedAt = complete ? new Date().toISOString() : null;
 
-      if (readyProcessedIds.size > 0) {
-        const readyIds = Array.from(readyProcessedIds);
-        const publishedOrQueued = new Set<string>();
-        for (let i = 0; i < readyIds.length; i += 500) {
-          const chunk = readyIds.slice(i, i + 500);
-          const { data: trackedRows } = await supabase
-            .from("winerim_push_tracking")
-            .select("winerim_wine_id, sync_status")
-            .eq("connection_id", connectionId)
-            .in("winerim_wine_id", chunk)
-            .in("sync_status", ["QUEUED", "PUSHED", "VERIFIED"]);
-          for (const row of (trackedRows || []) as { winerim_wine_id: string }[]) {
-            publishedOrQueued.add(String(row.winerim_wine_id));
-          }
-        }
-        for (const id of readyIds) {
-          if (!publishedOrQueued.has(String(id))) autoCreateCandidateIds.add(String(id));
-        }
-      }
+      // NOTE: the former "READY but not tracked ⇒ CREATE" backfill was removed on
+      // purpose. It re-evaluated every unpublished wine on every pass, which is
+      // exactly the bulk wave we must not fire during service. Brand-new wines
+      // still reach CREATE through the fingerprint gate above; deliberate mass
+      // publishing stays a manual/explicit operation.
+
 
       // ── AUTO-PUSH TRIGGER (INCREMENTAL, differential) ──
       // Only queue wines that are new/unpublished or whose catalog-visible fields
