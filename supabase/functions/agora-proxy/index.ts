@@ -12921,11 +12921,11 @@ ${costPricesXml}
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} dryRun=${dryRun} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
 
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType, forceEvaluate,
+        totalWines: wines.length, eventType: evtType, forceEvaluate, dryRun,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
