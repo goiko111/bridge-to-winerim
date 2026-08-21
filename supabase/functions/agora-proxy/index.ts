@@ -9,6 +9,7 @@ import {
   VINOTECA_PREPARATION_TYPE_ID,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
   VINOTECA_ROOT_FAMILY_NAME,
+  vinotecaFormatId,
   vinotecaRegionKey,
   type VinotecaReferencePlan,
   type VinotecaSkippedReference,
@@ -17,6 +18,7 @@ import {
   baseProductPriceMap,
   saleFormatDifferenceReasons,
 } from "../_shared/agoraVinotecaProductDiff.ts";
+import { verifyVinotecaNativeFormatsImport } from "../_shared/agoraVinotecaPostImportVerify.ts";
 
 import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
