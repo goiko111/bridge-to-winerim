@@ -5789,7 +5789,7 @@ serve(async (req) => {
           lineData.push({
             provider_product_id: productId,
             name: productName,
-            format: normalizedFmt,
+            format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
             family,
             quantity: qty,
             unit_price: unitPrice,
@@ -6130,7 +6130,7 @@ serve(async (req) => {
               lineData.push({
                 provider_product_id: productId,
                 name: pName,
-                format: normalizedFmt,
+                format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
                 family: fam,
                 quantity: qty,
                 unit_price: uP,
@@ -6305,7 +6305,7 @@ serve(async (req) => {
 
             lineData.push({
               provider_product_id: productId,
-              name: pName, format: normalizedFmt, family: fam,
+              name: pName, format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }), family: fam,
               quantity: qty, unit_price: uP, total_amount: lineTotal,
               provider_sold_at: providerSoldAt.value,
               provider_sold_at_source: providerSoldAt.source,
@@ -6504,7 +6504,7 @@ serve(async (req) => {
             lineData.push({
               provider_product_id: productId,
               name: pName,
-              format: normalizedFmt,
+              format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }),
               family: fam,
               quantity: qty,
               unit_price: uP,
@@ -6853,7 +6853,7 @@ serve(async (req) => {
 
               lineData.push({
                 provider_product_id: productId,
-                name: pName, format: normalizedFmt, family: fam,
+                name: pName, format: canonicalAgoraSalesLineFormat({ connectionId, identity: salesIdentity, fallbackFormat: normalizedFmt }), family: fam,
                 quantity: qty, unit_price: uP, total_amount: lineTotal,
                 provider_sold_at: providerSoldAt.value,
                 provider_sold_at_source: providerSoldAt.source,
