@@ -14,6 +14,11 @@ import {
   type VinotecaSkippedReference,
 } from "../_shared/agoraVinotecaNativeFormats.ts";
 import {
+  baseProductPriceMap,
+  saleFormatDifferenceReasons,
+} from "../_shared/agoraVinotecaProductDiff.ts";
+
+import {
   AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX,
   AGORA_BUTTON_TEXT_WINE_NAME_ONLY,
   AGORA_SORT_ALPHABETICAL_WINE_NAME,
