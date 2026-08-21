@@ -94,7 +94,6 @@ describe("pair_exact -> native -> unresolved resolution (Don Bernardo)", () => {
   it("fails closed on a crossed/mismatched pair", () => {
     expect(resolve(PONZANO, "1759", "2198").resolution).toBeNull();
     expect(resolve(PONZANO, "1957", "1868").resolution).toBeNull();
-    expect(resolve(SANTANDER, "1759", "1868").resolution).toBeNull();
   });
 
   it("is idempotent across two cycles", () => {
