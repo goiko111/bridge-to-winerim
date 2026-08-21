@@ -665,8 +665,10 @@ serve(async (req) => {
           if (nf.glassStockId  != null) upsertPayload.glass_stock_id  = nf.glassStockId;
           if (nf.magnumStockId != null) upsertPayload.magnum_stock_id = nf.magnumStockId;
 
-          const previous = existingBeforeList.get(winerimId);
-          classifyWineChange(winerimId, previous, upsertPayload, pricingStatus === "READY");
+          // No classification here on purpose: the list row is sparse and would
+          // oscillate against the enriched state. Only remember it.
+          listPayloadsById.set(winerimId, { ...upsertPayload });
+
 
 
           await supabase
