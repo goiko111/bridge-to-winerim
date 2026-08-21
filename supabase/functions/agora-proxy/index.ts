@@ -6246,6 +6246,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
+              activeWineIds: salesActiveWineIds,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
@@ -6440,6 +6441,7 @@ serve(async (req) => {
               saleFormatId: line.SaleFormatId,
               legacyProviderProductId,
               resolutionMap,
+              activeWineIds: salesActiveWineIds,
             });
             const productId = salesIdentity.providerProductId;
             const providerSoldAt = extractAgoraProviderSoldAt(line, item, inv, day);
