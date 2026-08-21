@@ -958,7 +958,7 @@ async function loadVinotecaCatalogRoutes(
   const rows = await selectAllConnectionRows(
     supabaseClient,
     "agora_sales_variant_mappings",
-    "provider_product_id, sale_format_id, winerim_wine_id, format_type, status",
+    "provider_product_id, sale_format_id, winerim_wine_id, format_type, status, metadata_json",
     connectionId,
   );
   const grouped = new Map<string, Record<string, unknown>[]>();
@@ -987,7 +987,11 @@ async function loadVinotecaCatalogRoutes(
         continue;
       }
       formatIds[format] = saleFormatId;
-      if (saleFormatId === productId) {
+      const metadata = row.metadata_json && typeof row.metadata_json === "object"
+        ? row.metadata_json as Record<string, unknown>
+        : {};
+      const explicitlyBase = String(metadata.formatSource ?? "").trim().toUpperCase() === "BASE";
+      if (explicitlyBase || saleFormatId === productId) {
         if (baseFormat && baseFormat !== format) invalid = true;
         baseFormat = format;
       }
