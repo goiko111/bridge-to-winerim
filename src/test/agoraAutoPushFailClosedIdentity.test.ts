@@ -112,8 +112,9 @@ describe("auto-push fail-closed identity quarantine", () => {
   });
 
   it("never uses the quarantine list to resolve or adopt an identity", () => {
+    // Exactly one code read (the helper) plus its doc comment mention.
     const usages = source.match(/auto_push_fail_closed_winerim_ids/g) || [];
-    expect(usages).toHaveLength(1);
+    expect(usages).toHaveLength(2);
     const helperUsages = block.match(/autoPushFailClosedWinerimIds\(/g) || [];
     expect(helperUsages).toHaveLength(1);
   });
