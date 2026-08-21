@@ -23,7 +23,11 @@ const resolutionMap = new Map<string, AgoraSalesResolution>([
   ["3999111", { winerim_wine_id: "999111", format: "GLASS" }],
 ]);
 
-const activeWineIds = new Set(["232481", "37684", "227648"]);
+const activeWineFormats = new Map<string, Set<string>>([
+  ["232481", new Set(["BOTTLE", "GLASS", "MAGNUM"])],
+  ["37684", new Set(["BOTTLE", "GLASS"])],
+  ["227648", new Set(["BOTTLE"])],
+]);
 
 function resolve(connectionId: string, productId: unknown, saleFormatId: unknown) {
   return resolveAgoraSalesLineIdentityForConnection({
@@ -32,7 +36,7 @@ function resolve(connectionId: string, productId: unknown, saleFormatId: unknown
     saleFormatId,
     legacyProviderProductId: String(productId ?? ""),
     resolutionMap,
-    activeWineIds,
+    activeWineFormats,
   });
 }
 
@@ -83,15 +87,26 @@ describe("forward sales resolution (VINOTECA connections)", () => {
     expect(line.blockedReason).toBe("winerim_wine_inactive");
   });
 
-  it("fails closed for a native id without mapping or with mismatched identity", () => {
-    expect(resolve(PONZANO, 0, "3111222").blockedReason).toBe("native_mapping_missing");
+  it("fails closed for a native format without a positive price", () => {
+    expect(resolve(PONZANO, 0, "4037684").blockedReason).toBe("winerim_format_price_missing");
+  });
+
+  it("resolves a native id deterministically even without a mapping row", () => {
+    expect(resolve(SANTANDER, 0, "3037684")).toEqual({
+      providerProductId: "3037684",
+      resolution: { winerim_wine_id: "37684", format: "GLASS" },
+      source: "sale_format_first",
+    });
+  });
+
+  it("fails closed when an existing mapping contradicts the deterministic identity", () => {
     expect(resolveAgoraSalesLineIdentityForConnection({
       connectionId: PONZANO,
       productId: 0,
       saleFormatId: "3232481",
       legacyProviderProductId: "",
       resolutionMap: new Map([["3232481", { winerim_wine_id: "999", format: "GLASS" }]]),
-      activeWineIds,
+      activeWineFormats,
     }).blockedReason).toBe("native_identity_mismatch");
   });
 
