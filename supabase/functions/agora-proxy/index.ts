@@ -12898,7 +12898,10 @@ ${costPricesXml}
 
         if (!autoPushWritesEnabled) {
           wouldQueue++;
-          skippedReasons.push({ winerim_id: wine.winerim_id, reason: `would_queue:${formatTypes.join("+")}` });
+          skippedReasons.push({
+            winerim_id: wine.winerim_id,
+            reason: `${dryRun ? "dry_run_would_queue" : "would_queue"}:${formatTypes.join("+")}`,
+          });
           continue;
         }
 
