@@ -139,7 +139,9 @@ export type VinotecaSkippedReference = {
     | "missing_bottle_price"
     | "missing_product_id"
     | "missing_name"
-    | "incomplete_adopted_route";
+    | "incomplete_adopted_route"
+    | "adopted_format_would_be_lost"
+    | "inactive_wine";
 };
 
 export type VinotecaPriceInput = {
@@ -152,6 +154,8 @@ export type VinotecaPriceInput = {
   glassCostPrice?: unknown;
   magnumSalePrice?: unknown;
   magnumCostPrice?: unknown;
+  /** Explicit false retires the reference: no XML, never reactivated. */
+  isActive?: unknown;
 };
 
 function positiveAmount(value: unknown): number {
@@ -175,6 +179,12 @@ export function buildVinotecaReferencePlan(
 
   if (adoptedRoute === null) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
+  }
+
+  // A retired/inactive reference is never rebuilt, so a hidden Agora product
+  // outside the active Winerim catalog can never be turned visible again.
+  if (input.isActive === false) {
+    return { plan: null, skipped: { winerimWineId, wineName, reason: "inactive_wine" } };
   }
 
   if (normalizedId === null) {
@@ -226,6 +236,17 @@ export function buildVinotecaReferencePlan(
   }
   if (!formats.some((format) => format.isBase)) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
+  }
+  // Fail-closed: an adopted route exposes an existing Agora sale format that
+  // this Winerim state would silently drop (no positive price). Never rewrite
+  // the reference in that case.
+  if (adoptedRoute) {
+    for (const format of Object.keys(adoptedRoute.formatIds) as VinotecaFormat[]) {
+      if (!adoptedRoute.formatIds[format]) continue;
+      if (!formats.some((planned) => planned.format === format)) {
+        return { plan: null, skipped: { winerimWineId, wineName, reason: "adopted_format_would_be_lost" } };
+      }
+    }
   }
   formats.sort((left, right) => Number(right.isBase) - Number(left.isBase));
 

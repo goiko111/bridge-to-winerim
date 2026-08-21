@@ -5115,6 +5115,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         glassCostPrice: extractGlassCostPrice(wine, connection),
         magnumSalePrice: wine.magnum_sale_price,
         magnumCostPrice: wine.magnum_purchase_price,
+        isActive: wine.is_active,
       }, hasAdoptedRoute ? adoptedRoute : undefined);
 
       if (!plan) {
