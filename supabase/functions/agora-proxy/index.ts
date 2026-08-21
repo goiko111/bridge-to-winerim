@@ -683,17 +683,25 @@ function agoraProductDifferenceReasons(
     ? scopedPriceListIds.filter((id) => Object.prototype.hasOwnProperty.call(expectedPrices, id))
     : Object.keys(expectedPrices);
 
+  const hasSaleFormats = /<AdditionalSaleFormats\b/i.test(expected.xml);
+  const basePriceLabel = hasSaleFormats ? "BOTTLE_PRICE_LIST" : "PRICE_LIST";
+
   for (const priceListId of priceListIds) {
     if (!Object.prototype.hasOwnProperty.call(actualPrices, priceListId)) {
-      differences.push(`PRICE_LIST_${priceListId}_MISSING`);
+      differences.push(`${basePriceLabel}_${priceListId}_MISSING`);
     } else if (expectedPrices[priceListId] !== actualPrices[priceListId]) {
-      differences.push(`PRICE_LIST_${priceListId}_MISMATCH`);
+      differences.push(`${basePriceLabel}_${priceListId}_MISMATCH`);
     }
   }
+
+  // GLASS/MAGNUM live inside AdditionalSaleFormats and are compared by
+  // SaleFormatId, never as independent Products.
+  differences.push(...saleFormatDifferenceReasons(expected.xml, actual.xml, scopedPriceListIds));
 
   if (priceListIds.length === 0) differences.push("NO_SCOPED_PRICE_LIST");
   return differences;
 }
+
 
 function agoraProductMatchesExpectedXml(
   expected: { xml: string; attrs: Record<string, string> },
