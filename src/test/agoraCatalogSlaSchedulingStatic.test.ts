@@ -57,7 +57,7 @@ describe("Agora catalog SLA scheduling", () => {
     expect(catalogBlock).toContain("auto_push_update_winerim_ids");
     expect(catalogBlock).toContain("auto_push_update_canary_winerim_ids");
     expect(catalogBlock).toContain("const prioritizeFirstBatch =");
-    expect(catalogBlock.match(/prioritizeFirstBatch\(/g) || []).toHaveLength(3);
+    expect(catalogBlock.match(/prioritizeFirstBatch\(/g) || []).toHaveLength(2);
     // fail-closed: no allowlist or later pages keep legacy ordering
     expect(catalogBlock).toContain("if (catalogPriorityWineIds.length === 0 || detailOffset !== 0) return ids;");
   });
