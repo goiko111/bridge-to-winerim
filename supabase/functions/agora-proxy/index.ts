@@ -14,6 +14,8 @@ import {
   trackingAgoraProductIdForFormat,
   vinotecaFormatId,
   vinotecaRegionKey,
+  type VinotecaCatalogRoute,
+  type VinotecaFormat,
   type VinotecaReferencePlan,
   type VinotecaSkippedReference,
 } from "../_shared/agoraVinotecaNativeFormats.ts";
@@ -940,6 +942,61 @@ async function loadSalesPairMappings(
     );
   }
   return pairs;
+}
+
+// Exact catalog identities for wines adopted from an existing Agora catalog.
+// A route is valid only when every row agrees on the parent ProductId and one
+// format uses that ProductId as its SaleFormatId (Agora's base format).
+// Partial or conflicting routes are retained as an invalid sentinel so the
+// builder fails closed instead of creating a deterministic duplicate.
+// deno-lint-ignore no-explicit-any
+async function loadVinotecaCatalogRoutes(
+  supabaseClient: any,
+  connectionId: string,
+): Promise<Map<string, VinotecaCatalogRoute | null> | undefined> {
+  if (!isAgoraSaleFormatFirstConnection(connectionId)) return undefined;
+  const rows = await selectAllConnectionRows(
+    supabaseClient,
+    "agora_sales_variant_mappings",
+    "provider_product_id, sale_format_id, winerim_wine_id, format_type, status",
+    connectionId,
+  );
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of (rows || []) as Record<string, unknown>[]) {
+    const status = String(row.status ?? "").trim().toUpperCase();
+    if (status && status !== "CONFIRMED" && status !== "ACTIVE") continue;
+    const wineId = String(row.winerim_wine_id ?? "").trim();
+    if (!wineId) continue;
+    const group = grouped.get(wineId) || [];
+    group.push(row);
+    grouped.set(wineId, group);
+  }
+
+  const routes = new Map<string, VinotecaCatalogRoute | null>();
+  for (const [wineId, group] of grouped) {
+    const productIds = new Set(group.map((row) => String(row.provider_product_id ?? "").trim()).filter(Boolean));
+    const formatIds: Partial<Record<VinotecaFormat, string>> = {};
+    let invalid = productIds.size !== 1;
+    let baseFormat: VinotecaFormat | null = null;
+    const productId = [...productIds][0] || "";
+    for (const row of group) {
+      const format = String(row.format_type ?? "").trim().toUpperCase() as VinotecaFormat;
+      const saleFormatId = String(row.sale_format_id ?? "").trim();
+      if (!(["BOTTLE", "GLASS", "MAGNUM"] as string[]).includes(format) || !saleFormatId || formatIds[format]) {
+        invalid = true;
+        continue;
+      }
+      formatIds[format] = saleFormatId;
+      if (saleFormatId === productId) {
+        if (baseFormat && baseFormat !== format) invalid = true;
+        baseFormat = format;
+      }
+    }
+    routes.set(wineId, !invalid && productId && baseFormat
+      ? { productId, baseFormat, formatIds }
+      : null);
+  }
+  return routes;
 }
 
 
@@ -4612,7 +4669,7 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
-function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }>; vinoteca?: Record<string, unknown> | null } {
+function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>, vinotecaCatalogRoutes?: Map<string, VinotecaCatalogRoute | null>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }>; vinoteca?: Record<string, unknown> | null } {
   const families = (masterData.families_json || []) as { Id: string; Name: string }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
@@ -5041,6 +5098,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   if (vinotecaNativeFormats) {
     for (const wine of wines) {
+      const wineId = String(wine.winerim_id || wine.id || "");
+      const hasAdoptedRoute = vinotecaCatalogRoutes?.has(wineId) || false;
+      const adoptedRoute = hasAdoptedRoute ? vinotecaCatalogRoutes?.get(wineId) : undefined;
       const { plan, skipped } = buildVinotecaReferencePlan({
         winerimWineId: wine.winerim_id || wine.id,
         wineName: wine.name,
@@ -5051,7 +5111,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         glassCostPrice: extractGlassCostPrice(wine, connection),
         magnumSalePrice: wine.magnum_sale_price,
         magnumCostPrice: wine.magnum_purchase_price,
-      });
+      }, hasAdoptedRoute ? adoptedRoute : undefined);
 
       if (!plan) {
         if (skipped) vinotecaSkipped.push(skipped);
@@ -5073,14 +5133,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
       vinotecaPlans.push(plan);
       const familyResult = vinotecaFamilyForRegion(plan.region);
-      const bottleFormat = plan.formats[0];
-      const extraFormats = plan.formats.slice(1);
+      const baseFormat = plan.formats.find((format) => format.isBase)!;
+      const extraFormats = plan.formats.filter((format) => !format.isBase);
       const productColor = agoraProductColor(connection, extractWineType(wine));
-      const bottleCost = bottleFormat.costPrice.toFixed(2);
+      const baseCost = baseFormat.costPrice.toFixed(2);
 
       validationResults.push({
         winerimId: plan.winerimWineId,
-        formatType: "BOTTLE",
+        formatType: baseFormat.format,
         validation: { valid: true, warnings: [], missingFields: [] },
       });
 
@@ -5096,10 +5156,10 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         renderXml: (finalProductName: string, finalButtonText: string) => {
           const buttonText = String(finalButtonText || "").slice(0, 20);
           const pricesXml = priceLists.map((pl) =>
-            `        <Price PriceListId="${pl.Id}" MainPrice="${bottleFormat.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
+            `        <Price PriceListId="${pl.Id}" MainPrice="${baseFormat.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
           ).join("\n");
           const costPricesXml = warehouses.map((wh) =>
-            `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${bottleCost}" />`
+            `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${baseCost}" />`
           ).join("\n");
           const saleFormatsXml = extraFormats.length > 0
             ? `      <AdditionalSaleFormats>\n${extraFormats.map((format) => {
@@ -5111,7 +5171,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
               return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
-          return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${bottleCost}">
+          return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${baseCost}">
       <Barcodes />
       <Prices>
 ${pricesXml}
@@ -7169,6 +7229,12 @@ serve(async (req) => {
         connection,
         ["BOTTLE", "GLASS", "MAGNUM"],
         await loadCustomFamilyMappings(connectionId),
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        await loadVinotecaCatalogRoutes(supabase, connectionId),
       );
 
       const existingIdentityIds = (dryRun.vinoteca?.plans as VinotecaReferencePlan[] | undefined || [])
@@ -10750,10 +10816,15 @@ ${costPricesXml}
           connection.id,
           (connection.provider_config || {}) as Record<string, unknown>,
         );
+        const vinotecaCatalogRoutes = await loadVinotecaCatalogRoutes(supabase, task.connection_id);
+        const adoptedCatalogRoute = vinotecaCatalogRoutes?.get(String(winerimWineId));
         const productIdByFormat = Object.fromEntries(
           fmtTypes.map((fmt: string) => [
             fmt,
-            (vinotecaNativeFormatsTask ? vinotecaFormatId(fmt, winerimWineId) : null)
+            (vinotecaNativeFormatsTask && adoptedCatalogRoute
+              ? adoptedCatalogRoute.formatIds[fmt as VinotecaFormat]
+              : null)
+              || (vinotecaNativeFormatsTask ? vinotecaFormatId(fmt, winerimWineId) : null)
               || deterministicAgoraProductId(connection, wineArr[0], fmt),
           ]),
         ) as Record<string, string>;
@@ -10823,6 +10894,7 @@ ${costPricesXml}
           isGeoMode ? wineArr : undefined,
           frozenPriceListIds,
           queuedProductNameOverrides,
+          vinotecaCatalogRoutes,
         );
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
@@ -11248,12 +11320,14 @@ ${costPricesXml}
             await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
               sync_status: "FAILED",
               task_id: task.id,
-              agora_product_id: trackingAgoraProductIdForFormat({
-                vinotecaNativeFormats: vinotecaNativeFormatsTask,
-                format: fmt,
-                winerimWineId,
-                genericFallback: productIdByFormat[fmt],
-              }) || undefined,
+              agora_product_id: (vinotecaNativeFormatsTask
+                ? productIdByFormat[fmt]
+                : trackingAgoraProductIdForFormat({
+                  vinotecaNativeFormats: false,
+                  format: fmt,
+                  winerimWineId,
+                  genericFallback: productIdByFormat[fmt],
+                })) || undefined,
               last_error: failMsg.substring(0, 500),
               pushed_at: new Date().toISOString(),
             });
@@ -11303,7 +11377,7 @@ ${costPricesXml}
 
         await supabase.from("outbound_tasks").update({
           status: "SUCCESS", last_error: null,
-          external_id: ((vinotecaNativeFormatsTask ? vinotecaFormatId("BOTTLE", winerimWineId) : null)
+          external_id: ((vinotecaNativeFormatsTask ? vinotecaPlanForTask?.productId : null)
             || productIdByFormat[fmtTypes[0]]) || null,
         }).eq("id", task.id);
 
@@ -11313,12 +11387,14 @@ ${costPricesXml}
         const pushStatus = taskVerification.success ? "VERIFIED" : "PUSHED";
         for (const fmt of fmtTypes) {
           const fmtProductId = productIdByFormat[fmt];
-          const trackedProductId = trackingAgoraProductIdForFormat({
-            vinotecaNativeFormats: vinotecaNativeFormatsTask,
-            format: fmt,
-            winerimWineId,
-            genericFallback: fmtProductId,
-          });
+          const trackedProductId = vinotecaNativeFormatsTask
+            ? fmtProductId
+            : trackingAgoraProductIdForFormat({
+              vinotecaNativeFormats: false,
+              format: fmt,
+              winerimWineId,
+              genericFallback: fmtProductId,
+            });
           await upsertPushTracking(supabase, task.connection_id, winerimWineId, fmt, {
             sync_status: pushStatus,
             task_id: task.id,
@@ -12832,6 +12908,7 @@ ${costPricesXml}
       let updateDiffCustomMappings: Record<string, { id: string; name: string }> | undefined = undefined;
       let updateDiffExistingProducts: { Id: string; Name: string }[] = [];
       let updateDiffActiveWines: any[] = [];
+      let updateDiffVinotecaRoutes: Map<string, VinotecaCatalogRoute | null> | undefined;
       const updateDiffScopedPriceListIds: string[] = Array.isArray((autoPushScopePayload as any)._effective_price_list_ids)
         ? ((autoPushScopePayload as any)._effective_price_list_ids as string[])
         : [];
@@ -12859,6 +12936,7 @@ ${costPricesXml}
         }
         try {
           updateDiffCustomMappings = await loadCustomFamilyMappings(connectionId);
+          updateDiffVinotecaRoutes = await loadVinotecaCatalogRoutes(supabase, connectionId);
         } catch (_e) {
           // Non-fatal — expected XML generation will use master data defaults.
         }
@@ -13103,6 +13181,7 @@ ${costPricesXml}
             updateDiffIsGeoMode ? [wine] : undefined,
             updateDiffScopedPriceListIds,
             expectedUpdateNameOverrides,
+            updateDiffVinotecaRoutes,
           );
           const expectedProducts = extractXmlElementsWithAttrs(expectedUpdateXml, "Product");
           const updateDiffReasons: string[] = [];
@@ -13316,11 +13395,19 @@ ${costPricesXml}
       });
       const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
       const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
+      const auditVinotecaRoutes = await loadVinotecaCatalogRoutes(supabase, connectionId);
+      const auditVinotecaNative = isVinotecaNativeFormatsConnection(
+        connectionId,
+        (connection.provider_config || {}) as Record<string, unknown>,
+      );
       const expectedOwnershipByProductId = new Map<string, { winerimWineId: string; format: string }[]>();
       const expectedAuditValidationKeys = new Set<string>();
       for (const wine of wines) {
         for (const format of ["BOTTLE", "GLASS", "MAGNUM"]) {
-          const productId = deterministicAgoraProductId(connection, wine, format);
+          const adoptedRoute = auditVinotecaRoutes?.get(String(wine.winerim_id));
+          const productId = (adoptedRoute?.formatIds[format as VinotecaFormat])
+            || (auditVinotecaNative ? vinotecaFormatId(format, wine.winerim_id) : null)
+            || deterministicAgoraProductId(connection, wine, format);
           const owners = expectedOwnershipByProductId.get(productId) || [];
           owners.push({
               winerimWineId: String(wine.winerim_id),
@@ -13353,6 +13440,8 @@ ${costPricesXml}
         isGeoMode ? geoConfig : undefined,
         isGeoMode ? wines : undefined,
         scope.selectedPriceListIds,
+        undefined,
+        auditVinotecaRoutes,
       );
       const validationFailures = validationResults.filter((item) =>
         !item.validation.valid && (

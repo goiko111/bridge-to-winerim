@@ -157,18 +157,18 @@ export function verifyVinotecaNativeFormatsImport(params: {
     result.summary.failed = plan.formats.length;
     fail({
       code: "NOT_FOUND",
-      message: `Product ${plan.productId} (BOTTLE ${plan.wineName}) not found in Agora`,
-      context: { productId: plan.productId, format: "BOTTLE" },
+      message: `Product ${plan.productId} (${plan.baseFormat} ${plan.wineName}) not found in Agora`,
+      context: { productId: plan.productId, format: plan.baseFormat },
     });
     for (const pl of scopedPriceLists) {
       result.missing_prices.push({
-        product_erp_id: `${plan.winerimWineId}:BOTTLE`,
+        product_erp_id: `${plan.winerimWineId}:${plan.baseFormat}`,
         agora_product_id: plan.productId,
         price_list_id: pl.id,
         price_list_name: pl.name,
         issue: "missing",
         name: plan.wineName,
-        format: "BOTTLE",
+        format: plan.baseFormat,
         affected_sale_centers: priceListToSaleCenters[pl.id] || [],
       });
       noteAffected(pl.id);
@@ -176,13 +176,13 @@ export function verifyVinotecaNativeFormatsImport(params: {
     return result;
   }
 
-  let bottleOk = true;
+  let baseOk = true;
 
   // ── Family ──
   const expectedFamilyId = attr(expected.attrs, "FamilyId");
   const actualFamilyId = attr(actual.attrs, "FamilyId");
   if (expectedFamilyId && actualFamilyId !== expectedFamilyId) {
-    bottleOk = false;
+    baseOk = false;
     result.verified_family = false;
     fail({
       code: "FAMILY_MISMATCH",
@@ -196,7 +196,7 @@ export function verifyVinotecaNativeFormatsImport(params: {
   const visible = isTruthyAgoraFlag(attr(actual.attrs, "SaleableAsMain")) ||
     isTruthyAgoraFlag(attr(actual.attrs, "UseAsDirectSale"));
   if (!visible) {
-    bottleOk = false;
+    baseOk = false;
     fail({
       code: "PRODUCT_NOT_VISIBLE",
       message: `Product ${plan.productId} is not saleable in Agora (SaleableAsMain/UseAsDirectSale false)`,
@@ -209,7 +209,7 @@ export function verifyVinotecaNativeFormatsImport(params: {
   const actualPrepType = attr(actual.attrs, "PreparationTypeId");
   const actualPrepOrder = attr(actual.attrs, "PreparationOrderId");
   if (actualPrepType !== VINOTECA_PREPARATION_TYPE_ID || actualPrepOrder !== VINOTECA_PREPARATION_ORDER_ID) {
-    bottleOk = false;
+    baseOk = false;
     result.verified_preparation = false;
     fail({
       code: "PREPARATION_MISMATCH",
@@ -223,7 +223,7 @@ export function verifyVinotecaNativeFormatsImport(params: {
     });
   }
 
-  // ── Base Product prices (BOTTLE), sale-format prices excluded ──
+  // ── Base Product prices, sale-format prices excluded ──
   const expectedBasePrices = baseProductPriceMap(expected.xml);
   const actualBasePrices = baseProductPriceMap(actual.xml);
   const priceListIds = scopedPriceLists.length > 0
@@ -234,76 +234,76 @@ export function verifyVinotecaNativeFormatsImport(params: {
     const expectedPrice = expectedBasePrices[pl.id];
     const actualPrice = actualBasePrices[pl.id];
     if (actualPrice === undefined) {
-      bottleOk = false;
+      baseOk = false;
       result.verified_prices = false;
       fail({
         code: "PRICE_MISSING",
         message: `Product ${plan.productId}: missing price for PriceList ${pl.id} (${pl.name})`,
         field: "MainPrice",
-        context: { productId: plan.productId, priceListId: pl.id, format: "BOTTLE" },
+        context: { productId: plan.productId, priceListId: pl.id, format: plan.baseFormat },
       });
       result.missing_prices.push({
-        product_erp_id: `${plan.winerimWineId}:BOTTLE`,
+        product_erp_id: `${plan.winerimWineId}:${plan.baseFormat}`,
         agora_product_id: plan.productId,
         price_list_id: pl.id,
         price_list_name: pl.name,
         issue: "missing",
         name: plan.wineName,
-        format: "BOTTLE",
+        format: plan.baseFormat,
         affected_sale_centers: priceListToSaleCenters[pl.id] || [],
       });
       noteAffected(pl.id);
       continue;
     }
     if (Number(actualPrice) <= 0) {
-      bottleOk = false;
+      baseOk = false;
       result.verified_prices = false;
       fail({
         code: "PRICE_ZERO",
         message: `Product ${plan.productId}: PriceList ${pl.id} (${pl.name}) stored a non-positive price ${actualPrice}`,
         field: "MainPrice",
-        context: { productId: plan.productId, priceListId: pl.id, format: "BOTTLE" },
+        context: { productId: plan.productId, priceListId: pl.id, format: plan.baseFormat },
       });
       result.missing_prices.push({
-        product_erp_id: `${plan.winerimWineId}:BOTTLE`,
+        product_erp_id: `${plan.winerimWineId}:${plan.baseFormat}`,
         agora_product_id: plan.productId,
         price_list_id: pl.id,
         price_list_name: pl.name,
         issue: "zero",
         name: plan.wineName,
-        format: "BOTTLE",
+        format: plan.baseFormat,
         affected_sale_centers: priceListToSaleCenters[pl.id] || [],
       });
       noteAffected(pl.id);
       continue;
     }
     if (actualPrice !== expectedPrice) {
-      bottleOk = false;
+      baseOk = false;
       result.verified_prices = false;
       fail({
         code: "PRICE_MISMATCH",
         message: `Product ${plan.productId}: PriceList ${pl.id} (${pl.name}) expected ${expectedPrice}, got ${actualPrice}`,
         field: "MainPrice",
         context: {
-          productId: plan.productId, priceListId: pl.id, format: "BOTTLE",
+          productId: plan.productId, priceListId: pl.id, format: plan.baseFormat,
           expected: expectedPrice, actual: actualPrice,
         },
       });
       result.missing_prices.push({
-        product_erp_id: `${plan.winerimWineId}:BOTTLE`,
+        product_erp_id: `${plan.winerimWineId}:${plan.baseFormat}`,
         agora_product_id: plan.productId,
         price_list_id: pl.id,
         price_list_name: pl.name,
         issue: "invalid",
         name: plan.wineName,
-        format: "BOTTLE",
+        format: plan.baseFormat,
         affected_sale_centers: priceListToSaleCenters[pl.id] || [],
       });
       noteAffected(pl.id);
     }
   }
 
-  if (bottleOk) result.summary.ok++;
+  if (baseOk) result.summary.ok++;
   else result.summary.failed++;
 
   // ── Native sale formats (GLASS / MAGNUM) inside AdditionalSaleFormats ──
@@ -312,7 +312,7 @@ export function verifyVinotecaNativeFormatsImport(params: {
   const expectedFormatPrices = saleFormatPriceMaps(expected.xml);
   const actualFormatPrices = saleFormatPriceMaps(actual.xml);
 
-  for (const format of plan.formats.filter((f) => f.format !== "BOTTLE")) {
+  for (const format of plan.formats.filter((f) => !f.isBase)) {
     let formatOk = true;
     const actualEl = actualFormatEls.get(format.agoraId);
 
