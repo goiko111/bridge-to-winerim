@@ -130,6 +130,70 @@ export type VinotecaCatalogRoute = {
   formatIds: Partial<Record<VinotecaFormat, string>>;
 };
 
+export type VinotecaCatalogRouteRow = {
+  provider_product_id?: unknown;
+  sale_format_id?: unknown;
+  format_type?: unknown;
+  evidence?: unknown;
+};
+
+/**
+ * Selects a complete compound route while tolerating stale flat mappings.
+ * A compound Product with BOTTLE+GLASS must beat an older standalone GLASS
+ * row. Equal-size valid candidates remain ambiguous and fail closed.
+ */
+export function selectVinotecaCatalogRoute(
+  rows: VinotecaCatalogRouteRow[],
+): VinotecaCatalogRoute | null {
+  const grouped = new Map<string, VinotecaCatalogRouteRow[]>();
+  for (const row of rows) {
+    const productId = String(row.provider_product_id ?? "").trim();
+    if (!productId) continue;
+    const group = grouped.get(productId) || [];
+    group.push(row);
+    grouped.set(productId, group);
+  }
+
+  const candidates: Array<VinotecaCatalogRoute & { formatCount: number }> = [];
+  for (const [productId, group] of grouped) {
+    const formatIds: Partial<Record<VinotecaFormat, string>> = {};
+    let baseFormat: VinotecaFormat | null = null;
+    let invalid = false;
+    for (const row of group) {
+      const format = String(row.format_type ?? "").trim().toUpperCase() as VinotecaFormat;
+      const saleFormatId = String(row.sale_format_id ?? "").trim();
+      if (!(["BOTTLE", "GLASS", "MAGNUM"] as string[]).includes(format) || !saleFormatId || formatIds[format]) {
+        invalid = true;
+        continue;
+      }
+      formatIds[format] = saleFormatId;
+      const metadata = row.evidence && typeof row.evidence === "object"
+        ? row.evidence as Record<string, unknown>
+        : {};
+      const explicitlyBase = String(metadata.formatSource ?? "").trim().toUpperCase() === "BASE";
+      if (explicitlyBase || saleFormatId === productId) {
+        if (baseFormat && baseFormat !== format) invalid = true;
+        baseFormat = format;
+      }
+    }
+    if (!invalid && baseFormat) {
+      candidates.push({
+        productId,
+        baseFormat,
+        formatIds,
+        formatCount: Object.keys(formatIds).length,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.formatCount - a.formatCount);
+  if (candidates.length === 0 || (
+    candidates.length > 1 && candidates[0].formatCount === candidates[1].formatCount
+  )) return null;
+  const { formatCount: _formatCount, ...route } = candidates[0];
+  return route;
+}
+
 export type VinotecaSkippedReference = {
   winerimWineId: string;
   wineName: string;

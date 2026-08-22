@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { trackingAgoraProductIdForFormat } from "../../supabase/functions/_shared/agoraVinotecaNativeFormats";
+import {
+  selectVinotecaCatalogRoute,
+  trackingAgoraProductIdForFormat,
+} from "../../supabase/functions/_shared/agoraVinotecaNativeFormats";
 
 const PROXY = readFileSync("supabase/functions/agora-proxy/index.ts", "utf8");
 
@@ -80,5 +83,24 @@ describe("VINOTECA tracking identities", () => {
     expect(PROXY.slice(routePlan, taskSuccess)).toContain('formatSource: format.isBase ? "BASE" : "ADDITIONAL"');
     expect(PROXY.slice(routePersistence, taskSuccess)).toContain("VINOTECA_COMPOUND_ROUTE_PERSISTENCE_FAILED");
     expect(taskSuccess).toBeGreaterThan(routePersistence);
+  });
+
+  it("prefers a complete compound route over a stale standalone format", () => {
+    expect(selectVinotecaCatalogRoute([
+      { provider_product_id: "761273", sale_format_id: "761273", format_type: "BOTTLE" },
+      { provider_product_id: "3261273", sale_format_id: "3261273", format_type: "GLASS" },
+      { provider_product_id: "761273", sale_format_id: "3261273", format_type: "GLASS" },
+    ])).toEqual({
+      productId: "761273",
+      baseFormat: "BOTTLE",
+      formatIds: { BOTTLE: "761273", GLASS: "3261273" },
+    });
+  });
+
+  it("fails closed when two valid routes have equal coverage", () => {
+    expect(selectVinotecaCatalogRoute([
+      { provider_product_id: "761273", sale_format_id: "761273", format_type: "BOTTLE" },
+      { provider_product_id: "3261273", sale_format_id: "3261273", format_type: "GLASS" },
+    ])).toBeNull();
   });
 });

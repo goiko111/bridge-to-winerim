@@ -15,6 +15,7 @@ import {
   vinotecaFormatId,
   vinotecaRegionKey,
   findAdoptableVinotecaRegionFamily,
+  selectVinotecaCatalogRoute,
   type VinotecaCatalogRoute,
   type VinotecaFormat,
   type VinotecaReferencePlan,
@@ -975,31 +976,7 @@ async function loadVinotecaCatalogRoutes(
 
   const routes = new Map<string, VinotecaCatalogRoute | null>();
   for (const [wineId, group] of grouped) {
-    const productIds = new Set(group.map((row) => String(row.provider_product_id ?? "").trim()).filter(Boolean));
-    const formatIds: Partial<Record<VinotecaFormat, string>> = {};
-    let invalid = productIds.size !== 1;
-    let baseFormat: VinotecaFormat | null = null;
-    const productId = [...productIds][0] || "";
-    for (const row of group) {
-      const format = String(row.format_type ?? "").trim().toUpperCase() as VinotecaFormat;
-      const saleFormatId = String(row.sale_format_id ?? "").trim();
-      if (!(["BOTTLE", "GLASS", "MAGNUM"] as string[]).includes(format) || !saleFormatId || formatIds[format]) {
-        invalid = true;
-        continue;
-      }
-      formatIds[format] = saleFormatId;
-      const metadata = row.evidence && typeof row.evidence === "object"
-        ? row.evidence as Record<string, unknown>
-        : {};
-      const explicitlyBase = String(metadata.formatSource ?? "").trim().toUpperCase() === "BASE";
-      if (explicitlyBase || saleFormatId === productId) {
-        if (baseFormat && baseFormat !== format) invalid = true;
-        baseFormat = format;
-      }
-    }
-    routes.set(wineId, !invalid && productId && baseFormat
-      ? { productId, baseFormat, formatIds }
-      : null);
+    routes.set(wineId, selectVinotecaCatalogRoute(group));
   }
   return routes;
 }
