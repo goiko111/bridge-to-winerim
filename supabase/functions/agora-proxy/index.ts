@@ -9,10 +9,12 @@ import {
   isVinotecaNativeFormatsConnection,
   VINOTECA_PREPARATION_ORDER_ID,
   VINOTECA_PREPARATION_TYPE_ID,
+  VINOTECA_REGION_FAMILY_COLOR,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
   VINOTECA_ROOT_FAMILY_NAME,
   trackingAgoraProductIdForFormat,
   vinotecaFormatId,
+  vinotecaRegionFamilyOrder,
   vinotecaRegionKey,
   findAdoptableVinotecaRegionFamily,
   selectVinotecaCatalogRoute,
@@ -4648,7 +4650,16 @@ function isTopRegion(country: string, region: string, geoConfig: GeographicFamil
 // ── XML IMPORT GENERATOR (HARDENED) ──
 // deno-lint-ignore no-explicit-any
 function generateImportXml(wines: any[], masterData: any, connection: any, formatTypes: string[], customFamilyMappings?: Record<string, { id: string; name: string }>, forceEmptyPreparation = false, geographicConfig?: GeographicFamilyConfig, allWinesForGeo?: any[], explicitPriceListIds?: string[], productNameOverrides?: Record<string, string>, vinotecaCatalogRoutes?: Map<string, VinotecaCatalogRoute | null>): { xml: string; validationResults: { winerimId: string; formatType: string; validation: WineValidationResult }[]; productLabelsById: Record<string, { name: string; buttonText: string }>; vinoteca?: Record<string, unknown> | null } {
-  const families = (masterData.families_json || []) as { Id: string; Name: string }[];
+  const families = (masterData.families_json || []) as {
+    Id: string;
+    Name: string;
+    ParentFamilyId?: string;
+    ShowInPos?: string | boolean;
+    DeletionDate?: string;
+    ButtonText?: string;
+    Color?: string;
+    Order?: string;
+  }[];
   const vats = (masterData.vats_json || []) as { Id: string; Name: string; VatRate: string }[];
   // Filter out deleted PriceLists — they must never appear in generated XML
   const allPriceListsRaw = (masterData.price_lists_json || []) as Record<string, unknown>[];
@@ -5003,7 +5014,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   }
 
   const newFamilies: { id: string; name: string; color?: string; buttonText?: string }[] = [];
-  const newFamilyHierarchy: { id: string; name: string; parentId: string; color?: string; buttonText?: string }[] = [];
+  const newFamilyHierarchy: { id: string; name: string; parentId: string; color?: string; buttonText?: string; order?: number }[] = [];
   const useCommercialCodeSort = shouldSortAgoraProductsByCommercialCode(connection);
   const useAlphabeticalWineNameSort = shouldSortAgoraProductsAlphabetically(connection);
   const codePrefixOrder = commercialCodePrefixOrder(connection);
@@ -5024,6 +5035,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
   const vinotecaPlans: VinotecaReferencePlan[] = [];
   const vinotecaSkipped: VinotecaSkippedReference[] = [];
   const vinotecaRegionFamilies = new Map<string, { id: string; name: string }>();
+  let vinotecaRootFamilyId = "";
 
   function vinotecaFamilyForRegion(region: string): { id: string; name: string } {
     const rootFamily = families.find((family) =>
@@ -5033,6 +5045,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       throw new Error(`${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: root family "${VINOTECA_ROOT_FAMILY_NAME}" not found in Agora master data`);
     }
     const rootId = String(rootFamily.Id);
+    vinotecaRootFamilyId = rootId;
     const key = vinotecaRegionKey(region);
     const cached = vinotecaRegionFamilies.get(key);
     if (cached) return cached;
@@ -5063,8 +5076,17 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         id: regionId,
         name: technicalName,
         parentId: rootId,
-        color: agoraProductColor(connection, null),
+        color: VINOTECA_REGION_FAMILY_COLOR,
         buttonText: region,
+      });
+    } else if (String(existingRegion?.Color || "").toUpperCase() !== VINOTECA_REGION_FAMILY_COLOR) {
+      newFamilyHierarchy.push({
+        id: regionId,
+        name: existingRegionName,
+        parentId: rootId,
+        color: VINOTECA_REGION_FAMILY_COLOR,
+        buttonText: String(existingRegion?.ButtonText || region),
+        order: Number(existingRegion?.Order) || undefined,
       });
     }
 
@@ -5164,6 +5186,24 @@ ${costPricesXml}
 
         },
       });
+    }
+
+    if (vinotecaRootFamilyId && newFamilyHierarchy.length > 0) {
+      const visibleSiblingLabels = families
+        .filter((family) =>
+          String(family.ParentFamilyId || "") === vinotecaRootFamilyId &&
+          ["true", "1"].includes(String(family.ShowInPos || "").toLowerCase()) &&
+          !String(family.DeletionDate || "").trim()
+        )
+        .map((family) => String(family.ButtonText || family.Name || ""));
+      const plannedLabels = newFamilyHierarchy
+        .filter((family) => family.parentId === vinotecaRootFamilyId)
+        .map((family) => String(family.buttonText || family.name));
+      const allRegionLabels = [...visibleSiblingLabels, ...plannedLabels];
+      for (const family of newFamilyHierarchy) {
+        if (family.parentId !== vinotecaRootFamilyId) continue;
+        family.order = vinotecaRegionFamilyOrder(family.buttonText || family.name, allRegionLabels);
+      }
     }
   }
 
@@ -5280,7 +5320,7 @@ ${costPricesXml}
     }
     // Then: hierarchical families (with parent)
     for (const f of newFamilyHierarchy) {
-      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.buttonText || f.name, 20))}" Color="${f.color || "#8B0000"}" Order="100" ParentFamilyId="${f.parentId}" />\n`;
+      xml += `    <Family Id="${f.id}" Name="${escapeXml(f.name)}" ShowInPos="true" ButtonText="${escapeXml(truncate(f.buttonText || f.name, 20))}" Color="${f.color || "#8B0000"}" Order="${f.order || 100}" ParentFamilyId="${f.parentId}" />\n`;
     }
     xml += `  </Families>\n`;
   }

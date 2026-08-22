@@ -19,6 +19,7 @@ export const VINOTECA_NATIVE_FORMATS_CONNECTION_IDS: readonly string[] = [
 ];
 
 export const VINOTECA_ROOT_FAMILY_NAME = "VINOTECA ABIERTA";
+export const VINOTECA_REGION_FAMILY_COLOR = "#722F37";
 export const VINOTECA_PREPARATION_TYPE_ID = "6";
 export const VINOTECA_PREPARATION_ORDER_ID = "2";
 
@@ -99,6 +100,21 @@ export function vinotecaRegionKey(value: unknown): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+/** Stable 1-based position for a region among its visible siblings. */
+export function vinotecaRegionFamilyOrder(
+  region: unknown,
+  siblingRegions: unknown[],
+): number {
+  const targetKey = vinotecaRegionKey(region);
+  const keys = [...new Set(
+    [...(siblingRegions || []), region]
+      .map(vinotecaRegionKey)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right, "es"));
+  const index = keys.indexOf(targetKey);
+  return index >= 0 ? index + 1 : keys.length + 1;
 }
 
 export function isValidVinotecaRegion(value: unknown): boolean {
@@ -383,6 +399,9 @@ export type AgoraFamilyLike = {
   ParentFamilyId?: unknown;
   ShowInPos?: unknown;
   DeletionDate?: unknown;
+  ButtonText?: unknown;
+  Color?: unknown;
+  Order?: unknown;
 };
 
 export function isVinotecaRegionFamilyAdoptable(

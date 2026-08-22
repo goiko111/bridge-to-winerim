@@ -5,7 +5,9 @@ import {
   isValidVinotecaRegion,
   isVinotecaNativeFormatsConnection,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
+  VINOTECA_REGION_FAMILY_COLOR,
   vinotecaFormatId,
+  vinotecaRegionFamilyOrder,
 } from "../../supabase/functions/_shared/agoraVinotecaNativeFormats";
 import {
   isAgoraSaleFormatFirstConnection,
@@ -47,6 +49,14 @@ describe("VINOTECA_REGION_REFERENCE_NATIVE_FORMATS gating", () => {
     expect(vinotecaFormatId("MAGNUM", 363449)).toBe("4363449");
     expect(vinotecaFormatId("BOTTLE", 0)).toBeNull();
     expect(vinotecaFormatId("UNKNOWN", 363449)).toBeNull();
+  });
+
+  it("keeps every dynamic region on the canonical color and alphabetical position", () => {
+    expect(VINOTECA_REGION_FAMILY_COLOR).toBe("#722F37");
+    const siblings = ["Rioja", "Toro", "Bierzo", "Cava"];
+    expect(vinotecaRegionFamilyOrder("Bordeaux", siblings)).toBe(2);
+    expect(vinotecaRegionFamilyOrder("Toro", siblings)).toBe(4);
+    expect(vinotecaRegionFamilyOrder("Rías Baixas", [...siblings, "Rías Baixas"])).toBe(3);
   });
 });
 
