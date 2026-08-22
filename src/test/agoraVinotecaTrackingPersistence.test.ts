@@ -54,7 +54,7 @@ describe("VINOTECA tracking identities", () => {
     expect(successBlock).toContain("trackingAgoraProductIdForFormat");
     const failBlock = PROXY.slice(PROXY.indexOf("PUSH TRACKING: Mark FAILED per format"));
     expect(failBlock.slice(0, 800)).toContain("trackingAgoraProductIdForFormat");
-    expect(PROXY).toContain('vinotecaFormatId("BOTTLE", winerimWineId)');
+    expect(PROXY).toContain("vinotecaFormatId(fmt, winerimWineId)");
   });
 
   it("keeps the native plan in scope until the outbound task is finalized", () => {
@@ -66,5 +66,19 @@ describe("VINOTECA tracking identities", () => {
     expect(verificationTry).toBeGreaterThan(declaration);
     expect(finalExternalId).toBeGreaterThan(verificationTry);
     expect(PROXY).not.toContain("const vinotecaPlanForTask = vinotecaNativeFormatsTask");
+  });
+
+  it("persists the native ProductId and SaleFormatId route before task success", () => {
+    const routePlan = PROXY.indexOf("const compoundMappings = vinotecaPlanForTask.formats.map");
+    const routePersistence = PROXY.indexOf('.from("agora_sales_variant_mappings")', routePlan);
+    const taskSuccess = PROXY.indexOf('status: "SUCCESS", last_error: null', routePersistence);
+
+    expect(routePlan).toBeGreaterThan(-1);
+    expect(routePersistence).toBeGreaterThan(-1);
+    expect(PROXY.slice(routePlan, taskSuccess)).toContain("provider_product_id: vinotecaPlanForTask!.productId");
+    expect(PROXY.slice(routePlan, taskSuccess)).toContain("sale_format_id: format.agoraId");
+    expect(PROXY.slice(routePlan, taskSuccess)).toContain('formatSource: format.isBase ? "BASE" : "ADDITIONAL"');
+    expect(PROXY.slice(routePersistence, taskSuccess)).toContain("VINOTECA_COMPOUND_ROUTE_PERSISTENCE_FAILED");
+    expect(taskSuccess).toBeGreaterThan(routePersistence);
   });
 });

@@ -11381,6 +11381,47 @@ ${costPricesXml}
           }, { onConflict: "connection_id,provider_product_id" });
         }
 
+        // A native VINOTECA reference is one Agora Product with nested
+        // SaleFormats. Persist that compound identity after the import has
+        // passed its fresh readback; otherwise the next UPDATE cycle would
+        // treat GLASS/MAGNUM as standalone Products and queue a false diff.
+        if (vinotecaNativeFormatsTask && vinotecaPlanForTask) {
+          const compoundMappings = vinotecaPlanForTask.formats.map((format) => ({
+            connection_id: task.connection_id,
+            provider_product_id: vinotecaPlanForTask!.productId,
+            sale_format_id: format.agoraId,
+            provider_product_name: vinotecaPlanForTask!.wineName,
+            provider_sale_format_name: formatProductName(format.format, vinotecaPlanForTask!.wineName),
+            winerim_wine_id: winerimWineId,
+            format_type: format.format,
+            match_method: "WINERIM_NATIVE_IDEMPOTENT_XML_IMPORT",
+            status: "CONFIRMED",
+            evidence: {
+              source: "agora-proxy:process-xml-outbound-task",
+              taskId: task.id,
+              formatSource: format.isBase ? "BASE" : "ADDITIONAL",
+              verifiedAt: new Date().toISOString(),
+            },
+          }));
+          const { error: compoundMappingError } = await supabase
+            .from("agora_sales_variant_mappings")
+            .upsert(compoundMappings, {
+              onConflict: "connection_id,provider_product_id,sale_format_id",
+            });
+          if (compoundMappingError) {
+            const persistenceError = `Compound VINOTECA route persistence failed: ${compoundMappingError.message}`;
+            await supabase.from("outbound_tasks").update({
+              status: "FAILED",
+              last_error: persistenceError.substring(0, 500),
+            }).eq("id", task.id);
+            return new Response(JSON.stringify({
+              success: false,
+              status: "FAILED",
+              reason: "VINOTECA_COMPOUND_ROUTE_PERSISTENCE_FAILED",
+            }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          }
+        }
+
         await supabase.from("provider_capabilities").upsert({
           connection_id: task.connection_id,
           provider: "AGORA",
