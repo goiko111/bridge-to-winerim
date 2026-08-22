@@ -88,14 +88,18 @@ describe("new reference intake", () => {
     ]);
   });
 
-  it("fails closed when an adopted route omits an active format", () => {
+  it("adds a newly active format to an adopted route without changing its ProductId", () => {
     const { plan, skipped } = buildVinotecaReferencePlan(wine(), {
       productId: "1368",
       baseFormat: "GLASS",
       formatIds: { GLASS: "1368" },
     });
-    expect(plan).toBeNull();
-    expect(skipped?.reason).toBe("incomplete_adopted_route");
+    expect(skipped).toBeNull();
+    expect(plan?.productId).toBe("1368");
+    expect(plan?.formats.map((format) => [format.format, format.agoraId, format.isBase])).toEqual([
+      ["GLASS", "1368", true],
+      ["BOTTLE", "2363449", false],
+    ]);
     expect(buildVinotecaReferencePlan(wine(), null).skipped?.reason).toBe("incomplete_adopted_route");
   });
 

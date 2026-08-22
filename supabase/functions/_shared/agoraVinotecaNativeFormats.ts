@@ -226,8 +226,16 @@ export function buildVinotecaReferencePlan(
   const baseFormat = adoptedRoute?.baseFormat || "BOTTLE";
   const formats: VinotecaFormatPlan[] = [];
   for (const desired of desiredFormats) {
+    // Preserve every identity already adopted from Agora. When Winerim adds a
+    // genuinely new additional format later, allocate it in our deterministic
+    // namespace instead of requiring a mapping that cannot exist yet. The
+    // adopted base format remains mandatory: replacing it would change the
+    // reference's ProductId and could orphan sales or create a duplicate.
+    const adoptedId = adoptedRoute?.formatIds[desired.format];
     const agoraId = adoptedRoute
-      ? adoptedRoute.formatIds[desired.format]
+      ? adoptedId || (desired.format !== baseFormat
+        ? vinotecaFormatId(desired.format, normalizedId)
+        : null)
       : vinotecaFormatId(desired.format, normalizedId);
     if (!agoraId) {
       return { plan: null, skipped: { winerimWineId, wineName, reason: "incomplete_adopted_route" } };
