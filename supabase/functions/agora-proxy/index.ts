@@ -24,6 +24,7 @@ import {
 import {
   baseProductPriceMap,
   saleFormatDifferenceReasons,
+  xmlOpeningTagAttributes,
 } from "../_shared/agoraVinotecaProductDiff.ts";
 import { verifyVinotecaNativeFormatsImport } from "../_shared/agoraVinotecaPostImportVerify.ts";
 
@@ -573,12 +574,7 @@ function extractXmlElementsWithAttrs(xml: string, tagName: string): { xml: strin
   let match: RegExpExecArray | null;
   while ((match = elementRegex.exec(xml)) !== null) {
     const full = match[0];
-    const attrs: Record<string, string> = {};
-    const attrRegex = /\b([\w:-]+)="([^"]*)"/g;
-    let attrMatch: RegExpExecArray | null;
-    while ((attrMatch = attrRegex.exec(full)) !== null) {
-      attrs[attrMatch[1]] = attrMatch[2];
-    }
+    const attrs = xmlOpeningTagAttributes(full);
     results.push({ xml: full, attrs });
   }
   return results;

@@ -17,6 +17,16 @@ export function normalizeAgoraDiffMoney(value: unknown): string {
   return Number.isFinite(numeric) ? numeric.toFixed(2) : raw;
 }
 
+/** Attributes belonging to the element itself, never to nested children. */
+export function xmlOpeningTagAttributes(elementXml: string): Record<string, string> {
+  const openingTag = /^<[^>]+>/.exec(String(elementXml ?? "").trim())?.[0] || "";
+  const attrs: Record<string, string> = {};
+  const attrRegex = /\b([\w:-]+)="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRegex.exec(openingTag)) !== null) attrs[match[1]] = match[2];
+  return attrs;
+}
+
 const ADDITIONAL_SALE_FORMATS_RE = /<AdditionalSaleFormats\b[^>]*\/>|<AdditionalSaleFormats\b[^>]*>[\s\S]*?<\/AdditionalSaleFormats>/gi;
 const SALE_FORMAT_RE = /<SaleFormat\b[^>]*\/>|<SaleFormat\b[^>]*>[\s\S]*?<\/SaleFormat>/gi;
 const PRICE_RE = /<Price\b[^>]*\/?>/gi;

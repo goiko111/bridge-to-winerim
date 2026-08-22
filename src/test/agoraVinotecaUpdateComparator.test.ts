@@ -5,6 +5,7 @@ import {
   productXmlWithoutSaleFormats,
   saleFormatDifferenceReasons,
   saleFormatPriceMaps,
+  xmlOpeningTagAttributes,
 } from "../../supabase/functions/_shared/agoraVinotecaProductDiff";
 
 const SOURCE = readFileSync("supabase/functions/agora-proxy/index.ts", "utf8");
@@ -32,6 +33,12 @@ function product(bottlePrice: string, glassPrice: string): string {
 }
 
 describe("base BOTTLE price is not masked by nested sale formats", () => {
+  it("does not let a nested SaleFormat overwrite Product attributes", () => {
+    const attrs = xmlOpeningTagAttributes(product("26.00", "3.10"));
+    expect(attrs.Id).toBe("2363449");
+    expect(attrs.AskForAddins).toBe("false");
+  });
+
   it("reads the bottle price from the base Product only", () => {
     expect(baseProductPriceMap(product("26.00", "3.10"))).toEqual({ "1": "26.00" });
     expect(productXmlWithoutSaleFormats(product("26.00", "3.10"))).not.toContain("SaleFormat");
@@ -73,6 +80,7 @@ describe("agora-proxy wiring", () => {
   it("uses the base price map and the sale-format comparator", () => {
     expect(SOURCE).toContain('from "../_shared/agoraVinotecaProductDiff.ts"');
     expect(SOURCE).toContain("return baseProductPriceMap(productXml);");
+    expect(SOURCE).toContain("const attrs = xmlOpeningTagAttributes(full);");
     expect(SOURCE).toContain("differences.push(...saleFormatDifferenceReasons(expected.xml, actual.xml, scopedPriceListIds));");
   });
 
