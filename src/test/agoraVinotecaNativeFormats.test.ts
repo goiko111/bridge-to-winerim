@@ -6,8 +6,10 @@ import {
   isVinotecaNativeFormatsConnection,
   VINOTECA_REGION_REFERENCE_NATIVE_FORMATS,
   VINOTECA_REGION_FAMILY_COLOR,
+  findWinerimOwnedVinotecaRegionFamily,
   vinotecaFormatId,
   vinotecaRegionFamilyOrder,
+  vinotecaRegionFamilyTechnicalName,
 } from "../../supabase/functions/_shared/agoraVinotecaNativeFormats";
 import {
   isAgoraSaleFormatFirstConnection,
@@ -57,6 +59,16 @@ describe("VINOTECA_REGION_REFERENCE_NATIVE_FORMATS gating", () => {
     expect(vinotecaRegionFamilyOrder("Bordeaux", siblings)).toBe(2);
     expect(vinotecaRegionFamilyOrder("Toro", siblings)).toBe(4);
     expect(vinotecaRegionFamilyOrder("Rías Baixas", [...siblings, "Rías Baixas"])).toBe(3);
+  });
+
+  it("never adopts a bare same-named legacy region family", () => {
+    const families = [
+      { Id: "123", Name: "Cava", ParentFamilyId: "112", ShowInPos: true },
+      { Id: "900284", Name: "VINOTECA ABIERTA - Cava", ParentFamilyId: "112", ShowInPos: true },
+    ];
+    expect(vinotecaRegionFamilyTechnicalName(" Cava ")).toBe("VINOTECA ABIERTA - Cava");
+    expect(findWinerimOwnedVinotecaRegionFamily(families, "112", "Cava")?.Id).toBe("900284");
+    expect(findWinerimOwnedVinotecaRegionFamily([families[0]], "112", "Cava")).toBeNull();
   });
 });
 

@@ -15,8 +15,9 @@ import {
   trackingAgoraProductIdForFormat,
   vinotecaFormatId,
   vinotecaRegionFamilyOrder,
+  vinotecaRegionFamilyTechnicalName,
   vinotecaRegionKey,
-  findAdoptableVinotecaRegionFamily,
+  findWinerimOwnedVinotecaRegionFamily,
   selectVinotecaCatalogRoute,
   type VinotecaCatalogRoute,
   type VinotecaFormat,
@@ -5050,15 +5051,14 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
     const cached = vinotecaRegionFamilies.get(key);
     if (cached) return cached;
 
-    // Only a family that is simultaneously a direct child of THIS connection's
-    // root, visible in POS and not deleted may be adopted. Legacy rootless /
-    // hidden / deleted homonyms are left untouched. Ambiguity fails closed.
-    const existingRegion = findAdoptableVinotecaRegionFamily(families, rootId, key);
+    // Region labels are not identities. Only the explicit Winerim technical
+    // name may be reused; a bare same-named Agora family is legacy.
+    const existingRegion = findWinerimOwnedVinotecaRegionFamily(families, rootId, region);
 
 
     let regionId = String(existingRegion?.Id || "");
     const existingRegionName = String(existingRegion?.Name ?? "").trim();
-    const technicalName = existingRegionName || `${VINOTECA_ROOT_FAMILY_NAME} - ${region}`;
+    const technicalName = existingRegionName || vinotecaRegionFamilyTechnicalName(region);
     if (!regionId) {
       for (let attempt = 0; attempt < 100; attempt++) {
         const candidate = stableFamilyId(attempt === 0 ? technicalName : `${technicalName}#${attempt}`);

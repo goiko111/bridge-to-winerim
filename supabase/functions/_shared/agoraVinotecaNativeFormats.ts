@@ -102,6 +102,16 @@ export function vinotecaRegionKey(value: unknown): string {
     .toLowerCase();
 }
 
+/**
+ * Technical family identity owned by Winerim. ButtonText remains the bare
+ * region for the POS, while Name carries provenance and avoids adopting a
+ * same-named legacy Agora family.
+ */
+export function vinotecaRegionFamilyTechnicalName(region: unknown): string {
+  const normalized = normalizeVinotecaRegion(region);
+  return normalized ? `${VINOTECA_ROOT_FAMILY_NAME} - ${normalized}` : "";
+}
+
 /** Stable 1-based position for a region among its visible siblings. */
 export function vinotecaRegionFamilyOrder(
   region: unknown,
@@ -445,6 +455,33 @@ export function findAdoptableVinotecaRegionFamily(
     throw new Error(
       `${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: ambiguous region family for "${regionKey}" (${
         candidates.map((c) => String(c.Id)).join(", ")
+      })`,
+    );
+  }
+  return candidates[0] ?? null;
+}
+
+/**
+ * Returns only a region family explicitly owned by Winerim. A visible direct
+ * child named merely "Cava", "Rioja", etc. is legacy and must never be
+ * adopted just because its label matches the Winerim region.
+ */
+export function findWinerimOwnedVinotecaRegionFamily(
+  families: AgoraFamilyLike[],
+  rootFamilyId: unknown,
+  region: unknown,
+): AgoraFamilyLike | null {
+  const technicalName = vinotecaRegionFamilyTechnicalName(region);
+  if (!technicalName) return null;
+  const technicalKey = vinotecaRegionKey(technicalName);
+  const candidates = (families || []).filter((family) =>
+    vinotecaRegionKey(family?.Name) === technicalKey &&
+    isVinotecaRegionFamilyAdoptable(family, rootFamilyId)
+  );
+  if (candidates.length > 1) {
+    throw new Error(
+      `${VINOTECA_REGION_REFERENCE_NATIVE_FORMATS}: ambiguous Winerim-owned region family for "${technicalName}" (${
+        candidates.map((candidate) => String(candidate.Id)).join(", ")
       })`,
     );
   }
