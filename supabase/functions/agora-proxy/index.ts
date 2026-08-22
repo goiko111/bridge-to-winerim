@@ -11073,6 +11073,7 @@ ${costPricesXml}
           errors: [], warnings: [], missing_prices: [], affected_sale_centers: [],
           summary: { checked: 0, ok: 0, failed: 0 },
         };
+        let vinotecaPlanForTask: VinotecaReferencePlan | null = null;
 
         // Diagnostics: actual prices read back from Agora
         const actualPricesByProduct: Record<string, { priceListId: string; mainPrice: string }[]> = {};
@@ -11143,7 +11144,7 @@ ${costPricesXml}
           });
 
           // ── VINOTECA native formats: verify the builder's own identities ──
-          const vinotecaPlanForTask = vinotecaNativeFormatsTask
+          vinotecaPlanForTask = vinotecaNativeFormatsTask
             ? ((vinotecaTaskMeta?.plans as VinotecaReferencePlan[] | undefined) || [])
               .find((plan) => plan.winerimWineId === String(winerimWineId || "")) || null
             : null;

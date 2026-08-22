@@ -56,4 +56,15 @@ describe("VINOTECA tracking identities", () => {
     expect(failBlock.slice(0, 800)).toContain("trackingAgoraProductIdForFormat");
     expect(PROXY).toContain('vinotecaFormatId("BOTTLE", winerimWineId)');
   });
+
+  it("keeps the native plan in scope until the outbound task is finalized", () => {
+    const declaration = PROXY.indexOf("let vinotecaPlanForTask: VinotecaReferencePlan | null = null");
+    const verificationTry = PROXY.indexOf("try {", declaration);
+    const finalExternalId = PROXY.indexOf("vinotecaPlanForTask?.productId", verificationTry);
+
+    expect(declaration).toBeGreaterThan(-1);
+    expect(verificationTry).toBeGreaterThan(declaration);
+    expect(finalExternalId).toBeGreaterThan(verificationTry);
+    expect(PROXY).not.toContain("const vinotecaPlanForTask = vinotecaNativeFormatsTask");
+  });
 });
