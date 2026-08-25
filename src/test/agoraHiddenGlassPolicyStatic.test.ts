@@ -7,6 +7,10 @@ const proxySource = readFileSync(
   resolve(repoRoot, "supabase/functions/agora-proxy/index.ts"),
   "utf8",
 );
+const hiddenGlassPolicySource = readFileSync(
+  resolve(repoRoot, "supabase/functions/_shared/agoraHiddenGlassPolicy.ts"),
+  "utf8",
+);
 const reconciliationSource = readFileSync(
   resolve(repoRoot, "scripts/reconcile-agora-catalog.mjs"),
   "utf8",
@@ -24,10 +28,10 @@ describe("Agora hidden public-menu glass policy", () => {
       'if (format === "GLASS") return wine?._agora_allow_inactive_glass === true',
     );
     expect(proxySource).toContain('if (format === "BOTTLE") return wine?._agora_allow_inactive_bottle === true');
-    expect(proxySource).toContain("configured.publish_bottle === true");
-    expect(proxySource).toContain("allowInactiveBottle");
-    expect(proxySource).toContain("const bottleSalePrice = configured.bottle_sale_price;");
-    expect(proxySource).not.toContain(
+    expect(hiddenGlassPolicySource).toContain("configured.publish_bottle === true");
+    expect(hiddenGlassPolicySource).toContain("allowInactiveBottle");
+    expect(hiddenGlassPolicySource).toContain("const configuredBottlePrice = positiveNumber(configured.bottle_sale_price);");
+    expect(hiddenGlassPolicySource).not.toContain(
       "const bottleSalePrice = configured.bottle_sale_price ?? extractBottleSalePrice(wine)",
     );
     expect(proxySource).toContain('if (format !== "BOTTLE" || configured.publish_bottle !== true) return false');
@@ -54,5 +58,13 @@ describe("Agora hidden public-menu glass policy", () => {
     expect(reconciliationSource).toContain('format === "BOTTLE" && wine._agora_allow_inactive_bottle === true');
     expect(reconciliationSource).toContain('wine.is_active !== false || wine._agora_allow_inactive_bottle === true');
     expect(reconciliationSource).toContain('wine.is_active !== false && positive(wine.magnum_sale_price)');
+  });
+
+  it("refreshes the live Agora readback after a manual import", () => {
+    const manualImportStart = proxySource.indexOf('if (action === "xml-import")');
+    const nextAction = proxySource.indexOf('if (action === "process-outbound-task")', manualImportStart);
+    const manualImportBlock = proxySource.slice(manualImportStart, nextAction);
+
+    expect(manualImportBlock).toContain("invalidateAgoraProductsCache(connectionId)");
   });
 });
