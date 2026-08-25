@@ -3,6 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
+import {
+  mergeAgoraHiddenGlassPolicy,
+  type AgoraHiddenGlassVariantPolicy,
+} from "../_shared/agoraHiddenGlassPolicy.ts";
 
 import {
   buildVinotecaReferencePlan,
@@ -4187,7 +4191,7 @@ interface WineValidationResult {
   error?: { code: string; message: string };
 }
 
-interface AgoraHiddenGlassVariant {
+interface AgoraHiddenGlassVariant extends AgoraHiddenGlassVariantPolicy {
   winerim_id: string;
   name: string;
   wine_type?: string | null;
@@ -4245,30 +4249,7 @@ function applyHiddenGlassVariantForAgora(connection: any, wine: any): any {
   const winerimWineId = wine?.winerim_id || wine?.id;
   const configured = configuredHiddenGlassVariant(connection, winerimWineId);
   if (!configured) return wine;
-  const bottleSalePrice = configured.bottle_sale_price;
-  const allowInactiveBottle = configured.publish_bottle === true &&
-    Number.isFinite(Number(bottleSalePrice)) && Number(bottleSalePrice) > 0;
-  return {
-    ...(wine || {}),
-    winerim_id: configured.winerim_id,
-    id: wine?.id || configured.winerim_id,
-    name: configured.name,
-    wine_type: configured.wine_type || wine?.wine_type || null,
-    glass_sale_price: configured.glass_sale_price,
-    bottle_sale_price: allowInactiveBottle
-      ? Number(bottleSalePrice)
-      : wine?.bottle_sale_price ?? null,
-    serve_by_glass: true,
-    raw_payload: {
-      ...(wine?.raw_payload || {}),
-      agora_hidden_glass_variant: {
-        source: configured.source || "CONNECTION_OVERRIDE",
-        captured_at: configured.captured_at || null,
-      },
-    },
-    _agora_allow_inactive_glass: true,
-    _agora_allow_inactive_bottle: allowInactiveBottle,
-  };
+  return mergeAgoraHiddenGlassPolicy(wine, configured);
 }
 
 function isConfiguredHiddenFormatVariant(connection: any, wineOrId: any, formatType: string): boolean {
@@ -10657,6 +10638,9 @@ ${costPricesXml}
 
       if (parsedResponse.success) {
         try {
+          // The import may have been preceded by a cached catalog read. A fresh
+          // response is authoritative for the exact per-format price readback.
+          invalidateAgoraProductsCache(connectionId);
           const cachedProducts = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000);
 
           const { data: cachedMaster } = await supabase
