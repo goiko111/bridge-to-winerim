@@ -2,6 +2,7 @@ import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
   completeAgoraSalesEventDocIds,
+  configuredAgoraBusinessDayRolloverHours,
   isAgoraDocumentWithinBusinessDay,
   isAgoraRefundDocument,
   normalizeAgoraLineFormat,
@@ -72,6 +73,46 @@ describe("Agora sales document identity and refunds", () => {
       _stock_sync_eligible: false,
       _stock_sync_skip_reason: "provider_line_dates_outside_requested_business_day",
     });
+  });
+
+  it("keeps the 36-hour business-day boundary by default", () => {
+    const lateInvoice = {
+      InvoiceItems: [{ Lines: [{ CreationDate: "2026-08-25T13:58:00" }] }],
+    };
+
+    expect(configuredAgoraBusinessDayRolloverHours({})).toBe(36);
+    expect(isAgoraDocumentWithinBusinessDay(lateInvoice, "2026-08-24")).toBe(false);
+    expect(withAgoraOperationalMetadata(lateInvoice, "2026-08-24")).toMatchObject({
+      _agora_out_of_day_document: true,
+      _stock_sync_eligible: false,
+    });
+  });
+
+  it("accepts a late close when the connection opts into a 48-hour rollover", () => {
+    const lateInvoice = {
+      InvoiceItems: [{ Lines: [{ CreationDate: "2026-08-25T13:58:00" }] }],
+    };
+    const rolloverHours = configuredAgoraBusinessDayRolloverHours({
+      agora_business_day_rollover_hours: 48,
+    });
+
+    expect(rolloverHours).toBe(48);
+    expect(isAgoraDocumentWithinBusinessDay(lateInvoice, "2026-08-24", rolloverHours)).toBe(true);
+    expect(withAgoraOperationalMetadata(lateInvoice, "2026-08-24", rolloverHours)).toBe(lateInvoice);
+  });
+
+  it("still rejects genuinely stale invoices with the maximum configured rollover", () => {
+    const staleInvoice = {
+      InvoiceItems: [{ Lines: [{ CreationDate: "2026-08-27T23:59:59" }] }],
+    };
+
+    expect(isAgoraDocumentWithinBusinessDay(staleInvoice, "2026-08-24", 72)).toBe(false);
+  });
+
+  it("fails closed to 36 hours for invalid provider configuration", () => {
+    expect(configuredAgoraBusinessDayRolloverHours({ agora_business_day_rollover_hours: 96 })).toBe(36);
+    expect(configuredAgoraBusinessDayRolloverHours({ agora_business_day_rollover_hours: "48" })).toBe(48);
+    expect(configuredAgoraBusinessDayRolloverHours(null)).toBe(36);
   });
 
   it("does not disable providers that omit line timestamps", () => {

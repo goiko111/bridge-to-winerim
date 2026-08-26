@@ -33,10 +33,16 @@ export function isAgoraRefundDocument(invoice: Record<string, unknown>): boolean
   return Number.isFinite(grossAmount) && grossAmount < 0;
 }
 
-function nextIsoDay(day: string): string {
-  const date = new Date(`${day}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString().slice(0, 10);
+const DEFAULT_AGORA_BUSINESS_DAY_ROLLOVER_HOURS = 36;
+
+export function configuredAgoraBusinessDayRolloverHours(providerConfig: unknown): number {
+  const config = providerConfig && typeof providerConfig === "object"
+    ? providerConfig as Record<string, unknown>
+    : {};
+  const parsed = Number(config.agora_business_day_rollover_hours);
+  return Number.isInteger(parsed) && parsed >= 24 && parsed <= 72
+    ? parsed
+    : DEFAULT_AGORA_BUSINESS_DAY_ROLLOVER_HOURS;
 }
 
 function normalizedLocalTimestamp(value: unknown): string | null {
@@ -67,22 +73,26 @@ function invoiceLineTimestamps(invoice: Record<string, unknown>): string[] {
 export function isAgoraDocumentWithinBusinessDay(
   invoice: Record<string, unknown>,
   requestedDay: string,
+  rolloverHours = DEFAULT_AGORA_BUSINESS_DAY_ROLLOVER_HOURS,
 ): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDay)) return true;
   const timestamps = invoiceLineTimestamps(invoice);
   if (timestamps.length === 0) return true;
 
   const start = `${requestedDay}T00:00:00`;
-  // Agora business days can legitimately finish after midnight. Noon is a
-  // deliberately generous boundary while still rejecting old invoices that
-  // reappear only because a refund was created on the requested day.
-  const end = `${nextIsoDay(requestedDay)}T12:00:00`;
+  const normalizedRolloverHours = Number.isInteger(rolloverHours) && rolloverHours >= 24 && rolloverHours <= 72
+    ? rolloverHours
+    : DEFAULT_AGORA_BUSINESS_DAY_ROLLOVER_HOURS;
+  const endDate = new Date(`${requestedDay}T00:00:00Z`);
+  endDate.setUTCHours(endDate.getUTCHours() + normalizedRolloverHours);
+  const end = endDate.toISOString().slice(0, 19);
   return timestamps.some((timestamp) => timestamp >= start && timestamp < end);
 }
 
 export function withAgoraOperationalMetadata(
   invoice: Record<string, unknown>,
   requestedDay?: string,
+  rolloverHours = DEFAULT_AGORA_BUSINESS_DAY_ROLLOVER_HOURS,
 ): Record<string, unknown> {
   if (isAgoraRefundDocument(invoice)) {
     return {
@@ -92,7 +102,7 @@ export function withAgoraOperationalMetadata(
       _stock_sync_skip_reason: "refund_document_requires_explicit_reconciliation",
     };
   }
-  if (requestedDay && !isAgoraDocumentWithinBusinessDay(invoice, requestedDay)) {
+  if (requestedDay && !isAgoraDocumentWithinBusinessDay(invoice, requestedDay, rolloverHours)) {
     return {
       ...invoice,
       _agora_out_of_day_document: true,

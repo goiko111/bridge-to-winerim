@@ -53,6 +53,7 @@ import {
   agoraDocumentType,
   buildAgoraInvoiceDocId,
   completeAgoraSalesEventDocIds,
+  configuredAgoraBusinessDayRolloverHours,
   normalizeAgoraLineFormat,
   shouldPauseAgoraInvoiceProcessing,
   withAgoraOperationalMetadata,
@@ -6386,7 +6387,12 @@ serve(async (req) => {
             total_amount: Number(inv.TotalAmount || docTotal),
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
-            line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv, day),
+            line_count: lineData.length,
+            raw_json: withAgoraOperationalMetadata(
+              inv,
+              day,
+              configuredAgoraBusinessDayRolloverHours(connection.provider_config),
+            ),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
@@ -6592,7 +6598,11 @@ serve(async (req) => {
             total_tax: Number(inv.TotalTaxAmount || 0),
             total_net: Number(inv.TotalNetAmount || 0),
             line_count: lineData.length,
-            raw_json: withAgoraOperationalMetadata(inv, day),
+            raw_json: withAgoraOperationalMetadata(
+              inv,
+              day,
+              configuredAgoraBusinessDayRolloverHours(providerConfig),
+            ),
           }, { onConflict: "connection_id,provider_doc_id" })
           .select("id").single();
 
@@ -6947,7 +6957,12 @@ serve(async (req) => {
               total_amount: Number(inv.TotalAmount || docTotal),
               total_tax: Number(inv.TotalTaxAmount || 0),
               total_net: Number(inv.TotalNetAmount || 0),
-              line_count: lineData.length, raw_json: withAgoraOperationalMetadata(inv, day),
+              line_count: lineData.length,
+              raw_json: withAgoraOperationalMetadata(
+                inv,
+                day,
+                configuredAgoraBusinessDayRolloverHours(providerConfig),
+              ),
             }, { onConflict: "connection_id,provider_doc_id" })
             .select("id").single();
 
