@@ -62,7 +62,8 @@ describe("Agora open tickets pilot and glass publishing gates", () => {
     const autoSyncSource = agoraProxySource.slice(autoSyncStart, autoSyncEnd);
 
     expect(autoSyncSource).toContain("lastSuccessfullyScannedDay = dayStr");
-    expect(autoSyncSource).toContain("last_business_day_synced: cursorAdvancedTo");
+    expect(autoSyncSource).toContain("updateSalesCursorMonotonically(");
+    expect(autoSyncSource).toContain("cursorAdvancedTo = cursorResult.cursor");
     expect(autoSyncSource).toContain('reason: "closed_day_scan_failed"');
     expect(autoSyncSource).not.toContain("catch (err) { /* skip */ }");
   });

@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.winerim-data-transfer/
 dist
 dist-ssr
 .env
@@ -15,6 +16,9 @@ dist-ssr
 !.env.example
 *.local
 .codex-backups/
+.wrangler/
+supabase/.temp/
+tmp/disabled-connection-hydration/
 
 # Editor directories and files
 .vscode/*

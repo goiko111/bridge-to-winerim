@@ -1,0 +1,31 @@
+name = "winerim-middleware-runtime-executor-rescue-prod-fleet"
+main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "rescue-production"
+RELEASE = "rescue-production-fleet-executor-inert"
+RUNTIME_MODE = "fleet-executor"
+RUNTIME_EXECUTION_ENABLED = "false"
+RUNTIME_VAULT_KEY_VERSION = "v1"
+WINERIM_API_BASE_URL = "https://app.winerim.com"
+WINERIM_ALLOWED_HOSTS = "app.winerim.com"
+RUNTIME_CATALOG_EXECUTION_ENABLED = "false"
+RUNTIME_CATALOG_FETCH_ENABLED = "false"
+RUNTIME_CATALOG_APPLY_ENABLED = "false"
+RUNTIME_SALES_EXECUTION_ENABLED = "false"
+RUNTIME_SALES_CURSOR_ENABLED = "false"
+RUNTIME_SALES_DLQ_READY = "false"
+RUNTIME_OUTBOUND_EXECUTION_ENABLED = "false"
+RUNTIME_OUTBOUND_MUTATION_ENABLED = "false"
+
+[[hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "bf568eb1d85a41539384f241084c2227"
+
+# RUNTIME_VAULT_KEY, RUNTIME_FLEET_WRITER_FENCE_BUNDLE and WRITER_FENCE are
+# intentionally absent. They are injected only by the separate activation
+# gate; without them, and with execution disabled, the executor is fail-closed.
