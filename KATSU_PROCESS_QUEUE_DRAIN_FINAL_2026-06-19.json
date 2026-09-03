@@ -1,0 +1,90 @@
+{
+  "connection_id": "982f1e63-5f15-48b8-b35f-037eafd4593e",
+  "created_at": "2026-06-19T05:35:19.024Z",
+  "runs": [
+    {
+      "iteration": 1,
+      "before": {
+        "QUEUED": 21,
+        "RUNNING": 2,
+        "FAILED": 0,
+        "BLOCKED": 0
+      },
+      "result": {
+        "success": true,
+        "processed": 10,
+        "succeeded": 10,
+        "failed": 0,
+        "remaining": 0,
+        "done": true,
+        "serverLoop": true,
+        "breakerTripped": false,
+        "commercialCodeSort": null
+      },
+      "after": {
+        "QUEUED": 1,
+        "RUNNING": 1,
+        "FAILED": 0,
+        "BLOCKED": 0
+      }
+    },
+    {
+      "iteration": 2,
+      "before": {
+        "QUEUED": 0,
+        "RUNNING": 1,
+        "FAILED": 0,
+        "BLOCKED": 0
+      },
+      "result": {
+        "success": true,
+        "processed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "remaining": 0,
+        "done": true,
+        "serverLoop": true,
+        "breakerTripped": false,
+        "commercialCodeSort": null
+      },
+      "after": {
+        "QUEUED": 0,
+        "RUNNING": 1,
+        "FAILED": 0,
+        "BLOCKED": 0
+      }
+    },
+    {
+      "iteration": 3,
+      "before": {
+        "QUEUED": 0,
+        "RUNNING": 1,
+        "FAILED": 0,
+        "BLOCKED": 0
+      },
+      "result": {
+        "success": true,
+        "processed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "remaining": 0,
+        "done": true,
+        "serverLoop": true,
+        "breakerTripped": false,
+        "commercialCodeSort": null
+      },
+      "after": {
+        "QUEUED": 0,
+        "RUNNING": 0,
+        "FAILED": 0,
+        "BLOCKED": 0
+      }
+    }
+  ],
+  "final": {
+    "QUEUED": 0,
+    "RUNNING": 0,
+    "FAILED": 0,
+    "BLOCKED": 0
+  }
+}

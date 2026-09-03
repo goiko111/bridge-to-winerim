@@ -1,0 +1,1911 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getBdpConfig, type BdpEndpointRecord } from "../_shared/providerConfig.ts";
+import { isConnectionPaused, classifyPosError, applyCircuitBreaker } from "../_shared/resilience.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function ok(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+function err(body: unknown, status = 400) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/** Build auth headers for BDP */
+function bdpHeaders(userKey: string, password: string): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (userKey && password) {
+    h["Authorization"] = `Basic ${btoa(`${userKey}:${password}`)}`;
+  }
+  return h;
+}
+
+/** Fetch with 30s timeout and optional retry with backoff */
+async function bdpFetch(url: string, headers: Record<string, string>, method = "GET", body?: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const opts: RequestInit = { method, headers, signal: controller.signal };
+    if (body) opts.body = body;
+    const resp = await fetch(url, opts);
+    clearTimeout(timeout);
+    return resp;
+  } catch (e) {
+    clearTimeout(timeout);
+    throw e;
+  }
+}
+
+/** Fetch with retry + exponential backoff (for discovery probes) */
+async function bdpFetchWithRetry(
+  url: string, headers: Record<string, string>, method = "GET",
+  { retries = 2, baseDelayMs = 1000 } = {},
+): Promise<{ resp: Response | null; attempts: number; lastError?: string }> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    try {
+      const resp = await bdpFetch(url, headers, method);
+      // Retry on 502/503/504
+      if ((resp.status === 502 || resp.status === 503 || resp.status === 504) && attempt <= retries) {
+        lastError = `HTTP ${resp.status}`;
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt - 1)));
+        continue;
+      }
+      return { resp, attempts: attempt };
+    } catch (e: any) {
+      lastError = e.message || "Network error";
+      if (attempt <= retries) {
+        await new Promise((r) => setTimeout(r, baseDelayMs * Math.pow(2, attempt - 1)));
+        continue;
+      }
+    }
+  }
+  return { resp: null, attempts: retries + 1, lastError };
+}
+
+/** Resolve mapping key from wine type + format for family lookup */
+function resolveMappingKey(wineType?: string, format?: string): string | null {
+  const fmt = (format || "").toLowerCase();
+  const type = (wineType || "").toLowerCase();
+
+  if (fmt === "glass" || fmt === "copa") return "glass";
+  if (fmt === "magnum") return "magnum";
+
+  if (type.includes("tinto") || type.includes("red")) return "bottle_red";
+  if (type.includes("blanco") || type.includes("white")) return "bottle_white";
+  if (type.includes("rosado") || type.includes("rosé") || type.includes("rose")) return "bottle_rose";
+  if (type.includes("espumoso") || type.includes("sparkling") || type.includes("cava") || type.includes("champagne")) return "bottle_sparkling";
+  if (type.includes("fortificado") || type.includes("fortified") || type.includes("jerez") || type.includes("sherry") || type.includes("porto") || type.includes("port")) return "bottle_fortified";
+  if (type.includes("postre") || type.includes("dessert") || type.includes("dulce") || type.includes("sweet")) return "bottle_dessert";
+
+  return type ? "bottle_red" : null; // fallback for unknown wine types
+}
+
+/**
+ * Parse BDP export documents into canonical SalesEvent + LineItems.
+ * BDP Weblink REST returns an array of "documents", each with header, lines, payments.
+ * We normalise into our canonical schema.
+ */
+interface BdpLine {
+  line_index: number;
+  provider_product_id: string;
+  name: string;
+  family: string | null;
+  format: string | null;
+  quantity: number;
+  unit_price: number;
+  total_amount: number;
+  vat_rate: number;
+}
+
+interface CanonicalEvent {
+  provider_doc_id: string;
+  business_day: string; // closure day (YYYY-MM-DD)
+  ticket_time: string | null; // actual ticket timestamp
+  doc_type: string;
+  total_amount: number;
+  total_tax: number;
+  total_net: number;
+  line_count: number;
+  lines: BdpLine[];
+  raw_json: unknown;
+}
+
+function parseBdpDocuments(rawDocuments: any[]): CanonicalEvent[] {
+  const events: CanonicalEvent[] = [];
+
+  for (const doc of rawDocuments) {
+    const header = doc.header || doc.Header || doc;
+    const lines = doc.lines || doc.Lines || doc.details || doc.Details || [];
+    const payments = doc.payments || doc.Payments || [];
+
+    // BDP may use "ClosureDate" or "BusinessDay" for the closure day
+    // and "Date" or "TicketDate" for the actual ticket time
+    const closureDay = header.ClosureDate || header.closure_date || header.BusinessDay || header.business_day || null;
+    const ticketTime = header.Date || header.date || header.TicketDate || header.ticket_date || null;
+
+    // Derive business_day: prefer closure day, fall back to ticket date
+    let businessDay = "";
+    if (closureDay) {
+      businessDay = String(closureDay).substring(0, 10);
+    } else if (ticketTime) {
+      businessDay = String(ticketTime).substring(0, 10);
+    } else {
+      businessDay = new Date().toISOString().substring(0, 10);
+    }
+
+    const docId = String(
+      header.DocumentId || header.document_id || header.Id || header.id || header.Number || header.number || `bdp_${Date.now()}_${Math.random()}`
+    );
+    const docType = header.DocumentType || header.document_type || header.Type || header.type || "Sale";
+
+    // Parse lines
+    const parsedLines: BdpLine[] = [];
+    let totalAmount = 0;
+    let totalTax = 0;
+
+    lines.forEach((line: any, idx: number) => {
+      const qty = Number(line.Quantity || line.quantity || line.Qty || line.qty || 1);
+      const unitPrice = Number(line.UnitPrice || line.unit_price || line.Price || line.price || 0);
+      const lineTotal = Number(line.TotalAmount || line.total_amount || line.Total || line.total || qty * unitPrice);
+      const vatRate = Number(line.VatRate || line.vat_rate || line.Tax || line.tax || 0);
+      const lineTax = vatRate > 0 ? lineTotal - lineTotal / (1 + vatRate / 100) : 0;
+
+      totalAmount += lineTotal;
+      totalTax += lineTax;
+
+      parsedLines.push({
+        line_index: idx,
+        provider_product_id: String(line.ProductId || line.product_id || line.ArticleId || line.article_id || `line_${idx}`),
+        name: String(line.ProductName || line.product_name || line.Description || line.description || line.Name || line.name || "Unknown"),
+        family: line.Family || line.family || line.Category || line.category || null,
+        format: line.Format || line.format || line.Unit || line.unit || null,
+        quantity: qty,
+        unit_price: unitPrice,
+        total_amount: lineTotal,
+        vat_rate: vatRate,
+      });
+    });
+
+    // Override totals if header has them
+    const hdrTotal = Number(header.TotalAmount || header.total_amount || header.Total || header.total || totalAmount);
+    const hdrTax = Number(header.TotalTax || header.total_tax || header.Tax || header.tax || totalTax);
+    const hdrNet = Number(header.TotalNet || header.total_net || header.Net || header.net || hdrTotal - hdrTax);
+
+    events.push({
+      provider_doc_id: docId,
+      business_day: businessDay,
+      ticket_time: ticketTime ? String(ticketTime) : null,
+      doc_type: docType,
+      total_amount: hdrTotal,
+      total_tax: hdrTax,
+      total_net: hdrNet,
+      line_count: parsedLines.length,
+      lines: parsedLines,
+      raw_json: doc,
+    });
+  }
+
+  return events;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const supabase = createClient(supabaseUrl, supabaseKey);
+
+  try {
+    const payload = await req.json();
+    const { action, connectionId } = payload;
+
+    if (!connectionId) {
+      return err({ success: false, message: "Missing connectionId" });
+    }
+
+    // Circuit-breaker guard: short-circuit if connection is currently paused.
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return err({ success: false, code: "CIRCUIT_BREAKER_OPEN", message: `Connection paused until ${cbState.until}: ${cbState.reason || "auto-pause"}` }, 503);
+    }
+
+    // Load connection
+    const { data: conn, error: connErr } = await supabase
+      .from("pos_connections")
+      .select("*")
+      .eq("id", connectionId)
+      .single();
+
+    if (connErr || !conn) {
+      return err({ success: false, message: "Connection not found" }, 404);
+    }
+
+    const config = getBdpConfig(conn.provider_config);
+    const baseUrl = (conn.base_url || "").replace(/\/+$/, "");
+    const port = config.port ? String(config.port) : "";
+    const userKey = config.user_key ? String(config.user_key) : "";
+    const password = config.password ? String(config.password) : "";
+    const exportProfileCode = config.export_profile_code ? String(config.export_profile_code) : "";
+    const host = port ? `${baseUrl}:${port}` : baseUrl;
+    const headers = bdpHeaders(userKey, password);
+
+    // ── Persisted endpoint resolution ──
+    const persistedEndpoints = config.discovered_endpoints || {};
+
+    /** Resolve a URL: use persisted endpoint if available, otherwise default path */
+    function resolveUrl(role: string, defaultPath: string): string {
+      // Find the best persisted endpoint for this role
+      for (const [, ep] of Object.entries(persistedEndpoints)) {
+        if (ep.role === role && ep.path && ep.last_success_at) {
+          return `${host}${ep.path}`;
+        }
+      }
+      return `${host}${defaultPath}`;
+    }
+
+    /** Track endpoint success/error in config and persist */
+    async function trackEndpoint(
+      key: string, role: "auth" | "sales" | "catalog" | "write",
+      path: string, resp: Response | null, errorMsg?: string,
+    ) {
+      const record: BdpEndpointRecord = persistedEndpoints[key] || { path, role };
+      record.path = path;
+      record.role = role;
+      if (resp && resp.ok) {
+        record.last_success_at = new Date().toISOString();
+        record.last_success_status = resp.status;
+      } else {
+        record.last_error_at = new Date().toISOString();
+        record.last_error_status = resp?.status || 0;
+        if (errorMsg) record.last_error_body = errorMsg.substring(0, 2048);
+      }
+      persistedEndpoints[key] = record;
+      // Persist back to provider_config (non-blocking)
+      const updatedConfig = { ...config, discovered_endpoints: persistedEndpoints };
+      supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId)
+        .then(() => {});
+    }
+
+    // ── ACTION: test (robust multi-step validation) ──
+    if (action === "test") {
+      const checks: Record<string, { ok: boolean; status: number; label: string; message: string; bodyPreview?: string }> = {};
+      let overallSuccess = true;
+
+      // 1) Auth check — hit /api/v1/status
+      try {
+        const authUrl = `${host}/api/v1/status`;
+        const authResp = await bdpFetch(authUrl, headers);
+        const authBody = await authResp.text();
+        const authOk = authResp.ok;
+        checks.auth = {
+          ok: authOk, status: authResp.status, label: "Autenticación",
+          message: authOk ? "Credenciales válidas" : (authResp.status === 401 ? "auth_failed: User Key o Password incorrectos" : `HTTP ${authResp.status}: ${authResp.statusText}`),
+          bodyPreview: authOk ? undefined : authBody.substring(0, 2048),
+        };
+        if (!authOk) overallSuccess = false;
+      } catch (e: any) {
+        const msg = e.message || "Network error";
+        checks.auth = {
+          ok: false, status: 0, label: "Autenticación",
+          message: msg.includes("abort") ? "timeout: No se pudo conectar en 30s — revisa firewall y puerto" : `network_error: ${msg}`,
+        };
+        overallSuccess = false;
+      }
+
+      // 2) Endpoint discovery — probe /api/v1/articles to validate REST is available
+      if (checks.auth?.ok) {
+        try {
+          const discUrl = `${host}/api/v1/articles`;
+          const discResp = await bdpFetch(discUrl, headers);
+          const discBody = await discResp.text();
+          const discOk = discResp.ok || discResp.status === 405;
+          checks.endpoint_discovery = {
+            ok: discOk, status: discResp.status, label: "Endpoint REST disponible",
+            message: discOk ? "API REST accesible" : `endpoint_not_found: ${discResp.status} — el servicio Weblink puede no estar habilitado`,
+            bodyPreview: discOk ? undefined : discBody.substring(0, 2048),
+          };
+          if (!discOk) overallSuccess = false;
+        } catch (e: any) {
+          checks.endpoint_discovery = {
+            ok: false, status: 0, label: "Endpoint REST disponible",
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+          overallSuccess = false;
+        }
+      } else {
+        checks.endpoint_discovery = { ok: false, status: 0, label: "Endpoint REST disponible", message: "skipped: auth fallida" };
+      }
+
+      // 3) Export profile code validation — attempt a date-scoped export
+      if (checks.auth?.ok) {
+        const today = new Date().toISOString().substring(0, 10);
+        const profileToTest = exportProfileCode || "WEBLINK";
+        const exportUrl = `${host}/api/v1/export/${encodeURIComponent(profileToTest)}?dateFrom=${today}&dateTo=${today}`;
+        try {
+          const expResp = await bdpFetch(exportUrl, headers);
+          const expBody = await expResp.text();
+          const expOk = expResp.ok;
+          checks.export_profile = {
+            ok: expOk, status: expResp.status, label: `Plantilla de exportación (${profileToTest})`,
+            message: expOk
+              ? "Plantilla aceptada por BDP"
+              : (expResp.status === 404
+                ? `export_profile_invalid: La plantilla "${profileToTest}" no existe en BDP — revisa el nombre`
+                : `HTTP ${expResp.status}: ${expResp.statusText}`),
+            bodyPreview: expOk ? undefined : expBody.substring(0, 2048),
+          };
+          if (!expOk) overallSuccess = false;
+        } catch (e: any) {
+          checks.export_profile = {
+            ok: false, status: 0, label: `Plantilla de exportación (${profileToTest})`,
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+          overallSuccess = false;
+        }
+      } else {
+        checks.export_profile = { ok: false, status: 0, label: "Plantilla de exportación", message: "skipped: auth fallida" };
+      }
+
+      // 4) Sample fetch — try to read today's export data (success = any valid JSON response)
+      if (checks.export_profile?.ok) {
+        try {
+          const today = new Date().toISOString().substring(0, 10);
+          const sampleUrl = `${host}/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${today}&dateTo=${today}`;
+          const sampleResp = await bdpFetch(sampleUrl, headers);
+          const sampleBody = await sampleResp.text();
+          let docCount = 0;
+          try {
+            const parsed = JSON.parse(sampleBody);
+            const arr = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || []);
+            docCount = Array.isArray(arr) ? arr.length : 0;
+          } catch { /* not JSON */ }
+          checks.sample_fetch = {
+            ok: sampleResp.ok, status: sampleResp.status, label: "Lectura de datos de prueba",
+            message: sampleResp.ok
+              ? `OK — ${docCount} documento(s) encontrados para hoy`
+              : `HTTP ${sampleResp.status}: No se pudieron leer datos`,
+            bodyPreview: sampleResp.ok ? undefined : sampleBody.substring(0, 2048),
+          };
+        } catch (e: any) {
+          checks.sample_fetch = {
+            ok: false, status: 0, label: "Lectura de datos de prueba",
+            message: `network_error: ${e.message || "Error de red"}`,
+          };
+        }
+        // sample_fetch failure is non-blocking — could just be no data today
+      } else {
+        checks.sample_fetch = { ok: false, status: 0, label: "Lectura de datos de prueba", message: "skipped: plantilla no válida" };
+      }
+
+      // Classify overall failure reason
+      let failureReason: string | null = null;
+      if (!overallSuccess) {
+        if (!checks.auth?.ok) {
+          failureReason = checks.auth?.message?.includes("timeout") ? "timeout_firewall" : "auth_failed";
+        } else if (!checks.endpoint_discovery?.ok) {
+          failureReason = "endpoint_not_found";
+        } else if (!checks.export_profile?.ok) {
+          failureReason = "export_profile_invalid";
+        }
+      }
+
+      // Persist test result to provider_config
+      const testMeta = {
+        last_test_at: new Date().toISOString(),
+        last_test_success: overallSuccess,
+        last_test_failure_reason: failureReason,
+        last_test_checks: checks,
+      };
+      const updatedConfig = { ...config, ...testMeta };
+      await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
+
+      return ok({
+        success: overallSuccess,
+        status: checks.auth?.status || 0,
+        statusText: overallSuccess ? "All checks passed" : (failureReason || "Check failed"),
+        contentType: "application/json",
+        bodyPreview: null,
+        message: overallSuccess ? "Conexión validada correctamente" : `Fallo: ${failureReason}`,
+        checks,
+        failureReason,
+      });
+    }
+
+    // ── ACTION: discover ──
+    // Probe endpoints with retry/backoff. Persist discovered routes per connection.
+    if (action === "discover") {
+      const today = new Date().toISOString().substring(0, 10);
+      const endpoints = [
+        { key: "auth",        label: "Auth / Status",   path: "/api/v1/status",      critical: true,  role: "auth" },
+        { key: "articles",    label: "Catalog (Articles)", path: "/api/v1/articles",  critical: false, role: "catalog" },
+        { key: "departments", label: "Departments",     path: "/api/v1/departments",  critical: false, role: "catalog" },
+        { key: "export",      label: "Sales Export",    path: `/api/v1/export/${encodeURIComponent(exportProfileCode || "WEBLINK")}?dateFrom=${today}&dateTo=${today}`, critical: true, role: "sales" },
+      ];
+
+      const importCode = config.import_profile_code ? String(config.import_profile_code) : "";
+      if (importCode) {
+        endpoints.push({ key: "import", label: "Write (Import)", path: `/api/v1/import/${encodeURIComponent(importCode)}`, critical: false, role: "write" });
+      }
+
+      // Also probe direct write via PUT/POST articles
+      endpoints.push({ key: "articles_write", label: "Write (REST)", path: "/api/v1/articles", critical: false, role: "write" });
+
+      const results: Record<string, {
+        ok: boolean; status: number; critical: boolean; role: string;
+        label: string; path: string; bodyPreview?: string;
+        attempts: number; lastError?: string;
+      }> = {};
+
+      // Probe all endpoints with retry
+      for (const ep of endpoints) {
+        const fullUrl = `${host}${ep.path}`;
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(fullUrl, headers, "GET", { retries: 2, baseDelayMs: 1500 });
+        if (resp) {
+          const body = await resp.text();
+          const isOk = resp.ok || resp.status === 405; // 405 = method not allowed but endpoint exists
+          results[ep.key] = {
+            ok: isOk, status: resp.status, critical: ep.critical, role: ep.role,
+            label: ep.label, path: ep.path,
+            bodyPreview: isOk ? undefined : body.substring(0, 1024), // Only show body on failures
+            attempts,
+          };
+        } else {
+          results[ep.key] = {
+            ok: false, status: 0, critical: ep.critical, role: ep.role,
+            label: ep.label, path: ep.path,
+            bodyPreview: undefined, attempts, lastError,
+          };
+        }
+      }
+
+      const canReadSales = results.export?.ok ?? false;
+      const canReadCatalog = results.articles?.ok ?? false;
+      const canWriteImport = importCode ? (results.import?.ok ?? false) : false;
+      const canWriteRest = results.articles_write?.ok ?? false;
+      const canWrite = canWriteImport || canWriteRest;
+      const allCriticalPass = Object.values(results).filter(r => r.critical).every(r => r.ok);
+
+      const writeMode = canWriteImport ? "IMPORT_PROFILE" : (canWriteRest ? "REST" : "NONE");
+
+      // Build persisted endpoint records with rich metadata
+      const discoveredEndpoints: Record<string, BdpEndpointRecord> = {};
+      for (const [key, val] of Object.entries(results)) {
+        const ep: BdpEndpointRecord = {
+          path: val.path,
+          role: val.role as BdpEndpointRecord["role"],
+          verified_at: new Date().toISOString(),
+        };
+        if (val.ok) {
+          ep.last_success_at = new Date().toISOString();
+          ep.last_success_status = val.status;
+        } else {
+          ep.last_error_at = new Date().toISOString();
+          ep.last_error_status = val.status;
+          ep.last_error_body = (val.bodyPreview || val.lastError || "").substring(0, 2048);
+        }
+        discoveredEndpoints[key] = ep;
+      }
+
+      // Persist to provider_config
+      const updatedConfig = {
+        ...config,
+        discovered_endpoints: discoveredEndpoints,
+        last_discovery_at: new Date().toISOString(),
+        // Keep legacy for backward compat
+        discovered_routes: Object.fromEntries(
+          Object.entries(discoveredEndpoints)
+            .filter(([, v]) => v.last_success_at)
+            .map(([k, v]) => [k, { path: v.path, status: v.last_success_status, verified_at: v.verified_at }])
+        ),
+      };
+      await supabase.from("pos_connections").update({ provider_config: updatedConfig }).eq("id", connectionId);
+
+      // Upsert provider_capabilities
+      const writeEndpointsJson: Record<string, unknown> = {};
+      if (canWriteImport) writeEndpointsJson.import = { path: `/api/v1/import/${encodeURIComponent(importCode)}`, mode: "IMPORT_PROFILE" };
+      if (canWriteRest) writeEndpointsJson.rest = { path: "/api/v1/articles", mode: "REST" };
+
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "BDP_NET",
+        can_read_sales: canReadSales,
+        can_read_catalog: canReadCatalog,
+        can_write_products: canWrite ? "YES" : "NO",
+        write_mode: writeMode,
+        write_endpoints_json: writeEndpointsJson,
+        webhook_supported: false,
+        readiness_status: allCriticalPass ? "CONNECTED" : "PARTIAL",
+        last_checked_at: new Date().toISOString(),
+      } as any, { onConflict: "connection_id" });
+
+      return ok({
+        success: allCriticalPass,
+        endpoints: results,
+        discoveredEndpoints,
+        capabilities: { canReadSales, canReadCatalog, canWrite, writeMode },
+      });
+    }
+
+    // ── ACTION: verify-product-v2 ──
+    // Returns shared PostWriteVerificationResult contract with family + tax checks
+    if (action === "verify-product-v2") {
+      const { productId, expectedFamily, expectedVatRate } = payload;
+      if (!productId) return err({ success: false, message: "Missing productId" });
+
+      const errors: { code: string; message: string; field?: string; context?: any }[] = [];
+      const warnings: { code: string; message: string; field?: string; context?: any }[] = [];
+      let exists = false;
+      let priceValid = false;
+      let familyValid = true;
+      let taxValid = true;
+
+      try {
+        // Try direct article fetch
+        let product: any = null;
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        if (resp.ok) {
+          product = JSON.parse(await resp.text());
+        } else {
+          // Fallback: list all
+          const allResp = await bdpFetch(`${host}/api/v1/articles`, headers);
+          if (allResp.ok) {
+            const all = JSON.parse(await allResp.text());
+            const arr = Array.isArray(all) ? all : (all.articles || all.Articles || all.data || []);
+            product = arr.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(productId));
+          }
+        }
+
+        if (!product) {
+          errors.push({ code: "NOT_FOUND", message: `Product ${productId} not found in BDP` });
+        } else {
+          exists = true;
+
+          // Price check
+          const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+          if (price > 0) {
+            priceValid = true;
+          } else {
+            errors.push({ code: "PRICE_ZERO", message: "Price is 0 or missing", field: "price", context: { actual: price } });
+          }
+
+          // Family check
+          const actualFamily = String(product.Department || product.department || product.Family || product.family || product.Category || product.category || "").trim();
+          if (expectedFamily) {
+            const expected = String(expectedFamily).trim().toLowerCase();
+            if (!actualFamily) {
+              familyValid = false;
+              errors.push({ code: "FAMILY_MISSING", message: `Product has no family/department, expected "${expectedFamily}"`, field: "family", context: { expected: expectedFamily, actual: null } });
+            } else if (actualFamily.toLowerCase() !== expected) {
+              familyValid = false;
+              warnings.push({ code: "FAMILY_MISMATCH", message: `Family is "${actualFamily}", expected "${expectedFamily}"`, field: "family", context: { expected: expectedFamily, actual: actualFamily } });
+            }
+          } else if (!actualFamily) {
+            warnings.push({ code: "FAMILY_EMPTY", message: "Product has no family/department assigned", field: "family" });
+          }
+
+          // Tax/VAT check
+          const actualVat = Number(product.VatRate || product.vat_rate || product.Tax || product.tax || product.IVA || product.iva || 0);
+          if (expectedVatRate !== undefined && expectedVatRate !== null) {
+            const expectedVat = Number(expectedVatRate);
+            if (actualVat !== expectedVat) {
+              taxValid = false;
+              errors.push({ code: "TAX_MISMATCH", message: `VAT is ${actualVat}%, expected ${expectedVat}%`, field: "vat_rate", context: { expected: expectedVat, actual: actualVat } });
+            }
+          } else if (actualVat === 0) {
+            warnings.push({ code: "TAX_ZERO", message: "VAT rate is 0% — may be intentional or missing", field: "vat_rate" });
+          }
+        }
+
+        const success = exists && priceValid && familyValid && taxValid;
+
+        return ok({
+          success,
+          verified_exists: exists,
+          verified_prices: priceValid,
+          verified_family: familyValid,
+          verified_tax: taxValid,
+          verified_scope: true,
+          errors,
+          warnings,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({
+          success: false, verified_exists: false, verified_prices: false, verified_family: false, verified_tax: false, verified_scope: true,
+          errors: [{ code: "NETWORK_ERROR", message: msg }], warnings: [],
+        });
+      }
+    }
+
+    // ── ACTION: test-custom ──
+    if (action === "test-custom") {
+      const { path, method: httpMethod } = payload;
+      const testUrl = `${host}${path || "/"}`;
+      try {
+        const resp = await bdpFetch(testUrl, headers, (httpMethod || "GET").toUpperCase());
+        const bodyText = await resp.text();
+        return ok({
+          success: resp.ok, status: resp.status, statusText: resp.statusText,
+          contentType: resp.headers.get("content-type") || "unknown",
+          bodyPreview: bodyText.substring(0, 2048), url: testUrl,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({
+          success: false, status: 0, url: testUrl,
+          message: msg.includes("abort") ? "Connection timed out (30s)" : msg,
+        });
+      }
+    }
+
+    // ── ACTION: fetch-sales ──
+    // Fetch documents for a given day (or date range) from BDP export endpoint
+    if (action === "fetch-sales") {
+      const { businessDay, dateFrom, dateTo } = payload;
+      const from = dateFrom || businessDay;
+      const to = dateTo || businessDay;
+
+      if (!from) {
+        return err({ success: false, message: "Missing businessDay or dateFrom" });
+      }
+
+      try {
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
+        const resp = await bdpFetch(exportUrl, headers);
+        const bodyText = await resp.text();
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp.ok ? undefined : bodyText);
+
+        if (!resp.ok) {
+          return ok({
+            success: false,
+            message: `BDP returned HTTP ${resp.status}: ${resp.statusText}`,
+            bodyPreview: bodyText.substring(0, 2048),
+          });
+        }
+
+        // Parse response — BDP may return JSON array or wrapped object
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          return ok({
+            success: false,
+            message: "BDP response is not valid JSON",
+            bodyPreview: bodyText.substring(0, 2048),
+          });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+
+        return ok({
+          success: true,
+          salesEvents,
+          totalDocuments: rawDocuments.length,
+          totalParsedEvents: salesEvents.length,
+          dateRange: { from, to },
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg.includes("abort") ? "Request timed out (30s)" : msg });
+      }
+    }
+
+    // ── ACTION: save-sales ──
+    // Fetch + parse + upsert with retry, enriched response, cursor protection
+    if (action === "save-sales") {
+      const { businessDay, dateFrom, dateTo } = payload;
+      const from = dateFrom || businessDay;
+      const to = dateTo || businessDay;
+
+      if (!from) {
+        return err({ success: false, message: "Missing businessDay or dateFrom" });
+      }
+
+      const syncMeta = {
+        mode: "save-sales",
+        profile_code: exportProfileCode,
+        date_range: { from, to },
+        started_at: new Date().toISOString(),
+      };
+
+      try {
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${to}`;
+
+        // Fetch with retry for transient failures
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp?.ok ? undefined : (lastError || `HTTP ${resp?.status}`));
+
+        if (!resp || !resp.ok) {
+          // Persist sync failure without touching cursor
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: lastError || `HTTP ${resp?.status}`, attempts };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: `BDP HTTP ${resp?.status || 0}: ${lastError || "Network error"}`, syncMeta: failMeta });
+        }
+
+        const bodyText = await resp.text();
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: "Invalid JSON from BDP", raw_preview: bodyText.substring(0, 2048) };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: "Invalid JSON from BDP", syncMeta: failMeta });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+        let savedEvents = 0;
+        let savedLines = 0;
+        let skippedRows = 0;
+        const errors: string[] = [];
+
+        for (const evt of salesEvents) {
+          const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+          const { data: eventRow, error: evtErr } = await supabase
+            .from("sales_events")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_doc_id: idempotencyId,
+                business_day: evt.business_day,
+                doc_type: evt.doc_type,
+                total_amount: evt.total_amount,
+                total_tax: evt.total_tax,
+                total_net: evt.total_net,
+                line_count: evt.line_count,
+                raw_json: evt.raw_json,
+              },
+              { onConflict: "connection_id,provider_doc_id" }
+            )
+            .select("id")
+            .single();
+
+          if (evtErr) {
+            errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            skippedRows++;
+            continue;
+          }
+          savedEvents++;
+
+          for (const line of evt.lines) {
+            const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+            const { error: lineErr } = await supabase
+              .from("sales_line_items")
+              .upsert(
+                {
+                  sales_event_id: eventRow.id,
+                  connection_id: connectionId,
+                  provider_product_id: lineProviderId,
+                  name: line.name,
+                  family: line.family,
+                  format: line.format,
+                  quantity: line.quantity,
+                  unit_price: line.unit_price,
+                  total_amount: line.total_amount,
+                  vat_rate: line.vat_rate,
+                  is_wine_candidate: false,
+                  mapped: false,
+                },
+                { onConflict: "sales_event_id,provider_product_id" }
+              );
+
+            if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); skippedRows++; }
+            else { savedLines++; }
+          }
+        }
+
+        // Only update cursor on success
+        const successMeta = {
+          ...syncMeta, finished_at: new Date().toISOString(), success: true,
+          documents_read: rawDocuments.length, events_saved: savedEvents,
+          lines_saved: savedLines, rows_skipped: skippedRows, attempts,
+          raw_preview: bodyText.substring(0, 2048),
+        };
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          last_business_day_synced: to,
+          provider_config: { ...config, last_sync_result: successMeta },
+        } as any).eq("id", connectionId);
+
+        return ok({ success: true, savedEvents, savedLines, totalParsed: salesEvents.length, skippedRows, errors, syncMeta: successMeta });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: msg };
+        await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+        return ok({ success: false, message: msg, syncMeta: failMeta });
+      }
+    }
+
+    // ── ACTION: backfill ──
+    // Save sales for last N days with retry per day
+    if (action === "backfill") {
+      const daysBack = Number(payload.daysBack || 30);
+      let totalSaved = 0;
+      let totalLines = 0;
+      let totalSkipped = 0;
+      let totalDocsRead = 0;
+      const errors: string[] = [];
+      const previousCursor = conn.last_business_day_synced;
+
+      const syncMeta = {
+        mode: "backfill",
+        profile_code: exportProfileCode,
+        days_requested: daysBack,
+        started_at: new Date().toISOString(),
+      };
+
+      for (let i = 0; i < daysBack; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const day = d.toISOString().substring(0, 10);
+
+        try {
+          const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+          const salesBase = resolveUrl("sales", defaultSalesPath);
+          const exportUrl = `${salesBase}?dateFrom=${day}&dateTo=${day}`;
+
+          const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+
+          if (!resp || !resp.ok) {
+            errors.push(`${day}: HTTP ${resp?.status || 0} (${attempts} attempts${lastError ? `, ${lastError}` : ""})`);
+            continue;
+          }
+
+          const bodyText = await resp.text();
+          let rawDocuments: any[];
+          try {
+            const parsed = JSON.parse(bodyText);
+            rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+          } catch {
+            errors.push(`${day}: Invalid JSON`);
+            continue;
+          }
+
+          if (rawDocuments.length === 0) continue;
+          totalDocsRead += rawDocuments.length;
+
+          const salesEvents = parseBdpDocuments(rawDocuments);
+
+          for (const evt of salesEvents) {
+            const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+            const { data: eventRow, error: evtErr } = await supabase
+              .from("sales_events")
+              .upsert(
+                {
+                  connection_id: connectionId,
+                  provider_doc_id: idempotencyId,
+                  business_day: evt.business_day,
+                  doc_type: evt.doc_type,
+                  total_amount: evt.total_amount,
+                  total_tax: evt.total_tax,
+                  total_net: evt.total_net,
+                  line_count: evt.line_count,
+                  raw_json: evt.raw_json,
+                },
+                { onConflict: "connection_id,provider_doc_id" }
+              )
+              .select("id")
+              .single();
+
+            if (evtErr) {
+              errors.push(`${day} doc ${evt.provider_doc_id}: ${evtErr.message}`);
+              totalSkipped++;
+              continue;
+            }
+            totalSaved++;
+
+            for (const line of evt.lines) {
+              const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+              const { error: lineErr } = await supabase
+                .from("sales_line_items")
+                .upsert(
+                  {
+                    sales_event_id: eventRow.id,
+                    connection_id: connectionId,
+                    provider_product_id: lineProviderId,
+                    name: line.name,
+                    family: line.family,
+                    format: line.format,
+                    quantity: line.quantity,
+                    unit_price: line.unit_price,
+                    total_amount: line.total_amount,
+                    vat_rate: line.vat_rate,
+                    is_wine_candidate: false,
+                    mapped: false,
+                  },
+                  { onConflict: "sales_event_id,provider_product_id" }
+                );
+
+              if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); totalSkipped++; }
+              else { totalLines++; }
+            }
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Unknown error";
+          errors.push(`${day}: ${msg}`);
+        }
+      }
+
+      // Update sync markers only if we saved something
+      const resultMeta = {
+        ...syncMeta, finished_at: new Date().toISOString(), success: errors.length === 0,
+        documents_read: totalDocsRead, events_saved: totalSaved,
+        lines_saved: totalLines, rows_skipped: totalSkipped, days_processed: daysBack,
+      };
+      if (totalSaved > 0) {
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          provider_config: { ...config, last_sync_result: resultMeta },
+        } as any).eq("id", connectionId);
+      } else {
+        // Don't touch cursor — preserve previous valid state
+        await supabase.from("pos_connections").update({
+          provider_config: { ...config, last_sync_result: resultMeta },
+        } as any).eq("id", connectionId);
+      }
+
+      return ok({ success: true, totalSaved, totalLines, totalSkipped, totalDocsRead, daysProcessed: daysBack, errors, syncMeta: resultMeta });
+    }
+
+    // ── ACTION: incremental-sync ──
+    // Fetch from last_business_day_synced until today with retry
+    if (action === "incremental-sync") {
+      const lastSynced = conn.last_business_day_synced;
+      const today = new Date().toISOString().substring(0, 10);
+      const from = lastSynced || today;
+
+      const syncMeta = {
+        mode: "incremental",
+        profile_code: exportProfileCode,
+        date_range: { from, to: today },
+        previous_cursor: lastSynced,
+        started_at: new Date().toISOString(),
+      };
+
+      try {
+        const defaultSalesPath = `/api/v1/export/${encodeURIComponent(exportProfileCode)}`;
+        const salesBase = resolveUrl("sales", defaultSalesPath);
+        const exportUrl = `${salesBase}?dateFrom=${from}&dateTo=${today}`;
+
+        const { resp, attempts, lastError } = await bdpFetchWithRetry(exportUrl, headers, "GET", { retries: 2, baseDelayMs: 2000 });
+        await trackEndpoint("export", "sales", defaultSalesPath, resp, resp?.ok ? undefined : (lastError || `HTTP ${resp?.status}`));
+
+        if (!resp || !resp.ok) {
+          // Don't touch cursor on failure
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: lastError || `HTTP ${resp?.status}`, attempts };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: `BDP HTTP ${resp?.status || 0}`, syncMeta: failMeta });
+        }
+
+        const bodyText = await resp.text();
+        let rawDocuments: any[];
+        try {
+          const parsed = JSON.parse(bodyText);
+          rawDocuments = Array.isArray(parsed) ? parsed : (parsed.documents || parsed.Documents || parsed.data || parsed.Data || [parsed]);
+        } catch {
+          const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: "Invalid JSON", raw_preview: bodyText.substring(0, 2048) };
+          await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+          return ok({ success: false, message: "Invalid JSON from BDP", syncMeta: failMeta });
+        }
+
+        const salesEvents = parseBdpDocuments(rawDocuments);
+        let savedEvents = 0;
+        let savedLines = 0;
+        let skippedRows = 0;
+        const errors: string[] = [];
+
+        for (const evt of salesEvents) {
+          const idempotencyId = `bdp_${evt.provider_doc_id}`;
+
+          const { data: eventRow, error: evtErr } = await supabase
+            .from("sales_events")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_doc_id: idempotencyId,
+                business_day: evt.business_day,
+                doc_type: evt.doc_type,
+                total_amount: evt.total_amount,
+                total_tax: evt.total_tax,
+                total_net: evt.total_net,
+                line_count: evt.line_count,
+                raw_json: evt.raw_json,
+              },
+              { onConflict: "connection_id,provider_doc_id" }
+            )
+            .select("id")
+            .single();
+
+          if (evtErr) {
+            errors.push(`Event ${evt.provider_doc_id}: ${evtErr.message}`);
+            skippedRows++;
+            continue;
+          }
+          savedEvents++;
+
+          for (const line of evt.lines) {
+            const lineProviderId = `${idempotencyId}_L${line.line_index}`;
+            const { error: lineErr } = await supabase
+              .from("sales_line_items")
+              .upsert(
+                {
+                  sales_event_id: eventRow.id,
+                  connection_id: connectionId,
+                  provider_product_id: lineProviderId,
+                  name: line.name,
+                  family: line.family,
+                  format: line.format,
+                  quantity: line.quantity,
+                  unit_price: line.unit_price,
+                  total_amount: line.total_amount,
+                  vat_rate: line.vat_rate,
+                  is_wine_candidate: false,
+                  mapped: false,
+                },
+                { onConflict: "sales_event_id,provider_product_id" }
+              );
+
+            if (lineErr) { errors.push(`Line ${lineProviderId}: ${lineErr.message}`); skippedRows++; }
+            else { savedLines++; }
+          }
+        }
+
+        // Update cursor only on success
+        const successMeta = {
+          ...syncMeta, finished_at: new Date().toISOString(), success: true,
+          documents_read: rawDocuments.length, events_saved: savedEvents,
+          lines_saved: savedLines, rows_skipped: skippedRows, attempts,
+          raw_preview: bodyText.substring(0, 2048),
+        };
+        await supabase.from("pos_connections").update({
+          last_sync_at: new Date().toISOString(),
+          last_business_day_synced: today,
+          provider_config: { ...config, last_sync_result: successMeta },
+        } as any).eq("id", connectionId);
+
+        return ok({
+          success: true, savedEvents, savedLines, skippedRows,
+          dateRange: { from, to: today },
+          totalParsed: salesEvents.length, errors, syncMeta: successMeta,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        const failMeta = { ...syncMeta, finished_at: new Date().toISOString(), success: false, error: msg };
+        await supabase.from("pos_connections").update({ provider_config: { ...config, last_sync_result: failMeta } } as any).eq("id", connectionId);
+        return ok({ success: false, message: msg, syncMeta: failMeta });
+      }
+    }
+
+    // ── ACTION: sync-catalog ──
+    // Fetch products/articles + departments/families from BDP
+    if (action === "sync-catalog") {
+      const catalogProfileCode = config.catalog_profile_code
+        ? String(config.catalog_profile_code)
+        : exportProfileCode;
+
+      try {
+        // Try fetching articles/products (use persisted catalog endpoint)
+        const productsUrl = resolveUrl("catalog", "/api/v1/articles");
+        let products: any[] = [];
+        let families: any[] = [];
+        let rawProductsPreview = "";
+
+        try {
+          const pResp = await bdpFetch(productsUrl, headers);
+          await trackEndpoint("articles", "catalog", "/api/v1/articles", pResp, pResp.ok ? undefined : `HTTP ${pResp.status}`);
+          if (pResp.ok) {
+            const pText = await pResp.text();
+            rawProductsPreview = pText.substring(0, 2048);
+            const parsed = JSON.parse(pText);
+            products = Array.isArray(parsed)
+              ? parsed
+              : (parsed.articles || parsed.Articles || parsed.products || parsed.Products || parsed.data || []);
+          }
+        } catch { /* endpoint may not exist */ }
+
+        // Try fetching departments/families
+        try {
+          const fResp = await bdpFetch(`${host}/api/v1/departments`, headers);
+          if (fResp.ok) {
+            const fText = await fResp.text();
+            const parsed = JSON.parse(fText);
+            families = Array.isArray(parsed)
+              ? parsed
+              : (parsed.departments || parsed.Departments || parsed.families || parsed.Families || parsed.data || []);
+          }
+        } catch { /* endpoint may not exist */ }
+
+        // If articles endpoint didn't work, try export endpoint with catalog profile
+        if (products.length === 0 && catalogProfileCode) {
+          try {
+            const catalogUrl = `${host}/api/v1/export/${encodeURIComponent(catalogProfileCode)}?type=articles`;
+            const cResp = await bdpFetch(catalogUrl, headers);
+            if (cResp.ok) {
+              const cText = await cResp.text();
+              rawProductsPreview = cText.substring(0, 2048);
+              const parsed = JSON.parse(cText);
+              products = Array.isArray(parsed)
+                ? parsed
+                : (parsed.articles || parsed.Articles || parsed.products || parsed.Products || parsed.data || []);
+            }
+          } catch { /* */ }
+        }
+
+        // Normalize products into provider_products
+        const normalized = products.map((p: any) => {
+          const id = String(p.Id || p.id || p.ArticleId || p.article_id || p.Code || p.code || "");
+          const name = String(p.Name || p.name || p.Description || p.description || "Unknown");
+          const family = p.Department || p.department || p.Family || p.family || p.Category || p.category || null;
+          const price = Number(p.Price || p.price || p.SalePrice || p.sale_price || p.PVP || p.pvp || 0);
+          const vatRate = Number(p.VatRate || p.vat_rate || p.Tax || p.tax || p.IVA || p.iva || 0);
+          const format = p.Format || p.format || p.Unit || p.unit || null;
+
+          return {
+            provider_product_id: id,
+            name,
+            family: family ? String(family) : null,
+            price,
+            vat_rate: vatRate,
+            sale_format: format ? String(format) : null,
+            raw_payload: p,
+          };
+        });
+
+        // ── Field-level diagnostics ──
+        let missingPrice = 0;
+        let missingFamily = 0;
+        let missingName = 0;
+        let missingVat = 0;
+        let missingFormat = 0;
+        let missingId = 0;
+        const pricesFound: number[] = [];
+
+        for (const p of normalized) {
+          if (!p.provider_product_id) missingId++;
+          if (!p.name || p.name === "Unknown") missingName++;
+          if (!p.price || p.price <= 0) missingPrice++;
+          else pricesFound.push(p.price);
+          if (!p.family) missingFamily++;
+          if (p.vat_rate === 0 || p.vat_rate === undefined) missingVat++;
+          if (!p.sale_format) missingFormat++;
+        }
+
+        const totalProducts = normalized.length;
+        const uniqueFamilies = [...new Set(normalized.filter(p => p.family).map(p => p.family))];
+        const avgPrice = pricesFound.length > 0 ? pricesFound.reduce((a, b) => a + b, 0) / pricesFound.length : 0;
+
+        const fieldCoverage = {
+          products: totalProducts,
+          with_price: totalProducts - missingPrice,
+          with_family: totalProducts - missingFamily,
+          with_name: totalProducts - missingName,
+          with_vat: totalProducts - missingVat,
+          with_format: totalProducts - missingFormat,
+          with_id: totalProducts - missingId,
+          unique_families: uniqueFamilies.length,
+          avg_price: Math.round(avgPrice * 100) / 100,
+          min_price: pricesFound.length > 0 ? Math.min(...pricesFound) : 0,
+          max_price: pricesFound.length > 0 ? Math.max(...pricesFound) : 0,
+        };
+
+        // Build warnings for important missing fields
+        const warnings: { code: string; message: string; count: number }[] = [];
+        if (missingPrice > 0) warnings.push({ code: "MISSING_PRICE", message: `${missingPrice} producto(s) sin precio válido`, count: missingPrice });
+        if (missingFamily > 0) warnings.push({ code: "MISSING_FAMILY", message: `${missingFamily} producto(s) sin familia/categoría`, count: missingFamily });
+        if (missingVat > 0) warnings.push({ code: "MISSING_VAT", message: `${missingVat} producto(s) sin IVA definido`, count: missingVat });
+        if (missingName > 0) warnings.push({ code: "MISSING_NAME", message: `${missingName} producto(s) sin nombre`, count: missingName });
+        if (missingId > 0) warnings.push({ code: "MISSING_ID", message: `${missingId} producto(s) sin ID`, count: missingId });
+        if (families.length === 0 && uniqueFamilies.length === 0) warnings.push({ code: "NO_FAMILIES", message: "No se encontraron familias/departamentos", count: 0 });
+
+        const catalogHealth = warnings.length === 0 ? "complete" : warnings.some(w => w.code === "MISSING_PRICE" || w.code === "NO_FAMILIES") ? "incomplete" : "partial";
+
+        // Sample: first 3 products for diagnostics
+        const sampleProducts = normalized.slice(0, 3).map(p => ({
+          id: p.provider_product_id,
+          name: p.name,
+          family: p.family,
+          price: p.price,
+          vat_rate: p.vat_rate,
+          format: p.sale_format,
+        }));
+
+        // Upsert into provider_products
+        let upserted = 0;
+        const errors: string[] = [];
+
+        for (const prod of normalized) {
+          if (!prod.provider_product_id) continue;
+          const { error: upErr } = await supabase
+            .from("provider_products")
+            .upsert(
+              {
+                connection_id: connectionId,
+                provider_product_id: prod.provider_product_id,
+                name: prod.name,
+                family: prod.family,
+                price: prod.price,
+                vat_rate: prod.vat_rate,
+                sale_format: prod.sale_format,
+                raw_payload: prod.raw_payload,
+                last_synced_at: new Date().toISOString(),
+                sync_status: "SYNCED",
+              },
+              { onConflict: "connection_id,provider_product_id" }
+            );
+          if (upErr) {
+            errors.push(`${prod.provider_product_id}: ${upErr.message}`);
+          } else {
+            upserted++;
+          }
+        }
+
+        // Persist catalog diagnostics summary
+        const catalogDiagnostics = {
+          synced_at: new Date().toISOString(),
+          field_coverage: fieldCoverage,
+          warnings,
+          catalog_health: catalogHealth,
+          sample_products: sampleProducts,
+          families_count: families.length,
+          unique_product_families: uniqueFamilies.length,
+        };
+
+        // Update connection catalog metadata
+        await supabase
+          .from("pos_connections")
+          .update({
+            last_catalog_sync_at: new Date().toISOString(),
+            catalog_product_count: normalized.length,
+            provider_config: { ...config, last_catalog_diagnostics: catalogDiagnostics },
+          } as any)
+          .eq("id", connectionId);
+
+        return ok({
+          success: true,
+          totalProducts: normalized.length,
+          upserted,
+          totalFamilies: families.length,
+          families: families.slice(0, 50).map((f: any) => ({
+            id: String(f.Id || f.id || f.Code || f.code || ""),
+            name: String(f.Name || f.name || f.Description || f.description || ""),
+          })),
+          rawProductsPreview,
+          errors,
+          fieldCoverage,
+          warnings,
+          catalogHealth,
+          sampleProducts,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: write-product ──
+    // Create or update a product in BDP, then auto-verify
+    if (action === "write-product") {
+      const { product, autoVerify = true } = payload;
+      if (!product) return err({ success: false, message: "Missing product payload" });
+
+      const importProfileCode = config.import_profile_code
+        ? String(config.import_profile_code)
+        : exportProfileCode;
+
+      try {
+        // Priority: family_override > explicit family > mapping resolution
+        let resolvedFamily = product.family_override || product.family || product.department || undefined;
+        if (!resolvedFamily && (product.wine_type || product.format)) {
+          const mappingKey = resolveMappingKey(product.wine_type, product.format);
+          if (mappingKey) {
+            const { data: mappingRow } = await supabase
+              .from("wine_type_family_mappings")
+              .select("agora_family_name")
+              .eq("connection_id", connectionId)
+              .eq("mapping_key", mappingKey)
+              .single();
+            if (mappingRow?.agora_family_name) {
+              resolvedFamily = mappingRow.agora_family_name;
+            }
+          }
+        }
+
+        // Try direct article endpoint first (PUT for update, POST for create)
+        const articleId = product.provider_product_id || product.id;
+        const articlePayload = {
+          Id: articleId || undefined,
+          Code: product.code || articleId || undefined,
+          Name: product.name,
+          Description: product.description || product.name,
+          Department: resolvedFamily,
+          Price: product.price || 0,
+          SalePrice: product.price || 0,
+          PVP: product.price || 0,
+          VatRate: product.vat_rate || 0,
+          IVA: product.vat_rate || 0,
+          Format: product.format || undefined,
+          Unit: product.format || undefined,
+        };
+
+        let writeResp: Response;
+        let writeUrl: string;
+        let writeMethod = "create";
+
+        if (articleId) {
+          // Update existing
+          writeUrl = `${host}/api/v1/articles/${encodeURIComponent(articleId)}`;
+          writeResp = await bdpFetch(writeUrl, { ...headers, "Content-Type": "application/json" }, "PUT");
+          writeMethod = "update";
+          // If PUT not supported, try POST
+          if (writeResp.status === 405 || writeResp.status === 404) {
+            writeUrl = `${host}/api/v1/articles`;
+            const bodyStr = JSON.stringify(articlePayload);
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), 30000);
+            writeResp = await fetch(writeUrl, {
+              method: "POST",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: bodyStr,
+              signal: controller2.signal,
+            });
+            clearTimeout(timeout2);
+          }
+        } else {
+          writeUrl = `${host}/api/v1/articles`;
+          const bodyStr = JSON.stringify(articlePayload);
+          const controller3 = new AbortController();
+          const timeout3 = setTimeout(() => controller3.abort(), 30000);
+          writeResp = await fetch(writeUrl, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: bodyStr,
+            signal: controller3.signal,
+          });
+          clearTimeout(timeout3);
+        }
+
+        const writeBody = await writeResp.text();
+        let writeOk = writeResp.ok;
+        let finalMethod = writeMethod;
+        let finalStatus = writeResp.status;
+        let finalBody = writeBody;
+
+        // If direct API didn't work, try import endpoint
+        if (!writeResp.ok && importProfileCode) {
+          const importUrl = `${host}/api/v1/import/${encodeURIComponent(importProfileCode)}`;
+          const importPayload = JSON.stringify({ articles: [articlePayload] });
+          const controller4 = new AbortController();
+          const timeout4 = setTimeout(() => controller4.abort(), 30000);
+          const importResp = await fetch(importUrl, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: importPayload,
+            signal: controller4.signal,
+          });
+          clearTimeout(timeout4);
+          finalBody = await importResp.text();
+          writeOk = importResp.ok;
+          finalMethod = "import";
+          finalStatus = importResp.status;
+        }
+
+        // Auto-verify after successful write
+        let verification = null;
+        const verifyId = articleId || null;
+        if (writeOk && autoVerify && verifyId) {
+          // Small delay to let BDP commit
+          await new Promise(r => setTimeout(r, 1000));
+
+          const vErrors: { code: string; message: string; field?: string; context?: any }[] = [];
+          const vWarnings: { code: string; message: string; field?: string; context?: any }[] = [];
+          let vExists = false, vPrice = false, vFamily = true, vTax = true;
+
+          try {
+            let foundProduct: any = null;
+            const vUrl = `${host}/api/v1/articles/${encodeURIComponent(verifyId)}`;
+            const vResp = await bdpFetch(vUrl, headers);
+            if (vResp.ok) {
+              foundProduct = JSON.parse(await vResp.text());
+            } else {
+              const allResp = await bdpFetch(`${host}/api/v1/articles`, headers);
+              if (allResp.ok) {
+                const all = JSON.parse(await allResp.text());
+                const arr = Array.isArray(all) ? all : (all.articles || all.Articles || all.data || []);
+                foundProduct = arr.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(verifyId));
+              }
+            }
+
+            if (!foundProduct) {
+              vErrors.push({ code: "NOT_FOUND", message: `Product ${verifyId} not found after write` });
+            } else {
+              vExists = true;
+              const actualPrice = Number(foundProduct.Price || foundProduct.price || foundProduct.SalePrice || foundProduct.PVP || 0);
+              if (actualPrice > 0) { vPrice = true; } else {
+                vErrors.push({ code: "PRICE_ZERO", message: "Price is 0 after write", field: "price", context: { actual: actualPrice } });
+              }
+
+              // Family
+              const actualFam = String(foundProduct.Department || foundProduct.department || foundProduct.Family || foundProduct.family || "").trim();
+              const expectedFam = String(product.family || "").trim();
+              if (expectedFam && actualFam.toLowerCase() !== expectedFam.toLowerCase()) {
+                vFamily = false;
+                vErrors.push({ code: "FAMILY_MISMATCH", message: `Family is "${actualFam || "(empty)"}", expected "${expectedFam}"`, field: "family" });
+              } else if (!actualFam) {
+                vWarnings.push({ code: "FAMILY_EMPTY", message: "No family assigned after write", field: "family" });
+              }
+
+              // Tax
+              const actualVat = Number(foundProduct.VatRate || foundProduct.vat_rate || foundProduct.IVA || 0);
+              const expectedVat = Number(product.vat_rate || 0);
+              if (expectedVat > 0 && actualVat !== expectedVat) {
+                vTax = false;
+                vErrors.push({ code: "TAX_MISMATCH", message: `VAT is ${actualVat}%, expected ${expectedVat}%`, field: "vat_rate" });
+              }
+            }
+
+            const vSuccess = vExists && vPrice && vFamily && vTax;
+            verification = {
+              success: vSuccess,
+              verified_exists: vExists,
+              verified_prices: vPrice,
+              verified_family: vFamily,
+              verified_tax: vTax,
+              verified_scope: true,
+              errors: vErrors,
+              warnings: vWarnings,
+            };
+
+            // If verification failed, mark any related outbound task as FAILED
+            if (!vSuccess) {
+              const failReason = vErrors.map(e => `[${e.code}] ${e.message}`).join("; ");
+              await supabase.from("outbound_tasks")
+                .update({ status: "FAILED", last_error: `Post-write verification failed: ${failReason}` } as any)
+                .eq("connection_id", connectionId)
+                .eq("status", "RUNNING")
+                .eq("task_type", "BDP_UPSERT_PRODUCT");
+            }
+          } catch (ve: unknown) {
+            const vmsg = ve instanceof Error ? ve.message : "Verification error";
+            verification = {
+              success: false, verified_exists: false, verified_prices: false, verified_family: false, verified_tax: false, verified_scope: true,
+              errors: [{ code: "VERIFY_ERROR", message: vmsg }], warnings: [],
+            };
+          }
+        }
+
+        return ok({
+          success: writeOk && (verification ? verification.success : true),
+          method: finalMethod,
+          status: finalStatus,
+          bodyPreview: finalBody.substring(0, 2048),
+          product: articlePayload,
+          verification,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: repair-fix-prices ──
+    // Update prices on existing BDP products via PUT, then auto-verify each
+    if (action === "repair-fix-prices") {
+      const { productIds } = payload; // optional array of product IDs to fix; if empty, fix all from provider_products
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, price, vat_rate, family")
+          .eq("connection_id", connectionId)
+          .gt("price", 0);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ Price: p.price, SalePrice: p.price, PVP: p.price });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "fix-prices", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-reassign-category ──
+    // Update family/department on existing BDP products using saved mappings
+    if (action === "repair-reassign-category") {
+      const { productIds } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, family")
+          .eq("connection_id", connectionId);
+
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_name")
+          .eq("connection_id", connectionId);
+
+        const mappingMap: Record<string, string> = {};
+        for (const m of (mappings || [])) {
+          if (m.agora_family_name) mappingMap[m.mapping_key] = m.agora_family_name;
+        }
+
+        // Also load winerim_wines to resolve wine_type for each product
+        const { data: winerimWines } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, wine_type, format")
+          .eq("connection_id", connectionId);
+
+        const wineMap: Record<string, { wine_type: string | null; format: string | null }> = {};
+        for (const w of (winerimWines || [])) {
+          wineMap[w.winerim_id] = { wine_type: w.wine_type, format: w.format };
+        }
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          // Try to resolve mapping key from product name or winerim data
+          const winerimId = (p as any).winerim_wine_id || p.provider_product_id.replace("WINERIM_", "");
+          const wineData = wineMap[winerimId];
+          const mappingKey = wineData ? resolveMappingKey(wineData.wine_type || undefined, wineData.format || undefined) : null;
+          const newFamily = mappingKey ? mappingMap[mappingKey] : null;
+
+          if (!newFamily) { skipped++; continue; }
+
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ Department: newFamily });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "reassign-category", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-fix-tax ──
+    // Update VAT/tax on existing BDP products
+    if (action === "repair-fix-tax") {
+      const { productIds, defaultVatRate } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, vat_rate")
+          .eq("connection_id", connectionId);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        const vatToApply = Number(defaultVatRate || conn.default_vat_rate || 10);
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+
+        for (const p of targets) {
+          const productVat = p.vat_rate && p.vat_rate > 0 ? p.vat_rate : vatToApply;
+          try {
+            const putUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const putBody = JSON.stringify({ VatRate: productVat, IVA: productVat });
+            const resp = await bdpFetch(putUrl, { ...headers, "Content-Type": "application/json" }, "PUT", putBody);
+            if (resp.ok) {
+              updated++;
+            } else if (resp.status === 404) {
+              skipped++;
+            } else {
+              failed++;
+              errors.push(`${p.provider_product_id}: HTTP ${resp.status}`);
+            }
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "fix-tax", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: repair-re-verify ──
+    // Re-run post-write verification on all products without modifying them
+    if (action === "repair-re-verify") {
+      const { productIds } = payload;
+      try {
+        const { data: products } = await supabase
+          .from("provider_products")
+          .select("provider_product_id, name, price, vat_rate, family")
+          .eq("connection_id", connectionId);
+
+        let targets = products || [];
+        if (productIds && Array.isArray(productIds) && productIds.length > 0) {
+          targets = targets.filter((p: any) => productIds.includes(p.provider_product_id));
+        }
+
+        let updated = 0, skipped = 0, failed = 0;
+        const errors: string[] = [];
+        const results: any[] = [];
+
+        for (const p of targets) {
+          try {
+            let foundProduct: any = null;
+            const vUrl = `${host}/api/v1/articles/${encodeURIComponent(p.provider_product_id)}`;
+            const vResp = await bdpFetch(vUrl, headers);
+            if (vResp.ok) {
+              foundProduct = JSON.parse(await vResp.text());
+            }
+
+            if (!foundProduct) { skipped++; continue; }
+
+            const actualPrice = Number(foundProduct.Price || foundProduct.price || foundProduct.SalePrice || foundProduct.PVP || 0);
+            const actualFam = String(foundProduct.Department || foundProduct.department || foundProduct.Family || foundProduct.family || "");
+            const actualVat = Number(foundProduct.VatRate || foundProduct.vat_rate || foundProduct.IVA || 0);
+
+            const priceOk = actualPrice > 0;
+            const familyOk = !p.family || actualFam.toLowerCase() === (p.family || "").toLowerCase();
+            const taxOk = !p.vat_rate || p.vat_rate === 0 || actualVat === p.vat_rate;
+
+            if (priceOk && familyOk && taxOk) {
+              updated++; // "updated" = verified OK
+            } else {
+              failed++;
+              const issues: string[] = [];
+              if (!priceOk) issues.push("price=0");
+              if (!familyOk) issues.push(`family="${actualFam}" expected="${p.family}"`);
+              if (!taxOk) issues.push(`vat=${actualVat} expected=${p.vat_rate}`);
+              errors.push(`${p.provider_product_id}: ${issues.join(", ")}`);
+            }
+
+            results.push({
+              id: p.provider_product_id,
+              name: p.name,
+              verified_exists: true,
+              verified_prices: priceOk,
+              verified_family: familyOk,
+              verified_tax: taxOk,
+              success: priceOk && familyOk && taxOk,
+            });
+          } catch (e: any) {
+            failed++;
+            errors.push(`${p.provider_product_id}: ${e.message}`);
+          }
+        }
+
+        return ok({ success: failed === 0, action: "re-verify", queued: 0, updated, skipped, failed, totalTargets: targets.length, errors, results });
+      } catch (e: any) {
+        return ok({ success: false, message: e.message });
+      }
+    }
+
+    // ── ACTION: verify-product ──
+    // Confirm product exists in BDP and has price > 0
+    if (action === "verify-product") {
+      const { productId } = payload;
+      if (!productId) return err({ success: false, message: "Missing productId" });
+
+      try {
+        // Try fetching the specific article
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        if (!resp.ok) {
+          // Try listing all and filter
+          const allUrl = `${host}/api/v1/articles`;
+          const allResp = await bdpFetch(allUrl, headers);
+          if (allResp.ok) {
+            const allText = await allResp.text();
+            const allParsed = JSON.parse(allText);
+            const allProducts = Array.isArray(allParsed) ? allParsed : (allParsed.articles || allParsed.Articles || allParsed.data || []);
+            const found = allProducts.find((p: any) =>
+              String(p.Id || p.id || p.Code || p.code) === String(productId)
+            );
+
+            if (found) {
+              const price = Number(found.Price || found.price || found.SalePrice || found.sale_price || found.PVP || 0);
+              return ok({
+                success: true,
+                exists: true,
+                priceValid: price > 0,
+                price,
+                name: String(found.Name || found.name || found.Description || ""),
+                raw: found,
+              });
+            }
+          }
+
+          return ok({
+            success: true,
+            exists: false,
+            priceValid: false,
+            message: `Product ${productId} not found in BDP`,
+          });
+        }
+
+        const bodyText = await resp.text();
+        let product: any;
+        try {
+          product = JSON.parse(bodyText);
+        } catch {
+          return ok({ success: false, message: "Invalid JSON response from BDP verify" });
+        }
+
+        const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+        const name = String(product.Name || product.name || product.Description || "");
+
+        return ok({
+          success: true,
+          exists: true,
+          priceValid: price > 0,
+          price,
+          name,
+          raw: product,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Unknown error";
+        return ok({ success: false, message: msg });
+      }
+    }
+
+    // ── ACTION: verify-write (shared PostWriteVerification contract) ──
+    if (action === "verify-write") {
+      const productId = payload.productId || payload.externalId || payload.external_id || "";
+      if (!productId) return err({ success: false, verified_exists: false, verified_prices: false, verified_scope: true, errors: [{ code: "NO_ID", message: "Missing productId for verification" }], warnings: [] });
+
+      const result = {
+        success: false,
+        verified_exists: false,
+        verified_prices: false,
+        verified_scope: true, // BDP doesn't have scope/auth expiry concept
+        errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+        warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+      };
+
+      // 1) Scope: verify connectivity
+      try {
+        const testUrl = `${host}/api/v1/articles?limit=1`;
+        const testResp = await bdpFetch(testUrl, headers);
+        if (testResp.status === 401 || testResp.status === 403) {
+          result.verified_scope = false;
+          result.errors.push({ code: "SCOPE_EXPIRED", message: `BDP returned ${testResp.status}. Credentials may be invalid.` });
+          return ok(result);
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "SCOPE_ERROR", message: `BDP connectivity check failed: ${e.message}` });
+        return ok(result);
+      }
+
+      // 2) Verify product exists
+      try {
+        const verifyUrl = `${host}/api/v1/articles/${encodeURIComponent(productId)}`;
+        const resp = await bdpFetch(verifyUrl, headers);
+
+        let product: any = null;
+        if (resp.ok) {
+          const bodyText = await resp.text();
+          try { product = JSON.parse(bodyText); } catch { /* invalid JSON */ }
+        }
+
+        if (!product) {
+          // Fallback: list all and search
+          const allUrl = `${host}/api/v1/articles`;
+          const allResp = await bdpFetch(allUrl, headers);
+          if (allResp.ok) {
+            const allText = await allResp.text();
+            const allParsed = JSON.parse(allText);
+            const allProducts = Array.isArray(allParsed) ? allParsed : (allParsed.articles || allParsed.Articles || allParsed.data || []);
+            product = allProducts.find((p: any) => String(p.Id || p.id || p.Code || p.code) === String(productId));
+          }
+        }
+
+        if (!product) {
+          result.errors.push({ code: "NOT_FOUND", message: `Product ${productId} not found in BDP after write`, context: { productId } });
+          return ok(result);
+        }
+
+        result.verified_exists = true;
+
+        // 3) Verify price
+        const price = Number(product.Price || product.price || product.SalePrice || product.sale_price || product.PVP || 0);
+        if (price > 0) {
+          result.verified_prices = true;
+          // Check expected price if provided
+          const expected = Number(payload.expectedPrice || 0);
+          if (expected > 0 && Math.abs(price - expected) > 0.01) {
+            result.warnings.push({ code: "PRICE_MISMATCH", message: `Expected price ${expected}, found ${price}`, field: "price", context: { expected, actual: price } });
+          }
+        } else {
+          result.errors.push({ code: "PRICE_ZERO", message: `Product exists but price is ${price}. Expected > 0.`, field: "price", context: { actual: price } });
+        }
+
+        // Provider-specific: check department/family
+        const dept = product.Department || product.department || "";
+        if (!dept) {
+          result.warnings.push({ code: "NO_DEPARTMENT", message: "Product has no department/family assigned.", field: "department" });
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+      }
+
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.errors.length === 0;
+      return ok(result);
+    }
+
+    // ── ACTION: get-endpoints ──
+    // Return persisted endpoint status for diagnostics UI
+    if (action === "get-endpoints") {
+      return ok({
+        success: true,
+        discoveredEndpoints: persistedEndpoints,
+        lastDiscoveryAt: config.last_discovery_at || null,
+        host,
+      });
+    }
+
+    return err({ success: false, message: `Unknown action: ${action}` });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    return err({ success: false, message: msg }, 500);
+  }
+});

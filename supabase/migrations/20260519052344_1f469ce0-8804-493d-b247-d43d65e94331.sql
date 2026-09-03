@@ -1,0 +1,1 @@
+UPDATE public.provider_capabilities SET can_write_products='YES', write_endpoint=COALESCE(write_endpoint,'/api/import/'), updated_at=now() WHERE connection_id='c9b23830-a00b-4786-a50b-43fe526c4d3c';

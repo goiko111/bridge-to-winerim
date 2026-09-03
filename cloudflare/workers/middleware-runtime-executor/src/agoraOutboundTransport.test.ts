@@ -1,0 +1,711 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { HttpRequestPort } from "../../middleware-runtime/src/adapters/http";
+import type { OutboundTask } from "../../middleware-runtime/src/handlers/outbound";
+import {
+  createAgoraOutboundTransport,
+  type AgoraOutboundTransportOptions,
+} from "./agoraOutboundTransport";
+
+const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
+
+function task(taskType: string, payload: Record<string, unknown>, externalId: string | null = null): OutboundTask {
+  return {
+    id: "22222222-2222-4222-8222-222222222222",
+    connectionId: CONNECTION_ID,
+    provider: "agora",
+    taskType,
+    payload,
+    status: "RUNNING",
+    attempts: 1,
+    maxAttempts: 3,
+    createdAt: "2026-08-03T10:00:00.000Z",
+    idempotencyKey: "outbound-fixture-1",
+    externalId,
+  };
+}
+
+function master(...products: string[]): string {
+  return `<?xml version="1.0"?><Export><Products>${products.join("")}</Products></Export>`;
+}
+
+const bottle = '<Product Id="500101" Name="B Test" FamilyId="10" VatId="1" UseAsDirectSale="true" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="25.00" /></Prices></Product>';
+const secondBottle = '<Product Id="500102" Name="B Test Two" FamilyId="10" VatId="1" UseAsDirectSale="true" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="30.00" /></Prices></Product>';
+const migratedBottle = '<Product Id="500101" Name="B Test" FamilyId="20" VatId="1" UseAsDirectSale="true" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="25.00" /></Prices></Product>';
+const hiddenBottle = '<Product Id="500101" Name="B Test" FamilyId="10" VatId="1" UseAsDirectSale="false" SaleableAsMain="false"><Prices><Price PriceListId="1" MainPrice="25.00" /></Prices></Product>';
+
+function response(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { "content-type": "application/xml" } });
+}
+
+function jsonMaster(...products: Array<Record<string, unknown>>): string {
+  return JSON.stringify({ Products: products });
+}
+
+function configured(
+  request: HttpRequestPort,
+  overrides: Partial<Pick<AgoraOutboundTransportOptions, "timeoutMs" | "maxResponseBytes" | "sleep">> = {},
+) {
+  return createAgoraOutboundTransport({
+    connectionId: CONNECTION_ID,
+    baseUrl: "https://agora.example.test",
+    allowedHosts: ["agora.example.test"],
+    credential: { read: () => "fixture-token" },
+    request,
+    ...overrides,
+  });
+}
+
+async function execute(transport: ReturnType<typeof configured>, outboundTask: OutboundTask) {
+  return transport.execute({
+    task: outboundTask,
+    context: { idempotencyKey: "outbound-fixture-1", attempt: 1, maxAttempts: 3 },
+  });
+}
+
+describe("Agora outbound transport", () => {
+  it("blocks a host outside the explicit allowlist without reading credentials or sending traffic", async () => {
+    const read = vi.fn(() => "fixture-token");
+    const request = { request: vi.fn() };
+    const transport = createAgoraOutboundTransport({
+      connectionId: CONNECTION_ID,
+      baseUrl: "https://agora.example.test",
+      allowedHosts: ["different.example.test"],
+      credential: { read },
+      request,
+    });
+
+    await expect(execute(transport, task("AGORA_HIDE_PRODUCT", { _product_ids: ["500101"] }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_HOST_NOT_ALLOWLISTED",
+    });
+    expect(read).not.toHaveBeenCalled();
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("blocks unsupported tasks and incomplete upserts before any HTTP request", async () => {
+    const request = { request: vi.fn() };
+    const transport = configured(request);
+
+    await expect(execute(transport, task("AGORA_DELETE_PRODUCT", {}))).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_OUTBOUND_TASK_UNSUPPORTED",
+    });
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _winerim_wine_id: "101",
+      _format_types: ["BOTTLE"],
+    }))).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_UPSERT_IMPORT_XML_REQUIRED",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("rejects a task from another connection or an altered idempotency context", async () => {
+    const request = { request: vi.fn() };
+    const transport = configured(request);
+    const wrongConnection = { ...task("AGORA_HIDE_PRODUCT", { _product_ids: ["500101"] }), connectionId: "other" };
+
+    await expect(execute(transport, wrongConnection)).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_OUTBOUND_TASK_IDENTITY_INVALID",
+    });
+    await expect(transport.execute({
+      task: task("AGORA_HIDE_PRODUCT", { _product_ids: ["500101"] }),
+      context: { idempotencyKey: "altered", attempt: 1, maxAttempts: 3 },
+    })).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_OUTBOUND_EXECUTION_CONTEXT_INVALID",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("blocks an upsert whose expected Product.Id set differs from the supplied XML", async () => {
+    const request = { request: vi.fn() };
+    const transport = configured(request);
+
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500999"],
+    }))).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_UPSERT_PRODUCT_IDS_MISMATCH",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("blocks an upsert containing sections outside the exact Products envelope", async () => {
+    const request = { request: vi.fn() };
+    const transport = configured(request);
+
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Families><Family Id="10" /></Families><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_UPSERT_IMPORT_XML_AMBIGUOUS",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("rejects a multi-product upsert before any HTTP request", async () => {
+    const request = { request: vi.fn() };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}${secondBottle}</Products></Import>`,
+      _expected_product_ids: ["500101", "500102"],
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_MULTI_PRODUCT_MUTATION_REJECTED",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+
+  it("upserts only from complete XML and certifies only after exact master readback", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const request: HttpRequestPort = {
+      request: vi.fn(async (url, init) => {
+        calls.push({ url, init });
+        if (calls.length === 1) return response(master());
+        if (calls.length === 2) return response("<ImportResult Success=\"true\" />");
+        return response(master(bottle));
+      }),
+    };
+    const transport = configured(request);
+    const xml = `<?xml version="1.0"?><Import><Products>${bottle}</Products></Import>`;
+
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: xml,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toEqual({
+      kind: "success",
+      externalId: "500101",
+      detail: "agora-import-readback-verified:500101",
+    });
+    expect(calls.map((call) => [new URL(call.url).pathname, call.init.method])).toEqual([
+      ["/api/export-master/", "GET"],
+      ["/api/import/", "POST"],
+      ["/api/export-master/", "GET"],
+    ]);
+    expect(String(calls[1].init.body)).toContain(bottle);
+    expect(calls[1].init.headers).toMatchObject({ "Content-Type": "application/xml; charset=utf-8" });
+  });
+
+  it("is idempotent by exact pre-read and does not repeat an already applied upsert", async () => {
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(bottle))) };
+    const transport = configured(request);
+
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "superseded",
+      evidence: {
+        verified: true,
+        taskId: "22222222-2222-4222-8222-222222222222",
+        connectionId: CONNECTION_ID,
+        source: "provider_readback",
+      },
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("preserves an existing Agora display order before upsert readback comparison", async () => {
+    const desired = bottle.replace("<Product ", '<Product Order="500101" ');
+    const current = bottle.replace("<Product ", '<Product Order="235" ');
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(current))) };
+    const transport = configured(request);
+
+    await expect(execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "superseded",
+      evidence: {
+        detail: "agora-products-already-match:500101",
+      },
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("ignores nested SaleFormat prices when certifying the root product price", async () => {
+    const desired = bottle.replace("<Product ", '<Product BaseSaleFormatId="500101" ');
+    const current = desired.replace(
+      "</Product>",
+      '<SaleFormats><SaleFormat Id="700101" Name="C Test" Ratio="0.20">'
+        + '<Prices><Price PriceListId="1" MainPrice="6.00" /></Prices>'
+        + "</SaleFormat></SaleFormats></Product>",
+    );
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(current))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "superseded",
+      evidence: { detail: "agora-products-already-match:500101" },
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("reads Agora JSON masters and certifies the imported product using the projected import contract", async () => {
+    const current = {
+      Id: 500101,
+      BaseSaleFormatId: 500101,
+      Name: "B Test",
+      ButtonText: "B Test",
+      Order: 500101,
+      FamilyId: 10,
+      VatId: 1,
+      UseAsDirectSale: true,
+      SaleableAsMain: true,
+      SaleableAsAddin: false,
+      IsSoldByWeight: false,
+      AskForPreparationNotes: false,
+      AskForAddins: false,
+      PrintWhenPriceIsZero: false,
+      PreparationTypeId: null,
+      PreparationOrderId: null,
+      CostPrice: 0,
+      IsMenu: false,
+      Prices: [{ PriceListId: 1, MainPrice: 25, AddinPrice: 0, MenuItemPrice: 0 }],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 0 }],
+    };
+    const desired = '<Product Order="500101" Id="500101" Name="B Test" ButtonText="B Test" FamilyId="10" VatId="1" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="" PreparationOrderId="" CostPrice="0.00"><Prices><Price PriceListId="1" MainPrice="25.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const request: HttpRequestPort = { request: vi.fn(async () => response(jsonMaster(current))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("requires an explicitly preserved BaseSaleFormatId to match the Agora readback", async () => {
+    const current = {
+      Id: 818,
+      BaseSaleFormatId: 818,
+      Name: "B Campillo Crianza 694",
+      ButtonText: "B Campillo Crianza",
+      FamilyId: 10,
+      VatId: 1,
+      UseAsDirectSale: false,
+      SaleableAsMain: true,
+      Prices: [{ PriceListId: 1, MainPrice: 27, AddinPrice: 0, MenuItemPrice: 0 }],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 0 }],
+    };
+    const desired = '<Product Order="818" Id="818" BaseSaleFormatId="864" Name="B Campillo Crianza 694" ButtonText="B Campillo Crianza" FamilyId="10" VatId="1" UseAsDirectSale="false" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="27.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const request: HttpRequestPort = { request: vi.fn(async () => response(jsonMaster(current))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["818"],
+    }))).resolves.toMatchObject({ kind: "blocked", reason: "AGORA_READBACK_MISMATCH" });
+  });
+
+  it("certifies the requested price list while preserving additional Agora price lists", async () => {
+    const current = {
+      Id: 818,
+      BaseSaleFormatId: 864,
+      Name: "B Campillo Crianza 694",
+      ButtonText: "B Campillo Crianza",
+      FamilyId: 10,
+      VatId: 1,
+      UseAsDirectSale: false,
+      SaleableAsMain: true,
+      Prices: [
+        { PriceListId: 1, MainPrice: 27, AddinPrice: 0, MenuItemPrice: 0 },
+        { PriceListId: 4, MainPrice: 29, AddinPrice: 0, MenuItemPrice: 0 },
+        { PriceListId: 5, MainPrice: 30, AddinPrice: 0, MenuItemPrice: 0 },
+      ],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 0 }],
+    };
+    const desired = '<Product Order="818" Id="818" BaseSaleFormatId="864" Name="B Campillo Crianza 694" ButtonText="B Campillo Crianza" FamilyId="10" VatId="1" UseAsDirectSale="false" SaleableAsMain="true"><Prices><Price PriceListId="1" MainPrice="27.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const request: HttpRequestPort = { request: vi.fn(async () => response(jsonMaster(current))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["818"],
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("applies an Agora JSON master delta and certifies the JSON readback", async () => {
+    const after = {
+      Id: 500101,
+      Name: "B Test 2024",
+      ButtonText: "B Test 2024",
+      Order: 500101,
+      FamilyId: 10,
+      VatId: 1,
+      UseAsDirectSale: true,
+      SaleableAsMain: true,
+      SaleableAsAddin: false,
+      IsSoldByWeight: false,
+      AskForPreparationNotes: false,
+      AskForAddins: false,
+      PrintWhenPriceIsZero: false,
+      PreparationTypeId: null,
+      PreparationOrderId: null,
+      CostPrice: 0,
+      Prices: [{ PriceListId: 1, MainPrice: 25, AddinPrice: 0, MenuItemPrice: 0 }],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 0 }],
+    };
+    const before = { ...after, Name: "B Test", ButtonText: "B Test" };
+    const desired = '<Product Order="500101" Id="500101" Name="B Test 2024" ButtonText="B Test 2024" FamilyId="10" VatId="1" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="" PreparationOrderId="" CostPrice="0.00"><Prices><Price PriceListId="1" MainPrice="25.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const responses = [
+      response(jsonMaster(before)),
+      response("ok"),
+      response(jsonMaster(after)),
+    ];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "success", externalId: "500101" });
+    expect(request.request).toHaveBeenCalledTimes(3);
+  });
+
+  it("recognizes the exact live Albariza JSON projection after an upsert", async () => {
+    const live = {
+      Id: 772934,
+      Name: "B Soto y Manrique Laderas de La Mira",
+      BaseSaleFormatId: 772934,
+      ButtonText: "B Soto y Manrique La",
+      Color: "#800040",
+      PLU: "",
+      FamilyId: 900157,
+      VatId: 3,
+      UseAsDirectSale: false,
+      SaleableAsMain: true,
+      SaleableAsAddin: false,
+      IsSoldByWeight: false,
+      AskForPreparationNotes: false,
+      AskForAddins: false,
+      PrintWhenPriceIsZero: false,
+      PreparationTypeId: null,
+      PreparationOrderId: null,
+      CostPrice: 0,
+      Order: 772934,
+      PreparationTimeInMinutes: null,
+      PreparationTimeWarningMinutes: null,
+      Barcodes: [],
+      Prices: [{ PriceListId: 1, MainPrice: 30, AddinPrice: 0, MenuItemPrice: 0 }],
+      AdditionalSaleFormats: [],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 0 }],
+      IsMenu: false,
+    };
+    const desired = '<Product Order="772934" Id="772934" Name="B Soto y Manrique Laderas de La Mira" ButtonText="B Soto y Manrique La" Color="#800040" PLU="" FamilyId="900157" VatId="3" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="" PreparationOrderId="" CostPrice="0.00"><Prices><Price PriceListId="1" MainPrice="30.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const request: HttpRequestPort = { request: vi.fn(async () => response(jsonMaster(live))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["772934"],
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("accepts Agora normalization of technical fields while certifying the catalog business contract", async () => {
+    const normalized = {
+      Id: 500101,
+      Name: "B Test",
+      ButtonText: "B Test",
+      Color: "#800040",
+      Order: 235,
+      FamilyId: 10,
+      VatId: 1,
+      UseAsDirectSale: true,
+      SaleableAsMain: true,
+      SaleableAsAddin: true,
+      PreparationTypeId: null,
+      PreparationOrderId: 99,
+      CostPrice: 17.5,
+      Prices: [{ PriceListId: 1, MainPrice: 25, AddinPrice: 0, MenuItemPrice: 0 }],
+      CostPrices: [{ WarehouseId: 1, CostPrice: 17.5 }],
+    };
+    const desired = '<Product Order="500101" Id="500101" Name="B Test" ButtonText="B Test" Color="#800040" FamilyId="10" VatId="1" UseAsDirectSale="true" SaleableAsMain="true" SaleableAsAddin="false" PreparationTypeId="" PreparationOrderId="" CostPrice="0.00"><Prices><Price PriceListId="1" MainPrice="25.00" AddinPrice="0.00" MenuItemPrice="0.00" /></Prices><CostPrices><CostPrice WarehouseId="1" CostPrice="0.00" /></CostPrices></Product>';
+    const request: HttpRequestPort = { request: vi.fn(async () => response(jsonMaster(normalized))) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${desired}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("never certifies a successful POST when the product readback differs", async () => {
+    const mismatched = bottle.replace('MainPrice="25.00"', 'MainPrice="26.00"');
+    const responses = [
+      response(master()),
+      response("ok"),
+      response(master(mismatched)),
+      response(master(mismatched)),
+      response(master(mismatched)),
+    ];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+    const transport = configured(request, { sleep: async () => undefined });
+
+    const result = await execute(transport, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }));
+    expect(result).toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_READBACK_MISMATCH",
+    });
+    expect(result.kind === "blocked" ? result.detail : undefined).toContain("500101:price:1:MainPrice:");
+    expect(request.request).toHaveBeenCalledTimes(5);
+  });
+
+  it("retries only the exact post-import readback when Agora initially returns a stale master", async () => {
+    const stale = bottle.replace('MainPrice="25.00"', 'MainPrice="24.00"');
+    const responses = [
+      response(master()),
+      response("ok"),
+      response(master(stale)),
+      response(master(bottle)),
+    ];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(execute(configured(request, { sleep }), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "success", externalId: "500101" });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(request.request).toHaveBeenCalledTimes(4);
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[1].method === "POST")).toHaveLength(1);
+  });
+
+  it("migrates a family by patching the complete live product and verifies the complete result", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const responses = [response(master(bottle)), response(master(bottle)), response("ok"), response(master(migratedBottle))];
+    const request: HttpRequestPort = {
+      request: vi.fn(async (url, init) => {
+        calls.push({ url, init });
+        return responses.shift()!;
+      }),
+    };
+
+    await expect(execute(configured(request), task("AGORA_MIGRATE_FAMILY", {
+      productId: "500101",
+      targetFamilyId: "20",
+      winerimWineId: "101",
+      format: "BOTTLE",
+    }, "500101"))).resolves.toMatchObject({ kind: "success", externalId: "500101" });
+    const posted = String(calls.find((call) => call.init.method === "POST")?.init.body);
+    expect(posted).toContain('FamilyId="20"');
+    expect(posted).toContain('<Price PriceListId="1" MainPrice="25.00" />');
+    expect(posted).toContain('Name="B Test"');
+  });
+
+  it("treats an already migrated family as verified superseded and sends no POST", async () => {
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(migratedBottle))) };
+
+    await expect(execute(configured(request), task("AGORA_MIGRATE_FAMILY", {
+      productId: "500101",
+      targetFamilyId: "20",
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect(request.request).toHaveBeenCalledTimes(2);
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls.every((call) => call[1].method === "GET")).toBe(true);
+  });
+
+  it("blocks migrate on pre-import drift instead of overwriting a concurrent product change", async () => {
+    const drifted = bottle.replace('MainPrice="25.00"', 'MainPrice="27.00"');
+    const responses = [response(master(bottle)), response(master(drifted))];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+
+    await expect(execute(configured(request), task("AGORA_MIGRATE_FAMILY", {
+      productId: "500101",
+      targetFamilyId: "20",
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_PRECONDITION_DRIFT",
+      detail: "500101",
+    });
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls.every((call) => call[1].method === "GET")).toBe(true);
+  });
+
+  it("blocks migrate when the exact product is absent and never imports", async () => {
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master())) };
+
+    await expect(execute(configured(request), task("AGORA_MIGRATE_FAMILY", {
+      productId: "500101",
+      targetFamilyId: "20",
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_MASTER_PRODUCT_MISSING",
+      detail: "500101",
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("hides products by preserving their complete live shape and verifying both flags", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const responses = [response(master(bottle)), response(master(bottle)), response("ok"), response(master(hiddenBottle))];
+    const request: HttpRequestPort = {
+      request: vi.fn(async (url, init) => {
+        calls.push({ url, init });
+        return responses.shift()!;
+      }),
+    };
+
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500101"],
+      _wine_name: "Test",
+    }))).resolves.toMatchObject({ kind: "success", externalId: "500101" });
+    const posted = String(calls.find((call) => call.init.method === "POST")?.init.body);
+    expect(posted).toContain('UseAsDirectSale="false"');
+    expect(posted).toContain('SaleableAsMain="false"');
+    expect(posted).toContain('<Price PriceListId="1" MainPrice="25.00" />');
+  });
+
+  it("does not repeat a hide after exact readback shows it already applied", async () => {
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(hiddenBottle))) };
+
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "superseded" });
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls.every((call) => call[1].method === "GET")).toBe(true);
+  });
+
+  it("blocks a single-product hide when the requested Product.Id is absent", async () => {
+    const request: HttpRequestPort = { request: vi.fn(async () => response(master(bottle))) };
+
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500102"],
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_MASTER_PRODUCT_MISSING",
+      detail: "500102",
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a multi-product hide before POST even when every product exists", async () => {
+    const request: HttpRequestPort = {
+      request: vi.fn(async () => response(master(bottle, secondBottle))),
+    };
+
+    await expect(execute(configured(request), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500101", "500102"],
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_MULTI_PRODUCT_MUTATION_REJECTED",
+    });
+    expect(request.request).toHaveBeenCalledOnce();
+    expect((request.request as ReturnType<typeof vi.fn>).mock.calls[0][1].method).toBe("GET");
+  });
+
+  it("returns a retry-classifiable HTTP failure and does not claim success on readback outage", async () => {
+    const responses = [response(master()), response("ok"), response("unavailable", 503)];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "failure",
+      failure: { httpStatus: 503, message: "AGORA_READBACK_HTTP_503" },
+    });
+  });
+
+  it("does not certify a POST when a 200 readback lacks the Products master container", async () => {
+    const responses = [response(master()), response("ok"), response("<Export><Families /></Export>")];
+    const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+
+    await expect(execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+      _expected_product_ids: ["500101"],
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_PRODUCTS_CONTAINER_INVALID",
+    });
+  });
+
+  it("rejects readback Products outside the unique direct Products container", async () => {
+    const invalidReadbacks = [
+      `<Export><Products /><Audit>${bottle}</Audit></Export>`,
+      `<Export><Products /><Products>${bottle}</Products></Export>`,
+      `<Export><Products><Wrapper>${bottle}</Wrapper></Products></Export>`,
+    ];
+
+    for (const invalidReadback of invalidReadbacks) {
+      const responses = [response(master()), response("ok"), response(invalidReadback)];
+      const request: HttpRequestPort = { request: vi.fn(async () => responses.shift()!) };
+      const result = await execute(configured(request), task("AGORA_XML_UPSERT_PRODUCT", {
+        _import_xml: `<Import><Products>${bottle}</Products></Import>`,
+        _expected_product_ids: ["500101"],
+      }));
+
+      expect(result).toMatchObject({ kind: "blocked" });
+    }
+  });
+
+  it("cancels a chunked readback as soon as the incremental byte limit is exceeded", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(64)));
+      },
+      cancel,
+    });
+    const request: HttpRequestPort = {
+      request: vi.fn(async () => new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/xml" },
+      })),
+    };
+
+    await expect(execute(configured(request, { maxResponseBytes: 32 }), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500101"],
+    }))).resolves.toEqual({
+      kind: "blocked",
+      reason: "AGORA_RESPONSE_TOO_LARGE",
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("times out and cancels a readback stream that never yields a body", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ cancel });
+    const request: HttpRequestPort = {
+      request: vi.fn(async () => new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/xml" },
+      })),
+    };
+
+    await expect(execute(configured(request, { timeoutMs: 5 }), task("AGORA_HIDE_PRODUCT", {
+      _product_ids: ["500101"],
+    }))).resolves.toMatchObject({
+      kind: "failure",
+      failure: { httpStatus: 408, message: "AGORA_READBACK_TIMEOUT" },
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("blocks malformed XML and credentials containing header injection", async () => {
+    const request = { request: vi.fn() };
+    const malformed = configured(request);
+    await expect(execute(malformed, task("AGORA_XML_UPSERT_PRODUCT", {
+      _import_xml: '<Import><Products><Product Id="500101"><Price></Products></Import>',
+      _expected_product_ids: ["500101"],
+    }))).resolves.toMatchObject({ kind: "blocked", reason: "AGORA_XML_NESTING_INVALID" });
+
+    const injected = createAgoraOutboundTransport({
+      connectionId: CONNECTION_ID,
+      baseUrl: "https://agora.example.test",
+      allowedHosts: ["agora.example.test"],
+      credential: { read: () => "token\r\nInjected: true" },
+      request,
+    });
+    await expect(execute(injected, task("AGORA_HIDE_PRODUCT", { _product_ids: ["500101"] }))).resolves.toMatchObject({
+      kind: "blocked",
+      reason: "AGORA_CREDENTIAL_UNAVAILABLE",
+    });
+    expect(request.request).not.toHaveBeenCalled();
+  });
+});

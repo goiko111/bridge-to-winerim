@@ -1,0 +1,240 @@
+provider_product_id,provider_product_name,family_name,family_visible,saleable_as_main,match_status,winerim_id,winerim_name,score,method,reasons
+559,B. 1/2 BOTELLA CHAMPAGNE SANGER VOYAGE 360,VINOS,False,True,NO_MATCH,272860,Sanger Voyage 360,60.0,FUZZY,token_similarity
+563,B. DR. LOOSEN GRAY SLATE RIESLING,VINOS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,42.9,FUZZY,token_similarity
+564,"B. DR.LOOSEN BEERENAUSLESE RIESLING (18,7 CL.)",VINOS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,22.2,FUZZY,token_similarity
+565,B. LUIS XIV ÁNFORAS,VINOS,False,True,MATCH,277148,Luis XIV Ánforas,100.0,FUZZY,token_similarity
+566,B. QUELIAS ROSÉ,VINOS,False,True,NO_MATCH,272870,Dulas Rosé,33.3,FUZZY,token_similarity
+567,B. RAFA CAÑIZARES SAUVIGNON BLANC,VINOS,False,True,NO_MATCH,272888,Rafa Cañizares Syrah,40.0,FUZZY,token_similarity
+568,B.EL BUEN ROLLO,VINOS,False,False,NO_MATCH,277141,Majuelo El Espejo la Seca,14.3,FUZZY,token_similarity
+569,C. DR. LOOSEN GRAY SLATE RIESLING ( semiseco ),VINOS POR COPAS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,37.5,FUZZY,token_similarity
+570,C. QUELIAS ROSADO,VINOS POR COPAS,False,True,NO_MATCH,272890,Saiaz Rosado,33.3,FUZZY,token_similarity
+571,C. RAFA CAÑIZARES SAUVIGNON BLANC,VINOS POR COPAS,False,True,NO_MATCH,272888,Rafa Cañizares Syrah,40.0,FUZZY,token_similarity
+572,C. RAIMUN GARNACHA,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+576,C. NOCTILUCA,VINOS POR COPAS,False,True,MATCH,272885,Noctiluca,100.0,FUZZY,token_similarity
+579,Fuga Sake,SAKE BAR,False,True,NO_MATCH,,,0,,
+593,1C. CHATEAU CRISTI ( 150 ml),VINOS POR COPAS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,33.3,FUZZY,token_similarity
+596,B. ABAD DOM BUENO ROSÉ,VINOS,False,True,NO_MATCH,277094,Abad Dom Bueno Rosado,60.0,FUZZY,token_similarity
+597,B. BALADIÑA ALBARIÑO SOBRE LÍAS,VINOS,False,True,REVIEW,272853,Baladiña Sobre Lías,75.0,FUZZY,token_similarity
+598,B. CHAMPAGNE SANGER VOYAGE 360,VINOS,False,True,REVIEW,272860,Sanger Voyage 360,75.0,FUZZY,token_similarity
+599,B. DR. LOOSEN RED SLATE RIESLING TROCKEN (seco),VINOS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,71.4,FUZZY,token_similarity
+600,B. JOHN DUVAL ENTITY,VINOS,False,True,NO_MATCH,272876,Entity Shiraz,25.0,FUZZY,token_similarity
+601,B. RAIMUN GARNACHA,VINOS,False,True,NO_MATCH,,,0,,
+602,C. DR. LOOSEN RED SLATE RIESLING TROCKEN ( seco ),VINOS POR COPAS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,71.4,FUZZY,token_similarity
+603,C. JOHN DUVAL ENTITY,VINOS POR COPAS,False,True,NO_MATCH,272876,Entity Shiraz,25.0,FUZZY,token_similarity
+604,C. SARMENTERO ROBLE,VINOS POR COPAS,False,True,MATCH,277203,Sarmentero Roble,100.0,FUZZY,token_similarity
+609,Chokyu Kijoshu 1997,SAKE BAR,False,True,NO_MATCH,,,0,,
+612,C. TOKAJ SZAMORODNI GROF DEGENFELD,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+624,C. TARIMA SPARKLING ( Frizzante ),VINOS POR COPAS,False,True,NO_MATCH,277161,Tarima Blanco,25.0,FUZZY,token_similarity
+628,B. TOKAJ GROF DEGENFELD SZAMORODNI (50CL.),VINOS,False,True,NO_MATCH,,,0,,
+631,B. CHATEAU CRISTI,VINOS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,66.7,FUZZY,token_similarity
+632,"B. DOMINIO DEL BENDITO ''LAS SABIAS""",VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+633,B. HUNTERS MIRU MIRU RESERVE,VINOS,False,True,NO_MATCH,272874,MiruMiru Reserve,25.0,FUZZY,token_similarity
+634,B. LAWSON'S DRY HILLS SAUVIGNON BLANC,VINOS,False,True,MATCH,272878,Lawson's Dry Hills Sauvignon Blanc,100.0,FUZZY,token_similarity
+635,B. RAATS OLD VINE CHENIN BLANC,VINOS,False,True,NO_MATCH,277143,Biu Blanc,16.7,FUZZY,token_similarity
+636,B. SARMENTERO ROBLE,VINOS,False,True,MATCH,277203,Sarmentero Roble,100.0,FUZZY,token_similarity
+637,B. TARIMA SPARKLING ( FRIZZANTE ),VINOS,False,True,NO_MATCH,277161,Tarima Blanco,25.0,FUZZY,token_similarity
+643,C. LAWSON'S DRY HILLS SAUVIGNON BLANC,VINOS POR COPAS,False,True,MATCH,272878,Lawson's Dry Hills Sauvignon Blanc,100.0,FUZZY,token_similarity
+644,C. MAIN DIVINE POKIRI RESERVE LATE PICKED,VINOS POR COPAS,False,True,NO_MATCH,272874,MiruMiru Reserve,14.3,FUZZY,token_similarity
+645,C. RAATS OLD VINES CHENIN BLANC,VINOS POR COPAS,False,True,NO_MATCH,272898,Tarima Hill Old Vines Monastrell,25.0,FUZZY,token_similarity
+650,Copa Vino Fuera Carta,VINOS POR COPAS,False,False,NO_MATCH,,,0,,
+657,B. NOCTILUCA (50 CL.),VINOS,False,True,NO_MATCH,272885,Noctiluca,33.3,FUZZY,token_similarity
+665,B. CAVA MESTRES ROSAT GRAN RERSERVA BRUT NATURE,VINOS,False,True,NO_MATCH,272857,Rosat de Mestres Brut Nature Gran Reserva,55.6,FUZZY,token_similarity
+666,B. EL BUEN ROLLO,VINOS,False,False,NO_MATCH,277141,Majuelo El Espejo la Seca,14.3,FUZZY,token_similarity
+667,B. HUNTERS MIRU MIRU ROSE,VINOS,False,True,NO_MATCH,272870,Dulas Rosé,25.0,FUZZY,token_similarity
+668,B. LA RASPA,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+669,B. THE CHOCOLATE BLOCK,VINOS,False,True,NO_MATCH,,,0,,
+671,C. LA RASPA,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+672,C. LUIS XIV ÁNFORAS,VINOS POR COPAS,False,True,MATCH,277148,Luis XIV Ánforas,100.0,FUZZY,token_similarity
+673,C. PX SOLERA 1981,VINOS POR COPAS,False,True,NO_MATCH,277114,PX Lorente & Barba,20.0,FUZZY,token_similarity
+674,C. SAXENBURG PRIVATE COLLECTION CHARDONNAY,VINOS POR COPAS,False,True,REVIEW,277144,Private Collection Chardonnay,75.0,FUZZY,token_similarity
+675,C. THE CHOCOLATE BLOCK,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+680,C. LAGAR DEL ZAR TINTO DULCE,VINOS POR COPAS,False,True,NO_MATCH,272900,Tintoralba Dulce,16.7,FUZZY,token_similarity
+681,B. DR. LOOSEN RIESLING ERDENER PRALAT AUSLESE GOLD (37'5 CL.),VINOS,False,True,NO_MATCH,272866,Dr. Loosen Red Slate Trocken,16.7,FUZZY,token_similarity
+687,Jarra grande Sake Masumi kaya,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+688,Jarra pequeña Sake Masumi kaya,SAKE BAR,False,True,NO_MATCH,,,0,,
+693,B. ROBERT WEIL KIEDRICH KLOSTERBERG RIESLING TROCKEN,VINOS,False,True,NO_MATCH,272889,Kiedrich Klosterberg Riesling Trocken,66.7,FUZZY,token_similarity
+699,B. MAIN DIVIDE POKIRI RESERVE PINOT GRIS,VINOS,False,True,NO_MATCH,272874,MiruMiru Reserve,14.3,FUZZY,token_similarity
+700,B. PAGO AYLES CUESTA DEL HERRERO,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+701,B. VOLVER CHARDONNAY,VINOS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+702,B. WARIS HUBERT LILYALE BLANC GRAND CRU,VINOS,False,True,NO_MATCH,272906,Lilyale Blanc de Blancs Grand Cru,50.0,FUZZY,token_similarity
+705,C. PAGO AYLES CUESTA DEL HERRERO,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+706,B. CAVA MESTRES COQUET BRUT NATURE GRAN RESERVA,VINOS,False,True,NO_MATCH,272857,Rosat de Mestres Brut Nature Gran Reserva,55.6,FUZZY,token_similarity
+715,Jarra grande Sake Kazenomori Takacho,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+716,Jarra pequeña Sake Kazenomori Takacho,SAKE BAR,False,True,NO_MATCH,,,0,,
+725,B. CAVA MESTRES VISOL GRAN RESERVA BRUT NATURE,VINOS,False,True,NO_MATCH,272857,Rosat de Mestres Brut Nature Gran Reserva,55.6,FUZZY,token_similarity
+726,B. PILLITTERI RIESLING ICE WINE (20 CL),VINOS,False,True,NO_MATCH,272886,Paul Cluver Riesling,12.5,FUZZY,token_similarity
+727,B. SAIAZ,VINOS,False,True,NO_MATCH,272890,Saiaz Rosado,50.0,FUZZY,token_similarity
+728,B. VILLA WOLF FORSTER PECHSTEIN RIESLING ( GG ),VINOS,False,True,NO_MATCH,275433,Forster Pechstein Riesling GG Dry,57.1,FUZZY,token_similarity
+730,C. SAIAZ,VINOS POR COPAS,False,True,NO_MATCH,272890,Saiaz Rosado,50.0,FUZZY,token_similarity
+731,C. VILLA WOLF FORSTER PECHSTEIN RIESLING ( GG ),VINOS POR COPAS,False,True,NO_MATCH,275433,Forster Pechstein Riesling GG Dry,57.1,FUZZY,token_similarity
+742,Jarra pequeña Sake Endo Keyriu,SAKE BAR,False,True,NO_MATCH,,,0,,
+746,B. LA CHABLISIENNE PREMIER CRU FOURCHAUME,VINOS,False,True,NO_MATCH,277149,Chablis 1er Cru 'Fourchaume',28.6,FUZZY,token_similarity
+747,B. RECAREDO INTENS ROSAT G.R. BRUT NATURE,VINOS,False,True,MATCH,277102,Recaredo Intens Rosat Brut Nature,100.0,FUZZY,token_similarity
+748,B. SANGER TRIANGLE MINERAL,VINOS,False,True,NO_MATCH,272860,Sanger Voyage 360,20.0,FUZZY,token_similarity
+749,B. VOLVER SINGLE VINEYARD,VINOS,False,True,NO_MATCH,277138,Single Vineyard,66.7,FUZZY,token_similarity
+750,B. SIAH,VINOS,False,True,NO_MATCH,,,0,,
+751,C. EL BUEN ROLLO,VINOS POR COPAS,False,True,NO_MATCH,277141,Majuelo El Espejo la Seca,14.3,FUZZY,token_similarity
+752,C. ROBERT WEIL KIEDRICH KLOSTERBERG RIESLING ( seco ),VINOS POR COPAS,False,True,NO_MATCH,272889,Kiedrich Klosterberg Riesling Trocken,42.9,FUZZY,token_similarity
+758,Copa Vino Fuera de Carta,VINOS POR COPAS,False,False,NO_MATCH,272852,Añada de Baladiña,14.3,FUZZY,token_similarity
+762,Jarra grande Sake Endo Keyriu,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+765,B. MAJUELO DEL CHIVIRITERO,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,60.0,FUZZY,token_similarity
+770,Tokyo Nigths,COPAS,False,True,NO_MATCH,,,0,,
+772,C. ALBARIÑO KOMOKABRAS VERDE,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+773,B. ALBARIÑO KOMOKABRAS VERDE,VINOS,False,True,NO_MATCH,,,0,,
+775,C. LA CHABLISIENNE PREMIER CRU FOURCHAME,VINOS POR COPAS,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,20.0,FUZZY,token_similarity
+776,C. VOLVER SINGLE VINEYARD,VINOS POR COPAS,False,True,NO_MATCH,277138,Single Vineyard,66.7,FUZZY,token_similarity
+780,Copa Vino Blanco Menu,VINOS POR COPAS,False,False,NO_MATCH,277161,Tarima Blanco,20.0,FUZZY,token_similarity
+783,B. LAGAR DEL ZAR TINTO DULCE(50 CL.),VINOS,False,True,NO_MATCH,272900,Tintoralba Dulce,12.5,FUZZY,token_similarity
+784,LAWSONS DRY HILLS GEWURZTRAMINER,VINOS,False,False,NO_MATCH,277154,Lawson's Dry Hills Gewürztraminer,60.0,FUZZY,token_similarity
+785,B. LOUIS ROEDERER 243 COLLECTION,VINOS,False,True,NO_MATCH,277144,Private Collection Chardonnay,16.7,FUZZY,token_similarity
+792,B. LOUIS ROEDERER COLLECTION 243 (38CL),VINOS,False,True,NO_MATCH,277144,Private Collection Chardonnay,14.3,FUZZY,token_similarity
+793,B. SARMENTERO VENDIMIA SELECCIONADA,VINOS,False,True,MATCH,272893,Sarmentero Vendimia Seleccionada,100.0,FUZZY,token_similarity
+794,C. ABAD DOM BUENO ROSÉ,VINOS POR COPAS,False,True,NO_MATCH,277094,Abad Dom Bueno Rosado,60.0,FUZZY,token_similarity
+795,C. LAWSONS DRI HILLS GEWURZTRAMINER,VINOS POR COPAS,False,True,NO_MATCH,277154,Lawson's Dry Hills Gewürztraminer,33.3,FUZZY,token_similarity
+796,B. CANTAYANO,VINOS,False,True,NO_MATCH,,,0,,
+797,B. CHATEAU CRISTI CHARDONNAY,VINOS,False,True,MATCH,275753,Château Cristi Chardonnay,100.0,FUZZY,token_similarity
+803,C. MISTELA RAFAEL CAÑIZARES,VINOS POR COPAS,False,True,NO_MATCH,272904,Volver Cuvée Rafael Cañizares,40.0,FUZZY,token_similarity
+810,B. ANDRE SCHERER GEWURZTRAMINER GRAND CRU EICHBERG,VINOS,False,True,NO_MATCH,272850,Andre Scherer Alsace Grand Cru 'Eichberg',71.4,FUZZY,token_similarity
+813,B. CHAMPAGNE JM GOBILLARD GR. RESERVE 1er Cru,VINOS,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,27.3,FUZZY,token_similarity
+814,B. SEXTO ELEMENTO,VINOS,False,True,NO_MATCH,277238,6º Elemento,50.0,FUZZY,token_similarity
+815,B. TRIGA BLANCO,VINOS,False,True,NO_MATCH,272903,Triga,50.0,FUZZY,token_similarity
+816,C. SARMENTERO VENDIMIA SELECCIONADA,VINOS POR COPAS,False,True,MATCH,272893,Sarmentero Vendimia Seleccionada,100.0,FUZZY,token_similarity
+817,C. TRIGA BLANCO,VINOS POR COPAS,False,True,NO_MATCH,272903,Triga,50.0,FUZZY,token_similarity
+829,B. ALBARIÑO KOMOKABRAS AMARILLO,VINOS,False,True,NO_MATCH,,,0,,
+832,C. SEXTO ELEMENTO,VINOS POR COPAS,False,True,NO_MATCH,277238,6º Elemento,50.0,FUZZY,token_similarity
+835,B. HUNTERS SAUVIGNON BLANC,VINOS,False,True,NO_MATCH,272878,Lawson's Dry Hills Sauvignon Blanc,33.3,FUZZY,token_similarity
+836,B. LE BRANCH,VINOS,False,True,MATCH,272879,Le Branch,100.0,FUZZY,token_similarity
+844,B. DOMINIO DEL BENDITO LAS SABIAS,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+845,B. PX SOLERA 1981 (50cl),VINOS,False,True,NO_MATCH,277114,PX Lorente & Barba,16.7,FUZZY,token_similarity
+848,C. DOMINIO DEL BENDITO LAS SABIAS,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+849,C. HUNTERS SAUVIGNON BLANC,VINOS POR COPAS,False,True,NO_MATCH,272878,Lawson's Dry Hills Sauvignon Blanc,33.3,FUZZY,token_similarity
+867,B. CORAZ,VINOS,False,True,NO_MATCH,,,0,,
+868,C. CORAZ,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+877,B. FINCA MARTELO,VINOS,False,True,NO_MATCH,277100,Finca Martelo Reserva,66.7,FUZZY,token_similarity
+878,B. LUIS XIV FONDILLON DE 25 AÑOS ( 50 cl ),VINOS,False,True,NO_MATCH,277148,Luis XIV Ánforas,22.2,FUZZY,token_similarity
+890,B. LUIS XIV ORANGE,VINOS,False,True,NO_MATCH,277148,Luis XIV Ánforas,50.0,FUZZY,token_similarity
+891,B. VOLVER CUVEE OLD VINES,VINOS,False,True,NO_MATCH,272904,Volver Cuvée Rafael Cañizares,33.3,FUZZY,token_similarity
+892,C. MUSIC DULCE BLANCO,VINOS POR COPAS,False,True,NO_MATCH,272900,Tintoralba Dulce,25.0,FUZZY,token_similarity
+893,C. VOLVER CUVEE OLD VINES,VINOS POR COPAS,False,True,NO_MATCH,272904,Volver Cuvée Rafael Cañizares,33.3,FUZZY,token_similarity
+896,Jarra pequeña Sake del mes,SAKE BAR,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+897,C. PALLISER ESTATE CHARDONNAY,VINOS POR COPAS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,20.0,FUZZY,token_similarity
+906,B. SARMENTERO 18 MESES,VINOS,False,True,NO_MATCH,272892,Sarmentero Gran Reserva 26 Meses,33.3,FUZZY,token_similarity
+907,C. SARMENTERO 18 MESES,VINOS POR COPAS,False,True,NO_MATCH,272892,Sarmentero Gran Reserva 26 Meses,33.3,FUZZY,token_similarity
+909,C. GARNACHA TINTORERA,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+910,Jarra pequeña Sake premium del mes,SAKE BAR,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,10.0,FUZZY,token_similarity
+912,La estrecha,VINOS POR COPAS,False,False,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+916,Pacharán Baines,COPAS,False,True,NO_MATCH,,,0,,
+922,1/3 planeta,VINOS POR COPAS,False,False,NO_MATCH,,,0,,
+923,B. MERIDIANO PERDIDO,VINOS,False,True,MATCH,277139,Meridiano Perdido,100.0,FUZZY,token_similarity
+924,B. TOMAS POSTIGO 3er año,VINOS,False,True,NO_MATCH,,,0,,
+925,C. MERIDIANO PERDIDO,VINOS POR COPAS,False,True,MATCH,277139,Meridiano Perdido,100.0,FUZZY,token_similarity
+926,C. TRIGA,VINOS POR COPAS,False,True,MATCH,272903,Triga,100.0,FUZZY,token_similarity
+930,Jarra grande Sake del mes,SAKE BAR,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,11.1,FUZZY,token_similarity
+934,C. QUINTA DE PANCAS CHARDONNAY RESERVA,VINOS POR COPAS,False,True,NO_MATCH,272857,Rosat de Mestres Brut Nature Gran Reserva,20.0,FUZZY,token_similarity
+942,1/2 Planeta Chardonnay,VINOS POR COPAS,False,False,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+943,B. TRIGA,VINOS,False,True,MATCH,272903,Triga,100.0,FUZZY,token_similarity
+947,C. MATAS ALTAS,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+951,Jarra grande Sake premium del mes,SAKE BAR,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,10.0,FUZZY,token_similarity
+952,C. LA CHABLISIENNE PREMIER CRU VAULORENT,VINOS POR COPAS,False,True,NO_MATCH,277151,Chablis 1er Cru 'Vaulorent',28.6,FUZZY,token_similarity
+959,C. 1/2 GEWURZTRAMINER,VINOS POR COPAS,False,True,NO_MATCH,277154,Lawson's Dry Hills Gewürztraminer,25.0,FUZZY,token_similarity
+960,B. MUSIC DULCE BLANCO,VINOS,False,True,NO_MATCH,272900,Tintoralba Dulce,25.0,FUZZY,token_similarity
+962,C. CAÑADA PARIS,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+963,C. Planeta Chardonnay,VINOS POR COPAS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+965,Chupito Sake,SAKE BAR,False,True,NO_MATCH,,,0,,
+966,Chupito Sake Premium,SAKE BAR,False,True,NO_MATCH,,,0,,
+970,B. MALAGOUSIA,VINOS,False,True,MATCH,277153,Malagousia,100.0,FUZZY,token_similarity
+974,1/4 Chablis Vaulorent,VINOS POR COPAS,False,False,NO_MATCH,277151,Chablis 1er Cru 'Vaulorent',50.0,FUZZY,token_similarity
+976,B. LIENZO CHARDONNAY,VINOS,False,True,NO_MATCH,277234,Lienzo Chardonnay Fermentado en Barrica,40.0,FUZZY,token_similarity
+977,Bayleis,COPAS,False,True,NO_MATCH,,,0,,
+978,botella tsuchida 99,SAKE BAR,False,True,NO_MATCH,,,0,,
+979,C. Nivarius,VINOS POR COPAS,False,False,NO_MATCH,,,0,,
+980,C. PAUL CLUVER RIESLING,VINOS POR COPAS,False,True,MATCH,272886,Paul Cluver Riesling,100.0,FUZZY,token_similarity
+984,B. PALLISER STATE,VINOS,False,True,NO_MATCH,,,0,,
+987,1/2 Chablis Vaulorent,VINOS POR COPAS,False,False,NO_MATCH,277151,Chablis 1er Cru 'Vaulorent',50.0,FUZZY,token_similarity
+988,B. LIENZO AIREN PIE FRANCO,VINOS,False,True,REVIEW,272880,Lienzo Selección Airén Pie Franco,80.0,FUZZY,token_similarity
+989,B. PAUL CLUVER RIESLING,VINOS,False,True,MATCH,272886,Paul Cluver Riesling,100.0,FUZZY,token_similarity
+994,B. FINCA EL ESPINO,VINOS,False,True,NO_MATCH,272872,Finca Les Lleres,20.0,FUZZY,token_similarity
+995,Hibiki Harmony,COPAS,False,True,NO_MATCH,,,0,,
+998,Sake espumoso Happoshu Shuwa shuwa,SAKE BAR,False,True,NO_MATCH,,,0,,
+999,Time Machine Vintage,SAKE BAR,False,True,NO_MATCH,,,0,,
+1001,B. ABALON 2024,VINOS,False,True,NO_MATCH,272847,Abalón Godello,33.3,FUZZY,token_similarity
+1002,B. VIÑA ARDANZA,VINOS,False,True,NO_MATCH,,,0,,
+1003,B. LA CHABLISIENNE PREMIER CRU VAULORENT,VINOS,False,True,NO_MATCH,277151,Chablis 1er Cru 'Vaulorent',28.6,FUZZY,token_similarity
+1004,C. LA ESCRIBANA,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+1006,Jarra pequeña sake Pure Black,SAKE BAR,False,True,NO_MATCH,,,0,,
+1009,Umeshu extra years,COPAS,False,True,NO_MATCH,,,0,,
+1010,Imo Taikoban Shochu de boniato,COPAS,False,True,NO_MATCH,272852,Añada de Baladiña,14.3,FUZZY,token_similarity
+1011,1/4 Palliser Chardonnay,VINOS POR COPAS,False,False,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+1012,B. MAJUELO EL ESPEJO,VINOS,False,True,NO_MATCH,277141,Majuelo El Espejo la Seca,60.0,FUZZY,token_similarity
+1013,C. SIAH,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+1014,C. TANUKI BOB,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+1016,Jarra grande Pure black,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,10.0,FUZZY,token_similarity
+1018,1/2 Palliser Chardonnay,VINOS POR COPAS,False,False,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+1019,Akashi Blended Whisky,COPAS,False,True,NO_MATCH,,,0,,
+1020,B. ALBARIÑO BALADIÑA BARRO,VINOS,False,True,NO_MATCH,272854,Baladiña Barro,66.7,FUZZY,token_similarity
+1021,B. TANUKI BOB,VINOS,False,True,NO_MATCH,,,0,,
+1022,C. MAJUELO DEL CHIVIRITERO,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,60.0,FUZZY,token_similarity
+1025,Jarra pequeña Sake tsuchida 99,SAKE BAR,False,True,NO_MATCH,,,0,,
+1028,Roku Gin  Gin Japonés,COPAS,False,True,NO_MATCH,,,0,,
+1031,B. ALBARIÑO AÑADA DE BALADIÑA,VINOS,False,True,REVIEW,272852,Añada de Baladiña,75.0,FUZZY,token_similarity
+1032,C. LIRONDO,VINOS POR COPAS,False,True,MATCH,272881,Lirondo,100.0,FUZZY,token_similarity
+1033,C. Palliser Chardonnay,VINOS POR COPAS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,25.0,FUZZY,token_similarity
+1034,Jarra grande Sake tsuchida 99,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+1036,Ron Teeda 5 años,COPAS,False,True,NO_MATCH,,,0,,
+1037,B. ESTRECHA,VINOS,False,True,NO_MATCH,,,0,,
+1038,B. GINESTA GEWURZTRAMINER,VINOS,False,True,NO_MATCH,272873,Ginesta,50.0,FUZZY,token_similarity
+1039,C. CANTAYANO,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+1040,Jarra pequeña sake Principe Nagaya,SAKE BAR,False,True,NO_MATCH,,,0,,
+1041,Kiyomi,COPAS,False,True,NO_MATCH,,,0,,
+1045,Yamazakura blended whisky,COPAS,False,True,NO_MATCH,,,0,,
+1046,C. BALADIÑA ALBARIÑO SOBRE LIAS,VINOS POR COPAS,False,True,REVIEW,272853,Baladiña Sobre Lías,75.0,FUZZY,token_similarity
+1048,Jarra grande sake Príncipe Nagaya,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+1050,Tenjaku sherry cask,COPAS,False,True,NO_MATCH,,,0,,
+1052,Botella Príncipe Nagaya,SAKE BAR,False,True,NO_MATCH,,,0,,
+1053,C. LIENZO CHARDONNAY,VINOS POR COPAS,False,True,NO_MATCH,277234,Lienzo Chardonnay Fermentado en Barrica,40.0,FUZZY,token_similarity
+1054,B. LIRONDO,VINOS,False,True,MATCH,272881,Lirondo,100.0,FUZZY,token_similarity
+1058,B. BIU RIESLING,VINOS,False,True,NO_MATCH,277143,Biu Blanc,33.3,FUZZY,token_similarity
+1059,B. LA SERVIL,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+1060,C. LIENZO AIREN PIE FRANCO,VINOS POR COPAS,False,True,REVIEW,272880,Lienzo Selección Airén Pie Franco,80.0,FUZZY,token_similarity
+1061,C. LE BRANCH,VINOS POR COPAS,False,True,MATCH,272879,Le Branch,100.0,FUZZY,token_similarity
+1062,Jarra pequeña sake Ine Mankai,SAKE BAR,False,True,NO_MATCH,,,0,,
+1066,C. ABALON GODELLO,VINOS POR COPAS,False,True,MATCH,272847,Abalón Godello,100.0,FUZZY,token_similarity
+1067,B. FINCA LES LLERES,VINOS,False,True,MATCH,272872,Finca Les Lleres,100.0,FUZZY,token_similarity
+1068,B. SARMENTERO GRAN RESERVA,VINOS,False,True,NO_MATCH,272892,Sarmentero Gran Reserva 26 Meses,60.0,FUZZY,token_similarity
+1069,Jarra grande sake Ine Mankai,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,9.1,FUZZY,token_similarity
+1074,B. ABAD DOM BUENO MENCIA,VINOS,False,True,NO_MATCH,277094,Abad Dom Bueno Rosado,60.0,FUZZY,token_similarity
+1075,C. MAJUELO EL ESPEJO,VINOS POR COPAS,False,True,NO_MATCH,277141,Majuelo El Espejo la Seca,60.0,FUZZY,token_similarity
+1076,C. SARMENTERO GRAN RESERVA,VINOS POR COPAS,False,True,NO_MATCH,272892,Sarmentero Gran Reserva 26 Meses,60.0,FUZZY,token_similarity
+1077,Jarra pequeña sake Fuga,SAKE BAR,False,True,NO_MATCH,,,0,,
+1078,B. MAJUELO DEL CHIRIVITERO,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,33.3,FUZZY,token_similarity
+1081,B. NERO DE SORT,VINOS,False,True,NO_MATCH,272852,Añada de Baladiña,20.0,FUZZY,token_similarity
+1082,C. ABAD DOM BUENO MENCIA,VINOS POR COPAS,False,True,NO_MATCH,277094,Abad Dom Bueno Rosado,60.0,FUZZY,token_similarity
+1083,C. ALBARIÑO BALADIÑA BARRO,VINOS POR COPAS,False,True,NO_MATCH,272854,Baladiña Barro,66.7,FUZZY,token_similarity
+1084,Jarra grande sake Fuga,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,10.0,FUZZY,token_similarity
+1087,135º East Hyogo dry gin,COPAS,False,True,NO_MATCH,277146,Lawson's Dry Hills Riesling,12.5,FUZZY,token_similarity
+1088,C. ALBARIÑO AÑADA DE BALADIÑA,VINOS POR COPAS,False,True,REVIEW,272852,Añada de Baladiña,75.0,FUZZY,token_similarity
+1089,B. LA RINCONADA,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+1090,C. NERO DE SORT,VINOS POR COPAS,False,True,NO_MATCH,272852,Añada de Baladiña,20.0,FUZZY,token_similarity
+1091,Jarra pequeña sake Akishika Moto shibori,SAKE BAR,False,True,NO_MATCH,,,0,,
+1094,B. LA RASPA TINTO,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,14.3,FUZZY,token_similarity
+1095,B. MARIA MERENS GODELLO,VINOS,False,True,NO_MATCH,272847,Abalón Godello,25.0,FUZZY,token_similarity
+1096,C. BIU RIESLING,VINOS POR COPAS,False,True,NO_MATCH,277143,Biu Blanc,33.3,FUZZY,token_similarity
+1097,C. GINESTA GEWURZTRAMINER,VINOS POR COPAS,False,True,NO_MATCH,272873,Ginesta,50.0,FUZZY,token_similarity
+1098,Etsu Sakura Japanese Gin,COPAS,False,True,NO_MATCH,,,0,,
+1099,Jarra grande sake Akhishika Moto shibori,SAKE BAR,False,True,NO_MATCH,272859,J.M. Gobillard & Fils Grande Reserve Brut Premier Cru,8.3,FUZZY,token_similarity
+1101,B. MAGNUM DOMINIO DEL BENDITO LAS SABIAS,VINOS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,10.0,FUZZY,token_similarity
+1102,C. LA PICONADA,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,16.7,FUZZY,token_similarity
+1103,Etsu Gin The Original,COPAS,False,True,NO_MATCH,,,0,,
+1105,Sake chokyu kijoshu 1997,SAKE BAR,False,True,NO_MATCH,,,0,,
+1106,C. FINCA LES LLERES,VINOS POR COPAS,False,True,MATCH,272872,Finca Les Lleres,100.0,FUZZY,token_similarity
+1107,C. LA RASPA TINTO,VINOS POR COPAS,False,True,NO_MATCH,272883,Majuelo del Chiviritero La Seca,14.3,FUZZY,token_similarity
+1110,B. ARENISCA LOS PILONES,VINOS,False,True,NO_MATCH,,,0,,
+1111,C. ABAD DOM BUENO GODELLO ESENCIA,VINOS POR COPAS,False,True,MATCH,272845,Abad Dom Bueno Godello Esencia,100.0,FUZZY,token_similarity
+1112,C. TARIMA HILL,VINOS POR COPAS,False,True,NO_MATCH,287303,Tarima Hill Blanco,66.7,FUZZY,token_similarity
+1114,B. VOLVER SINGLE VINEYARD MAGNUM,VINOS,False,True,NO_MATCH,277138,Single Vineyard,50.0,FUZZY,token_similarity
+1115,C. ARENISCA LOS PILONES,VINOS POR COPAS,False,True,NO_MATCH,,,0,,
+1116,C. MARIA MERENS GODELLO,VINOS POR COPAS,False,True,NO_MATCH,272847,Abalón Godello,25.0,FUZZY,token_similarity
+1118,B. SAN SALVADOR GODELLO MAGNUM,VINOS,False,True,NO_MATCH,272891,San Salvador,50.0,FUZZY,token_similarity
+1177139,C. ALPHA ESTATE MALAGOUZIA TURTLES VINEYARD,VINOS POR COPAS,False,True,NO_MATCH,277138,Single Vineyard,16.7,FUZZY,token_similarity
+1177140,C. CHAVY-CHOUET LES FEMELOTTES BOURGOGNE BLANC,VINOS POR COPAS,False,True,NO_MATCH,277143,Biu Blanc,14.3,FUZZY,token_similarity
+1177141,C. CROCODILE´S LAIR KAAIMANSGAT CHARDONNAY,VINOS POR COPAS,False,True,NO_MATCH,275753,Château Cristi Chardonnay,16.7,FUZZY,token_similarity

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "appliedAt": "2026-07-14T09:46:27.750Z",
+  "connectionId": "e5b988f1-8471-4336-a1f7-a5c1626deab1",
+  "locationName": "Sa Vida",
+  "purpose": "Reversible hide of the true pre-Winerim VINOS family without hiding Winerim geographic families",
+  "before": {
+    "family": { "id": "95", "name": "VINOS", "showInPos": true },
+    "productIds": ["978", "979", "980", "981", "982", "983", "984", "985", "986", "987", "988", "989", "990", "991", "992", "993"],
+    "productsSaleable": 16
+  },
+  "after": {
+    "family": { "id": "95", "name": "VINOS", "showInPos": false },
+    "productsSaleable": 0,
+    "winerimFamiliesVisible": 8,
+    "winerimGeographicFamiliesPreserved": true,
+    "openOutboundQueue": 0
+  },
+  "rollback": {
+    "family": {
+      "action": "set-family-visibility",
+      "updates": [{ "familyId": "95", "showInPos": true }]
+    },
+    "products": {
+      "action": "set-product-visibility",
+      "updates": [
+        { "productId": "978", "visible": true },
+        { "productId": "979", "visible": true },
+        { "productId": "980", "visible": true },
+        { "productId": "981", "visible": true },
+        { "productId": "982", "visible": true },
+        { "productId": "983", "visible": true },
+        { "productId": "984", "visible": true },
+        { "productId": "985", "visible": true },
+        { "productId": "986", "visible": true },
+        { "productId": "987", "visible": true },
+        { "productId": "988", "visible": true },
+        { "productId": "989", "visible": true },
+        { "productId": "990", "visible": true },
+        { "productId": "991", "visible": true },
+        { "productId": "992", "visible": true },
+        { "productId": "993", "visible": true }
+      ]
+    }
+  }
+}

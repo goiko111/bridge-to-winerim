@@ -1,0 +1,256 @@
+{
+  "appliedAt": "2026-06-04T14:19:31.375Z",
+  "connection": {
+    "id": "f1ce42a4-ffe2-44ea-bb3d-e22b306b1d8c",
+    "location_name": "Kava"
+  },
+  "targetFamilies": [
+    "2069 GENEROSOS",
+    "2070 DULCES"
+  ],
+  "before": {
+    "families": [
+      {
+        "Id": "2069",
+        "Name": "GENEROSOS",
+        "ShowInPos": "false",
+        "Order": "6"
+      },
+      {
+        "Id": "2070",
+        "Name": "DULCES",
+        "ShowInPos": "false",
+        "Order": "7"
+      }
+    ],
+    "products": [
+      {
+        "Id": "14081",
+        "Name": "MANZANILLA PAPIRUSA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14082",
+        "Name": "MANZANILLA ALEGRIA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14083",
+        "Name": "CABERRUBIA CARRASCAL FINO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14084",
+        "Name": "INOCENTE",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14085",
+        "Name": "DON ZOILO AMONTILLADO 12 AÑOS",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14086",
+        "Name": "PALO CORTADO CLASICO URIUM",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14087",
+        "Name": "GREAT DUKE PALO CORTADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14088",
+        "Name": "BERTOLA PALO CORTADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14089",
+        "Name": "MOSCATEL LAUR4A",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14090",
+        "Name": "LA CILLA PX",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14238",
+        "Name": "FINO ELECTRICO EN RAMA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14239",
+        "Name": "GRAN BARQUERO AMONTILLADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14240",
+        "Name": "DON PX",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14241",
+        "Name": "Nº 2 VICTORIA",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      },
+      {
+        "Id": "14242",
+        "Name": "SICHEL SAUTERNES",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "false"
+      }
+    ]
+  },
+  "verification": {
+    "allOk": true,
+    "families": [
+      {
+        "Id": "2069",
+        "Name": "GENEROSOS",
+        "ShowInPos": "true"
+      },
+      {
+        "Id": "2070",
+        "Name": "DULCES",
+        "ShowInPos": "true"
+      }
+    ],
+    "products": [
+      {
+        "Id": "14081",
+        "Name": "MANZANILLA PAPIRUSA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14082",
+        "Name": "MANZANILLA ALEGRIA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14083",
+        "Name": "CABERRUBIA CARRASCAL FINO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14084",
+        "Name": "INOCENTE",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14085",
+        "Name": "DON ZOILO AMONTILLADO 12 AÑOS",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14086",
+        "Name": "PALO CORTADO CLASICO URIUM",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14087",
+        "Name": "GREAT DUKE PALO CORTADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14088",
+        "Name": "BERTOLA PALO CORTADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14089",
+        "Name": "MOSCATEL LAUR4A",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14090",
+        "Name": "LA CILLA PX",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14238",
+        "Name": "FINO ELECTRICO EN RAMA",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14239",
+        "Name": "GRAN BARQUERO AMONTILLADO",
+        "FamilyId": "2069",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14240",
+        "Name": "DON PX",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14241",
+        "Name": "Nº 2 VICTORIA",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      },
+      {
+        "Id": "14242",
+        "Name": "SICHEL SAUTERNES",
+        "FamilyId": "2070",
+        "UseAsDirectSale": "false",
+        "SaleableAsMain": "true"
+      }
+    ]
+  }
+}

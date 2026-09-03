@@ -1,0 +1,1952 @@
+{
+  "connection_id": "982f1e63-5f15-48b8-b35f-037eafd4593e",
+  "legacy_family_ids": [
+    "11",
+    "33",
+    "37"
+  ],
+  "legacy_families": [
+    {
+      "Id": "11",
+      "Name": "VINOS",
+      "ShowInPos": "false",
+      "ButtonText": "VINOS",
+      "Color": "#BACDE2",
+      "Order": "10",
+      "DeletionDate": "2019-06-11T13:23:45"
+    },
+    {
+      "Id": "33",
+      "Name": "VINOS",
+      "ShowInPos": "false",
+      "ButtonText": "VINOS",
+      "Color": "#BACDE2",
+      "Order": "23"
+    },
+    {
+      "Id": "37",
+      "Name": "VINOS POR COPAS",
+      "ShowInPos": "false",
+      "ButtonText": "VINOS POR COPAS",
+      "Color": "#BACDE2",
+      "Order": "27"
+    }
+  ],
+  "legacy_products": [
+    {
+      "product_id": "559",
+      "name": "B. 1/2 BOTELLA CHAMPAGNE SANGER VOYAGE 360",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "563",
+      "name": "B. DR. LOOSEN GRAY SLATE RIESLING",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "564",
+      "name": "B. DR.LOOSEN BEERENAUSLESE RIESLING (18,7 CL.)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "565",
+      "name": "B. LUIS XIV ÁNFORAS",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "566",
+      "name": "B. QUELIAS ROSÉ",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "567",
+      "name": "B. RAFA CAÑIZARES SAUVIGNON BLANC",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "568",
+      "name": "B.EL BUEN ROLLO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "569",
+      "name": "C. DR. LOOSEN GRAY SLATE RIESLING ( semiseco )",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "570",
+      "name": "C. QUELIAS ROSADO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "571",
+      "name": "C. RAFA CAÑIZARES SAUVIGNON BLANC",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "572",
+      "name": "C. RAIMUN GARNACHA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "576",
+      "name": "C. NOCTILUCA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "593",
+      "name": "1C. CHATEAU CRISTI ( 150 ml)",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "596",
+      "name": "B. ABAD DOM BUENO ROSÉ",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "597",
+      "name": "B. BALADIÑA ALBARIÑO SOBRE LÍAS",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "598",
+      "name": "B. CHAMPAGNE SANGER VOYAGE 360",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "599",
+      "name": "B. DR. LOOSEN RED SLATE RIESLING TROCKEN (seco)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "600",
+      "name": "B. JOHN DUVAL ENTITY",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "601",
+      "name": "B. RAIMUN GARNACHA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "602",
+      "name": "C. DR. LOOSEN RED SLATE RIESLING TROCKEN ( seco )",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "603",
+      "name": "C. JOHN DUVAL ENTITY",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "604",
+      "name": "C. SARMENTERO ROBLE",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "612",
+      "name": "C. TOKAJ SZAMORODNI GROF DEGENFELD",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "624",
+      "name": "C. TARIMA SPARKLING ( Frizzante )",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "628",
+      "name": "B. TOKAJ GROF DEGENFELD SZAMORODNI (50CL.)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "631",
+      "name": "B. CHATEAU CRISTI",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "632",
+      "name": "B. DOMINIO DEL BENDITO ''LAS SABIAS\"",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "633",
+      "name": "B. HUNTERS MIRU MIRU RESERVE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "634",
+      "name": "B. LAWSON'S DRY HILLS SAUVIGNON BLANC",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "635",
+      "name": "B. RAATS OLD VINE CHENIN BLANC",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "636",
+      "name": "B. SARMENTERO ROBLE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "637",
+      "name": "B. TARIMA SPARKLING ( FRIZZANTE )",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "643",
+      "name": "C. LAWSON'S DRY HILLS SAUVIGNON BLANC",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "644",
+      "name": "C. MAIN DIVINE POKIRI RESERVE LATE PICKED",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "645",
+      "name": "C. RAATS OLD VINES CHENIN BLANC",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "650",
+      "name": "Copa Vino Fuera Carta",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "657",
+      "name": "B. NOCTILUCA (50 CL.)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "665",
+      "name": "B. CAVA MESTRES ROSAT GRAN RERSERVA BRUT NATURE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "666",
+      "name": "B. EL BUEN ROLLO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "667",
+      "name": "B. HUNTERS MIRU MIRU ROSE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "668",
+      "name": "B. LA RASPA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "669",
+      "name": "B. THE CHOCOLATE BLOCK",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "671",
+      "name": "C. LA RASPA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "672",
+      "name": "C. LUIS XIV ÁNFORAS",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "673",
+      "name": "C. PX SOLERA 1981",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "674",
+      "name": "C. SAXENBURG PRIVATE COLLECTION CHARDONNAY",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "675",
+      "name": "C. THE CHOCOLATE BLOCK",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "680",
+      "name": "C. LAGAR DEL ZAR TINTO DULCE",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "681",
+      "name": "B. DR. LOOSEN RIESLING ERDENER PRALAT AUSLESE GOLD (37'5 CL.)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "693",
+      "name": "B. ROBERT WEIL KIEDRICH KLOSTERBERG RIESLING TROCKEN",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "699",
+      "name": "B. MAIN DIVIDE POKIRI RESERVE PINOT GRIS",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "700",
+      "name": "B. PAGO AYLES CUESTA DEL HERRERO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "701",
+      "name": "B. VOLVER CHARDONNAY",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "702",
+      "name": "B. WARIS HUBERT LILYALE BLANC GRAND CRU",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "705",
+      "name": "C. PAGO AYLES CUESTA DEL HERRERO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "706",
+      "name": "B. CAVA MESTRES COQUET BRUT NATURE GRAN RESERVA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "725",
+      "name": "B. CAVA MESTRES VISOL GRAN RESERVA BRUT NATURE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "726",
+      "name": "B. PILLITTERI RIESLING ICE WINE (20 CL)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "727",
+      "name": "B. SAIAZ",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "728",
+      "name": "B. VILLA WOLF FORSTER PECHSTEIN RIESLING ( GG )",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "730",
+      "name": "C. SAIAZ",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "731",
+      "name": "C. VILLA WOLF FORSTER PECHSTEIN RIESLING ( GG )",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "746",
+      "name": "B. LA CHABLISIENNE PREMIER CRU FOURCHAUME",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "747",
+      "name": "B. RECAREDO INTENS ROSAT G.R. BRUT NATURE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "748",
+      "name": "B. SANGER TRIANGLE MINERAL",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "749",
+      "name": "B. VOLVER SINGLE VINEYARD",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "750",
+      "name": "B. SIAH",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "751",
+      "name": "C. EL BUEN ROLLO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "752",
+      "name": "C. ROBERT WEIL KIEDRICH KLOSTERBERG RIESLING ( seco )",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "758",
+      "name": "Copa Vino Fuera de Carta",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "765",
+      "name": "B. MAJUELO DEL CHIVIRITERO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "772",
+      "name": "C. ALBARIÑO KOMOKABRAS VERDE",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "773",
+      "name": "B. ALBARIÑO KOMOKABRAS VERDE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "775",
+      "name": "C. LA CHABLISIENNE PREMIER CRU FOURCHAME",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "776",
+      "name": "C. VOLVER SINGLE VINEYARD",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "780",
+      "name": "Copa Vino Blanco Menu",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "783",
+      "name": "B. LAGAR DEL ZAR TINTO DULCE(50 CL.)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "784",
+      "name": "LAWSONS DRY HILLS GEWURZTRAMINER",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "785",
+      "name": "B. LOUIS ROEDERER 243 COLLECTION",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "792",
+      "name": "B. LOUIS ROEDERER COLLECTION 243 (38CL)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "793",
+      "name": "B. SARMENTERO VENDIMIA SELECCIONADA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "794",
+      "name": "C. ABAD DOM BUENO ROSÉ",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "795",
+      "name": "C. LAWSONS DRI HILLS GEWURZTRAMINER",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "796",
+      "name": "B. CANTAYANO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "797",
+      "name": "B. CHATEAU CRISTI CHARDONNAY",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "803",
+      "name": "C. MISTELA RAFAEL CAÑIZARES",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "810",
+      "name": "B. ANDRE SCHERER GEWURZTRAMINER GRAND CRU EICHBERG",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "813",
+      "name": "B. CHAMPAGNE JM GOBILLARD GR. RESERVE 1er Cru",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "814",
+      "name": "B. SEXTO ELEMENTO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "815",
+      "name": "B. TRIGA BLANCO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "816",
+      "name": "C. SARMENTERO VENDIMIA SELECCIONADA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "817",
+      "name": "C. TRIGA BLANCO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "829",
+      "name": "B. ALBARIÑO KOMOKABRAS AMARILLO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "832",
+      "name": "C. SEXTO ELEMENTO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "835",
+      "name": "B. HUNTERS SAUVIGNON BLANC",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "836",
+      "name": "B. LE BRANCH",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "844",
+      "name": "B. DOMINIO DEL BENDITO LAS SABIAS",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "845",
+      "name": "B. PX SOLERA 1981 (50cl)",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "848",
+      "name": "C. DOMINIO DEL BENDITO LAS SABIAS",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "849",
+      "name": "C. HUNTERS SAUVIGNON BLANC",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "867",
+      "name": "B. CORAZ",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "868",
+      "name": "C. CORAZ",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "877",
+      "name": "B. FINCA MARTELO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "878",
+      "name": "B. LUIS XIV FONDILLON DE 25 AÑOS ( 50 cl )",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "890",
+      "name": "B. LUIS XIV ORANGE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "891",
+      "name": "B. VOLVER CUVEE OLD VINES",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "892",
+      "name": "C. MUSIC DULCE BLANCO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "893",
+      "name": "C. VOLVER CUVEE OLD VINES",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "897",
+      "name": "C. PALLISER ESTATE CHARDONNAY",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "906",
+      "name": "B. SARMENTERO 18 MESES",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "907",
+      "name": "C. SARMENTERO 18 MESES",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "909",
+      "name": "C. GARNACHA TINTORERA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "912",
+      "name": "La estrecha",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "922",
+      "name": "1/3 planeta",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "923",
+      "name": "B. MERIDIANO PERDIDO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "924",
+      "name": "B. TOMAS POSTIGO 3er año",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "925",
+      "name": "C. MERIDIANO PERDIDO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "926",
+      "name": "C. TRIGA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "934",
+      "name": "C. QUINTA DE PANCAS CHARDONNAY RESERVA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "942",
+      "name": "1/2 Planeta Chardonnay",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "943",
+      "name": "B. TRIGA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "947",
+      "name": "C. MATAS ALTAS",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "952",
+      "name": "C. LA CHABLISIENNE PREMIER CRU VAULORENT",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "959",
+      "name": "C. 1/2 GEWURZTRAMINER",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "960",
+      "name": "B. MUSIC DULCE BLANCO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "962",
+      "name": "C. CAÑADA PARIS",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "963",
+      "name": "C. Planeta Chardonnay",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "970",
+      "name": "B. MALAGOUSIA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "974",
+      "name": "1/4 Chablis Vaulorent",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "976",
+      "name": "B. LIENZO CHARDONNAY",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "979",
+      "name": "C. Nivarius",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "980",
+      "name": "C. PAUL CLUVER RIESLING",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "984",
+      "name": "B. PALLISER STATE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "987",
+      "name": "1/2 Chablis Vaulorent",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "988",
+      "name": "B. LIENZO AIREN PIE FRANCO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "989",
+      "name": "B. PAUL CLUVER RIESLING",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "994",
+      "name": "B. FINCA EL ESPINO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1001",
+      "name": "B. ABALON 2024",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1002",
+      "name": "B. VIÑA ARDANZA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1003",
+      "name": "B. LA CHABLISIENNE PREMIER CRU VAULORENT",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1004",
+      "name": "C. LA ESCRIBANA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1011",
+      "name": "1/4 Palliser Chardonnay",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "1012",
+      "name": "B. MAJUELO EL ESPEJO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1013",
+      "name": "C. SIAH",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1014",
+      "name": "C. TANUKI BOB",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1018",
+      "name": "1/2 Palliser Chardonnay",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "false",
+      "Order": null
+    },
+    {
+      "product_id": "1020",
+      "name": "B. ALBARIÑO BALADIÑA BARRO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1021",
+      "name": "B. TANUKI BOB",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1022",
+      "name": "C. MAJUELO DEL CHIVIRITERO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1031",
+      "name": "B. ALBARIÑO AÑADA DE BALADIÑA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1032",
+      "name": "C. LIRONDO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1033",
+      "name": "C. Palliser Chardonnay",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1037",
+      "name": "B. ESTRECHA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1038",
+      "name": "B. GINESTA GEWURZTRAMINER",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1039",
+      "name": "C. CANTAYANO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1046",
+      "name": "C. BALADIÑA ALBARIÑO SOBRE LIAS",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1053",
+      "name": "C. LIENZO CHARDONNAY",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1054",
+      "name": "B. LIRONDO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1058",
+      "name": "B. BIU RIESLING",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1059",
+      "name": "B. LA SERVIL",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1060",
+      "name": "C. LIENZO AIREN PIE FRANCO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1061",
+      "name": "C. LE BRANCH",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1066",
+      "name": "C. ABALON GODELLO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1067",
+      "name": "B. FINCA LES LLERES",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1068",
+      "name": "B. SARMENTERO GRAN RESERVA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1074",
+      "name": "B. ABAD DOM BUENO MENCIA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1075",
+      "name": "C. MAJUELO EL ESPEJO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1076",
+      "name": "C. SARMENTERO GRAN RESERVA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1078",
+      "name": "B. MAJUELO DEL CHIRIVITERO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1081",
+      "name": "B. NERO DE SORT",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1082",
+      "name": "C. ABAD DOM BUENO MENCIA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1083",
+      "name": "C. ALBARIÑO BALADIÑA BARRO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1088",
+      "name": "C. ALBARIÑO AÑADA DE BALADIÑA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1089",
+      "name": "B. LA RINCONADA",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1090",
+      "name": "C. NERO DE SORT",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1094",
+      "name": "B. LA RASPA TINTO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1095",
+      "name": "B. MARIA MERENS GODELLO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1096",
+      "name": "C. BIU RIESLING",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1097",
+      "name": "C. GINESTA GEWURZTRAMINER",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1101",
+      "name": "B. MAGNUM DOMINIO DEL BENDITO LAS SABIAS",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1102",
+      "name": "C. LA PICONADA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1106",
+      "name": "C. FINCA LES LLERES",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1107",
+      "name": "C. LA RASPA TINTO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1110",
+      "name": "B. ARENISCA LOS PILONES",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1111",
+      "name": "C. ABAD DOM BUENO GODELLO ESENCIA",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1112",
+      "name": "C. TARIMA HILL",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1114",
+      "name": "B. VOLVER SINGLE VINEYARD MAGNUM",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1115",
+      "name": "C. ARENISCA LOS PILONES",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1116",
+      "name": "C. MARIA MERENS GODELLO",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1118",
+      "name": "B. SAN SALVADOR GODELLO MAGNUM",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "772846",
+      "name": "B. SAN SALVADOR GODELLO",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "772848",
+      "name": "B ALPHA ESTATE MALAGOUZIA TURTLES VINEYARD",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "772855",
+      "name": "B. CROCODILE´S LAIR KAAIMANSGAT CHARDONNAY",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "772862",
+      "name": "B. CHAVY-CHOUET LES FEMELOTTES BOURGOGNE BLANC",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "975434",
+      "name": "B. 1/2 PRESTIGE DES SACRES BRUT PRESTIGE",
+      "family_id": "33",
+      "family_name": "VINOS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1177139",
+      "name": "C. ALPHA ESTATE MALAGOUZIA TURTLES VINEYARD",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1177140",
+      "name": "C. CHAVY-CHOUET LES FEMELOTTES BOURGOGNE BLANC",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    },
+    {
+      "product_id": "1177141",
+      "name": "C. CROCODILE´S LAIR KAAIMANSGAT CHARDONNAY",
+      "family_id": "37",
+      "family_name": "VINOS POR COPAS",
+      "UseAsDirectSale": "false",
+      "SaleableAsMain": "true",
+      "Order": null
+    }
+  ],
+  "expected_winerim_product_ids": [
+    "1172891",
+    "1177138",
+    "772845",
+    "772847",
+    "772850",
+    "772852",
+    "772853",
+    "772854",
+    "772857",
+    "772859",
+    "772860",
+    "772866",
+    "772870",
+    "772872",
+    "772873",
+    "772874",
+    "772875",
+    "772876",
+    "772878",
+    "772879",
+    "772880",
+    "772881",
+    "772883",
+    "772885",
+    "772886",
+    "772888",
+    "772889",
+    "772890",
+    "772891",
+    "772892",
+    "772893",
+    "772896",
+    "772898",
+    "772900",
+    "772902",
+    "772903",
+    "772904",
+    "772906",
+    "772907",
+    "775433",
+    "775753",
+    "777094",
+    "777100",
+    "777102",
+    "777110",
+    "777111",
+    "777112",
+    "777114",
+    "777125",
+    "777129",
+    "777131",
+    "777133",
+    "777139",
+    "777141",
+    "777143",
+    "777144",
+    "777146",
+    "777148",
+    "777149",
+    "777151",
+    "777153",
+    "777154",
+    "777161",
+    "777203",
+    "777234",
+    "777238",
+    "972845",
+    "972847",
+    "972850",
+    "972852",
+    "972853",
+    "972854",
+    "972857",
+    "972859",
+    "972860",
+    "972866",
+    "972870",
+    "972872",
+    "972873",
+    "972874",
+    "972875",
+    "972876",
+    "972878",
+    "972879",
+    "972880",
+    "972881",
+    "972883",
+    "972885",
+    "972886",
+    "972888",
+    "972889",
+    "972890",
+    "972891",
+    "972892",
+    "972893",
+    "972896",
+    "972898",
+    "972900",
+    "972902",
+    "972903",
+    "972904",
+    "972906",
+    "972907",
+    "975433",
+    "975753",
+    "977094",
+    "977100",
+    "977102",
+    "977110",
+    "977111",
+    "977112",
+    "977114",
+    "977125",
+    "977129",
+    "977131",
+    "977133",
+    "977138",
+    "977139",
+    "977141",
+    "977143",
+    "977144",
+    "977146",
+    "977148",
+    "977149",
+    "977151",
+    "977153",
+    "977154",
+    "977161",
+    "977203",
+    "977234",
+    "977238"
+  ]
+}

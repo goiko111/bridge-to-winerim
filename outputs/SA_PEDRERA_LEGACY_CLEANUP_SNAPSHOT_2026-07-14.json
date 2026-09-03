@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "appliedAt": "2026-07-14T09:46:27.750Z",
+  "connectionId": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
+  "locationName": "Sa Pedrera",
+  "purpose": "Keep a Winerim product visible while completing legacy cleanup",
+  "before": {
+    "product": {
+      "id": "597995",
+      "name": "B MAGNUM 32 - Morgon",
+      "winerimWineId": "97995",
+      "format": "BOTTLE",
+      "familyId": "30",
+      "familyVisibility": "hidden",
+      "saleable": true
+    }
+  },
+  "after": {
+    "product": {
+      "id": "597995",
+      "name": "B MAGNUM 32 - Morgon",
+      "familyId": "904289",
+      "familyName": "MAGNUM WINERIM",
+      "saleable": true
+    },
+    "legacyWineFamiliesVisible": 0,
+    "openOutboundQueue": 0
+  },
+  "rollback": {
+    "note": "Requeue wine 97995 as BOTTLE with familyOverrideId=30 if the previous placement must be restored."
+  }
+}

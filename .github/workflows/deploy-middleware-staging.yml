@@ -1,0 +1,331 @@
+name: Deploy middleware staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_target:
+        description: "Type staging-only to confirm this must not touch production"
+        required: true
+        type: string
+      confirm_sha:
+        description: "Exact reviewed commit SHA to deploy"
+        required: true
+        type: string
+      migration_mode:
+        description: "Database operation: none or empty bootstrap (existing staging upgrades run only from a durable operator host)"
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - bootstrap-empty
+      apply_migrations:
+        description: "Apply the reviewed staging bootstrap/migrations"
+        required: true
+        default: false
+        type: boolean
+      deploy_worker:
+        description: "Deploy the staging Worker"
+        required: true
+        default: true
+        type: boolean
+      deploy_pages:
+        description: "Blocked until Pages has a reviewed preflight and rollback gate"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: middleware-staging
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate reviewed staging source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify explicit target and immutable source
+        env:
+          CONFIRM_TARGET: ${{ inputs.confirm_target }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+          DEPLOY_PAGES: ${{ inputs.deploy_pages }}
+        run: |
+          test "$CONFIRM_TARGET" = "staging-only" || (echo "confirm_target must be staging-only" >&2; exit 1)
+          test "$CONFIRM_SHA" = "$ACTUAL_SHA" || (echo "confirm_sha does not match the workflow commit" >&2; exit 1)
+          test "$DEPLOY_PAGES" = "false" || (echo "Pages deploy is blocked until its Access preflight and rollback gate are reviewed" >&2; exit 1)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify staging requires Cloudflare Access JWT
+        run: |
+          access_required="$(awk '
+            $0 == "[env.staging.vars]" { in_staging = 1; next }
+            in_staging && /^\[/ { exit }
+            in_staging && $1 == "REQUIRE_ACCESS_JWT" {
+              value = $3
+              gsub(/"/, "", value)
+              print value
+              exit
+            }
+          ' wrangler.middleware.toml)"
+          test "$access_required" = "true" || (echo "Staging must require Access JWT before static admin secrets can be omitted" >&2; exit 1)
+      - run: npx tsc --noEmit --pretty false
+      - run: npx vitest run src/test/middlewareOnboarding.test.ts src/test/middlewareWorkerSecurity.test.ts src/test/integrationChecklist.test.ts src/test/cloudflareDbAdapter.test.ts src/test/cloudflareDbSql.test.ts src/test/cloudflareRuntime*.test.ts src/test/stagingRuntimeUpgrade.test.ts
+      - run: npm run cf:executor:test
+      - run: npx wrangler deploy --config wrangler.middleware.toml --env staging --dry-run --outdir /tmp/middleware-worker-check
+      - run: npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/middleware-runtime-check
+      - run: npx wrangler deploy --config wrangler.middleware-runtime-executor.toml --env staging --dry-run --outdir /tmp/middleware-runtime-executor-check
+      - run: infrastructure/postgres/smoke-local-worker.sh
+      - name: Verify reviewed 28-to-30 upgrade and rollback locally
+        run: |
+          PATH="$(pg_config --bindir):$PATH" infrastructure/postgres/test-runtime-upgrade.sh
+      - run: node --check scripts/smoke-middleware-api.mjs
+
+  release:
+    name: Verify, migrate and deploy staging serially
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: validate
+    environment: middleware-staging
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Preflight existing API domain and Cloudflare Access
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          api_host="api-staging.middleware.winerim.wine"
+          api_service="winerim-middleware-api-staging"
+          api_url="https://$api_host"
+          cloudflare_api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "Missing CLOUDFLARE_API_TOKEN" >&2; exit 1)
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || (echo "Missing CLOUDFLARE_ACCOUNT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_ID" || (echo "Missing CF_ACCESS_CLIENT_ID" >&2; exit 1)
+          test -n "$CF_ACCESS_CLIENT_SECRET" || (echo "Missing CF_ACCESS_CLIENT_SECRET" >&2; exit 1)
+          test -n "$MIDDLEWARE_ADMIN_TOKEN" || (echo "Missing MIDDLEWARE_ADMIN_TOKEN" >&2; exit 1)
+          npx wrangler whoami >/dev/null
+
+          expected_aud="$(awk '
+            $0 == "[env.staging.vars]" { in_staging = 1; next }
+            in_staging && /^\[/ { exit }
+            in_staging && $1 == "CF_ACCESS_AUD" {
+              value = $3
+              gsub(/"/, "", value)
+              print value
+              exit
+            }
+          ' wrangler.middleware.toml)"
+          test -n "$expected_aud" || (echo "Missing staging CF_ACCESS_AUD" >&2; exit 1)
+
+          domains="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/workers/domains")"
+          jq -e --arg host "$api_host" --arg service "$api_service" '
+            .success == true and any(.result[]; .hostname == $host and .service == $service)
+          ' <<<"$domains" >/dev/null || {
+            echo "API custom domain is not already mapped to the staging Worker" >&2
+            exit 1
+          }
+
+          apps="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/access/apps?per_page=100")"
+          app="$(jq -cer --arg domain "$api_host" '
+            [.result[] | select(.domain == $domain and .type == "self_hosted")]
+            | if length == 1 then .[0] else error("expected exactly one Access app") end
+          ' <<<"$apps")"
+          access_app_id="$(jq -er '.id' <<<"$app")"
+          access_app_aud="$(jq -er '.aud' <<<"$app")"
+          test "$access_app_aud" = "$expected_aud" || {
+            echo "Access application audience does not match staging CF_ACCESS_AUD" >&2
+            exit 1
+          }
+
+          policies="$(curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$cloudflare_api/access/apps/$access_app_id/policies?per_page=100")"
+          jq -e '
+            .success == true
+            and any(.result[]; .action == "allow" or .action == "service_auth")
+          ' <<<"$policies" >/dev/null || {
+            echo "Access application has no allow or service-auth policy" >&2
+            exit 1
+          }
+
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            "$api_url/health")"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Access preflight did not block anonymous API traffic: HTTP $public_status" >&2; exit 1 ;;
+          esac
+
+          protected_health="$(curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            "$api_url/health")"
+          jq -e '
+            .ok == true
+            and .service == "winerim-middleware-api"
+            and .environment == "staging"
+          ' <<<"$protected_health" >/dev/null
+          echo "ACCESS_PREFLIGHT_OK host=$api_host service=$api_service"
+
+      - name: Verify staging database target before bootstrap
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+          APPLY_MIGRATIONS: ${{ inputs.apply_migrations }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
+        run: |
+          test -n "$STAGING_DB_URL" || (echo "Missing STAGING_DB_URL" >&2; exit 1)
+          STAGING_DATABASE_URL="$STAGING_DB_URL" node infrastructure/postgres/staging-target.mjs >/dev/null
+          connected_name="$(psql "$STAGING_DB_URL" -XAtqc "select current_database()")"
+          test "$connected_name" = postgres || (echo "Connected database identity is not the immutable postgres target" >&2; exit 1)
+
+          has_sentinel="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.infrastructure_metadata') is not null")"
+          if [ "$has_sentinel" = "t" ]; then
+            identity="$(psql "$STAGING_DB_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
+            test "$identity" = "staging" || (echo "Existing database sentinel is not staging" >&2; exit 1)
+            table_count="$(psql "$STAGING_DB_URL" -XAtqc "select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r'")"
+            if [ "$table_count" = 28 ]; then
+              echo "28-table staging must be upgraded manually from a durable encrypted operator host before this workflow may deploy" >&2
+              exit 1
+            elif [ "$table_count" = 30 ]; then
+              test "$MIGRATION_MODE" = none || (echo "30-table staging must use migration_mode=none" >&2; exit 1)
+            else
+              echo "Existing staging inventory is neither reviewed pre-upgrade nor post-upgrade" >&2
+              exit 1
+            fi
+          else
+            test "$APPLY_MIGRATIONS" = "true" || (echo "Empty staging database requires apply_migrations=true" >&2; exit 1)
+            test "$MIGRATION_MODE" = bootstrap-empty || (echo "Empty staging database requires migration_mode=bootstrap-empty" >&2; exit 1)
+            has_core_schema="$(psql "$STAGING_DB_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
+            test "$has_core_schema" = "f" || (echo "Refusing bootstrap: core schema exists without the staging sentinel" >&2; exit 1)
+            echo "Verified empty staging target; bootstrap is permitted"
+          fi
+
+      - name: Apply reviewed staging migrations
+        if: ${{ inputs.apply_migrations }}
+        env:
+          STAGING_DB_URL: ${{ secrets.STAGING_DB_URL }}
+          MIGRATION_MODE: ${{ inputs.migration_mode }}
+        run: |
+          case "$MIGRATION_MODE" in
+            bootstrap-empty)
+              infrastructure/postgres/apply-staging.sh "$STAGING_DB_URL"
+              ;;
+            *) echo "apply_migrations requires a reviewed migration_mode" >&2; exit 1 ;;
+          esac
+
+      - name: Verify staging identity and database contract after bootstrap
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DB_URL }}
+        run: |
+          identity="$(psql "$DATABASE_URL" -XAtqc "select value from public.infrastructure_metadata where key = 'environment'")"
+          connected_name="$(psql "$DATABASE_URL" -XAtqc "select current_database()")"
+          has_core_schema="$(psql "$DATABASE_URL" -XAtqc "select to_regclass('public.pos_connections') is not null")"
+          test "$identity" = "staging" || (echo "Post-bootstrap database sentinel is not staging" >&2; exit 1)
+          test "$connected_name" = postgres || (echo "Post-bootstrap database name is not postgres" >&2; exit 1)
+          test "$has_core_schema" = "t" || (echo "Post-bootstrap core schema is missing" >&2; exit 1)
+          infrastructure/postgres/validate.sh
+
+      - name: Capture current Worker rollback version
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          previous="$(npx wrangler deployments list --config wrangler.middleware.toml --env staging --json | jq -er '.[-1].versions[0].version_id')"
+          echo "PREVIOUS_WORKER_VERSION=$previous" >> "$GITHUB_ENV"
+
+      - name: Deploy Worker to staging only
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --config wrangler.middleware.toml --env staging
+
+      - name: Verify API denial and readiness through Cloudflare Access
+        if: ${{ inputs.deploy_worker }}
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          MIDDLEWARE_ADMIN_TOKEN: ${{ secrets.MIDDLEWARE_ADMIN_TOKEN }}
+        run: |
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            https://api-staging.middleware.winerim.wine/health)"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Cloudflare Access did not block anonymous API traffic after deploy: HTTP $public_status" >&2; exit 1 ;;
+          esac
+          body="$(curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            -H "X-Middleware-Token: $MIDDLEWARE_ADMIN_TOKEN" \
+            https://api-staging.middleware.winerim.wine/ready)"
+          jq -e '.ok == true and .database == "staging"' <<<"$body" >/dev/null
+
+      - name: Roll back Worker after failed post-deploy verification
+        if: ${{ failure() && inputs.deploy_worker && env.PREVIOUS_WORKER_VERSION != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          npx wrangler rollback "$PREVIOUS_WORKER_VERSION" \
+            --config wrangler.middleware.toml \
+            --env staging \
+            --message "Automatic rollback after staging smoke failure" \
+            --yes
+
+          active="$(npx wrangler deployments list \
+            --config wrangler.middleware.toml \
+            --env staging \
+            --json | jq -er '.[-1].versions[0].version_id')"
+          test "$active" = "$PREVIOUS_WORKER_VERSION" || {
+            echo "Rollback did not restore the captured Worker version" >&2
+            exit 1
+          }
+
+          public_status="$(curl --silent --output /dev/null --max-time 10 --write-out '%{http_code}' \
+            https://api-staging.middleware.winerim.wine/health)"
+          case "$public_status" in
+            302|401|403) ;;
+            *) echo "Access is not blocking the rolled-back API: HTTP $public_status" >&2; exit 1 ;;
+          esac
+
+          protected_health="$(curl --fail --silent --show-error --max-time 10 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            https://api-staging.middleware.winerim.wine/health)"
+          jq -e '
+            .ok == true
+            and .service == "winerim-middleware-api"
+            and .environment == "staging"
+          ' <<<"$protected_health" >/dev/null
+          echo "API_ROLLBACK_VERIFIED version=$PREVIOUS_WORKER_VERSION"

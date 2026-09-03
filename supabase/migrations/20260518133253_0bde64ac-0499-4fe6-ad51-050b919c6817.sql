@@ -1,0 +1,1 @@
+UPDATE public.pos_connections SET auto_push_verified_ready=true, updated_at=now() WHERE id='f1ce42a4-ffe2-44ea-bb3d-e22b306b1d8c';

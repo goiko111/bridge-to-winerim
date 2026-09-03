@@ -1,0 +1,1980 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { getSimphonyConfig } from "../_shared/providerConfig.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function sb() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+}
+
+// ── Wine detection constants ──
+const DEFAULT_WINE_FAMILIES = [
+  "wine","wines","red wine","white wine","rosé","sparkling",
+  "champagne","prosecco","pinot","cabernet","merlot","chardonnay",
+  "sauvignon","zinfandel","syrah","shiraz","riesling","malbec",
+  "tempranillo","sangiovese","nebbiolo","moscato",
+  "bottle","glass","by the glass","btg",
+  "vino","tinto","blanco","rosado","cava","bodega",
+];
+const NON_WINE_FAMILIES = [
+  "water","beer","cocktail","cocktails","spirit","spirits",
+  "coffee","tea","juice","soda","soft drink","non-alcoholic",
+  "appetizer","entree","main","dessert","side",
+  "pizza","pasta","salad","bread","soup",
+  "gin","whiskey","vodka","rum","tequila","bourbon",
+  "snack","ice cream","fruit","birra","acqua","caffè","bibita",
+];
+const WINE_PRODUCT_KEYWORDS = [
+  "reserve","reserva","riserva","gran","estate",
+  "red","white","rosé","sparkling","brut","sec","demi-sec",
+  "cabernet","merlot","pinot","chardonnay","sauvignon","zinfandel",
+  "syrah","shiraz","malbec","tempranillo","sangiovese","nebbiolo",
+  "champagne","prosecco","cava","franciacorta",
+  "bottle","glass","btg","75cl","375ml","magnum",
+  "napa","sonoma","bordeaux","burgundy","tuscany","rioja",
+  "vintage","blend","varietal",
+];
+const NON_WINE_PRODUCT_KEYWORDS = [
+  "water","mineral","coke","pepsi","sprite","tonic",
+  "coffee","espresso","latte","cappuccino","beer","ipa","lager",
+  "pizza","pasta","burger","fries","salad","bread",
+  "gin tonic","whiskey","vodka","rum","mojito","margarita",
+  "cake","ice cream","dessert","cheesecake",
+];
+const WINE_FORMAT_KEYWORDS = ["bottle","glass","btg","magnum","75cl","375ml","150cl","by the glass","half bottle"];
+
+function computeWineScore(family: string | undefined, name: string | undefined, format: string | undefined, unitPrice: number, wineFamilies: string[], nonWineFamilies: string[]) {
+  const f = (family || "").toLowerCase();
+  const n = (name || "").toLowerCase();
+  const fmt = (format || "").toLowerCase();
+  let score = 0;
+  const reasons: string[] = [];
+  for (const wf of nonWineFamilies) { if (f.includes(wf)) { score -= 50; reasons.push(`family_non_wine:${wf}`); break; } }
+  if (score >= 0) { for (const wf of wineFamilies) { if (f.includes(wf)) { score += 50; reasons.push(`family_wine:${wf}`); break; } } }
+  for (const kw of NON_WINE_PRODUCT_KEYWORDS) { if (n.includes(kw)) { score -= 30; reasons.push(`name_non_wine:${kw}`); break; } }
+  for (const kw of WINE_PRODUCT_KEYWORDS) { if (n.includes(kw)) { score += 30; reasons.push(`name_wine:${kw}`); break; } }
+  for (const kw of WINE_FORMAT_KEYWORDS) { if (fmt.includes(kw) || n.includes(kw)) { score += 15; reasons.push(`format_wine:${kw}`); break; } }
+  if (unitPrice > 0) {
+    if (unitPrice >= 5 && unitPrice <= 500) { score += 10; reasons.push(`price_range:${unitPrice}`); }
+    else if (unitPrice < 5) { score -= 10; reasons.push(`price_too_low:${unitPrice}`); }
+  }
+  if (!f && score === 0) { score += 5; reasons.push("no_family_fallback"); }
+  return { score: Math.max(-100, Math.min(100, score)), reasons };
+}
+
+function isWineCandidate(family: string | undefined, name: string | undefined, format: string | undefined, unitPrice: number, wineFamilies: string[], nonWineFamilies: string[]) {
+  const { score, reasons } = computeWineScore(family, name, format, unitPrice, wineFamilies, nonWineFamilies);
+  return { candidate: score > 0, score, reasons };
+}
+
+function suggestFamilyClassification(familyName: string) {
+  const f = familyName.toLowerCase();
+  for (const kw of NON_WINE_FAMILIES) { if (f.includes(kw)) return { suggestedWine: false, confidence: "high" as const }; }
+  for (const kw of DEFAULT_WINE_FAMILIES) { if (f.includes(kw)) return { suggestedWine: true, confidence: "high" as const }; }
+  if (f.includes("beverage") || f.includes("drink") || f.includes("bar")) return { suggestedWine: false, confidence: "medium" as const };
+  return { suggestedWine: false, confidence: "low" as const };
+}
+
+// deno-lint-ignore no-explicit-any
+function mapSimphonyMenuItem(item: any) {
+  return {
+    provider_product_id: String(item.menuItemId || item.objectNum || ""),
+    name: String(item.name || item.longDescriptor || ""),
+    format: "",
+    family: String(item.familyGroupName || item.majorGroupName || ""),
+    quantity: Number(item.quantity || 1),
+    unit_price: Number(item.price || 0),
+    total_amount: Number(item.total || item.price || 0) * Number(item.quantity || 1),
+    vat_rate: 0,
+  };
+}
+
+// ── Helper: get connection ──
+async function getConnection(connId: string) {
+  const { data, error } = await sb().from("pos_connections").select("*").eq("id", connId).single();
+  if (error || !data) throw new Error("Connection not found");
+  return data;
+}
+
+// ── Centralized OIDC token manager ──
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before expiry
+const MAX_RETRY_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 1000;
+
+// deno-lint-ignore no-explicit-any
+function maskToken(token: string): string {
+  if (!token || token.length < 12) return "***";
+  return `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface TokenResult {
+  token: string;
+  expiresAt: string;
+  fromCache: boolean;
+  attempts: number;
+  endpointUsed: string;
+}
+
+// deno-lint-ignore no-explicit-any
+async function acquireOidcTokenInternal(conn: any): Promise<TokenResult> {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const oidcBase = cfg.oidc_base_url;
+  const clientId = cfg.client_id;
+  const clientSecret = cfg.client_secret;
+
+  if (!oidcBase || !clientId || !clientSecret) {
+    throw new Error("OIDC base URL, Client ID, and Client Secret are required");
+  }
+
+  const tokenUrl = `${oidcBase.replace(/\/+$/, "")}/oidc-provider/v1/oauth2/token`;
+  let lastError = "";
+
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    try {
+      const body = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: clientId,
+        client_secret: clientSecret,
+        scope: "openid",
+      });
+
+      const res = await fetch(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        lastError = `OIDC ${res.status}: ${errText.slice(0, 200)}`;
+        // Only retry on 5xx or network-like errors
+        if (res.status >= 500 && attempt < MAX_RETRY_ATTEMPTS) {
+          console.log(`[simphony-oidc] Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} failed (${res.status}), retrying…`);
+          await sleep(BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+          continue;
+        }
+        throw new Error(lastError);
+      }
+
+      const tokenData = await res.json();
+      const idToken = tokenData.id_token || tokenData.access_token;
+      const expiresIn = tokenData.expires_in || 3600;
+      const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+
+      if (!idToken) {
+        throw new Error("Token response did not contain id_token or access_token");
+      }
+
+      // Never log the raw token
+      console.log(`[simphony-oidc] Token acquired (${maskToken(idToken)}), expires ${expiresAt}, attempt ${attempt}`);
+
+      return { token: idToken, expiresAt, fromCache: false, attempts: attempt, endpointUsed: tokenUrl };
+    } catch (e: any) {
+      lastError = e.message || String(e);
+      if (attempt < MAX_RETRY_ATTEMPTS && (lastError.includes("fetch") || lastError.includes("network") || lastError.includes("OIDC 5"))) {
+        console.log(`[simphony-oidc] Attempt ${attempt}/${MAX_RETRY_ATTEMPTS} error: ${lastError.slice(0, 100)}, retrying…`);
+        await sleep(BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error(`OIDC token acquisition failed after ${MAX_RETRY_ATTEMPTS} attempts: ${lastError}`);
+}
+
+/**
+ * Ensure a valid OIDC token exists for the connection.
+ * Returns the token. If cached token is still valid, returns it.
+ * Otherwise acquires a new one, stores it, and updates diagnostics.
+ */
+// deno-lint-ignore no-explicit-any
+async function ensureValidToken(conn: any): Promise<string> {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const expiresAt = cfg.oidc_token_expires_at;
+
+  // Check if current token is still valid (with margin)
+  if (conn.api_token && expiresAt) {
+    const expiryDate = new Date(expiresAt);
+    if (expiryDate.getTime() - Date.now() > TOKEN_REFRESH_MARGIN_MS) {
+      return conn.api_token; // cached, still valid
+    }
+  }
+
+  // If no OIDC credentials, just return whatever token is set (manual token)
+  if (!cfg.oidc_base_url || !cfg.client_id || !cfg.client_secret) {
+    if (conn.api_token) return conn.api_token;
+    throw new Error("No OIDC credentials and no manual token set");
+  }
+
+  // Acquire fresh token
+  try {
+    const result = await acquireOidcTokenInternal(conn);
+
+    const updatedCfg = {
+      ...cfg,
+      oidc_token_expires_at: result.expiresAt,
+      auth_diagnostics: {
+        ...(cfg.auth_diagnostics || {}),
+        last_auth_success_at: new Date().toISOString(),
+        token_expires_at: result.expiresAt,
+        endpoint_used: result.endpointUsed,
+        attempts_last_acquire: result.attempts,
+      },
+    };
+
+    await sb().from("pos_connections").update({
+      api_token: result.token,
+      provider_config: updatedCfg,
+    }).eq("id", conn.id);
+
+    // Update in-memory conn for subsequent use in same request
+    conn.api_token = result.token;
+    conn.provider_config = updatedCfg;
+
+    return result.token;
+  } catch (e: any) {
+    // Store failure diagnostics
+    const updatedCfg = {
+      ...cfg,
+      auth_diagnostics: {
+        ...(cfg.auth_diagnostics || {}),
+        last_auth_failure_at: new Date().toISOString(),
+        last_auth_failure_reason: e.message?.slice(0, 300),
+        endpoint_used: `${(cfg.oidc_base_url || "").replace(/\/+$/, "")}/oidc-provider/v1/oauth2/token`,
+      },
+    };
+
+    await sb().from("pos_connections").update({
+      provider_config: updatedCfg,
+    }).eq("id", conn.id);
+
+    conn.provider_config = updatedCfg;
+    throw e;
+  }
+}
+
+// ── Helper: STS headers (supports multi-RVC via override) ──
+// deno-lint-ignore no-explicit-any
+function stsHeaders(conn: any, rvcOverride?: string) {
+  const parts = (conn.location_name || "").split("|");
+  return {
+    "Authorization": `Bearer ${conn.api_token}`,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Simphony-OrgShortName": parts[1] || "",
+    "Simphony-LocRef": parts[2] || "",
+    "Simphony-RvcRef": rvcOverride || parts[3] || "",
+  };
+}
+
+// deno-lint-ignore no-explicit-any
+function baseUrl(conn: any) {
+  return (conn.base_url || "").replace(/\/+$/, "");
+}
+
+// deno-lint-ignore no-explicit-any
+function ccBaseUrl(conn: any): string | null {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  return cfg.cc_base_url || null;
+}
+
+// deno-lint-ignore no-explicit-any
+function getSelectedRvcs(conn: any): string[] {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs;
+  if (Array.isArray(rvcs) && rvcs.length > 0) return rvcs;
+  const parts = (conn.location_name || "").split("|");
+  return parts[3] ? [parts[3]] : [];
+}
+
+async function getWineFamilies(connectionId: string) {
+  const { data: familyRules } = await sb()
+    .from("wine_family_rules")
+    .select("family_name, is_wine")
+    .eq("connection_id", connectionId);
+  const custom = familyRules?.filter((r: { is_wine: boolean }) => r.is_wine).map((r: { family_name: string }) => r.family_name.toLowerCase()) || [];
+  return [...DEFAULT_WINE_FAMILIES, ...custom];
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: test (auto-refreshes token before testing)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleTest(conn: any) {
+  try {
+    await ensureValidToken(conn);
+  } catch (e: any) {
+    return json({ success: false, message: `Auth failed: ${e.message}` });
+  }
+  const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
+  const res = await fetch(url, { headers: stsHeaders(conn) });
+  if (res.ok) {
+    const body = await res.json();
+    const parts = (conn.location_name || "").split("|");
+    return json({ success: true, merchantName: `${parts[1] || ""} / ${parts[2] || ""}`, checkCount: Array.isArray(body) ? body.length : (body.items?.length || 0) });
+  }
+  const errBody = await res.text();
+  return json({ success: false, status: res.status, message: `Simphony responded ${res.status}: ${errBody.slice(0, 200)}` });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: oidc-acquire (S2) — uses centralized token manager
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleOidcAcquire(conn: any) {
+  const cfg = getSimphonyConfig(conn.provider_config);
+  if (!cfg.oidc_base_url || !cfg.client_id || !cfg.client_secret) {
+    return json({ success: false, message: "OIDC base URL, Client ID, and Client Secret are required" });
+  }
+
+  try {
+    const token = await ensureValidToken(conn);
+    const updatedCfg = getSimphonyConfig(conn.provider_config);
+    const diag = updatedCfg.auth_diagnostics || {};
+    return json({
+      success: true,
+      message: `Token acquired, expires ${diag.token_expires_at || updatedCfg.oidc_token_expires_at}`,
+      expiresAt: diag.token_expires_at || updatedCfg.oidc_token_expires_at,
+      diagnostics: {
+        lastAuthSuccessAt: diag.last_auth_success_at,
+        tokenExpiresAt: diag.token_expires_at,
+        endpointUsed: diag.endpoint_used,
+        attemptsLastAcquire: diag.attempts_last_acquire,
+      },
+    });
+  } catch (e: any) {
+    const updatedCfg = getSimphonyConfig(conn.provider_config);
+    const diag = updatedCfg.auth_diagnostics || {};
+    return json({
+      success: false,
+      message: `OIDC token acquisition failed: ${e.message}`,
+      diagnostics: {
+        lastAuthFailureAt: diag.last_auth_failure_at,
+        lastAuthFailureReason: diag.last_auth_failure_reason,
+        endpointUsed: diag.endpoint_used,
+      },
+    });
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: discover-locations (S3)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleDiscoverLocations(conn: any) {
+  // Auto-refresh token before discovery
+  try { await ensureValidToken(conn); } catch { /* proceed with current token */ }
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+
+  // Try STS Gen2 Organizations API
+  const locations: { locRef: string; name: string; revenueCenters: { rvcRef: string; name: string }[] }[] = [];
+
+  // Path 1: STS Organizations API
+  try {
+    const url = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations`;
+    const res = await fetch(url, { headers: stsHeaders(conn) });
+    if (res.ok) {
+      const body = await res.json();
+      const locs = Array.isArray(body) ? body : (body.items || body.locations || []);
+      for (const loc of locs) {
+        const locRef = String(loc.locRef || loc.locationRef || loc.id || "");
+        const locName = String(loc.name || loc.locationName || locRef);
+        const rvcs: { rvcRef: string; name: string }[] = [];
+
+        // Try to fetch RVCs for this location
+        try {
+          const rvcUrl = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations/${locRef}/revenueCenters`;
+          const rvcRes = await fetch(rvcUrl, { headers: stsHeaders(conn) });
+          if (rvcRes.ok) {
+            const rvcBody = await rvcRes.json();
+            const rvcList = Array.isArray(rvcBody) ? rvcBody : (rvcBody.items || rvcBody.revenueCenters || []);
+            for (const rvc of rvcList) {
+              rvcs.push({
+                rvcRef: String(rvc.rvcRef || rvc.revenueCenterRef || rvc.id || ""),
+                name: String(rvc.name || rvc.revenueCenterName || ""),
+              });
+            }
+          }
+        } catch { /* skip */ }
+
+        locations.push({ locRef, name: locName, revenueCenters: rvcs });
+      }
+    }
+  } catch { /* skip */ }
+
+  // Path 2: If STS didn't work, try C&C API
+  if (locations.length === 0) {
+    const cc = ccBaseUrl(conn);
+    if (cc) {
+      try {
+        const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
+          headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+        });
+        if (res.ok) {
+          const body = await res.json();
+          const locs = Array.isArray(body) ? body : (body.items || body.locations || []);
+          for (const loc of locs) {
+            const locRef = String(loc.locRef || loc.objectNum || loc.id || "");
+            const locName = String(loc.name || loc.longDescriptor || locRef);
+            locations.push({ locRef, name: locName, revenueCenters: [] });
+          }
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  return json({
+    locations,
+    message: locations.length > 0
+      ? `Found ${locations.length} locations with ${locations.reduce((s, l) => s + l.revenueCenters.length, 0)} revenue centers`
+      : "No locations found. Verify org short name and API permissions.",
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: preflight (strengthened — explicit per-area checks)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handlePreflight(conn: any) {
+  // Auto-refresh token before preflight
+  try { await ensureValidToken(conn); } catch { /* preflight will detect auth failures */ }
+  const checks: { id: string; label: string; status: string; detail?: string; required: boolean }[] = [];
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  const locRefParam = parts[2] || "";
+  const rvcRefParam = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+
+  // ── 0) Required base URLs present ──
+  const hostUrlVal = (conn.base_url || "").trim();
+  const oidcUrlVal = (cfg.oidc_base_url || "").trim();
+  const missingUrls: string[] = [];
+  if (!hostUrlVal) missingUrls.push("STS Gen2 Host URL");
+  if (!oidcUrlVal && !conn.api_token) missingUrls.push("OIDC Base URL (no manual token set either)");
+  if (!orgShortName) missingUrls.push("Org Short Name");
+  if (!locRefParam) missingUrls.push("Location Ref (locRef)");
+  if (!rvcRefParam) missingUrls.push("Revenue Center Ref (rvcRef)");
+  if (missingUrls.length > 0) {
+    checks.push({ id: "base_urls", label: "Required base URLs & refs", status: "fail", detail: `Missing: ${missingUrls.join(", ")}. Set these in step 1 (Connection).`, required: true });
+  } else {
+    checks.push({ id: "base_urls", label: "Required base URLs & refs", status: "pass", detail: `STS: ${hostUrlVal.slice(0, 40)}… | OIDC: ${oidcUrlVal ? oidcUrlVal.slice(0, 30) + "…" : "manual token"} | Org: ${orgShortName} | Loc: ${locRefParam} | RVC: ${rvcRefParam}`, required: true });
+  }
+
+  // ── 1) STS Gen2 connectivity ──
+  let stsOk = false;
+  try {
+    const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
+    const res = await fetch(url, { headers: stsHeaders(conn) });
+    if (res.ok) {
+      stsOk = true;
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "pass", detail: "STS Gen2 API responding", required: true });
+    } else if (res.status === 403) {
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: "403 Forbidden — STS Gen2 reachable but access denied. Check Option 74 and POS API Client workstation.", required: true });
+    } else if (res.status === 401) {
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: "401 Unauthorized — token expired or invalid. Acquire a fresh OIDC token in step 2.", required: true });
+    } else {
+      checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "warn", detail: `Unexpected status ${res.status}. Verify STS Gen2 host URL.`, required: true });
+    }
+  } catch (e: any) {
+    checks.push({ id: "sts", label: "STS Gen2 connectivity", status: "fail", detail: `Network error: ${e.message}. Verify STS Gen2 host URL is correct.`, required: true });
+  }
+
+  // ── 2) OIDC auth success ──
+  const cfgAuth = getSimphonyConfig(conn.provider_config);
+  const tokenExpiry = cfgAuth.oidc_token_expires_at;
+  if (stsOk) {
+    checks.push({ id: "oidc", label: "OIDC authentication", status: "pass", detail: tokenExpiry ? `Token valid, expires: ${tokenExpiry}` : "Token accepted by STS Gen2", required: true });
+  } else {
+    const stsCheck = checks[0];
+    if (stsCheck?.detail?.includes("401")) {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "fail", detail: "Token rejected. Go to step 2 → Acquire Token via client_credentials flow.", required: true });
+    } else if (tokenExpiry && new Date(tokenExpiry) > new Date()) {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "warn", detail: `Token exists (expires: ${tokenExpiry}) but STS did not respond. May be a network or config issue.`, required: true });
+    } else {
+      checks.push({ id: "oidc", label: "OIDC authentication", status: "fail", detail: tokenExpiry ? `Token expired at ${tokenExpiry}. Acquire a fresh token.` : "No OIDC token. Go to step 2 → Acquire Token.", required: true });
+    }
+  }
+
+  // ── 3) Locations discovered ──
+  let locationsFound = 0;
+  let rvcsFound = 0;
+  try {
+    const locUrl = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations`;
+    const locRes = await fetch(locUrl, { headers: stsHeaders(conn) });
+    if (locRes.ok) {
+      const locBody = await locRes.json();
+      const locs = Array.isArray(locBody) ? locBody : (locBody.items || locBody.locations || []);
+      locationsFound = locs.length;
+      const matchedLoc = locs.find((l: any) => String(l.locRef || l.locationRef || l.id || "") === locRefParam);
+      if (matchedLoc) {
+        try {
+          const rvcUrl = `${baseUrl(conn)}/api/v1/organizations/${orgShortName}/locations/${locRefParam}/revenueCenters`;
+          const rvcRes = await fetch(rvcUrl, { headers: stsHeaders(conn) });
+          if (rvcRes.ok) {
+            const rvcBody = await rvcRes.json();
+            const rvcList = Array.isArray(rvcBody) ? rvcBody : (rvcBody.items || rvcBody.revenueCenters || []);
+            rvcsFound = rvcList.length;
+          }
+        } catch { /* skip */ }
+      }
+      checks.push({
+        id: "locations", label: "Locations discovered", status: locationsFound > 0 ? "pass" : "warn",
+        detail: locationsFound > 0
+          ? `Found ${locationsFound} location(s). Configured: ${locRefParam || "not set"} ${matchedLoc ? "✓ matched" : "⚠ not found in list"}`
+          : "No locations returned. Verify Org Short Name and API permissions.",
+        required: true,
+      });
+    } else if (locRes.status === 403 || locRes.status === 401) {
+      checks.push({ id: "locations", label: "Locations discovered", status: stsOk ? "warn" : "fail", detail: `Locations API returned ${locRes.status}. Organization listing may require additional permissions.`, required: true });
+    } else {
+      checks.push({ id: "locations", label: "Locations discovered", status: "warn", detail: `Locations API returned ${locRes.status}. Location ${locRefParam || "not set"} may still work if manually configured.`, required: true });
+    }
+  } catch {
+    checks.push({ id: "locations", label: "Locations discovered", status: stsOk ? "warn" : "fail", detail: "Could not query locations. Verify STS host URL and credentials.", required: true });
+  }
+
+  // ── 4) RVC discovered ──
+  if (rvcsFound > 0) {
+    const rvcMatchDetail = rvcRefParam ? `Configured RVC: ${rvcRefParam}` : "No RVC configured — set in step 1 or Discover step";
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: "pass", detail: `Found ${rvcsFound} RVC(s) for location ${locRefParam}. ${rvcMatchDetail}`, required: true });
+  } else if (locationsFound > 0 && stsOk) {
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: "warn", detail: `No RVCs returned for location ${locRefParam}. RVC ${rvcRefParam || "not set"} may still work. Use Discover step to verify.`, required: true });
+  } else {
+    checks.push({ id: "rvc", label: "Revenue Center (RVC) discovered", status: stsOk ? "warn" : "fail", detail: rvcRefParam ? `RVC ${rvcRefParam} configured but could not verify. Ensure it exists in EMC → Setup → Revenue Centers.` : "No RVC configured. Set in step 1 or use Discover step.", required: true });
+  }
+
+  // ── 5) Option 74 likely enabled ──
+  if (stsOk) {
+    checks.push({ id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "pass", detail: "STS Gen2 API responding — Option 74 is enabled for this RVC.", required: true });
+  } else {
+    const stsCheck = checks[0];
+    if (stsCheck?.detail?.includes("403")) {
+      checks.push({
+        id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "fail",
+        detail: "403 strongly suggests Option 74 is disabled. Steps: EMC → Setup → RVC Parameters → Options tab → Enable #74 (Enable STS Gen2).",
+        required: true,
+      });
+    } else {
+      checks.push({ id: "rvc74", label: "Option 74 (Enable STS Gen2)", status: "warn", detail: "Cannot determine — verify manually: EMC → Setup → RVC Parameters → Options tab → #74.", required: true });
+    }
+  }
+
+  // ── 6) POS API Client workstation ──
+  if (stsOk) {
+    checks.push({ id: "workstation", label: "POS API Client workstation", status: "pass", detail: "STS Gen2 responding — a POS API Client workstation exists and CAPS Service Host is configured.", required: true });
+  } else {
+    checks.push({
+      id: "workstation", label: "POS API Client workstation", status: "warn",
+      detail: "Cannot confirm. Ensure: EMC → Setup → Workstations → New → Type: POS API Client. Assign CAPS Service Host.",
+      required: true,
+    });
+  }
+
+  // ── 7) C&C API (optional) ──
+  const cc = ccBaseUrl(conn);
+  if (cc) {
+    try {
+      const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
+        headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+      });
+      if (res.ok) {
+        checks.push({ id: "cc", label: "Config & Content API", status: "pass", detail: "C&C API responding — catalog write available", required: false });
+      } else {
+        checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: `Status ${res.status}. Verify CCAPI URL: EMC → Enterprise Parameters → Applications`, required: false });
+      }
+    } catch {
+      checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: "Not reachable", required: false });
+    }
+  } else {
+    checks.push({ id: "cc", label: "Config & Content API", status: "warn", detail: "Not configured — catalog write disabled", required: false });
+  }
+
+  // ── 8) Notifications API (optional) ──
+  if (stsOk) {
+    try {
+      const url = `${baseUrl(conn)}/api/v1/notifications/subscriptions`;
+      const res = await fetch(url, { headers: stsHeaders(conn) });
+      if (res.ok || res.status === 404) {
+        checks.push({ id: "notifications", label: "Notifications API", status: res.ok ? "pass" : "warn", detail: res.ok ? "Notifications endpoint available" : "Endpoint returned 404 — may not be enabled for this org", required: false });
+      } else {
+        checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: `Status ${res.status}`, required: false });
+      }
+    } catch {
+      checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: "Not reachable", required: false });
+    }
+  } else {
+    checks.push({ id: "notifications", label: "Notifications API", status: "warn", detail: "Skipped (STS not reachable)", required: false });
+  }
+
+  return json({ checks });
+}
+
+// ── Retry wrapper for STS Gen2 API calls ──
+const STS_MAX_RETRIES = 3;
+const STS_BASE_BACKOFF_MS = 1000;
+
+interface StsFetchResult {
+  ok: boolean;
+  status: number;
+  // deno-lint-ignore no-explicit-any
+  data: any;
+  attempts: number;
+  error?: string;
+}
+
+async function stsFetchWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  label: string,
+): Promise<StsFetchResult> {
+  let lastError = "";
+  for (let attempt = 1; attempt <= STS_MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.ok) {
+        const body = await res.json();
+        return { ok: true, status: res.status, data: body, attempts: attempt };
+      }
+      const errText = await res.text();
+      lastError = `${res.status}: ${errText.slice(0, 200)}`;
+      // Only retry on 5xx or 429
+      if ((res.status >= 500 || res.status === 429) && attempt < STS_MAX_RETRIES) {
+        console.log(`[simphony-sts] ${label} attempt ${attempt}/${STS_MAX_RETRIES} got ${res.status}, retrying…`);
+        await sleep(STS_BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      return { ok: false, status: res.status, data: null, attempts: attempt, error: lastError };
+    } catch (e: any) {
+      lastError = e.message || String(e);
+      if (attempt < STS_MAX_RETRIES && (lastError.includes("fetch") || lastError.includes("network") || lastError.includes("timeout"))) {
+        console.log(`[simphony-sts] ${label} attempt ${attempt}/${STS_MAX_RETRIES} error, retrying…`);
+        await sleep(STS_BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+        continue;
+      }
+      return { ok: false, status: 0, data: null, attempts: attempt, error: lastError };
+    }
+  }
+  return { ok: false, status: 0, data: null, attempts: STS_MAX_RETRIES, error: lastError };
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: find-last-business-day (S4 — multi-RVC aware, per-RVC diagnostics)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleFindDays(conn: any, daysBack: number) {
+  // Auto-refresh token before scanning
+  await ensureValidToken(conn);
+  const scanDays = daysBack || 60;
+  const rvcs = getSelectedRvcs(conn);
+  const globalDays = new Set<string>();
+  let totalScanned = 0;
+  let totalInvoicesFound = 0;
+  let totalBatches = 0;
+  let totalRetries = 0;
+  const perRvc: Record<string, { invoices: number; days: string[]; batches: number }> = {};
+
+  for (const rvc of rvcs) {
+    const rvcDays = new Set<string>();
+    let rvcInvoices = 0;
+    let rvcBatches = 0;
+    for (let i = 0; i < scanDays; i += 7) {
+      const sinceDate = new Date(Date.now() - Math.min(i + 7, scanDays) * 86400000);
+      const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceDate.toISOString()}&limit=500`;
+      const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `findDays-rvc${rvc}-batch${i}`);
+      rvcBatches++;
+      totalBatches++;
+      if (result.attempts > 1) totalRetries += result.attempts - 1;
+      if (result.ok) {
+        const checks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+        rvcInvoices += checks.length;
+        totalInvoicesFound += checks.length;
+        // deno-lint-ignore no-explicit-any
+        for (const check of checks) {
+          const openTime = check.openTime || check.closedTime || check.createdAt;
+          if (openTime) {
+            const day = new Date(openTime).toISOString().split("T")[0];
+            rvcDays.add(day);
+            globalDays.add(day);
+          }
+        }
+      }
+      totalScanned += Math.min(7, scanDays - i);
+    }
+    perRvc[rvc] = { invoices: rvcInvoices, days: Array.from(rvcDays).sort((a, b) => b.localeCompare(a)), batches: rvcBatches };
+  }
+
+  const daysWithSales = Array.from(globalDays).sort((a, b) => b.localeCompare(a));
+  return json({
+    daysWithSales: daysWithSales.slice(0, 30),
+    totalScanned,
+    totalInvoicesFound,
+    totalBatches,
+    totalRetries,
+    // Per-RVC diagnostics (omitted for single-RVC to keep backward compat)
+    ...(rvcs.length > 1 ? { perRvc } : {}),
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: fetch-day (S4 — multi-RVC, global dedup by checkId, per-RVC diagnostics)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleFetchDay(conn: any, connectionId: string, businessDay: string) {
+  if (!businessDay) return json({ error: "businessDay is required" }, 400);
+  await ensureValidToken(conn);
+  const rvcs = getSelectedRvcs(conn);
+  const sinceTime = `${businessDay}T00:00:00Z`;
+  const wineFamilies = await getWineFamilies(connectionId);
+  const allFamilies = new Set<string>();
+  // Global dedup: prevent same check from appearing across RVC queries
+  const seenDocIds = new Set<string>();
+  // deno-lint-ignore no-explicit-any
+  const salesEvents: any[] = [];
+  let totalBatches = 0;
+  let totalRetries = 0;
+  const perRvc: Record<string, { invoices: number; lineItems: number; wineItems: number; duplicatesSkipped: number; batches: number }> = {};
+
+  for (const rvc of rvcs) {
+    let rvcInvoices = 0;
+    let rvcLines = 0;
+    let rvcWine = 0;
+    let rvcDuplicates = 0;
+    let rvcBatches = 0;
+
+    const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
+    const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `fetchDay-${businessDay}-rvc${rvc}`);
+    rvcBatches++;
+    totalBatches++;
+    if (result.attempts > 1) totalRetries += result.attempts - 1;
+
+    if (result.ok) {
+      // deno-lint-ignore no-explicit-any
+      let allChecks: any[] = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+      // deno-lint-ignore no-explicit-any
+      allChecks = allChecks.filter((c: any) => (c.openTime || c.closedTime || "").startsWith(businessDay));
+
+      for (const check of allChecks) {
+        const docId = String(check.checkId || check.id || "");
+        // Global dedup: if this checkId was already processed from another RVC, skip
+        if (seenDocIds.has(docId)) {
+          rvcDuplicates++;
+          continue;
+        }
+        seenDocIds.add(docId);
+        rvcInvoices++;
+
+        const menuItems = check.menuItems || check.detailLines || [];
+        // deno-lint-ignore no-explicit-any
+        const lines: any[] = [];
+        for (const item of menuItems) {
+          const mapped = mapSimphonyMenuItem(item);
+          if (mapped.family) allFamilies.add(mapped.family);
+          const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
+          lines.push({ ...mapped, is_wine_candidate: wr.candidate, wine_score: wr.score, wine_reasons: wr.reasons });
+          rvcLines++;
+          if (wr.candidate) rvcWine++;
+        }
+        const totals = check.totals || {};
+        const totalAmount = Number(totals.subtotal || totals.total || check.total || 0);
+        const totalTax = Number(totals.tax || check.taxTotal || 0);
+        salesEvents.push({
+          provider_doc_id: `${docId}${rvcs.length > 1 ? `_${rvc}` : ""}`,
+          business_day: businessDay, doc_type: check.checkType || "Check",
+          total_amount: totalAmount, total_tax: totalTax, total_net: totalAmount - totalTax,
+          line_count: lines.length, lines, rvc_ref: rvc,
+        });
+      }
+    }
+
+    perRvc[rvc] = { invoices: rvcInvoices, lineItems: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates, batches: rvcBatches };
+  }
+
+  const detectedFamilies = Array.from(allFamilies).map((f) => {
+    const suggestion = suggestFamilyClassification(f);
+    // deno-lint-ignore no-explicit-any
+    const itemCount = salesEvents.reduce((c: number, ev: any) => c + ev.lines.filter((l: any) => l.family === f).length, 0);
+    return { name: f, ...suggestion, itemCount };
+  });
+
+  return json({
+    businessDay, invoiceCount: salesEvents.length, salesEvents, detectedFamilies,
+    totalBatches, totalRetries,
+    ...(rvcs.length > 1 ? { perRvc, totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0) } : {}),
+  });
+}
+
+// ── Stable idempotency key for line items ──
+function lineIdempotencyKey(connectionId: string, providerDocId: string, idx: number, providerProductId: string): string {
+  return `${connectionId}::${providerDocId}::${idx}::${providerProductId}`;
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: save-sales (idempotent, raw payload, diagnostics, retry)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleSaveSales(conn: any, connectionId: string, businessDay: string) {
+  if (!businessDay) return json({ error: "businessDay required" }, 400);
+  await ensureValidToken(conn);
+  const rvcs = getSelectedRvcs(conn);
+  const sinceTime = `${businessDay}T00:00:00Z`;
+  const wineFamilies = await getWineFamilies(connectionId);
+  const supabaseClient = sb();
+  let savedEvents = 0;
+  let savedLines = 0;
+  let totalPaymentsSaved = 0;
+  let totalBatches = 0;
+  let totalRetries = 0;
+  // Global dedup by checkId to prevent cross-RVC duplicates
+  const seenDocIds = new Set<string>();
+  const perRvc: Record<string, { saved: number; lines: number; wineItems: number; duplicatesSkipped: number; errors: string[]; batches: number; retries: number; lastCursor?: string }> = {};
+  const startedAt = Date.now();
+
+  for (const rvc of rvcs) {
+    let rvcSaved = 0;
+    let rvcLines = 0;
+    let rvcWine = 0;
+    let rvcDuplicates = 0;
+    let rvcBatches = 0;
+    let rvcRetries = 0;
+    const rvcErrors: string[] = [];
+    let lastCheckTime = "";
+
+    // deno-lint-ignore no-explicit-any
+    let allChecks: any[] = [];
+    const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&sinceTime=${sinceTime}&limit=1000`;
+    const result = await stsFetchWithRetry(url, stsHeaders(conn, rvc), `saveSales-${businessDay}-rvc${rvc}`);
+    rvcBatches++;
+    totalBatches++;
+    rvcRetries += Math.max(0, result.attempts - 1);
+    totalRetries += Math.max(0, result.attempts - 1);
+
+    if (result.ok) {
+      allChecks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+    } else {
+      rvcErrors.push(`Fetch failed: ${result.error || result.status}`);
+    }
+
+    // deno-lint-ignore no-explicit-any
+    allChecks = allChecks.filter((c: any) => (c.openTime || c.closedTime || "").startsWith(businessDay));
+
+    for (const check of allChecks) {
+      const docId = String(check.checkId || check.id || "");
+      // Global dedup: skip if already processed from another RVC
+      if (seenDocIds.has(docId)) {
+        rvcDuplicates++;
+        continue;
+      }
+      seenDocIds.add(docId);
+
+      // Track cursor (latest check time in this RVC)
+      const checkTime = check.closedTime || check.openTime || "";
+      if (checkTime > lastCheckTime) lastCheckTime = checkTime;
+
+      const menuItems = check.menuItems || check.detailLines || [];
+      // deno-lint-ignore no-explicit-any
+      const lineData: any[] = [];
+      for (const item of menuItems) {
+        const mapped = mapSimphonyMenuItem(item);
+        const wr = isWineCandidate(mapped.family, mapped.name, mapped.format, mapped.unit_price, wineFamilies, NON_WINE_FAMILIES);
+        lineData.push({ ...mapped, is_wine_candidate: wr.candidate });
+        if (wr.candidate) rvcWine++;
+      }
+      const totals = check.totals || {};
+      const totalAmount = Number(totals.subtotal || totals.total || check.total || 0);
+      const totalTax = Number(totals.tax || check.taxTotal || 0);
+      const providerDocId = `${docId}${rvcs.length > 1 ? `_${rvc}` : ""}`;
+
+      // Upsert sales event with full raw payload for debugging
+      const { data: eventRow, error: eventErr } = await supabaseClient
+        .from("sales_events")
+        .upsert({
+          connection_id: connectionId, provider_doc_id: providerDocId, business_day: businessDay,
+          doc_type: check.checkType || "Check", total_amount: totalAmount, total_tax: totalTax,
+          total_net: totalAmount - totalTax, line_count: lineData.length, raw_json: check,
+        }, { onConflict: "connection_id,provider_doc_id" })
+        .select("id").single();
+
+      if (eventErr || !eventRow) {
+        if (eventErr) rvcErrors.push(`Upsert ${docId}: ${eventErr.message}`);
+        continue;
+      }
+      rvcSaved++;
+      savedEvents++;
+
+      // Delete existing lines then re-insert (idempotent via event-level upsert)
+      await supabaseClient.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+      const linesToInsert = lineData.map((l: any, idx: number) => ({
+        ...l,
+        sales_event_id: eventRow.id,
+        connection_id: connectionId,
+        // Stable provider_product_id: use original if present, else generate from position
+        provider_product_id: l.provider_product_id || lineIdempotencyKey(connectionId, providerDocId, idx, ""),
+      }));
+      if (linesToInsert.length > 0) {
+        const { error: lineErr } = await supabaseClient.from("sales_line_items").insert(linesToInsert);
+        if (!lineErr) { savedLines += linesToInsert.length; rvcLines += linesToInsert.length; }
+        else { rvcErrors.push(`Lines ${providerDocId}: ${lineErr.message}`); }
+      }
+    }
+
+    perRvc[rvc] = {
+      saved: rvcSaved, lines: rvcLines, wineItems: rvcWine, duplicatesSkipped: rvcDuplicates,
+      errors: rvcErrors, batches: rvcBatches, retries: rvcRetries,
+      lastCursor: lastCheckTime || undefined,
+    };
+  }
+
+  // Build sync diagnostics
+  const durationMs = Date.now() - startedAt;
+  const syncDiagnostics = {
+    business_day: businessDay,
+    checks_fetched: savedEvents,
+    batches_processed: totalBatches,
+    line_items_saved: savedLines,
+    payments_saved: totalPaymentsSaved,
+    retries: totalRetries,
+    duration_ms: durationMs,
+    synced_at: new Date().toISOString(),
+    per_rvc: Object.fromEntries(
+      Object.entries(perRvc).map(([rvc, d]) => [rvc, {
+        saved: d.saved, lines: d.lines, wine: d.wineItems,
+        duplicates_skipped: d.duplicatesSkipped, errors: d.errors.length,
+        last_cursor: d.lastCursor,
+      }])
+    ),
+  };
+
+  // Update global cursor + persist sync diagnostics & per-RVC cursors
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const updatedCfg = {
+    ...cfg,
+    last_sync_diagnostics: syncDiagnostics,
+    rvc_cursors: {
+      ...(cfg.rvc_cursors || {}),
+      ...Object.fromEntries(
+        Object.entries(perRvc).map(([rvc, d]) => [rvc, {
+          last_business_day: businessDay,
+          synced_at: new Date().toISOString(),
+          last_cursor: d.lastCursor,
+        }])
+      ),
+    },
+  };
+
+  await supabaseClient.from("pos_connections").update({
+    last_business_day_synced: businessDay,
+    last_sync_at: new Date().toISOString(),
+    provider_config: updatedCfg,
+  }).eq("id", connectionId);
+
+  return json({
+    success: true, savedEvents, savedLines, businessDay,
+    diagnostics: syncDiagnostics,
+    ...(rvcs.length > 1 ? {
+      perRvc,
+      totalDuplicatesSkipped: Object.values(perRvc).reduce((s, r) => s + r.duplicatesSkipped, 0),
+    } : {}),
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: cc-read-catalog (S5 — enhanced with scope diagnostics)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleCcReadCatalog(conn: any) {
+  const cc = ccBaseUrl(conn);
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  const locRef = parts[2] || "";
+  const rvcRef = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const selectedRvcs = cfg.selected_rvcs || (rvcRef ? [rvcRef] : []);
+
+  // Build diagnostics about what data source we're using
+  const catalogDiagnostics = {
+    source: "none" as "ccapi" | "sts_config" | "import_export" | "none",
+    sourceLabel: "No data source available",
+    locationsSynced: locRef ? 1 : 0,
+    locationLabel: parts[0] || locRef || "Unknown",
+    locRef,
+    rvcsSynced: selectedRvcs.length,
+    rvcs: selectedRvcs,
+    itemCount: 0,
+    itemsWithPrice: 0,
+    itemsWithoutPrice: 0,
+    activeItems: 0,
+    inactiveItems: 0,
+    familyGroups: [] as string[],
+    lastSyncAt: conn.last_catalog_sync_at || null,
+    warnings: [] as { code: string; message: string }[],
+  };
+
+  if (!cc) {
+    // No C&C API — check if STS is available for basic config
+    catalogDiagnostics.warnings.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot read full catalog. Use Import/Export as fallback." });
+
+    // Try STS Configuration API V2 as fallback
+    try {
+      const stsConfigUrl = `${baseUrl(conn)}/api/v1/configuration/menuItems?limit=100`;
+      const stsRes = await stsFetchWithRetry(stsConfigUrl, stsHeaders(conn), "sts-config-catalog");
+      if (stsRes.ok) {
+        const rawItems = Array.isArray(stsRes.data) ? stsRes.data : (stsRes.data.items || stsRes.data.menuItems || []);
+        catalogDiagnostics.source = "sts_config";
+        catalogDiagnostics.sourceLabel = "STS Configuration API V2 (limited scope)";
+        // deno-lint-ignore no-explicit-any
+        const items = rawItems.map((it: any) => ({
+          menuItemId: String(it.menuItemId || it.objectNum || it.id || ""),
+          name: String(it.name || it.longDescriptor || ""),
+          familyGroup: String(it.familyGroupName || it.majorGroupName || ""),
+          price: Number(it.price || it.defaultPrice || 0),
+          active: it.active !== false,
+        }));
+        catalogDiagnostics.itemCount = items.length;
+        catalogDiagnostics.itemsWithPrice = items.filter((i: any) => i.price > 0).length;
+        catalogDiagnostics.itemsWithoutPrice = items.filter((i: any) => i.price <= 0).length;
+        catalogDiagnostics.activeItems = items.filter((i: any) => i.active).length;
+        catalogDiagnostics.inactiveItems = items.filter((i: any) => !i.active).length;
+        const families = [...new Set(items.map((i: any) => i.familyGroup).filter(Boolean))];
+        catalogDiagnostics.familyGroups = families as string[];
+        catalogDiagnostics.warnings.push({ code: "STS_LIMITED", message: "STS Configuration API provides a limited view. For full catalog access, configure the C&C API URL." });
+        return json({ items, catalogDiagnostics });
+      }
+    } catch { /* STS config not available either */ }
+
+    catalogDiagnostics.source = "none";
+    catalogDiagnostics.warnings.push({ code: "NO_CATALOG_SOURCE", message: "Neither C&C API nor STS Configuration API is reachable. Use Bulk Import/Export to generate catalog files." });
+    return json({ items: [], catalogDiagnostics });
+  }
+
+  // C&C API available
+  catalogDiagnostics.source = "ccapi";
+  catalogDiagnostics.sourceLabel = "Config & Content API (CCAPI)";
+
+  if (!orgShortName) {
+    catalogDiagnostics.warnings.push({ code: "NO_ORG", message: "Organization short name is missing. C&C API requires it in the URL path." });
+    return json({ items: [], catalogDiagnostics });
+  }
+
+  try {
+    const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?limit=500`, {
+      headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      if (res.status === 401 || res.status === 403) {
+        catalogDiagnostics.warnings.push({ code: "AUTH_FAILED", message: `C&C API returned ${res.status}. Token may be expired or lacks menuItems scope.` });
+      } else if (res.status === 404) {
+        catalogDiagnostics.warnings.push({ code: "ORG_NOT_FOUND", message: `Organization "${orgShortName}" not found in C&C API. Verify the org short name.` });
+      } else {
+        catalogDiagnostics.warnings.push({ code: "CCAPI_ERROR", message: `C&C API returned ${res.status}: ${t.slice(0, 150)}` });
+      }
+      return json({ items: [], catalogDiagnostics, message: `C&C API responded ${res.status}` });
+    }
+    const body = await res.json();
+    // deno-lint-ignore no-explicit-any
+    const rawItems = Array.isArray(body) ? body : (body.items || body.menuItems || []);
+    // deno-lint-ignore no-explicit-any
+    const items = rawItems.map((it: any) => ({
+      menuItemId: String(it.menuItemId || it.objectNum || it.id || ""),
+      name: String(it.name || it.longDescriptor || ""),
+      familyGroup: String(it.familyGroupName || it.majorGroupName || ""),
+      price: Number(it.price || it.defaultPrice || 0),
+      active: it.active !== false,
+    }));
+
+    catalogDiagnostics.itemCount = items.length;
+    catalogDiagnostics.itemsWithPrice = items.filter((i: any) => i.price > 0).length;
+    catalogDiagnostics.itemsWithoutPrice = items.filter((i: any) => i.price <= 0).length;
+    catalogDiagnostics.activeItems = items.filter((i: any) => i.active).length;
+    catalogDiagnostics.inactiveItems = items.filter((i: any) => !i.active).length;
+    const families = [...new Set(items.map((i: any) => i.familyGroup).filter(Boolean))];
+    catalogDiagnostics.familyGroups = families as string[];
+
+    // Update last_catalog_sync_at
+    const supabaseClient = sb();
+    await supabaseClient.from("pos_connections").update({
+      last_catalog_sync_at: new Date().toISOString(),
+      catalog_product_count: items.length,
+      catalog_wine_candidate_count: items.filter((i: any) => i.price > 0).length,
+    }).eq("id", conn.id);
+    catalogDiagnostics.lastSyncAt = new Date().toISOString();
+
+    return json({ items, catalogDiagnostics });
+  } catch (e: any) {
+    catalogDiagnostics.warnings.push({ code: "NETWORK_ERROR", message: `Failed to reach C&C API: ${e.message}` });
+    return json({ items: [], catalogDiagnostics, message: e.message });
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: cc-write-preview (S7 — enhanced with location/RVC context)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleCcWritePreview(conn: any, connectionId: string) {
+  const supabaseClient = sb();
+  const { data: wines } = await supabaseClient
+    .from("winerim_wines").select("*")
+    .eq("connection_id", connectionId).eq("pricing_status", "READY").eq("is_active", true);
+
+  if (!wines || wines.length === 0) return json({ preview: [], message: "No wines with pricing_status=READY" });
+
+  const { data: existingMappings } = await supabaseClient
+    .from("product_mappings").select("winerim_wine_id, provider_product_id, format_type")
+    .eq("connection_id", connectionId);
+
+  const mappingMap = new Map<string, string>();
+  for (const m of existingMappings || []) {
+    if (m.winerim_wine_id) mappingMap.set(`${m.winerim_wine_id}_${m.format_type}`, m.provider_product_id);
+  }
+
+  // Build target context for UI
+  const parts = (conn.location_name || "").split("|");
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs || (parts[3] ? [parts[3]] : []);
+  const targetContext = {
+    locationLabel: parts[0] || "",
+    orgShortName: parts[1] || "",
+    locRef: parts[2] || "",
+    rvcs,
+    writeMode: conn.write_mode || "NONE",
+    writeEnabled: conn.write_mode !== "NONE",
+    ccBaseUrl: cfg.cc_base_url || null,
+  };
+
+  // deno-lint-ignore no-explicit-any
+  const preview: any[] = [];
+  for (const w of wines) {
+    if (w.bottle_sale_price) {
+      const key = `${w.winerim_id}_BOT`;
+      preview.push({ action: mappingMap.has(key) ? "update" : "create", winerimId: w.winerim_id, wineName: w.name, menuItemName: `${w.name} (Botella)`, price: w.bottle_sale_price, format: "BOT" });
+    }
+    if (w.serve_by_glass && w.glass_sale_price) {
+      const key = `${w.winerim_id}_COPA`;
+      preview.push({ action: mappingMap.has(key) ? "update" : "create", winerimId: w.winerim_id, wineName: w.name, menuItemName: `${w.name} (Copa)`, price: w.glass_sale_price, format: "COPA" });
+    }
+    if (w.magnum_sale_price) {
+      const key = `${w.winerim_id}_MAG`;
+      preview.push({ action: mappingMap.has(key) ? "update" : "create", winerimId: w.winerim_id, wineName: w.name, menuItemName: `${w.name} (Magnum)`, price: w.magnum_sale_price, format: "MAG" });
+    }
+  }
+  return json({ preview, targetContext });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: cc-write-execute (S7 — gated behind write_mode)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleCcWriteExecute(conn: any, connectionId: string, dryRun: boolean) {
+  // Gate: writes must be explicitly enabled
+  if (conn.write_mode === "NONE") {
+    return json({ created: 0, updated: 0, message: "Writes are disabled for this connection. Enable write mode in Sync Settings before executing writes.", blocked: true });
+  }
+  const cc = ccBaseUrl(conn);
+  if (!cc) return json({ created: 0, updated: 0, message: "C&C API URL not configured" });
+
+  const supabaseClient = sb();
+  const { data: wines } = await supabaseClient
+    .from("winerim_wines").select("*")
+    .eq("connection_id", connectionId).eq("pricing_status", "READY").eq("is_active", true);
+
+  if (!wines || wines.length === 0) return json({ created: 0, updated: 0, message: "No wines ready" });
+
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  let created = 0;
+  let updated = 0;
+  const errors: string[] = [];
+
+  for (const w of wines) {
+    const formats = [];
+    if (w.bottle_sale_price) formats.push({ format: "BOT", name: `${w.name} (Botella)`, price: w.bottle_sale_price });
+    if (w.serve_by_glass && w.glass_sale_price) formats.push({ format: "COPA", name: `${w.name} (Copa)`, price: w.glass_sale_price });
+    if (w.magnum_sale_price) formats.push({ format: "MAG", name: `${w.name} (Magnum)`, price: w.magnum_sale_price });
+
+    for (const fmt of formats) {
+      if (dryRun) { created++; continue; }
+
+      const { error: taskErr } = await supabaseClient.from("outbound_tasks").insert({
+        connection_id: connectionId,
+        task_type: "SIMPHONY_CC_WRITE",
+        status: "PENDING_APPROVAL",
+        payload_json: {
+          winerim_id: w.winerim_id, wine_name: w.name,
+          menu_item_name: fmt.name, price: fmt.price, format: fmt.format,
+          cc_base_url: cc, org_short_name: orgShortName,
+          verify_after_write: true,
+        },
+      });
+      if (taskErr) { errors.push(`${fmt.name}: ${taskErr.message}`); } else { created++; }
+    }
+  }
+
+  return json({ created, updated, dryRun, errors: errors.length > 0 ? errors : undefined, message: dryRun ? `Dry-run: ${created} items would be created/updated` : `${created} tasks enqueued for approval` });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: generate-import-export (S6 bulk fallback)
+// ════════════════════════════════════════════════════════
+async function handleGenerateImportExport(connectionId: string, format: string) {
+  const supabaseClient = sb();
+  const { data: wines } = await supabaseClient
+    .from("winerim_wines").select("*")
+    .eq("connection_id", connectionId).eq("pricing_status", "READY").eq("is_active", true);
+
+  if (!wines || wines.length === 0) return json({ success: false, message: "No wines with READY status" });
+
+  // deno-lint-ignore no-explicit-any
+  const items: any[] = [];
+  for (const w of wines) {
+    if (w.bottle_sale_price) items.push({ objectNum: `WINERIM_${w.winerim_id}_BOT`, name: `${w.name} (Botella)`, familyGroup: w.wine_type || "Vinos", price: w.bottle_sale_price, format: "BOT" });
+    if (w.serve_by_glass && w.glass_sale_price) items.push({ objectNum: `WINERIM_${w.winerim_id}_COPA`, name: `${w.name} (Copa)`, familyGroup: w.wine_type || "Vinos", price: w.glass_sale_price, format: "COPA" });
+    if (w.magnum_sale_price) items.push({ objectNum: `WINERIM_${w.winerim_id}_MAG`, name: `${w.name} (Magnum)`, familyGroup: w.wine_type || "Vinos", price: w.magnum_sale_price, format: "MAGNUM" });
+  }
+
+  let content: string;
+  const fileName = `simphony_import_${Date.now()}.${format === "csv" ? "csv" : "json"}`;
+  if (format === "csv") {
+    const header = "ObjectNum,Name,FamilyGroup,Price,Format";
+    const lines = items.map((i) => `${i.objectNum},"${i.name}",${i.familyGroup},${i.price},${i.format}`);
+    content = [header, ...lines].join("\n");
+  } else {
+    content = JSON.stringify({ menuItems: items }, null, 2);
+  }
+  return json({ success: true, content, fileName, itemCount: items.length, message: `Generated ${items.length} menu items for import` });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: register-webhook (S6 Notifications API)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleRegisterWebhook(conn: any, connectionId: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const callbackUrl = `${supabaseUrl}/functions/v1/simphony-proxy`;
+
+  // Try to register a notification subscription
+  try {
+    const url = `${baseUrl(conn)}/api/v1/notifications/subscriptions`;
+    const subscriptionBody = {
+      callbackUrl: callbackUrl,
+      eventTypes: ["CHECK_CLOSED", "CHECK_OPENED", "CHECK_UPDATED"],
+      description: `Winerim Bridge webhook for connection ${connectionId}`,
+    };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: stsHeaders(conn),
+      body: JSON.stringify(subscriptionBody),
+    });
+
+    if (res.ok) {
+      const body = await res.json();
+      return json({
+        webhookStatus: {
+          registered: true,
+          callbackUrl,
+          subscriptionId: body.subscriptionId || body.id || null,
+          lastEventAt: null,
+          eventCount: 0,
+        },
+        message: "Webhook subscription registered successfully",
+      });
+    } else {
+      const errText = await res.text();
+      return json({
+        webhookStatus: {
+          registered: false,
+          callbackUrl,
+          lastEventAt: null,
+          eventCount: 0,
+        },
+        message: `Notifications API returned ${res.status}: ${errText.slice(0, 200)}. This API may require partner enablement or a specific STS version.`,
+      });
+    }
+  } catch (e: any) {
+    return json({
+      webhookStatus: { registered: false, callbackUrl, lastEventAt: null, eventCount: 0 },
+      message: `Webhook registration failed: ${e.message}`,
+    });
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: webhook-status (S6 — enhanced with health diagnostics)
+// ════════════════════════════════════════════════════════
+async function handleWebhookStatus(connectionId: string) {
+  const supabaseClient = sb();
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+
+  // Last event received
+  const { data: lastEvents } = await supabaseClient
+    .from("webhook_events")
+    .select("created_at, event_type, status")
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  // Total count
+  const { count: totalCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY");
+
+  // Last successfully processed
+  const { data: lastSuccess } = await supabaseClient
+    .from("webhook_events")
+    .select("created_at, event_type, processed_at")
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "PROCESSED")
+    .order("processed_at", { ascending: false })
+    .limit(1);
+
+  // Last failure
+  const { data: lastFailure } = await supabaseClient
+    .from("webhook_events")
+    .select("created_at, event_type, status, payload")
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .in("status", ["FAILED", "ERROR"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  // Pending count
+  const { count: pendingCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "PENDING");
+
+  // Failed count
+  const { count: failedCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .in("status", ["FAILED", "ERROR"]);
+
+  // Duplicate count
+  const { count: dupeCount } = await supabaseClient
+    .from("webhook_events")
+    .select("id", { count: "exact", head: true })
+    .eq("connection_id", connectionId)
+    .eq("provider", "SIMPHONY")
+    .eq("status", "DUPLICATE");
+
+  return json({
+    webhookStatus: {
+      registered: true,
+      callbackUrl: `${supabaseUrl}/functions/v1/simphony-proxy`,
+      lastEventAt: lastEvents?.[0]?.created_at || null,
+      lastEventType: lastEvents?.[0]?.event_type || null,
+      eventCount: totalCount || 0,
+      pendingCount: pendingCount || 0,
+      failedCount: failedCount || 0,
+      duplicateCount: dupeCount || 0,
+      lastSuccessAt: lastSuccess?.[0]?.processed_at || null,
+      lastSuccessType: lastSuccess?.[0]?.event_type || null,
+      lastFailureAt: lastFailure?.[0]?.created_at || null,
+      lastFailureType: lastFailure?.[0]?.event_type || null,
+      lastFailureReason: lastFailure?.[0]?.payload ? (lastFailure[0].payload as any).error_reason || null : null,
+    },
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: webhook-ingest (S6 — hardened: fast 200, dedupe, async processing)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleWebhookIngest(payload: any) {
+  const supabaseClient = sb();
+  const eventType = payload.eventType || payload.type || "UNKNOWN";
+  const eventId = payload.eventId || payload.id || `simphony_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // ── Deduplicate: check if this eventId already exists ──
+  const { data: existing } = await supabaseClient
+    .from("webhook_events")
+    .select("id")
+    .eq("event_id", eventId)
+    .eq("provider", "SIMPHONY")
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    // Already received — return fast 200 without re-processing
+    return json({ received: true, eventId, duplicate: true });
+  }
+
+  // ── Store raw event immediately for fast 200 ──
+  const { error: insertErr } = await supabaseClient.from("webhook_events").insert({
+    provider: "SIMPHONY",
+    event_id: eventId,
+    event_type: eventType,
+    payload: payload,
+    connection_id: payload.connectionId || null,
+    status: "PENDING",
+  });
+
+  if (insertErr) {
+    // If insert fails due to unique constraint, it's a race-condition duplicate
+    if (insertErr.code === "23505") {
+      return json({ received: true, eventId, duplicate: true });
+    }
+    console.error("Webhook insert failed:", insertErr.message);
+    return json({ received: false, error: insertErr.message }, 500);
+  }
+
+  // ── Async processing: fire-and-forget to avoid blocking the 200 ──
+  // We process inline but after sending the response would be ideal;
+  // in edge functions we process quickly and update status.
+  try {
+    const connectionId = payload.connectionId || null;
+    if (connectionId && (eventType === "CHECK_CLOSED" || eventType === "CHECK_UPDATED")) {
+      // Mark as processing
+      await supabaseClient.from("webhook_events")
+        .update({ status: "PROCESSING" })
+        .eq("event_id", eventId)
+        .eq("provider", "SIMPHONY");
+
+      // Fetch the connection to get headers
+      const { data: conn } = await supabaseClient
+        .from("pos_connections")
+        .select("*")
+        .eq("id", connectionId)
+        .single();
+
+      if (conn) {
+        // Fetch the specific check if checkId is provided
+        const checkId = payload.checkId || payload.entityId || null;
+        if (checkId) {
+          const checkUrl = `${baseUrl(conn)}/api/v1/checks/${checkId}`;
+          const checkRes = await stsFetchWithRetry(checkUrl, stsHeaders(conn), `webhook-check-${checkId}`);
+          if (checkRes.ok) {
+            // Upsert the check as a sales event (reuse idempotency key)
+            const check = checkRes.data;
+            const businessDay = check.businessDate || check.businessDay || new Date().toISOString().slice(0, 10);
+            const providerDocId = `${connectionId}_${String(check.checkNum || check.checkId || checkId)}`;
+
+            await supabaseClient.from("sales_events").upsert({
+              connection_id: connectionId,
+              provider_doc_id: providerDocId,
+              business_day: businessDay,
+              doc_type: eventType,
+              total_amount: Number(check.totalAmount || check.total || 0),
+              total_tax: Number(check.totalTax || check.tax || 0),
+              total_net: Number(check.totalNet || (check.totalAmount || 0) - (check.totalTax || 0)),
+              line_count: Array.isArray(check.detailLines || check.lineItems) ? (check.detailLines || check.lineItems).length : 0,
+              raw_json: check,
+            }, { onConflict: "connection_id,provider_doc_id" });
+          }
+        }
+
+        // Mark as processed
+        await supabaseClient.from("webhook_events")
+          .update({ status: "PROCESSED", processed_at: new Date().toISOString() })
+          .eq("event_id", eventId)
+          .eq("provider", "SIMPHONY");
+      } else {
+        await supabaseClient.from("webhook_events")
+          .update({ status: "FAILED", payload: { ...payload, error_reason: "Connection not found" } })
+          .eq("event_id", eventId)
+          .eq("provider", "SIMPHONY");
+      }
+    } else {
+      // Non-actionable event type — mark as processed (informational)
+      await supabaseClient.from("webhook_events")
+        .update({ status: "PROCESSED", processed_at: new Date().toISOString() })
+        .eq("event_id", eventId)
+        .eq("provider", "SIMPHONY");
+    }
+  } catch (e: any) {
+    // Processing failed — mark but don't fail the 200 response
+    console.error("Webhook processing error:", e.message);
+    await supabaseClient.from("webhook_events")
+      .update({ status: "FAILED", payload: { ...payload, error_reason: e.message } })
+      .eq("event_id", eventId)
+      .eq("provider", "SIMPHONY");
+  }
+
+  return json({ received: true, eventId });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: pilot-run (8-step automated validation)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handlePilotRun(conn: any, connectionId: string) {
+  const steps: { id: string; label: string; status: string; detail?: string; data?: unknown }[] = [];
+  const supabaseClient = sb();
+  let allPassed = true;
+
+  const fail = (id: string, label: string, detail: string) => {
+    steps.push({ id, label, status: "error", detail });
+    allPassed = false;
+  };
+
+  // ── Step 1: Preflight ──
+  try {
+    const url = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=1`;
+    const res = await stsFetchWithRetry(url, stsHeaders(conn), "pilot-preflight");
+    if (res.ok) {
+      steps.push({ id: "preflight", label: "Preflight — STS Gen2 reachable", status: "done", detail: "STS responding OK" });
+    } else {
+      fail("preflight", "Preflight — STS Gen2 reachable", `STS returned ${res.status}`);
+      return json({ steps, allPassed: false });
+    }
+  } catch (e: any) {
+    fail("preflight", "Preflight — STS Gen2 reachable", e.message);
+    return json({ steps, allPassed: false });
+  }
+
+  // ── Step 2: Discover location/RVC ──
+  const parts = (conn.location_name || "").split("|");
+  const locRef = parts[2] || "";
+  const rvcRef = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcs = cfg.selected_rvcs || (rvcRef ? [rvcRef] : []);
+  if (locRef && rvcs.length > 0) {
+    steps.push({ id: "discover", label: "Discover — location & RVC", status: "done", detail: `Location: ${parts[0] || locRef}, ${rvcs.length} RVC(s): ${rvcs.join(", ")}` });
+  } else {
+    fail("discover", "Discover — location & RVC", `Missing ${!locRef ? "location ref" : "RVC selection"}. Go to Step 3 (Discover) first.`);
+  }
+
+  // ── Step 3: Sync sales (read test) ──
+  try {
+    const checksUrl = `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=5`;
+    const checksRes = await stsFetchWithRetry(checksUrl, stsHeaders(conn), "pilot-sales-read");
+    if (checksRes.ok) {
+      const items = Array.isArray(checksRes.data) ? checksRes.data : (checksRes.data.items || checksRes.data.checks || []);
+      steps.push({ id: "sales-read", label: "Sales read test", status: items.length > 0 ? "done" : "warn", detail: `${items.length} check(s) found via STS` });
+    } else {
+      fail("sales-read", "Sales read test", `STS checks endpoint returned ${checksRes.status}`);
+    }
+  } catch (e: any) {
+    fail("sales-read", "Sales read test", e.message);
+  }
+
+  // ── Step 4: Catalog read test ──
+  const cc = ccBaseUrl(conn);
+  if (cc) {
+    try {
+      const orgShortName = parts[1] || "";
+      const res = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?limit=10`, {
+        headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+      });
+      if (res.ok) {
+        const body = await res.json();
+        const count = Array.isArray(body) ? body.length : (body.items?.length || 0);
+        steps.push({ id: "catalog-read", label: "Catalog read test (CCAPI)", status: "done", detail: `${count} menu items sampled` });
+      } else {
+        const status = res.status;
+        fail("catalog-read", "Catalog read test (CCAPI)", `C&C returned ${status}${status === 401 ? " — token expired?" : status === 404 ? " — org not found" : ""}`);
+      }
+    } catch (e: any) {
+      fail("catalog-read", "Catalog read test (CCAPI)", `C&C unreachable: ${e.message}`);
+    }
+  } else {
+    steps.push({ id: "catalog-read", label: "Catalog read test", status: "warn", detail: "C&C API not configured — skipped (use Import/Export)" });
+  }
+
+  // ── Step 5: Preview one write ──
+  const { data: wines } = await supabaseClient
+    .from("winerim_wines").select("winerim_id, name, bottle_sale_price, wine_type")
+    .eq("connection_id", connectionId).eq("pricing_status", "READY").eq("is_active", true)
+    .limit(1);
+
+  const testWine = wines?.[0];
+  if (testWine && testWine.bottle_sale_price) {
+    const previewItem = {
+      objectNum: `WINERIM_${testWine.winerim_id}_BOT`,
+      name: `${testWine.name} (Botella)`,
+      price: testWine.bottle_sale_price,
+      format: "BOT",
+      familyGroup: testWine.wine_type || "Wines",
+    };
+    steps.push({ id: "write-preview", label: "Preview one write", status: "done", detail: `"${previewItem.name}" @ $${previewItem.price}`, data: previewItem });
+  } else {
+    steps.push({ id: "write-preview", label: "Preview one write", status: "warn", detail: "No wines with READY pricing found — sync Winerim catalog first" });
+  }
+
+  // ── Step 6: Execute one write (dry-run only in pilot) ──
+  if (testWine && conn.write_mode !== "NONE" && cc) {
+    const { error: taskErr } = await supabaseClient.from("outbound_tasks").insert({
+      connection_id: connectionId,
+      task_type: "SIMPHONY_PILOT_TEST_ITEM",
+      status: "PENDING_APPROVAL",
+      payload_json: {
+        winerim_id: testWine.winerim_id, wine_name: testWine.name,
+        menu_item_name: `${testWine.name} (Botella)`, price: testWine.bottle_sale_price, format: "BOT",
+        cc_base_url: cc, org_short_name: parts[1] || "",
+        pilot: true, verify_after_write: true,
+      },
+    });
+    steps.push({
+      id: "write-execute", label: "Execute one write", status: taskErr ? "error" : "done",
+      detail: taskErr ? taskErr.message : "Test item enqueued for PENDING_APPROVAL",
+    });
+    if (taskErr) allPassed = false;
+  } else if (conn.write_mode === "NONE") {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "Write mode is OFF — enable in Catalog step to test writes" });
+  } else if (!cc) {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "C&C API not configured — write test skipped" });
+  } else {
+    steps.push({ id: "write-execute", label: "Execute one write", status: "warn", detail: "No test wine available" });
+  }
+
+  // ── Step 7: Post-write verification ──
+  if (testWine && cc) {
+    try {
+      const orgShortName = parts[1] || "";
+      const objectNum = `WINERIM_${testWine.winerim_id}_BOT`;
+      const searchRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?filter=objectNum eq '${objectNum}'&limit=5`, {
+        headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+      });
+      if (searchRes.ok) {
+        const body = await searchRes.json();
+        const items = Array.isArray(body) ? body : (body.items || body.menuItems || []);
+        // deno-lint-ignore no-explicit-any
+        const found = items.find((it: any) => String(it.objectNum || it.menuItemId || "") === objectNum);
+        if (found) {
+          const price = Number(found.price || found.defaultPrice || 0);
+          steps.push({ id: "verify", label: "Post-write verification", status: price > 0 ? "done" : "warn", detail: `Found "${objectNum}" — price: $${price}` });
+        } else {
+          steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `"${objectNum}" not yet in C&C (pending approval or not yet pushed)` });
+        }
+      } else {
+        steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `C&C search returned ${searchRes.status}` });
+      }
+    } catch (e: any) {
+      steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: `Verify failed: ${e.message}` });
+    }
+  } else {
+    steps.push({ id: "verify", label: "Post-write verification", status: "warn", detail: "Skipped — no test wine or no C&C API" });
+  }
+
+  // ── Step 8: Mark pilot-verified ──
+  const passedCount = steps.filter(s => s.status === "done").length;
+  const warnCount = steps.filter(s => s.status === "warn").length;
+  const errorCount = steps.filter(s => s.status === "error").length;
+  const pilotVerified = errorCount === 0 && passedCount >= 4; // at least preflight + discover + sales-read + catalog-read
+
+  if (pilotVerified) {
+    // Persist pilot-verified status
+    const updatedCfg = { ...cfg, pilot_verified: true, pilot_verified_at: new Date().toISOString(), pilot_passed: passedCount, pilot_warnings: warnCount };
+    await supabaseClient.from("pos_connections").update({ provider_config: updatedCfg as any }).eq("id", connectionId);
+    steps.push({ id: "mark-verified", label: "Mark pilot-verified", status: "done", detail: `${passedCount} passed, ${warnCount} warnings, 0 errors — connection marked as pilot-verified` });
+  } else {
+    steps.push({ id: "mark-verified", label: "Mark pilot-verified", status: "error", detail: `${passedCount} passed, ${warnCount} warnings, ${errorCount} errors — not verified` });
+    allPassed = false;
+  }
+
+  return json({ steps, allPassed, summary: { passed: passedCount, warnings: warnCount, errors: errorCount, pilotVerified } });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: rvc-diagnostics (per-RVC health & cursor report)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleRvcDiagnostics(conn: any, connectionId: string) {
+  await ensureValidToken(conn);
+  const rvcs = getSelectedRvcs(conn);
+  if (rvcs.length <= 1) {
+    // Single-RVC: still return basic diagnostics
+    const rvc = rvcs[0] || "none";
+    const cfg = getSimphonyConfig(conn.provider_config);
+    const cursor = cfg.rvc_cursors?.[rvc] || {};
+    const lastSync = cfg.last_sync_diagnostics || {};
+    return json({
+      singleRvc: true, rvc,
+      cursor: { last_business_day: cursor.last_business_day || conn.last_business_day_synced || null, synced_at: cursor.synced_at || conn.last_sync_at || null, last_cursor: cursor.last_cursor || null },
+      lastSync,
+    });
+  }
+
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const rvcCursors = cfg.rvc_cursors || {};
+
+  const diagnostics: {
+    rvc: string; reachable: boolean; status: number | null;
+    sampleChecks: number;
+    cursor: { last_business_day: string | null; synced_at: string | null; last_cursor: string | null };
+    error?: string;
+    savedEvents?: number;
+  }[] = [];
+
+  const supabaseClient = sb();
+
+  for (const rvc of rvcs) {
+    const cursor = rvcCursors[rvc] || {};
+    const result = await stsFetchWithRetry(
+      `${baseUrl(conn)}/api/v1/checks?includeClosed=true&limit=3`,
+      stsHeaders(conn, rvc),
+      `rvcDiag-${rvc}`,
+    );
+
+    // Count saved events for this RVC
+    const { count } = await supabaseClient
+      .from("sales_events")
+      .select("id", { count: "exact", head: true })
+      .eq("connection_id", connectionId)
+      .like("provider_doc_id", `%_${rvc}`);
+
+    if (result.ok) {
+      const checks = Array.isArray(result.data) ? result.data : (result.data.items || result.data.checks || []);
+      diagnostics.push({
+        rvc, reachable: true, status: result.status, sampleChecks: checks.length,
+        cursor: { last_business_day: cursor.last_business_day || null, synced_at: cursor.synced_at || null, last_cursor: cursor.last_cursor || null },
+        savedEvents: count || 0,
+      });
+    } else {
+      diagnostics.push({
+        rvc, reachable: false, status: result.status, sampleChecks: 0,
+        cursor: { last_business_day: cursor.last_business_day || null, synced_at: cursor.synced_at || null, last_cursor: cursor.last_cursor || null },
+        error: result.error?.slice(0, 200),
+        savedEvents: count || 0,
+      });
+    }
+  }
+
+  return json({
+    singleRvc: false,
+    rvcCount: rvcs.length,
+    diagnostics,
+    globalCursor: conn.last_business_day_synced,
+    lastSync: cfg.last_sync_diagnostics || null,
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// ACTION: verify-write (strict post-write verification for CCAPI / import-export)
+// ════════════════════════════════════════════════════════
+// deno-lint-ignore no-explicit-any
+async function handleVerifyWrite(conn: any, connectionId: string, payload: any) {
+  // Auto-refresh token before verification
+  try { await ensureValidToken(conn); } catch { /* proceed with current token */ }
+
+  const cc = ccBaseUrl(conn);
+  const parts = (conn.location_name || "").split("|");
+  const orgShortName = parts[1] || "";
+  const locRefParam = parts[2] || "";
+  const rvcRefParam = parts[3] || "";
+  const cfg = getSimphonyConfig(conn.provider_config);
+  const allSelectedRvcs = cfg.selected_rvcs || (rvcRefParam ? [rvcRefParam] : []);
+
+  const externalId = payload.externalId || payload.external_id || "";
+  const expectedPrice = Number(payload.expectedPrice || payload.price || 0);
+  const format = payload.format || "BOT";
+  const winerimId = payload.winerim_id || payload.winerimId || "";
+  const verifyMode: "ccapi" | "import" | "auto" = payload.verifyMode || "auto";
+
+  const result = {
+    success: false,
+    verified_exists: false,
+    verified_prices: false,
+    verified_scope: false,
+    verified_config: false,
+    errors: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+    warnings: [] as { code: string; message: string; field?: string; context?: Record<string, unknown> }[],
+  };
+
+  // ── 1) Verify scope: can we still reach C&C API? ──
+  if (!cc) {
+    if (verifyMode === "import") {
+      // Import-export mode: no C&C API needed, just check STS
+      result.verified_scope = true;
+      result.warnings.push({ code: "NO_CCAPI", message: "No C&C API configured. Verification limited to STS check endpoint." });
+
+      // Try to find item via STS checks (limited verification)
+      const objectNum = externalId || `WINERIM_${winerimId}_${format}`;
+      result.warnings.push({ code: "IMPORT_MODE", message: `Import-export mode: item "${objectNum}" must be verified manually via EMC or STS checks after POS reload.` });
+      result.verified_exists = false;
+      result.verified_prices = false;
+      result.verified_config = false;
+      result.success = false;
+      return json(result);
+    }
+    result.errors.push({ code: "NO_CCAPI", message: "Config & Content API URL not configured. Cannot verify writes." });
+    return json(result);
+  }
+
+  // Scope check: verify C&C API reachable and location is in scope
+  try {
+    const scopeRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/locations`, {
+      headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+    });
+    if (scopeRes.ok) {
+      result.verified_scope = true;
+      const scopeBody = await scopeRes.json();
+      const locs = Array.isArray(scopeBody) ? scopeBody : (scopeBody.items || scopeBody.locations || []);
+      const matchedLoc = locs.find((l: any) => String(l.locRef || l.locationRef || l.id || "") === locRefParam);
+      if (!matchedLoc && locRefParam) {
+        result.warnings.push({ code: "LOC_NOT_IN_SCOPE", message: `Location ${locRefParam} not found in C&C API scope. Item may not be visible.`, context: { locRef: locRefParam, availableLocs: locs.length } });
+      }
+    } else if (scopeRes.status === 401 || scopeRes.status === 403) {
+      result.errors.push({ code: "SCOPE_EXPIRED", message: `C&C API returned ${scopeRes.status}. Token may be expired or permissions revoked.` });
+      return json(result);
+    } else {
+      result.warnings.push({ code: "SCOPE_UNKNOWN", message: `C&C API returned ${scopeRes.status}. Scope could not be fully verified.` });
+      result.verified_scope = true; // non-blocking for non-auth errors
+    }
+  } catch (e: any) {
+    result.errors.push({ code: "SCOPE_ERROR", message: `Scope check failed: ${e.message}` });
+    return json(result);
+  }
+
+  // ── 2) Verify item exists + price + config fields + location/RVC assignment ──
+  const objectNum = externalId || `WINERIM_${winerimId}_${format}`;
+  try {
+    const searchRes = await fetch(`${cc}/config/sim/v2/organizations/${orgShortName}/menuItems?filter=objectNum eq '${objectNum}'&limit=10`, {
+      headers: { "Authorization": `Bearer ${conn.api_token}`, "Accept": "application/json" },
+    });
+    if (searchRes.ok) {
+      const searchBody = await searchRes.json();
+      const items = Array.isArray(searchBody) ? searchBody : (searchBody.items || searchBody.menuItems || []);
+      const matched = items.find((it: any) => String(it.objectNum || it.menuItemId || "") === objectNum);
+
+      if (matched) {
+        result.verified_exists = true;
+
+        // ── 3) Verify price > 0 ──
+        const actualPrice = Number(matched.price || matched.defaultPrice || 0);
+        if (actualPrice > 0) {
+          result.verified_prices = true;
+          if (expectedPrice > 0 && Math.abs(actualPrice - expectedPrice) > 0.01) {
+            result.warnings.push({ code: "PRICE_MISMATCH", message: `Expected price ${expectedPrice}, found ${actualPrice}`, field: "price", context: { expected: expectedPrice, actual: actualPrice } });
+          }
+        } else {
+          result.errors.push({ code: "PRICE_ZERO", message: `Item exists but price is ${actualPrice}. A write is only successful if price > 0.`, field: "price", context: { actual: actualPrice, expected: expectedPrice } });
+        }
+
+        // ── 4) Verify location/RVC scope assignment ──
+        const locAssignments = matched.locations || matched.locationAssignments || [];
+        if (Array.isArray(locAssignments) && locAssignments.length > 0 && locRefParam) {
+          const locMatch = locAssignments.some((la: any) => String(la.locRef || la.locationRef || "") === locRefParam);
+          if (!locMatch) {
+            // Promote to error: item not usable at this location
+            result.errors.push({ code: "LOC_NOT_ASSIGNED", message: `Item exists but is NOT assigned to location ${locRefParam}. It will not appear on the POS.`, context: { locRef: locRefParam, assignedLocs: locAssignments.length } });
+            result.verified_scope = false;
+          }
+          // Check each selected RVC
+          const missingRvcs: string[] = [];
+          for (const rvc of allSelectedRvcs) {
+            const rvcMatch = locAssignments.some((la: any) => {
+              const rvcs = la.revenueCenters || la.rvcs || [];
+              return rvcs.some((r: any) => String(r.rvcRef || r.revenueCenterRef || "") === rvc);
+            });
+            if (!rvcMatch) missingRvcs.push(rvc);
+          }
+          if (missingRvcs.length > 0) {
+            result.errors.push({
+              code: "RVC_NOT_ASSIGNED",
+              message: `Item not assigned to ${missingRvcs.length} RVC(s): ${missingRvcs.join(", ")}. It will not appear on those terminals.`,
+              context: { missingRvcs, totalSelectedRvcs: allSelectedRvcs.length },
+            });
+            result.verified_scope = false;
+          }
+        } else if (locRefParam && (!Array.isArray(locAssignments) || locAssignments.length === 0)) {
+          result.warnings.push({ code: "NO_LOC_DATA", message: "C&C API did not return location assignment data. Cannot verify scope." });
+        }
+
+        // ── 5) Verify required configuration fields ──
+        const configIssues: { field: string; issue: string }[] = [];
+        const itemName = String(matched.name || matched.longDescriptor || "");
+        if (!itemName || itemName.trim().length === 0) {
+          configIssues.push({ field: "name", issue: "Item name is empty" });
+        }
+        const familyGroup = String(matched.familyGroupName || matched.majorGroupName || matched.familyGroup || "");
+        if (!familyGroup || familyGroup.trim().length === 0) {
+          configIssues.push({ field: "familyGroup", issue: "No family/major group assigned" });
+        }
+        if (matched.active === false) {
+          configIssues.push({ field: "active", issue: "Item is marked inactive — it will not appear on POS" });
+        }
+        // Check for a valid menu item class/type
+        const itemClass = matched.menuItemClass || matched.type || matched.class || null;
+        if (itemClass !== null && itemClass !== undefined) {
+          const classStr = String(itemClass).toLowerCase();
+          if (classStr === "modifier" || classStr === "condiment") {
+            configIssues.push({ field: "menuItemClass", issue: `Item class is "${classStr}" — expected a regular menu item` });
+          }
+        }
+
+        if (configIssues.length === 0) {
+          result.verified_config = true;
+        } else {
+          for (const ci of configIssues) {
+            result.errors.push({ code: "CONFIG_MISSING", message: ci.issue, field: ci.field });
+          }
+        }
+      } else {
+        result.errors.push({ code: "NOT_FOUND", message: `Menu item with objectNum "${objectNum}" not found in C&C API after write.`, context: { objectNum, searchResultCount: items.length } });
+      }
+    } else {
+      result.warnings.push({ code: "SEARCH_FAILED", message: `C&C menuItems search returned ${searchRes.status}. Item existence could not be verified.` });
+    }
+  } catch (e: any) {
+    result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+  }
+
+  result.success = result.verified_exists && result.verified_prices && result.verified_scope && result.verified_config && result.errors.length === 0;
+  return json(result);
+}
+
+// ════════════════════════════════════════════════════════
+// ROUTER
+// ════════════════════════════════════════════════════════
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  try {
+    const payload = await req.json();
+    const { action, connectionId, businessDay, daysBack, dryRun, format } = payload;
+
+    // Webhook ingest doesn't need a connectionId
+    if (action === "webhook-ingest") return await handleWebhookIngest(payload);
+
+    const conn = await getConnection(connectionId);
+
+    switch (action) {
+      case "test": return await handleTest(conn);
+      case "oidc-acquire": return await handleOidcAcquire(conn);
+      case "discover-locations": return await handleDiscoverLocations(conn);
+      case "preflight": return await handlePreflight(conn);
+      case "find-last-business-day": return await handleFindDays(conn, daysBack || 60);
+      case "fetch-day": return await handleFetchDay(conn, connectionId, businessDay);
+      case "save-sales": return await handleSaveSales(conn, connectionId, businessDay);
+      case "cc-read-catalog": return await handleCcReadCatalog(conn);
+      case "cc-write-preview": return await handleCcWritePreview(conn, connectionId);
+      case "cc-write-execute": return await handleCcWriteExecute(conn, connectionId, dryRun !== false);
+      case "generate-import-export": return await handleGenerateImportExport(connectionId, format || "json");
+      case "register-webhook": return await handleRegisterWebhook(conn, connectionId);
+      case "webhook-status": return await handleWebhookStatus(connectionId);
+      case "pilot-run": return await handlePilotRun(conn, connectionId);
+      case "rvc-diagnostics": return await handleRvcDiagnostics(conn, connectionId);
+      case "verify-write": return await handleVerifyWrite(conn, connectionId, payload);
+      default: return json({ error: `Unknown action: ${action}` }, 400);
+    }
+  } catch (e: any) {
+    console.error("simphony-proxy error:", e);
+    return json({ error: e.message }, 500);
+  }
+});

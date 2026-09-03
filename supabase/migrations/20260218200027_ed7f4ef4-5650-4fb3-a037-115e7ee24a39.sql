@@ -1,0 +1,1 @@
+ALTER TABLE public.pos_connections ADD COLUMN winerim_api_token text;

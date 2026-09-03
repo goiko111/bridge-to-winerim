@@ -1,0 +1,51 @@
+# TEMPLATE ONLY. Do not pass directly to Wrangler.
+# Deploy only after exclusiveScope.ts and writerFence.ts are imported by the
+# runtime queue handler as described in the fail-closed runbook.
+name = "winerim-rescue-prod-canary-{{CANARY_RUN_ID}}"
+main = "cloudflare/workers/middleware-runtime/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "rescue-production"
+RELEASE = "{{RELEASE}}"
+RUNTIME_EXECUTION_ENABLED = "true"
+RUNTIME_MODE = "exclusive-canary-consumer"
+RUNTIME_CANARY_CONNECTION_ID = "{{CANARY_CONNECTION_ID}}"
+CANARY_RUN_ID = "{{CANARY_RUN_ID}}"
+CANARY_EXCLUSIVE_QUEUE_NAME = "{{CANARY_QUEUE_NAME}}"
+CANARY_MESSAGE_ID = "{{CANARY_MESSAGE_ID}}"
+CANARY_IDEMPOTENCY_KEY = "{{CANARY_IDEMPOTENCY_KEY}}"
+CANARY_PAYLOAD_SHA256 = "{{CANARY_PAYLOAD_SHA256}}"
+CANARY_RUNTIME_JOB = "{{CANARY_RUNTIME_JOB}}"
+CANARY_RUNTIME_LANE = "{{CANARY_RUNTIME_LANE}}"
+WRITER_FENCE_HOLDER_ID = "{{WRITER_FENCE_HOLDER_ID}}"
+
+[[hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "{{RUNTIME_HYPERDRIVE_ID}}"
+
+[[services]]
+binding = "RUNTIME_EXECUTOR"
+service = "{{RUNTIME_EXECUTOR_SERVICE_NAME}}"
+
+[[services]]
+binding = "WRITER_FENCE"
+service = "{{WRITER_FENCE_SERVICE_NAME}}"
+
+[[secrets_store_secrets]]
+binding = "CANARY_WRITER_FENCE_PROOF"
+store_id = "{{WRITER_FENCE_PROOF_STORE_ID}}"
+secret_name = "{{WRITER_FENCE_PROOF_SECRET_NAME}}"
+
+# This physical Queue must have exactly one producer for this run and exactly
+# one consumer. It must never be a shared staging/production sales Queue.
+[[queues.consumers]]
+queue = "{{CANARY_QUEUE_NAME}}"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "{{CANARY_DLQ_QUEUE_NAME}}"

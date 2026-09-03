@@ -1,0 +1,55 @@
+{
+  "conn": {
+    "auto_push_verified_ready": true,
+    "auto_push_glass": true,
+    "write_glass": true,
+    "last_sync_at": "2026-06-19T05:30:20.533+00:00",
+    "last_business_day_synced": "2026-06-18",
+    "last_catalog_sync_at": "2026-06-19T05:25:07.250353+00:00"
+  },
+  "families_total": 42,
+  "products_total": 1284,
+  "winerim_expected": 131,
+  "winerim_present": 131,
+  "winerim_missing": 0,
+  "winerim_bad": 0,
+  "winerim_saleable": 131,
+  "winerim_direct_true": 0,
+  "winerim_by_family": {
+    "BLANCOS WINERIM": 29,
+    "COPAS WINERIM": 65,
+    "FORTIFICADOS WINERIM": 4,
+    "DULCE WINERIM": 4,
+    "TINTOS WINERIM": 16,
+    "ESPUMOSOS WINERIM": 8,
+    "ROSADOS WINERIM": 3,
+    "MAGNUM WINERIM": 2
+  },
+  "legacy_family_ids": [
+    [
+      "11",
+      "VINOS",
+      "false"
+    ],
+    [
+      "33",
+      "VINOS",
+      "false"
+    ],
+    [
+      "37",
+      "VINOS POR COPAS",
+      "false"
+    ]
+  ],
+  "legacy_products": 198,
+  "legacy_saleable": 0,
+  "legacy_direct": 0,
+  "open_tasks_final": {
+    "QUEUED": 0,
+    "RUNNING": 0,
+    "FAILED": 0,
+    "BLOCKED": 0
+  },
+  "queue_verified_at": "2026-06-19T05:35:19.024Z"
+}

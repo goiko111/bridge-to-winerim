@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "appliedAt": "2026-07-14T09:49:19.390Z",
+  "connectionId": "2ef2b6f1-de80-4e94-8774-3140b2ae16e4",
+  "locationName": "Restaurante Jardi",
+  "purpose": "Reversible product-level hide of the remaining generic legacy wine buttons inside the mixed BEGUDES family",
+  "before": {
+    "family": { "id": "43", "name": "BEGUDES", "showInPos": true },
+    "products": [
+      { "id": "388", "name": "COPA VI NEGRE", "saleableAsMain": true, "useAsDirectSale": false },
+      { "id": "389", "name": "COPA CAVA", "saleableAsMain": true, "useAsDirectSale": false },
+      { "id": "390", "name": "COPA VI ROSAT", "saleableAsMain": true, "useAsDirectSale": false },
+      { "id": "391", "name": "COPA VI BLANC", "saleableAsMain": true, "useAsDirectSale": false }
+    ]
+  },
+  "after": {
+    "products": [
+      { "id": "388", "saleableAsMain": false, "useAsDirectSale": false },
+      { "id": "389", "saleableAsMain": false, "useAsDirectSale": false },
+      { "id": "390", "saleableAsMain": false, "useAsDirectSale": false },
+      { "id": "391", "saleableAsMain": false, "useAsDirectSale": false }
+    ],
+    "nonWineProductsPreserved": [
+      { "id": "400", "name": "GINTONIC SEAGRAMS" },
+      { "id": "401", "name": "CONVINAT" },
+      { "id": "488", "name": "calcotada can butjosa" }
+    ],
+    "openOutboundQueue": 0
+  },
+  "rollback": {
+    "action": "set-product-visibility",
+    "updates": [
+      { "productId": "388", "visible": true },
+      { "productId": "389", "visible": true },
+      { "productId": "390", "visible": true },
+      { "productId": "391", "visible": true }
+    ]
+  }
+}

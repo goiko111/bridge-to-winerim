@@ -1,0 +1,1 @@
+UPDATE pos_connections SET auto_push_on_create = true, auto_push_on_update = true, auto_push_verified_ready = true, require_manual_review_before_push = false WHERE provider = 'agora';

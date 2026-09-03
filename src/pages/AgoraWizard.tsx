@@ -1,0 +1,5069 @@
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import {
+  ArrowLeft, ArrowRight, ArrowLeftRight, CheckCircle2, Loader2, XCircle, Search, Link2, Settings2, Map,
+  Power, Wine, Calendar, Download, Filter, Grape, ShieldCheck, ShieldX, HelpCircle,
+  ChevronDown, Package, RefreshCw, Database, Zap, RotateCcw, Tag,
+  Upload, AlertTriangle, Play, FileJson, FileText, Send, Shield, Eye,
+  Server, Wrench, GlassWater, BarChart3,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "@/hooks/use-toast";
+import {
+  useAgoraConnection, SalesEvent, SalesLineItem, DetectedFamily,
+  CatalogDiscoveryResult, ProviderProduct, ClassificationConfig,
+} from "@/hooks/useAgoraConnection";
+import { useOutboundSync, OutboundTask } from "@/hooks/useOutboundSync";
+import { useAgoraMasterData, AgoraMasterItem } from "@/hooks/useAgoraMasterData";
+import AgoraFamilyManager from "@/components/AgoraFamilyManager";
+import AgoraFamilyVisibilityPanel from "@/components/AgoraFamilyVisibilityPanel";
+import AgoraProductVisibilityPanel from "@/components/AgoraProductVisibilityPanel";
+import AgoraRepairActionsPanel from "@/components/AgoraRepairActionsPanel";
+import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
+import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
+import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
+import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
+import AgoraManualMatchPanel from "@/components/AgoraManualMatchPanel";
+import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
+import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
+import {
+  RestWriteBadge, XmlImportBadge, MasterDataBadge, AutoPushBadge,
+  ReadinessBadgeRow, OverallReadinessBadge,
+  type ReadinessDimensions,
+} from "@/components/ReadinessBadges";
+
+const steps = [
+  { id: 1, label: "Connection", icon: Link2 },
+  { id: 2, label: "Sync Settings", icon: Settings2 },
+  { id: 3, label: "Capabilities", icon: Shield },
+  { id: 4, label: "Catalog", icon: Package },
+  { id: 5, label: "Master Data", icon: Server },
+  { id: 6, label: "Families", icon: Grape },
+  { id: 7, label: "Sales & Mapping", icon: Map },
+  { id: 8, label: "Wine Matching", icon: Wine },
+  { id: 9, label: "Winerim Catalog", icon: Grape },
+  { id: 10, label: "Write Settings", icon: Wrench },
+  { id: 11, label: "Outbound Sync", icon: Upload },
+  { id: 12, label: "Sales Analytics", icon: BarChart3 },
+  { id: 13, label: "Today's Sales & Stock", icon: Wine },
+  { id: 14, label: "Go Live", icon: Power },
+];
+
+// Helper to fetch all rows from a table without limit
+async function fetchAllWinerimWines(connectionId: string, select: string): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  const allRows: any[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase.from("winerim_wines").select(select).eq("connection_id", connectionId).order("name").range(from, from + PAGE_SIZE - 1);
+    if (error || !data || data.length === 0) break;
+    allRows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return allRows;
+}
+
+async function fetchAllMappings(connectionId: string): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  const allRows: any[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase.from("product_mappings").select("*").eq("connection_id", connectionId).order("match_score", { ascending: false }).range(from, from + PAGE_SIZE - 1);
+    if (error || !data || data.length === 0) break;
+    allRows.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return allRows;
+}
+
+// ── Classification badge component ──
+function ClassificationBadge({ product }: { product: ProviderProduct | { classification_override?: string; is_wine_candidate: boolean; last_score?: number; last_reasons?: string[]; wine_score?: number; wine_reasons?: string[] } }) {
+  const override = (product as any).classification_override || "AUTO";
+  const isWine = product.is_wine_candidate;
+  const score = (product as any).last_score ?? (product as any).wine_score ?? 0;
+  const reasons = (product as any).last_reasons ?? (product as any).wine_reasons ?? [];
+
+  const getLabel = () => {
+    if (override === "WINE") return "WINE";
+    if (override === "NOT_WINE") return "NOT_WINE";
+    if (isWine) return "WINE";
+    if (score > 0 && score < 40) return "NEEDS_REVIEW";
+    return "NOT_WINE";
+  };
+
+  const label = getLabel();
+  const variant = label === "WINE" ? "default" : label === "NEEDS_REVIEW" ? "outline" : "secondary";
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge variant={variant} className="text-[10px] cursor-help gap-1">
+            {override !== "AUTO" && <Tag className="h-2.5 w-2.5" />}
+            {label === "WINE" && <Wine className="h-3 w-3" />}
+            {label === "NEEDS_REVIEW" && <HelpCircle className="h-3 w-3" />}
+            {label}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="left" className="max-w-xs">
+          <div className="space-y-1 text-xs">
+            <p className="font-medium">Score: {score} · Override: {override}</p>
+            {reasons.length > 0 && (
+              <ul className="list-disc pl-3 space-y-0.5">
+                {reasons.map((r: string, i: number) => <li key={i} className="text-muted-foreground">{r}</li>)}
+              </ul>
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// ── Step 1: Connection ──
+function StepConnection({
+  locationName, setLocationName, baseUrl, setBaseUrl, apiToken, setApiToken,
+  winerimApiToken, setWinerimApiToken, testStatus, testError, onTest,
+}: {
+  locationName: string; setLocationName: (v: string) => void;
+  baseUrl: string; setBaseUrl: (v: string) => void;
+  apiToken: string; setApiToken: (v: string) => void;
+  winerimApiToken: string; setWinerimApiToken: (v: string) => void;
+  testStatus: string; testError: string | null; onTest: () => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Connection Details</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Enter your Agora POS base URL, API token, and location name.</p>
+      </div>
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Location Name</label>
+          <Input placeholder="e.g. La Vinoteca Central" value={locationName} onChange={(e) => setLocationName(e.target.value)} className="bg-background text-sm" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Base URL</label>
+          <Input placeholder="http://192.168.1.100:8080" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="bg-background font-mono text-sm" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Api-Token</label>
+          <Input type="password" placeholder="Enter your Agora API token" value={apiToken} onChange={(e) => setApiToken(e.target.value)} className="bg-background font-mono text-sm" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Winerim API Token</label>
+          <Input type="password" placeholder="Enter your Winerim API token" value={winerimApiToken} onChange={(e) => setWinerimApiToken(e.target.value)} className="bg-background font-mono text-sm" />
+          <p className="mt-1 text-[11px] text-muted-foreground">Token de la API v2 de Winerim para sincronizar catálogo y stock.</p>
+        </div>
+        <Button onClick={onTest} disabled={testStatus === "testing" || !baseUrl || !apiToken} variant="secondary" className="w-full">
+          {testStatus === "testing" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {testStatus === "success" && <CheckCircle2 className="mr-2 h-4 w-4 text-success" />}
+          {testStatus === "error" && <XCircle className="mr-2 h-4 w-4 text-destructive" />}
+          {testStatus === "idle" && "Test Connection"}
+          {testStatus === "testing" && "Testing…"}
+          {testStatus === "success" && "Connection Successful"}
+          {testStatus === "error" && (testError || "Connection Failed")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 2: Sync Settings ──
+function StepSyncSettings({
+  syncMode, setSyncMode, frequency, setFrequency, backfill, setBackfill,
+  catalogSyncEnabled, onToggleCatalogSync,
+}: {
+  syncMode: string; setSyncMode: (v: "PULL_ONLY" | "BIDIRECTIONAL") => void;
+  frequency: number; setFrequency: (v: number) => void;
+  backfill: number; setBackfill: (v: number) => void;
+  catalogSyncEnabled: boolean; onToggleCatalogSync: (v: boolean) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Sync Settings</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Configure how and how often data is synced.</p>
+      </div>
+      <div className="space-y-4">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-2 block">Sync Mode</label>
+          <div className="grid grid-cols-2 gap-3">
+            {(["PULL_ONLY", "BIDIRECTIONAL"] as const).map((mode) => (
+              <button key={mode} onClick={() => setSyncMode(mode)} className={`rounded-lg border p-3 text-left transition-all ${syncMode === mode ? "border-primary bg-primary/5" : "border-border hover:border-primary/30"}`}>
+                <span className="text-sm font-medium text-foreground">{mode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span>
+                <p className="mt-0.5 text-xs text-muted-foreground">{mode === "PULL_ONLY" ? "Read sales data from Agora" : "Read sales + push wines to Agora"}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-2 block">Sync Frequency</label>
+          <div className="flex gap-2">
+            {[5, 10, 15, 30, 60].map((f) => (
+              <button key={f} onClick={() => setFrequency(f)} className={`rounded-lg border px-3 py-2 text-xs font-medium transition-all ${frequency === f ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                {f} min
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-2 block">Backfill Period</label>
+          <div className="flex gap-2">
+            {[7, 30, 90].map((d) => (
+              <button key={d} onClick={() => setBackfill(d)} className={`rounded-lg border px-3 py-2 text-xs font-medium transition-all ${backfill === d ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                Last {d} days
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between rounded-lg border border-border p-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">Sync catalog/products</p>
+            <p className="text-xs text-muted-foreground">Fetch the full product catalog from Agora daily</p>
+          </div>
+          <Switch checked={catalogSyncEnabled} onCheckedChange={onToggleCatalogSync} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 3: Catalog ──
+function StepCatalog({
+  catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
+  catalogSyncing, catalogSyncResult, catalogTestResult, catalogTestingEndpoint,
+  catalogProducts, buildingDerived, derivedResult,
+  onDiscover, onSync, onTestEndpoint, onFetchProducts, onBuildDerived,
+}: {
+  catalogStatus: { catalogEndpoint: string | null; lastCatalogSyncAt: string | null; catalogProductCount: number; catalogWineCandidateCount: number };
+  catalogDiscovering: boolean; catalogDiscoveryResults: CatalogDiscoveryResult[];
+  catalogDiscoverySample: unknown; catalogSyncing: boolean;
+  catalogSyncResult: { totalProducts: number; wineCandidates: number } | null;
+  catalogTestResult: { count: number; sample: unknown[] } | null;
+  catalogTestingEndpoint: boolean; catalogProducts: ProviderProduct[];
+  buildingDerived: boolean; derivedResult: { totalProducts: number; wineCandidates: number; daysScanned: number } | null;
+  onDiscover: () => void; onSync: () => void; onTestEndpoint: (filter?: string) => void;
+  onFetchProducts: () => void; onBuildDerived: () => void;
+}) {
+  const [searchCatalog, setSearchCatalog] = useState("");
+  const [showWineOnly, setShowWineOnly] = useState(false);
+  const [testFilter, setTestFilter] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    let result = catalogProducts;
+    if (searchCatalog) {
+      const q = searchCatalog.toLowerCase();
+      result = result.filter((p) => p.name.toLowerCase().includes(q) || (p.family || "").toLowerCase().includes(q));
+    }
+    if (showWineOnly) result = result.filter((p) => p.is_wine_candidate);
+    return result;
+  }, [catalogProducts, searchCatalog, showWineOnly]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Catalog / Product Sync</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Discover and sync the product catalog from Agora.</p>
+      </div>
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Database className="h-3.5 w-3.5" /> Catalog Status</p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Endpoint</span>
+          <span className="font-mono text-foreground">{catalogStatus.catalogEndpoint || "Not discovered"}</span>
+          <span className="text-muted-foreground">Last sync</span>
+          <span className="font-mono text-foreground">{catalogStatus.lastCatalogSyncAt ? new Date(catalogStatus.lastCatalogSyncAt).toLocaleString() : "Never"}</span>
+          <span className="text-muted-foreground">Products</span>
+          <span className="font-mono text-foreground">{catalogStatus.catalogProductCount}</span>
+          <span className="text-muted-foreground">Wine candidates</span>
+          <span className={`font-mono ${catalogStatus.catalogWineCandidateCount > 0 ? "text-success" : "text-muted-foreground"}`}>{catalogStatus.catalogWineCandidateCount}</span>
+        </div>
+        {catalogStatus.catalogWineCandidateCount === 0 && catalogStatus.catalogProductCount > 0 && (
+          <p className="text-[11px] text-muted-foreground col-span-2 mt-1 flex items-center gap-1">
+            <HelpCircle className="h-3 w-3 shrink-0" /> No wines currently in POS catalog. Wine candidates will appear after pushing products from Winerim.
+          </p>
+        )}
+      </div>
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={onDiscover} disabled={catalogDiscovering}>
+          {catalogDiscovering ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />} Discover Endpoint
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onSync} disabled={catalogSyncing || !catalogStatus.catalogEndpoint}>
+          {catalogSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Sync Now
+        </Button>
+        {catalogStatus.catalogEndpoint && catalogProducts.length === 0 && (
+          <Button variant="outline" size="sm" onClick={onFetchProducts}><Download className="mr-2 h-4 w-4" /> Load Products</Button>
+        )}
+      </div>
+      {catalogSyncResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Catalog synced</p>
+          <p className="text-muted-foreground">{catalogSyncResult.totalProducts} products, {catalogSyncResult.wineCandidates} wine candidates.</p>
+        </div>
+      )}
+      {catalogDiscoveryResults.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Discovery Results</p>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+            {catalogDiscoveryResults.map((r, idx) => (
+              <div key={`${r.label}-${idx}`} className="px-4 py-2.5 bg-card space-y-1">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground font-mono">{r.label}</p>
+                    <p className="text-[11px] text-muted-foreground">Status: {r.status} · {r.contentType} · {r.count} items</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {r.count > 0 ? <Badge variant="default" className="text-[10px]">{r.count} items</Badge> : <Badge variant="secondary" className="text-[10px]">{r.status >= 400 ? `Error ${r.status}` : "Empty"}</Badge>}
+                    {r.filter === catalogStatus.catalogEndpoint && <Badge variant="default" className="text-[10px] bg-success"><Zap className="mr-1 h-3 w-3" />Selected</Badge>}
+                  </div>
+                </div>
+                {r.errorBody && (
+                  <pre className="rounded bg-destructive/5 border border-destructive/20 p-2 text-[10px] font-mono text-destructive overflow-x-auto max-h-24 overflow-y-auto whitespace-pre-wrap">{r.errorBody}</pre>
+                )}
+              </div>
+            ))}
+          </div>
+          {!catalogStatus.catalogEndpoint && catalogDiscoveryResults.every((r) => r.count === 0) && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+              <p className="text-xs font-medium text-foreground flex items-center gap-1.5"><HelpCircle className="h-3.5 w-3.5 text-amber-500" /> Catalog export not available</p>
+              <p className="text-[11px] text-muted-foreground">Ask your installer to enable catalog export permissions/modules.</p>
+              <Button variant="secondary" size="sm" onClick={onBuildDerived} disabled={buildingDerived}>
+                {buildingDerived ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />} Build Derived Catalog (last 30 days)
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {derivedResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-2">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Derived catalog built</p>
+          <p className="text-muted-foreground">Scanned {derivedResult.daysScanned} days → {derivedResult.totalProducts} products, {derivedResult.wineCandidates} wine candidates.</p>
+          {derivedResult.wineCandidates === 0 && (
+            <div className="rounded-md bg-blue-500/10 border border-blue-500/20 p-2 text-[11px] text-blue-700 flex items-start gap-1.5">
+              <HelpCircle className="h-3 w-3 shrink-0 mt-0.5" />
+              <span>This customer currently has no wines in Agora POS, so derived wine candidates may be low or zero until Winerim products are pushed.</span>
+            </div>
+          )}
+        </div>
+      )}
+      {catalogDiscoverySample && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Sample Record</p>
+          <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-48 overflow-y-auto text-foreground">{JSON.stringify(catalogDiscoverySample, null, 2)}</pre>
+        </div>
+      )}
+      <div className="space-y-2 rounded-lg border border-border p-4">
+        <p className="text-xs font-medium text-muted-foreground">Debug: Test Catalog Endpoint</p>
+        <div className="flex gap-2">
+          <Input placeholder="Filter name (e.g. Articles)" value={testFilter} onChange={(e) => setTestFilter(e.target.value)} className="bg-background text-sm font-mono flex-1" />
+          <Button variant="outline" size="sm" onClick={() => onTestEndpoint(testFilter || undefined)} disabled={catalogTestingEndpoint}>
+            {catalogTestingEndpoint ? <Loader2 className="h-4 w-4 animate-spin" /> : "Test"}
+          </Button>
+        </div>
+        {catalogTestResult && (
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">{catalogTestResult.count} items found</p>
+            <pre className="rounded-lg bg-secondary/30 p-2 text-xs font-mono overflow-x-auto max-h-36 overflow-y-auto text-foreground">{JSON.stringify(catalogTestResult.sample, null, 2)}</pre>
+          </div>
+        )}
+      </div>
+      {catalogProducts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex gap-3 items-center">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Search products…" value={searchCatalog} onChange={(e) => setSearchCatalog(e.target.value)} className="pl-10 bg-background" />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={showWineOnly} onCheckedChange={setShowWineOnly} />
+              <Wine className="h-3.5 w-3.5" /> Wine only
+            </label>
+          </div>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
+            {filteredProducts.length === 0 ? (
+              <div className="text-center py-6 text-sm text-muted-foreground">No matching products.</div>
+            ) : filteredProducts.map((p) => (
+              <div key={p.id} className="flex items-center justify-between px-4 py-2.5 bg-card hover:bg-secondary/30 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`h-2 w-2 rounded-full shrink-0 ${p.is_wine_candidate ? "bg-success" : "bg-muted-foreground"}`} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {p.family && <span className="mr-2">{p.family}</span>}
+                      {p.sale_format && <span className="mr-2">· {p.sale_format}</span>}
+                      {p.price > 0 && <span className="font-mono">€{p.price.toFixed(2)}</span>}
+                    </p>
+                  </div>
+                </div>
+                <ClassificationBadge product={p} />
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground text-right">Showing {filteredProducts.length} of {catalogProducts.length}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 4: Families ──
+function StepFamilies({
+  detectedFamilies, loadingDays, loadingSales, familyOverrides, setFamilyOverrides,
+  scanStats, daysWithSales, selectedDay, onRunHistoricalScan, salesEvents,
+  catalogProducts, onAddKeyword,
+}: {
+  detectedFamilies: DetectedFamily[]; loadingDays: boolean; loadingSales: boolean;
+  familyOverrides: Record<string, boolean>; setFamilyOverrides: (v: Record<string, boolean>) => void;
+  scanStats: { totalScanned: number; totalInvoicesFound: number } | null;
+  daysWithSales: string[]; selectedDay: string | null;
+  onRunHistoricalScan: () => void; salesEvents: SalesEvent[];
+  catalogProducts: ProviderProduct[];
+  onAddKeyword: (keyword: string, type: "wine" | "non_wine") => void;
+}) {
+  const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
+
+  // Merge families from catalog + sales
+  const allFamilies = useMemo(() => {
+    const familyMap: Record<string, { itemCount: number; wineCount: number; notWineCount: number }> = {};
+    for (const p of catalogProducts) {
+      const fam = p.family || "Sin familia";
+      if (!familyMap[fam]) familyMap[fam] = { itemCount: 0, wineCount: 0, notWineCount: 0 };
+      familyMap[fam].itemCount++;
+      if (p.is_wine_candidate) familyMap[fam].wineCount++; else familyMap[fam].notWineCount++;
+    }
+    for (const df of detectedFamilies) {
+      if (!familyMap[df.name]) {
+        familyMap[df.name] = { itemCount: df.itemCount, wineCount: 0, notWineCount: 0 };
+      }
+    }
+    return familyMap;
+  }, [catalogProducts, detectedFamilies]);
+
+  const familyProducts = useMemo(() => {
+    const map: Record<string, { name: string; format: string; unitPrice: number; quantity: number; isWine: boolean }[]> = {};
+    // From catalog
+    for (const p of catalogProducts) {
+      const fam = p.family || "Sin familia";
+      if (!map[fam]) map[fam] = [];
+      map[fam].push({ name: p.name, format: p.sale_format || "", unitPrice: p.price, quantity: 0, isWine: p.is_wine_candidate });
+    }
+    // Fallback from sales
+    if (catalogProducts.length === 0) {
+      for (const ev of salesEvents) {
+        for (const line of ev.lines) {
+          const fam = line.family || "Sin familia";
+          if (!map[fam]) map[fam] = [];
+          const existing = map[fam].find((p) => p.name === line.name && p.format === line.format);
+          if (existing) existing.quantity += line.quantity;
+          else map[fam].push({ name: line.name, format: line.format, unitPrice: line.unit_price, quantity: line.quantity, isWine: line.is_wine_candidate });
+        }
+      }
+    }
+    for (const fam of Object.keys(map)) map[fam].sort((a, b) => a.name.localeCompare(b.name));
+    return map;
+  }, [salesEvents, catalogProducts]);
+
+  const sortedFamilies = useMemo(() => {
+    const entries = Object.entries(allFamilies).map(([name, info]) => {
+      const detected = detectedFamilies.find((f) => f.name === name);
+      const suggestedWine = detected?.suggestedWine ?? (info.wineCount > info.notWineCount);
+      const confidence = detected?.confidence ?? "low";
+      return { name, suggestedWine, confidence, itemCount: info.itemCount, wineCount: info.wineCount, notWineCount: info.notWineCount };
+    });
+    return entries.sort((a, b) => {
+      const aWine = a.name in familyOverrides ? familyOverrides[a.name] : a.suggestedWine;
+      const bWine = b.name in familyOverrides ? familyOverrides[b.name] : b.suggestedWine;
+      if (aWine !== bWine) return aWine ? -1 : 1;
+      return b.itemCount - a.itemCount;
+    });
+  }, [allFamilies, detectedFamilies, familyOverrides]);
+
+  const wineCount = sortedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
+  const isLoading = loadingDays || loadingSales;
+
+  const confidenceIcon = (c: string) => {
+    if (c === "high") return <ShieldCheck className="h-3.5 w-3.5 text-success" />;
+    if (c === "medium") return <HelpCircle className="h-3.5 w-3.5 text-warning" />;
+    return <ShieldX className="h-3.5 w-3.5 text-muted-foreground" />;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Scanning sales data…</p>
+        </div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">{loadingDays ? "Scanning business days…" : "Loading sales…"}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Wine Family Classification</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {sortedFamilies.length > 0
+            ? <>Detected <span className="font-medium text-foreground">{sortedFamilies.length}</span> families. One-click to classify as Wine/Not wine.</>
+            : "No families detected yet."}
+        </p>
+      </div>
+
+      {scanStats && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Scan Results</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Days scanned</span><span className="font-mono text-foreground">{scanStats.totalScanned}</span>
+            <span className="text-muted-foreground">Days with sales</span><span className="font-mono text-foreground">{daysWithSales.length}</span>
+            <span className="text-muted-foreground">Total invoices</span><span className="font-mono text-foreground">{scanStats.totalInvoicesFound}</span>
+            {selectedDay && <><span className="text-muted-foreground">Last day with data</span><span className="font-mono text-foreground">{selectedDay}</span></>}
+            <span className="text-muted-foreground">Families</span><span className="font-mono text-foreground">{sortedFamilies.length}</span>
+          </div>
+        </div>
+      )}
+
+      {sortedFamilies.length === 0 && (
+        <div className="text-center py-8 space-y-4 rounded-lg border border-border bg-secondary/20">
+          <p className="text-sm text-muted-foreground">No families found. Try scanning more history or sync catalog first.</p>
+          <Button variant="secondary" onClick={onRunHistoricalScan}><Search className="mr-2 h-4 w-4" /> Run Historical Scan (90 days)</Button>
+        </div>
+      )}
+
+      {sortedFamilies.length > 0 && (
+        <>
+          <div className="flex gap-4 text-xs">
+            <div className="flex items-center gap-1.5"><div className="h-2.5 w-2.5 rounded-full bg-success" /><span className="text-muted-foreground"><span className="font-medium text-foreground">{wineCount}</span> wine</span></div>
+            <div className="flex items-center gap-1.5"><div className="h-2.5 w-2.5 rounded-full bg-muted-foreground" /><span className="text-muted-foreground"><span className="font-medium text-foreground">{sortedFamilies.length - wineCount}</span> non-wine</span></div>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => {
+              const o: Record<string, boolean> = {};
+              sortedFamilies.forEach((f) => { o[f.name] = true; });
+              setFamilyOverrides(o);
+            }}>Select All as Wine</Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              const o: Record<string, boolean> = {};
+              sortedFamilies.forEach((f) => { o[f.name] = false; });
+              setFamilyOverrides(o);
+            }}>Deselect All</Button>
+            <Button variant="outline" size="sm" onClick={() => setFamilyOverrides({})}>Reset</Button>
+          </div>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-96 overflow-y-auto">
+            {sortedFamilies.map((f) => {
+              const isWine = f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine;
+              const isOverridden = f.name in familyOverrides && familyOverrides[f.name] !== f.suggestedWine;
+              return (
+                <div key={f.name}>
+                  <div className={`flex items-center justify-between px-4 py-3 transition-colors cursor-pointer hover:bg-secondary/30 ${isWine ? "bg-success/5" : "bg-card"}`}
+                    onClick={() => setExpandedFamily(expandedFamily === f.name ? null : f.name)}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Switch checked={isWine} onCheckedChange={(v) => {
+                        setFamilyOverrides({ ...familyOverrides, [f.name]: v });
+                        onAddKeyword(f.name, v ? "wine" : "non_wine");
+                      }} onClick={(e) => e.stopPropagation()} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-foreground truncate">{f.name}</p>
+                          {isOverridden && <Badge variant="outline" className="text-[10px] px-1.5 py-0">edited</Badge>}
+                          <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${expandedFamily === f.name ? "rotate-180" : ""}`} />
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {confidenceIcon(f.confidence)}
+                          <span className="text-[11px] text-muted-foreground capitalize">{f.confidence}</span>
+                          <span className="text-[11px] text-muted-foreground">· {f.itemCount} items</span>
+                          {f.wineCount > 0 && <span className="text-[11px] text-success">({f.wineCount} wine)</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="shrink-0">
+                      {isWine ? <Badge variant="default" className="text-[10px]"><Wine className="mr-1 h-3 w-3" />Wine</Badge>
+                        : <Badge variant="secondary" className="text-[10px]">Non-wine</Badge>}
+                    </div>
+                  </div>
+                  {expandedFamily === f.name && (
+                    <div className="bg-secondary/10 border-t border-border px-6 py-2 max-h-48 overflow-y-auto">
+                      {(familyProducts[f.name] || []).length === 0 ? (
+                        <p className="text-xs text-muted-foreground py-1">No products loaded for this family.</p>
+                      ) : (
+                        <table className="w-full text-xs">
+                          <thead><tr className="text-muted-foreground border-b border-border">
+                            <th className="text-left py-1 font-medium">Product</th>
+                            <th className="text-left py-1 font-medium">Format</th>
+                            <th className="text-right py-1 font-medium">Price</th>
+                            <th className="text-right py-1 font-medium">Class</th>
+                          </tr></thead>
+                          <tbody>
+                            {(familyProducts[f.name] || []).map((p, i) => (
+                              <tr key={i} className="border-b border-border/50 last:border-0">
+                                <td className="py-1 text-foreground">{p.name}</td>
+                                <td className="py-1 text-muted-foreground">{p.format || "—"}</td>
+                                <td className="py-1 text-right text-foreground">{p.unitPrice.toFixed(2)}€</td>
+                                <td className="py-1 text-right">{p.isWine ? <Wine className="h-3 w-3 text-success inline" /> : <span className="text-muted-foreground">—</span>}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Step 5: Sales & Mapping ──
+function StepSalesMapping({
+  connectionId: smConnectionId,
+  daysWithSales, selectedDay, setSelectedDay, loadingDays,
+  salesEvents, loadingSales, onFetchDay, onSaveSales,
+  saving, saveResult, familyOverrides, detectedFamilies,
+  catalogProducts, onOverride, onBulkOverride, recomputing, onRecompute, recomputeResult,
+  lastClosedDay,
+}: {
+  connectionId: string | null;
+  daysWithSales: string[]; selectedDay: string | null; setSelectedDay: (d: string) => void;
+  loadingDays: boolean; salesEvents: SalesEvent[]; loadingSales: boolean;
+  onFetchDay: (day: string) => void; onSaveSales: (day: string) => void;
+  saving: boolean; saveResult: {
+    savedEvents: number;
+    savedLines: number;
+    resolvedLines?: number;
+    unresolvedLines?: number;
+    stockSync?: { synced: number; skipped: number; failed: number; checkedDays?: number; errors?: string[] } | null;
+    cursorAdvanced?: boolean;
+    warning?: string | null;
+  } | null;
+  familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
+  catalogProducts: ProviderProduct[];
+  onOverride: (id: string, override: "WINE" | "NOT_WINE" | "AUTO") => void;
+  onBulkOverride: (ids: string[], override: "WINE" | "NOT_WINE") => void;
+  recomputing: boolean; onRecompute: () => void;
+  recomputeResult: { wine: number; notWine: number; needsReview: number } | null;
+  lastClosedDay?: string | null;
+}) {
+  const [searchMapping, setSearchMapping] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [classOpen, setClassOpen] = useState(false);
+  const [autoSyncing, setAutoSyncing] = useState(false);
+  const [autoSyncResult, setAutoSyncResult] = useState<{ daysSynced: number; totalEvents: number; totalLines: number; resolvedLines: number; unresolvedLines: number; message?: string } | null>(null);
+  const useCatalog = catalogProducts.length > 0;
+
+  const isFamilyWine = (familyName: string) => {
+    if (familyName in familyOverrides) return familyOverrides[familyName];
+    const detected = detectedFamilies.find((f) => f.name === familyName);
+    return detected?.suggestedWine ?? false;
+  };
+
+  // Split products by classification
+  const { wineProducts, notWineProducts, reviewProducts } = useMemo(() => {
+    const products = useCatalog
+      ? catalogProducts.map((p) => ({
+          id: p.id, provider_product_id: p.provider_product_id, name: p.name,
+          format: p.sale_format || "", family: p.family || "", quantity: 0,
+          unit_price: p.price, total_amount: 0, vat_rate: p.vat_rate,
+          is_wine_candidate: p.is_wine_candidate, wine_score: p.wine_score,
+          wine_reasons: p.wine_reasons, classification_override: p.classification_override,
+          last_score: p.last_score, last_reasons: p.last_reasons,
+          familyIsWine: isFamilyWine(p.family || ""),
+        }))
+      : salesEvents.flatMap((ev) =>
+          ev.lines.map((l, i) => ({
+            id: `${ev.provider_doc_id}-${i}`, provider_product_id: l.provider_product_id, name: l.name,
+            format: l.format, family: l.family, quantity: l.quantity,
+            unit_price: l.unit_price, total_amount: l.total_amount, vat_rate: l.vat_rate,
+            is_wine_candidate: l.is_wine_candidate, wine_score: l.wine_score || 0,
+            wine_reasons: l.wine_reasons || [], classification_override: "AUTO",
+            last_score: l.wine_score || 0, last_reasons: l.wine_reasons || [],
+            familyIsWine: isFamilyWine(l.family),
+          }))
+        );
+
+    const search = searchMapping.toLowerCase();
+    const filtered = search
+      ? products.filter((p) => p.name.toLowerCase().includes(search) || p.family.toLowerCase().includes(search))
+      : products;
+
+    return {
+      wineProducts: filtered.filter((p) => p.classification_override === "WINE" || (p.classification_override === "AUTO" && p.is_wine_candidate)),
+      notWineProducts: filtered.filter((p) => p.classification_override === "NOT_WINE" || (p.classification_override === "AUTO" && !p.is_wine_candidate && p.last_score <= 0)),
+      reviewProducts: filtered.filter((p) => p.classification_override === "AUTO" && !p.is_wine_candidate && p.last_score > 0),
+    };
+  }, [catalogProducts, salesEvents, familyOverrides, detectedFamilies, searchMapping, useCatalog]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const renderProductRow = (p: typeof wineProducts[0]) => (
+    <div key={p.id} className="flex items-center justify-between px-4 py-2 bg-card hover:bg-secondary/30 transition-colors group">
+      <div className="flex items-center gap-3 min-w-0">
+        {useCatalog && (
+          <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelect(p.id)}
+            className="h-3.5 w-3.5 rounded border-border accent-primary" />
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+          <p className="text-[11px] text-muted-foreground">
+            {p.family && <span className="mr-2">{p.family}</span>}
+            {p.format && <span className="mr-2">· {p.format}</span>}
+            {p.unit_price > 0 && <span className="font-mono">€{p.unit_price.toFixed(2)}</span>}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {useCatalog && (
+          <div className="hidden group-hover:flex gap-1">
+            <button onClick={() => onOverride(p.id, "WINE")} className="text-[10px] px-1.5 py-0.5 rounded border border-success/30 text-success hover:bg-success/10">Wine</button>
+            <button onClick={() => onOverride(p.id, "NOT_WINE")} className="text-[10px] px-1.5 py-0.5 rounded border border-destructive/30 text-destructive hover:bg-destructive/10">Not wine</button>
+            {p.classification_override !== "AUTO" && (
+              <button onClick={() => onOverride(p.id, "AUTO")} className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:bg-secondary">Auto</button>
+            )}
+          </div>
+        )}
+        <ClassificationBadge product={p} />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Sales & Product Mapping</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Las ventas se sincronizan automáticamente desde cierres de caja. En Agora se procesa el último día cerrado y se reintenta si el stock no queda confirmado.
+        </p>
+      </div>
+
+      {/* Auto-sync button */}
+      <div className="flex items-center gap-3">
+        <Button variant="default" size="sm" disabled={autoSyncing || !smConnectionId} onClick={async () => {
+          if (!smConnectionId) return;
+          setAutoSyncing(true); setAutoSyncResult(null);
+          try {
+            const { data, error } = await supabase.functions.invoke("agora-proxy", {
+              body: { action: "auto-sync-sales", connectionId: smConnectionId },
+            });
+            if (error) throw error;
+            setAutoSyncResult(data);
+          } catch (err) { console.error("Auto-sync error:", err); }
+          finally { setAutoSyncing(false); }
+        }}>
+          {autoSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+          Sync All Pending Days
+        </Button>
+        <span className="text-[11px] text-muted-foreground">Automático vía cron para días cerrados</span>
+      </div>
+
+      {autoSyncResult && (
+        <div className={`rounded-lg border p-3 text-xs ${autoSyncResult.daysSynced > 0 ? "border-success/30 bg-success/5" : "border-border bg-secondary/20"}`}>
+          {autoSyncResult.message ? (
+            <p className="text-muted-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> {autoSyncResult.message}</p>
+          ) : (
+            <>
+              <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Synced {autoSyncResult.daysSynced} days</p>
+              <p className="text-muted-foreground">{autoSyncResult.totalEvents} events · {autoSyncResult.totalLines} lines · ✓{autoSyncResult.resolvedLines} resolved · ⚠{autoSyncResult.unresolvedLines} unresolved</p>
+            </>
+          )}
+          {(autoSyncResult as any).stockSync && (
+            <p className="text-muted-foreground">
+              Stock: ✓{(autoSyncResult as any).stockSync.synced || 0} synced · {(autoSyncResult as any).stockSync.skipped || 0} skipped · ⚠{(autoSyncResult as any).stockSync.failed || 0} failed
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Last closed day banner */}
+      {lastClosedDay && (
+        <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+          <Calendar className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-xs text-foreground">
+            Data available up to last closed day: <span className="font-mono font-semibold text-primary">{lastClosedDay}</span>
+          </span>
+        </div>
+      )}
+
+      {/* BOT / COPA / MAGNUM format breakdown */}
+      {salesEvents.length > 0 && (() => {
+        const allLines = salesEvents.flatMap(e => e.lines);
+        const botLines = allLines.filter(l => l.format === "BOT");
+        const copaLines = allLines.filter(l => l.format === "COPA");
+        const magnumLines = allLines.filter(l => l.format === "MAGNUM");
+        const otherLines = allLines.filter(l => l.format !== "BOT" && l.format !== "COPA" && l.format !== "MAGNUM");
+        const botQty = botLines.reduce((s, l) => s + l.quantity, 0);
+        const copaQty = copaLines.reduce((s, l) => s + l.quantity, 0);
+        const magnumQty = magnumLines.reduce((s, l) => s + l.quantity, 0);
+        return (
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{botLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">BOT lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {botQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{copaLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">COPA lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {copaQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{magnumLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">MAGNUM lines</p>
+              <p className="text-[10px] font-mono text-muted-foreground">qty {magnumQty}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-2">
+              <p className="text-sm font-bold text-foreground">{otherLines.length}</p>
+              <p className="text-[10px] text-muted-foreground">Other</p>
+              <p className="text-[10px] font-mono text-muted-foreground">{allLines.length} total</p>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Day selector — always visible */}
+      <div>
+        <label className="text-xs font-medium text-muted-foreground mb-2 block"><Calendar className="inline h-3.5 w-3.5 mr-1" /> Business Day — Fetch & Save Sales</label>
+        {loadingDays ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="h-4 w-4 animate-spin" /> Scanning…</div>
+        ) : daysWithSales.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">No cash closures found.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {daysWithSales.map((day) => (
+              <button key={day} onClick={() => { setSelectedDay(day); onFetchDay(day); }}
+                className={`rounded-lg border px-3 py-2 text-xs font-mono transition-all ${selectedDay === day ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                {day}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recompute + bulk actions */}
+      {/* Classification (collapsible) */}
+      {useCatalog && (
+        <div className="rounded-lg border border-border">
+          <button onClick={() => setClassOpen(!classOpen)} className="flex items-center justify-between w-full px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+            <span className="flex items-center gap-2">
+              <Filter className="h-3.5 w-3.5" /> Product Classification ({wineProducts.length} wine · {notWineProducts.length} not wine · {reviewProducts.length} review)
+            </span>
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${classOpen ? "rotate-180" : ""}`} />
+          </button>
+          {classOpen && (
+            <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
+              <div className="flex gap-2 flex-wrap items-center">
+                <Button variant="secondary" size="sm" onClick={onRecompute} disabled={recomputing}>
+                  {recomputing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                  Recompute Classification
+                </Button>
+                {selectedIds.size > 0 && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "WINE"); setSelectedIds(new Set()); }}>
+                      <Wine className="mr-1 h-3.5 w-3.5" /> Mark {selectedIds.size} as Wine
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => { onBulkOverride(Array.from(selectedIds), "NOT_WINE"); setSelectedIds(new Set()); }}>
+                      Mark {selectedIds.size} as Not Wine
+                    </Button>
+                  </>
+                )}
+              </div>
+              {recomputeResult && (
+                <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs">
+                  <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Classification recomputed</p>
+                  <p className="text-muted-foreground">{recomputeResult.wine} wine · {recomputeResult.notWine} not wine · {recomputeResult.needsReview} needs review</p>
+                </div>
+              )}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="Search products…" value={searchMapping} onChange={(e) => setSearchMapping(e.target.value)} className="pl-10 bg-background" />
+              </div>
+              <Tabs defaultValue="review">
+                <TabsList className="w-full">
+                  <TabsTrigger value="review" className="flex-1">
+                    <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Needs Review ({reviewProducts.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="wine" className="flex-1">
+                    <Wine className="mr-1.5 h-3.5 w-3.5" /> Wine ({wineProducts.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="notwine" className="flex-1">
+                    Not Wine ({notWineProducts.length})
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="review">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {reviewProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No products need review.</div>
+                      : reviewProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+                <TabsContent value="wine">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {wineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No wine products.</div>
+                      : wineProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+                <TabsContent value="notwine">
+                  <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                    {notWineProducts.length === 0 ? <div className="text-center py-8 text-sm text-muted-foreground">No non-wine products.</div>
+                      : notWineProducts.map(renderProductRow)}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Day sales preview */}
+      {selectedDay && loadingSales && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="h-4 w-4 animate-spin" /> Fetching sales for {selectedDay}…</div>
+      )}
+      {selectedDay && !loadingSales && salesEvents.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">
+              Sales for {selectedDay} — {salesEvents.length} tickets, {salesEvents.reduce((s, e) => s + e.lines.length, 0)} lines
+            </h3>
+          </div>
+          <div className="rounded-lg border border-border bg-card max-h-[300px] overflow-y-auto divide-y divide-border">
+            {salesEvents.flatMap((ev, ei) =>
+              ev.lines.map((l, li) => (
+                <div key={`${ei}-${li}`} className="flex items-center justify-between px-4 py-2 text-sm hover:bg-secondary/30">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground truncate">{l.name}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {l.family && <span className="mr-2">{l.family}</span>}
+                      {l.format && <span className="mr-2">· {l.format}</span>}
+                      {l.provider_product_id && <span className="font-mono mr-2">ID:{l.provider_product_id}</span>}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4 shrink-0 text-xs text-muted-foreground">
+                    <span>×{l.quantity}</span>
+                    <span className="font-mono">€{l.unit_price.toFixed(2)}</span>
+                    <span className="font-mono font-semibold text-foreground">€{l.total_amount.toFixed(2)}</span>
+                    {l.is_wine_candidate ? (
+                      <Badge variant="outline" className="text-[10px] border-success/30 text-success">🍷</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] border-border text-muted-foreground">—</Badge>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <Button size="sm" variant="secondary" className="w-full" onClick={() => onSaveSales(selectedDay)} disabled={saving}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            {saveResult ? `Saved ${saveResult.savedEvents} events, ${saveResult.savedLines} lines · ✓${saveResult.resolvedLines || 0} resolved · ⚠${saveResult.unresolvedLines || 0} unresolved${saveResult.stockSync ? ` · stock ✓${saveResult.stockSync.synced}/⚠${saveResult.stockSync.failed}` : ""}` : "Save to DB + sync stock"}
+          </Button>
+          {saveResult?.warning && (
+            <p className="text-xs text-amber-600">{saveResult.warning}</p>
+          )}
+        </div>
+      )}
+      {selectedDay && !loadingSales && salesEvents.length === 0 && (
+        <p className="text-sm text-muted-foreground py-2">No sales found for {selectedDay}.</p>
+      )}
+    </div>
+  );
+}
+
+// ── Step 6: Wine Matching ──
+interface ProductMapping {
+  id: string;
+  provider_product_id: string;
+  provider_product_name: string;
+  winerim_wine_id: string | null;
+  winerim_wine_name: string | null;
+  match_method: string;
+  match_score: number;
+  match_reasons: string[];
+  status: string;
+}
+
+interface WinerimWine {
+  winerim_id: string;
+  name: string;
+  winery: string | null;
+  vintage: string | null;
+  region: string | null;
+}
+
+function StepWineMatching({
+  connectionId,
+}: {
+  connectionId: string | null;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [matching, setMatching] = useState(false);
+  const [aiMatching, setAiMatching] = useState(false);
+  const [mappings, setMappings] = useState<ProductMapping[]>([]);
+  const [winerimWines, setWinerimWines] = useState<WinerimWine[]>([]);
+  const [matchResult, setMatchResult] = useState<{ matched: number; skuMatched: number; fuzzyMatched: number; noMatch: number } | null>(null);
+  const [aiResult, setAiResult] = useState<{ processed: number; updated: number } | null>(null);
+  const [searchWinerim, setSearchWinerim] = useState("");
+  const [searchMappings, setSearchMappings] = useState("");
+  const [editingMapping, setEditingMapping] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    const [mappingsData, winesData] = await Promise.all([
+      fetchAllMappings(connectionId),
+      fetchAllWinerimWines(connectionId, "winerim_id, name, winery, vintage, region"),
+    ]);
+    setMappings(mappingsData as ProductMapping[]);
+    setWinerimWines(winesData as WinerimWine[]);
+    setLoading(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const fetchWinerimCatalog = async () => {
+    if (!connectionId) return;
+    setFetchingCatalog(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "fetch-catalog", connectionId, mode: "start", detailOffset: 0, detailBatchSize: 100 },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        toast({ title: "Catálogo Winerim cargado", description: `${data.totalWines} vinos importados` });
+        await loadData();
+      } else {
+        toast({ title: "Error", description: data?.error || "No se pudo cargar el catálogo", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setFetchingCatalog(false); }
+  };
+
+  const runMatching = async () => {
+    if (!connectionId) return;
+    setMatching(true); setMatchResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "match-products", connectionId },
+      });
+      if (error) throw error;
+      setMatchResult(data);
+      await loadData();
+    } catch (e: any) {
+      toast({ title: "Error matching", description: e.message, variant: "destructive" });
+    } finally { setMatching(false); }
+  };
+
+  const runAiMatching = async () => {
+    if (!connectionId) return;
+    setAiMatching(true); setAiResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "ai-match", connectionId },
+      });
+      if (error) throw error;
+      setAiResult(data);
+      await loadData();
+    } catch (e: any) {
+      toast({ title: "Error AI matching", description: e.message, variant: "destructive" });
+    } finally { setAiMatching(false); }
+  };
+
+  const confirmMapping = async (mappingId: string, winerimWineId?: string, winerimWineName?: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "confirm-mapping", connectionId, mappingId, winerimWineId, winerimWineName },
+    });
+    await loadData();
+    setEditingMapping(null);
+  };
+
+  const rejectMapping = async (mappingId: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "reject-mapping", connectionId, mappingId },
+    });
+    await loadData();
+  };
+
+  const ignoreMapping = async (mappingId: string) => {
+    await supabase.functions.invoke("winerim-proxy", {
+      body: { action: "ignore-mapping", connectionId, mappingId },
+    });
+    await loadData();
+  };
+
+  const matchesSearch = (m: ProductMapping) => {
+    if (!searchMappings.trim()) return true;
+    const q = searchMappings.toLowerCase();
+    return m.provider_product_name.toLowerCase().includes(q) || (m.winerim_wine_name || "").toLowerCase().includes(q);
+  };
+
+  const pendingMappings = mappings.filter(m => m.status === "PENDING" && matchesSearch(m));
+  const confirmedMappings = mappings.filter(m => m.status === "CONFIRMED" && matchesSearch(m));
+  const rejectedMappings = mappings.filter(m => (m.status === "REJECTED" || m.status === "IGNORED") && matchesSearch(m));
+
+  const filteredWines = searchWinerim
+    ? winerimWines.filter(w => w.name.toLowerCase().includes(searchWinerim.toLowerCase()) || (w.winery || "").toLowerCase().includes(searchWinerim.toLowerCase()))
+    : winerimWines;
+
+  const methodBadge = (method: string) => {
+    const v = method === "SKU" ? "default" : method === "AI" ? "secondary" : "outline";
+    return <Badge variant={v} className="text-[10px]">{method}</Badge>;
+  };
+
+  const scoreBadge = (score: number) => {
+    const color = score >= 80 ? "text-success" : score >= 50 ? "text-warning" : "text-destructive";
+    return <span className={`font-mono text-[10px] font-medium ${color}`}>{score}%</span>;
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Wine Matching (POS → Winerim)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Match POS wine products with your Winerim catalog to enable stock sync.
+        </p>
+      </div>
+
+      {/* Status bar */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <div className="grid grid-cols-3 gap-4 text-xs">
+          <div><span className="text-muted-foreground block">Winerim Wines</span><span className="font-medium text-foreground text-sm">{winerimWines.length}</span></div>
+          <div><span className="text-muted-foreground block">Matched</span><span className="font-medium text-success text-sm">{confirmedMappings.length}</span></div>
+          <div><span className="text-muted-foreground block">Pending Review</span><span className="font-medium text-warning text-sm">{pendingMappings.length}</span></div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={fetchWinerimCatalog} disabled={fetchingCatalog}>
+          {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          {winerimWines.length > 0 ? "Refresh Winerim Catalog" : "Fetch Winerim Catalog"}
+        </Button>
+        {winerimWines.length > 0 && (
+          <>
+            <Button variant="secondary" size="sm" onClick={runMatching} disabled={matching}>
+              {matching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+              SKU + Fuzzy Match
+            </Button>
+            {pendingMappings.length > 0 && (
+              <Button variant="outline" size="sm" onClick={runAiMatching} disabled={aiMatching}>
+                {aiMatching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <span className="mr-2">🤖</span>}
+                AI Match ({pendingMappings.length} pending)
+              </Button>
+            )}
+          </>
+        )}
+      </div>
+
+      {matchResult && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Matching completed</p>
+          <p className="text-muted-foreground">
+            {matchResult.matched} matched ({matchResult.skuMatched} SKU, {matchResult.fuzzyMatched} fuzzy), {matchResult.noMatch} no match
+          </p>
+        </div>
+      )}
+      {aiResult && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5">🤖 AI Matching completed</p>
+          <p className="text-muted-foreground">{aiResult.processed} processed, {aiResult.updated} updated</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : mappings.length === 0 && winerimWines.length === 0 ? (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20 space-y-2">
+          <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">Fetch your Winerim catalog first, then run matching.</p>
+        </div>
+      ) : mappings.length === 0 && winerimWines.length > 0 ? (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4 space-y-2">
+          <div className="flex items-start gap-2">
+            <HelpCircle className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-foreground">No POS wine products to match</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                This customer has no wine products in Agora yet. Use the <strong>Winerim Catalog</strong> step (next step) to browse and push wines directly into Agora.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+        {/* Search mappings */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Search mappings…" value={searchMappings} onChange={(e) => setSearchMappings(e.target.value)} className="pl-10 bg-background" />
+        </div>
+        <Tabs defaultValue="pending" className="space-y-3">
+          <TabsList className="w-full">
+            <TabsTrigger value="pending" className="flex-1">
+              <HelpCircle className="mr-1.5 h-3.5 w-3.5" /> Pending ({pendingMappings.length})
+            </TabsTrigger>
+            <TabsTrigger value="confirmed" className="flex-1">
+              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Confirmed ({confirmedMappings.length})
+            </TabsTrigger>
+            <TabsTrigger value="rejected" className="flex-1">
+              Rejected ({rejectedMappings.length})
+            </TabsTrigger>
+          </TabsList>
+
+          {[
+            { key: "pending", items: pendingMappings },
+            { key: "confirmed", items: confirmedMappings },
+            { key: "rejected", items: rejectedMappings },
+          ].map(({ key, items }) => (
+            <TabsContent key={key} value={key}>
+              <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-80 overflow-y-auto">
+                {items.length === 0 ? (
+                  <div className="text-center py-8 text-sm text-muted-foreground">
+                    {key === "pending" ? "No pending matches. Run matching first." : `No ${key} matches.`}
+                  </div>
+                ) : items.map((m) => (
+                  <div key={m.id} className="px-4 py-3 bg-card hover:bg-secondary/30 transition-colors">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{m.provider_product_name}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <p className="text-sm text-primary truncate">{m.winerim_wine_name || "No match"}</p>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {methodBadge(m.match_method)}
+                          {scoreBadge(m.match_score)}
+                          {m.match_reasons.length > 0 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger><HelpCircle className="h-3 w-3 text-muted-foreground" /></TooltipTrigger>
+                                <TooltipContent side="right" className="max-w-xs text-xs">
+                                  {m.match_reasons.map((r, i) => <div key={i}>{r}</div>)}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
+                      </div>
+                      {key === "pending" && (
+                        <div className="flex gap-1 shrink-0">
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-success hover:text-success" onClick={() => confirmMapping(m.id)}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditingMapping(editingMapping === m.id ? null : m.id)}>
+                            <Search className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive" onClick={() => rejectMapping(m.id)}>
+                            <XCircle className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => ignoreMapping(m.id)}>
+                            <Filter className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {/* Manual search panel */}
+                    {editingMapping === m.id && (
+                      <div className="mt-3 border-t border-border pt-3 space-y-2">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <Input placeholder="Search Winerim wines…" value={searchWinerim} onChange={(e) => setSearchWinerim(e.target.value)} className="pl-9 bg-background text-sm h-8" />
+                        </div>
+                        <div className="max-h-40 overflow-y-auto divide-y divide-border rounded border border-border">
+                          {filteredWines.slice(0, 20).map((w) => (
+                            <button key={w.winerim_id} onClick={() => confirmMapping(m.id, w.winerim_id, w.name)}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-secondary/30 transition-colors flex items-center justify-between">
+                              <div>
+                                <span className="font-medium text-foreground">{w.name}</span>
+                                {w.winery && <span className="text-muted-foreground ml-2">({w.winery})</span>}
+                                {w.vintage && <span className="text-muted-foreground ml-1">{w.vintage}</span>}
+                              </div>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </TabsContent>
+          ))}
+        </Tabs>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Step 9: Winerim Catalog (Winerim → Agora) ──
+interface WinerimCatalogWine {
+  winerim_id: string;
+  name: string;
+  wine_type: string | null;
+  bottle_sale_price: number | null;
+  bottle_purchase_price: number | null;
+  glass_sale_price: number | null;
+  glass_cost_price: number | null;
+  magnum_sale_price: number | null;
+  magnum_purchase_price: number | null;
+  serve_by_glass: boolean;
+  is_active: boolean;
+  winery: string | null;
+  region: string | null;
+  vintage: string | null;
+  updated_at: string;
+  pricing_status: string;
+  pricing_missing_reason: string | null;
+}
+
+const PRICING_REASON_ORDER = [
+  "503_from_winerim",
+  "detail_fetch_failed",
+  "no_prices_array",
+  "prices_array_empty",
+  "format_not_recognized",
+  "sale_price_missing",
+  "parser_error",
+  "unknown",
+] as const;
+
+type PricingMissingReason = (typeof PRICING_REASON_ORDER)[number];
+
+const RETRYABLE_REASONS = new Set<PricingMissingReason>(["503_from_winerim"]);
+
+const normalizePricingReason = (reason: string | null | undefined): PricingMissingReason => {
+  if (!reason) return "unknown";
+  return (PRICING_REASON_ORDER as readonly string[]).includes(reason) ? (reason as PricingMissingReason) : "unknown";
+};
+
+const isRetryableReason = (reason: PricingMissingReason) => RETRYABLE_REASONS.has(reason);
+
+function StepWinerimCatalog({
+  connectionId,
+  onQueueProducts,
+  queuingProducts,
+  families,
+  priceListCount,
+}: {
+  connectionId: string | null;
+  onQueueProducts: (ids: string[], formatTypes?: string[], familyOverrideId?: string) => void;
+  queuingProducts: boolean;
+  families: { Id: string; Name: string }[];
+  priceListCount: number;
+}) {
+  const [wines, setWines] = useState<WinerimCatalogWine[]>([]);
+  const [pushTracking, setPushTracking] = useState<Record<string, Record<string, {
+    sync_status: string;
+    last_error: string | null;
+    pushed_at: string | null;
+    verified_at: string | null;
+    agora_product_id?: string | null;
+    agora_family_id?: string | null;
+    agora_family_name?: string | null;
+  }>>>({});
+  const [taskStateByWine, setTaskStateByWine] = useState<Record<string, {
+    status: "QUEUED" | "RUNNING" | "BLOCKED";
+    operation: "CREATE" | "UPDATE";
+    format_types: string[];
+    blocked_reason: string | null;
+    last_error: string | null;
+  }>>({});
+  const [loading, setLoading] = useState(false);
+  const [fetchingCatalog, setFetchingCatalog] = useState(false);
+  const [refreshDiagnostics, setRefreshDiagnostics] = useState<{
+    total: number;
+    processed: number;
+    listFetched: number;
+    detailAttempted: number;
+    detailSucceeded: number;
+    bottleUpdated: number;
+    glassUpdated: number;
+  } | null>(null);
+  const [lastEnrichedAt, setLastEnrichedAt] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filterActive, setFilterActive] = useState(true);
+  const [filterGlass, setFilterGlass] = useState(false);
+  const [filterNonReadyOnly, setFilterNonReadyOnly] = useState(false);
+  const [filterMissingReason, setFilterMissingReason] = useState<"all" | PricingMissingReason>("all");
+  const [filterFormat, setFilterFormat] = useState<"all" | "bottle" | "glass" | "magnum">("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [filterSyncStatus, setFilterSyncStatus] = useState<"all" | "NOT_PUSHED" | "QUEUED" | "PUSHED" | "VERIFIED" | "FAILED">("all");
+  const [filterWineType, setFilterWineType] = useState<string>("all");
+  const [expandedWineId, setExpandedWineId] = useState<string | null>(null);
+  const [familyOverrideId, setFamilyOverrideId] = useState("");
+  const [previewXml, setPreviewXml] = useState<string | null>(null);
+  const [generatingXml, setGeneratingXml] = useState(false);
+  const [enrichingMissing, setEnrichingMissing] = useState(false);
+  const [diagnosingUnknown, setDiagnosingUnknown] = useState(false);
+  const [diagnoseResult, setDiagnoseResult] = useState<{
+    totalNonReady: number;
+    reclassified: number;
+    results: Record<string, number>;
+    debugSamples: any[];
+  } | null>(null);
+  const [enrichResult, setEnrichResult] = useState<{
+    processed: number;
+    movedToReady: number;
+    readyBefore: number;
+    readyAfter: number;
+    missingBefore: number;
+    missingAfter: number;
+    byStatusAfter: Record<string, number>;
+    byReasonAfter: Record<PricingMissingReason, number>;
+  } | null>(null);
+
+  const loadWines = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    const [data, trackingData, masterData, outboundTaskRows] = await Promise.all([
+      fetchAllWinerimWines(
+        connectionId,
+        "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
+      ),
+      (async () => {
+        const PAGE = 1000;
+        let all: any[] = [];
+        let page = 0;
+        while (true) {
+          const { data: batch } = await supabase
+            .from("winerim_push_tracking" as any)
+            .select("winerim_wine_id, format, sync_status, last_error, pushed_at, verified_at, agora_product_id, agora_family_id")
+            .eq("connection_id", connectionId)
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (!batch || batch.length === 0) break;
+          all = all.concat(batch);
+          if (batch.length < PAGE) break;
+          page++;
+        }
+        return all;
+      })(),
+      supabase.from("agora_master_data")
+        .select("families_json, products_summary_json")
+        .eq("connection_id", connectionId)
+        .maybeSingle()
+        .then(r => r.data || null),
+      (async () => {
+        const PAGE = 1000;
+        let all: any[] = [];
+        let page = 0;
+        while (true) {
+          const { data: batch } = await supabase
+            .from("outbound_tasks" as any)
+            .select("payload_json, status, blocked_reason, last_error, updated_at")
+            .eq("connection_id", connectionId)
+            .eq("task_type", "AGORA_XML_UPSERT_PRODUCT")
+            .in("status", ["QUEUED", "RUNNING", "BLOCKED"])
+            .order("updated_at", { ascending: false })
+            .range(page * PAGE, (page + 1) * PAGE - 1);
+          if (!batch || batch.length === 0) break;
+          all = all.concat(batch);
+          if (batch.length < PAGE) break;
+          page++;
+        }
+        return all;
+      })(),
+    ]);
+    const rows = data as WinerimCatalogWine[];
+    setWines(rows);
+
+    const familyMap: Record<string, string> = {};
+    const familiesArr = ((masterData as any)?.families_json as any[]) || [];
+    for (const f of familiesArr) {
+      familyMap[String(f.Id)] = f.Name || f.ButtonText || String(f.Id);
+    }
+
+    const productFamilyMap: Record<string, { familyId: string | null; familyName: string | null }> = {};
+    const productsArr = (((masterData as any)?.products_summary_json as any[]) || []);
+    for (const p of productsArr) {
+      const familyId = p?.FamilyId ? String(p.FamilyId) : null;
+      productFamilyMap[String(p.Id)] = {
+        familyId,
+        familyName: familyId ? (familyMap[familyId] || familyId) : null,
+      };
+    }
+
+    // Build tracking lookup: winerim_wine_id -> { BOTTLE: {...}, GLASS: {...}, MAGNUM: {...} }
+    const trackingMap: Record<string, Record<string, {
+      sync_status: string;
+      last_error: string | null;
+      pushed_at: string | null;
+      verified_at: string | null;
+      agora_product_id?: string | null;
+      agora_family_id?: string | null;
+      agora_family_name?: string | null;
+    }>> = {};
+    for (const t of trackingData as any[]) {
+      if (!trackingMap[t.winerim_wine_id]) trackingMap[t.winerim_wine_id] = {};
+      const fallbackFamily = t.agora_product_id ? productFamilyMap[String(t.agora_product_id)] : null;
+      const resolvedFamilyId = t.agora_family_id ? String(t.agora_family_id) : (fallbackFamily?.familyId || null);
+      trackingMap[t.winerim_wine_id][t.format] = {
+        sync_status: t.sync_status,
+        last_error: t.last_error,
+        pushed_at: t.pushed_at,
+        verified_at: t.verified_at,
+        agora_product_id: t.agora_product_id,
+        agora_family_id: resolvedFamilyId,
+        agora_family_name: resolvedFamilyId ? (familyMap[resolvedFamilyId] || fallbackFamily?.familyName || resolvedFamilyId) : (fallbackFamily?.familyName || null),
+      };
+    }
+    setPushTracking(trackingMap);
+
+    const taskMap: Record<string, {
+      status: "QUEUED" | "RUNNING" | "BLOCKED";
+      operation: "CREATE" | "UPDATE";
+      format_types: string[];
+      blocked_reason: string | null;
+      last_error: string | null;
+    }> = {};
+    for (const task of outboundTaskRows as any[]) {
+      const payload = (task.payload_json || {}) as Record<string, any>;
+      const wineId = String(payload._winerim_wine_id || "");
+      if (!wineId || taskMap[wineId]) continue;
+      taskMap[wineId] = {
+        status: task.status,
+        operation: payload._operation === "UPDATE" ? "UPDATE" : "CREATE",
+        format_types: Array.isArray(payload._format_types) ? payload._format_types.map((fmt: unknown) => String(fmt)) : [],
+        blocked_reason: task.blocked_reason || null,
+        last_error: task.last_error || null,
+      };
+    }
+    setTaskStateByWine(taskMap);
+
+    const latestEnriched = rows
+      .filter((w) =>
+        (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) ||
+        (w.glass_sale_price != null && Number(w.glass_sale_price) > 0) ||
+        (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0)
+      )
+      .map((w) => w.updated_at)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] || null;
+
+    setLastEnrichedAt(latestEnriched);
+    setLoading(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadWines(); }, [loadWines]);
+
+  const fetchCatalog = async () => {
+    if (!connectionId) return;
+    setFetchingCatalog(true);
+    setRefreshDiagnostics(null);
+
+    try {
+      const runBatch = async (mode: "start" | "enrich", offset: number) => {
+        const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+          body: { action: "fetch-catalog", connectionId, mode, detailOffset: offset, detailBatchSize: 100 },
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || "Catalog refresh failed");
+        return data;
+      };
+
+      let total = 0;
+      let processed = 0;
+      let listFetched = 0;
+      let detailAttempted = 0;
+      let detailSucceeded = 0;
+      let bottleUpdated = 0;
+      let glassUpdated = 0;
+
+      let mode: "start" | "enrich" = "start";
+      let nextOffset = 0;
+      let complete = false;
+      let completionTs: string | null = null;
+
+      while (!complete) {
+        const batch = await runBatch(mode, nextOffset);
+
+        total = Number(batch.totalWines || total);
+        processed = Number(batch.processedDetails || processed);
+        listFetched = Math.max(listFetched, Number(batch.listWinesFetched || 0));
+        detailAttempted += Number(batch.detailRequestsAttempted || 0);
+        detailSucceeded += Number(batch.detailRequestsSucceeded || 0);
+        bottleUpdated += Number(batch.winesUpdatedWithBottlePrice || 0);
+        glassUpdated += Number(batch.winesUpdatedWithGlassPrice || 0);
+
+        setRefreshDiagnostics({
+          total,
+          processed,
+          listFetched,
+          detailAttempted,
+          detailSucceeded,
+          bottleUpdated,
+          glassUpdated,
+        });
+
+        complete = Boolean(batch.complete);
+        if (complete) {
+          completionTs = batch.enrichmentCompletedAt || new Date().toISOString();
+        } else {
+          const candidateOffset = Number(batch.nextDetailOffset ?? processed);
+          if (!Number.isFinite(candidateOffset) || candidateOffset <= nextOffset) {
+            throw new Error("Pricing enrichment stalled before completion.");
+          }
+          nextOffset = candidateOffset;
+          mode = "enrich";
+        }
+      }
+
+      await loadWines();
+      if (completionTs) setLastEnrichedAt(completionTs);
+
+      if (detailAttempted > 0 && detailSucceeded === 0) {
+        toast({
+          title: "Catalog synced, but detail enrichment failed",
+          description: "No wine detail requests succeeded. Check connection/token and retry refresh.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Winerim catalog refresh completed",
+          description: `List: ${listFetched} wines · Details: ${detailSucceeded}/${detailAttempted} · Bottle priced: ${bottleUpdated} · Glass priced: ${glassUpdated}`,
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setFetchingCatalog(false);
+    }
+  };
+
+  // Unique wine types for filter dropdown
+  const uniqueWineTypes = useMemo(() => {
+    const types = new Set<string>();
+    for (const w of wines) { if (w.wine_type) types.add(w.wine_type); }
+    return Array.from(types).sort();
+  }, [wines]);
+
+  // Helper to get push status for a wine (worst across formats)
+  const getWineSyncStatus = useCallback((winerimId: string): string => {
+    const wt = pushTracking[winerimId];
+    if (!wt || Object.keys(wt).length === 0) return "NOT_PUSHED";
+    const statuses = Object.values(wt).map(t => t.sync_status);
+    if (statuses.includes("FAILED")) return "FAILED";
+    if (statuses.includes("QUEUED")) return "QUEUED";
+    if (statuses.includes("PUSHED")) return "PUSHED";
+    if (statuses.every(s => s === "VERIFIED")) return "VERIFIED";
+    return statuses[0] || "NOT_PUSHED";
+  }, [pushTracking]);
+
+  const getPendingTaskMeta = useCallback((winerimId: string) => taskStateByWine[winerimId] || null, [taskStateByWine]);
+
+  const taskSummary = useMemo(() => {
+    const values = Object.values(taskStateByWine);
+    return {
+      queuedCreate: values.filter((t) => (t.status === "QUEUED" || t.status === "RUNNING") && t.operation === "CREATE").length,
+      queuedUpdate: values.filter((t) => (t.status === "QUEUED" || t.status === "RUNNING") && t.operation === "UPDATE").length,
+      blocked: values.filter((t) => t.status === "BLOCKED").length,
+    };
+  }, [taskStateByWine]);
+
+  const filteredWines = useMemo(() => {
+    let result = wines;
+    if (filterActive) result = result.filter(w => w.is_active);
+    if (filterGlass) result = result.filter(w => w.serve_by_glass);
+    if (filterNonReadyOnly || filterMissingReason !== "all") {
+      result = result.filter(w => (w.pricing_status || "MISSING") !== "READY");
+    }
+    if (filterMissingReason !== "all") {
+      result = result.filter(w => normalizePricingReason(w.pricing_missing_reason) === filterMissingReason);
+    }
+    if (filterFormat !== "all") {
+      result = result.filter(w => {
+        if (filterFormat === "bottle") return w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0;
+        if (filterFormat === "glass") return w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0;
+        if (filterFormat === "magnum") return w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0;
+        return true;
+      });
+    }
+    if (filterWineType !== "all") {
+      result = result.filter(w => w.wine_type === filterWineType);
+    }
+    if (filterSyncStatus !== "all") {
+      result = result.filter(w => getWineSyncStatus(w.winerim_id) === filterSyncStatus);
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(w =>
+        w.name.toLowerCase().includes(q) ||
+        (w.winery || "").toLowerCase().includes(q) ||
+        (w.wine_type || "").toLowerCase().includes(q) ||
+        (w.region || "").toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [wines, search, filterActive, filterGlass, filterNonReadyOnly, filterMissingReason, filterFormat, filterWineType, filterSyncStatus, getWineSyncStatus]);
+
+  const toggleWine = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedIds(new Set(filteredWines.map(w => w.winerim_id)));
+  const clearSelection = () => setSelectedIds(new Set());
+
+  // Status tab filter
+  const [statusTab, setStatusTab] = useState<"ALL" | "READY" | "MISSING" | "RETRYING" | "FAILED" | "BY_REASON">("ALL");
+
+  const pricingStats = useMemo(() => {
+    const byStatus: Record<string, number> = {};
+    const byReason = Object.fromEntries(PRICING_REASON_ORDER.map((reason) => [reason, 0])) as Record<PricingMissingReason, number>;
+    let nonReadyTotal = 0;
+    let retryable = 0;
+    let nonRetryable = 0;
+    let withBottle = 0;
+    let withGlass = 0;
+    let withMagnum = 0;
+
+    for (const w of wines) {
+      const st = w.pricing_status || "MISSING";
+      byStatus[st] = (byStatus[st] || 0) + 1;
+      if (st !== "READY") {
+        nonReadyTotal += 1;
+        const reason = normalizePricingReason(w.pricing_missing_reason);
+        byReason[reason] = (byReason[reason] || 0) + 1;
+        if (isRetryableReason(reason)) retryable += 1;
+        else nonRetryable += 1;
+      } else {
+        // Count variants for READY wines
+        if (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) withBottle += 1;
+        if (w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0) withGlass += 1;
+        if (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0) withMagnum += 1;
+      }
+    }
+
+    return { byStatus, byReason, nonReadyTotal, retryable, nonRetryable, withBottle, withGlass, withMagnum };
+  }, [wines]);
+
+  // Group wines by pricing_status
+  const winesByStatus = useMemo(() => {
+    const groups: Record<string, WinerimCatalogWine[]> = { READY: [], MISSING: [], RETRYING: [], FAILED: [] };
+    for (const w of wines) {
+      const st = w.pricing_status || "MISSING";
+      if (!groups[st]) groups[st] = [];
+      groups[st].push(w);
+    }
+    return groups;
+  }, [wines]);
+
+  // Group wines by missing_reason (only non-READY)
+  const winesByReason = useMemo(() => {
+    const groups: Record<PricingMissingReason, WinerimCatalogWine[]> = Object.fromEntries(
+      PRICING_REASON_ORDER.map((r) => [r, []])
+    ) as Record<PricingMissingReason, WinerimCatalogWine[]>;
+    for (const w of wines) {
+      if ((w.pricing_status || "MISSING") !== "READY") {
+        const reason = normalizePricingReason(w.pricing_missing_reason);
+        groups[reason].push(w);
+      }
+    }
+    return groups;
+  }, [wines]);
+
+  const enrichMissingPrices = async () => {
+    if (!connectionId) return;
+    setEnrichingMissing(true);
+    setEnrichResult(null);
+
+    // Capture "before" snapshot from current wines state
+    const readyBefore = wines.filter(w => w.pricing_status === "READY").length;
+    const missingBefore = wines.length - readyBefore;
+
+    let totalProcessed = 0;
+    try {
+      for (let i = 0; i < 5; i++) {
+        const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+          body: { action: "fetch-wine-details", connectionId },
+        });
+        if (error) throw error;
+        if (!data?.success) break;
+        totalProcessed += data.enriched || 0;
+        if ((data.requested || 0) === 0) break;
+      }
+
+      // Re-fetch wines from DB to get fresh counts
+      const freshWines = await fetchAllWinerimWines(
+        connectionId,
+        "winerim_id, name, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active, winery, region, vintage, updated_at, pricing_status, pricing_missing_reason"
+      ) as WinerimCatalogWine[];
+      setWines(freshWines);
+
+      // Compute "after" stats from fresh data
+      const byStatusAfter: Record<string, number> = {};
+      const byReasonAfter = Object.fromEntries(PRICING_REASON_ORDER.map((reason) => [reason, 0])) as Record<PricingMissingReason, number>;
+      for (const w of freshWines) {
+        const st = w.pricing_status || "MISSING";
+        byStatusAfter[st] = (byStatusAfter[st] || 0) + 1;
+        if (st !== "READY") {
+          const reason = normalizePricingReason(w.pricing_missing_reason);
+          byReasonAfter[reason] = (byReasonAfter[reason] || 0) + 1;
+        }
+      }
+      const readyAfter = byStatusAfter.READY || 0;
+      const missingAfter = freshWines.length - readyAfter;
+      const movedToReady = readyAfter - readyBefore;
+
+      setEnrichResult({
+        processed: totalProcessed,
+        movedToReady,
+        readyBefore,
+        readyAfter,
+        missingBefore,
+        missingAfter,
+        byStatusAfter,
+        byReasonAfter,
+      });
+
+      toast({
+        title: "Pricing enrichment complete",
+        description: `${totalProcessed} processed · ${movedToReady} newly priced · ${missingAfter} still pending`,
+      });
+    } catch (e: any) {
+      toast({ title: "Enrichment error", description: e.message, variant: "destructive" });
+    } finally { setEnrichingMissing(false); }
+  };
+
+  const diagnoseUnknownWines = async () => {
+    if (!connectionId) return;
+    setDiagnosingUnknown(true);
+    setDiagnoseResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "diagnose-unknown", connectionId },
+      });
+      if (error) throw error;
+      setDiagnoseResult(data);
+      await loadWines();
+      toast({
+        title: "Diagnosis complete",
+        description: `${data.reclassified} wines reclassified with explicit reasons`,
+      });
+    } catch (e: any) {
+      toast({ title: "Diagnosis error", description: e.message, variant: "destructive" });
+    } finally { setDiagnosingUnknown(false); }
+  };
+
+  const handlePreviewXml = async () => {
+    if (!connectionId || selectedIds.size === 0) return;
+    setGeneratingXml(true);
+    setPreviewXml(null);
+    try {
+      // Always send all supported formats — backend validates per-wine eligibility.
+      const formatTypes = ["BOTTLE", "GLASS", "MAGNUM"];
+
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "preview-xml", connectionId, winerimWineIds: Array.from(selectedIds), formatTypes },
+      });
+      if (error) throw error;
+
+      const validationResults = data?.validationResults || [];
+      
+      // Build format diagnostics
+      const formatsGenerated = validationResults.filter((v: any) => v.validation?.valid).map((v: any) => v.formatType);
+      const formatsSkipped = validationResults.filter((v: any) => !v.validation?.valid);
+      const uniqueGenerated = [...new Set(formatsGenerated)] as string[];
+      const skippedReasons = formatsSkipped.map((v: any) => {
+        const wine = wines.find(w => w.winerim_id === v.winerimId);
+        const name = wine?.name || v.winerimId;
+        const missing = v.validation?.missingFields || [];
+        if (v.formatType === "GLASS") {
+          if (missing.includes("missing_glass_sale_price")) return `COPA ${name}: No glass price available`;
+          if (missing.includes("serve_by_glass_not_enabled")) return `COPA ${name}: serve_by_glass not enabled`;
+          if (missing.includes("wine_inactive")) return `COPA ${name}: Wine is inactive`;
+        }
+        if (v.formatType === "BOTTLE") {
+          if (missing.includes("missing_bottle_sale_price")) return `BOT. ${name}: No bottle price available`;
+          if (missing.includes("wine_inactive")) return `BOT. ${name}: Wine is inactive`;
+        }
+        return `${v.formatType} ${name}: ${missing.join(", ")}`;
+      });
+
+      const allInvalid = validationResults.length > 0 && validationResults.every((v: any) => !v.validation?.valid);
+
+      if (allInvalid && (!data?.xml || !data.xml.includes("<Product"))) {
+        const warningMsg = skippedReasons.length > 0
+          ? `No exportable products found.\n\nIssues:\n${skippedReasons.map((w: string) => `• ${w}`).join("\n")}\n\nTip: Click "Refresh Catalog" to re-fetch wine details.`
+          : "No exportable products found. Click \"Refresh Catalog\" to re-fetch.";
+        setPreviewXml(warningMsg);
+      } else {
+        // Build diagnostic header
+        const diagLines: string[] = [];
+        diagLines.push(`Formats generated: ${uniqueGenerated.join(", ") || "none"}`);
+        if (skippedReasons.length > 0) {
+          diagLines.push(`Formats skipped (${formatsSkipped.length}):`);
+          skippedReasons.forEach((r: string) => diagLines.push(`  - ${r}`));
+        }
+        const diagComment = `<!-- DIAGNOSTICS:\n${diagLines.map(l => `  ${l}`).join("\n")}\n-->`;
+        setPreviewXml(`${diagComment}\n${data?.xml || "No XML generated"}`);
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setGeneratingXml(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Winerim Catalog (Winerim → Agora)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Browse your Winerim wine catalog, select wines, and push them to Agora POS.
+        </p>
+      </div>
+
+      {/* Wines already in Ágora */}
+      <AgoraWinesInPosPanel connectionId={connectionId} />
+
+      {/* Stats */}
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-2">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 text-xs">
+          <div><span className="text-muted-foreground block">Total Wines</span><span className="font-medium text-foreground text-sm">{wines.length}</span></div>
+          <div><span className="text-muted-foreground block">Active</span><span className="font-medium text-success text-sm">{wines.filter(w => w.is_active).length}</span></div>
+          <div><span className="text-muted-foreground block">With Bottle Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">With Glass Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">With Magnum Price</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0).length}</span></div>
+          <div><span className="text-muted-foreground block">Serve by Glass</span><span className="font-medium text-foreground text-sm">{wines.filter(w => w.serve_by_glass).length}</span></div>
+        </div>
+        {/* Push tracking stats */}
+        {Object.keys(pushTracking).length > 0 && (() => {
+          const allFormats = Object.values(pushTracking).flatMap(wt => Object.values(wt));
+          const byStatus: Record<string, number> = {};
+          for (const f of allFormats) { byStatus[f.sync_status] = (byStatus[f.sync_status] || 0) + 1; }
+          return (
+            <div className="grid grid-cols-5 gap-2 mt-2">
+              {["NOT_PUSHED", "QUEUED", "PUSHED", "VERIFIED", "FAILED"].map(s => (
+                <div key={s} className="text-center rounded border border-border p-1.5">
+                  <p className="text-[10px] text-muted-foreground">{s}</p>
+                  <p className={`text-sm font-bold ${s === "VERIFIED" ? "text-success" : s === "FAILED" ? "text-destructive" : "text-foreground"}`}>{byStatus[s] || 0}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+        {(taskSummary.queuedCreate > 0 || taskSummary.queuedUpdate > 0 || taskSummary.blocked > 0) && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Pending CREATE</p>
+                <p className="text-sm font-bold text-foreground">{taskSummary.queuedCreate}</p>
+              </div>
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Pending UPDATE</p>
+                <p className="text-sm font-bold text-foreground">{taskSummary.queuedUpdate}</p>
+              </div>
+              <div className="text-center rounded border border-border p-1.5">
+                <p className="text-[10px] text-muted-foreground">Blocked tasks</p>
+                <p className="text-sm font-bold text-destructive">{taskSummary.blocked}</p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              <strong>VERIFIED</strong> = ya publicado en Agora. <strong>Pending UPDATE</strong> = ya existe arriba y solo queda refrescar datos. <strong>Blocked</strong> = hay que revisar el motivo exacto.
+            </p>
+          </div>
+        )}
+        {lastEnrichedAt && (
+          <p className="text-[11px] text-muted-foreground">
+            Pricing enrichment completed: {new Date(lastEnrichedAt).toLocaleString()}
+          </p>
+        )}
+        {wines.length > 0 && wines.filter(w => (w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0) || (w.glass_sale_price != null && Number(w.glass_sale_price) > 0) || (w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0)).length === 0 && (
+          <div className="flex items-start gap-2 mt-2 p-2 rounded bg-destructive/10 border border-destructive/20">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <p className="text-xs text-destructive">
+              No wines have pricing data yet. Click <strong>"Refresh Catalog"</strong> to fetch wine details including prices from Winerim.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={fetchCatalog} disabled={fetchingCatalog}>
+          {fetchingCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          {fetchingCatalog
+            ? `Refreshing… ${refreshDiagnostics?.processed || 0}/${refreshDiagnostics?.total || 0}`
+            : wines.length > 0 ? "Refresh Catalog" : "Fetch Winerim Catalog"}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={loadWines} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Reload List
+        </Button>
+      </div>
+
+      {/* ── Grouped Pricing Dashboard ── */}
+      {wines.length > 0 && !fetchingCatalog && (
+        <div className="rounded-lg border border-border bg-card overflow-hidden">
+          {/* Dashboard Tabs */}
+          <div className="flex border-b border-border bg-secondary/30 overflow-x-auto">
+            {[
+              { key: "ALL", label: `All (${wines.length})`, icon: "📋" },
+              { key: "READY", label: `✅ READY (${pricingStats.byStatus.READY || 0})`, color: "text-success" },
+              { key: "MISSING", label: `⚠️ MISSING (${pricingStats.byStatus.MISSING || 0})`, color: "text-amber-500" },
+              { key: "RETRYING", label: `⏳ RETRYING (${pricingStats.byStatus.RETRYING || 0})`, color: "text-blue-400" },
+              { key: "FAILED", label: `❌ FAILED (${pricingStats.byStatus.FAILED || 0})`, color: "text-destructive" },
+              { key: "BY_REASON", label: "📊 By Reason", color: "text-muted-foreground" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setStatusTab(tab.key as typeof statusTab)}
+                className={`px-4 py-2.5 text-xs font-medium whitespace-nowrap transition-colors ${
+                  statusTab === tab.key
+                    ? "bg-background border-b-2 border-primary text-foreground"
+                    : `hover:bg-secondary/50 ${tab.color || "text-foreground"}`
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          <div className="p-4 space-y-4">
+            {statusTab === "ALL" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Overview of all {wines.length} wines in the catalog.</p>
+                {/* Summary cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-success">{pricingStats.byStatus.READY || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">READY</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      🍾 {pricingStats.withBottle} bot · 🍷 {pricingStats.withGlass} glass · 🍾 {pricingStats.withMagnum} mag
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-amber-500">{pricingStats.byStatus.MISSING || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">MISSING</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-blue-400">{pricingStats.byStatus.RETRYING || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">RETRYING</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+                    <p className="text-lg font-bold text-destructive">{pricingStats.byStatus.FAILED || 0}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">FAILED</p>
+                  </div>
+                </div>
+                {/* Retryability summary */}
+                {pricingStats.nonReadyTotal > 0 && (
+                  <div className="flex gap-4 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+                      {pricingStats.retryable} retryable
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded-full bg-destructive" />
+                      {pricingStats.nonRetryable} non-retryable
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {statusTab === "READY" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-success">{pricingStats.byStatus.READY || 0}</strong> wines are ready to push.
+                  These have at least one valid price format (Bottle, Glass, or Magnum).
+                </p>
+                {/* Variant breakdown */}
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <svg className="h-5 w-5 mx-auto mb-1 text-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg>
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withBottle}</p>
+                    <p className="text-[10px] text-muted-foreground">Bottles</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <Wine className="h-5 w-5 mx-auto mb-1 text-foreground" />
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withGlass}</p>
+                    <p className="text-[10px] text-muted-foreground">By Glass</p>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <svg className="h-6 w-6 mx-auto mb-1 text-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v4.5a2 2 0 0 1-.5 1.3L7 11a5 5 0 0 0-1 3v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6a5 5 0 0 0-1-3l-2.5-3.2A2 2 0 0 1 14 6.5V2"/><path d="M10 2h4"/></svg>
+                    <p className="text-lg font-bold text-foreground">{pricingStats.withMagnum}</p>
+                    <p className="text-[10px] text-muted-foreground">Magnums</p>
+                  </div>
+                </div>
+                {/* READY wine list */}
+                {winesByStatus.READY.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-primary cursor-pointer hover:underline">View {winesByStatus.READY.length} READY wines</summary>
+                    <div className="mt-2 max-h-48 overflow-y-auto divide-y divide-border border border-border rounded-lg">
+                      {winesByStatus.READY.slice(0, 50).map((w) => (
+                        <div key={w.winerim_id} className="px-3 py-2 text-xs flex items-center justify-between bg-card">
+                          <span className="truncate">{w.name}</span>
+                          <div className="flex gap-2 shrink-0 text-[10px] font-mono">
+                            {w.bottle_sale_price != null && <span>🍾 €{Number(w.bottle_sale_price).toFixed(2)}</span>}
+                            {w.glass_sale_price != null && <span>🍷 €{Number(w.glass_sale_price).toFixed(2)}</span>}
+                            {w.magnum_sale_price != null && <span>🍾M €{Number(w.magnum_sale_price).toFixed(2)}</span>}
+                          </div>
+                        </div>
+                      ))}
+                      {winesByStatus.READY.length > 50 && (
+                        <p className="px-3 py-2 text-[10px] text-muted-foreground">…and {winesByStatus.READY.length - 50} more</p>
+                      )}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
+
+            {(statusTab === "MISSING" || statusTab === "RETRYING" || statusTab === "FAILED") && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  <strong className={statusTab === "MISSING" ? "text-amber-500" : statusTab === "RETRYING" ? "text-blue-400" : "text-destructive"}>
+                    {pricingStats.byStatus[statusTab] || 0}
+                  </strong> wines in {statusTab} status.
+                </p>
+                {/* Reason breakdown for this status */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {PRICING_REASON_ORDER.map((reason) => {
+                    const count = winesByStatus[statusTab]?.filter((w) => normalizePricingReason(w.pricing_missing_reason) === reason).length || 0;
+                    if (count === 0) return null;
+                    return (
+                      <div key={reason} className="rounded border border-border bg-secondary/30 p-2 text-center">
+                        <p className="text-sm font-bold text-foreground">{count}</p>
+                        <p className="text-[9px] text-muted-foreground truncate" title={reason}>{reason}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Wine list */}
+                {winesByStatus[statusTab]?.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto divide-y divide-border border border-border rounded-lg">
+                    {winesByStatus[statusTab].slice(0, 30).map((w) => (
+                      <div key={w.winerim_id} className="px-3 py-2 text-xs flex items-center justify-between bg-card">
+                        <span className="truncate flex-1 mr-2">{w.name}</span>
+                        <Badge variant="outline" className="text-[9px] shrink-0">{normalizePricingReason(w.pricing_missing_reason)}</Badge>
+                      </div>
+                    ))}
+                    {winesByStatus[statusTab].length > 30 && (
+                      <p className="px-3 py-2 text-[10px] text-muted-foreground">…and {winesByStatus[statusTab].length - 30} more</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {statusTab === "BY_REASON" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">Wines grouped by missing-price reason (non-READY only).</p>
+                <div className="grid gap-3">
+                  {PRICING_REASON_ORDER.map((reason) => {
+                    const wines = winesByReason[reason];
+                    if (wines.length === 0) return null;
+                    return (
+                      <div key={reason} className="rounded-lg border border-border bg-secondary/30 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-secondary/50">
+                          <span className="text-xs font-medium text-foreground">{reason}</span>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={isRetryableReason(reason) ? "default" : "secondary"} className="text-[9px]">
+                              {isRetryableReason(reason) ? "retryable" : "non-retryable"}
+                            </Badge>
+                            <span className="text-xs font-bold text-foreground">{wines.length}</span>
+                          </div>
+                        </div>
+                        <details>
+                          <summary className="px-3 py-1.5 text-[10px] text-primary cursor-pointer hover:underline bg-card">Show wines</summary>
+                          <div className="divide-y divide-border max-h-32 overflow-y-auto">
+                            {wines.slice(0, 20).map((w) => (
+                              <div key={w.winerim_id} className="px-3 py-1.5 text-xs text-foreground/80 bg-card">{w.name}</div>
+                            ))}
+                            {wines.length > 20 && (
+                              <p className="px-3 py-1.5 text-[10px] text-muted-foreground">…and {wines.length - 20} more</p>
+                            )}
+                          </div>
+                        </details>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Enrichment actions */}
+            {pricingStats.nonReadyTotal > 0 && !enrichingMissing && (
+              <div className="flex gap-2 flex-wrap pt-2 border-t border-border">
+                <Button variant="outline" size="sm" onClick={enrichMissingPrices} disabled={enrichingMissing} className="text-xs">
+                  <Zap className="mr-1 h-3 w-3" />
+                  Re-enrich {pricingStats.nonReadyTotal} non-ready
+                </Button>
+                {(pricingStats.byReason.unknown || 0) > 0 && (
+                  <Button variant="outline" size="sm" onClick={diagnoseUnknownWines} disabled={diagnosingUnknown} className="text-xs">
+                    <Search className="mr-1 h-3 w-3" />
+                    Diagnose {pricingStats.byReason.unknown} unknown
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Enrichment result */}
+            {enrichResult && (
+              <div className="p-2.5 rounded bg-secondary border border-border space-y-1.5">
+                <p className="font-semibold text-foreground text-xs">Last enrichment run:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1 text-xs text-foreground/80">
+                  <span>Processed: <strong className="text-foreground">{enrichResult.processed}</strong></span>
+                  <span>Moved to READY: <strong className={enrichResult.movedToReady > 0 ? "text-success" : "text-foreground"}>{enrichResult.movedToReady}</strong></span>
+                  <span>Ready: {enrichResult.readyBefore} → <strong className="text-foreground">{enrichResult.readyAfter}</strong></span>
+                  <span>Non-ready: {enrichResult.missingBefore} → <strong className="text-foreground">{enrichResult.missingAfter}</strong></span>
+                </div>
+                {enrichResult.missingAfter > 0 && enrichResult.missingAfter === enrichResult.missingBefore && (
+                  <p className="text-destructive mt-1.5 font-semibold text-xs">⚠ No net progress — same wines remain stuck.</p>
+                )}
+              </div>
+            )}
+
+            {/* Diagnose result */}
+            {diagnoseResult && (
+              <div className="p-2.5 rounded bg-secondary border border-border space-y-1.5">
+                <p className="font-semibold text-foreground text-xs">Diagnosis result:</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-foreground/80">
+                  <span>Reclassified: <strong className="text-foreground">{diagnoseResult.reclassified}</strong></span>
+                  {Object.entries(diagnoseResult.results).map(([reason, count]) => (
+                    <span key={reason}>{reason}: <strong className="text-foreground">{count}</strong></span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(fetchingCatalog || refreshDiagnostics) && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
+          <p className="text-muted-foreground">Diagnostics</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <p className="text-foreground">List fetched: <span className="font-mono">{refreshDiagnostics?.listFetched ?? 0}</span></p>
+            <p className="text-foreground">Details attempted: <span className="font-mono">{refreshDiagnostics?.detailAttempted ?? 0}</span></p>
+            <p className="text-foreground">Details succeeded: <span className="font-mono">{refreshDiagnostics?.detailSucceeded ?? 0}</span></p>
+            <p className="text-foreground">Progress: <span className="font-mono">{refreshDiagnostics?.processed ?? 0}/{refreshDiagnostics?.total ?? 0}</span></p>
+            <p className="text-foreground">Bottle priced: <span className="font-mono">{refreshDiagnostics?.bottleUpdated ?? 0}</span></p>
+            <p className="text-foreground">Glass priced: <span className="font-mono">{refreshDiagnostics?.glassUpdated ?? 0}</span></p>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : wines.length === 0 ? (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+          <Wine className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">No Winerim wines synced yet. Click "Fetch Winerim Catalog" above.</p>
+        </div>
+      ) : (
+        <>
+          {/* Search and filters */}
+          <div className="flex gap-3 items-center flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Search wines…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10 bg-background" />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterActive} onCheckedChange={setFilterActive} /> Active only
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterGlass} onCheckedChange={setFilterGlass} /> Glass only
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+              <Switch checked={filterNonReadyOnly} onCheckedChange={setFilterNonReadyOnly} /> Non-ready only
+            </label>
+            <select
+              value={filterMissingReason}
+              onChange={(e) => setFilterMissingReason(e.target.value as "all" | PricingMissingReason)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All reasons</option>
+              {PRICING_REASON_ORDER.map((reason) => (
+                <option key={reason} value={reason}>{reason}</option>
+              ))}
+            </select>
+            <select
+              value={filterFormat}
+              onChange={(e) => setFilterFormat(e.target.value as "all" | "bottle" | "glass" | "magnum")}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All formats</option>
+              <option value="bottle">🍾 Bottle available</option>
+              <option value="glass">🍷 Glass available</option>
+              <option value="magnum">🍾 Magnum available</option>
+            </select>
+            <select
+              value={filterWineType}
+              onChange={(e) => setFilterWineType(e.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All types</option>
+              {uniqueWineTypes.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <select
+              value={filterSyncStatus}
+              onChange={(e) => setFilterSyncStatus(e.target.value as typeof filterSyncStatus)}
+              className="h-9 rounded-md border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All push states</option>
+              <option value="NOT_PUSHED">⬜ Not pushed</option>
+              <option value="QUEUED">⏳ Queued</option>
+              <option value="PUSHED">↑ Pushed</option>
+              <option value="VERIFIED">✓ Verified</option>
+              <option value="FAILED">✗ Failed</option>
+            </select>
+          </div>
+
+          {/* PriceList coverage info */}
+          {priceListCount > 0 && (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-[11px] text-foreground flex items-center gap-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span>Prices will be applied to: <strong>{priceListCount} PriceLists</strong> (same price everywhere — all SaleCenters covered).</span>
+            </div>
+          )}
+          {priceListCount === 0 && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-[11px] text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>No PriceLists in Master Data — push is blocked. Sync Master Data first.</span>
+            </div>
+          )}
+
+          {/* Selection actions */}
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button variant="ghost" size="sm" onClick={selectAll} className="h-7 text-[11px]">Select All ({filteredWines.length})</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => w.pricing_status === "READY").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px]"
+            >
+              Select READY ({filteredWines.filter((w) => w.pricing_status === "READY").length})
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px]"
+            >
+              Select Not Pushed ({filteredWines.filter((w) => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED").length})
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set(filteredWines.filter((w) => getWineSyncStatus(w.winerim_id) === "FAILED").map((w) => w.winerim_id)))}
+              className="h-7 text-[11px] text-destructive"
+            >
+              Select Failed ({filteredWines.filter((w) => getWineSyncStatus(w.winerim_id) === "FAILED").length})
+            </Button>
+            {selectedIds.size > 0 && (() => {
+              const pushableIds = Array.from(selectedIds).filter(id => {
+                const w = wines.find(x => x.winerim_id === id);
+                return w && w.pricing_status === "READY";
+              });
+              const failedIds = Array.from(selectedIds).filter(id => getWineSyncStatus(id) === "FAILED");
+              const updateIds = pushableIds.filter(id => {
+                const s = getWineSyncStatus(id);
+                return s === "VERIFIED" || s === "PUSHED";
+              });
+              const createIds = pushableIds.filter(id => !updateIds.includes(id));
+              const blockedCount = selectedIds.size - pushableIds.length;
+              return (
+                <>
+                  <Button variant="ghost" size="sm" onClick={clearSelection} className="h-7 text-[11px]">Clear ({selectedIds.size})</Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { onQueueProducts(pushableIds, ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); clearSelection(); }}
+                    disabled={queuingProducts || pushableIds.length === 0} className="h-7 text-[11px]">
+                    {queuingProducts ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+                    Push {pushableIds.length} to Agora ({createIds.length} create · {updateIds.length} update)
+                    {blockedCount > 0 && <span className="text-destructive ml-1">({blockedCount} blocked)</span>}
+                  </Button>
+                  {failedIds.length > 0 && (
+                    <Button variant="outline" size="sm"
+                      onClick={() => { onQueueProducts(failedIds, ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); clearSelection(); }}
+                      disabled={queuingProducts} className="h-7 text-[11px] border-destructive/30 text-destructive">
+                      <RefreshCw className="mr-1 h-3 w-3" />
+                      Requeue {failedIds.length} Failed
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={handlePreviewXml} disabled={generatingXml} className="h-7 text-[11px]">
+                    {generatingXml ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+                    Preview XML
+                  </Button>
+                </>
+              );
+            })()}
+            <span className="text-[11px] text-muted-foreground ml-auto">
+              Showing {filteredWines.length} of {wines.length}
+              {filterSyncStatus !== "all" && ` · Push: ${filterSyncStatus}`}
+              {filterWineType !== "all" && ` · Type: ${filterWineType}`}
+            </span>
+          </div>
+
+          {/* Quick rollout actions */}
+          {wines.length > 0 && (
+            <div className="flex gap-2 items-center flex-wrap rounded-lg border border-border bg-secondary/20 p-2.5">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mr-1">Rollout:</span>
+              {(() => {
+                const notPushedReady = wines.filter(w => w.pricing_status === "READY" && getWineSyncStatus(w.winerim_id) === "NOT_PUSHED");
+                const failedAll = wines.filter(w => getWineSyncStatus(w.winerim_id) === "FAILED");
+                return (
+                  <>
+                    <Button variant="outline" size="sm" className="h-7 text-[11px]"
+                      disabled={queuingProducts || notPushedReady.length === 0}
+                      onClick={() => { onQueueProducts(notPushedReady.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
+                      <Send className="mr-1 h-3 w-3" />
+                      Push all not pushed ({notPushedReady.length})
+                    </Button>
+                    {failedAll.length > 0 && (
+                      <Button variant="outline" size="sm" className="h-7 text-[11px] border-destructive/30 text-destructive"
+                        disabled={queuingProducts}
+                        onClick={() => { onQueueProducts(failedAll.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
+                        <RefreshCw className="mr-1 h-3 w-3" />
+                        Requeue all failed ({failedAll.length})
+                      </Button>
+                    )}
+                    {/* Push by wine type */}
+                    {filterWineType !== "all" && (() => {
+                      const typeNotPushed = notPushedReady.filter(w => w.wine_type === filterWineType);
+                      return typeNotPushed.length > 0 ? (
+                        <Button variant="outline" size="sm" className="h-7 text-[11px]"
+                          disabled={queuingProducts}
+                          onClick={() => { onQueueProducts(typeNotPushed.map(w => w.winerim_id), ["BOTTLE", "GLASS", "MAGNUM"], familyOverrideId || undefined); }}>
+                          <Send className="mr-1 h-3 w-3" />
+                          Push {filterWineType} not pushed ({typeNotPushed.length})
+                        </Button>
+                      ) : null;
+                    })()}
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Family override at push time */}
+          {families.length > 0 && selectedIds.size > 0 && (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-3">
+              <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Family override:</span>
+              <select
+                value={familyOverrideId}
+                onChange={(e) => setFamilyOverrideId(e.target.value)}
+                className="flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="">Use default mapping</option>
+                {families.map(f => (
+                  <option key={f.Id} value={f.Id}>{f.Id}: {f.Name}</option>
+                ))}
+              </select>
+              {familyOverrideId && (
+                <span className="text-[10px] text-primary font-medium">All selected wines will be sent to this family</span>
+              )}
+            </div>
+          )}
+
+          {/* XML Preview - shown right after actions for visibility */}
+          {previewXml && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-muted-foreground">XML Preview</p>
+                <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPreviewXml(null)}>Close</Button>
+              </div>
+              <pre className="rounded-lg border border-border bg-secondary/30 p-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto text-foreground whitespace-pre-wrap">
+                {previewXml}
+              </pre>
+            </div>
+          )}
+
+          {/* Wine list */}
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-[500px] overflow-y-auto">
+            {filteredWines.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground">No wines match your filters.</div>
+            ) : filteredWines.map((w) => {
+              const bottleOk = w.bottle_sale_price != null && Number(w.bottle_sale_price) > 0;
+              const glassOk = w.serve_by_glass && w.glass_sale_price != null && Number(w.glass_sale_price) > 0;
+              const magnumOk = w.magnum_sale_price != null && Number(w.magnum_sale_price) > 0;
+              const isReady = w.pricing_status === "READY";
+              const reason = normalizePricingReason(w.pricing_missing_reason);
+              const blockReasons: string[] = [];
+              if (!isReady) {
+                if (!bottleOk && !glassOk && !magnumOk) blockReasons.push("No valid sale price for any format");
+                else blockReasons.push(`pricing_status is "${w.pricing_status || "MISSING"}" (reason: ${reason})`);
+              }
+              if (!bottleOk) blockReasons.push("BOTTLE: bottle_sale_price missing or ≤ 0");
+              if (w.serve_by_glass && !glassOk) blockReasons.push("GLASS: serve_by_glass=true but glass_sale_price missing or ≤ 0");
+              if (!w.serve_by_glass) blockReasons.push("GLASS: serve_by_glass=false");
+
+              const wineTracking = pushTracking[w.winerim_id] || {};
+              const pendingTask = getPendingTaskMeta(w.winerim_id);
+              const publishedFamilies = [...new Set(Object.values(wineTracking)
+                .filter((t) => t.sync_status === "VERIFIED" || t.sync_status === "PUSHED")
+                .map((t) => t.agora_family_name)
+                .filter(Boolean))] as string[];
+              const isPublished = Object.values(wineTracking).some((t) => t.sync_status === "VERIFIED" || t.sync_status === "PUSHED");
+              const getPushBadge = (fmt: string) => {
+                const t = wineTracking[fmt];
+                if (!t) return null;
+                const s = t.sync_status;
+                const variant = s === "VERIFIED" ? "default" : s === "PUSHED" ? "secondary" : s === "QUEUED" ? "outline" : s === "FAILED" ? "destructive" : "outline";
+                const icon = s === "VERIFIED" ? "✓" : s === "PUSHED" ? "↑" : s === "QUEUED" ? "⏳" : s === "FAILED" ? "✗" : "—";
+                return { variant, label: `${icon} ${s}`, error: t.last_error };
+              };
+              const isExpanded = expandedWineId === w.winerim_id;
+
+              return (
+                <div key={w.winerim_id} className={`bg-card hover:bg-secondary/30 transition-colors ${isPublished ? "bg-secondary/10" : ""}`}>
+                  <div className="flex items-center gap-3 px-4 py-2.5 cursor-pointer" onClick={() => setExpandedWineId(isExpanded ? null : w.winerim_id)}>
+                    <input type="checkbox" checked={selectedIds.has(w.winerim_id)}
+                      onChange={(e) => { e.stopPropagation(); toggleWine(w.winerim_id); }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-foreground truncate">{w.name}</p>
+                        {!w.is_active && <Badge variant="secondary" className="text-[10px]">Inactive</Badge>}
+                        {isReady ? (
+                          <Badge variant="default" className="text-[10px]">✓ READY</Badge>
+                        ) : (
+                          <>
+                            <Badge variant="outline" className="text-[10px]">{w.pricing_status || "MISSING"}</Badge>
+                            <Badge variant="outline" className="text-[10px]">{reason}</Badge>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {isRetryableReason(reason) ? "Retryable" : "Non-retryable"}
+                            </Badge>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5 flex-wrap">
+                        {w.wine_type && <span className="capitalize">{w.wine_type}</span>}
+                        {w.winery && <span>{w.winery}</span>}
+                        {w.vintage && <span>{w.vintage}</span>}
+                        {w.region && <span>{w.region}</span>}
+                        {/* Format availability badges inline */}
+                        <span className={`${bottleOk ? "text-success" : "text-muted-foreground/50"}`}>🍾 {bottleOk ? "✓" : "✗"}</span>
+                        <span className={`${glassOk ? "text-success" : "text-muted-foreground/50"}`}>🍷 {glassOk ? "✓" : "✗"}</span>
+                        <span className={`${magnumOk ? "text-success" : "text-muted-foreground/50"}`}>MAG {magnumOk ? "✓" : "✗"}</span>
+                        {/* Inline push status */}
+                        {(() => {
+                          const syncSt = getWineSyncStatus(w.winerim_id);
+                          if (syncSt === "NOT_PUSHED" && !pendingTask) return null;
+                          const variant = syncSt === "VERIFIED" ? "default" as const : syncSt === "FAILED" ? "destructive" as const : "outline" as const;
+                          const icon = syncSt === "VERIFIED" ? "✓" : syncSt === "PUSHED" ? "↑" : syncSt === "QUEUED" ? "⏳" : syncSt === "FAILED" ? "✗" : "—";
+                          return (
+                            <>
+                              {syncSt !== "NOT_PUSHED" && <Badge variant={variant} className="text-[9px] ml-1">{icon} {syncSt}</Badge>}
+                              {publishedFamilies.map((family) => (
+                                <Badge key={family} variant="outline" className="text-[9px]">📁 Agora: {family}</Badge>
+                              ))}
+                              {pendingTask && (pendingTask.status === "QUEUED" || pendingTask.status === "RUNNING") && (
+                                <Badge variant="outline" className="text-[9px]">⏳ Pending {pendingTask.operation}</Badge>
+                              )}
+                              {pendingTask?.status === "BLOCKED" && (
+                                <Badge variant="destructive" className="text-[9px]">✗ Blocked {pendingTask.operation}</Badge>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 text-[11px]">
+                      {w.bottle_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.bottle_sale_price).toFixed(2)}</span>
+                      )}
+                      {w.glass_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.glass_sale_price).toFixed(2)}</span>
+                      )}
+                      {w.magnum_sale_price != null && (
+                        <span className="font-mono text-foreground">€{Number(w.magnum_sale_price).toFixed(2)}</span>
+                      )}
+                      <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                    </div>
+                  </div>
+
+                  {/* Per-wine debug panel */}
+                  {isExpanded && (
+                    <div className="px-4 pb-3 pt-0">
+                      <div className="rounded-md border border-border bg-secondary/30 p-3 space-y-2 text-xs">
+                        <p className="font-semibold text-foreground text-[11px]">Wine Debug: {w.winerim_id}</p>
+
+                        {/* Pricing status */}
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                          <span className="text-muted-foreground">pricing_status</span>
+                          <span className={`font-mono font-medium ${isReady ? "text-success" : "text-destructive"}`}>{w.pricing_status || "MISSING"}</span>
+                          <span className="text-muted-foreground">pricing_missing_reason</span>
+                          <span className="font-mono text-foreground">{w.pricing_missing_reason || "—"}</span>
+                          <span className="text-muted-foreground">is_active</span>
+                          <span className="font-mono text-foreground">{String(w.is_active)}</span>
+                          <span className="text-muted-foreground">serve_by_glass</span>
+                          <span className="font-mono text-foreground">{String(w.serve_by_glass)}</span>
+                          <span className="text-muted-foreground">wine_type</span>
+                          <span className="font-mono text-foreground">{w.wine_type || "—"}</span>
+                          <span className="text-muted-foreground">updated_at</span>
+                          <span className="font-mono text-foreground">{new Date(w.updated_at).toLocaleString()}</span>
+                        </div>
+
+                        {/* Format eligibility */}
+                        <div className="mt-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Format Eligibility</p>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className={`rounded border p-2 text-center ${bottleOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍾 BOTTLE</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.bottle_sale_price != null ? `€${Number(w.bottle_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${bottleOk ? "text-success" : "text-destructive"}`}>{bottleOk ? "✓ Eligible" : "✗ Blocked"}</p>
+                            </div>
+                            <div className={`rounded border p-2 text-center ${glassOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍷 GLASS</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.glass_sale_price != null ? `€${Number(w.glass_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${glassOk ? "text-success" : "text-destructive"}`}>
+                                {!w.serve_by_glass ? "✗ serve_by_glass=false" : glassOk ? "✓ Eligible" : "✗ No glass price"}
+                              </p>
+                            </div>
+                            <div className={`rounded border p-2 text-center ${magnumOk ? "border-success/30 bg-success/5" : "border-destructive/30 bg-destructive/5"}`}>
+                              <p className="font-medium text-[11px]">🍾 MAGNUM</p>
+                              <p className="text-[10px] mt-0.5 font-mono">{w.magnum_sale_price != null ? `€${Number(w.magnum_sale_price).toFixed(2)}` : "—"}</p>
+                              <p className={`text-[9px] mt-0.5 ${magnumOk ? "text-success" : "text-destructive"}`}>{magnumOk ? "✓ Eligible" : "✗ No magnum price"}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Push Tracking Status */}
+                        {Object.keys(wineTracking).length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Agora Push Status</p>
+                            <div className="grid grid-cols-3 gap-2">
+                              {["BOTTLE", "GLASS", "MAGNUM"].map(fmt => {
+                                const t = wineTracking[fmt];
+                                if (!t) return (
+                                  <div key={fmt} className="rounded border border-border p-2 text-center">
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <p className="text-[9px] mt-0.5 text-muted-foreground">NOT_PUSHED</p>
+                                  </div>
+                                );
+                                const statusColor = t.sync_status === "VERIFIED" ? "border-success/30 bg-success/5"
+                                  : t.sync_status === "PUSHED" ? "border-primary/30 bg-primary/5"
+                                  : t.sync_status === "QUEUED" ? "border-accent bg-accent/30"
+                                  : t.sync_status === "FAILED" ? "border-destructive/30 bg-destructive/5"
+                                  : "border-border";
+                                return (
+                                  <div key={fmt} className={`rounded border p-2 text-center ${statusColor}`}>
+                                    <p className="font-medium text-[11px]">{fmt}</p>
+                                    <Badge variant={t.sync_status === "VERIFIED" ? "default" : t.sync_status === "FAILED" ? "destructive" : "outline"} className="text-[9px] mt-0.5">
+                                      {t.sync_status}
+                                    </Badge>
+                                    {t.agora_family_name && <p className="text-[9px] text-muted-foreground mt-0.5">📁 {t.agora_family_name}</p>}
+                                    {t.pushed_at && <p className="text-[9px] text-muted-foreground mt-0.5">Pushed: {new Date(t.pushed_at).toLocaleDateString()}</p>}
+                                    {t.verified_at && <p className="text-[9px] text-success mt-0.5">Verified: {new Date(t.verified_at).toLocaleDateString()}</p>}
+                                    {t.last_error && <p className="text-[9px] text-destructive mt-0.5 truncate" title={t.last_error}>{t.last_error.substring(0, 40)}</p>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {pendingTask && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pending Task</p>
+                            <div className="rounded border border-border p-2 space-y-1">
+                              <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                                <span className="text-muted-foreground">operation</span>
+                                <span className="font-mono text-foreground">{pendingTask.operation}</span>
+                                <span className="text-muted-foreground">status</span>
+                                <span className={`font-mono ${pendingTask.status === "BLOCKED" ? "text-destructive" : "text-foreground"}`}>{pendingTask.status}</span>
+                                <span className="text-muted-foreground">formats</span>
+                                <span className="font-mono text-foreground">{pendingTask.format_types.join(", ") || "—"}</span>
+                              </div>
+                              {pendingTask.blocked_reason && <p className="text-[11px] text-destructive">{pendingTask.blocked_reason}</p>}
+                              {pendingTask.last_error && <p className="text-[11px] text-muted-foreground break-words">{pendingTask.last_error}</p>}
+                            </div>
+                          </div>
+                        )}
+                        <div className="mt-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Normalized Prices</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 font-mono">
+                            <span className="text-muted-foreground">bottle_sale_price</span>
+                            <span className="text-foreground">{w.bottle_sale_price != null ? `€${Number(w.bottle_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">bottle_purchase_price</span>
+                            <span className="text-foreground">{w.bottle_purchase_price != null ? `€${Number(w.bottle_purchase_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">glass_sale_price</span>
+                            <span className="text-foreground">{w.glass_sale_price != null ? `€${Number(w.glass_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">glass_cost_price</span>
+                            <span className="text-foreground">{w.glass_cost_price != null ? `€${Number(w.glass_cost_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">magnum_sale_price</span>
+                            <span className="text-foreground">{w.magnum_sale_price != null ? `€${Number(w.magnum_sale_price).toFixed(2)}` : "null"}</span>
+                            <span className="text-muted-foreground">magnum_purchase_price</span>
+                            <span className="text-foreground">{w.magnum_purchase_price != null ? `€${Number(w.magnum_purchase_price).toFixed(2)}` : "null"}</span>
+                          </div>
+                        </div>
+
+                        {/* Block reasons */}
+                        {blockReasons.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">
+                              {isReady ? "Format Limitations" : "Block Reasons"}
+                            </p>
+                            <ul className="space-y-0.5">
+                              {blockReasons.map((r, i) => (
+                                <li key={i} className="flex items-start gap-1.5 text-[11px] text-destructive">
+                                  <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                                  <span>{r}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Step 3: Capabilities Detection ──
+function StepCapabilities({
+  connectionId, capabilities, detecting, detectionResults, onDetect, onLoadCapabilities,
+  exporting, onExport, writeMode, xmlWriteCapability,
+}: {
+  connectionId: string | null;
+  capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
+  detecting: boolean;
+  detectionResults: unknown[];
+  onDetect: () => void;
+  onLoadCapabilities: () => void;
+  exporting: boolean;
+  onExport: (format: "json" | "csv") => void;
+  writeMode: string;
+  xmlWriteCapability: "UNKNOWN" | "YES" | "NO";
+}) {
+  useEffect(() => { onLoadCapabilities(); }, [connectionId]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Capabilities Detection</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Check if this Agora installation supports writing products (creating/updating wines).
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" /> Write Capabilities</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">REST Write</p>
+            <RestWriteBadge />
+            <p className="text-[10px] text-muted-foreground mt-1">Standard REST endpoints not available on this installation.</p>
+          </div>
+          <div className="rounded-lg border border-border bg-background p-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">XML Import Write</p>
+            <XmlImportBadge writeMode={writeMode} canWrite={xmlWriteCapability} />
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {writeMode === "XML_IMPORT" && xmlWriteCapability === "YES"
+                ? "XML import has been validated successfully for this connection."
+                : writeMode === "XML_IMPORT"
+                  ? "XML import is available. Run a manual XML import to validate before enabling auto-push."
+                  : "Write mode is not set to XML Import. Configure in Write Settings (Step 10)."}
+            </p>
+          </div>
+        </div>
+        {capabilities?.last_checked_at && (
+          <p className="text-[11px] text-muted-foreground">Last checked: {new Date(capabilities.last_checked_at).toLocaleString()}</p>
+        )}
+      </div>
+
+      <Button variant="secondary" size="sm" onClick={onDetect} disabled={detecting}>
+        {detecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+        Detect REST Write Support
+      </Button>
+
+      {(detectionResults as any[]).length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Detection Results</p>
+          <div className="divide-y divide-border rounded-lg border border-border overflow-hidden">
+            {(detectionResults as any[]).map((r: any, i: number) => (
+              <div key={i} className="px-4 py-2.5 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-mono text-foreground">{r.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={r.supports ? "default" : "secondary"} className="text-[10px]">
+                      {r.status} {r.supports ? "✓ Supported" : "✗ Not found"}
+                    </Badge>
+                  </div>
+                </div>
+                {r.body && <pre className="mt-1 text-[10px] font-mono text-muted-foreground truncate max-w-full">{r.body.substring(0, 200)}</pre>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 space-y-3">
+        <div className="flex items-start gap-2">
+          <HelpCircle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-foreground">REST write not available</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              This Agora installation does not expose REST write endpoints. Use <strong>XML Import</strong> (Steps 5 & 9) to push products, or export as JSON/CSV for manual import.
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
+            <FileJson className="mr-2 h-4 w-4" /> Export JSON
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
+            <FileText className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Step 8: Outbound Sync Panel ──
+function StepOutboundSync({
+  connectionId, capabilities, outboundTasks, loadingTasks,
+  processingQueue, queuingProducts, exporting, queueProgress,
+  onLoadTasks, onProcessQueue, onProcessQueueServerSide, onRetry, onRequeueWithCurrentScope, onExport,
+  winerimWines, onQueueProducts,
+  backfillingPreparation, onBackfillPreparation,
+  fixingPrices, onFixMissingPrices,
+  reassigningFamilies, onReassignFamilies,
+  clearingQueue, onClearQueue,
+  requeueingBlocked, onRequeueBlockedAsUpdate,
+}: {
+  connectionId: string | null;
+  capabilities: import("@/hooks/useOutboundSync").ProviderCapability | null;
+  outboundTasks: OutboundTask[];
+  loadingTasks: boolean;
+  processingQueue: boolean;
+  queueProgress: { processed: number; succeeded: number; failed: number; total: number } | null;
+  queuingProducts: boolean;
+  exporting: boolean;
+  onLoadTasks: () => Promise<OutboundTask[]>;
+  onProcessQueue: () => Promise<{ success: boolean; processed: number; succeeded: number; failed: number } | undefined>;
+  onProcessQueueServerSide: () => Promise<any>;
+  onRetry: (taskId: string) => void;
+  onRequeueWithCurrentScope: (taskId: string) => Promise<any>;
+  onExport: (format: "json" | "csv") => void;
+  winerimWines: { winerim_id: string; name: string }[];
+  onQueueProducts: (ids: string[], formatTypes?: string[]) => Promise<any>;
+  backfillingPreparation: boolean;
+  onBackfillPreparation: (winerimWineIds?: string[]) => Promise<any>;
+  fixingPrices: boolean;
+  onFixMissingPrices: (winerimWineIds: string[], formatTypes?: string[]) => Promise<any>;
+  reassigningFamilies: boolean;
+  onReassignFamilies: (winerimWineIds?: string[]) => Promise<any>;
+  clearingQueue: boolean;
+  onClearQueue: (statusFilter?: "FAILED" | "BLOCKED") => Promise<any>;
+  requeueingBlocked: boolean;
+  onRequeueBlockedAsUpdate: () => Promise<any>;
+}) {
+  const [selectedWineIds, setSelectedWineIds] = useState<Set<string>>(new Set());
+  const [searchOutbound, setSearchOutbound] = useState("");
+  const wineNameMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const w of winerimWines) m[w.winerim_id] = w.name;
+    return m;
+  }, [winerimWines]);
+
+  useEffect(() => { onLoadTasks(); }, [connectionId]);
+
+  // Auto-detect write capability: if we have SUCCESS tasks, we can write
+  const hasSuccessTasks = outboundTasks.some(t => t.status === "SUCCESS");
+  const canWrite = capabilities?.can_write_products === "YES" || capabilities?.can_write_products === "UNKNOWN" || hasSuccessTasks;
+
+  const getTaskPayload = (t: OutboundTask) => ((t.payload_json as any) || {}) as any;
+
+  const getTaskName = (t: OutboundTask) => {
+    const payload = getTaskPayload(t);
+    const wid = payload?._winerim_wine_id;
+    return wineNameMap[wid] || payload?.Name || (wid ? `Wine ${wid}` : t.task_type);
+  };
+
+  const getScopeItems = (value: unknown): Array<{ id?: string; name?: string; priceListId?: string | null }> => (
+    Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<{ id?: string; name?: string; priceListId?: string | null }> : []
+  );
+
+  const getTaskScopeMeta = (t: OutboundTask) => {
+    const payload = getTaskPayload(t);
+    const selectedSaleCenters = getScopeItems(payload._selected_sale_centers);
+    const selectedPriceLists = getScopeItems(payload._selected_price_lists);
+    const ignoredPriceLists = getScopeItems(payload._ignored_price_lists);
+    const legacyVerificationScope = !!payload._legacy_verification_scope || !payload._verification_scope_version;
+    const scopeFrozen = !!payload._scope_frozen_at;
+    const scopeFrozenAt = payload._scope_frozen_at ? String(payload._scope_frozen_at) : null;
+
+    const verificationMode = payload._verification_mode || null;
+
+    return {
+      payload,
+      selectedSaleCenters,
+      selectedPriceLists,
+      ignoredPriceLists,
+      legacyVerificationScope,
+      scopeFrozen,
+      scopeFrozenAt,
+      verificationMode,
+      sourceLabel: verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS"
+        ? "Production (all active SaleCenters)"
+        : scopeFrozen
+          ? "Frozen at enqueue time"
+          : payload._verification_scope_source === "selected_sale_centers"
+            ? "Selected SaleCenters"
+            : payload._verification_scope_source === "referenced_sale_centers"
+              ? "Referenced SaleCenters"
+              : "Unknown scope",
+    };
+  };
+
+  const formatScopeNames = (items: Array<{ id?: string; name?: string }>) => (
+    items.length > 0 ? items.map((item) => item.name || item.id || "Unknown").join(", ") : "—"
+  );
+
+  const filteredTasks = useMemo(() => {
+    if (!searchOutbound.trim()) return outboundTasks;
+    const q = searchOutbound.toLowerCase();
+    return outboundTasks.filter(t => getTaskName(t).toLowerCase().includes(q) || t.status.toLowerCase().includes(q));
+  }, [outboundTasks, searchOutbound, wineNameMap]);
+
+  const filteredWinerimWines = useMemo(() => {
+    if (!searchOutbound.trim()) return winerimWines;
+    const q = searchOutbound.toLowerCase();
+    return winerimWines.filter(w => w.name.toLowerCase().includes(q));
+  }, [winerimWines, searchOutbound]);
+
+  const queuedTasks = filteredTasks.filter(t => t.status === "QUEUED");
+  const runningTasks = filteredTasks.filter(t => t.status === "RUNNING");
+  const pendingTasks = filteredTasks.filter(t => t.status === "QUEUED" || t.status === "RUNNING");
+  const successTasks = filteredTasks.filter(t => t.status === "SUCCESS");
+  const failedTasks = filteredTasks.filter(t => t.status === "FAILED");
+  const blockedTasks = filteredTasks.filter(t => t.status === "BLOCKED");
+  const queuedTasksTotal = outboundTasks.filter(t => t.status === "QUEUED").length;
+  const canProcessQueue = canWrite || queuedTasksTotal > 0;
+
+  // Create vs Update counters from _operation field
+  const createTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "CREATE");
+  const updateTasks = outboundTasks.filter(t => (t.payload_json as any)?._operation === "UPDATE");
+
+  const handleRefresh = async () => {
+    const tasks = await onLoadTasks();
+    const total = tasks.length;
+    const queued = tasks.filter(t => t.status === "QUEUED").length;
+    const running = tasks.filter(t => t.status === "RUNNING").length;
+    toast({
+      title: "Cola actualizada",
+      description: `${total} tareas · ${queued} en cola · ${running} en ejecución`,
+    });
+  };
+
+  const handleProcessQueue = async () => {
+    const result = await onProcessQueue();
+    if (!result) {
+      toast({ title: "No se pudo procesar la cola", variant: "destructive" });
+      return;
+    }
+
+    if (result.processed === 0) {
+      toast({
+        title: "No hay pendientes en cola",
+        description: "Primero encola vinos desde 'Push Wines to Agora'.",
+      });
+      return;
+    }
+
+    toast({
+      title: "Cola procesada",
+      description: `Procesadas ${result.processed} · OK ${result.succeeded} · Fallidas ${result.failed}`,
+    });
+  };
+
+  const toggleWine = (id: string) => {
+    setSelectedWineIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Outbound Sync (Winerim → Agora)</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {canWrite
+            ? "Push matched wines from Winerim to your Agora product catalog."
+            : canProcessQueue
+              ? "Write not validated yet, but you can process queued tasks to validate XML import."
+              : "Write not supported. Use export to create products in Agora manually."}
+        </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search wines or tasks…" value={searchOutbound} onChange={(e) => setSearchOutbound(e.target.value)} className="pl-10 bg-background" />
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { label: "Queued", count: queuedTasks.length, color: "text-primary" },
+          { label: "Success", count: successTasks.length, color: "text-success" },
+          { label: "Failed", count: failedTasks.length, color: "text-destructive" },
+          { label: "Blocked", count: blockedTasks.length, color: "text-amber-500" },
+        ].map(s => (
+          <div key={s.label} className="rounded-lg border border-border bg-card p-3 text-center">
+            <p className={`text-lg font-bold ${s.color}`}>{s.count}</p>
+            <p className="text-[10px] text-muted-foreground uppercase">{s.label}</p>
+          </div>
+        ))}
+      </div>
+      {(createTasks.length > 0 || updateTasks.length > 0) && (
+        <div className="flex gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+            {createTasks.length} CREATE ({createTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+            {updateTasks.length} UPDATE ({updateTasks.filter(t => t.status === "SUCCESS").length} ok)
+          </span>
+          {outboundTasks.length - createTasks.length - updateTasks.length > 0 && (
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full bg-muted-foreground" />
+              {outboundTasks.length - createTasks.length - updateTasks.length} legacy (no type)
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2 flex-wrap">
+        {canProcessQueue && (
+          <>
+            <Button variant="secondary" size="sm" onClick={handleProcessQueue}
+              disabled={processingQueue || queuedTasksTotal === 0}>
+              {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              Process Queue ({queuedTasksTotal})
+            </Button>
+            <Button variant="outline" size="sm" onClick={async () => {
+              await onProcessQueueServerSide();
+              toast({ title: "Cola iniciada en servidor", description: "El procesamiento continuará aunque cierres la pestaña. Refresca para ver el progreso." });
+            }}
+              disabled={processingQueue || queuedTasksTotal === 0}
+              title="Procesa la cola en el servidor — no necesita mantener la pestaña abierta">
+              {processingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+              Server Process
+            </Button>
+          </>
+        )}
+
+        {/* Live progress bar during queue processing */}
+        {processingQueue && queueProgress && queueProgress.total > 0 && (
+          <div className="w-full mt-2 space-y-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Procesando cola…</span>
+              <span>{queueProgress.processed} / {queueProgress.total} ({queueProgress.succeeded} ✓ {queueProgress.failed > 0 ? ` ${queueProgress.failed} ✗` : ""})</span>
+            </div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full flex">
+                <div className="bg-emerald-500 transition-all duration-300" style={{ width: `${(queueProgress.succeeded / queueProgress.total) * 100}%` }} />
+                {queueProgress.failed > 0 && (
+                  <div className="bg-destructive transition-all duration-300" style={{ width: `${(queueProgress.failed / queueProgress.total) * 100}%` }} />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        <Button variant="outline" size="sm" onClick={() => onExport("json")} disabled={exporting}>
+          <FileJson className="mr-2 h-4 w-4" /> Export JSON
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => onExport("csv")} disabled={exporting}>
+          <FileText className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
+        <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={loadingTasks}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loadingTasks ? "animate-spin" : ""}`} /> Refresh
+        </Button>
+
+        {/* Requeue blocked duplicates as UPDATE */}
+        {outboundTasks.some(t => t.status === "BLOCKED" && t.blocked_reason?.includes("PRODUCT_ALREADY_EXISTS")) && (
+          <Button variant="outline" size="sm" disabled={requeueingBlocked}
+            className="text-blue-600 border-blue-300 hover:bg-blue-50"
+            onClick={async () => {
+              const res = await onRequeueBlockedAsUpdate();
+              if (res?.requeued) toast({ title: `${res.requeued} tareas re-encoladas como UPDATE` });
+            }}>
+            {requeueingBlocked ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Re-encolar como UPDATE ({outboundTasks.filter(t => t.status === "BLOCKED" && t.blocked_reason?.includes("PRODUCT_ALREADY_EXISTS")).length})
+          </Button>
+        )}
+
+        {/* Clear Queue buttons */}
+        {outboundTasks.some(t => t.status === "FAILED" || t.status === "BLOCKED") && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" disabled={clearingQueue} className="text-amber-600 border-amber-300 hover:bg-amber-50">
+                {clearingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+                Clear Failed/Blocked ({outboundTasks.filter(t => t.status === "FAILED" || t.status === "BLOCKED").length})
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear failed & blocked tasks?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete {outboundTasks.filter(t => t.status === "FAILED" || t.status === "BLOCKED").length} tasks with status FAILED or BLOCKED. Success and queued tasks will not be affected.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={async () => {
+                  const res = await onClearQueue("FAILED");
+                  if (res?.success) toast({ title: "Failed/blocked tasks cleared" });
+                }}>Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" disabled={clearingQueue || outboundTasks.length === 0} className="text-destructive border-destructive/30 hover:bg-destructive/5">
+              {clearingQueue ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <XCircle className="mr-2 h-4 w-4" />}
+              Clear All ({outboundTasks.length})
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear entire queue?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete ALL {outboundTasks.length} outbound tasks for this connection, including successful ones. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={async () => {
+                const res = await onClearQueue();
+                if (res?.success) toast({ title: "All tasks cleared" });
+              }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete All</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <Button variant="ghost" size="sm"
+          onClick={async () => {
+            if (!connectionId) return;
+            toast({ title: "Generating debug bundle…" });
+            try {
+              const { data, error } = await supabase.functions.invoke("agora-proxy", {
+                body: { action: "debug-bundle", connectionId },
+              });
+              if (error) throw error;
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `debug-bundle-${connectionId?.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast({ title: "Debug bundle downloaded" });
+            } catch (e: any) {
+              toast({ title: "Failed to generate bundle", description: e.message, variant: "destructive" });
+            }
+          }}>
+          <Download className="mr-2 h-4 w-4" /> Export Debug Bundle
+        </Button>
+      </div>
+
+      {/* Queue wines */}
+      {canWrite && winerimWines.length > 0 && (
+        <div className="rounded-lg border border-border p-4 space-y-3">
+          <p className="text-xs font-medium text-muted-foreground">Push Wines to Agora</p>
+          <div className="max-h-48 overflow-y-auto divide-y divide-border rounded-lg border border-border">
+            {filteredWinerimWines.map(w => (
+              <label key={w.winerim_id} className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/30 cursor-pointer text-sm">
+                <input type="checkbox" checked={selectedWineIds.has(w.winerim_id)}
+                  onChange={() => toggleWine(w.winerim_id)}
+                  className="h-3.5 w-3.5 rounded border-border accent-primary" />
+                <span className="text-foreground">{w.name}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" disabled={selectedWineIds.size === 0 || queuingProducts}
+              onClick={async () => {
+                const result = await onQueueProducts(Array.from(selectedWineIds), ["BOTTLE", "GLASS", "MAGNUM"]);
+                const r = result as any;
+                if (r) {
+                  toast({
+                    title: "Queued for Agora",
+                    description: `${r.queuedCreate || 0} CREATE · ${r.queuedUpdate || 0} UPDATE · ${r.skippedDuplicate || 0} already queued`,
+                  });
+                }
+                setSelectedWineIds(new Set());
+              }}>
+              {queuingProducts ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Push {selectedWineIds.size} to Agora
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => {
+              setSelectedWineIds(new Set(winerimWines.map(w => w.winerim_id)));
+            }}>Select All</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Repair Actions Panel */}
+      {canWrite && (
+        <AgoraRepairActionsPanel
+          connectionId={connectionId}
+          backfillingPreparation={backfillingPreparation}
+          onBackfillPreparation={onBackfillPreparation}
+          fixingPrices={fixingPrices}
+          onFixMissingPrices={onFixMissingPrices}
+          reassigningFamilies={reassigningFamilies}
+          onReassignFamilies={onReassignFamilies}
+          onProcessQueue={onProcessQueue}
+          processingQueue={processingQueue}
+        />
+      )}
+
+      {/* PriceList Persistence Probe */}
+      {canWrite && (
+        <AgoraPriceListProbePanel connectionId={connectionId} />
+      )}
+
+      {/* Connection Comparison Diagnostics */}
+      <div className="rounded-lg border p-4 space-y-2">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <ArrowLeftRight className="h-4 w-4" /> Connection Comparison
+        </h4>
+        <p className="text-xs text-muted-foreground">Compare two Agora connections side-by-side to diagnose installation-specific issues.</p>
+        <AgoraConnectionCompare />
+      </div>
+
+      {/* Persistence warning banner */}
+      {outboundTasks.some(t => t.last_error?.includes("IMPORT_DID_NOT_PERSIST_ALL_PRICELISTS")) && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div className="text-xs text-amber-700">
+            <p className="font-medium">Agora is not persisting all PriceLists</p>
+            <p className="mt-0.5 text-muted-foreground">
+              One or more tasks have confirmed that Agora does not save prices for all sent PriceLists.
+              Run the PriceList Persistence Probe above to generate evidence for Agora support.
+              Do NOT mark this connection as production-verified until this is resolved.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Task list */}
+      <Tabs defaultValue="all" className="space-y-3">
+        <TabsList className="w-full">
+          <TabsTrigger value="all" className="flex-1">All ({filteredTasks.length})</TabsTrigger>
+          <TabsTrigger value="pending" className="flex-1">
+            Pending ({pendingTasks.length})
+            {pendingTasks.length > 0 && <Badge variant="secondary" className="ml-1 text-[10px]">{pendingTasks.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="failed" className="flex-1">
+            Failed ({failedTasks.length})
+            {failedTasks.length > 0 && <Badge variant="destructive" className="ml-1 text-[10px]">{failedTasks.length}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="blocked" className="flex-1">
+            Blocked ({blockedTasks.length})
+          </TabsTrigger>
+        </TabsList>
+
+        {[
+          { key: "all", items: filteredTasks },
+          { key: "pending", items: pendingTasks },
+          { key: "failed", items: failedTasks },
+          { key: "blocked", items: blockedTasks },
+        ].map(({ key, items }) => {
+          // Detect failed tasks with price-related errors
+          const priceFailedTasks = key === "failed" ? items.filter(t =>
+            t.last_error && /missing prices|PriceList/i.test(t.last_error)
+          ) : [];
+          const priceFailedWineIds = [...new Set(priceFailedTasks.map(t => (t.payload_json as any)?._winerim_wine_id).filter(Boolean))];
+
+          return (
+          <TabsContent key={key} value={key}>
+            {/* Auto-fix prices banner for failed tab */}
+            {key === "failed" && priceFailedWineIds.length > 0 && (
+              <div className="mb-2 flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+                <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+                <span className="text-xs text-destructive flex-1">
+                  {priceFailedWineIds.length} product(s) failed due to missing PriceList prices.
+                </span>
+                <Button variant="destructive" size="sm" className="h-7 text-xs"
+                  disabled={fixingPrices}
+                  onClick={async () => {
+                    const result = await onFixMissingPrices(priceFailedWineIds);
+                    toast({
+                      title: "Price Fix Queued",
+                      description: `${result?.queued || 0} tasks queued to fix missing prices for ${priceFailedWineIds.length} product(s).`,
+                    });
+                  }}>
+                  {fixingPrices ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Wrench className="mr-1 h-3.5 w-3.5" />}
+                  Auto-fix prices ({priceFailedWineIds.length})
+                </Button>
+              </div>
+            )}
+            <div className="divide-y divide-border rounded-lg border border-border overflow-hidden max-h-72 overflow-y-auto">
+              {items.length === 0 ? (
+                <div className="text-center py-8 text-sm text-muted-foreground">No tasks.</div>
+              ) : items.map(t => (
+                <div key={t.id} className="px-4 py-3 bg-card hover:bg-secondary/30 transition-colors">
+                  {(() => {
+                    const scopeMeta = getTaskScopeMeta(t);
+                    return (
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {getTaskName(t)}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            <Badge variant={
+                              t.status === "SUCCESS" ? "default" :
+                              t.status === "FAILED" ? "destructive" :
+                              t.status === "BLOCKED" ? "outline" :
+                              "secondary"
+                            } className="text-[10px]">{t.status}</Badge>
+                            {scopeMeta.legacyVerificationScope && (
+                              <Badge variant="outline" className="text-[10px]">legacy_verification_scope</Badge>
+                            )}
+                            {scopeMeta.payload?._operation && (
+                              <Badge variant="outline" className={`text-[10px] ${scopeMeta.payload._operation === "CREATE" ? "border-emerald-500 text-emerald-600" : "border-blue-500 text-blue-600"}`}>
+                                {scopeMeta.payload._operation === "CREATE" ? "➕ CREATE" : "✏️ UPDATE"}
+                              </Badge>
+                            )}
+                            {scopeMeta.payload?._trigger_source && (
+                              <Badge variant="outline" className="text-[10px]">
+                                {scopeMeta.payload._trigger_source === "AUTO_CREATE" ? "⚡ Auto Create" :
+                                 scopeMeta.payload._trigger_source === "AUTO_UPDATE" ? "⚡ Auto Update" :
+                                 String(scopeMeta.payload._trigger_source)}
+                              </Badge>
+                            )}
+                            {scopeMeta.payload?._winerim_wine_id && (
+                              <span className="font-mono">Winerim: {String(scopeMeta.payload._winerim_wine_id)}</span>
+                            )}
+                            {t.external_id && <span className="font-mono">Agora: {t.external_id}</span>}
+                            <span>Attempts: {t.attempts}/{t.max_attempts}</span>
+                          </div>
+                          <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+                            <p>
+                              <span className="font-medium text-foreground">Verification mode:</span>{" "}
+                              {scopeMeta.verificationMode === "PRODUCTION_ALL_ACTIVE_SALE_CENTERS" ? (
+                                <Badge variant="default" className="text-[9px] px-1 py-0 ml-1">🏭 Production</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1">{scopeMeta.verificationMode || "legacy"}</Badge>
+                              )}
+                            </p>
+                            <p>
+                              <span className="font-medium text-foreground">Verification scope:</span> {scopeMeta.sourceLabel}
+                              {scopeMeta.scopeFrozen && (
+                                <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 border-emerald-500 text-emerald-600">🔒 Frozen</Badge>
+                              )}
+                            </p>
+                            {scopeMeta.scopeFrozenAt && (
+                              <p className="text-[10px]"><span className="font-medium text-foreground">Scope frozen at:</span> {new Date(scopeMeta.scopeFrozenAt).toLocaleString()}</p>
+                            )}
+                            <p><span className="font-medium text-foreground">Included SaleCenters:</span> {formatScopeNames(scopeMeta.selectedSaleCenters)}</p>
+                            <p><span className="font-medium text-foreground">Included PriceLists:</span> {formatScopeNames(scopeMeta.selectedPriceLists)}</p>
+                            <p><span className="font-medium text-foreground">Ignored PriceLists:</span> {formatScopeNames(scopeMeta.ignoredPriceLists)}</p>
+                            {scopeMeta.legacyVerificationScope && (
+                              <p className="text-amber-600">⚠️ Legacy task: no tiene scope congelado. Usa "Requeue with production scope" para recrearlo.</p>
+                            )}
+                          </div>
+                          {t.last_error && (
+                            <details className="mt-1 group">
+                              <summary className="text-[11px] text-destructive cursor-pointer truncate hover:text-destructive/80">
+                                {t.last_error}
+                              </summary>
+                              <pre className="mt-1 text-[10px] text-destructive whitespace-pre-wrap break-all bg-destructive/5 rounded p-2 border border-destructive/20 max-h-48 overflow-y-auto font-mono">
+                                {t.last_error}
+                              </pre>
+                            </details>
+                          )}
+                          {/* ── POST-IMPORT DIAGNOSTICS ── */}
+                          {(() => {
+                            const diag = (t.payload_json as any)?._diagnostics;
+                            if (!diag || !Array.isArray(diag.products_diagnosed)) return null;
+                            return (
+                              <details className="mt-2 group">
+                                <summary className="text-[11px] font-medium text-foreground cursor-pointer hover:text-primary">
+                                  🔍 Import Diagnostics ({(diag.products_diagnosed as any[]).length} products)
+                                </summary>
+                                <div className="mt-1 rounded border border-border bg-secondary/20 p-2 space-y-2 text-[10px]">
+                                  <p className="text-muted-foreground">Diagnostics captured: {diag.timestamp ? new Date(diag.timestamp).toLocaleString() : "—"}</p>
+                                  {(diag.products_diagnosed as any[]).map((pd: any, idx: number) => {
+                                    const sent = diag.sent_price_lists_by_product?.[pd.product_id] || [];
+                                    const actual = diag.actual_price_lists_by_product?.[pd.product_id] || [];
+                                    return (
+                                      <div key={idx} className="rounded border border-border p-2 space-y-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="font-mono font-semibold">Product {pd.product_id}</span>
+                                          <Badge variant={pd.diagnosis === "OK" ? "default" : "destructive"} className="text-[9px]">
+                                            {pd.diagnosis}
+                                          </Badge>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <p className="font-medium text-foreground">Sent in XML ({sent.length} PLs):</p>
+                                            {sent.map((s: any, si: number) => (
+                                              <p key={si} className="font-mono">PL {s.priceListId} → €{s.mainPrice}</p>
+                                            ))}
+                                          </div>
+                                          <div>
+                                            <p className="font-medium text-foreground">Actual in Agora ({actual.length} PLs):</p>
+                                            {actual.length > 0 ? actual.map((a: any, ai: number) => (
+                                              <p key={ai} className="font-mono">PL {a.priceListId} → €{a.mainPrice}</p>
+                                            )) : <p className="text-destructive">Product not found in export</p>}
+                                          </div>
+                                        </div>
+                                        {pd.missing_in_agora?.length > 0 && (
+                                          <p className="text-destructive font-medium">
+                                            ❌ Missing in Agora: PL {pd.missing_in_agora.join(", PL ")}
+                                            {pd.xml_included_all_expected && " — XML was correct, Agora did NOT persist these PriceLists"}
+                                          </p>
+                                        )}
+                                        {pd.extra_in_agora?.length > 0 && (
+                                          <p className="text-amber-600">Extra in Agora (not in sent XML): PL {pd.extra_in_agora.join(", PL ")}</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </details>
+                            );
+                          })()}
+                          {t.blocked_reason && (
+                            <p className="mt-1 text-[11px] text-amber-600">{t.blocked_reason}</p>
+                          )}
+                        </div>
+                        {(t.status === "FAILED" || t.status === "BLOCKED") && (
+                          <div className="flex items-center gap-1">
+                            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRetry(t.id)}>
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="outline" size="sm" className="h-7 text-[10px]" onClick={() => onRequeueWithCurrentScope(t.id)}>
+                              Requeue with production scope
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ))}
+            </div>
+          </TabsContent>
+        );})}
+      </Tabs>
+    </div>
+  );
+}
+
+// ── Agora Products Panel (browsable) ──
+function AgoraProductsPanel({ products, families }: {
+  products: { Id: string; Name: string; FamilyId?: string; VatId?: string }[];
+  families: { Id: string; Name: string }[];
+}) {
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [selectedFamily, setSelectedFamily] = useState<string>("ALL");
+  const [viewMode, setViewMode] = useState<"list" | "families">("list");
+
+  const familyMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    families.forEach(f => { map[f.Id] = f.Name; });
+    return map;
+  }, [families]);
+
+  const familyGroups = useMemo(() => {
+    const groups: Record<string, typeof products> = {};
+    // Seed all master-data families so they always appear
+    families.forEach(f => { groups[f.Id] = []; });
+    products.forEach(p => {
+      const fid = p.FamilyId || "none";
+      if (!groups[fid]) groups[fid] = [];
+      groups[fid].push(p);
+    });
+    return Object.entries(groups)
+      .map(([id, items]) => ({ id, name: familyMap[id] || (id === "none" ? "Sin familia" : `Family ${id}`), items }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, families, familyMap]);
+
+  const filtered = useMemo(() => {
+    let list = products;
+    if (selectedFamily !== "ALL") {
+      list = list.filter(p => (p.FamilyId || "none") === selectedFamily);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(p => p.Name.toLowerCase().includes(q) || p.Id.includes(q));
+    }
+    return list;
+  }, [products, selectedFamily, search]);
+
+  const shown = expanded ? filtered : filtered.slice(0, 50);
+
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+          <Package className="h-3.5 w-3.5" /> Agora Products ({products.length})
+        </p>
+        <div className="flex gap-2 items-center">
+          <div className="flex rounded-md border border-border overflow-hidden">
+            <button onClick={() => setViewMode("list")}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${viewMode === "list" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"}`}>
+              List
+            </button>
+            <button onClick={() => setViewMode("families")}
+              className={`px-2.5 py-1 text-[10px] font-medium transition-colors ${viewMode === "families" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"}`}>
+              By Family
+            </button>
+          </div>
+          <Input
+            placeholder="Search by name or ID..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 w-48 text-xs"
+          />
+        </div>
+      </div>
+
+      {viewMode === "families" ? (
+        <div className="space-y-1">
+          {familyGroups.map(g => {
+            const isOpen = selectedFamily === g.id;
+            const groupFiltered = search.trim()
+              ? g.items.filter(p => p.Name.toLowerCase().includes(search.toLowerCase()) || p.Id.includes(search))
+              : g.items;
+            if (search.trim() && groupFiltered.length === 0) return null;
+            return (
+              <div key={g.id} className="rounded-md border border-border overflow-hidden">
+                <button
+                  onClick={() => setSelectedFamily(isOpen ? "ALL" : g.id)}
+                  className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                >
+                  <span className="flex items-center gap-2 text-foreground">
+                    <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isOpen ? "rotate-0" : "-rotate-90"}`} />
+                    {g.name}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">{groupFiltered.length} products</span>
+                </button>
+                {isOpen && (
+                  <div className="max-h-60 overflow-y-auto border-t border-border divide-y divide-border">
+                    {groupFiltered.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground italic py-3 text-center">No products match.</p>
+                    ) : groupFiltered.map((p) => (
+                      <div key={p.Id} className="grid grid-cols-[80px_1fr] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+                        <span className="font-mono text-muted-foreground">{p.Id}</span>
+                        <span className="text-foreground truncate">{p.Name}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <>
+          {filtered.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground italic py-2 text-center">No products match your search.</p>
+          ) : (
+            <>
+              <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                <div className="grid grid-cols-[80px_1fr_100px_60px] gap-2 px-3 py-1.5 bg-muted/50 text-[10px] font-medium text-muted-foreground sticky top-0">
+                  <span>ID</span><span>Name</span><span>Family</span><span>VAT</span>
+                </div>
+                {shown.map((p) => (
+                  <div key={p.Id} className="grid grid-cols-[80px_1fr_100px_60px] gap-2 px-3 py-1.5 text-xs hover:bg-muted/30">
+                    <span className="font-mono text-muted-foreground">{p.Id}</span>
+                    <span className="text-foreground truncate">{p.Name}</span>
+                    <span className="text-muted-foreground truncate">{familyMap[p.FamilyId || ""] || "—"}</span>
+                    <span className="text-muted-foreground">{p.VatId || "—"}</span>
+                  </div>
+                ))}
+              </div>
+              {!expanded && filtered.length > 50 && (
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(true)}>
+                  Show all {filtered.length} products
+                </Button>
+              )}
+              {expanded && filtered.length > 50 && (
+                <Button variant="ghost" size="sm" className="h-7 text-[11px] w-full" onClick={() => setExpanded(false)}>
+                  Collapse
+                </Button>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">
+        Products loaded from last Master Data sync. New wines created via XML import will appear here after re-syncing.
+      </p>
+    </div>
+  );
+}
+
+// ── Step 5: Master Data ──
+function StepMasterData({
+  masterData, syncing, syncError, syncTruncationWarnings, onSync, onLoad, writeCapability, writeSettings, connectionId, saveWriteSettings,
+}: {
+  masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
+  syncing: boolean; syncError: string | null;
+  syncTruncationWarnings: string[];
+  onSync: () => void; onLoad: () => void;
+  writeCapability: "UNKNOWN" | "YES" | "NO";
+  writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
+  connectionId: string | null;
+  saveWriteSettings: (settings: Partial<import("@/hooks/useAgoraMasterData").WriteSettings>) => Promise<void>;
+}) {
+  useEffect(() => { onLoad(); }, []);
+
+  // ── Wine data diagnostics ──
+  const [wineStats, setWineStats] = useState<{
+    total: number; hasBottlePrice: number; hasGlassPrice: number;
+    serveByGlass: number; hasWineType: number; missingPricing: number; missingWineType: number; inactive: number;
+  } | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<{ enriched: number; detailsMissing: number } | null>(null);
+
+  const loadWineStats = useCallback(async () => {
+    if (!connectionId) return;
+    setLoadingStats(true);
+    const data = await fetchAllWinerimWines(connectionId,
+      "bottle_sale_price, glass_sale_price, magnum_sale_price, serve_by_glass, wine_type, is_active"
+    );
+    if (data.length > 0) {
+      setWineStats({
+        total: data.length,
+        hasBottlePrice: data.filter((w: any) => w.bottle_sale_price != null).length,
+        hasGlassPrice: data.filter((w: any) => w.glass_sale_price != null).length,
+        serveByGlass: data.filter((w: any) => w.serve_by_glass).length,
+        hasWineType: data.filter((w: any) => w.wine_type != null).length,
+        missingPricing: data.filter((w: any) => w.bottle_sale_price == null && w.glass_sale_price == null && w.magnum_sale_price == null).length,
+        missingWineType: data.filter((w: any) => w.wine_type == null).length,
+        inactive: data.filter((w: any) => w.is_active === false).length,
+      });
+    } else {
+      setWineStats({ total: 0, hasBottlePrice: 0, hasGlassPrice: 0, serveByGlass: 0, hasWineType: 0, missingPricing: 0, missingWineType: 0, inactive: 0 });
+    }
+    setLoadingStats(false);
+  }, [connectionId]);
+
+  useEffect(() => { loadWineStats(); }, [loadWineStats]);
+
+  const enrichWines = useCallback(async () => {
+    if (!connectionId) return;
+    setEnriching(true);
+    setEnrichResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("winerim-proxy", {
+        body: { action: "fetch-wine-details", connectionId },
+      });
+      if (error) throw error;
+      setEnrichResult({ enriched: data?.enriched || 0, detailsMissing: data?.detailsMissing || 0 });
+      await loadWineStats();
+    } catch (e: any) {
+      console.error("Enrich failed:", e);
+    } finally {
+      setEnriching(false);
+    }
+  }, [connectionId, loadWineStats]);
+
+  const [searchMaster, setSearchMaster] = useState("");
+
+  // ── Sale Center / PriceList diagnostic ──
+  // Find all candidate central sale centers
+  const activeSaleCenters = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+  const centralCandidates = activeSaleCenters.filter(
+    (sc: any) => (sc.Name || "").toLowerCase().includes("central") || sc.IsDefault === "true"
+  );
+  const [selectedSaleCenterId, setSelectedSaleCenterId] = useState<string | null>(null);
+
+  // Initialize from persisted settings
+  useEffect(() => {
+    if (writeSettings.selected_sale_center_ids && writeSettings.selected_sale_center_ids.length > 0) {
+      setSelectedSaleCenterId(writeSettings.selected_sale_center_ids[0]);
+    }
+  }, [writeSettings.selected_sale_center_ids]);
+
+  // Persist selection to DB
+  const handleSelectSaleCenter = useCallback((id: string | null) => {
+    setSelectedSaleCenterId(id);
+    saveWriteSettings({ selected_sale_center_ids: id ? [id] : [] } as any);
+  }, [saveWriteSettings]);
+
+  // Determine active central: persisted selection > single candidate > first sale center
+  const activeCentralCenter = (() => {
+    if (selectedSaleCenterId) {
+      return activeSaleCenters.find((sc: any) => sc.Id === selectedSaleCenterId) || null;
+    }
+    if (centralCandidates.length === 1) return centralCandidates[0];
+    if (centralCandidates.length > 1) return null; // force selection
+    // Default: pick first active sale center if none selected
+    if (activeSaleCenters.length > 0) return activeSaleCenters[0];
+    return null;
+  })();
+
+  const centralPriceListId = activeCentralCenter?.CurrentPriceListId || null;
+  const centralPriceList = centralPriceListId
+    ? masterData.priceLists.find((pl: any) => pl.Id === centralPriceListId)
+    : null;
+
+  // ── Verify & Backfill ──
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<any>(null);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const verifyProducts = useCallback(async () => {
+    if (!connectionId) return;
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { 
+          action: "verify-products", 
+          connectionId,
+          ...(selectedSaleCenterId ? { saleCenterId: selectedSaleCenterId } : {}),
+        },
+      });
+      if (error) throw error;
+      setVerifyResult(data);
+    } catch (e: any) {
+      console.error("Verify failed:", e);
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectionId, selectedSaleCenterId]);
+
+  const backfillPrices = useCallback(async () => {
+    if (!connectionId) return;
+    setBackfilling(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "backfill-prices", connectionId, formatTypes: ["BOTTLE", "GLASS", "MAGNUM"] },
+      });
+      if (error) throw error;
+      toast({ title: "Backfill queued", description: `${data?.queued || 0} products queued for re-push` });
+    } catch (e: any) {
+      console.error("Backfill failed:", e);
+    } finally {
+      setBackfilling(false);
+    }
+  }, [connectionId]);
+
+  const sections = [
+    { label: "Families", data: masterData.families, icon: Grape },
+    { label: "VATs", data: masterData.vats, icon: Tag },
+    { label: "Price Lists", data: masterData.priceLists, icon: FileText },
+    { label: "Preparation Types", data: masterData.preparationTypes, icon: Settings2 },
+    { label: "Preparation Orders", data: masterData.preparationOrders, icon: Settings2 },
+    { label: "Warehouses", data: masterData.warehouses, icon: Database },
+    { label: "Sale Points", data: masterData.salePoints, icon: Server },
+    { label: "Sale Centers", data: masterData.saleCenters, icon: Server },
+  ];
+
+  const filterItems = (data: any[]) => {
+    if (!searchMaster.trim()) return data;
+    const q = searchMaster.toLowerCase();
+    return data.filter((item: any) => (item.Name || "").toLowerCase().includes(q) || (item.Id || "").toLowerCase().includes(q));
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Agora Master Data</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Fetch master data (families, VATs, price lists, etc.) from Agora via <code className="text-xs font-mono bg-secondary px-1 rounded">/api/export-master/</code>
+        </p>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Search master data…" value={searchMaster} onChange={(e) => setSearchMaster(e.target.value)} className="pl-10 bg-background" />
+      </div>
+
+      {/* Status badges — unified readiness model */}
+      <ReadinessBadgeRow dimensions={{
+        writeMode: writeSettings.write_mode,
+        canWrite: writeCapability,
+        masterDataFetchedAt: masterData.fetchedAt,
+        autoPushVerifiedReady: writeSettings.auto_push_verified_ready,
+      }} />
+
+      {/* ── Auto-push verification gate ── */}
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+        <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
+          <Shield className="h-3.5 w-3.5 text-primary" /> Auto-push Verification Gate
+        </p>
+        {writeSettings.auto_push_verified_ready ? (
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              ✅ This connection is verified for auto-push. Products can be automatically pushed to Agora when created or updated.
+            </p>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-[11px] text-destructive border-destructive/30 hover:bg-destructive/5">
+                  <ShieldX className="mr-1 h-3 w-3" /> Revoke auto-push verification
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Revoke auto-push verification?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will disable automatic product push to Agora. You will need to manually import products and re-verify before auto-push can be used again.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={() => saveWriteSettings({ auto_push_verified_ready: false })}
+                  >
+                    Revoke verification
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              ⚠️ Auto-push is disabled. Run a manual XML import, verify products were created correctly in Agora, then mark as verified below.
+            </p>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-7 text-[11px]"
+                  disabled={writeCapability !== "YES"}
+                >
+                  <ShieldCheck className="mr-1 h-3 w-3" /> Mark connection as verified for auto-push
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Enable auto-push verification?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Use this only after verifying that products were created correctly in Agora (correct names, prices, families, VAT rates, and that they are sellable).
+                    <br /><br />
+                    Once verified, the system will be allowed to automatically push new products to Agora based on your auto-push settings.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => saveWriteSettings({ auto_push_verified_ready: true })}>
+                    Confirm — I verified in Agora
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            {writeCapability !== "YES" && (
+              <p className="text-[10px] text-muted-foreground italic">Run a successful manual XML import first to unlock this option.</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Button variant="secondary" size="sm" onClick={onSync} disabled={syncing}>
+        {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+        Sync Agora Master Data
+      </Button>
+      {syncError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          <p className="font-medium flex items-center gap-1.5"><XCircle className="h-3.5 w-3.5" /> {syncError}</p>
+        </div>
+      )}
+      {masterData.fetchedAt && (
+        <p className="text-[11px] text-muted-foreground">Last synced: {new Date(masterData.fetchedAt).toLocaleString()}</p>
+      )}
+      {writeCapability === "UNKNOWN" && masterData.fetchedAt && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600">
+          <p className="flex items-center gap-1.5"><AlertTriangle className="h-3 w-3" /> Master data synced but write not yet verified. Go to Write Settings and run a manual XML import to confirm write capability.</p>
+        </div>
+      )}
+
+      {/* ── Truncation Warning ── */}
+      {syncTruncationWarnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-1">
+          <p className="font-medium text-foreground flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Possible data truncation</p>
+          {syncTruncationWarnings.map((w, i) => (
+            <p key={i} className="text-muted-foreground">{w}</p>
+          ))}
+        </div>
+      )}
+
+      {/* ── Sale Center / PriceList Diagnostic ── */}
+      {masterData.fetchedAt && (
+        <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Server className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium text-foreground">Sale Center Diagnostic</p>
+          </div>
+
+          {/* Multiple candidates warning */}
+          {centralCandidates.length > 1 && !selectedSaleCenterId && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
+              <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 shrink-0" /> Multiple central sale centers detected ({centralCandidates.length}). Select which one to use for diagnostics:
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                {centralCandidates.map((sc: any) => (
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
+                    {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No candidates — manual selection */}
+          {centralCandidates.length === 0 && activeSaleCenters.length > 0 && !selectedSaleCenterId && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3 space-y-2">
+              <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                <AlertTriangle className="h-3 w-3 shrink-0" /> No "Central" or default sale center detected. Select one manually:
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                {activeSaleCenters.map((sc: any) => (
+                  <Button key={sc.Id} variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => handleSelectSaleCenter(sc.Id)}>
+                    {sc.Name} (PL: {sc.CurrentPriceListId || "none"})
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Fetched counts summary with production scope breakdown */}
+          {(() => {
+            const activeSC = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate);
+            const deletedSC = masterData.saleCenters.filter((sc: any) => !!sc.DeletionDate);
+            const activePL = masterData.priceLists.filter((pl: any) => !pl.DeletionDate);
+            const deletedPL = masterData.priceLists.filter((pl: any) => !!pl.DeletionDate);
+            // Production scope: only PLs linked to an active SC via CurrentPriceListId
+            const activeSCWithPL = activeSC.filter((sc: any) => !!sc.CurrentPriceListId);
+            const scopedPLIds = new Set(activeSCWithPL.map((sc: any) => String(sc.CurrentPriceListId)));
+            const inScopePL = activePL.filter((pl: any) => scopedPLIds.has(String(pl.Id)));
+            const outOfScopePL = activePL.filter((pl: any) => !scopedPLIds.has(String(pl.Id)));
+            return (
+              <div className="space-y-2">
+                <div className="grid grid-cols-4 gap-2 text-[10px]">
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">SaleCenters</p>
+                    <p className={`text-sm font-bold ${activeSC.length > 0 ? "text-foreground" : "text-destructive"}`}>{activeSC.length}</p>
+                    {deletedSC.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedSC.length} 🗑</p>}
+                  </div>
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">SalePoints</p>
+                    <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                  </div>
+                  <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-2 text-center">
+                    <p className="text-muted-foreground">PLs in Scope</p>
+                    <p className="text-sm font-bold text-emerald-600">{inScopePL.length}</p>
+                    <p className="text-[9px] text-muted-foreground">linked to active SC</p>
+                  </div>
+                  <div className="rounded border border-border bg-background p-2 text-center">
+                    <p className="text-muted-foreground">PLs Excluded</p>
+                    <p className="text-sm font-bold text-muted-foreground">{outOfScopePL.length + deletedPL.length}</p>
+                    {outOfScopePL.length > 0 && <p className="text-[9px] text-muted-foreground">{outOfScopePL.length} no SC</p>}
+                    {deletedPL.length > 0 && <p className="text-[9px] text-muted-foreground">{deletedPL.length} 🗑</p>}
+                  </div>
+                </div>
+                {outOfScopePL.length > 0 && (
+                  <div className="rounded border border-border bg-secondary/30 p-2 text-[10px] text-muted-foreground flex items-start gap-1.5">
+                    <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>{outOfScopePL.length} active PriceList{outOfScopePL.length > 1 ? "s" : ""} excluded from production scope</strong> (no SaleCenter linked): {outOfScopePL.map((pl: any) => pl.Name).join(", ")}. These won't block verification or readiness.
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {activeCentralCenter ? (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-border bg-background p-3">
+                  <p className="text-[10px] text-muted-foreground">Active Sale Center</p>
+                  <p className="text-sm font-bold text-foreground">{activeCentralCenter.Name}</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">ID: {activeCentralCenter.Id}</p>
+                  {selectedSaleCenterId && (
+                    <Button variant="link" size="sm" className="h-5 px-0 text-[10px]" onClick={() => handleSelectSaleCenter(null)}>Reset selection</Button>
+                  )}
+                </div>
+                <div className={`rounded-lg border p-3 ${centralPriceListId ? "border-emerald-500/30 bg-emerald-500/5" : "border-destructive/30 bg-destructive/5"}`}>
+                  <p className="text-[10px] text-muted-foreground">Current PriceList</p>
+                  <p className={`text-sm font-bold ${centralPriceListId ? "text-emerald-600" : "text-destructive"}`}>
+                    {centralPriceList ? `${centralPriceList.Name}` : centralPriceListId || "Not found"}
+                  </p>
+                  {centralPriceListId && <p className="text-[10px] text-muted-foreground font-mono">ID: {centralPriceListId}</p>}
+                </div>
+              </div>
+              {!centralPriceListId && (
+                <div className="rounded-md bg-destructive/10 border border-destructive/20 p-2 text-[11px] text-destructive flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  Selected sale center has no CurrentPriceListId. Products without prices for this list will fail at sale.
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={verifyProducts} disabled={verifying}>
+                  {verifying ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Eye className="mr-1 h-3 w-3" />}
+                  Verify All PriceList Prices
+                </Button>
+                <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={backfillPrices} disabled={backfilling}>
+                  {backfilling ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+                  Fix Prices for All PriceLists
+                </Button>
+              </div>
+              {verifyResult && (
+                <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(verifyResult.missingCentralPrice || 0) === 0 ? (
+                      <Badge variant="default" className="text-[10px] bg-emerald-600"><CheckCircle2 className="mr-1 h-3 w-3" /> All products have prices in all {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists</Badge>
+                    ) : (
+                      <Badge variant="destructive" className="text-[10px]"><XCircle className="mr-1 h-3 w-3" /> {verifyResult.missingCentralPrice} products with price issues</Badge>
+                    )}
+                    {verifyResult.summary && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {verifyResult.summary.checked} checked · {verifyResult.summary.ok} ok · {verifyResult.summary.failed} failed · {verifyResult.totalPriceLists || masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active PriceLists · {verifyResult.totalSaleCenters || masterData.saleCenters.filter((sc: any) => !sc.DeletionDate).length} active SaleCenters
+                      </span>
+                    )}
+                  </div>
+                  {verifyResult.missing_prices && verifyResult.missing_prices.length > 0 && (
+                    <div className="max-h-48 overflow-auto space-y-1">
+                      {/* Group by product */}
+                      {(() => {
+                        const byProduct: Record<string, { name: string; format: string; priceLists: { id: string; name: string; issue: string; saleCenters: string[] }[] }> = {};
+                        for (const mp of verifyResult.missing_prices) {
+                          const key = mp.agora_product_id;
+                          if (!byProduct[key]) byProduct[key] = { name: mp.name || mp.product_name || key, format: mp.format || "?", priceLists: [] };
+                          byProduct[key].priceLists.push({
+                            id: mp.price_list_id,
+                            name: mp.price_list_name || mp.price_list_id,
+                            issue: mp.issue,
+                            saleCenters: mp.affected_sale_centers || [],
+                          });
+                        }
+                        return Object.entries(byProduct).map(([productId, info]) => (
+                          <div key={productId} className="rounded border border-destructive/20 bg-destructive/5 p-2 space-y-1">
+                            <p className="text-[11px] font-medium text-destructive">
+                              <Badge variant="destructive" className="text-[8px] px-1 py-0 mr-1">{info.format}</Badge>
+                              {info.name} <span className="font-mono text-muted-foreground">(ID: {productId})</span>
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {info.priceLists.map((pl, i) => (
+                                <span key={i} className="text-[10px] font-mono text-destructive bg-destructive/10 rounded px-1.5 py-0.5">
+                                  {pl.issue}: {pl.name}{pl.saleCenters.length > 0 ? ` → ${pl.saleCenters.join(", ")}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* PriceList ↔ SaleCenter mapping */}
+              {masterData.priceLists.length > 0 && masterData.saleCenters.length > 0 && (
+                <details className="rounded-lg border border-border bg-background">
+                  <summary className="px-3 py-2 text-[11px] font-medium text-muted-foreground cursor-pointer hover:text-foreground">
+                    PriceList → SaleCenter mapping ({masterData.priceLists.filter((pl: any) => !pl.DeletionDate).length} active, {masterData.priceLists.filter((pl: any) => !!pl.DeletionDate).length} deleted)
+                  </summary>
+                  <div className="px-3 pb-3 space-y-1 max-h-48 overflow-auto">
+                    {/* In-scope PLs first, then out-of-scope, then deleted */}
+                    {(() => {
+                      const activeSCIds = masterData.saleCenters.filter((sc: any) => !sc.DeletionDate && !!sc.CurrentPriceListId);
+                      const scopedIds = new Set(activeSCIds.map((sc: any) => String(sc.CurrentPriceListId)));
+                      const sorted = [...masterData.priceLists].sort((a: any, b: any) => {
+                        const aDeleted = !!a.DeletionDate;
+                        const bDeleted = !!b.DeletionDate;
+                        const aInScope = !aDeleted && scopedIds.has(String(a.Id));
+                        const bInScope = !bDeleted && scopedIds.has(String(b.Id));
+                        if (aInScope !== bInScope) return aInScope ? -1 : 1;
+                        if (aDeleted !== bDeleted) return aDeleted ? 1 : -1;
+                        return 0;
+                      });
+                      return sorted.map((pl: any) => {
+                        const isDeleted = !!pl.DeletionDate;
+                        const isInScope = !isDeleted && scopedIds.has(String(pl.Id));
+                        const linkedCenters = masterData.saleCenters.filter(
+                          (sc: any) => sc.CurrentPriceListId === pl.Id && !sc.DeletionDate
+                        );
+                        return (
+                          <div key={pl.Id} className={`flex items-start gap-2 text-[10px] py-1 border-b border-border/50 last:border-0 ${isDeleted ? "opacity-40" : !isInScope ? "opacity-60" : ""}`}>
+                            <Badge variant={isDeleted ? "secondary" : isInScope ? "default" : "outline"} className={`text-[9px] px-1.5 py-0 shrink-0 font-mono ${isDeleted ? "line-through" : ""} ${isInScope ? "bg-emerald-600" : ""}`}>{pl.Id}</Badge>
+                            <span className={`font-medium min-w-[80px] ${isDeleted ? "text-muted-foreground line-through" : "text-foreground"}`}>{pl.Name}</span>
+                            {isDeleted ? (
+                              <Badge variant="secondary" className="text-[8px] px-1 py-0">🗑 Deleted {String(pl.DeletionDate).slice(0, 10)}</Badge>
+                            ) : isInScope ? (
+                              <span className="text-muted-foreground">
+                                <Badge variant="outline" className="text-[8px] px-1 py-0 mr-1 border-emerald-500/40 text-emerald-600">IN SCOPE</Badge>
+                                → {linkedCenters.map((sc: any) => sc.Name).join(", ")}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">
+                                <Badge variant="outline" className="text-[8px] px-1 py-0 mr-1">OUT OF SCOPE</Badge>
+                                No linked SaleCenter — excluded from verification
+                              </span>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </details>
+              )}
+            </div>
+          ) : masterData.saleCenters.length === 0 ? (
+            <div className="space-y-2">
+              <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
+                <p className="text-[11px] text-amber-600 font-medium flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 shrink-0" /> SaleCenters: 0 fetched. Click "Sync Agora Master Data" above to fetch. If this persists, the Agora installation may not expose SaleCenters via export-master.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SaleCenters</p>
+                  <p className="text-sm font-bold text-destructive">0</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">SalePoints</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.salePoints.length}</p>
+                </div>
+                <div className="rounded border border-border bg-background p-2 text-center">
+                  <p className="text-muted-foreground">PriceLists</p>
+                  <p className="text-sm font-bold text-foreground">{masterData.priceLists.length}</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* ── Wine Data Diagnostics ── */}
+      <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Wine className="h-4 w-4 text-primary" />
+            <p className="text-xs font-medium text-foreground">Winerim Data Diagnostics</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={loadWineStats} disabled={loadingStats}>
+              {loadingStats ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+              Refresh
+            </Button>
+            <Button variant="secondary" size="sm" className="h-7 text-[11px]" onClick={enrichWines} disabled={enriching}>
+              {enriching ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Download className="mr-1 h-3 w-3" />}
+              Enrich Missing Pricing
+            </Button>
+          </div>
+        </div>
+        {enrichResult && (
+          <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground">
+            Enriched {enrichResult.enriched} wines · {enrichResult.detailsMissing} details not found
+          </div>
+        )}
+        {wineStats && wineStats.total === 0 ? (
+          <div className="rounded-lg border border-border bg-secondary/20 p-4 text-center space-y-1">
+            <Wine className="mx-auto h-6 w-6 text-muted-foreground/40" />
+            <p className="text-sm text-muted-foreground">No Winerim wine data synced yet</p>
+            <p className="text-[11px] text-muted-foreground">Go to "Wine Matching" step and fetch your Winerim catalog first.</p>
+          </div>
+        ) : wineStats ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{wineStats.total}</p>
+              <p className="text-[10px] text-muted-foreground">Total wines</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-emerald-600">{wineStats.hasBottlePrice}</p>
+              <p className="text-[10px] text-muted-foreground">With bottle price</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-blue-600">{wineStats.hasGlassPrice}</p>
+              <p className="text-[10px] text-muted-foreground">With glass price</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-violet-600">{wineStats.serveByGlass}</p>
+              <p className="text-[10px] text-muted-foreground">Serve by glass</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{wineStats.hasWineType}</p>
+              <p className="text-[10px] text-muted-foreground">With wine type</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.missingPricing > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.missingPricing > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.missingPricing}</p>
+              <p className="text-[10px] text-muted-foreground">Missing all pricing</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.missingWineType > 0 ? "border-amber-500/30 bg-amber-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.missingWineType > 0 ? "text-amber-600" : "text-emerald-600"}`}>{wineStats.missingWineType}</p>
+              <p className="text-[10px] text-muted-foreground">Missing wine type</p>
+            </div>
+            <div className={`rounded-lg border p-3 text-center ${wineStats.inactive > 0 ? "border-red-500/30 bg-red-500/5" : "border-border bg-background"}`}>
+              <p className={`text-lg font-bold ${wineStats.inactive > 0 ? "text-red-600" : "text-emerald-600"}`}>{wineStats.inactive}</p>
+              <p className="text-[10px] text-muted-foreground">Inactive</p>
+            </div>
+            <div className="rounded-lg border border-border bg-background p-3 text-center">
+              <p className="text-lg font-bold text-emerald-600">{Math.round((wineStats.hasBottlePrice / Math.max(wineStats.total - wineStats.inactive, 1)) * 100)}%</p>
+              <p className="text-[10px] text-muted-foreground">Active coverage</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground italic">Loading stats...</p>
+        )}
+        {wineStats && wineStats.missingPricing > 0 && (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            {wineStats.missingPricing} wines missing pricing. Click "Enrich Missing Pricing" to fetch detail data from Winerim.
+          </div>
+        )}
+      </div>
+
+      {/* ── Agora Family Manager ── */}
+      <AgoraFamilyManager
+        connectionId={connectionId}
+        families={masterData.families}
+        onSyncMasterData={onSync}
+        syncing={syncing}
+      />
+
+      {/* ── Family Visibility Panel (hide legacy families / archive products) ── */}
+      <AgoraFamilyVisibilityPanel connectionId={connectionId} />
+
+      {/* ── Product Visibility Panel (hide individual legacy products) ── */}
+      <AgoraProductVisibilityPanel connectionId={connectionId} />
+
+      {sections.map(({ label, data, icon: Icon }) => {
+        const filtered = filterItems(data);
+        if (searchMaster.trim() && filtered.length === 0) return null;
+        const isDeletedSection = label === "Price Lists" || label === "Sale Centers";
+        const activeItems = isDeletedSection ? filtered.filter((item: any) => !item.DeletionDate) : filtered;
+        const deletedItems = isDeletedSection ? filtered.filter((item: any) => !!item.DeletionDate) : [];
+        return (
+        <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Icon className="h-3.5 w-3.5" /> {label} ({activeItems.length}{deletedItems.length > 0 ? ` active, ${deletedItems.length} deleted` : ""}{searchMaster.trim() ? ` / ${data.length} total` : ""})
+          </p>
+          {activeItems.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {activeItems.map((item: any, i: number) => (
+                <Badge key={i} variant="outline" className="text-[10px] font-mono">
+                  {item.Id}: {item.Name}{item.VatRate ? ` (${(Number(item.VatRate) * 100).toFixed(0)}%)` : ""}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground italic">No data yet. Click sync above.</p>
+          )}
+          {deletedItems.length > 0 && (
+            <details className="group">
+              <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
+                {deletedItems.length} deleted / archived
+              </summary>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {deletedItems.map((item: any, i: number) => (
+                  <Badge key={`del-${i}`} variant="secondary" className="text-[10px] font-mono opacity-60 line-through">
+                    {item.Id}: {item.Name}
+                    {item.DeletionDate && <span className="ml-1 no-underline text-[8px]">🗑 {String(item.DeletionDate).slice(0, 10)}</span>}
+                  </Badge>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+        );
+      })}
+      {masterData.productsSummary.length > 0 && (
+        <AgoraProductsPanel products={masterData.productsSummary} families={masterData.families} />
+      )}
+    </div>
+  );
+}
+// ── Step 9: Write Settings ──
+function StepWriteSettings({
+  writeSettings, masterData, onSave,
+}: {
+  writeSettings: import("@/hooks/useAgoraMasterData").WriteSettings;
+  masterData: import("@/hooks/useAgoraMasterData").AgoraMasterData;
+  onSave: (s: Partial<import("@/hooks/useAgoraMasterData").WriteSettings>) => void;
+}) {
+  const families = masterData.families;
+  const vats = masterData.vats;
+  const prepTypes = masterData.preparationTypes;
+  const prepOrders = masterData.preparationOrders;
+  const warehouses = masterData.warehouses;
+
+  const SelectDropdown = ({ label, value, options, onChange }: {
+    label: string; value: string | null;
+    options: { id: string; label: string }[];
+    onChange: (v: string) => void;
+  }) => (
+    <div>
+      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{label}</label>
+      <select
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+      >
+        <option value="">Auto / Default</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>{o.id}: {o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Write Settings</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Configure defaults for creating wine products in Agora via XML import.
+        </p>
+      </div>
+
+      {families.length === 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+          <p className="font-medium flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> No master data loaded. Go back to "Master Data" step and sync first.</p>
+        </div>
+      )}
+
+      <div className="grid gap-4">
+        <SelectDropdown label="Default Wine Family" value={writeSettings.default_family_id}
+          options={families.map((f: any) => ({ id: f.Id, label: f.Name }))}
+          onChange={(v) => onSave({ default_family_id: v || null })} />
+        <SelectDropdown label="Default VAT" value={writeSettings.default_vat_id}
+          options={vats.map((v: any) => ({ id: v.Id, label: `${v.Name} (${(Number(v.VatRate) * 100).toFixed(0)}%)` }))}
+          onChange={(v) => onSave({ default_vat_id: v || null })} />
+        <SelectDropdown label="Preparation Type" value={writeSettings.default_preparation_type_id}
+          options={prepTypes.map((p: any) => ({ id: p.Id, label: p.Name }))}
+          onChange={(v) => onSave({ default_preparation_type_id: v || null })} />
+        <SelectDropdown label="Preparation Order" value={writeSettings.default_preparation_order_id}
+          options={prepOrders.map((p: any) => ({ id: p.Id, label: p.Name }))}
+          onChange={(v) => onSave({ default_preparation_order_id: v || null })} />
+
+        {/* Preparation Type/Order mismatch warning */}
+        {(() => {
+          const typeSet = !!writeSettings.default_preparation_type_id;
+          const orderSet = !!writeSettings.default_preparation_order_id;
+          if (typeSet !== orderSet) {
+            return (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  PreparationType and PreparationOrder must both be set or both empty — a mismatch causes TPV crash.
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Currently: Type = <span className="font-mono">{writeSettings.default_preparation_type_id || "(empty)"}</span>,
+                  Order = <span className="font-mono">{writeSettings.default_preparation_order_id || "(empty)"}</span>.
+                  The XML generator will force both empty if this state is saved.
+                </p>
+                <Button variant="destructive" size="sm" className="h-7 text-[11px]"
+                  onClick={() => onSave({ default_preparation_type_id: null, default_preparation_order_id: null })}>
+                  Clear Both
+                </Button>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        <SelectDropdown label="Default Warehouse" value={writeSettings.default_warehouse_id}
+          options={warehouses.map((w: any) => ({ id: w.Id, label: w.Name }))}
+          onChange={(v) => onSave({ default_warehouse_id: v || null })} />
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <p className="text-xs font-medium text-muted-foreground">Format Options</p>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Write Bottle (BOT.)</p><p className="text-[11px] text-muted-foreground">Create bottle products in Agora</p></div>
+          <Switch checked={writeSettings.write_bottle} onCheckedChange={(v) => onSave({ write_bottle: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Write Glass (COPA)</p><p className="text-[11px] text-muted-foreground">Create glass/copa products in Agora. Requires serve_by_glass + glass_sale_price on the wine.</p></div>
+          <Switch checked={writeSettings.write_glass} onCheckedChange={(v) => onSave({ write_glass: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-create Missing Families</p><p className="text-[11px] text-muted-foreground">Create wine families in Agora if they don't exist</p></div>
+          <Switch checked={writeSettings.auto_create_families} onCheckedChange={(v) => onSave({ auto_create_families: v })} />
+        </div>
+        {writeSettings.write_glass && (
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Estimated Glasses per Bottle (fallback for glass cost)</label>
+            <div className="flex gap-2 items-center">
+              {[4, 5, 6, 7, 8].map((n) => (
+                <button key={n} onClick={() => onSave({ estimated_glasses_per_bottle: n })}
+                  className={`rounded-lg border px-3 py-2 text-xs font-medium transition-all ${writeSettings.estimated_glasses_per_bottle === n ? "border-primary bg-primary/5 text-primary" : "border-border text-muted-foreground hover:border-primary/30"}`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">Used to estimate glass cost when glass_cost_price is missing: bottle_purchase_price ÷ {writeSettings.estimated_glasses_per_bottle}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+        <div className="flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" />
+          <p className="text-xs font-medium text-foreground">Auto Push</p>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          When enabled, syncing the Winerim catalog will automatically create outbound tasks to push new/updated wines to Agora.
+        </p>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push on Create</p><p className="text-[11px] text-muted-foreground">Queue push when a new wine is synced from Winerim</p></div>
+          <Switch checked={writeSettings.auto_push_on_create} onCheckedChange={(v) => onSave({ auto_push_on_create: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push on Update</p><p className="text-[11px] text-muted-foreground">Queue push when an existing wine is updated (only if already synced)</p></div>
+          <Switch checked={writeSettings.auto_push_on_update} onCheckedChange={(v) => onSave({ auto_push_on_update: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push Bottle</p><p className="text-[11px] text-muted-foreground">Auto-push BOT. format</p></div>
+          <Switch checked={writeSettings.auto_push_bottle} onCheckedChange={(v) => onSave({ auto_push_bottle: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Auto-push Glass</p><p className="text-[11px] text-muted-foreground">Auto-push COPA format</p></div>
+          <Switch checked={writeSettings.auto_push_glass} onCheckedChange={(v) => onSave({ auto_push_glass: v })} />
+        </div>
+        <div className="flex items-center justify-between">
+          <div><p className="text-sm text-foreground">Require Manual Review</p><p className="text-[11px] text-muted-foreground">Only auto-push wines with valid name and resolvable data</p></div>
+          <Switch checked={writeSettings.require_manual_review_before_push} onCheckedChange={(v) => onSave({ require_manual_review_before_push: v })} />
+        </div>
+        {!writeSettings.auto_push_on_create && !writeSettings.auto_push_on_update && (
+          <div className="rounded-md bg-muted/50 p-2 text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3" /> Auto-push is disabled. Wines will only be pushed manually from the Outbound Sync step.
+          </div>
+        )}
+        {(writeSettings.auto_push_on_create || writeSettings.auto_push_on_update) && writeSettings.write_mode !== "XML_IMPORT" && (
+          <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-2 text-[11px] text-amber-600 flex items-center gap-1.5">
+            <AlertTriangle className="h-3 w-3" /> Auto-push requires write_mode = XML_IMPORT. Sync Master Data first to enable.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 12: Sales Analytics ──
+function StepSalesAnalytics({ connectionId }: { connectionId: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  const [analytics, setAnalytics] = useState<{
+    totalEvents: number; totalLines: number; totalWineLines: number;
+    resolvedCount: number; unresolvedCount: number;
+    byFormat: Record<string, { count: number; qty: number; total: number }>;
+    unresolvedByProduct: { provider_product_id: string; name: string; family: string; count: number; qty: number; total: number }[];
+    lastSyncDay: string | null;
+    events: { id: string; business_day: string; total_amount: number; line_count: number }[];
+  } | null>(null);
+  const [resolveResult, setResolveResult] = useState<{ totalUnresolved: number; resolved: number; remaining: number } | null>(null);
+
+  const loadAnalytics = useCallback(async () => {
+    if (!connectionId) return;
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "sales-analytics", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) setAnalytics(data);
+    } catch (e: any) { console.error("Failed to load analytics:", e); }
+    finally { setLoading(false); }
+  }, [connectionId]);
+
+  useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
+
+  const resolveSales = useCallback(async () => {
+    if (!connectionId) return;
+    setResolving(true); setResolveResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("agora-proxy", {
+        body: { action: "resolve-sales", connectionId },
+      });
+      if (error) throw error;
+      if (data?.success) {
+        setResolveResult(data);
+        await loadAnalytics();
+      }
+    } catch (e: any) { console.error("Failed to resolve sales:", e); }
+    finally { setResolving(false); }
+  }, [connectionId, loadAnalytics]);
+
+  if (loading && !analytics) {
+    return <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Sales Analytics — Agora → Winerim</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Track how sales from Agora resolve to Winerim wines by product and format.
+        </p>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <Button variant="secondary" size="sm" onClick={loadAnalytics} disabled={loading}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh Analytics
+        </Button>
+        <Button variant="outline" size="sm" onClick={resolveSales} disabled={resolving}>
+          {resolving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+          Re-resolve Unmatched Lines
+        </Button>
+      </div>
+
+      {resolveResult && (
+        <div className="rounded-lg border border-border bg-secondary/30 p-3 text-xs space-y-1">
+          <p className="font-semibold text-foreground">Resolution Result</p>
+          <p className="text-foreground">Processed: <strong>{resolveResult.totalUnresolved}</strong> unresolved · Resolved: <strong className="text-success">{resolveResult.resolved}</strong> · Remaining: <strong className={resolveResult.remaining > 0 ? "text-destructive" : "text-success"}>{resolveResult.remaining}</strong></p>
+        </div>
+      )}
+
+      {analytics && (
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{analytics.totalEvents}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Sales Events</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-foreground">{analytics.totalWineLines}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Wine Lines</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-lg font-bold text-success">{analytics.resolvedCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Resolved</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className={`text-lg font-bold ${analytics.unresolvedCount > 0 ? "text-destructive" : "text-success"}`}>{analytics.unresolvedCount}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Unresolved</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 text-center">
+              <p className="text-sm font-bold text-foreground">{analytics.lastSyncDay || "—"}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Last Sync Day</p>
+            </div>
+          </div>
+
+          {/* Format Breakdown */}
+          {Object.keys(analytics.byFormat).length > 0 && (
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-2.5 bg-secondary/30 border-b border-border">
+                <p className="text-xs font-semibold text-foreground">Resolved Sales by Format</p>
+              </div>
+              <div className="grid grid-cols-3 gap-0 divide-x divide-border">
+                {["BOTTLE", "GLASS", "MAGNUM"].map(fmt => {
+                  const data = analytics.byFormat[fmt] || analytics.byFormat[fmt.toLowerCase()] || { count: 0, qty: 0, total: 0 };
+                  return (
+                    <div key={fmt} className="p-4 text-center">
+                      <p className="text-[10px] text-muted-foreground uppercase">{fmt}</p>
+                      <p className="text-xl font-bold text-foreground">{data.count}</p>
+                      <p className="text-[10px] text-muted-foreground">{data.qty} units · €{data.total.toFixed(2)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Unresolved Lines for Review */}
+          {analytics.unresolvedByProduct.length > 0 && (
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <div className="px-4 py-2.5 bg-destructive/5 border-b border-border flex items-center gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                <p className="text-xs font-semibold text-destructive">Unresolved Wine Lines ({analytics.unresolvedCount})</p>
+              </div>
+              <div className="max-h-[300px] overflow-y-auto divide-y divide-border">
+                {analytics.unresolvedByProduct.map((p) => (
+                  <div key={p.provider_product_id} className="flex items-center justify-between px-4 py-2.5 text-xs hover:bg-secondary/30">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{p.name}</p>
+                      <p className="text-[10px] text-muted-foreground">ID: {p.provider_product_id} · Family: {p.family || "—"}</p>
+                    </div>
+                    <div className="flex items-center gap-4 shrink-0 text-right">
+                      <div>
+                        <p className="font-mono text-foreground">{p.count} lines</p>
+                        <p className="text-[10px] text-muted-foreground">{p.qty} qty</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-foreground">€{p.total.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="px-4 py-2 bg-secondary/20 border-t border-border text-[10px] text-muted-foreground">
+                Push these products to Agora first, or match them in Wine Matching to resolve.
+              </div>
+            </div>
+          )}
+
+          {/* Recent Events */}
+          {analytics.events.length > 0 && (
+            <details className="rounded-lg border border-border bg-card overflow-hidden">
+              <summary className="px-4 py-2.5 bg-secondary/30 text-xs font-semibold text-foreground cursor-pointer hover:bg-secondary/50">
+                Recent Sales Events ({analytics.events.length})
+              </summary>
+              <div className="max-h-[200px] overflow-y-auto divide-y divide-border">
+                {analytics.events.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between px-4 py-2 text-xs">
+                    <span className="font-mono text-foreground">{e.business_day}</span>
+                    <span className="text-muted-foreground">{e.line_count} lines</span>
+                    <span className="font-mono text-foreground">€{Number(e.total_amount).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+
+      {!analytics && !loading && (
+        <div className="text-center py-8 rounded-lg border border-border bg-secondary/20">
+          <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+          <p className="text-sm text-muted-foreground">No sales data yet. Save sales from the Sales & Mapping step first.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 14: Go Live ──
+function StepGoLive({
+  syncMode, frequency, backfill, salesEvents, selectedDay,
+  onEnable, enabled, familyOverrides, detectedFamilies, catalogStatus,
+  readinessDimensions,
+}: {
+  syncMode: string; frequency: number; backfill: number;
+  salesEvents: SalesEvent[]; selectedDay: string | null;
+  onEnable: () => void; enabled: boolean;
+  familyOverrides: Record<string, boolean>; detectedFamilies: DetectedFamily[];
+  catalogStatus: { catalogEndpoint: string | null; catalogProductCount: number; catalogWineCandidateCount: number; catalogSyncEnabled: boolean };
+  readinessDimensions?: ReadinessDimensions;
+}) {
+  const wineFamilyCount = detectedFamilies.filter((f) => f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine).length;
+  const wineLines = salesEvents.flatMap((e) => e.lines).filter((l) => l.is_wine_candidate);
+
+  return (
+    <div className="space-y-6 text-center py-4">
+      <div className="flex justify-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10"><Power className="h-8 w-8 text-primary" /></div>
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Ready to Go Live</h2>
+        <p className="mt-1 text-sm text-muted-foreground max-w-md mx-auto">Activa la conexión para que el cron procese automáticamente los días cerrados y reintente si Winerim no confirma stock.</p>
+      </div>
+
+      {/* Readiness summary */}
+      {readinessDimensions && (
+        <div className="flex justify-center gap-2 flex-wrap">
+          <OverallReadinessBadge dimensions={readinessDimensions} />
+        </div>
+      )}
+      {readinessDimensions && (
+        <div className="flex justify-center">
+          <ReadinessBadgeRow dimensions={readinessDimensions} />
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-secondary/30 p-4 text-left max-w-sm mx-auto space-y-2">
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Mode</span><span className="font-medium text-foreground">{syncMode === "PULL_ONLY" ? "Pull Only" : "Bidirectional"}</span></div>
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Frequency</span><span className="font-medium text-foreground">Every {frequency} min</span></div>
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Backfill</span><span className="font-medium text-foreground">Last {backfill} days</span></div>
+        {selectedDay && <div className="flex justify-between text-xs"><span className="text-muted-foreground">Last business day</span><span className="font-medium font-mono text-foreground">{selectedDay}</span></div>}
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine families</span><span className="font-medium text-foreground">{wineFamilyCount}</span></div>
+        <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates (sales)</span><span className="font-medium text-foreground">{wineLines.length}</span></div>
+        {catalogStatus.catalogEndpoint && (
+          <>
+            <div className="border-t border-border pt-2 mt-2" />
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog endpoint</span><span className="font-mono font-medium text-foreground">{catalogStatus.catalogEndpoint}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog products</span><span className="font-medium text-foreground">{catalogStatus.catalogProductCount}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Wine candidates</span><span className="font-medium text-success">{catalogStatus.catalogWineCandidateCount}</span></div>
+            <div className="flex justify-between text-xs"><span className="text-muted-foreground">Catalog sync</span><span className="font-medium text-foreground">{catalogStatus.catalogSyncEnabled ? "Enabled" : "Disabled"}</span></div>
+          </>
+        )}
+      </div>
+      <Button size="lg" onClick={onEnable} className="shadow-glow">
+        {enabled ? (<><CheckCircle2 className="mr-2 h-4 w-4" /> Sync Enabled — Redirecting…</>) : "Enable Sync"}
+      </Button>
+    </div>
+  );
+}
+
+// ── Main Wizard ──
+export default function AgoraWizard() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [currentStep, setCurrentStep] = useState(1);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiToken, setApiToken] = useState("");
+  const [winerimApiToken, setWinerimApiToken] = useState("");
+  const [locationName, setLocationName] = useState("");
+  const [syncMode, setSyncMode] = useState<"PULL_ONLY" | "BIDIRECTIONAL">("PULL_ONLY");
+  const [frequency, setFrequency] = useState(15);
+  const [backfill, setBackfill] = useState(30);
+  const [enabled, setEnabled] = useState(false);
+  const [familyOverrides, setFamilyOverrides] = useState<Record<string, boolean>>({});
+
+  const {
+    connectionId, setConnectionId,
+    testStatus, testError, testConnection, updateConnection, loadConnection,
+    daysWithSales, selectedDay, setSelectedDay, loadingDays, findDaysWithSales, scanStats, lastClosedDay,
+    salesEvents, detectedFamilies, loadingSales, fetchSalesForDay,
+    saving, saveResult, saveSalesToDb, enableSync, saveFamilyRules,
+    catalogStatus, catalogDiscovering, catalogDiscoveryResults, catalogDiscoverySample,
+    catalogSyncing, catalogSyncResult, catalogTestResult, catalogTestingEndpoint,
+    catalogProducts, discoverCatalog, syncCatalog, testCatalogEndpoint,
+    fetchCatalogProducts, toggleCatalogSync,
+    buildingDerived, derivedResult, buildDerivedCatalog,
+    classificationConfig, loadClassificationConfig, saveClassificationConfig,
+    recomputing, recomputeResult, recomputeClassification,
+    overrideProductClassification, bulkOverrideProducts,
+  } = useAgoraConnection();
+
+  const outbound = useOutboundSync(connectionId);
+  const agoraMaster = useAgoraMasterData(connectionId);
+
+  // Winerim wines for outbound push
+  const [winerimWinesForPush, setWinerimWinesForPush] = useState<{ winerim_id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    const connParam = searchParams.get("connection");
+    if (connParam && !connectionId) {
+      loadConnection(connParam).then((conn) => {
+        if (conn) {
+          setLocationName(conn.location_name);
+          setBaseUrl(conn.base_url);
+          setApiToken(conn.api_token);
+          setWinerimApiToken(conn.winerim_api_token || "");
+          setSyncMode(conn.sync_mode as "PULL_ONLY" | "BIDIRECTIONAL");
+          setFrequency(conn.sync_frequency_minutes);
+          setBackfill(conn.backfill_days);
+          setEnabled(conn.enabled);
+          setCurrentStep(7);
+        }
+      });
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if ((currentStep === 6 || currentStep === 7) && connectionId && daysWithSales.length === 0 && !loadingDays) {
+      findDaysWithSales(60);
+    }
+  }, [currentStep, connectionId]);
+
+  useEffect(() => {
+    if (selectedDay && (currentStep === 6 || currentStep === 7)) fetchSalesForDay(selectedDay);
+  }, [selectedDay]);
+
+  useEffect(() => {
+    if (currentStep === 4 && connectionId && !catalogStatus.catalogEndpoint && !catalogDiscovering) discoverCatalog();
+  }, [currentStep, connectionId]);
+
+  useEffect(() => {
+    if ((currentStep === 6 || currentStep === 7) && connectionId) {
+      loadClassificationConfig();
+      if (catalogProducts.length === 0) fetchCatalogProducts();
+    }
+  }, [currentStep, connectionId]);
+
+  useEffect(() => {
+    if (connectionId && currentStep === 6 && !classificationConfig.id) {
+      saveClassificationConfig({
+        non_wine_keywords_blacklist: ["menu", "menú", "degustación", "terrina", "ravioli", "steak", "solomillo", "atún", "gambas", "postre", "tarta", "pan", "snack", "ensalada", "pescado", "carne"],
+        wine_keywords_whitelist: ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut", "reserva", "crianza", "botella", "bot.", "75cl", "magnum", "copa"],
+        format_whitelist: ["BOT", "Bottle", "75cl", "Copa", "Glass"],
+      });
+    }
+  }, [connectionId, currentStep]);
+
+  // Load master data + write settings when entering steps 3, 5 or 10
+  useEffect(() => {
+    if ((currentStep === 3 || currentStep === 5 || currentStep === 9 || currentStep === 10 || currentStep === 11) && connectionId) {
+      agoraMaster.loadMasterData();
+      agoraMaster.loadWriteSettings();
+    }
+  }, [currentStep, connectionId]);
+
+  // Load winerim wines and outbound tasks when entering step 11
+  useEffect(() => {
+    if (currentStep === 11 && connectionId) {
+      fetchAllWinerimWines(connectionId, "winerim_id, name")
+        .then((data) => { setWinerimWinesForPush(data as any); });
+      outbound.loadOutboundTasks();
+      outbound.loadCapabilities();
+    }
+  }, [currentStep, connectionId]);
+
+  const handleAddKeyword = (keyword: string, type: "wine" | "non_wine") => {
+    if (type === "wine") {
+      const current = classificationConfig.wine_families_whitelist || [];
+      if (!current.includes(keyword)) {
+        saveClassificationConfig({ wine_families_whitelist: [...current, keyword] });
+      }
+    } else {
+      const current = classificationConfig.non_wine_families_blacklist || [];
+      if (!current.includes(keyword)) {
+        saveClassificationConfig({ non_wine_families_blacklist: [...current, keyword] });
+      }
+    }
+  };
+
+  const handleNext = async () => {
+    if (currentStep === 2 && connectionId) {
+      await updateConnection(connectionId, {
+        sync_mode: syncMode, sync_frequency_minutes: frequency,
+        backfill_days: backfill, location_name: locationName || "New Location",
+      });
+    }
+    if (currentStep === 6) {
+      const families = detectedFamilies.map((f) => ({
+        name: f.name, isWine: f.name in familyOverrides ? familyOverrides[f.name] : f.suggestedWine,
+      }));
+      if (families.length > 0) await saveFamilyRules(families);
+    }
+    setCurrentStep((s) => Math.min(14, s + 1));
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-8">
+      <button onClick={() => navigate("/integrations")} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+        <ArrowLeft className="h-4 w-4" /> Back to Integrations
+      </button>
+      <div className="flex items-center gap-4">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary font-bold text-lg">A</div>
+        <div>
+          <h1 className="text-xl font-bold text-foreground">Connect Agora POS</h1>
+          <p className="text-sm text-muted-foreground">Set up your Agora integration in a few steps.</p>
+      </div>
+      {connectionId && (
+        <div className="ml-auto flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
+          <div className="text-right">
+            <p className="text-xs font-medium text-foreground">Conexión activa (cron)</p>
+            <p className="text-[10px] text-muted-foreground">{enabled ? "El cron sincroniza esta conexión cada 5 min" : "Pausada — el cron no entra"}</p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={async (v) => {
+              setEnabled(v);
+              await updateConnection(connectionId, { enabled: v });
+            }}
+          />
+        </div>
+      )}
+      {connectionId && <ConnectionHealthPanel connectionId={connectionId} />}
+      </div>
+      <div className="flex items-center gap-1">
+        {steps.map((step, i) => {
+          const isActive = step.id === currentStep;
+          const isDone = step.id < currentStep;
+          return (
+            <div key={step.id} className="flex items-center gap-1 flex-1">
+              <button
+                type="button"
+                onClick={() => setCurrentStep(step.id)}
+                className={`flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-semibold transition-all cursor-pointer hover:ring-2 hover:ring-primary/40 ${isDone ? "bg-success text-success-foreground" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"}`}
+              >
+                {isDone ? <CheckCircle2 className="h-3 w-3" /> : step.id}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentStep(step.id)}
+                className={`text-[10px] font-medium hidden xl:block cursor-pointer hover:text-foreground transition-colors ${isActive ? "text-foreground" : "text-muted-foreground"}`}
+              >
+                {step.label}
+              </button>
+              {i < steps.length - 1 && <div className={`h-px flex-1 ${isDone ? "bg-success" : "bg-border"}`} />}
+            </div>
+          );
+        })}
+      </div>
+      <AnimatePresence mode="wait">
+        <motion.div key={currentStep} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }} className="rounded-xl border border-border bg-card p-6 shadow-card">
+          {currentStep === 1 && (
+            <StepConnection locationName={locationName} setLocationName={setLocationName}
+              baseUrl={baseUrl} setBaseUrl={setBaseUrl} apiToken={apiToken} setApiToken={setApiToken}
+              winerimApiToken={winerimApiToken} setWinerimApiToken={setWinerimApiToken}
+              testStatus={testStatus} testError={testError} onTest={() => testConnection(baseUrl, apiToken, winerimApiToken, locationName)} />
+          )}
+          {currentStep === 2 && (
+            <StepSyncSettings syncMode={syncMode} setSyncMode={setSyncMode}
+              frequency={frequency} setFrequency={setFrequency} backfill={backfill} setBackfill={setBackfill}
+              catalogSyncEnabled={catalogStatus.catalogSyncEnabled} onToggleCatalogSync={toggleCatalogSync} />
+          )}
+          {currentStep === 3 && (
+            <StepCapabilities connectionId={connectionId}
+              capabilities={outbound.capabilities} detecting={outbound.detecting}
+              detectionResults={outbound.detectionResults}
+              onDetect={outbound.detectCapabilities} onLoadCapabilities={outbound.loadCapabilities}
+              exporting={outbound.exporting} onExport={outbound.exportProducts}
+              writeMode={agoraMaster.writeSettings.write_mode}
+              xmlWriteCapability={agoraMaster.writeCapability} />
+          )}
+          {currentStep === 4 && (
+            <StepCatalog catalogStatus={catalogStatus}
+              catalogDiscovering={catalogDiscovering} catalogDiscoveryResults={catalogDiscoveryResults}
+              catalogDiscoverySample={catalogDiscoverySample} catalogSyncing={catalogSyncing}
+              catalogSyncResult={catalogSyncResult} catalogTestResult={catalogTestResult}
+              catalogTestingEndpoint={catalogTestingEndpoint} catalogProducts={catalogProducts}
+              buildingDerived={buildingDerived} derivedResult={derivedResult}
+              onDiscover={discoverCatalog} onSync={syncCatalog} onTestEndpoint={testCatalogEndpoint}
+              onFetchProducts={fetchCatalogProducts} onBuildDerived={buildDerivedCatalog} />
+          )}
+          {currentStep === 5 && (
+            <StepMasterData masterData={agoraMaster.masterData}
+              syncing={agoraMaster.syncing} syncError={agoraMaster.syncError}
+              syncTruncationWarnings={agoraMaster.syncTruncationWarnings}
+              onSync={agoraMaster.syncMasterData} onLoad={agoraMaster.loadMasterData}
+              writeCapability={agoraMaster.writeCapability} writeSettings={agoraMaster.writeSettings}
+              connectionId={connectionId} saveWriteSettings={agoraMaster.saveWriteSettings} />
+          )}
+          {currentStep === 6 && (
+            <div className="space-y-6">
+              {/* Agora Family Manager with Geographic Families */}
+              <AgoraFamilyManager
+                connectionId={connectionId}
+                families={agoraMaster.masterData.families}
+                onSyncMasterData={agoraMaster.syncMasterData}
+                syncing={agoraMaster.syncing}
+              />
+              {/* Wine Family Classification */}
+              <StepFamilies detectedFamilies={detectedFamilies} loadingDays={loadingDays} loadingSales={loadingSales}
+                familyOverrides={familyOverrides} setFamilyOverrides={setFamilyOverrides}
+                scanStats={scanStats} daysWithSales={daysWithSales} selectedDay={selectedDay}
+                onRunHistoricalScan={() => findDaysWithSales(90)} salesEvents={salesEvents}
+                catalogProducts={catalogProducts} onAddKeyword={handleAddKeyword} />
+            </div>
+          )}
+          {currentStep === 7 && (
+            <StepSalesMapping connectionId={connectionId} daysWithSales={daysWithSales} selectedDay={selectedDay} setSelectedDay={setSelectedDay}
+              loadingDays={loadingDays} salesEvents={salesEvents} loadingSales={loadingSales}
+              onFetchDay={fetchSalesForDay} onSaveSales={saveSalesToDb} saving={saving} saveResult={saveResult}
+              familyOverrides={familyOverrides} detectedFamilies={detectedFamilies}
+              catalogProducts={catalogProducts}
+              onOverride={overrideProductClassification} onBulkOverride={bulkOverrideProducts}
+              recomputing={recomputing} onRecompute={recomputeClassification} recomputeResult={recomputeResult}
+              lastClosedDay={lastClosedDay} />
+          )}
+          {currentStep === 8 && (
+            <Tabs defaultValue="auto" className="space-y-4">
+              <TabsList className="w-full">
+                <TabsTrigger value="auto" className="flex-1">
+                  <Zap className="mr-1.5 h-3.5 w-3.5" /> Auto / AI Matching
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="flex-1">
+                  <ArrowLeftRight className="mr-1.5 h-3.5 w-3.5" /> Manual Side-by-Side
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="auto">
+                <StepWineMatching connectionId={connectionId} />
+              </TabsContent>
+              <TabsContent value="manual">
+                <AgoraManualMatchPanel connectionId={connectionId} />
+              </TabsContent>
+            </Tabs>
+          )}
+          {currentStep === 9 && (
+            <StepWinerimCatalog connectionId={connectionId}
+              onQueueProducts={(ids, fmts, familyOverride) => outbound.queueProducts(ids, fmts, familyOverride)}
+              queuingProducts={outbound.queuingProducts}
+              families={agoraMaster.masterData.families}
+              priceListCount={agoraMaster.masterData.priceLists.length} />
+          )}
+          {currentStep === 10 && (
+            <StepWriteSettings writeSettings={agoraMaster.writeSettings}
+              masterData={agoraMaster.masterData}
+              onSave={agoraMaster.saveWriteSettings} />
+          )}
+          {currentStep === 11 && (
+            <StepOutboundSync connectionId={connectionId}
+              capabilities={outbound.capabilities}
+              outboundTasks={outbound.outboundTasks} loadingTasks={outbound.loadingTasks}
+              processingQueue={outbound.processingQueue} queuingProducts={outbound.queuingProducts}
+              exporting={outbound.exporting}
+              onLoadTasks={outbound.loadOutboundTasks} onProcessQueue={outbound.processQueue} onProcessQueueServerSide={outbound.processQueueServerSide}
+              onRetry={outbound.retryTask}
+              onRequeueWithCurrentScope={outbound.requeueTaskWithCurrentScope}
+              onExport={outbound.exportProducts}
+              winerimWines={winerimWinesForPush}
+              onQueueProducts={(ids, fmts) => outbound.queueProducts(ids, fmts)}
+              backfillingPreparation={outbound.backfillingPreparation}
+              onBackfillPreparation={outbound.backfillPreparation}
+              fixingPrices={outbound.fixingPrices}
+              onFixMissingPrices={outbound.fixMissingPrices}
+              reassigningFamilies={outbound.reassigningFamilies}
+              onReassignFamilies={outbound.reassignFamilies}
+              clearingQueue={outbound.clearingQueue}
+              onClearQueue={outbound.clearQueue}
+              requeueingBlocked={outbound.requeueingBlocked}
+              onRequeueBlockedAsUpdate={outbound.requeueBlockedAsUpdate}
+              queueProgress={outbound.queueProgress} />
+          )}
+          {currentStep === 12 && (
+            <StepSalesAnalytics connectionId={connectionId} />
+          )}
+          {currentStep === 13 && (
+            <AgoraTodaysSalesStock connectionId={connectionId} />
+          )}
+          {currentStep === 14 && (
+            <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
+              salesEvents={salesEvents} selectedDay={selectedDay}
+              onEnable={async () => { await enableSync(); setEnabled(true); setTimeout(() => navigate("/integrations"), 2000); }}
+              enabled={enabled} familyOverrides={familyOverrides} detectedFamilies={detectedFamilies} catalogStatus={catalogStatus}
+              readinessDimensions={{
+                writeMode: agoraMaster.writeSettings.write_mode,
+                canWrite: agoraMaster.writeCapability,
+                masterDataFetchedAt: agoraMaster.masterData.fetchedAt,
+                autoPushVerifiedReady: agoraMaster.writeSettings.auto_push_verified_ready,
+              }} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+      <div className="flex justify-between">
+        <Button variant="ghost" onClick={() => setCurrentStep((s) => Math.max(1, s - 1))} disabled={currentStep === 1}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Previous
+        </Button>
+        {currentStep < 14 && (
+          <Button onClick={handleNext} disabled={currentStep === 1 && testStatus !== "success"}>
+            Next <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,36 @@
+# TEMPLATE ONLY. The observer has no public route and records sanitized
+# metadata only; it never archives payload contents or provider credentials.
+name = "winerim-rescue-prod-canary-dlq-observer-{{CANARY_RUN_ID}}"
+main = "cloudflare/canary-failclosed/src/dlqObserver.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+CANARY_DLQ_QUEUE_NAME = "{{CANARY_DLQ_QUEUE_NAME}}"
+CANARY_ALARM_QUEUE_NAME = "{{CANARY_ALARM_QUEUE_NAME}}"
+
+[[r2_buckets]]
+binding = "CANARY_DLQ_ARCHIVE"
+bucket_name = "{{CANARY_DLQ_ARCHIVE_BUCKET}}"
+
+[[queues.producers]]
+binding = "CANARY_DLQ_ALERTS"
+queue = "{{CANARY_ALARM_QUEUE_NAME}}"
+
+[[queues.consumers]]
+queue = "{{CANARY_DLQ_QUEUE_NAME}}"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "{{CANARY_OBSERVER_FAILURE_QUEUE_NAME}}"
+
+[[queues.consumers]]
+queue = "{{CANARY_ALARM_QUEUE_NAME}}"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+max_concurrency = 1
+dead_letter_queue = "{{CANARY_OBSERVER_FAILURE_QUEUE_NAME}}"

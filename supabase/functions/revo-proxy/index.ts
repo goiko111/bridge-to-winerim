@@ -1,0 +1,1731 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isConnectionPaused } from "../_shared/resilience.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-revo-hmac-sha256, tenant",
+};
+
+const REVO_BASE = "https://revoxef.works/api/external";
+
+// ── Rate limiter: 120 req/min per connection ──
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 120;
+const rateMap = new Map<string, { count: number; start: number }>();
+
+function checkRate(connId: string): boolean {
+  const now = Date.now();
+  const e = rateMap.get(connId);
+  if (!e || now - e.start > RATE_WINDOW_MS) {
+    rateMap.set(connId, { count: 1, start: now });
+    return true;
+  }
+  if (e.count >= RATE_MAX) return false;
+  e.count++;
+  return true;
+}
+
+// ── Classification (shared logic) ──
+const WINE_KW = [
+  "vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut",
+  "reserva", "crianza", "botella", "75cl", "copa", "tempranillo",
+  "garnacha", "cabernet", "merlot", "syrah", "chardonnay", "verdejo",
+  "albariño", "rioja", "ribera", "prosecco", "lambrusco",
+];
+const NON_WINE_KW = [
+  "agua", "water", "cerveza", "beer", "café", "coffee", "postre",
+  "dessert", "pan", "bread", "refresco", "coca", "zumo", "menu",
+  "menú", "ensalada", "carne", "pescado", "gin", "whisky", "vodka",
+  "cocktail", "tapa", "ración", "helado",
+];
+
+function classify(
+  name: string,
+  family: string,
+  price: number,
+): { isWine: boolean; score: number; reasons: string[] } {
+  const n = (name || "").toLowerCase();
+  const f = (family || "").toLowerCase();
+  const reasons: string[] = [];
+  let score = 0;
+
+  for (const kw of ["vino", "tinto", "blanco", "rosado", "cava", "champagne", "brut"]) {
+    if (n.includes(kw)) { reasons.push(`hard_wine:${kw}`); return { isWine: true, score: 100, reasons }; }
+  }
+  if (/\b(botella|bot\.?\s|75\s?cl|copa de vino)\b/i.test(n)) {
+    reasons.push("hard_wine_bottle"); return { isWine: true, score: 100, reasons };
+  }
+
+  for (const kw of NON_WINE_KW) {
+    if (f.includes(kw) || n.includes(kw)) { score -= 50; reasons.push(`non_wine:${kw}`); break; }
+  }
+  for (const kw of WINE_KW) {
+    if (f.includes(kw) || n.includes(kw)) { score += 40; reasons.push(`wine:${kw}`); break; }
+  }
+  if (price >= 6 && price <= 600 && Math.abs(score) < 20) { score += 5; reasons.push(`price_range:${price}`); }
+  score = Math.max(-100, Math.min(100, score));
+  return { isWine: score >= 40, score, reasons };
+}
+
+// ── Format normalizer: map Revo selling format names to canonical types ──
+function normalizeFormat(rawFormat: string, name: string): string {
+  const f = (rawFormat || "").toLowerCase().trim();
+  const n = (name || "").toLowerCase();
+  // Exact / prefix matches on selling format
+  if (/^bot(\.|\b|ella)/i.test(f) || f === "bot" || f === "botella" || f === "bottle") return "BOTTLE";
+  if (/^copa/i.test(f) || f === "glass" || f === "cup") return "GLASS";
+  if (/^magn/i.test(f) || f === "magnum" || f === "mag") return "MAGNUM";
+  // Fallback: infer from product name
+  if (/\b(bot\.?|botella|bottle)\b/i.test(n) || /\b75\s?cl\b/i.test(n)) return "BOTTLE";
+  if (/\b(copa|glass|cup)\b/i.test(n)) return "GLASS";
+  if (/\b(magnum|mag\.?|150\s?cl)\b/i.test(n)) return "MAGNUM";
+  // Return raw if no match
+  return rawFormat || "";
+}
+
+// ── Fetch with rate-limit + retry on 429 ──
+async function revoFetch(
+  url: string,
+  headers: Record<string, string>,
+  connId: string,
+  method = "GET",
+  body?: unknown,
+): Promise<Response> {
+  if (!checkRate(connId)) throw new Error("Rate limit 120 req/min exceeded. Back off.");
+  const opts: RequestInit = { method, headers: { ...headers, Accept: "application/json", "Content-Type": "application/json" } };
+  if (body) opts.body = JSON.stringify(body);
+  let res = await fetch(url, opts);
+  if (res.status === 429) {
+    await new Promise((r) => setTimeout(r, 5000));
+    if (!checkRate(connId)) throw new Error("Rate limit exceeded after backoff.");
+    res = await fetch(url, opts);
+  }
+  return res;
+}
+
+// ── HMAC SHA-256 webhook verification ──
+async function verifyHmac(payload: string, signature: string, secret: string): Promise<boolean> {
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+    const computed = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    return computed === signature.toLowerCase();
+  } catch { return false; }
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // ── WEBHOOK RECEIVER ──
+    const url = new URL(req.url);
+    if (url.pathname.endsWith("/webhook")) {
+      const signature = req.headers.get("x-revo-hmac-sha256") || "";
+      const body = await req.text();
+
+      const { data: connections } = await supabase
+        .from("pos_connections")
+        .select("id, api_token, base_url")
+        .eq("provider", "REVO_XEF")
+        .eq("enabled", true);
+
+      if (!connections?.length) {
+        return new Response(JSON.stringify({ error: "No active Revo connections" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // api_token stores "tenant|access_token|client_token|webhook_secret"
+      let matched: typeof connections[0] | null = null;
+      for (const c of connections) {
+        const parts = c.api_token.split("|");
+        const webhookSecret = parts[3] || "";
+        if (webhookSecret && await verifyHmac(body, signature, webhookSecret)) {
+          matched = c; break;
+        }
+      }
+      if (!matched) {
+        return new Response(JSON.stringify({ error: "Invalid signature" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      let payload: unknown;
+      try { payload = JSON.parse(body); } catch { payload = { raw: body }; }
+      console.log(`[revo-webhook] Connection ${matched.id}:`, JSON.stringify(payload).substring(0, 500));
+
+      return new Response(JSON.stringify({ success: true, connectionId: matched.id }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── STANDARD ACTIONS ──
+    const reqBody = await req.json();
+    const { action, connectionId, businessDay, daysBack, startDate, endDate } = reqBody;
+
+    const { data: connection, error: connError } = await supabase
+      .from("pos_connections")
+      .select("*").eq("id", connectionId).single();
+
+    if (connError || !connection) {
+      return new Response(JSON.stringify({ error: "Connection not found" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Circuit-breaker guard
+    const cbState = await isConnectionPaused(supabase, connectionId);
+    if (cbState.paused) {
+      return new Response(JSON.stringify({ error: "CIRCUIT_BREAKER_OPEN", paused_until: cbState.until, reason: cbState.reason }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Parse compound token: "tenant|access_token|client_token|webhook_secret"
+    const tokenParts = connection.api_token.trim().split("|");
+    const tenant = tokenParts[0] || "";
+    const accessToken = tokenParts[1] || "";
+    const clientToken = tokenParts[2] || "";
+
+    const revoHeaders: Record<string, string> = {
+      tenant,
+      Authorization: `Bearer ${accessToken}`,
+      "client-token": clientToken,
+    };
+
+    const json = (data: unknown, status = 200) =>
+      new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    // ── TEST ──
+    if (action === "test") {
+      try {
+        const res = await revoFetch(`${REVO_BASE}/v2/paymentMethods`, revoHeaders, connectionId);
+        if (!res.ok) {
+          const errBody = await res.text();
+          return json({ success: false, status: res.status, message: `Revo responded ${res.status}: ${errBody.substring(0, 300)}` });
+        }
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : data.data || [];
+        return json({ success: true, paymentMethodCount: items.length });
+      } catch (e) {
+        return json({ success: false, message: (e as Error).message });
+      }
+    }
+
+    // ── HEALTH CHECK (comprehensive connection readiness) ──
+    if (action === "health-check") {
+      const checks: Record<string, { status: "OK" | "FAIL" | "WARN"; message: string; timestamp?: string }> = {};
+      let overallStatus: "VERIFIED" | "PARTIAL" | "ERROR" = "VERIFIED";
+
+      // 1) Auth check
+      try {
+        const authRes = await revoFetch(`${REVO_BASE}/v2/paymentMethods`, revoHeaders, connectionId);
+        if (authRes.ok) {
+          checks.auth = { status: "OK", message: "Authentication valid" };
+        } else if (authRes.status === 401 || authRes.status === 403) {
+          checks.auth = { status: "FAIL", message: `Auth failed: HTTP ${authRes.status}. Token expired or permissions revoked.` };
+          overallStatus = "ERROR";
+        } else {
+          checks.auth = { status: "WARN", message: `Auth returned HTTP ${authRes.status}. May be transient.` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.auth = { status: "FAIL", message: `Auth check error: ${e.message}` };
+        overallStatus = "ERROR";
+      }
+
+      // 2) Sales read check
+      const today = new Date().toISOString().split("T")[0];
+      try {
+        const salesRes = await revoFetch(
+          `${REVO_BASE}/v3/reports/orders?start_date=${today}&end_date=${today}&per_page=1`,
+          revoHeaders, connectionId,
+        );
+        if (salesRes.ok) {
+          checks.sales_read = { status: "OK", message: "Sales API accessible" };
+        } else if (salesRes.status === 401 || salesRes.status === 403) {
+          checks.sales_read = { status: "FAIL", message: `Sales API returned ${salesRes.status}. Insufficient permissions.` };
+          overallStatus = "ERROR";
+        } else {
+          checks.sales_read = { status: "WARN", message: `Sales API returned ${salesRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.sales_read = { status: "FAIL", message: `Sales check error: ${e.message}` };
+        overallStatus = "ERROR";
+      }
+
+      // 3) Catalog sync check
+      try {
+        const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/items?per_page=1`, revoHeaders, connectionId);
+        if (catRes.ok) {
+          checks.catalog_sync = { status: "OK", message: "Catalog API accessible" };
+        } else {
+          checks.catalog_sync = { status: "FAIL", message: `Catalog API returned ${catRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.catalog_sync = { status: "FAIL", message: `Catalog check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 4) Dependencies check (category, tax, format availability)
+      try {
+        const [catRes, taxRes] = await Promise.all([
+          revoFetch(`${REVO_BASE}/v2/catalog/categories?per_page=1`, revoHeaders, connectionId),
+          revoFetch(`${REVO_BASE}/v2/taxes`, revoHeaders, connectionId),
+        ]);
+        const catOk = catRes.ok;
+        const taxOk = taxRes.ok;
+        let taxCount = 0;
+        if (taxOk) {
+          const taxJson = await taxRes.json();
+          taxCount = (Array.isArray(taxJson) ? taxJson : taxJson.data || []).length;
+        }
+        if (catOk && taxOk && taxCount > 0) {
+          checks.dependencies = { status: "OK", message: `Categories and taxes (${taxCount}) available` };
+        } else {
+          const issues: string[] = [];
+          if (!catOk) issues.push("categories unavailable");
+          if (!taxOk) issues.push("taxes unavailable");
+          if (taxOk && taxCount === 0) issues.push("no tax rates configured");
+          checks.dependencies = { status: issues.length > 0 ? "FAIL" : "OK", message: issues.join(", ") || "OK" };
+          if (issues.length > 0 && overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.dependencies = { status: "WARN", message: `Dep check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 5) Write verification check (test write capability without creating)
+      try {
+        const writeRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items`, revoHeaders, connectionId,
+          "POST", { name: "__health_check_probe__" },
+        );
+        // 422 = validation error (write endpoint exists), 201/200 = created (clean up)
+        const canWrite = writeRes.status === 422 || writeRes.status === 201 || writeRes.status === 200;
+        if (writeRes.status === 201 || writeRes.status === 200) {
+          try {
+            const created = await writeRes.json();
+            const cid = created.id || created.data?.id;
+            if (cid) await revoFetch(`${REVO_BASE}/v2/catalog/items/${cid}`, revoHeaders, connectionId, "DELETE");
+          } catch { /* ignore */ }
+        }
+        if (canWrite) {
+          checks.write_verification = { status: "OK", message: "Write endpoint accessible" };
+        } else if (writeRes.status === 401 || writeRes.status === 403) {
+          checks.write_verification = { status: "FAIL", message: `Write not permitted: HTTP ${writeRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        } else {
+          checks.write_verification = { status: "WARN", message: `Write probe returned ${writeRes.status}` };
+          if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+        }
+      } catch (e: any) {
+        checks.write_verification = { status: "FAIL", message: `Write check error: ${e.message}` };
+        if (overallStatus === "VERIFIED") overallStatus = "PARTIAL";
+      }
+
+      // 6) Last successful sync timestamp
+      checks.last_sync = {
+        status: connection.last_sync_at ? "OK" : "WARN",
+        message: connection.last_sync_at ? "Last sync recorded" : "No sync recorded yet",
+        timestamp: connection.last_sync_at || undefined,
+      };
+
+      // 7) Last catalog sync timestamp
+      checks.last_catalog_sync = {
+        status: connection.last_catalog_sync_at ? "OK" : "WARN",
+        message: connection.last_catalog_sync_at ? "Last catalog sync recorded" : "No catalog sync yet",
+        timestamp: connection.last_catalog_sync_at || undefined,
+      };
+
+      // Persist to provider_capabilities
+      const canWrite = checks.write_verification?.status === "OK";
+      await supabase.from("provider_capabilities").upsert({
+        connection_id: connectionId,
+        provider: "REVO_XEF",
+        can_read_sales: checks.sales_read?.status === "OK",
+        can_read_catalog: checks.catalog_sync?.status === "OK",
+        can_write_products: canWrite ? "YES" : checks.write_verification?.status === "WARN" ? "UNKNOWN" : "NO",
+        write_mode: canWrite ? "REST" : "NONE",
+        readiness_status: overallStatus,
+        last_checked_at: new Date().toISOString(),
+        last_verified_at: overallStatus === "VERIFIED" ? new Date().toISOString() : undefined,
+        write_endpoints_json: { health_checks: checks },
+      }, { onConflict: "connection_id" });
+
+      return json({ success: true, overallStatus, checks });
+    }
+
+    if (action === "fetch-rooms") {
+      const res = await revoFetch(`${REVO_BASE}/v2/rooms`, revoHeaders, connectionId);
+      if (!res.ok) return json({ error: `Revo ${res.status}` }, 502);
+      const data = await res.json();
+      return json({ success: true, rooms: Array.isArray(data) ? data : data.data || [] });
+    }
+
+    // ── FETCH ORDERS REPORT (nightly backfill / incremental) ──
+    if (action === "fetch-orders") {
+      const start = startDate || businessDay || new Date().toISOString().split("T")[0];
+      const end = endDate || start;
+      let allOrders: unknown[] = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const params = new URLSearchParams({
+          start_date: start, end_date: end,
+          withContents: "", withInvoices: "", withPayments: "",
+          page: String(page), per_page: "200",
+        });
+        const res = await revoFetch(`${REVO_BASE}/v3/reports/orders?${params}`, revoHeaders, connectionId);
+        if (!res.ok) return json({ error: `Revo ${res.status}` }, 502);
+        const data = await res.json();
+        const orders = Array.isArray(data) ? data : data.data || data.orders || [];
+        allOrders = allOrders.concat(orders);
+        // Check pagination
+        const meta = data.meta || data.pagination || {};
+        const lastPage = meta.last_page || meta.totalPages || 1;
+        hasMore = page < lastPage;
+        page++;
+      }
+
+      // Normalize orders into SalesEvents
+      const salesEvents = allOrders.map((order: any) => {
+        const orderId = String(order.id || order.orderId || "");
+        const contents = order.contents || order.items || order.orderContents || [];
+        const lines = contents.map((item: any) => {
+          const name = String(item.name || item.productName || "");
+          const family = String(item.categoryName || item.groupName || item.category || "");
+          const price = Number(item.price || item.unitPrice || 0);
+          const qty = Number(item.quantity || 1);
+          const total = Number(item.total || item.totalAmount || price * qty);
+          const vatRate = Number(item.taxPercentage || item.vatRate || 0);
+          const cls = classify(name, family, price);
+          const rawFmt = String(item.sellingFormatName || item.format || "");
+          const format = normalizeFormat(rawFmt, name);
+          return {
+            provider_product_id: String(item.product_id || item.productId || item.id || ""),
+            name, format, family,
+            quantity: qty, unit_price: price, total_amount: total,
+            vat_rate: vatRate, is_wine_candidate: cls.isWine,
+            wine_score: cls.score, wine_reasons: cls.reasons,
+          };
+        });
+
+        const invoices = order.invoices || [];
+        const totalAmount = invoices.length > 0
+          ? invoices.reduce((s: number, inv: any) => s + Number(inv.total || inv.amount || 0), 0)
+          : Number(order.total || order.sum || 0);
+
+        return {
+          provider_doc_id: orderId,
+          business_day: start,
+          doc_type: String(order.type || "order"),
+          total_amount: totalAmount,
+          total_tax: Number(order.totalTax || 0),
+          total_net: Number(order.totalNet || totalAmount),
+          line_count: lines.length,
+          lines,
+        };
+      });
+
+      return json({ businessDay: start, orderCount: allOrders.length, salesEvents });
+    }
+
+    // ── SAVE SALES TO DB ──
+    if (action === "save-sales") {
+      const day = businessDay;
+      if (!day) return json({ error: "businessDay required" }, 400);
+
+      // Fetch orders for this day
+      const params = new URLSearchParams({
+        start_date: day, end_date: day,
+        withContents: "", withInvoices: "", withPayments: "",
+        per_page: "200",
+      });
+      let allOrders: any[] = [];
+      let page = 1;
+      let hasMore = true;
+      while (hasMore) {
+        const res = await revoFetch(
+          `${REVO_BASE}/v3/reports/orders?${params}&page=${page}`, revoHeaders, connectionId,
+        );
+        if (!res.ok) break;
+        const data = await res.json();
+        const orders = Array.isArray(data) ? data : data.data || data.orders || [];
+        allOrders = allOrders.concat(orders);
+        const lastPage = (data.meta || data.pagination || {}).last_page || 1;
+        hasMore = page < lastPage;
+        page++;
+      }
+
+      let savedEvents = 0, savedLines = 0;
+      for (const order of allOrders) {
+        const orderId = String(order.id || order.orderId || "");
+        if (!orderId) continue;
+        const contents = order.contents || order.items || order.orderContents || [];
+        const lineData: Record<string, unknown>[] = [];
+        let docTotal = 0;
+
+        for (const item of contents) {
+          const name = String(item.name || item.productName || "");
+          const family = String(item.categoryName || item.groupName || "");
+          const price = Number(item.price || item.unitPrice || 0);
+          const qty = Number(item.quantity || 1);
+          const total = Number(item.total || price * qty);
+          docTotal += total;
+          const cls = classify(name, family, price);
+          const rawFmt = String(item.sellingFormatName || "");
+          const format = normalizeFormat(rawFmt, name);
+          lineData.push({
+            provider_product_id: String(item.product_id || item.productId || ""),
+            name, format, family,
+            quantity: qty, unit_price: price, total_amount: total,
+            vat_rate: Number(item.taxPercentage || 0),
+            is_wine_candidate: cls.isWine,
+          });
+        }
+
+        const invoices = order.invoices || [];
+        const totalAmount = invoices.length > 0
+          ? invoices.reduce((s: number, inv: any) => s + Number(inv.total || 0), 0)
+          : Number(order.total || docTotal);
+
+        const { data: eventRow, error: eventErr } = await supabase
+          .from("sales_events")
+          .upsert({
+            connection_id: connectionId, provider_doc_id: orderId, business_day: day,
+            doc_type: String(order.type || "order"),
+            total_amount: totalAmount,
+            total_tax: Number(order.totalTax || 0),
+            total_net: Number(order.totalNet || totalAmount),
+            line_count: lineData.length, raw_json: order,
+          }, { onConflict: "connection_id,provider_doc_id" })
+          .select("id").single();
+
+        if (eventErr || !eventRow) continue;
+        savedEvents++;
+        await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+        const rows = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
+        if (rows.length > 0) {
+          const { error } = await supabase.from("sales_line_items").insert(rows);
+          if (!error) savedLines += rows.length;
+        }
+      }
+
+      await supabase.from("pos_connections")
+        .update({ last_business_day_synced: day, last_sync_at: new Date().toISOString() })
+        .eq("id", connectionId);
+
+      return json({ success: true, savedEvents, savedLines, businessDay: day });
+    }
+
+    // ── BACKFILL (multi-day) ──
+    if (action === "backfill") {
+      const days = daysBack || 30;
+      let totalSaved = 0, totalLines = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < days; i++) {
+        const day = new Date(Date.now() - i * 86400000).toISOString().split("T")[0];
+        try {
+          const params = new URLSearchParams({
+            start_date: day, end_date: day,
+            withContents: "", withInvoices: "", withPayments: "",
+            per_page: "200",
+          });
+          const res = await revoFetch(`${REVO_BASE}/v3/reports/orders?${params}`, revoHeaders, connectionId);
+          if (!res.ok) { errors.push(`${day}: HTTP ${res.status}`); continue; }
+          const data = await res.json();
+          const orders = Array.isArray(data) ? data : data.data || data.orders || [];
+          if (orders.length === 0) continue;
+
+          for (const order of orders) {
+            const orderId = String(order.id || "");
+            if (!orderId) continue;
+            const contents = order.contents || order.items || [];
+            const lineData: Record<string, unknown>[] = [];
+
+            for (const item of contents) {
+              const name = String(item.name || "");
+              const family = String(item.categoryName || item.groupName || "");
+              const price = Number(item.price || 0);
+              const qty = Number(item.quantity || 1);
+              const cls = classify(name, family, price);
+              const rawFmt = String(item.sellingFormatName || "");
+              const format = normalizeFormat(rawFmt, name);
+              lineData.push({
+                provider_product_id: String(item.product_id || item.productId || ""),
+                name, format, family,
+                quantity: qty, unit_price: price, total_amount: Number(item.total || price * qty),
+                vat_rate: Number(item.taxPercentage || 0), is_wine_candidate: cls.isWine,
+              });
+            }
+
+            const { data: eventRow } = await supabase
+              .from("sales_events")
+              .upsert({
+                connection_id: connectionId, provider_doc_id: orderId, business_day: day,
+                doc_type: "order",
+                total_amount: Number(order.total || 0),
+                total_tax: Number(order.totalTax || 0),
+                total_net: Number(order.totalNet || 0),
+                line_count: lineData.length, raw_json: order,
+              }, { onConflict: "connection_id,provider_doc_id" })
+              .select("id").single();
+
+            if (!eventRow) continue;
+            totalSaved++;
+            await supabase.from("sales_line_items").delete().eq("sales_event_id", eventRow.id);
+            const rows = lineData.map((l) => ({ ...l, sales_event_id: eventRow.id, connection_id: connectionId }));
+            if (rows.length > 0) {
+              const { error } = await supabase.from("sales_line_items").insert(rows);
+              if (!error) totalLines += rows.length;
+            }
+          }
+        } catch (e) { errors.push(`${day}: ${(e as Error).message}`); }
+      }
+
+      await supabase.from("pos_connections")
+        .update({ last_sync_at: new Date().toISOString() })
+        .eq("id", connectionId);
+
+      return json({ success: true, totalSaved, totalLines, errors });
+    }
+
+    // ── SYNC CATALOG ──
+    if (action === "sync-catalog") {
+      // Fetch groups, categories, items
+      const fetchAll = async (resource: string) => {
+        let all: any[] = [];
+        let page = 1;
+        let hasMore = true;
+        while (hasMore) {
+          const res = await revoFetch(
+            `${REVO_BASE}/v2/catalog/${resource}?page=${page}&per_page=200`, revoHeaders, connectionId,
+          );
+          if (!res.ok) break;
+          const data = await res.json();
+          const items = Array.isArray(data) ? data : data.data || [];
+          all = all.concat(items);
+          const lastPage = (data.meta || {}).last_page || 1;
+          hasMore = page < lastPage;
+          page++;
+        }
+        return all;
+      };
+
+      const [groups, categories, items] = await Promise.all([
+        fetchAll("groups"),
+        fetchAll("categories"),
+        fetchAll("items"),
+      ]);
+
+      // Build lookup maps
+      const groupMap = new Map(groups.map((g: any) => [String(g.id), g]));
+      const catMap = new Map(categories.map((c: any) => [String(c.id), c]));
+
+      let totalProducts = 0, wineCandidates = 0;
+
+      for (const item of items) {
+        const productId = String(item.id || "");
+        if (!productId) continue;
+        const name = String(item.name || "");
+        const cat = catMap.get(String(item.category_id || ""));
+        const group = cat ? groupMap.get(String(cat.group_id || "")) : null;
+        const family = String(cat?.name || group?.name || "");
+        const price = Number(item.price || item.sellingPrice || 0);
+        const cls = classify(name, family, price);
+
+        await supabase.from("provider_products").upsert({
+          connection_id: connectionId,
+          provider_product_id: productId,
+          name,
+          family,
+          price,
+          vat_rate: Number(item.tax || item.taxPercentage || 0),
+          sale_format: String(item.sellingFormatName || item.format || ""),
+          is_wine_candidate: cls.isWine,
+          wine_score: cls.score,
+          wine_reasons: cls.reasons,
+          last_score: cls.score,
+          last_reasons: cls.reasons,
+          raw_payload: item,
+          last_synced_at: new Date().toISOString(),
+          sync_status: "SYNCED",
+        }, { onConflict: "connection_id,provider_product_id" });
+
+        totalProducts++;
+        if (cls.isWine) wineCandidates++;
+      }
+
+      await supabase.from("pos_connections").update({
+        last_catalog_sync_at: new Date().toISOString(),
+        catalog_product_count: totalProducts,
+        catalog_wine_candidate_count: wineCandidates,
+      }).eq("id", connectionId);
+
+      return json({ success: true, totalProducts, wineCandidates, groups: groups.length, categories: categories.length });
+    }
+
+    // ── VALIDATE WRITE DEPENDENCIES ──
+    // Checks that required catalog dependencies exist in Revo before allowing a write.
+    // Returns { valid, missing[], warnings[] }
+    async function validateWriteDeps(itemData: any) {
+      const missing: { dep: string; message: string; guidance: string }[] = [];
+      const warnings: { dep: string; message: string; guidance: string }[] = [];
+
+      // 1) Category must exist and belong to a group
+      const categoryId = itemData.category_id;
+      if (!categoryId) {
+        missing.push({
+          dep: "category_id",
+          message: "No category_id provided. Items require a category in Revo.",
+          guidance: "In Revo XEF back-office: Catálogo → Categorías. Create a category, then map it in the wizard Catalog step.",
+        });
+      } else {
+        try {
+          const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${categoryId}`, revoHeaders, connectionId);
+          if (!catRes.ok) {
+            missing.push({
+              dep: "category_id",
+              message: `Category ${categoryId} not found in Revo (HTTP ${catRes.status}).`,
+              guidance: "Create the category in Revo XEF back-office first, or update the category_id mapping.",
+            });
+          } else {
+            const catJson = await catRes.json();
+            const catData = catJson.data || catJson;
+            if (!catData.group_id) {
+              missing.push({
+                dep: "group",
+                message: `Category ${categoryId} has no parent group assigned. The item will not appear in any POS menu.`,
+                guidance: "In Revo XEF: Catálogo → Grupos. Assign the category to a group so items are reachable.",
+              });
+            } else {
+              // Verify the group itself exists
+              try {
+                const grpRes = await revoFetch(`${REVO_BASE}/v2/catalog/groups/${catData.group_id}`, revoHeaders, connectionId);
+                if (!grpRes.ok) {
+                  missing.push({
+                    dep: "group",
+                    message: `Group ${catData.group_id} (parent of category ${categoryId}) not found (HTTP ${grpRes.status}).`,
+                    guidance: "The category references a deleted group. Reassign it in Revo XEF: Catálogo → Grupos.",
+                  });
+                }
+              } catch (_e) {
+                warnings.push({
+                  dep: "group",
+                  message: `Could not verify group ${catData.group_id}: network error.`,
+                  guidance: "Non-blocking. The group may still exist.",
+                });
+              }
+            }
+          }
+        } catch (e: any) {
+          missing.push({
+            dep: "category_id",
+            message: `Could not verify category ${categoryId}: ${e.message}`,
+            guidance: "Check network connectivity to Revo API.",
+          });
+        }
+      }
+
+      // 2) Tax / VAT – must be > 0 and validated against Revo tax list
+      const tax = Number(itemData.tax ?? itemData.vat_rate ?? 0);
+      if (tax <= 0) {
+        missing.push({
+          dep: "tax",
+          message: `Tax/VAT rate is ${tax}. Items need a valid VAT rate for invoicing.`,
+          guidance: "Set a default_vat_rate in the wizard Settings step, or pass tax > 0 in the item payload.",
+        });
+      } else {
+        // Verify the tax value exists in Revo's tax configuration
+        try {
+          const taxRes = await revoFetch(`${REVO_BASE}/v2/taxes`, revoHeaders, connectionId);
+          if (taxRes.ok) {
+            const taxJson = await taxRes.json();
+            const taxes = Array.isArray(taxJson) ? taxJson : taxJson.data || [];
+            const taxValues = taxes.map((t: any) => Number(t.percentage || t.rate || t.value || 0));
+            if (taxValues.length > 0 && !taxValues.some((v: number) => Math.abs(v - tax) < 0.5)) {
+              missing.push({
+                dep: "tax",
+                message: `Tax rate ${tax}% does not match any configured Revo tax (available: ${taxValues.join(", ")}%).`,
+                guidance: "In Revo XEF: Configuración → Impuestos. Add the tax rate or use one of the existing ones.",
+              });
+            }
+          }
+          // If endpoint not available, skip (non-blocking)
+        } catch (_e) { /* non-blocking */ }
+      }
+
+      // 3) Price must be > 0
+      const price = Number(itemData.price ?? 0);
+      if (price <= 0) {
+        missing.push({
+          dep: "price",
+          message: `Price is ${price}. Items must have a price > 0 to be sellable.`,
+          guidance: "Ensure the Winerim wine has a bottle_sale_price or glass_sale_price set before pushing.",
+        });
+      }
+
+      // 4) Selling format – validate against Revo's selling formats if provided
+      const sellingFormat = itemData.selling_format || itemData.sellingFormatName || "";
+      if (!sellingFormat) {
+        warnings.push({
+          dep: "selling_format",
+          message: "No selling format specified. The item will use the POS default format.",
+          guidance: "In Revo XEF: Catálogo → Formatos de venta. Create formats like 'Botella' or 'Copa', then pass selling_format.",
+        });
+      } else {
+        // Verify the format exists
+        try {
+          const fmtRes = await revoFetch(`${REVO_BASE}/v2/catalog/sellingFormats`, revoHeaders, connectionId);
+          if (fmtRes.ok) {
+            const fmtJson = await fmtRes.json();
+            const formats = Array.isArray(fmtJson) ? fmtJson : fmtJson.data || [];
+            const fmtNames = formats.map((f: any) => String(f.name || "").toLowerCase());
+            if (fmtNames.length > 0 && !fmtNames.includes(sellingFormat.toLowerCase())) {
+              missing.push({
+                dep: "selling_format",
+                message: `Selling format "${sellingFormat}" not found in Revo (available: ${formats.map((f: any) => f.name).join(", ")}).`,
+                guidance: "Create this format in Revo XEF: Catálogo → Formatos de venta, or use an existing one.",
+              });
+            }
+          }
+        } catch (_e) { /* non-blocking */ }
+      }
+
+      // 5) Room/location reference (if provided)
+      const roomId = itemData.room_id || itemData.roomId || "";
+      if (roomId) {
+        try {
+          const roomRes = await revoFetch(`${REVO_BASE}/v2/rooms/${roomId}`, revoHeaders, connectionId);
+          if (!roomRes.ok) {
+            missing.push({
+              dep: "room_id",
+              message: `Room ${roomId} not found in Revo (HTTP ${roomRes.status}).`,
+              guidance: "In Revo XEF: Configuración → Salas. Verify the room exists or remove room_id from payload.",
+            });
+          }
+        } catch (_e) {
+          warnings.push({
+            dep: "room_id",
+            message: `Could not verify room ${roomId}: network error.`,
+            guidance: "Non-blocking. The room reference will be sent as-is.",
+          });
+        }
+      }
+
+      // Combine: missing = hard blocks, warnings = soft issues
+      // A write is only valid if there are zero missing deps
+      return { valid: missing.length === 0, missing, warnings };
+    }
+
+    // ── FETCH DIAGNOSTICS DEPS (UI diagnostics panel) ──
+    if (action === "fetch-diagnostics-deps") {
+      const { resource } = reqBody;
+      const resourceMap: Record<string, string> = {
+        groups: "catalog/groups",
+        categories: "catalog/categories",
+        taxes: "taxes",
+        sellingFormats: "catalog/sellingFormats",
+        rooms: "rooms",
+      };
+      const endpoint = resourceMap[resource];
+      if (!endpoint) return json({ error: `Unknown resource: ${resource}` }, 400);
+
+      try {
+        let all: any[] = [];
+        let page = 1;
+        let hasMore = true;
+        while (hasMore) {
+          const res = await revoFetch(`${REVO_BASE}/v2/${endpoint}?page=${page}&per_page=200`, revoHeaders, connectionId);
+          if (!res.ok) break;
+          const data = await res.json();
+          const items = Array.isArray(data) ? data : data.data || [];
+          all = all.concat(items);
+          const lastPage = (data.meta || {}).last_page || 1;
+          hasMore = page < lastPage;
+          page++;
+        }
+
+        // Normalize to a consistent shape
+        const items = all.map((item: any) => ({
+          id: String(item.id || ""),
+          name: String(item.name || ""),
+          ...(resource === "categories" ? { group_id: item.group_id || null } : {}),
+          ...(resource === "taxes" ? { percentage: Number(item.percentage || item.rate || item.value || 0) } : {}),
+        }));
+
+        return json({ success: true, resource, items, count: items.length });
+      } catch (e: any) {
+        return json({ success: false, resource, items: [], error: e.message });
+      }
+    }
+
+    if (action === "validate-write-deps") {
+      const { itemData } = reqBody;
+      if (!itemData) return json({ error: "itemData required" }, 400);
+      const result = await validateWriteDeps(itemData);
+      return json(result);
+    }
+
+    // ── UPSERT ITEM (Outbound: Winerim → Revo) ──
+    if (action === "upsert-item") {
+      const { itemData, taskId, skipValidation } = reqBody;
+      if (!itemData) return json({ error: "itemData required" }, 400);
+
+      // Pre-write dependency validation (unless explicitly skipped)
+      if (!skipValidation) {
+        const deps = await validateWriteDeps(itemData);
+        if (!deps.valid) {
+          const errorMsg = deps.missing.map((m) => `[${m.dep}] ${m.message}`).join("; ");
+          if (taskId) {
+            await supabase.from("outbound_tasks").update({
+              status: "BLOCKED",
+              blocked_reason: errorMsg,
+              last_error: `Dependency check failed: ${deps.missing.length} missing`,
+            }).eq("id", taskId);
+          }
+          return json({
+            success: false,
+            blocked: true,
+            error: "Write blocked: missing catalog dependencies",
+            missing: deps.missing,
+            warnings: deps.warnings || [],
+          });
+        }
+      }
+
+      try {
+        // Check if item exists (has external_id)
+        let revoItemId = itemData.revo_item_id;
+        let method = "POST";
+        let endpoint = `${REVO_BASE}/v2/catalog/items`;
+
+        if (revoItemId) {
+          method = "PUT";
+          endpoint = `${REVO_BASE}/v2/catalog/items/${revoItemId}`;
+        }
+
+        const payload = {
+          name: itemData.name,
+          category_id: itemData.category_id,
+          price: itemData.price,
+          tax: itemData.tax || 10,
+          ...(itemData.extra || {}),
+        };
+
+        const res = await revoFetch(endpoint, revoHeaders, connectionId, method, payload);
+        if (!res.ok) {
+          const errBody = await res.text();
+          if (taskId) {
+            const { data: attemptsRow } = await supabase
+              .from("outbound_tasks")
+              .select("attempts")
+              .eq("id", taskId)
+              .single();
+            await supabase.from("outbound_tasks").update({
+              status: "FAILED", last_error: `Revo ${res.status}: ${errBody.substring(0, 300)}`,
+              attempts: ((attemptsRow as any)?.attempts ?? 0) + 1,
+            } as any).eq("id", taskId);
+          }
+          return json({ success: false, error: errBody.substring(0, 300) });
+        }
+
+        const result = await res.json();
+        const newId = String(result.id || result.data?.id || revoItemId || "");
+
+        // ── Auto post-write verification with price-context checks ──
+        let verification = null;
+        try {
+          const vItemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${newId}`, revoHeaders, connectionId);
+          if (vItemRes.ok) {
+            const vItem = await vItemRes.json();
+            const vData = vItem.data || vItem;
+            const vTax = Number(vData.tax || vData.taxPercentage || 0);
+            const vCat = String(vData.category_id || vData.categoryId || "");
+            const vFmt = String(vData.sellingFormatName || vData.format || "");
+            const vErrors: any[] = [];
+            const vWarnings: any[] = [];
+
+            // Price context verification (base + formats + price lists)
+            const priceCheck = await verifyPriceContexts(newId, vData, vErrors, vWarnings);
+
+            if (vTax <= 0) vErrors.push({ code: "TAX_MISSING", message: `Tax is ${vTax}%`, field: "tax" });
+            if (!vCat) vErrors.push({ code: "NO_CATEGORY", message: "No category assigned", field: "category_id" });
+            if (itemData.selling_format && !vFmt) vWarnings.push({ code: "FORMAT_MISSING", message: "No selling format", field: "selling_format" });
+
+            verification = {
+              success: vErrors.length === 0,
+              verified_exists: true,
+              verified_prices: priceCheck.verified,
+              verified_family: !!vCat,
+              verified_tax: vTax > 0,
+              verified_scope: true,
+              price_contexts: priceCheck.contexts,
+              errors: vErrors,
+              warnings: vWarnings,
+            };
+          }
+        } catch (_e) { /* non-blocking */ }
+
+        if (taskId) {
+          const taskStatus = verification && !verification.success ? "FAILED" : "SUCCESS";
+          await supabase.from("outbound_tasks").update({
+            status: taskStatus, external_id: newId,
+            last_error: verification && !verification.success
+              ? `Post-write verification failed: ${verification.errors.map((e: any) => e.code).join(", ")}`
+              : null,
+          }).eq("id", taskId);
+        }
+
+        return json({ success: true, revoItemId: newId, verification });
+      } catch (e) {
+        if (taskId) {
+          await supabase.from("outbound_tasks").update({
+            status: "FAILED", last_error: (e as Error).message,
+          }).eq("id", taskId);
+        }
+        return json({ success: false, error: (e as Error).message });
+      }
+    }
+
+    // ── PROCESS OUTBOUND QUEUE ──
+    if (action === "process-outbound-queue") {
+      const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
+        p_connection_id: connectionId,
+        p_task_types: ["REVO_UPSERT_ITEM"],
+        p_limit: 20,
+      });
+      const usedAtomicClaim = !claimErr;
+      let tasks = claimedTasks;
+      if (claimErr) {
+        console.warn(`[revo process-outbound-queue] atomic claim unavailable, falling back: ${claimErr.message}`);
+        const { data: fallbackTasks } = await supabase
+          .from("outbound_tasks")
+          .select("*")
+          .eq("connection_id", connectionId)
+          .eq("status", "QUEUED")
+          .order("created_at")
+          .limit(20);
+        tasks = fallbackTasks;
+      }
+
+      if (!tasks?.length) return json({ processed: 0 });
+
+      let processed = 0, blocked = 0;
+      for (const task of tasks) {
+        const currentAttempts = usedAtomicClaim ? (task.attempts || 1) : ((task.attempts || 0) + 1);
+        if (!usedAtomicClaim) {
+          await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: currentAttempts }).eq("id", task.id);
+        }
+        const payload = task.payload_json as any;
+
+        // Pre-write dependency check
+        const deps = await validateWriteDeps(payload);
+        if (!deps.valid) {
+          const reason = deps.missing.map((m) => `[${m.dep}] ${m.message}`).join("; ");
+          await supabase.from("outbound_tasks").update({
+            status: "BLOCKED",
+            blocked_reason: reason,
+            last_error: `Dependency check: ${deps.missing.length} missing`,
+            attempts: currentAttempts,
+          }).eq("id", task.id);
+          blocked++;
+          continue;
+        }
+
+        try {
+          let method = "POST";
+          let endpoint = `${REVO_BASE}/v2/catalog/items`;
+          if (payload.revo_item_id) {
+            method = "PUT";
+            endpoint = `${REVO_BASE}/v2/catalog/items/${payload.revo_item_id}`;
+          }
+          const itemPayload = {
+            name: payload.name || payload.Name,
+            category_id: payload.category_id,
+            price: payload.price || payload.Price,
+            tax: payload.tax || 10,
+          };
+          const res = await revoFetch(endpoint, revoHeaders, connectionId, method, itemPayload);
+          if (!res.ok) {
+            const err = await res.text();
+            await supabase.from("outbound_tasks").update({
+              status: currentAttempts >= task.max_attempts ? "FAILED" : "QUEUED",
+              last_error: `Revo ${res.status}: ${err.substring(0, 300)}`,
+              attempts: currentAttempts,
+            }).eq("id", task.id);
+          } else {
+            const result = await res.json();
+            await supabase.from("outbound_tasks").update({
+              status: "SUCCESS",
+              external_id: String(result.id || result.data?.id || ""),
+              attempts: currentAttempts,
+            }).eq("id", task.id);
+            processed++;
+          }
+        } catch (e) {
+          await supabase.from("outbound_tasks").update({
+            status: currentAttempts >= task.max_attempts ? "FAILED" : "QUEUED",
+            last_error: (e as Error).message,
+            attempts: currentAttempts,
+          }).eq("id", task.id);
+        }
+      }
+      return json({ success: true, processed, blocked });
+    }
+
+    // ── QUEUE OUTBOUND PRODUCTS ──
+    if (action === "queue-outbound") {
+      const { winerimWineIds, categoryOverride } = reqBody;
+      if (!winerimWineIds?.length) return json({ error: "winerimWineIds required" }, 400);
+
+      const { data: wines } = await supabase
+        .from("winerim_wines")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", winerimWineIds);
+
+      if (!wines?.length) return json({ queued: 0 });
+
+      // If no override, try to resolve from saved mappings
+      let mappingLookup: Map<string, string> | null = null;
+      if (!categoryOverride) {
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_id")
+          .eq("connection_id", connectionId);
+        if (mappings?.length) {
+          mappingLookup = new Map(mappings.map((m: any) => [m.mapping_key, m.agora_family_id]));
+        }
+      }
+
+      let queued = 0;
+      for (const wine of wines) {
+        // Resolve category: override > saved mapping > null
+        let resolvedCategoryId: string | null = categoryOverride || null;
+        if (!resolvedCategoryId && mappingLookup && wine.wine_type) {
+          // Try to match wine_type to a mapping key (e.g. "Red" → "bottle_red")
+          const wt = String(wine.wine_type).toLowerCase();
+          const fmt = String(wine.format || "bottle").toLowerCase();
+          const candidates = [
+            `${fmt}_${wt}`,
+            `bottle_${wt}`,
+            fmt,
+          ];
+          for (const key of candidates) {
+            if (mappingLookup.has(key)) {
+              resolvedCategoryId = mappingLookup.get(key) || null;
+              break;
+            }
+          }
+        }
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: {
+            name: wine.name,
+            price: wine.bottle_sale_price || wine.price || 0,
+            winerim_id: wine.winerim_id,
+            category_id: resolvedCategoryId,
+            wine_type: wine.wine_type,
+            ...(categoryOverride ? { category_override: categoryOverride } : {}),
+          },
+          status: "QUEUED",
+        });
+        queued++;
+      }
+      return json({ success: true, queued });
+    }
+
+    // ── REPAIR: FIX PRICES ──
+    if (action === "repair-fix-prices") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        // Check for existing pending repair
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        // Fetch latest price from winerim_wines
+        let price = payload.price || 0;
+        if (payload.winerim_id) {
+          const { data: wine } = await supabase
+            .from("winerim_wines")
+            .select("bottle_sale_price, glass_sale_price, price")
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", payload.winerim_id)
+            .single();
+          if (wine) price = wine.bottle_sale_price || wine.price || price;
+        }
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, price, repair_action: "fix_prices" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: REASSIGN CATEGORY ──
+    if (action === "repair-reassign-category") {
+      const { categoryOverride } = reqBody;
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      // Load mappings if no override
+      let mappingLookup: Map<string, string> | null = null;
+      if (!categoryOverride) {
+        const { data: mappings } = await supabase
+          .from("wine_type_family_mappings")
+          .select("mapping_key, agora_family_id")
+          .eq("connection_id", connectionId);
+        if (mappings?.length) {
+          mappingLookup = new Map(mappings.map((m: any) => [m.mapping_key, m.agora_family_id]));
+        }
+      }
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        let catId = categoryOverride || null;
+        if (!catId && mappingLookup && payload.wine_type) {
+          const wt = String(payload.wine_type).toLowerCase();
+          for (const key of [`bottle_${wt}`, "bottle", "glass"]) {
+            if (mappingLookup.has(key)) { catId = mappingLookup.get(key) || null; break; }
+          }
+        }
+
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, category_id: catId, repair_action: "reassign_category" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: FIX TAX/VAT ──
+    if (action === "repair-fix-tax") {
+      const { taxRate } = reqBody;
+      const targetTax = Number(taxRate || connection.default_vat_rate || 10);
+
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("*")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ queued: 0, skipped: 0, totalTargets: 0 });
+
+      let queued = 0, skipped = 0;
+      const seen = new Set<string>();
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) { skipped++; continue; }
+        seen.add(extId);
+
+        const { data: existing } = await supabase
+          .from("outbound_tasks")
+          .select("id")
+          .eq("connection_id", connectionId)
+          .eq("external_id", extId)
+          .in("status", ["QUEUED", "RUNNING"])
+          .limit(1);
+        if (existing?.length) { skipped++; continue; }
+
+        const payload = task.payload_json as any;
+        await supabase.from("outbound_tasks").insert({
+          connection_id: connectionId,
+          task_type: "REVO_UPSERT_ITEM",
+          payload_json: { ...payload, revo_item_id: extId, tax: targetTax, repair_action: "fix_tax" },
+          status: "QUEUED",
+          external_id: extId,
+        });
+        queued++;
+      }
+      return json({ success: true, queued, skipped, totalTargets: tasks.length });
+    }
+
+    // ── REPAIR: RE-VERIFY ALL ──
+    if (action === "repair-reverify") {
+      const { data: tasks } = await supabase
+        .from("outbound_tasks")
+        .select("id, external_id, payload_json")
+        .eq("connection_id", connectionId)
+        .eq("task_type", "REVO_UPSERT_ITEM")
+        .eq("status", "SUCCESS")
+        .not("external_id", "is", null);
+
+      if (!tasks?.length) return json({ verified: 0, passed: 0, failed: 0, totalTargets: 0 });
+
+      let verified = 0, passed = 0, failed = 0;
+      const seen = new Set<string>();
+      const results: any[] = [];
+
+      for (const task of tasks) {
+        const extId = task.external_id!;
+        if (seen.has(extId)) continue;
+        seen.add(extId);
+
+        try {
+          const itemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${extId}`, revoHeaders, connectionId);
+          if (!itemRes.ok) {
+            results.push({ external_id: extId, success: false, error: `HTTP ${itemRes.status}` });
+            failed++;
+          } else {
+            const item = await itemRes.json();
+            const d = item.data || item;
+            const vCat = !!(d.category_id || d.categoryId);
+            const vTax = Number(d.tax || d.taxPercentage || 0) > 0;
+
+            // Price context verification
+            const priceErrors: any[] = [];
+            const priceWarnings: any[] = [];
+            const priceCheck = await verifyPriceContexts(extId, d, priceErrors, priceWarnings);
+            const vPrice = priceCheck.verified;
+
+            const ok = vPrice && vCat && vTax;
+            results.push({
+              external_id: extId,
+              name: d.name,
+              success: ok,
+              verified_prices: vPrice,
+              verified_family: vCat,
+              verified_tax: vTax,
+              price_contexts: priceCheck.contexts,
+              price_errors: priceErrors,
+              price_warnings: priceWarnings,
+            });
+            if (ok) passed++; else failed++;
+          }
+          verified++;
+        } catch (e: any) {
+          results.push({ external_id: extId, success: false, error: e.message });
+          failed++;
+          verified++;
+        }
+      }
+      return json({ success: true, verified, passed, failed, totalTargets: tasks.length, results });
+    }
+
+    // ── DETECT CAPABILITIES ──
+    if (action === "detect-capabilities") {
+      const results: { endpoint: string; status: number; writable: boolean }[] = [];
+
+      // Test catalog read
+      const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/items?per_page=1`, revoHeaders, connectionId);
+      results.push({ endpoint: "catalog/items", status: catRes.status, writable: false });
+
+      // Test catalog write (try POST with empty body to see if we get 422 vs 403)
+      try {
+        const writeRes = await revoFetch(`${REVO_BASE}/v2/catalog/items`, revoHeaders, connectionId, "POST", { name: "__test_capability_check__" });
+        // If we get 422 (validation error) or 201, write is supported
+        const canWrite = writeRes.status === 422 || writeRes.status === 201 || writeRes.status === 200;
+        results.push({ endpoint: "catalog/items (write)", status: writeRes.status, writable: canWrite });
+
+        // If we accidentally created it, clean up
+        if (writeRes.status === 201 || writeRes.status === 200) {
+          try {
+            const created = await writeRes.json();
+            const createdId = created.id || created.data?.id;
+            if (createdId) {
+              await revoFetch(`${REVO_BASE}/v2/catalog/items/${createdId}`, revoHeaders, connectionId, "DELETE");
+            }
+          } catch { /* ignore */ }
+        }
+
+        await supabase.from("provider_capabilities").upsert({
+          connection_id: connectionId,
+          provider: "REVO_XEF",
+          can_read_sales: true,
+          can_read_catalog: catRes.ok,
+          can_write_products: canWrite ? "YES" : "NO",
+          write_endpoint: canWrite ? "/v2/catalog/items" : null,
+          last_checked_at: new Date().toISOString(),
+        }, { onConflict: "connection_id" });
+      } catch (e) {
+        results.push({ endpoint: "catalog/items (write)", status: 0, writable: false });
+      }
+
+      return json({ success: true, results });
+    }
+
+    // ── EXPORT PRODUCTS ──
+    if (action === "export-products") {
+      const { format: expFormat, winerimWineIds } = reqBody;
+      let query = supabase.from("winerim_wines").select("*").eq("connection_id", connectionId);
+      if (winerimWineIds?.length) query = query.in("winerim_id", winerimWineIds);
+      const { data: wines } = await query;
+      if (!wines) return json({ products: [] });
+
+      if (expFormat === "csv") {
+        const header = "name,winerim_id,price,format,grape_variety,region,winery,vintage\n";
+        const rows = wines.map((w: any) =>
+          `"${w.name}","${w.winerim_id}","${w.price || ""}","${w.format || ""}","${w.grape_variety || ""}","${w.region || ""}","${w.winery || ""}","${w.vintage || ""}"`
+        ).join("\n");
+        return new Response(header + rows, { headers: { ...corsHeaders, "Content-Type": "text/csv" } });
+      }
+      return json({ products: wines });
+    }
+
+    // ── Helper: verify price contexts for an item ──
+    async function verifyPriceContexts(
+      itemId: string,
+      itemData: any,
+      errors: any[],
+      warnings: any[],
+    ): Promise<{ verified: boolean; contexts: any[] }> {
+      const contexts: any[] = [];
+      const basePrice = Number(itemData.price || itemData.sellingPrice || 0);
+
+      // 1) Check selling formats on the item (some Revo setups embed them)
+      const sellingFormats = itemData.sellingFormats || itemData.selling_formats || [];
+      if (Array.isArray(sellingFormats) && sellingFormats.length > 0) {
+        for (const sf of sellingFormats) {
+          const sfName = String(sf.name || sf.format || "unknown");
+          const sfPrice = Number(sf.price || sf.sellingPrice || 0);
+          contexts.push({ context: `format:${sfName}`, price: sfPrice });
+          if (sfPrice <= 0) {
+            errors.push({
+              code: "PRICE_ZERO_IN_FORMAT",
+              message: `Price is ${sfPrice} in selling format "${sfName}". Product is not sellable in this format.`,
+              field: "price",
+              context: { format: sfName, price: sfPrice },
+            });
+          }
+        }
+      }
+
+      // 2) Try fetching selling formats endpoint for the item
+      try {
+        const sfRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items/${itemId}/sellingFormats`, revoHeaders, connectionId,
+        );
+        if (sfRes.ok) {
+          const sfJson = await sfRes.json();
+          const formats = Array.isArray(sfJson) ? sfJson : sfJson.data || [];
+          for (const sf of formats) {
+            const sfName = String(sf.name || sf.format || "unknown");
+            const sfPrice = Number(sf.price || sf.sellingPrice || 0);
+            // Avoid duplicates from embedded formats
+            if (!contexts.some((c) => c.context === `format:${sfName}`)) {
+              contexts.push({ context: `format:${sfName}`, price: sfPrice });
+              if (sfPrice <= 0) {
+                errors.push({
+                  code: "PRICE_ZERO_IN_FORMAT",
+                  message: `Price is ${sfPrice} in selling format "${sfName}". Product is not sellable in this format.`,
+                  field: "price",
+                  context: { format: sfName, price: sfPrice },
+                });
+              }
+            }
+          }
+        }
+      } catch (_e) { /* endpoint may not exist — non-blocking */ }
+
+      // 3) Try fetching price lists for the item
+      try {
+        const plRes = await revoFetch(
+          `${REVO_BASE}/v2/catalog/items/${itemId}/priceLists`, revoHeaders, connectionId,
+        );
+        if (plRes.ok) {
+          const plJson = await plRes.json();
+          const lists = Array.isArray(plJson) ? plJson : plJson.data || [];
+          for (const pl of lists) {
+            const plName = String(pl.name || pl.priceListName || `priceList:${pl.id || "?"}`);
+            const plPrice = Number(pl.price || pl.amount || 0);
+            contexts.push({ context: `priceList:${plName}`, price: plPrice });
+            if (plPrice <= 0) {
+              errors.push({
+                code: "PRICE_ZERO_IN_PRICELIST",
+                message: `Price is ${plPrice} in price list "${plName}". Product is not sellable in this context.`,
+                field: "price",
+                context: { priceList: plName, price: plPrice },
+              });
+            }
+          }
+        }
+      } catch (_e) { /* endpoint may not exist — non-blocking */ }
+
+      // 4) Check base price (always required)
+      contexts.push({ context: "base", price: basePrice });
+      const baseFailed = basePrice <= 0;
+      if (baseFailed) {
+        // Only add if not already reported
+        if (!errors.some((e: any) => e.code === "PRICE_ZERO")) {
+          errors.push({
+            code: "PRICE_ZERO",
+            message: `Base price is ${basePrice}. Product must have price > 0 to be sellable.`,
+            field: "price",
+            context: { actual: basePrice },
+          });
+        }
+      }
+
+      // 5) If there are rooms, verify the item's category is reachable from at least one room
+      try {
+        const roomsRes = await revoFetch(`${REVO_BASE}/v2/rooms`, revoHeaders, connectionId);
+        if (roomsRes.ok) {
+          const roomsJson = await roomsRes.json();
+          const rooms = Array.isArray(roomsJson) ? roomsJson : roomsJson.data || [];
+          if (rooms.length > 0) {
+            const catId = String(itemData.category_id || itemData.categoryId || "");
+            // Some Revo setups restrict categories per room via price lists or menus
+            // If rooms exist and no price lists were found, emit a warning
+            if (contexts.filter((c) => c.context.startsWith("priceList:")).length === 0 && rooms.length > 1) {
+              warnings.push({
+                code: "MULTI_ROOM_NO_PRICELISTS",
+                message: `${rooms.length} rooms detected but no price lists found for this item. Verify the product is available in all required rooms/contexts.`,
+                field: "price",
+                context: { roomCount: rooms.length, rooms: rooms.map((r: any) => r.name || r.id).slice(0, 5) },
+              });
+            }
+          }
+        }
+      } catch (_e) { /* non-blocking */ }
+
+      const allPricesOk = !baseFailed && !errors.some((e: any) =>
+        e.code === "PRICE_ZERO_IN_FORMAT" || e.code === "PRICE_ZERO_IN_PRICELIST"
+      );
+      return { verified: allPricesOk, contexts };
+    }
+
+    // ── VERIFY-WRITE (Post-write verification – strict) ──
+    if (action === "verify-write") {
+      const {
+        externalId, external_id, revo_item_id,
+        expectedPrice, price,
+        expectedCategory, category_id,
+        expectedTax, tax, vat_rate,
+        expectedFormat, selling_format,
+      } = reqBody;
+      const itemId = externalId || external_id || revo_item_id || "";
+
+      type Issue = { code: string; message: string; field?: string; context?: Record<string, unknown> };
+      const result = {
+        success: false,
+        verified_exists: false,
+        verified_prices: false,
+        verified_scope: false,
+        verified_family: false,
+        verified_tax: false,
+        price_contexts: [] as any[],
+        errors: [] as Issue[],
+        warnings: [] as Issue[],
+      };
+
+      // 1) Verify scope: can we still reach the catalog API?
+      try {
+        const scopeRes = await revoFetch(`${REVO_BASE}/v2/catalog/items?per_page=1`, revoHeaders, connectionId);
+        if (scopeRes.ok) {
+          result.verified_scope = true;
+        } else if (scopeRes.status === 401 || scopeRes.status === 403) {
+          result.errors.push({ code: "SCOPE_EXPIRED", message: `Catalog API returned ${scopeRes.status}. Token may be expired or permissions revoked.` });
+          return json(result);
+        } else {
+          result.warnings.push({ code: "SCOPE_UNKNOWN", message: `Catalog API returned ${scopeRes.status}. Scope could not be fully verified.` });
+          result.verified_scope = true;
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "SCOPE_ERROR", message: `Scope check failed: ${e.message}` });
+        return json(result);
+      }
+
+      // 2) Verify item exists
+      if (!itemId) {
+        result.errors.push({ code: "NO_ITEM_ID", message: "No item ID provided for verification. Pass externalId or revo_item_id." });
+        return json(result);
+      }
+
+      try {
+        const itemRes = await revoFetch(`${REVO_BASE}/v2/catalog/items/${itemId}`, revoHeaders, connectionId);
+        if (itemRes.ok) {
+          result.verified_exists = true;
+          const item = await itemRes.json();
+          const itemData = item.data || item;
+
+          // 3) Verify prices across all contexts
+          const expected = Number(expectedPrice || price || 0);
+          const priceCheck = await verifyPriceContexts(itemId, itemData, result.errors, result.warnings);
+          result.price_contexts = priceCheck.contexts;
+          result.verified_prices = priceCheck.verified;
+
+          // Check expected price match on base
+          const actualPrice = Number(itemData.price || itemData.sellingPrice || 0);
+          if (actualPrice > 0 && expected > 0 && Math.abs(actualPrice - expected) > 0.01) {
+            result.warnings.push({
+              code: "PRICE_MISMATCH",
+              message: `Expected price ${expected}, found ${actualPrice}`,
+              field: "price",
+              context: { expected, actual: actualPrice },
+            });
+          }
+
+          // 4) Verify family/category assignment (strict)
+          const actualCategoryId = String(itemData.category_id || itemData.categoryId || "");
+          const expectedCatId = String(expectedCategory || category_id || "");
+
+          if (!actualCategoryId) {
+            result.errors.push({
+              code: "NO_CATEGORY",
+              message: "Item has no category assigned. It will not appear in Revo POS menus.",
+              field: "category_id",
+            });
+          } else {
+            if (expectedCatId && actualCategoryId !== expectedCatId) {
+              result.warnings.push({
+                code: "CATEGORY_MISMATCH",
+                message: `Expected category ${expectedCatId}, found ${actualCategoryId}`,
+                field: "category_id",
+                context: { expected: expectedCatId, actual: actualCategoryId },
+              });
+            }
+            try {
+              const catRes = await revoFetch(`${REVO_BASE}/v2/catalog/categories/${actualCategoryId}`, revoHeaders, connectionId);
+              if (catRes.ok) {
+                const catJson = await catRes.json();
+                const catData = catJson.data || catJson;
+                if (!catData.group_id) {
+                  result.warnings.push({
+                    code: "NO_GROUP",
+                    message: `Category ${actualCategoryId} has no parent group. Item may not be visible in POS menu.`,
+                    field: "category_id",
+                  });
+                }
+              }
+            } catch (_e) { /* non-blocking */ }
+            result.verified_family = true;
+          }
+
+          // 5) Verify tax/VAT mapping is present
+          const actualTax = Number(itemData.tax || itemData.taxPercentage || itemData.vat || 0);
+          const expectedTaxVal = Number(expectedTax || tax || vat_rate || 0);
+          if (actualTax > 0) {
+            result.verified_tax = true;
+            if (expectedTaxVal > 0 && Math.abs(actualTax - expectedTaxVal) > 0.5) {
+              result.warnings.push({
+                code: "TAX_MISMATCH",
+                message: `Expected tax ${expectedTaxVal}%, found ${actualTax}%`,
+                field: "tax",
+                context: { expected: expectedTaxVal, actual: actualTax },
+              });
+            }
+          } else {
+            result.errors.push({
+              code: "TAX_MISSING",
+              message: `Item has no VAT/tax rate assigned (${actualTax}%). Required for invoicing.`,
+              field: "tax",
+              context: { actual: actualTax },
+            });
+          }
+
+          // 6) Verify selling format if applicable
+          const actualFormat = String(itemData.sellingFormatName || itemData.selling_format || itemData.format || "");
+          const expectedFmt = String(expectedFormat || selling_format || "");
+          if (expectedFmt) {
+            if (!actualFormat) {
+              result.errors.push({
+                code: "FORMAT_MISSING",
+                message: `Expected selling format "${expectedFmt}" but item has none assigned.`,
+                field: "selling_format",
+                context: { expected: expectedFmt },
+              });
+            } else if (actualFormat.toLowerCase() !== expectedFmt.toLowerCase()) {
+              result.warnings.push({
+                code: "FORMAT_MISMATCH",
+                message: `Expected format "${expectedFmt}", found "${actualFormat}"`,
+                field: "selling_format",
+                context: { expected: expectedFmt, actual: actualFormat },
+              });
+            }
+          }
+
+        } else if (itemRes.status === 404) {
+          result.errors.push({
+            code: "NOT_FOUND",
+            message: `Item ${itemId} not found in Revo catalog after write.`,
+            context: { itemId },
+          });
+        } else {
+          const errText = await itemRes.text();
+          result.errors.push({
+            code: "FETCH_ERROR",
+            message: `Revo returned ${itemRes.status} when verifying item ${itemId}: ${errText.substring(0, 200)}`,
+            context: { itemId, status: itemRes.status },
+          });
+        }
+      } catch (e: any) {
+        result.errors.push({ code: "VERIFY_ERROR", message: `Verification request failed: ${e.message}` });
+      }
+
+      result.success = result.verified_exists && result.verified_prices && result.verified_scope
+        && result.verified_family && result.verified_tax && result.errors.length === 0;
+      return json(result);
+    }
+
+    return json({ error: `Unknown action: ${action}` }, 400);
+
+  } catch (e) {
+    return new Response(JSON.stringify({ error: (e as Error).message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
+});

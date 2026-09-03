@@ -1,0 +1,138 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const repoRoot = process.cwd();
+const agoraProxySource = readFileSync(resolve(repoRoot, "supabase/functions/agora-proxy/index.ts"), "utf8");
+const dispatcherSource = readFileSync(resolve(repoRoot, "supabase/functions/agora-cron-dispatcher/index.ts"), "utf8");
+
+describe("Agora open tickets pilot and glass publishing gates", () => {
+  it("keeps the open-ticket pilot callable but flag-gated", () => {
+    expect(agoraProxySource).toContain('action === "probe-open-tickets"');
+    expect(agoraProxySource).toContain('action === "sync-open-tickets"');
+    expect(agoraProxySource).toContain("/api/export/tickets/");
+    expect(agoraProxySource).toContain("open_tickets_sync_enabled");
+    expect(agoraProxySource).toContain("open_tickets_stock_sync_enabled");
+    expect(agoraProxySource).toContain("open_tickets_min_line_age_minutes");
+    expect(agoraProxySource).toContain("isAgoraTimestampOldEnough");
+    expect(dispatcherSource).toContain("open_tickets_sync_enabled");
+    expect(dispatcherSource).toContain('action: "sync-open-tickets"');
+  });
+
+  it("uses incremental closed-day stock reconciliation when open-ticket sync is enabled", () => {
+    expect(agoraProxySource).toContain("isIntradaySalesSyncEnabled(connection) || isOpenTicketsSyncEnabled(connection)");
+  });
+
+  it("dispatches open tickets before slower closed-day reconciliation", () => {
+    const salesRequestsStart = dispatcherSource.indexOf(
+      "// Prioritize the latency-sensitive paths.",
+    );
+    const salesRequestsEnd = dispatcherSource.indexOf(
+      "return requests;",
+      salesRequestsStart,
+    );
+    const salesRequests = dispatcherSource.slice(salesRequestsStart, salesRequestsEnd);
+
+    expect(salesRequestsStart).toBeGreaterThan(-1);
+    expect(salesRequests.indexOf('action: "sync-open-tickets"')).toBeLessThan(
+      salesRequests.indexOf('action: "sync-intraday-sales"'),
+    );
+    expect(salesRequests.indexOf('action: "sync-intraday-sales"')).toBeLessThan(
+      salesRequests.indexOf('action: "auto-sync-sales"'),
+    );
+  });
+
+  it("loads provider config inside auto-sync-sales before applying day guards", () => {
+    const autoSyncStart = agoraProxySource.indexOf('if (action === "auto-sync-sales")');
+    const autoSyncEnd = agoraProxySource.indexOf('// ── RESOLVE EXISTING SALES LINES', autoSyncStart);
+    const autoSyncSource = agoraProxySource.slice(autoSyncStart, autoSyncEnd);
+
+    expect(autoSyncStart).toBeGreaterThan(-1);
+    expect(autoSyncSource).toContain(
+      "const providerConfig = ((connection.provider_config || {}) as Record<string, unknown>);",
+    );
+    expect(autoSyncSource.indexOf("const providerConfig")).toBeLessThan(
+      autoSyncSource.indexOf("isStockSyncDayAllowed(day, providerConfig)"),
+    );
+  });
+
+  it("advances the closed-day cursor across successfully scanned days without invoices", () => {
+    const autoSyncStart = agoraProxySource.indexOf('if (action === "auto-sync-sales")');
+    const autoSyncEnd = agoraProxySource.indexOf('// ── RESOLVE EXISTING SALES LINES', autoSyncStart);
+    const autoSyncSource = agoraProxySource.slice(autoSyncStart, autoSyncEnd);
+
+    expect(autoSyncSource).toContain("lastSuccessfullyScannedDay = dayStr");
+    expect(autoSyncSource).toContain("updateSalesCursorMonotonically(");
+    expect(autoSyncSource).toContain("cursorAdvancedTo = cursorResult.cursor");
+    expect(autoSyncSource).toContain('reason: "closed_day_scan_failed"');
+    expect(autoSyncSource).not.toContain("catch (err) { /* skip */ }");
+  });
+
+  it("keeps late-closing open tickets ahead of the closed-day cursor", () => {
+    expect(agoraProxySource).toContain("function recentOpenTicketBusinessDays");
+    expect(agoraProxySource).toContain("open_tickets_active_cursor_guard_minutes");
+    expect(agoraProxySource).toContain("businessDays: daysWithSavedTickets.slice().sort()");
+    expect(agoraProxySource).toContain("const activeOpenTicketDays = recentOpenTicketBusinessDays(providerConfig)");
+    expect(agoraProxySource).toContain("const openTicketCursorCeiling = activeOpenTicketDays[0]");
+    expect(agoraProxySource).toContain("const completedDayCursor = capClosedDayCursor(day)");
+  });
+
+  it("does not require the legacy serve_by_glass flag when Winerim has a glass price", () => {
+    expect(agoraProxySource).toContain("serve_by_glass_not_enabled_but_glass_price_present");
+    expect(agoraProxySource).not.toContain('reason: "glass_skipped:serve_by_glass_not_enabled"');
+    expect(agoraProxySource).toContain('reason: "glass_skipped:no_glass_sale_price"');
+  });
+
+  it("preserves key Agora safety guards", () => {
+    expect(agoraProxySource.match(/req\.json\(/g) || []).toHaveLength(1);
+    const directProductsCalls = agoraProxySource.match(/fetchWithRetry\([^)]*export-master\/\?filter=Products/g) || [];
+    expect(directProductsCalls).toHaveLength(0);
+    expect(agoraProxySource).toContain("fetchAgoraProductsXmlCached");
+  });
+
+  it("persists Agora sale line time and passes it to Winerim sales import", () => {
+    expect(agoraProxySource).toContain("extractAgoraProviderSoldAt");
+    expect(agoraProxySource).toContain("line?.CreationDate");
+    expect(agoraProxySource).toContain("provider_sold_at");
+    expect(agoraProxySource).toContain("provider_sold_at_source");
+    expect(agoraProxySource).toContain("soldAt: normalizeProviderSoldAt(input.soldAt) || input.day");
+  });
+
+  it("routes inactive Winerim stock variants through sales import without mutating stock", () => {
+    expect(agoraProxySource).toContain("function readWinerimStockActive");
+    expect(agoraProxySource).toContain("stock.stockActive ?? stock.stock_active ?? stock.active");
+    expect(agoraProxySource).toContain("async function importWinerimSalesOnly");
+    expect(agoraProxySource).toContain("POST /sales/import failed for inactive stock");
+    expect(agoraProxySource.match(/mode: "sales_only_stock_inactive"/g) || []).toHaveLength(6);
+    expect((agoraProxySource.match(/if \(!match\.stockActive\)/g) || []).length).toBeGreaterThanOrEqual(3);
+    expect(agoraProxySource).toContain("stockActive: false");
+  });
+
+  it("treats stale open-ticket sales as provisional and reversible", () => {
+    expect(agoraProxySource).toContain("open_tickets_stock_current_day_only");
+    expect(agoraProxySource).toContain("open_tickets_restore_stale_previous_days_enabled");
+    expect(agoraProxySource).toContain("open_ticket_cancellation_restore");
+    expect(agoraProxySource).toContain("staleDayStockSkippedLines");
+    expect(agoraProxySource).toContain("isOpenTicketStockDayAllowed(day, defaultDay, providerConfig)");
+    expect(agoraProxySource).toContain('String(event.doc_type || "").toLowerCase() !== "openticket"');
+    expect(agoraProxySource).toContain("definitiveEventIds.length > 0 ? definitiveEventIds : eligibleEventIds");
+    expect(agoraProxySource).toContain("i < definitiveEventIds.length; i += 100");
+    expect(agoraProxySource).toContain("definitive sales_line_items lookup failed");
+    expect(agoraProxySource).toContain("const allDayEventIds = (dayEvents || []).map");
+    expect(agoraProxySource).toContain("quantity: -restoreQty");
+  });
+
+  it("defers inactive-stock sales history until Agora emits a definitive invoice", () => {
+    expect(agoraProxySource).toContain('desiredSource === "open_ticket"');
+    expect(agoraProxySource).toContain('mode: "open_ticket_sales_only_deferred_to_invoice"');
+    expect(agoraProxySource).toContain('status: "SKIPPED"');
+    expect(agoraProxySource).toContain('source:${desiredSource}');
+  });
+
+  it("never turns negative Agora quantities into positive sales", () => {
+    expect(agoraProxySource).toContain("signedWholeSaleQuantity(line.quantity)");
+    expect(agoraProxySource).not.toContain("Math.ceil(Math.abs(Number(line.quantity || 0)))");
+    expect(agoraProxySource).toContain("withAgoraOperationalMetadata(inv, day)");
+    expect(agoraProxySource).toContain("agoraDocumentType(inv)");
+  });
+});

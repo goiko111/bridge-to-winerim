@@ -1,0 +1,1 @@
+ALTER TABLE public.pos_connections ADD COLUMN IF NOT EXISTS selected_sale_center_ids text[] NOT NULL DEFAULT '{}'::text[];

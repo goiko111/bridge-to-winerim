@@ -1,0 +1,4 @@
+[0.00-7.00] Mira, se ve dulces winering, pero cuando abres, te salen ya repetidos.
+[7.00-13.00] Aquí dos sale dos veces, en India sale dos veces y no salen colocados por la numeración.
+[13.00-17.00] Continúan saliendo sin estar en orden.
+[17.00-21.00] Bueno, lo ves como aparece todo, ¿no? Pues ya me dices.

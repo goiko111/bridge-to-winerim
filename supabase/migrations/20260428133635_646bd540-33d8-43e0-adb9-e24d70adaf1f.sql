@@ -1,0 +1,1 @@
+UPDATE public.outbound_tasks SET status='QUEUED', last_error=NULL, attempts=0, updated_at=now() WHERE connection_id='c9b23830-a00b-4786-a50b-43fe526c4d3c' AND task_type='AGORA_MIGRATE_FAMILY' AND status='FAILED';

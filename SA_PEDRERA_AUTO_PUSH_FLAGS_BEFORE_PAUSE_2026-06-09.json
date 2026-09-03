@@ -1,0 +1,14 @@
+{
+  "generatedAt": "2026-06-09T15:14:02.990Z",
+  "connectionId": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
+  "location": "Sa Pedrera",
+  "flags": {
+    "id": "e2f6ce27-0e94-444f-9d64-09ba425a2b83",
+    "location_name": "Sa Pedrera",
+    "auto_push_on_create": true,
+    "auto_push_on_update": true,
+    "auto_push_verified_ready": true,
+    "auto_push_bottle": true,
+    "auto_push_glass": true
+  }
+}
