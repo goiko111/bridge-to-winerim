@@ -14,6 +14,7 @@
     "cf:api:smoke:local": "node scripts/smoke-middleware-api.mjs http://127.0.0.1:8787",
     "cf:runtime:test": "vitest run src/test/cloudflareRuntime*.test.ts --environment node",
     "cf:runtime:fleet:test": "vitest run --config cloudflare/workers/middleware-runtime/vitest.config.ts",
+    "cf:runtime:fleet:catalog:render": "node infrastructure/runtime/fleet-catalog-render-config.mjs",
     "cf:executor:test": "vitest run --config cloudflare/workers/middleware-runtime-executor/vitest.config.ts",
     "cf:writer-fence:test": "vitest run --config cloudflare/canary-failclosed/vitest.config.ts",
     "cf:runtime:dry-run:staging": "npx wrangler deploy --config wrangler.middleware-runtime.toml --env staging --dry-run --outdir /tmp/winerim-middleware-runtime-staging-dryrun",
