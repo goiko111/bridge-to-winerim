@@ -1,5 +1,61 @@
 # CURRENT_STATE
 
+## 2026-09-03 - Clinic certificado parcialmente; Casa Esteban en preflight cifrado e inerte
+
+- **Taberna del Clinic** (`1c5177f1-9459-4ee9-8b6e-4780f8b6b96b`) ya está
+  activa en infraestructura propia, no es candidata a otra migración. Cuatro
+  ventas naturales del 02/09 (facturas `27686`–`27689`) se correlacionan con
+  mapping `CONFIRMED`, `sales.claim SUCCESS`, historial Winerim y un recibo
+  `stock_sync_log SUCCESS` del mismo vino/formato/cantidad, creado 1.5–2.5 s
+  antes del claim. La ausencia de una FK de línea en esos recibos es deuda de
+  observabilidad, no evidencia de doble descuento. Lectura fresca a las
+  `2026-09-03T11:47:46Z`: breaker cerrado, fallos consecutivos `0`, cero
+  leases vivas y los jobs catálogo/ventas/outbound más recientes en `SUCCESS`.
+  Tres horas de observación dan p95 de `300–309 s` para los cinco carriles;
+  por tanto el SLA de cinco minutos se observa sano con tolerancia normal.
+- Clinic no es todavía `OK_100`: el corte de 24 h conserva `22 RETRY`,
+  `2 RUNNING` y `78 TERMINAL`. La clasificación muestra `22 RETRY` de
+  catálogo por HTTP `503` (`RUNTIME_EXECUTOR_UNAVAILABLE` o
+  `CATALOG_APPLY_UNAVAILABLE`) y `36 TERMINAL` de ventas por HTTP `422`
+  `RUNTIME_FLEET_SCOPE_REJECTED`; las dos filas RUNNING no tienen lease viva.
+  Son deuda histórica clasificada, no cola viva: desde 02:03Z no hay un fallo
+  nuevo y hay ciclos posteriores sanos. Falta una venta natural GLASS y que
+  el recibo persista directamente su `sales_line_item_id`; no se harán ventas
+  artificiales ni replays para completar esas dos evidencias.
+- Lectura adicional a `2026-09-03T12:31Z`: cuatro records cerrados de día de
+  negocio, correspondientes a las facturas `200`/`201` y sus compensaciones;
+  sus horas de venta fuente son del 02/09. Las dos líneas de vino son
+  `BOTTLE` y `mapped=true`; no se ha cerrado ninguna `GLASS`. El claim y el
+  receipt nuevos son `SUCCESS`, con cola y leases a cero. Una comanda abierta
+  no entra al historial hasta convertirse en factura cerrada; el monitor
+  pasivo sigue esperando una copa natural.
+- La factura posterior `27690` sí contiene dos copas, pero son el botón legacy
+  genérico `COPA VINO TINTO` (`ProductId 425`, familia `VINOS A COPAS`, 9 EUR)
+  sin mapping/tracking Winerim. Se clasificaron correctamente como no
+  atribuibles: no se inventó vino ni se mutó stock. Clinic sigue pendiente de
+  la primera copa cerrada mediante botón Winerim.
+- **Casa Esteban** (`5bed7bf7-f28a-4a1c-95f4-bc02ecb9298f`) permanece inerte:
+  `enabled=false`, `PULL_ONLY/NONE`, catálogo apagado, cero scopes,
+  credenciales, leases y fences activos. Se preparó la nueva generación
+  cifrada `casa-esteban-ro-20260903-a` reutilizando el sobre AES-GCM retirado
+  por copia interna, sin leer ni exponer valores. Readback: scope `PREPARED`,
+  inactivo, y exactamente dos credenciales cifradas inactivas. El siguiente
+  gate de preflight se completó con dos lecturas separadas cinco minutos:
+  `Families`, `Products` e `Invoices` devolvieron `200/XML` idénticos (24,
+  539 y 4 respectivamente). El scope ya fue revocado (`ABORTED`): cero
+  credenciales/scopes activos, cero leases, y la conexión sigue inerte. Falta
+  snapshot/diff y un canary de negocio reversible; no se activó writer,
+  catálogo, ventas ni stock durante el preflight. El único bloqueo interno
+  restante para dicho canary es materializar un grant propio de writer-fence
+  dentro del bundle cifrado de la flota: el perfil runtime ya existe, pero no
+  se debe activar con una firma inventada ni reutilizar el scope abortado.
+- Snapshot de corte fresco: Casa sigue sin credenciales, scopes, fences ni
+  leases activos y no tiene trabajo en vuelo que drenar. Es una preimagen
+  válida, pero no se retirará Lovable hasta que el grant fresco ya esté
+  incorporado al bundle protegido para poder activar y verificar own-infra en
+  el mismo pase reversible.
+
+
 ## 2026-08-04 13:50 CEST - Baseline REST por conexion listo y smoke live OK
 
 - Productor PostgREST secuencial/rate-limited genera artefactos privados
@@ -7308,3 +7364,52 @@ _Última actualización: 2026-08-03 18:26 CEST_
   no observó una factura real; historial y stock siguen sin certificar.
 - El siguiente incremento debe incluir readiness visible de SaleCenters y de
   rutas de preparación por formato antes del canary final.
+
+## 2026-09-03 - Readiness de SaleCenters, tarifas y preparación
+
+### Hechos
+- Sobre el commit local `729f640`, Fleet Runtime incorpora un auditor puro de
+  staging para productos Winerim activos de botella y copa.
+- Bloquea por defecto si un SaleCenter seleccionado no tiene tarifa efectiva
+  activa, precio positivo por formato, venta normal o la pareja válida de tipo
+  y orden de preparación.
+- La prueba focal pasó `6/6`; la suite completa Fleet Runtime pasó `31/31`;
+  también pasaron TypeScript dirigido y `git diff --check`.
+- No hubo deploy, activación, writer, venta, stock, cursor, cola ni cambio de
+  configuración productiva.
+
+### Estado operativo
+- Es capacidad local/staging, no una activación.
+- La impresora física sigue requiriendo comanda controlada o evidencia
+  operador/SAT tras un canary autorizado por separado.
+
+## 2026-09-03 - Collector de readiness read-only preparado
+
+### Hechos
+- Se añadió un harness local que invoca exclusivamente los cinco maestros
+  Agora necesarios para SaleCenters, tarifas, preparación y productos.
+- Las entradas de producto deben venir de tracking Winerim exacto. Si falta un
+  ProductId en el master, el collector bloquea y no hace matching por nombre.
+- El recibo es sanitizado: filtro, HTTP, content type y conteo; no conserva ni
+  expone cuerpo, host o credencial.
+- Suite Fleet Runtime posterior: `35/35` verde. No hubo llamada autenticada
+  real, deploy, activación ni mutación operativa.
+
+### Siguiente gate
+- Elegir una sola conexión con IDs Winerim ya confirmados e invocar el
+  collector mediante el límite de secretos existente, en modo read-only.
+
+## 2026-09-03 - Casa Esteban, gate de venta natural bloqueado sin evidencia
+
+### Hechos
+- Lectura de control plane: conexión inerte (`enabled=false`, `PULL_ONLY`,
+  `write_mode=NONE`), sin scope, credencial ni fence own-infra activos.
+- El snapshot de ventas retenido no tiene líneas mapeadas de Casa Esteban; no
+  existe cadena factura/línea/mapping/claim/historial/stock certificable.
+- Las ejecuciones recientes `SUCCESS` de scheduler no equivalen a venta real.
+- La lectura API source no se inició: no hay credencial disponible en el plano
+  heredado ni material activo en own-infra. No se buscó ni expuso un secreto.
+
+### Estado
+- `BLOCKED_NO_AUTHENTICATED_NATURAL_SALE_EVIDENCE`; no atribuible a own-infra
+  ni Lovable sin inventar evidencia.

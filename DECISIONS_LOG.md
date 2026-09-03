@@ -1,5 +1,40 @@
 # DECISIONS_LOG
 
+## 2026-09-03 - Certificación Clinic separa exact-once de la integridad de cola
+
+- **Decisión:** aceptar como prueba de cuatro descuentos exact-once de Clinic
+  la correlación determinista `factura -> mapping CONFIRMED -> sales.claim
+  SUCCESS -> readback Winerim -> receipt SUCCESS`, cuando vino, formato,
+  cantidad y ventana temporal son únicos; no declarar `OK_100` mientras haya
+  RETRY/RUNNING/TERMINAL recientes sin clasificar.
+- **Razón:** los recibos creados 1.5–2.5 segundos antes del claim no guardan
+  la FK de `sales_line_item`, pero coinciden de forma única con cada venta.
+- **Alternativa descartada:** replay o nuevo descuento para “rellenar” la FK;
+  podría duplicar stock y no mejora la prueba existente.
+
+## 2026-09-03 - Casa Esteban no reactiva credenciales retiradas para un probe
+
+- **Decisión:** mantener Casa Esteban inerte hasta disponer de un scope de
+  lectura temporal por el secret manager aprobado.
+- **Razón:** el control plane conserva material cifrado retirado, pero la
+  activación normal exige un scope activo y exactamente dos credenciales
+  activas de la misma generación; reactivarlas para un probe sería un cambio
+  productivo y rompería fail-closed.
+- **Alternativa descartada:** extraer secretos de base de datos, usar filas
+  legacy o reactivar una pareja retirada.
+
+## 2026-09-03 - Casa Esteban no sustituye el bundle global de writer-fence
+
+- **Decisión:** mantener la conexión inerte tras el preflight satisfactorio
+  hasta que exista el materializador normal de la plataforma para añadir su
+  grant fresco al bundle protegido de flota.
+- **Razón:** ese bundle contiene las autorizaciones de conexiones activas y
+  no se puede leer de vuelta por diseño. Sobrescribirlo con un bundle nuevo
+  de Casa, o sintetizar su proof/grant, podría invalidar otros escritores.
+- **Alternativa descartada:** actualizar a ciegas el Secret Store, reutilizar
+  un grant/scope abortado o firmar material localmente.
+
+
 ## 2026-08-04 - REST por conexion es observacional durante servicio
 
 - El export REST se limita a GET secuencial/rate-limited, ventanas <=31 dias
@@ -3015,3 +3050,42 @@ reservar esfuerzo máximo para gates productivos, pagos y seguridad.
 **Razón:** los objetos Git dataless provocaron esperas de minutos, mientras el
 clon local responde en centésimas. El contexto extenso y el esfuerzo máximo en
 ciclos rutinarios consumen tokens sin una mejora proporcional.
+
+## 2026-09-03 - Routing de venta fail-closed por SaleCenter
+
+**Decisión:** certificar botella o copa Winerim únicamente cuando cada
+SaleCenter seleccionado resuelva una tarifa efectiva activa y el producto tenga
+familia, venta normal, precio positivo específico y pareja válida de tipo y
+orden de preparación. `CurrentPriceListId` prevalece sobre `PriceListId`.
+
+**Razón:** que el catálogo exista no prueba que sea vendible en el punto de
+venta previsto ni que tenga routing a bebidas. El auditor convierte selección
+ausente, tarifa obsoleta, routing incompleto y precio inválido en bloqueos
+accionables antes de activar.
+
+**Límite:** el readback API no certifica impresión física. Hace falta comanda
+controlada o evidencia operador/SAT para esa afirmación final.
+
+## 2026-09-03 - Collector de master aislado y sanitizado
+
+**Decisión:** el collector de readiness recibe un cliente Agora autenticado por
+inyección y sólo realiza `GET` de los cinco maestros imprescindibles. El
+resultado conserva status, content type y conteos, nunca payload, host ni
+credencial.
+
+**Razón:** permite preparar la lectura real por conexión sin ampliar el
+perímetro de secretos ni convertir una auditoría en un runtime activable.
+
+**Límite:** sus ProductIds/formato de entrada deben proceder de tracking
+Winerim exacto. Ausencia o ambigüedad bloquea; no hay inferencia por nombre.
+
+## 2026-09-03 - Casa Esteban no certifica ventas por scheduler vacío
+
+**Decisión:** no tratar `sales.auto-sync` o `sales.sync-intraday` con outcome
+`SUCCESS` como prueba de una venta de botón Winerim. La certificación exige una
+línea mapeada y correlación con invoice, claim, historial y recibo de stock o
+sales-only.
+
+**Razón:** Casa Esteban está inerte, sin credencial/scope/fence own-infra
+activo, y no conserva líneas mapeadas. Atribuir la ruta a own-infra o Lovable
+sin esos artefactos sería una inferencia insegura.

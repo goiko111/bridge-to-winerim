@@ -1,5 +1,28 @@
 # NEXT_STEPS
 
+## P0 - Gates activos Clinic y Casa Esteban - 2026-09-03
+
+- [ ] **Clinic:** mantener observación pasiva hasta la primera venta GLASS
+  natural. El SLA ya está observado con p95 `300–309 s` y no hay cola/lease
+  viva. La deuda histórica `22 RETRY / 2 RUNNING / 78 TERMINAL` quedó
+  clasificada como 503 catálogo / 422 scope rechazado / terminales de run
+  anterior; no replay, stock ni cursor manual. Mantener la correlación de
+  recibos por order/tiempo hasta que el runtime persista la FK de línea. Hay
+  un monitor temporal activo de dos horas, `Clinic: primera copa Winerim`, que
+  sólo observará la siguiente venta natural GLASS.
+- [ ] **Casa Esteban:** la generación cifrada inactiva
+  `casa-esteban-ro-20260903-a` ya está `PREPARED` y verificada sin cambiar
+  `enabled`, writer, fence ni catálogo. Desplegar únicamente un capability
+  temporal de `GET` Agora contractual, activarlo con expiración corta y
+  revocación preparada, y obtener dos lecturas `200/XML` de master e invoices
+  separadas por cinco minutos. **Completado y revocado:** dos lecturas
+  `200/XML` idénticas de 24 familias, 539 productos y 4 facturas. Preparar
+  snapshot/diff de los 276 mappings existentes y una generación nueva para
+  canary reversible. Antes, materializar de forma segura el grant de
+  writer-fence de Casa en el Secret Store/bundle de flota; no reutilizar el
+  scope abortado ni sintetizar una firma.
+
+
 ## P0 - Baseline REST por conexion - 2026-08-04 13:50 CEST
 
 - [x] Implementar productor GET secuencial, rate-limit/backoff y artefactos
@@ -2142,7 +2165,7 @@
 - [x] Implementar paralelismo acotado por conexión y orden estricto dentro de
   cada conexión.
 - [x] Repetir staging: conexión rápida 25 ms mientras la lenta continúa 60 s.
-- [ ] Añadir a la auditoría por conexión la selección y resolución de
+- [x] Añadir auditoría local fail-closed para selección y resolución de
   SaleCenters, PriceLists efectivas y rutas de preparación botella/copa.
 - [x] Reconciliar el cambio en la rama Fleet recuperable y ejecutar suite
   raíz (`790` pass), lint dirigido, build, dry-run y escaneo de secretos.
@@ -2150,3 +2173,20 @@
   no reutilizar el permiso consumido por el rollout anterior.
 - [ ] Ejecutar como último gate una venta natural de Casa Esteban y verificar
   factura Agora, mapping, historial Winerim y stock exactamente una vez.
+
+### Siguiente incremento seguro
+- [x] Añadir collector read-only de master autenticado que transforme el
+  snapshot de una conexión en la entrada del auditor, sin activar el runtime.
+- [ ] Ejecutar el collector una sola vez para una conexión elegida, con sus
+  ProductIds/formato Winerim exactos y el límite de secretos existente.
+- [ ] Exigir `READY` y una comanda controlada o evidencia operador/SAT antes
+  de certificar preparación e impresora en producción.
+
+## P0 - Casa Esteban, venta natural (2026-09-03)
+
+- [x] Auditar sin escritura la cadena interna de factura, mapping, claim,
+  historial y stock; no existe línea mapeada retenida que certificar.
+- [ ] Abrir una sola sesión read-only mediante credencial ya existente en el
+  secret manager, o recibir fecha/ID exacto de factura por canal seguro.
+- [ ] Correlacionar esa única factura con los recibos antes de decidir writer,
+  canary o cualquier cambio de producción.
