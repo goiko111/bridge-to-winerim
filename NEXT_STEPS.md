@@ -2136,3 +2136,17 @@
 - [ ] No desplegar `agora-proxy`, `_shared/stockSyncUtils.ts` ni el monitor
   modificado hasta cerrar estos puntos con pruebas de reintento, concurrencia y
   seleccion parcial.
+## P0 - Fleet Runtime después del aislamiento de cola (2026-09-03)
+
+- [x] Reproducir en Cloudflare staging el bloqueo de 60 s entre dos conexiones.
+- [x] Implementar paralelismo acotado por conexión y orden estricto dentro de
+  cada conexión.
+- [x] Repetir staging: conexión rápida 25 ms mientras la lenta continúa 60 s.
+- [ ] Añadir a la auditoría por conexión la selección y resolución de
+  SaleCenters, PriceLists efectivas y rutas de preparación botella/copa.
+- [x] Reconciliar el cambio en la rama Fleet recuperable y ejecutar suite
+  raíz (`790` pass), lint dirigido, build, dry-run y escaneo de secretos.
+- [ ] Solicitar autorización productiva específica para el nuevo artefacto;
+  no reutilizar el permiso consumido por el rollout anterior.
+- [ ] Ejecutar como último gate una venta natural de Casa Esteban y verificar
+  factura Agora, mapping, historial Winerim y stock exactamente una vez.

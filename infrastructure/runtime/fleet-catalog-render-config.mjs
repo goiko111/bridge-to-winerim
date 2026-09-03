@@ -10,7 +10,7 @@ export const FLEET_CATALOG_DLQ = "winerim-rescue-prod-dead-letter";
 
 export const FLEET_CATALOG_CONSUMER_BLOCK = `[[queues.consumers]]
 queue = "${FLEET_CATALOG_QUEUE}"
-max_batch_size = 1
+max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 3
 max_concurrency = 2
@@ -18,6 +18,8 @@ dead_letter_queue = "${FLEET_CATALOG_DLQ}"`;
 
 const INERT_CONSUMER_MARKER = `# Intentionally no Queue consumer. The reviewed consumer gate must add exactly
 # one rescue Queue and its winerim-rescue-prod-dead-letter binding separately.`;
+const BASE_FLEET_LANE = 'FLEET_RUNTIME_LANE = "sales-stock"';
+const CATALOG_FLEET_LANE = 'FLEET_RUNTIME_LANE = "catalog"';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const defaultSourcePath = resolve(repoRoot, "wrangler.middleware-runtime-fleet.toml");
@@ -77,11 +79,17 @@ export function renderFleetCatalogRuntimeConfig({ baseSource, executorSource }) 
   if (baseSource.indexOf(INERT_CONSUMER_MARKER) !== baseSource.lastIndexOf(INERT_CONSUMER_MARKER)) {
     fail("FLEET_CATALOG_INERT_MARKER_NOT_UNIQUE");
   }
+  if (baseSource.indexOf(BASE_FLEET_LANE) === -1
+    || baseSource.indexOf(BASE_FLEET_LANE) !== baseSource.lastIndexOf(BASE_FLEET_LANE)) {
+    fail("FLEET_CATALOG_BASE_LANE_INVALID");
+  }
 
-  const renderedSource = baseSource.replace(
-    INERT_CONSUMER_MARKER,
-    `# Catalog-only consumer activation. Sales, stock, outbound and maintenance remain unconsumed.\n${FLEET_CATALOG_CONSUMER_BLOCK}`,
-  );
+  const renderedSource = baseSource
+    .replace(BASE_FLEET_LANE, CATALOG_FLEET_LANE)
+    .replace(
+      INERT_CONSUMER_MARKER,
+      `# Catalog-only consumer activation. Sales, stock, outbound and maintenance remain unconsumed.\n${FLEET_CATALOG_CONSUMER_BLOCK}`,
+    );
   validateFleetCatalogRuntimeConfig({ baseSource, executorSource, renderedSource });
   return renderedSource;
 }
@@ -102,21 +110,24 @@ export function validateFleetCatalogRuntimeConfig({ baseSource, executorSource, 
     fail("FLEET_CATALOG_CONSUMER_CONTRACT_MISMATCH");
   }
 
-  const expectedSource = baseSource.replace(
-    INERT_CONSUMER_MARKER,
-    `# Catalog-only consumer activation. Sales, stock, outbound and maintenance remain unconsumed.\n${FLEET_CATALOG_CONSUMER_BLOCK}`,
-  );
+  const expectedSource = baseSource
+    .replace(BASE_FLEET_LANE, CATALOG_FLEET_LANE)
+    .replace(
+      INERT_CONSUMER_MARKER,
+      `# Catalog-only consumer activation. Sales, stock, outbound and maintenance remain unconsumed.\n${FLEET_CATALOG_CONSUMER_BLOCK}`,
+    );
   if (expectedSource === baseSource) fail("FLEET_CATALOG_INERT_MARKER_MISSING");
   if (renderedSource !== expectedSource) fail("FLEET_CATALOG_BASE_CONFIG_CHANGED");
 
   return Object.freeze({
     ok: true,
     mode: "fleet-catalog-only",
+    fleetLane: "catalog",
     baseSha256: sha256(baseSource),
     renderedSha256: sha256(renderedSource),
     consumerCount: 1,
     queue: FLEET_CATALOG_QUEUE,
-    maxBatchSize: 1,
+    maxBatchSize: 10,
     maxBatchTimeout: 5,
     maxRetries: 3,
     maxConcurrency: 2,

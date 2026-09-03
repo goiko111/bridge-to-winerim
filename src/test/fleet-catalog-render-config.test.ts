@@ -46,9 +46,10 @@ describe("fleet catalog-only runtime config renderer", () => {
     expect(result).toMatchObject({
       ok: true,
       mode: "fleet-catalog-only",
+      fleetLane: "catalog",
       consumerCount: 1,
       queue: "winerim-rescue-prod-catalog",
-      maxBatchSize: 1,
+      maxBatchSize: 10,
       maxBatchTimeout: 5,
       maxRetries: 3,
       maxConcurrency: 2,
@@ -56,6 +57,8 @@ describe("fleet catalog-only runtime config renderer", () => {
     });
     expect(renderedSource.match(/\[\[queues\.consumers\]\]/gu)).toHaveLength(1);
     expect(renderedSource).toContain('crons = ["*/5 * * * *"]');
+    expect(renderedSource).toContain('FLEET_RUNTIME_LANE = "catalog"');
+    expect(renderedSource).not.toContain('FLEET_RUNTIME_LANE = "sales-stock"');
     expect(renderedSource.match(/\[\[queues\.producers\]\]/gu)).toHaveLength(6);
     expect(renderedSource).toContain('binding = "RUNTIME_EXECUTOR"');
     expect(renderedSource).toContain('binding = "MIDDLEWARE_DB"');
@@ -80,7 +83,7 @@ describe("fleet catalog-only runtime config renderer", () => {
 
   it("rejects batching or concurrency drift", () => {
     const renderedSource = renderFleetCatalogRuntimeConfig({ baseSource: runtimeSource, executorSource });
-    const batched = renderedSource.replace("max_batch_size = 1", "max_batch_size = 10");
+    const batched = renderedSource.replace("max_batch_size = 10", "max_batch_size = 1");
     const serialized = renderedSource.replace("max_concurrency = 2", "max_concurrency = 1");
 
     expect(errorCode(() => validateFleetCatalogRuntimeConfig({

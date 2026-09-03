@@ -2990,3 +2990,28 @@ ya demostró una carrera real con el cron.
   consumer inerte, readiness, activacion, shadow y luego un run live nuevo.
 - Albariza se carga por fases: familias, dos productos canary y solo despues
   el resto del catalogo; una venta que mueva stock requiere gate separado.
+## 2026-09-03 - El aislamiento de flota se aplica dentro del lote por conexión
+
+**Decisión:** no depender del autoscaling de Cloudflare Queues para aislar una
+conexión lenta. El consumidor agrupa mensajes por `connectionId`, procesa cada
+grupo en orden y permite como máximo dos grupos concurrentes.
+
+**Razón:** la prueba remota inicial mostró que `max_concurrency=2` no abrió una
+segunda invocación para dos mensajes de baja carga; el rápido esperó los 60 s
+del lento. Con concurrencia dentro del lote, ambos comenzaron en el mismo
+milisegundo y el rápido terminó en 25 ms.
+
+**Límites:** no se ha desplegado a producción. El canary de venta real de Casa
+Esteban se mantiene como último gate, después de terminar optimización,
+SaleCenters y preparation routing.
+
+## 2026-09-03 - Repositorios activos fuera de iCloud y esfuerzo por riesgo
+
+**Decisión:** mantener fuera de iCloud únicamente repositorios y worktrees
+activos que presenten placeholders dataless; documentos y tareas no se mueven
+en bloque. Usar esfuerzo bajo/medio para supervisión, alto para desarrollo y
+reservar esfuerzo máximo para gates productivos, pagos y seguridad.
+
+**Razón:** los objetos Git dataless provocaron esperas de minutos, mientras el
+clon local responde en centésimas. El contexto extenso y el esfuerzo máximo en
+ciclos rutinarios consumen tokens sin una mejora proporcional.

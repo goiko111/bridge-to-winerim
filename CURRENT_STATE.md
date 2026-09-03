@@ -7283,3 +7283,28 @@ _Última actualización: 2026-08-03 18:26 CEST_
 ### Tareas pendientes inmediatas
 - Conciliar los `19` efectos iniciales contra ERP y obtener equivalencia humana
   para las líneas legacy restantes antes de procesar `2026-07-15`.
+## 2026-09-03 - Aislamiento de cola demostrado en staging
+
+### Hechos
+- El repositorio recuperable está fuera de iCloud en
+  `/Users/GOIKO/Developer/winerim-middleware-fleet-snapshot`; Git responde en
+  centésimas y el árbol de trabajo está preservado localmente.
+- Una primera prueba Cloudflare demostró que `max_concurrency=2` con lotes de
+  uno no evita por sí solo el bloqueo en carga baja: el mensaje rápido esperó
+  a que acabara el lento de 60 segundos.
+- El consumidor ahora agrupa por conexión, ejecuta como máximo dos conexiones
+  distintas en paralelo y conserva orden estricto dentro de cada conexión.
+- La segunda prueba, con un lote de dos, inició ambas conexiones a la vez: la
+  rápida terminó en 25 ms y la lenta en 60 s. Worker, Queue, DLQ y secreto
+  sintéticos fueron eliminados después del readback.
+- La suite raíz quedó verde (`790` tests pasados, `4` omitidos), al igual que
+  el build de producción y `git diff --check`.
+- No hubo despliegue ni mutación productiva. Evidencia completa:
+  `docs/operations/fleet-queue-isolation-staging-2026-09-03.md`.
+
+### Estado productivo relacionado
+- Fleet Runtime sigue default-off. El canary anterior de Casa Esteban validó
+  dos ciclos de catálogo/ventas/outbound sin fallos y catálogo `276/276`, pero
+  no observó una factura real; historial y stock siguen sin certificar.
+- El siguiente incremento debe incluir readiness visible de SaleCenters y de
+  rutas de preparación por formato antes del canary final.

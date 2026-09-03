@@ -1,0 +1,20 @@
+name = "{{WORKER_NAME}}"
+main = "src/worker.mjs"
+compatibility_date = "2026-09-03"
+workers_dev = true
+preview_urls = false
+
+[vars]
+HARNESS_MODE = "STAGING_SYNTHETIC_ONLY"
+
+[[queues.producers]]
+binding = "ISOLATION_QUEUE"
+queue = "{{QUEUE_NAME}}"
+
+[[queues.consumers]]
+queue = "{{QUEUE_NAME}}"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1
+max_concurrency = 2
+dead_letter_queue = "{{DLQ_NAME}}"
