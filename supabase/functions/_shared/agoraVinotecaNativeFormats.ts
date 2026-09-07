@@ -1,3 +1,8 @@
+import {
+  WINERIM_FORMAT_CATALOG,
+  type WinerimFormatKey,
+} from "./winerimFormats.ts";
+
 // ─────────────────────────────────────────────────────────────────────
 // VINOTECA_REGION_REFERENCE_NATIVE_FORMATS (Don Bernardo only)
 // ─────────────────────────────────────────────────────────────────────
@@ -23,13 +28,16 @@ export const VINOTECA_REGION_FAMILY_COLOR = "#722F37";
 export const VINOTECA_PREPARATION_TYPE_ID = "6";
 export const VINOTECA_PREPARATION_ORDER_ID = "2";
 
-export const VINOTECA_FORMAT_ID_BASE: Record<string, number> = {
-  BOTTLE: 2000000,
-  GLASS: 3000000,
-  MAGNUM: 4000000,
-};
+// Deterministic identity namespaces come from the shared Winerim format
+// catalog. BOTTLE/GLASS/MAGNUM keep their historical 2M/3M/4M bases; every
+// additional format (media botella, jeroboam, matusalem…) gets its own.
+export const VINOTECA_FORMAT_ID_BASE: Record<string, number> = Object.fromEntries(
+  WINERIM_FORMAT_CATALOG.map((format) => [format.key, format.idBase]),
+);
 
-export type VinotecaFormat = "BOTTLE" | "GLASS" | "MAGNUM";
+export type VinotecaFormat = WinerimFormatKey;
+
+export const VINOTECA_SUPPORTED_FORMATS: readonly string[] = WINERIM_FORMAT_CATALOG.map((f) => f.key);
 
 export function isVinotecaNativeFormatsConnection(
   connectionId: unknown,
@@ -188,7 +196,7 @@ export function selectVinotecaCatalogRoute(
     for (const row of group) {
       const format = String(row.format_type ?? "").trim().toUpperCase() as VinotecaFormat;
       const saleFormatId = String(row.sale_format_id ?? "").trim();
-      if (!(["BOTTLE", "GLASS", "MAGNUM"] as string[]).includes(format) || !saleFormatId || formatIds[format]) {
+      if (!VINOTECA_SUPPORTED_FORMATS.includes(format) || !saleFormatId || formatIds[format]) {
         invalid = true;
         continue;
       }
@@ -244,6 +252,11 @@ export type VinotecaPriceInput = {
   glassCostPrice?: unknown;
   magnumSalePrice?: unknown;
   magnumCostPrice?: unknown;
+  /**
+   * Additional Winerim formats already gated by the connection's opt-in
+   * (media botella, jeroboam, matusalem…). Only positive prices are used.
+   */
+  extraFormats?: { format: unknown; salePrice: unknown; costPrice?: unknown }[];
   /** Explicit false retires the reference: no XML, never reactivated. */
   isActive?: unknown;
 };
@@ -311,6 +324,15 @@ export function buildVinotecaReferencePlan(
   const magnumPrice = positiveAmount(input.magnumSalePrice);
   if (magnumPrice) {
     desiredFormats.push({ format: "MAGNUM", salePrice: magnumPrice, costPrice: nonNegativeAmount(input.magnumCostPrice) });
+  }
+
+  for (const extra of input.extraFormats || []) {
+    const key = String(extra?.format ?? "").trim().toUpperCase() as VinotecaFormat;
+    if (!VINOTECA_SUPPORTED_FORMATS.includes(key)) continue;
+    if (desiredFormats.some((desired) => desired.format === key)) continue;
+    const price = positiveAmount(extra?.salePrice);
+    if (!price) continue;
+    desiredFormats.push({ format: key, salePrice: price, costPrice: nonNegativeAmount(extra?.costPrice) });
   }
 
   const baseFormat = adoptedRoute?.baseFormat || "BOTTLE";
