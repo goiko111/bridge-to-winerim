@@ -1028,6 +1028,8 @@ serve(async (req) => {
               createCandidates: autoCreateIds.length,
               updateCandidates: autoUpdateIds.length,
               fingerprintSkipped: fingerprintSkippedIds.size,
+          unknownWinerimVariants: [...unknownVariantsSeen],
+              unknownWinerimVariants: [...unknownVariantsSeen],
               parts,
             };
             console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} fingerprintSkipped=${fingerprintSkippedIds.size} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
@@ -1206,9 +1208,10 @@ serve(async (req) => {
         }
 
         const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = findEntryForVariant(prices, "botella");
+        const bottleEntry = findEntryForVariantOrFallback(prices, "botella");
         const glassEntry = findEntryForVariant(prices, "copa");
         const magnumEntry = findEntryForVariant(prices, "magnum");
+        const { rows: detailFormatRows } = extractWinerimWineFormats(prices);
 
         const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : undefined;
         const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : undefined;
@@ -1262,6 +1265,22 @@ serve(async (req) => {
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
+
+        // Keep the format catalog in sync on this path too.
+        if (detailFormatRows.length > 0) {
+          await supabase
+            .from("winerim_wine_formats")
+            .upsert(
+              detailFormatRows.map((row) => ({ ...row, connection_id: connectionId, winerim_id: String(winerimId) })),
+              { onConflict: "connection_id,winerim_id,format_key" },
+            );
+          await supabase
+            .from("winerim_wine_formats")
+            .delete()
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", String(winerimId))
+            .not("format_key", "in", `(${detailFormatRows.map((row) => row.format_key).join(",")})`);
+        }
         if (pricingStatus === "READY") {
           enriched++;
           // Track transition: was MISSING/FAILED/RETRYING/NOT_PUSHED → now READY
