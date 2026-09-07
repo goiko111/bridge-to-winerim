@@ -143,6 +143,7 @@ export function resolveForwardAgoraSalesLineIdentity(input: {
 // otherwise unrelated legacy mappings resolve as wine. Every other connection
 // keeps its exact legacy identity untouched.
 import { parseVinotecaNativeId } from "./agoraVinotecaNativeFormats.ts";
+import { WINERIM_FORMAT_CATALOG, winerimFormatKey } from "./winerimFormats.ts";
 
 export const AGORA_SALE_FORMAT_FIRST_CONNECTION_IDS: readonly string[] = [
   "a700d425-9194-4758-95ff-7fee86419e14", // Don Bernardo Ponzano
@@ -174,7 +175,12 @@ export function agoraSalesPairKey(productId: unknown, saleFormatId: unknown): st
   return `${norm(productId)}|${norm(saleFormatId)}`;
 }
 
-const AGORA_CANONICAL_LINE_FORMATS = new Set(["BOTTLE", "GLASS", "MAGNUM", "OTHER"]);
+// Every Winerim format (botella, copa, magnum, media botella, jeroboam,
+// matusalem…) is a valid canonical line format, plus the OTHER catch-all.
+const AGORA_CANONICAL_LINE_FORMATS = new Set<string>([
+  ...WINERIM_FORMAT_CATALOG.map((format) => format.key),
+  "OTHER",
+]);
 
 /**
  * Canonical persisted format of a sales line. For allowlisted (VINOTECA)
@@ -192,18 +198,20 @@ export function canonicalAgoraSalesLineFormat(input: {
   if (!isAgoraSaleFormatFirstConnection(input.connectionId)) return fallback;
   const resolution = input.identity.resolution;
   if (!resolution || !String(resolution.winerim_wine_id || "").trim()) return fallback;
-  const raw = String(resolution.format || "").trim().toUpperCase();
-  const canonical = raw === "COPA" ? "GLASS" : raw;
+  const canonical = normalizeLineFormat(resolution.format);
   return AGORA_CANONICAL_LINE_FORMATS.has(canonical) ? canonical : fallback;
 }
 
 
+function normalizeLineFormat(value: unknown): string {
+  const upper = String(value ?? "").trim().toUpperCase();
+  if (!upper) return "";
+  // Accepts Winerim variant labels ("copa", "media botella") and canonical keys.
+  return winerimFormatKey(upper) || winerimFormatKey(value) || upper;
+}
+
 function isSameFormat(a: unknown, b: unknown): boolean {
-  const norm = (value: unknown) => {
-    const upper = String(value ?? "").trim().toUpperCase();
-    return upper === "COPA" ? "GLASS" : upper;
-  };
-  return norm(a) === norm(b);
+  return normalizeLineFormat(a) === normalizeLineFormat(b);
 }
 
 /**
@@ -251,9 +259,7 @@ export function resolveAgoraSalesLineIdentityForConnection(input: {
         providerProductId: saleFormatId || productId,
         resolution: {
           winerim_wine_id: String(pair.winerim_wine_id).trim(),
-          format: String(pair.format || "").trim().toUpperCase() === "COPA"
-            ? "GLASS"
-            : String(pair.format || "").trim().toUpperCase(),
+          format: normalizeLineFormat(pair.format),
         },
         source: "pair_exact",
       };
