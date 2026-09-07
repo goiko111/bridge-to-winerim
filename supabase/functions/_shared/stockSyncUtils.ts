@@ -1,7 +1,10 @@
 import {
   resolveWinerimFormat,
+  resolveWinerimFormatByCapacity,
   WINERIM_FORMAT_CATALOG,
+  winerimVariantForFormat,
 } from "./winerimFormats.ts";
+
 
 /**
  * Canonical Winerim variant string (e.g. "botella", "copa", "magnum",
