@@ -33,8 +33,25 @@ export function normalizeWinerimVariant(value: unknown): WinerimVariant | null {
 }
 
 export function variantForAgoraFormat(format: unknown): WinerimVariant {
-  return resolveWinerimFormat(format)?.variant ?? "botella";
+  const exact = resolveWinerimFormat(format);
+  if (exact) return exact.variant;
+  // Tolerate decorated POS labels such as "COPA 15CL" or "BOTELLA MAGNUM".
+  const raw = String(format || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  if (!raw) return "botella";
+  const matches = WINERIM_FORMAT_CATALOG.filter((definition) =>
+    definition.variants.some((variant) => {
+      const needle = variant.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      return needle.length >= 4 && raw.includes(needle);
+    })
+  );
+  // Prefer the most specific match ("doble-magnum" over "magnum").
+  matches.sort((left, right) => right.variant.length - left.variant.length);
+  return matches[0]?.variant ?? "botella";
 }
+
 
 
 export function signedWholeSaleQuantity(value: unknown): number {
