@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
 import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
+import { isFormatEnabledForConnection } from "../_shared/winerimExtendedFormats.ts";
+import {
+  extractWinerimWineFormats,
+  isLegacyWinerimFormat,
+  publishableWinerimFormats,
+} from "../_shared/winerimFormats.ts";
 import {
   mergeAgoraHiddenGlassPolicy,
   type AgoraHiddenGlassVariantPolicy,
@@ -5077,6 +5083,21 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         magnumSalePrice: wine.magnum_sale_price,
         magnumCostPrice: wine.magnum_purchase_price,
         isActive: wine.is_active,
+        // Extended Winerim formats (media botella, jeroboam, matusalem…) are
+        // derived from what Winerim actually exposes for this wine and gated
+        // per connection. Legacy formats are handled by the fields above.
+        extraFormats: publishableWinerimFormats(
+          extractWinerimWineFormats(wine.raw_payload?.prices).rows,
+        )
+          .filter((row) =>
+            !isLegacyWinerimFormat(row.format_key)
+            && isFormatEnabledForConnection(row.format_key, connection?.provider_config, connection?.id)
+          )
+          .map((row) => ({
+            format: row.format_key,
+            salePrice: row.sale_price,
+            costPrice: row.cost_price,
+          })),
       }, hasAdoptedRoute ? adoptedRoute : undefined);
 
       if (!plan) {
