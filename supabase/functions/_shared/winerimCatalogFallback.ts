@@ -1,4 +1,4 @@
-import { findEntryForVariant } from "./stockSyncUtils.ts";
+import { findEntryForVariant, findEntryForVariantOrFallback } from "./stockSyncUtils.ts";
 
 type PriceEntry = {
   variant?: string;
@@ -47,7 +47,8 @@ export function normalizeWinerimCatalogFields(
     : null;
 
   const prices = Array.isArray(wine.prices) ? wine.prices as PriceEntry[] : [];
-  const bottleEntry = findEntryForVariant(prices, "botella") as PriceEntry | undefined;
+  // Half/small-bottle-only wines still fill the legacy bottle columns.
+  const bottleEntry = findEntryForVariantOrFallback(prices, "botella") as PriceEntry | undefined;
   const glassEntry = findEntryForVariant(prices, "copa") as PriceEntry | undefined;
   const magnumEntry = findEntryForVariant(prices, "magnum") as PriceEntry | undefined;
 

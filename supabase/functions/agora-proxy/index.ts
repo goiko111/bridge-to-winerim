@@ -66,10 +66,10 @@ import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
-  findStockForVariant,
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
+  readStockVariant,
   retryableWinerimSalesImportSales,
   signedWholeSaleQuantity,
   salesImportQtyWhenStockDidNotMove,
@@ -1853,13 +1853,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
       const data = await r.json();
       const normalized = parseWinerimStockRows(data)
         .map((s) => {
-          const canonical = findStockForVariant([s], "copa")
-            ? "copa"
-            : findStockForVariant([s], "botella")
-              ? "botella"
-              : findStockForVariant([s], "magnum")
-                ? "magnum"
-                : null;
+          // Any catalog format (copa, botella, magnum, media-botella,
+          // jeroboam...) resolves against its own Winerim stock line.
+          const canonical = readStockVariant(s);
           return {
             id: Number(s.id),
             stock: Number(s.stock ?? 0),
@@ -2429,13 +2425,9 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
       const data = await r.json();
       const normalized = parseWinerimStockRows(data)
         .map((stock) => {
-          const canonical = findStockForVariant([stock], "copa")
-            ? "copa"
-            : findStockForVariant([stock], "botella")
-              ? "botella"
-              : findStockForVariant([stock], "magnum")
-                ? "magnum"
-                : null;
+          // Any catalog format (copa, botella, magnum, media-botella,
+          // jeroboam...) resolves against its own Winerim stock line.
+          const canonical = readStockVariant(stock);
           return {
             id: Number(stock.id),
             stock: Number(stock.stock ?? 0),
@@ -2993,13 +2985,9 @@ async function syncStockForDayIncrementalByDayTotal(
       const data = await r.json();
       const normalized = parseWinerimStockRows(data)
         .map((stock) => {
-          const canonical = findStockForVariant([stock], "copa")
-            ? "copa"
-            : findStockForVariant([stock], "botella")
-              ? "botella"
-              : findStockForVariant([stock], "magnum")
-                ? "magnum"
-                : null;
+          // Any catalog format (copa, botella, magnum, media-botella,
+          // jeroboam...) resolves against its own Winerim stock line.
+          const canonical = readStockVariant(stock);
           return {
             id: Number(stock.id),
             stock: Number(stock.stock ?? 0),
@@ -3448,13 +3436,9 @@ async function restoreStaleOpenTicketStock(
     const data = await response.json();
     const normalized = parseWinerimStockRows(data)
       .map((stock) => {
-        const canonical = findStockForVariant([stock], "copa")
-          ? "copa"
-          : findStockForVariant([stock], "botella")
-            ? "botella"
-            : findStockForVariant([stock], "magnum")
-              ? "magnum"
-              : null;
+        // Any catalog format (copa, botella, magnum, media-botella,
+        // jeroboam...) resolves against its own Winerim stock line.
+        const canonical = readStockVariant(stock);
         return {
           id: Number(stock.id),
           stock: Number(stock.stock ?? 0),

@@ -19,7 +19,32 @@ export const WINERIM_CATALOG_FINGERPRINT_FIELDS = [
   "magnum_sale_price",
 ] as const;
 
+/**
+ * Extra field carrying the digest of the non-legacy formats (media botella,
+ * jeroboam, matusalem…). Only folded into the fingerprint for connections with
+ * extended formats enabled, so enabling the feature cannot make every wine of
+ * every other connection look "changed".
+ */
+export const WINERIM_EXTENDED_FORMATS_FIELD = "extended_formats_digest";
+
+/** Stable digest of extended-format price/stock state for one wine. */
+export function winerimExtendedFormatsDigest(
+  rows: { format_key?: unknown; sale_price?: unknown; stock_id?: unknown; is_active?: unknown }[] | null | undefined,
+): string {
+  return (rows || [])
+    .map((row) => [
+      String(row.format_key ?? "").toUpperCase(),
+      row.sale_price === null || row.sale_price === undefined ? "" : Number(row.sale_price).toFixed(4),
+      row.stock_id === null || row.stock_id === undefined ? "" : String(row.stock_id),
+      row.is_active === false ? "0" : "1",
+    ].join(":"))
+    .filter((entry) => !entry.startsWith(":"))
+    .sort()
+    .join(",");
+}
+
 export type WinerimCatalogRow = Record<string, unknown>;
+
 
 function normalizeScalar(value: unknown): string {
   if (value === undefined || value === null) return "\u0000";
@@ -36,11 +61,16 @@ function normalizeScalar(value: unknown): string {
  * Returns the deterministic fingerprint, or null when it cannot be computed
  * (fail-closed: the caller must then skip the wine instead of evaluating it).
  */
-export function computeWinerimCatalogFingerprint(row: WinerimCatalogRow | null | undefined): string | null {
+export function computeWinerimCatalogFingerprint(
+  row: WinerimCatalogRow | null | undefined,
+  options?: { includeExtendedFormats?: boolean },
+): string | null {
   if (!row || typeof row !== "object") return null;
   const name = row.name;
   if (name === undefined || name === null || String(name).trim() === "") return null;
-  return WINERIM_CATALOG_FINGERPRINT_FIELDS
+  const fields: string[] = [...WINERIM_CATALOG_FINGERPRINT_FIELDS];
+  if (options?.includeExtendedFormats) fields.push(WINERIM_EXTENDED_FORMATS_FIELD);
+  return fields
     .map((field) => `${field}=${normalizeScalar(row[field])}`)
     .join("|");
 }
@@ -55,7 +85,7 @@ export function buildNextCatalogFingerprintRow(
   payload: WinerimCatalogRow,
 ): WinerimCatalogRow {
   const next: WinerimCatalogRow = {};
-  for (const field of WINERIM_CATALOG_FINGERPRINT_FIELDS) {
+  for (const field of [...WINERIM_CATALOG_FINGERPRINT_FIELDS, WINERIM_EXTENDED_FORMATS_FIELD]) {
     next[field] = field in payload ? payload[field] : previous?.[field];
   }
   if (!("name" in payload) && previous?.name !== undefined) next.name = previous.name;
@@ -79,10 +109,13 @@ export function decideCatalogChange(options: {
   previous: WinerimCatalogRow | null | undefined;
   payload: WinerimCatalogRow;
   pricingReady: boolean;
+  /** Fold extended formats into the fingerprint (per-connection opt-in). */
+  includeExtendedFormats?: boolean;
 }): CatalogChangeDecision {
-  const { previous, payload, pricingReady } = options;
+  const { previous, payload, pricingReady, includeExtendedFormats } = options;
+  const fingerprintOptions = { includeExtendedFormats: includeExtendedFormats === true };
   const nextRow = buildNextCatalogFingerprintRow(previous, payload);
-  const nextFingerprint = computeWinerimCatalogFingerprint(nextRow);
+  const nextFingerprint = computeWinerimCatalogFingerprint(nextRow, fingerprintOptions);
   if (!nextFingerprint) {
     return { outcome: "skipped", reason: "fingerprint_unavailable", nextFingerprint: null };
   }
@@ -93,7 +126,7 @@ export function decideCatalogChange(options: {
       : { outcome: "skipped", reason: "new_wine_not_priced", nextFingerprint };
   }
 
-  const previousFingerprint = computeWinerimCatalogFingerprint(previous);
+  const previousFingerprint = computeWinerimCatalogFingerprint(previous, fingerprintOptions);
   if (!previousFingerprint) {
     return { outcome: "skipped", reason: "previous_fingerprint_unavailable", nextFingerprint };
   }

@@ -2,13 +2,24 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   findEntryForVariant,
+  findEntryForVariantOrFallback,
   normalizeWinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
+import {
+  extractWinerimWineFormats,
+  isLegacyWinerimFormat,
+  type WinerimWineFormatRow,
+} from "../_shared/winerimFormats.ts";
+import { isExtendedFormatsConnection } from "../_shared/winerimExtendedFormats.ts";
 import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
-import { decideCatalogChange } from "../_shared/winerimCatalogFingerprint.ts";
+import {
+  decideCatalogChange,
+  WINERIM_EXTENDED_FORMATS_FIELD,
+  winerimExtendedFormatsDigest,
+} from "../_shared/winerimCatalogFingerprint.ts";
 
 
 const corsHeaders = {
@@ -461,9 +472,10 @@ serve(async (req) => {
         const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
         const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = findEntryForVariant(prices, "botella");
+        const bottleEntry = findEntryForVariantOrFallback(prices, "botella");
         const glassEntry = findEntryForVariant(prices, "copa");
         const magnumEntry = findEntryForVariant(prices, "magnum");
+        const { rows: formatRows, unknownVariants } = extractWinerimWineFormats(prices);
 
         const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
         const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
@@ -494,8 +506,57 @@ serve(async (req) => {
           bottleStockId,
           glassStockId,
           magnumStockId,
+          formatRows,
+          unknownVariants,
         };
       }
+
+      // ── FORMAT CATALOG PERSISTENCE (winerim_wine_formats) ──
+      // One row per (wine, format). Formats that disappear from Winerim are
+      // deleted so a retired variant can never keep an Agora button sellable.
+      const persistWineFormats = async (
+        winerimId: string,
+        rows: WinerimWineFormatRow[],
+      ): Promise<void> => {
+        if (!Array.isArray(rows)) return;
+        if (rows.length > 0) {
+          const { error: formatsError } = await supabase
+            .from("winerim_wine_formats")
+            .upsert(
+              rows.map((row) => ({ ...row, connection_id: connectionId, winerim_id: winerimId })),
+              { onConflict: "connection_id,winerim_id,format_key" },
+            );
+          if (formatsError) {
+            console.error(`[winerim-proxy] winerim_wine_formats upsert failed for ${winerimId}: ${formatsError.message}`);
+            return;
+          }
+        }
+        const keptKeys = rows.map((row) => row.format_key);
+        let staleQuery = supabase
+          .from("winerim_wine_formats")
+          .delete()
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
+        if (keptKeys.length > 0) staleQuery = staleQuery.not("format_key", "in", `(${keptKeys.join(",")})`);
+        const { error: staleError } = await staleQuery;
+        if (staleError) {
+          console.error(`[winerim-proxy] winerim_wine_formats cleanup failed for ${winerimId}: ${staleError.message}`);
+        }
+      };
+
+      const extendedFormatsEnabled = isExtendedFormatsConnection(
+        connectionId,
+        (connection.provider_config || {}) as Record<string, unknown>,
+      );
+      const extendedDigestByWineId = new Map<string, string>();
+      const unknownVariantsSeen = new Set<string>();
+
+      const rememberExtendedFormats = (winerimId: string, rows: WinerimWineFormatRow[]) => {
+        extendedDigestByWineId.set(
+          winerimId,
+          winerimExtendedFormatsDigest((rows || []).filter((row) => !isLegacyWinerimFormat(row.format_key))),
+        );
+      };
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
@@ -513,7 +574,16 @@ serve(async (req) => {
         payload: Record<string, unknown>,
         pricingReady: boolean,
       ) => {
-        const decision = decideCatalogChange({ previous, payload, pricingReady });
+        const decision = decideCatalogChange({
+          previous: previous
+            ? { ...previous, [WINERIM_EXTENDED_FORMATS_FIELD]: previous[WINERIM_EXTENDED_FORMATS_FIELD] }
+            : previous,
+          payload: extendedFormatsEnabled && extendedDigestByWineId.has(winerimId)
+            ? { ...payload, [WINERIM_EXTENDED_FORMATS_FIELD]: extendedDigestByWineId.get(winerimId) }
+            : payload,
+          pricingReady,
+          includeExtendedFormats: extendedFormatsEnabled,
+        });
         if (decision.outcome === "new") autoCreateCandidateIds.add(winerimId);
         else if (decision.outcome === "changed") autoUpdateCandidateIds.add(winerimId);
         else if (decision.outcome === "skipped" && decision.reason === "fingerprint_unavailable") {
@@ -537,6 +607,26 @@ serve(async (req) => {
             .in("winerim_id", chunk);
           for (const row of (rows || []) as Record<string, unknown>[]) {
             result.set(String(row.winerim_id), row);
+          }
+          // Extended-format digest comes from the child table, so the
+          // fingerprint compares like with like instead of always looking new.
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("winerim_id, format_key, sale_price, stock_id, is_active")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", chunk);
+          const grouped = new Map<string, Record<string, unknown>[]>();
+          for (const row of (formatRows || []) as Record<string, unknown>[]) {
+            if (isLegacyWinerimFormat(row.format_key)) continue;
+            const wineId = String(row.winerim_id);
+            const group = grouped.get(wineId) || [];
+            group.push(row);
+            grouped.set(wineId, group);
+          }
+          for (const id of chunk) {
+            const row = result.get(id);
+            if (!row) continue;
+            row[WINERIM_EXTENDED_FORMATS_FIELD] = winerimExtendedFormatsDigest(grouped.get(id) || []);
           }
         }
         return result;
@@ -669,6 +759,14 @@ serve(async (req) => {
           // No classification here on purpose: the list row is sparse and would
           // oscillate against the enriched state. Only remember it.
           listPayloadsById.set(winerimId, { ...upsertPayload });
+
+          for (const variant of nf.unknownVariants) unknownVariantsSeen.add(variant);
+          // The list endpoint rarely carries prices; only persist formats when
+          // it actually did, so an empty list never wipes enriched formats.
+          if (nf.formatRows.length > 0) {
+            await persistWineFormats(winerimId, nf.formatRows);
+            rememberExtendedFormats(winerimId, nf.formatRows);
+          }
 
 
 
@@ -845,6 +943,11 @@ serve(async (req) => {
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
 
+        // The detail endpoint is authoritative for formats too.
+        for (const variant of nf.unknownVariants) unknownVariantsSeen.add(variant);
+        await persistWineFormats(winerimId, nf.formatRows);
+        rememberExtendedFormats(winerimId, nf.formatRows);
+
         // Single classification point of the cycle, against the FINAL state.
         // start ⇒ previous is the pre-list-upsert row and the payload is the
         // merged list+detail state; enrich ⇒ previous is the pre-enrich row.
@@ -925,6 +1028,8 @@ serve(async (req) => {
               createCandidates: autoCreateIds.length,
               updateCandidates: autoUpdateIds.length,
               fingerprintSkipped: fingerprintSkippedIds.size,
+          unknownWinerimVariants: [...unknownVariantsSeen],
+              unknownWinerimVariants: [...unknownVariantsSeen],
               parts,
             };
             console.log(`[winerim-proxy] differential auto-push: createCandidates=${autoCreateIds.length} updateCandidates=${autoUpdateIds.length} fingerprintSkipped=${fingerprintSkippedIds.size} queued=${queuedTotal} hidQueued=${hidQueuedTotal} complete=${complete}`);
@@ -1103,9 +1208,10 @@ serve(async (req) => {
         }
 
         const prices = Array.isArray(detail.prices) ? detail.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = findEntryForVariant(prices, "botella");
+        const bottleEntry = findEntryForVariantOrFallback(prices, "botella");
         const glassEntry = findEntryForVariant(prices, "copa");
         const magnumEntry = findEntryForVariant(prices, "magnum");
+        const { rows: detailFormatRows } = extractWinerimWineFormats(prices);
 
         const bottleStockId = Number.isFinite(Number(bottleEntry?.erpStock?.id)) ? Number(bottleEntry!.erpStock!.id) : undefined;
         const glassStockId  = Number.isFinite(Number(glassEntry?.erpStock?.id))  ? Number(glassEntry!.erpStock!.id)  : undefined;
@@ -1159,6 +1265,22 @@ serve(async (req) => {
           .update(updateData)
           .eq("connection_id", connectionId)
           .eq("winerim_id", winerimId);
+
+        // Keep the format catalog in sync on this path too.
+        if (detailFormatRows.length > 0) {
+          await supabase
+            .from("winerim_wine_formats")
+            .upsert(
+              detailFormatRows.map((row) => ({ ...row, connection_id: connectionId, winerim_id: String(winerimId) })),
+              { onConflict: "connection_id,winerim_id,format_key" },
+            );
+          await supabase
+            .from("winerim_wine_formats")
+            .delete()
+            .eq("connection_id", connectionId)
+            .eq("winerim_id", String(winerimId))
+            .not("format_key", "in", `(${detailFormatRows.map((row) => row.format_key).join(",")})`);
+        }
         if (pricingStatus === "READY") {
           enriched++;
           // Track transition: was MISSING/FAILED/RETRYING/NOT_PUSHED → now READY
