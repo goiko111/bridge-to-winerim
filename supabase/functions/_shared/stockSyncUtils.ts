@@ -1,27 +1,41 @@
-export type WinerimVariant = "copa" | "botella" | "magnum";
+import {
+  resolveWinerimFormat,
+  WINERIM_FORMAT_CATALOG,
+} from "./winerimFormats.ts";
+
+/**
+ * Canonical Winerim variant string (e.g. "botella", "copa", "magnum",
+ * "media-botella", "jeroboam"). Driven by the shared format catalog instead of
+ * a hardcoded three-format union.
+ */
+export type WinerimVariant = string;
 
 export const WINERIM_SALES_IMPORT_MAX_ATTEMPTS = 3;
 
-export const WINERIM_VARIANT_ALIASES: Record<WinerimVariant, string[]> = {
-  copa: ["copa", "glass"],
-  botella: ["botella", "bottle", "botella-pequena", "media-botella"],
-  magnum: ["magnum"],
-};
+export const WINERIM_VARIANT_ALIASES: Record<string, string[]> = Object.fromEntries(
+  WINERIM_FORMAT_CATALOG.map((format) => [format.variant, format.variants]),
+);
+
+/**
+ * Fallback chain used ONLY to fill the legacy bottle columns of winerim_wines,
+ * preserving the historical behaviour where a wine sold exclusively in half or
+ * small bottles still had a bottle price. Stock deduction never uses it.
+ */
+export const WINERIM_BOTTLE_LEGACY_FALLBACK: readonly string[] = [
+  "botella",
+  "botella-tienda",
+  "botella-pequena",
+  "media-botella",
+];
 
 export function normalizeWinerimVariant(value: unknown): WinerimVariant | null {
-  const raw = String(value || "").trim().toLowerCase();
-  for (const [canonical, aliases] of Object.entries(WINERIM_VARIANT_ALIASES) as [WinerimVariant, string[]][]) {
-    if (aliases.includes(raw)) return canonical;
-  }
-  return null;
+  return resolveWinerimFormat(value)?.variant ?? null;
 }
 
 export function variantForAgoraFormat(format: unknown): WinerimVariant {
-  const raw = String(format || "").toUpperCase();
-  if (raw === "COPA" || raw === "GLASS" || raw.includes("COPA") || raw.includes("GLASS")) return "copa";
-  if (raw === "MAGNUM" || raw.includes("MAGNUM")) return "magnum";
-  return "botella";
+  return resolveWinerimFormat(format)?.variant ?? "botella";
 }
+
 
 export function signedWholeSaleQuantity(value: unknown): number {
   const quantity = Number(value || 0);
