@@ -608,6 +608,26 @@ serve(async (req) => {
           for (const row of (rows || []) as Record<string, unknown>[]) {
             result.set(String(row.winerim_id), row);
           }
+          // Extended-format digest comes from the child table, so the
+          // fingerprint compares like with like instead of always looking new.
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("winerim_id, format_key, sale_price, stock_id, is_active")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", chunk);
+          const grouped = new Map<string, Record<string, unknown>[]>();
+          for (const row of (formatRows || []) as Record<string, unknown>[]) {
+            if (isLegacyWinerimFormat(row.format_key)) continue;
+            const wineId = String(row.winerim_id);
+            const group = grouped.get(wineId) || [];
+            group.push(row);
+            grouped.set(wineId, group);
+          }
+          for (const id of chunk) {
+            const row = result.get(id);
+            if (!row) continue;
+            row[WINERIM_EXTENDED_FORMATS_FIELD] = winerimExtendedFormatsDigest(grouped.get(id) || []);
+          }
         }
         return result;
       };
@@ -739,6 +759,14 @@ serve(async (req) => {
           // No classification here on purpose: the list row is sparse and would
           // oscillate against the enriched state. Only remember it.
           listPayloadsById.set(winerimId, { ...upsertPayload });
+
+          for (const variant of nf.unknownVariants) unknownVariantsSeen.add(variant);
+          // The list endpoint rarely carries prices; only persist formats when
+          // it actually did, so an empty list never wipes enriched formats.
+          if (nf.formatRows.length > 0) {
+            await persistWineFormats(winerimId, nf.formatRows);
+            rememberExtendedFormats(winerimId, nf.formatRows);
+          }
 
 
 
@@ -914,6 +942,11 @@ serve(async (req) => {
         if (nf.bottleStockId != null) updateData.bottle_stock_id = nf.bottleStockId;
         if (nf.glassStockId  != null) updateData.glass_stock_id  = nf.glassStockId;
         if (nf.magnumStockId != null) updateData.magnum_stock_id = nf.magnumStockId;
+
+        // The detail endpoint is authoritative for formats too.
+        for (const variant of nf.unknownVariants) unknownVariantsSeen.add(variant);
+        await persistWineFormats(winerimId, nf.formatRows);
+        rememberExtendedFormats(winerimId, nf.formatRows);
 
         // Single classification point of the cycle, against the FINAL state.
         // start ⇒ previous is the pre-list-upsert row and the payload is the
