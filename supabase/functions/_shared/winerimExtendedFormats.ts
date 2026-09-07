@@ -42,7 +42,7 @@ export function extendedFormatsExcludedKeys(
   if (!Array.isArray(raw)) return [];
   return raw
     .map((value) => winerimFormatKey(value))
-    .filter((key): key is string => typeof key === "string" && key.length > 0);
+    .filter((key): key is NonNullable<typeof key> => key !== null && key.length > 0);
 }
 
 /**
