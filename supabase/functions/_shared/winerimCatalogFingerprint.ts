@@ -61,11 +61,16 @@ function normalizeScalar(value: unknown): string {
  * Returns the deterministic fingerprint, or null when it cannot be computed
  * (fail-closed: the caller must then skip the wine instead of evaluating it).
  */
-export function computeWinerimCatalogFingerprint(row: WinerimCatalogRow | null | undefined): string | null {
+export function computeWinerimCatalogFingerprint(
+  row: WinerimCatalogRow | null | undefined,
+  options?: { includeExtendedFormats?: boolean },
+): string | null {
   if (!row || typeof row !== "object") return null;
   const name = row.name;
   if (name === undefined || name === null || String(name).trim() === "") return null;
-  return WINERIM_CATALOG_FINGERPRINT_FIELDS
+  const fields: string[] = [...WINERIM_CATALOG_FINGERPRINT_FIELDS];
+  if (options?.includeExtendedFormats) fields.push(WINERIM_EXTENDED_FORMATS_FIELD);
+  return fields
     .map((field) => `${field}=${normalizeScalar(row[field])}`)
     .join("|");
 }
@@ -80,7 +85,7 @@ export function buildNextCatalogFingerprintRow(
   payload: WinerimCatalogRow,
 ): WinerimCatalogRow {
   const next: WinerimCatalogRow = {};
-  for (const field of WINERIM_CATALOG_FINGERPRINT_FIELDS) {
+  for (const field of [...WINERIM_CATALOG_FINGERPRINT_FIELDS, WINERIM_EXTENDED_FORMATS_FIELD]) {
     next[field] = field in payload ? payload[field] : previous?.[field];
   }
   if (!("name" in payload) && previous?.name !== undefined) next.name = previous.name;
@@ -104,10 +109,13 @@ export function decideCatalogChange(options: {
   previous: WinerimCatalogRow | null | undefined;
   payload: WinerimCatalogRow;
   pricingReady: boolean;
+  /** Fold extended formats into the fingerprint (per-connection opt-in). */
+  includeExtendedFormats?: boolean;
 }): CatalogChangeDecision {
-  const { previous, payload, pricingReady } = options;
+  const { previous, payload, pricingReady, includeExtendedFormats } = options;
+  const fingerprintOptions = { includeExtendedFormats: includeExtendedFormats === true };
   const nextRow = buildNextCatalogFingerprintRow(previous, payload);
-  const nextFingerprint = computeWinerimCatalogFingerprint(nextRow);
+  const nextFingerprint = computeWinerimCatalogFingerprint(nextRow, fingerprintOptions);
   if (!nextFingerprint) {
     return { outcome: "skipped", reason: "fingerprint_unavailable", nextFingerprint: null };
   }
@@ -118,7 +126,7 @@ export function decideCatalogChange(options: {
       : { outcome: "skipped", reason: "new_wine_not_priced", nextFingerprint };
   }
 
-  const previousFingerprint = computeWinerimCatalogFingerprint(previous);
+  const previousFingerprint = computeWinerimCatalogFingerprint(previous, fingerprintOptions);
   if (!previousFingerprint) {
     return { outcome: "skipped", reason: "previous_fingerprint_unavailable", nextFingerprint };
   }
