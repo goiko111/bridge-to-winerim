@@ -75,6 +75,25 @@ export function findEntryForVariant<T extends { variant?: unknown }>(
   return entries.find((entry) => normalizeWinerimVariant(entry.variant) === variant);
 }
 
+/**
+ * Legacy-compatible lookup: exact variant first, then the bottle fallback
+ * chain. Used only for the historical bottle columns of winerim_wines.
+ */
+export function findEntryForVariantOrFallback<T extends { variant?: unknown }>(
+  entries: T[],
+  variant: WinerimVariant,
+  fallbackChain: readonly string[] = WINERIM_BOTTLE_LEGACY_FALLBACK,
+): T | undefined {
+  const exact = findEntryForVariant(entries, variant);
+  if (exact) return exact;
+  if (variant !== "botella") return undefined;
+  for (const candidate of fallbackChain) {
+    const match = findEntryForVariant(entries, candidate);
+    if (match) return match;
+  }
+  return undefined;
+}
+
 export function readStockVariant(stock: Record<string, unknown>): WinerimVariant | null {
   const winePrice = stock.winePrice as { variant?: unknown } | undefined;
   return normalizeWinerimVariant(winePrice?.variant ?? stock.variant);
@@ -131,9 +150,7 @@ export function isTerminalStockSyncError(error: unknown): boolean {
   return (
     msg.includes("wine not found") ||
     msg.includes("not found or not accessible") ||
-    msg.includes("variant 'copa' not found") ||
-    msg.includes("variant 'botella' not found") ||
-    msg.includes("variant 'magnum' not found")
+    /variant '[^']+' not found/.test(msg)
   );
 }
 
