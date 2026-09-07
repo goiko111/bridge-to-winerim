@@ -214,3 +214,96 @@ export function extractWinerimWineFormats(prices: unknown): {
 export function publishableWinerimFormats(rows: WinerimWineFormatRow[]): WinerimWineFormatRow[] {
   return (rows || []).filter((row) => row.is_active && row.sale_price != null && row.sale_price > 0);
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// CAPACITY EQUIVALENCE (POS label ⇄ Winerim format)
+// ─────────────────────────────────────────────────────────────────────
+// POS buttons name the capacity, not the Winerim format: "CLOE 3L",
+// "VEUVE 1,5 L", "BENJAMIN 20CL", "MAGNUM 150 cl". A capacity can map to more
+// than one Winerim format (3 L = doble magnum OR jeroboam), so resolution is
+// explicitly ambiguity-aware: it only commits when a single candidate remains,
+// preferring the formats the wine actually has in Winerim (learned from
+// winerim_wine_formats). Never guesses — ambiguity fails closed.
+
+/** Liters parsed from a POS label ("3L", "1,5 l", "75 cl", "750ml"). */
+export function parseLitersFromLabel(value: unknown): number | null {
+  const raw = String(value ?? "")
+    .toLowerCase()
+    .replace(",", ".");
+  const match = raw.match(/(\d+(?:\.\d+)?)\s*(l|lt|lts|litros?|cl|ml)\b/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const unit = match[2];
+  const liters = unit === "cl" ? amount / 100 : unit === "ml" ? amount / 1000 : amount;
+  return liters > 0 && liters <= 30 ? Math.round(liters * 1000) / 1000 : null;
+}
+
+/** Every catalog format with this nominal capacity (tolerance 1%). */
+export function winerimFormatsForLiters(liters: unknown): WinerimFormatDefinition[] {
+  const target = Number(liters);
+  if (!Number.isFinite(target) || target <= 0) return [];
+  return WINERIM_FORMAT_CATALOG.filter((format) =>
+    format.liters !== null && Math.abs(format.liters - target) <= Math.max(0.005, target * 0.01)
+  );
+}
+
+export type WinerimCapacityResolution = {
+  format: WinerimFormatKey | null;
+  liters: number | null;
+  candidates: WinerimFormatKey[];
+  reason:
+    | "exact_variant"
+    | "capacity_unique"
+    | "capacity_narrowed_by_wine"
+    | "capacity_ambiguous"
+    | "capacity_unknown";
+};
+
+/**
+ * Resolves a POS format label / capacity to a single Winerim format.
+ *
+ * Order: exact variant name → unique capacity match → capacity narrowed to one
+ * of the formats the wine actually has in Winerim → ambiguous (fail-closed).
+ */
+export function resolveWinerimFormatByCapacity(input: {
+  /** POS label or Winerim variant, e.g. "CLOE 3L" or "jeroboam". */
+  label?: unknown;
+  /** Explicit capacity in liters when the POS provides it as a number. */
+  liters?: unknown;
+  /** Formats this wine really has in Winerim (learned, used to disambiguate). */
+  availableFormats?: Iterable<unknown>;
+}): WinerimCapacityResolution {
+  const exact = resolveWinerimFormat(input.label);
+  if (exact) {
+    return { format: exact.key, liters: exact.liters, candidates: [exact.key], reason: "exact_variant" };
+  }
+
+  const liters = Number.isFinite(Number(input.liters)) && Number(input.liters) > 0
+    ? Number(input.liters)
+    : parseLitersFromLabel(input.label);
+  if (liters === null) {
+    return { format: null, liters: null, candidates: [], reason: "capacity_unknown" };
+  }
+
+  const candidates = winerimFormatsForLiters(liters);
+  if (candidates.length === 0) {
+    return { format: null, liters, candidates: [], reason: "capacity_unknown" };
+  }
+  const candidateKeys = candidates.map((format) => format.key);
+  if (candidates.length === 1) {
+    return { format: candidateKeys[0], liters, candidates: candidateKeys, reason: "capacity_unique" };
+  }
+
+  const available = new Set<WinerimFormatKey>();
+  for (const value of input.availableFormats || []) {
+    const key = winerimFormatKey(value);
+    if (key) available.add(key);
+  }
+  const narrowed = candidateKeys.filter((key) => available.has(key));
+  if (narrowed.length === 1) {
+    return { format: narrowed[0], liters, candidates: candidateKeys, reason: "capacity_narrowed_by_wine" };
+  }
+
+  return { format: null, liters, candidates: candidateKeys, reason: "capacity_ambiguous" };
+}
