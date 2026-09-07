@@ -2,13 +2,24 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   findEntryForVariant,
+  findEntryForVariantOrFallback,
   normalizeWinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
+import {
+  extractWinerimWineFormats,
+  isLegacyWinerimFormat,
+  type WinerimWineFormatRow,
+} from "../_shared/winerimFormats.ts";
+import { isExtendedFormatsConnection } from "../_shared/winerimExtendedFormats.ts";
 import {
   extractCommercialCodeFromName,
   normalizeCommercialCode,
 } from "../_shared/productCodeMatching.ts";
-import { decideCatalogChange } from "../_shared/winerimCatalogFingerprint.ts";
+import {
+  decideCatalogChange,
+  WINERIM_EXTENDED_FORMATS_FIELD,
+  winerimExtendedFormatsDigest,
+} from "../_shared/winerimCatalogFingerprint.ts";
 
 
 const corsHeaders = {
@@ -461,9 +472,10 @@ serve(async (req) => {
         const wineType = rawType && typeof rawType === "string" && rawType.length > 0 ? String(rawType).toLowerCase() : null;
 
         const prices = Array.isArray(w.prices) ? w.prices as { variant: string; price: number; erpStock?: { id?: number; stock?: number } }[] : [];
-        const bottleEntry = findEntryForVariant(prices, "botella");
+        const bottleEntry = findEntryForVariantOrFallback(prices, "botella");
         const glassEntry = findEntryForVariant(prices, "copa");
         const magnumEntry = findEntryForVariant(prices, "magnum");
+        const { rows: formatRows, unknownVariants } = extractWinerimWineFormats(prices);
 
         const bottleSalePrice = toPositiveNumber(bottleEntry?.price) ?? toPositiveNumber(w.bottle_sale_price ?? w.sale_price ?? w.pvp ?? w.price);
         const bottlePurchasePrice = toPositiveNumber(w.bottle_purchase_price ?? w.purchase_price ?? w.cost_price ?? w.cost);
@@ -494,8 +506,57 @@ serve(async (req) => {
           bottleStockId,
           glassStockId,
           magnumStockId,
+          formatRows,
+          unknownVariants,
         };
       }
+
+      // ── FORMAT CATALOG PERSISTENCE (winerim_wine_formats) ──
+      // One row per (wine, format). Formats that disappear from Winerim are
+      // deleted so a retired variant can never keep an Agora button sellable.
+      const persistWineFormats = async (
+        winerimId: string,
+        rows: WinerimWineFormatRow[],
+      ): Promise<void> => {
+        if (!Array.isArray(rows)) return;
+        if (rows.length > 0) {
+          const { error: formatsError } = await supabase
+            .from("winerim_wine_formats")
+            .upsert(
+              rows.map((row) => ({ ...row, connection_id: connectionId, winerim_id: winerimId })),
+              { onConflict: "connection_id,winerim_id,format_key" },
+            );
+          if (formatsError) {
+            console.error(`[winerim-proxy] winerim_wine_formats upsert failed for ${winerimId}: ${formatsError.message}`);
+            return;
+          }
+        }
+        const keptKeys = rows.map((row) => row.format_key);
+        let staleQuery = supabase
+          .from("winerim_wine_formats")
+          .delete()
+          .eq("connection_id", connectionId)
+          .eq("winerim_id", winerimId);
+        if (keptKeys.length > 0) staleQuery = staleQuery.not("format_key", "in", `(${keptKeys.join(",")})`);
+        const { error: staleError } = await staleQuery;
+        if (staleError) {
+          console.error(`[winerim-proxy] winerim_wine_formats cleanup failed for ${winerimId}: ${staleError.message}`);
+        }
+      };
+
+      const extendedFormatsEnabled = isExtendedFormatsConnection(
+        connectionId,
+        (connection.provider_config || {}) as Record<string, unknown>,
+      );
+      const extendedDigestByWineId = new Map<string, string>();
+      const unknownVariantsSeen = new Set<string>();
+
+      const rememberExtendedFormats = (winerimId: string, rows: WinerimWineFormatRow[]) => {
+        extendedDigestByWineId.set(
+          winerimId,
+          winerimExtendedFormatsDigest((rows || []).filter((row) => !isLegacyWinerimFormat(row.format_key))),
+        );
+      };
 
       const autoCreateCandidateIds = new Set<string>();
       const autoUpdateCandidateIds = new Set<string>();
@@ -513,7 +574,16 @@ serve(async (req) => {
         payload: Record<string, unknown>,
         pricingReady: boolean,
       ) => {
-        const decision = decideCatalogChange({ previous, payload, pricingReady });
+        const decision = decideCatalogChange({
+          previous: previous
+            ? { ...previous, [WINERIM_EXTENDED_FORMATS_FIELD]: previous[WINERIM_EXTENDED_FORMATS_FIELD] }
+            : previous,
+          payload: extendedFormatsEnabled && extendedDigestByWineId.has(winerimId)
+            ? { ...payload, [WINERIM_EXTENDED_FORMATS_FIELD]: extendedDigestByWineId.get(winerimId) }
+            : payload,
+          pricingReady,
+          includeExtendedFormats: extendedFormatsEnabled,
+        });
         if (decision.outcome === "new") autoCreateCandidateIds.add(winerimId);
         else if (decision.outcome === "changed") autoUpdateCandidateIds.add(winerimId);
         else if (decision.outcome === "skipped" && decision.reason === "fingerprint_unavailable") {
