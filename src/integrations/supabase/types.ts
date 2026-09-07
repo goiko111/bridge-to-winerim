@@ -1306,6 +1306,48 @@ export type Database = {
           },
         ]
       }
+      winerim_wine_formats: {
+        Row: {
+          connection_id: string
+          cost_price: number | null
+          created_at: string
+          format_key: string
+          id: string
+          is_active: boolean
+          sale_price: number | null
+          source_variant: string | null
+          stock_id: number | null
+          updated_at: string
+          winerim_id: string
+        }
+        Insert: {
+          connection_id: string
+          cost_price?: number | null
+          created_at?: string
+          format_key: string
+          id?: string
+          is_active?: boolean
+          sale_price?: number | null
+          source_variant?: string | null
+          stock_id?: number | null
+          updated_at?: string
+          winerim_id: string
+        }
+        Update: {
+          connection_id?: string
+          cost_price?: number | null
+          created_at?: string
+          format_key?: string
+          id?: string
+          is_active?: boolean
+          sale_price?: number | null
+          source_variant?: string | null
+          stock_id?: number | null
+          updated_at?: string
+          winerim_id?: string
+        }
+        Relationships: []
+      }
       winerim_wines: {
         Row: {
           bottle_purchase_price: number | null
