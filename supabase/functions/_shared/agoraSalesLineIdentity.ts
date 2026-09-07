@@ -204,10 +204,11 @@ export function canonicalAgoraSalesLineFormat(input: {
 
 
 function normalizeLineFormat(value: unknown): string {
-  const upper = String(value ?? "").trim().toUpperCase();
+  const raw = String(value ?? "").trim();
+  const upper = raw.toUpperCase();
   if (!upper) return "";
   // Accepts Winerim variant labels ("copa", "media botella") and canonical keys.
-  return winerimFormatKey(upper) || winerimFormatKey(value) || upper;
+  return winerimFormatKey(raw) || upper;
 }
 
 function isSameFormat(a: unknown, b: unknown): boolean {
