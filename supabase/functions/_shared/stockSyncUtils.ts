@@ -49,7 +49,11 @@ export function variantForAgoraFormat(format: unknown): WinerimVariant {
   );
   // Prefer the most specific match ("doble-magnum" over "magnum").
   matches.sort((left, right) => right.variant.length - left.variant.length);
-  return matches[0]?.variant ?? "botella";
+  if (matches[0]) return matches[0].variant;
+  // Capacity-named buttons ("CLOE 3L", "VEUVE 1,5 L"): only when unambiguous.
+  const byCapacity = resolveWinerimFormatByCapacity({ label: format });
+  if (byCapacity.format) return winerimVariantForFormat(byCapacity.format) ?? "botella";
+  return "botella";
 }
 
 
