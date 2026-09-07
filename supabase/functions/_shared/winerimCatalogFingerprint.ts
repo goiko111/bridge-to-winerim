@@ -19,7 +19,32 @@ export const WINERIM_CATALOG_FINGERPRINT_FIELDS = [
   "magnum_sale_price",
 ] as const;
 
+/**
+ * Extra field carrying the digest of the non-legacy formats (media botella,
+ * jeroboam, matusalem…). Only folded into the fingerprint for connections with
+ * extended formats enabled, so enabling the feature cannot make every wine of
+ * every other connection look "changed".
+ */
+export const WINERIM_EXTENDED_FORMATS_FIELD = "extended_formats_digest";
+
+/** Stable digest of extended-format price/stock state for one wine. */
+export function winerimExtendedFormatsDigest(
+  rows: { format_key?: unknown; sale_price?: unknown; stock_id?: unknown; is_active?: unknown }[] | null | undefined,
+): string {
+  return (rows || [])
+    .map((row) => [
+      String(row.format_key ?? "").toUpperCase(),
+      row.sale_price === null || row.sale_price === undefined ? "" : Number(row.sale_price).toFixed(4),
+      row.stock_id === null || row.stock_id === undefined ? "" : String(row.stock_id),
+      row.is_active === false ? "0" : "1",
+    ].join(":"))
+    .filter((entry) => !entry.startsWith(":"))
+    .sort()
+    .join(",");
+}
+
 export type WinerimCatalogRow = Record<string, unknown>;
+
 
 function normalizeScalar(value: unknown): string {
   if (value === undefined || value === null) return "\u0000";
