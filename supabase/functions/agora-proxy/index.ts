@@ -66,7 +66,6 @@ import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
   buildStockSyncIdempotencyKey,
-  findStockForVariant,
   isTerminalStockSyncError,
   normalizeWinerimVariant,
   parseWinerimStockRows,
