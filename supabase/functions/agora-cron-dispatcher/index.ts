@@ -327,6 +327,7 @@ Deno.serve(async (req: Request) => {
         connections: connections.length,
         skippedByBreaker,
         skippedByPreflight,
+        requeuedAfterRecovery,
         skippedByLock: lockedCount,
         dispatched: allResults.length - lockedCount,
         succeeded: okCount,
