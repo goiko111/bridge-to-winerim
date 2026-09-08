@@ -476,6 +476,8 @@ function earlierProviderSoldAt(current: unknown, next: unknown): string | null {
 function formatProductName(fmt: string, wineName: string): string {
   const f = String(fmt || "").toUpperCase();
   const normalizedWineName = String(wineName || "").replace(/\s+/g, " ").trim();
+  const extendedName = extendedFormatProductName(f, normalizedWineName);
+  if (extendedName) return extendedName;
   if (f === "MAGNUM") return `M ${normalizedWineName}`;
   if (f === "GLASS" || f === "COPA") return `C ${normalizedWineName}`;
   return `B ${normalizedWineName}`;
