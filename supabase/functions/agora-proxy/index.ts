@@ -4350,6 +4350,21 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any, p
     }
   }
 
+  // Non-legacy Winerim formats (media botella, jeroboam…): fail-closed. They
+  // need the connection canary switch AND a live positive price row.
+  if (isExtendedFormat(formatType)) {
+    const formatSlug = String(formatType || "").toLowerCase();
+    if (connection && !isExtendedFormatPublishable(connection, formatType)) {
+      missingFields.push("extended_format_publication_disabled");
+    } else if (!extendedFormatPrice(wine, formatType)) {
+      missingFields.push(`missing_${formatSlug}_sale_price`);
+    } else if (!(extendedFormatPrice(wine, formatType)!.cost > 0)) {
+      warnings.push(`missing_${formatSlug}_cost_price_will_use_zero`);
+    }
+  }
+
+
+
   return {
     valid: missingFields.length === 0,
     warnings,
