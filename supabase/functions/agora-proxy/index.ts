@@ -5,6 +5,17 @@ import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirs
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
 import { isFormatEnabledForConnection } from "../_shared/winerimExtendedFormats.ts";
 import {
+  attachExtendedFormatPrices,
+  eligibleExtendedFormats,
+  extendedFormatOrder,
+  extendedFormatPrice,
+  extendedFormatProductId,
+  extendedFormatProductName,
+  isExtendedFormat,
+  isExtendedFormatPublishable,
+  isExtendedPublishEnabled,
+} from "../_shared/agoraExtendedFormatPublication.ts";
+import {
   extractWinerimWineFormats,
   isLegacyWinerimFormat,
   publishableWinerimFormats,
