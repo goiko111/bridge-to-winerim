@@ -28,7 +28,7 @@ const RECOVERABLE_PATTERNS: RegExp[] = [
   /error sending request/i,
   /http 50[0234]\b/i,
   /http 429\b/i,
-  /http 52[0-9]\b/i,
+  /http 5[23][0-9]\b/i,
   /temporarily unavailable/i,
 ];
 
