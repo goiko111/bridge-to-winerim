@@ -6,6 +6,9 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Layout from "@/components/Layout";
 import Index from "./pages/Index";
 import Integrations from "./pages/Integrations";
+import CommercialOnboarding from "./pages/CommercialOnboarding";
+import IntegrationChecklist from "./pages/IntegrationChecklist";
+import AgoraFleetStatus from "./pages/AgoraFleetStatus";
 import AgoraWizard from "./pages/AgoraWizard";
 import TcposWizard from "./pages/TcposWizard";
 import CloverWizard from "./pages/CloverWizard";
@@ -37,6 +40,9 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/integrations" element={<Integrations />} />
+            <Route path="/onboarding" element={<CommercialOnboarding />} />
+            <Route path="/checklist" element={<IntegrationChecklist />} />
+            <Route path="/agora-fleet" element={<AgoraFleetStatus />} />
             <Route path="/integrations/agora" element={<AgoraWizard />} />
             <Route path="/integrations/tcpos" element={<TcposWizard />} />
             <Route path="/integrations/clover" element={<CloverWizard />} />

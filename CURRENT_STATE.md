@@ -1,8 +1,255 @@
 # CURRENT_STATE
 
+## 2026-08-04 13:50 CEST - Baseline REST por conexion listo y smoke live OK
+
+- Productor PostgREST secuencial/rate-limited genera artefactos privados
+  `agora-shadow-v1` por conexion/pasada sin solicitar credenciales ni raw JSON.
+- Smoke Sa Pedrera: 9 GET a 1 req/s, 0 retries/429, marcador estable y
+  self-reconcile exacto; cero writes remotos.
+- Validacion: 13 tests, ESLint, TypeScript, node check y diff check OK.
+- Durante servicio es solo observacional. Merge/cursor/cutover siguen
+  bloqueados hasta writer fence, drain >=130 s y dos capturas identicas.
+
+## 2026-08-04 13:31 CEST - Export oficial valido; staging bloqueado en 30/31
+
+- Export Lovable `bridge-to-winerim_260804.backup` validado como PostgreSQL
+  custom `1.16`, restaurado localmente con PG17 y fijado por SHA-256.
+- Artefacto sanitizado schema `2` generado desde restore descartable; `20`
+  tablas y reconciliacion offline OK. El import dry-run exige target `31` y
+  reemplazaria `30`, preservando el sentinel de infraestructura.
+- Staging fresh: PostgreSQL 17, sentinel `staging`, `30` tablas, `0`
+  conexiones/runtime; falta `runtime_catalog_source_scope` (`0014`).
+- Cero writes remotos. Falta almacenamiento cifrado, DSN staging seguro,
+  aplicar/verificar `0014` y ejecutar import serial quiescente.
+
+## 2026-08-04 13:05 CEST - Transferencia Lovable preparada; runtime sigue inerte
+
+- Lovable se recupero tras ampliar Cloud y vuelve a originar ventas de las
+  conexiones antiguas; own-infra no tiene consumers/conexiones live activas.
+- Rama integra export `20 -> 31`, restore descartable verificado, aborto por
+  write concurrente, commit ambiguo reconciliado y writer fence externo firmado.
+- Productor catalogo aislado por un solo producto/credencial queda local y sin
+  deploy. Falta export oficial descargable y cutover serial por conexion.
+- Validaciones: transferencia `17`, rescue `35`, fail-closed `20`,
+  executor/tooling `79`, catalogo `13`, runtime `293`, TypeScript/build/PG OK.
+
+## 2026-08-04 11:42 CEST - Albariza catalogo Agora completo; own-infra inerte
+
+- Se aplicaron fuera del runtime propio siete familias por colores y `748/748`
+  variantes Winerim con snapshot, canary, lotes, readback y rollback. El
+  catalogo general previo quedo intacto.
+- Tres IDs transitorios se ocultaron reversiblemente y `20` variantes sin
+  precio quedaron excluidas. No hubo ventas, stock, historico, cursor o cron.
+- La conexion own-infra no esta activa: faltan provision cifrado, writer fence,
+  primera venta real B+C y SLA de catalogo antes de `OK_100`.
+
+## 2026-08-03 23:00 CEST - El Bejeque tecnicamente cerrado; espera primera copa real
+
+- Rescue Supabase sano. Run A `RETIRED`, run B `PREPARED`/inactivo, conexion
+  apagada y cero filas operativas; migracion append-only aplicada/readback OK.
+- Runtime ligado al SHA-256 exacto del grant activo; fuente limpia `2bb7c00`
+  publicada, archivada `0600` y validada con `579` tests mas gates completos.
+- 20 probes Agora HTTP 200 devolvieron 0 facturas/0 tickets. No hubo venta
+  sintetica, deploy B, stock, cursor, historico ni catalogo live.
+- Informe en audit: `STATUS_MIDDLEWARE_EL_BEJEQUE_FINALIZATION_2026-08-03_2300.md`.
+
+## 2026-08-03 20:13 CEST - Release remoto congelado; gates externos precisos
+
+- `a80c9eb` esta publicado en
+  `origin/codex/own-infrastructure-20260802` y archivado `0600` en el volumen
+  cifrado con SHA-256 verificado.
+- Revalidacion exacta: runtime `284/284`, executor `61/61`, tooling `16/16`,
+  fail-closed `15/15`, TypeScript, build y Workerd OK.
+- Cloudflare rescue sigue inerte: R2 y Hyperdrive sanos, cuatro colas Bejeque
+  sin productores/consumidores y cero Workers canary desplegados.
+- El Bejeque no tiene token Agora en almacenamiento seguro y falta evidencia
+  `401/403` del token Winerim anterior. No se genero manifest parcial.
+- Albariza queda preparada con 7 familias, 762 altas y canary de catalogo
+  B/C, sin writes. Shadow read-only y live usaran runs separados.
+
+## 2026-08-03 19:33 CEST - Bundles Workerd OK; Albariza preview limpio
+
+- El empaquetado fail-closed usa ahora el bundler de Wrangler con Node 22+
+  antes de fijar `no_bundle` y SHA-256; consumer y executor arrancan en
+  Workerd local. El P1 de `require()` dinamico queda corregido localmente.
+- Suite raiz `570` OK y `3` skipped; executor `61/61`, fail-closed `15/15`,
+  TypeScript, build, cuatro dry-runs Wrangler y smoke Workerd OK.
+- Preview fresco Albariza: `748` vinos, `763` variantes, `762` publicables,
+  `0` colisiones y `0` diffs inesperados. Una copa sin precio queda excluida.
+- El Bejeque sigue inerte: token Winerim nuevo validado, sin deploy ni writes;
+  faltan token Agora por canal seguro y prueba negativa/evidencia equivalente
+  de revocacion Winerim anterior.
+
+## 2026-08-03 19:20 CEST - Fence asimetrico y bundles de canary cerrados
+
+- Rescue solo acepta Agora `shared-read-only`; cinco carriles de mutacion
+  Agora quedan cerrados antes de DB.
+- Executor valida envelope exacto y el deploy usa cuatro bundles preconstruidos
+  ligados por SHA-256 a sus TOML y al manifiesto de activacion.
+- Nuevo token Winerim de El Bejeque pasa `wines` y `stock` en lectura. Falta
+  prueba negativa del token antiguo y token Agora por canal seguro.
+- Naming Albariza elimina colisiones de botones preservando overrides.
+- Suite raiz `568`, executor `61`, fail-closed `15`, naming `20`, TypeScript,
+  build y cuatro Wrangler dry-runs OK. Cero deploys y cero writes.
+
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-22 14:35 CEST_
+_Última actualización: 2026-08-03 18:26 CEST_
+
+## El Bejeque - R2 listo y release congelado - 2026-08-03
+
+### Hechos
+
+- R2 Standard quedo activo con coste base `0 USD` y bucket exclusivo WEUR.
+- Healthcheck remoto `write/read/delete` OK; readback final `0` objetos y
+  `0 B`.
+- Cuatro Queues dedicadas siguen con `0` productores y `0` consumidores.
+- Fuente exacta `9e4ebce` e inventario Cloudflare se guardaron en el volumen
+  cifrado con SHA-256 y modo `0600`.
+- Validacion exacta: root `546`, executor `61`, fail-closed `15`, tooling `14`,
+  PostgreSQL 17, TypeScript, build y dos Wrangler dry-runs OK.
+- No hubo deploy, consumer ni llamada a Agora/Winerim.
+
+### Decision
+
+- R2 deja de ser bloqueo. No desplegar manifests parciales ni abrir el canary
+  hasta rotar la pareja Agora/Winerim y cercar el writer anterior.
+
+### Tareas pendientes
+
+- Rotacion proveedor, drain `>=130 s`, `401/403` antiguo y dos probes nuevos.
+- Provision cifrado inactivo, render/deploy, activacion/verifier y shadow.
+
+## El Bejeque - esquema y recursos externos inertes - 2026-08-03
+
+### Hechos
+
+- Backup cifrado anterior a `0013` revalidado y snapshot logico fresco de las
+  `30` tablas creado en el volumen cifrado. Estado fresco: `31` conexiones,
+  El Bejeque `70/409/95/1` y cero filas operativas.
+- `0013_runtime_canary_control_plane_history.sql` quedo aplicada en rescue.
+  Readback: `run_id NOT NULL`, `6` constraints, `2` triggers, control plane
+  vacio y sin privilegios `anon/authenticated`.
+- `middleware_runtime_login` y el Hyperdrive rescue se rotaron y validaron con
+  una consulta read-only.
+- La vault key rescue esta activa en el unico Secrets Store de la cuenta; su
+  copia privada tiene modo `0600` en el volumen cifrado.
+- Existen cuatro Queues exclusivas para `bejeque-20260803-a`, todas con `0`
+  productores y `0` consumidores.
+- No hubo deploy de Workers, activacion de conexion, ventas, stock, cursor,
+  catalogo ni llamadas a TPV/Winerim.
+
+### Decisiones
+
+- Reutilizar el unico Secrets Store con nombres separados por entorno.
+- No habilitar R2 sin aprobacion del checkout y no desplegar Workers sin R2,
+  tokens rotados y manifests completos.
+
+### Tareas pendientes
+
+- Aprobar/habilitar R2 Standard.
+- Rotar tokens Agora y Winerim de El Bejeque; obtener `401/403` antiguo,
+  esperar `>=130 s` y completar dos probes read-only nuevos.
+- Provisionar credenciales inactivas, render/deploy dedicado, activation,
+  verifier, shadow y una sola operacion controlada.
+
+## El Bejeque - activacion y rotacion versionadas - 2026-08-03
+
+### Hechos
+
+- `0013_runtime_canary_control_plane_history.sql` versiona scope y
+  credenciales por `run_id`, conserva estados terminales, bloquea replay y
+  limita a un unico canary activo global.
+- Provision genera la pareja cifrada inactiva y manifest; activacion enlaza
+  manifests de deploy/fence/credenciales por SHA-256 en una transaccion;
+  retirada marca `RETIRED` sin borrar; rotacion exige historial completo.
+- `bootstrap` exige cero recibos operativos. `rotate` conserva los recibos del
+  candidato solo con todo el historial anterior terminal; RLS, readiness y
+  vault ligan credenciales activas al mismo `run_id` activo.
+- El runbook pausa consumer/writer, revoca grants y espera `>=130 s` antes de
+  rotar, cubriendo lease maxima `120 s` y timeout de red `10 s`.
+- Validacion: PG17 dos generaciones y pre-canary OK; replay/RLS/permisos OK;
+  tooling focal `21/21`, runtime `267/267`, executor `61/61`, fail-closed
+  `15/15`, root `546` tests, TypeScript, build y Wrangler dry-run con Node 24
+  OK.
+- Lint focalizado OK. Lint global falla por `951` errores y `85` avisos
+  heredados fuera de este bloque.
+- La revision independiente final devuelve `SIN_P0_P1` tras exigir `run_id`
+  tambien en el vault y alinear `RETIRED`/`ABORTED` como estados terminales.
+- En este bloque local El Bejeque seguia apagado; el bloque externo posterior
+  aplica `0013` y crea recursos inertes, documentado arriba.
+
+### Decision
+
+- Activar solo una generacion exacta mediante SQL transaccional y evidencia
+  SHA-256; ninguna generacion terminal puede reutilizarse.
+- La evidencia `401/403` solo se acepta tras pausa, revocacion y drain
+  `>=130 s`.
+
+### Tareas pendientes
+
+- Backup inerte, aplicar `0013`, rotar/revocar writer antiguo, obtener
+  `401/403`, provisionar y desplegar canary dedicado antes de shadow/operacion.
+
+## El Bejeque - tooling canary fail-closed - 2026-08-03
+
+### Hechos
+
+- Existe un provisionador local que cifra Agora+Winerim con AES-256-GCM y el
+  AAD exacto del runtime. Solo genera SQL privado `0600`, inserta ambas filas
+  con `active=false` y rechaza vault no vacio, candidato no inerte, scopes
+  activos o filas operativas.
+- Existe un preparador de retirada rescue que desactiva credenciales, scope y
+  conexion sin borrar filas ni logs, y genera el orden de retirada de recursos
+  Cloudflare. El modo por defecto de ambas herramientas es plan-only.
+- PostgreSQL 17 local verifico provision, activacion simulada y retirada:
+  estado final `0` credenciales activas, `0` scopes activos y conexion apagada.
+- Validacion: root `539/539`, executor `61/61`, fail-closed `15/15`, TypeScript,
+  lint acotado y `git diff --check` verdes.
+- No se cargaron tokens reales, no se conecto a Supabase/Cloudflare/Agora/
+  Winerim y no hubo deploy ni escritura productiva.
+- La revision independiente detecto y se corrigieron: replay de artefacto,
+  binding `runId`/scope, readback global, inventario incompleto Cloudflare y
+  rutas sensibles dentro del repo/symlink. La reprovision de la misma
+  conexion sigue exigiendo un procedimiento de rotacion versionada separado.
+- La segunda revision independiente no encuentra P0/P1: la retirada exige el
+  manifiesto de deploy `0600` y su SHA-256, usa locks y no puede apuntar a
+  recursos compartidos aportados manualmente.
+
+### Decision
+
+- Provisionar siempre inactivo y separar activacion de preparacion. La
+  retirada desactiva y conserva evidencia; nunca borra ni hace `TRUNCATE`.
+
+### Tareas pendientes
+
+- Rotar/revocar la credencial del writer anterior y obtener `401/403` antes de
+  renderizar/aplicar un artefacto real. Despues: probes, shadow y canary unico.
+
+## El Bejeque - pre-canary seguro - 2026-08-03
+
+### Hechos
+
+- Rescue production conserva `31` conexiones inertes y El Bejeque apagado.
+- Hidratacion remota verificada: `70` vinos, `409` productos, `95` mappings y
+  `1` master; `23` mappings exactos inactivos quedan solo para historico
+  sales-only (`21` GLASS, `2` BOTTLE).
+- Cero credenciales runtime, canary, ventas, stock logs y outbound.
+- Backup cifrado real restaura en PG17 y valida apply/rollback de la transicion.
+- Root `531/531`, executor `61/61`, fail-closed `15/15` y TypeScript verdes.
+
+### Decision
+
+- `stockActive=false` nunca autoriza live ni stock. El canary no se abre sin
+  rotar la credencial anterior y demostrar `401/403` en el writer Lovable.
+
+### Tareas pendientes
+
+- Provision cifrado y retirada/cleanup rescue ya estan automatizados
+  localmente y validados. Las tareas `cf:runtime:canary:*` antiguas siguen
+  siendo solo para staging y no deben usarse para este cutover.
+- Rotar/revocar credencial, cargar solo El Bejeque en vault, dos probes
+  read-only, shadow y una venta legitima con cola exclusiva y rollback.
 
 ## Abadia Yuste - mapping legacy exacto y univoco - 2026-07-22
 

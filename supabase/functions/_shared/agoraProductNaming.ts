@@ -8,6 +8,7 @@ export interface AgoraProductNameCandidate {
 export interface AgoraExistingProductName {
   Id?: string | number | null;
   Name?: string | null;
+  ButtonText?: string | null;
 }
 
 export interface AgoraProductLabel {
@@ -63,16 +64,145 @@ function normalizeVintage(vintage: string | number | null | undefined): string {
   return year ? year[0] : "";
 }
 
+function technicalFormatPrefix(value: string): string {
+  return String(value || "").trim().match(/^(B|C|M)\b/i)?.[1]?.toUpperCase() || "";
+}
+
+function compactStableSuffix(value: string | number | null | undefined): string {
+  const text = String(value ?? "");
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36).slice(-7);
+}
+
 export function buildAgoraButtonText(baseName: string, finalName: string, distinctiveSuffix?: string, maxLen = 20): string {
   const suffix = String(distinctiveSuffix || "").trim();
   if (!suffix) return truncateAgoraButtonText(finalName, maxLen);
 
   const suffixText = ` ${suffix}`;
-  if (suffixText.length >= maxLen) return truncateAgoraButtonText(suffix, maxLen);
+  if (suffixText.length >= maxLen) {
+    const formatPrefix = technicalFormatPrefix(baseName);
+    if (!formatPrefix) return truncateAgoraButtonText(suffix, maxLen);
+    return `${formatPrefix} ${truncateAgoraButtonText(suffix, maxLen - formatPrefix.length - 1)}`;
+  }
 
   const headLen = maxLen - suffixText.length;
   const head = String(baseName || "").substring(0, headLen).trimEnd();
   return truncateAgoraButtonText(`${head || String(baseName || "").charAt(0)}${suffixText}`, maxLen);
+}
+
+function resolveAgoraButtonTextCollisions(
+  candidates: AgoraProductNameCandidate[],
+  existingProducts: AgoraExistingProductName[],
+  labels: Record<string, AgoraProductLabel>,
+  maxLen = 20,
+): void {
+  const entries = candidates
+    .map((candidate) => ({
+      candidate,
+      productId: String(candidate.productId ?? "").trim(),
+      baseName: String(candidate.baseName || "").trim(),
+      vintage: normalizeVintage(candidate.vintage),
+      initialButtonKey: normalizeAgoraProductNameKey(
+        labels[String(candidate.productId ?? "").trim()]?.buttonText || "",
+      ),
+    }))
+    .filter((entry) => entry.productId && entry.baseName && labels[entry.productId]);
+
+  const generatedOwners = new Map<string, string[]>();
+  const baseNameOwners = new Map<string, string[]>();
+  for (const entry of entries) {
+    generatedOwners.set(entry.initialButtonKey, [
+      ...(generatedOwners.get(entry.initialButtonKey) ?? []),
+      entry.productId,
+    ]);
+    const baseKey = normalizeAgoraProductNameKey(entry.baseName);
+    baseNameOwners.set(baseKey, [...(baseNameOwners.get(baseKey) ?? []), entry.productId]);
+  }
+
+  const existingButtonOwners = new Map<string, Set<string>>();
+  for (const product of existingProducts) {
+    const id = String(product.Id ?? "").trim();
+    const buttonText = String(product.ButtonText ?? "").trim();
+    if (!id || !buttonText) continue;
+    const key = normalizeAgoraProductNameKey(buttonText);
+    const owners = existingButtonOwners.get(key) ?? new Set<string>();
+    owners.add(id);
+    existingButtonOwners.set(key, owners);
+  }
+
+  function hasExternalButtonOwner(buttonText: string, productId: string): boolean {
+    const owners = existingButtonOwners.get(normalizeAgoraProductNameKey(buttonText));
+    return Boolean(owners && [...owners].some((owner) => owner !== productId));
+  }
+
+  function needsResolution(entry: typeof entries[number]): boolean {
+    const label = labels[entry.productId];
+    const generated = generatedOwners.get(entry.initialButtonKey) ?? [];
+    const duplicateBaseName = (
+      baseNameOwners.get(normalizeAgoraProductNameKey(entry.baseName)) ?? []
+    ).length > 1;
+    const vintageWasLost = Boolean(
+      entry.vintage && duplicateBaseName && !label.buttonText.includes(entry.vintage),
+    );
+    return generated.length > 1
+      || hasExternalButtonOwner(label.buttonText, entry.productId)
+      || vintageWasLost;
+  }
+
+  const usedButtonKeys = new Set<string>();
+  for (const entry of entries) {
+    if (!needsResolution(entry)) {
+      usedButtonKeys.add(normalizeAgoraProductNameKey(labels[entry.productId].buttonText));
+    }
+  }
+
+  const pending = entries
+    .filter(needsResolution)
+    .sort((left, right) => left.productId.localeCompare(right.productId, "en", { numeric: true }));
+
+  for (const entry of pending) {
+    const label = labels[entry.productId];
+    const collisionGroup = entries.filter((candidate) => (
+      candidate.initialButtonKey === entry.initialButtonKey
+      || normalizeAgoraProductNameKey(candidate.baseName) === normalizeAgoraProductNameKey(entry.baseName)
+    ));
+    const vintageCount = entry.vintage
+      ? collisionGroup.filter((candidate) => candidate.vintage === entry.vintage).length
+      : 0;
+    const id = entry.candidate.winerimId ?? entry.candidate.productId;
+    const identifiers = [...suffixCandidates(id), compactStableSuffix(entry.productId)];
+    const suffixes = [
+      ...(entry.vintage && vintageCount === 1 ? [entry.vintage] : []),
+      ...(entry.vintage ? identifiers.map((identifier) => `${entry.vintage}-${identifier}`) : []),
+      ...identifiers,
+    ];
+
+    let resolved = "";
+    for (const suffix of [...new Set(suffixes)]) {
+      const candidate = buildAgoraButtonText(entry.baseName, label.name, suffix, maxLen);
+      const key = normalizeAgoraProductNameKey(candidate);
+      if (!usedButtonKeys.has(key) && !hasExternalButtonOwner(candidate, entry.productId)) {
+        resolved = candidate;
+        break;
+      }
+    }
+
+    for (let attempt = 0; !resolved; attempt += 1) {
+      const suffix = `${compactStableSuffix(entry.productId)}-${attempt.toString(36)}`;
+      const candidate = buildAgoraButtonText(entry.baseName, label.name, suffix, maxLen);
+      const key = normalizeAgoraProductNameKey(candidate);
+      if (!usedButtonKeys.has(key) && !hasExternalButtonOwner(candidate, entry.productId)) {
+        resolved = candidate;
+      }
+    }
+
+    label.buttonText = resolved;
+    usedButtonKeys.add(normalizeAgoraProductNameKey(resolved));
+  }
 }
 
 export function buildDuplicateSafeAgoraProductLabels(
@@ -181,6 +311,8 @@ export function buildDuplicateSafeAgoraProductLabels(
       assignedKeys.add(normalizeAgoraProductNameKey(finalName));
     });
   }
+
+  resolveAgoraButtonTextCollisions(candidates, existingProducts, finalLabels);
 
   return finalLabels;
 }

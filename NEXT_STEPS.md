@@ -1,6 +1,114 @@
 # NEXT_STEPS
 
+## P0 - Baseline REST por conexion - 2026-08-04 13:50 CEST
+
+- [x] Implementar productor GET secuencial, rate-limit/backoff y artefactos
+  privados por conexion.
+- [x] Validar con 13 tests y smoke live de una conexion a 1 req/s.
+- [ ] Guardar capturas reales en volumen cifrado durable, no `/private/tmp`.
+- [ ] Tras importar el export oficial: fence firmado por conexion, drain
+  `>=130 s`, dos capturas identicas y reconcile exacto antes de cualquier merge.
+
+## P0 - Import oficial preparado; gate schema staging - 2026-08-04 13:31 CEST
+
+- [x] Descargar y hashear `bridge-to-winerim_260804.backup` en local privado.
+- [x] Restaurar con PostgreSQL 17 y generar artefacto sanitizado schema `2`.
+- [x] Reconciliar offline y validar target `31`/reemplazo `30` sin writes.
+- [ ] Copiar fuente/artefacto/backup target a volumen cifrado durable.
+- [ ] Obtener DSN directa/Session Pooler de staging por canal seguro.
+- [ ] Aplicar/readback `0014_runtime_catalog_source_scope.sql` (`30 -> 31`).
+- [ ] Ejecutar import quiescente, reconciliar y conservar rollback antes de
+  provisionar credenciales o activar runtime.
+
+## P0 - Import Lovable y cutover serial - 2026-08-04 13:05 CEST
+
+- [x] Cerrar contrato `20 -> 31`, restore real y fence de concurrencia.
+- [x] Exigir evidencia externa Ed25519 del writer Lovable cercado.
+- [x] Descargar/hashear el export oficial y probar restore descartable.
+- [ ] Completar `0014` y reconciliar staging con rollback; no importar con
+  runtime activo.
+- [ ] Cortar una conexion piloto con drain `>=130 s`, dos lecturas y canary.
+
+## P0 - Albariza runtime tras catalogo live - 2026-08-04 11:42 CEST
+
+- [x] Publicar siete familias y `748/748` variantes con canary/readback.
+- [x] Excluir `20` sin precio y ocultar tres stale con XML inverso.
+- [ ] Provision cifrado inactivo y readback exacto de la fila/conexion.
+- [ ] Writer fence, shadow read-only y activacion serial sin backfill.
+- [ ] Primera venta real B+C y SLA alta/precio `<5 min`, con rollback.
+
+## P0 - El Bejeque: unico gate operativo restante - 2026-08-03 23:00 CEST
+
+- [x] Cerrar hashes manifest/grant/proof, aborto append-only y lectura DB.
+- [x] Aplicar/verificar migracion rescue con run A retirado y B preparado.
+- [x] Publicar `2bb7c00`, validar `579` tests, executor, Workerd, PG17 y build.
+- [x] Observar 20 veces Agora real: HTTP 200, 0 facturas y 0 tickets.
+- [ ] Primera venta real de copa mapeada: capturar IDs exactos y snapshot.
+- [ ] Regenerar manifest/grant, desplegar B serialmente, readiness doble,
+  mensaje unico, replay idempotente, readback de historial+stock y retirada.
+
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
+
+## P0 - Release remoto y canaries separados
+
+- [x] Publicar `a80c9eb`, congelar archive `0600` y actualizar inventario.
+- [x] Repetir runtime/executor/tooling/fail-closed/TypeScript/build/Workerd.
+- [ ] Introducir Agora El Bejeque por canal seguro; no aceptar plaintext en
+  argumentos, logs, Git ni Markdown.
+- [ ] Obtener `401/403` anterior o evidencia backend equivalente aprobada.
+- [ ] Desplegar fence/executor/observer antes del consumer y guardar readiness
+  pre/post activacion.
+- [ ] Ejecutar shadow read-only, retirarlo y crear otro run para live.
+- [ ] Albariza: provision apagado + 7 familias + canary `855797/1055797`;
+  venta real en gate de stock separado.
+
+## P0 - Fence El Bejeque y preview Albariza
+
+- [x] Modo Agora `shared-read-only`, scope exacto y bundles inmutables.
+- [x] Token Winerim nuevo validado en dos GET oficiales.
+- [x] Preview fresco Albariza: `762` publicables, cero colisiones/diffs.
+- [x] Generar bundles con Wrangler y arrancar consumer/executor en Workerd.
+- [ ] Obtener `401/403` antiguo o evidencia backend equivalente aprobada.
+- [ ] Introducir Agora El Bejeque por canal seguro y provisionar inactivo.
+- [ ] Corregir/excluir la copa Albariza sin precio y ejecutar canary B/C antes
+  de publicacion completa.
+
+## P0 - El Bejeque activation gate versionado
+
+- [x] Añadir `run_id`, estados terminales, evidencias SHA-256 e inmutabilidad.
+- [x] Implementar provisioning, activacion y retiro transaccionales con
+  manifests privados y rotacion versionada.
+- [x] Validar dos generaciones PG17, RLS, pre-canary, runtime, executor,
+  fail-closed, suite root, TypeScript, build y Wrangler dry-run.
+- [x] Cerrar drain programatico, orden de retirada y binding exacto de
+  credenciales/RLS/readiness/vault al `run_id` activo.
+- [x] Revalidar backup, crear snapshot logico fresco y aplicar `0013` solo con
+  control plane vacio.
+- [x] Rotar login runtime/Hyperdrive, activar vault key rescue y crear cuatro
+  Queues exclusivas inertes para `bejeque-20260803-a`.
+- [x] Usuario autorizo R2 Standard; suscripcion activa, bucket exclusivo WEUR
+  creado y healthcheck remoto cerrado con `0` objetos.
+- [x] Congelar `9e4ebce`, inventario Cloudflare privado y repetir validacion
+  exacta de tests, PG17, TypeScript, build y Wrangler dry-runs.
+- [ ] Rotar tokens Agora/Winerim, guardar `401/403`, esperar `>=130 s` y
+  obtener dos probes read-only correctos.
+- [ ] Provisionar inactivo, renderizar manifests, desplegar recursos dedicados
+  sin consumer, activar/verificar run exacto y ejecutar shadow.
+- [ ] Ejecutar solo una operacion controlada tras cerrar todos los gates.
+
+## P0 - El Bejeque rescue pre-canary
+
+- [x] Aplicar `72 -> 95` mappings con backup, readback y rollback.
+- [x] Endurecer sales para stockId exacto y sales-only inactivo fail-closed.
+- [x] Validar suites, verifier, paquete fence y backup restaurable.
+- [x] Implementar provisionador cifrado de dos credenciales sin exponerlas;
+  genera solo artefacto privado inactivo y fail-closed.
+- [x] Implementar retirada/cleanup del canary rescue y scope expirado sin
+  borrar evidencias; validado en PostgreSQL 17 local.
+- [ ] Rotar credenciales Agora/Winerim y obtener evidencia `401/403` antes del
+  grant.
+- [ ] Dos probes read-only, shadow y una sola venta legitima; mantener todo el
+  resto apagado.
 
 ## P0 - Corte operativo al cerrar 2026-07-22
 

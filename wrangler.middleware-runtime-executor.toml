@@ -1,0 +1,27 @@
+name = "winerim-middleware-runtime-executor"
+main = "cloudflare/workers/middleware-runtime-executor/src/worker.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[env.staging]
+name = "winerim-middleware-runtime-executor-staging"
+workers_dev = false
+preview_urls = false
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging-private-inert"
+RUNTIME_EXECUTION_ENABLED = "false"
+RUNTIME_VAULT_KEY_VERSION = "v1"
+WINERIM_API_BASE_URL = "https://app.winerim.com"
+WINERIM_ALLOWED_HOSTS = "app.winerim.com"
+
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "0adae4108e4241f19cf5ba2709cbc69f"
+
+# RUNTIME_VAULT_KEY is intentionally absent. Bind an account-level Cloudflare
+# Secrets Store secret only during the reviewed deploy gate. The Worker remains
+# fail-closed without it and never has a public route or workers.dev URL.

@@ -1,0 +1,79 @@
+diff --git a/cloudflare/workers/middleware-runtime-executor/src/worker.ts b/cloudflare/workers/middleware-runtime-executor/src/worker.ts
+--- a/cloudflare/workers/middleware-runtime-executor/src/worker.ts
++++ b/cloudflare/workers/middleware-runtime-executor/src/worker.ts
+@@
+ import { Client } from "pg";
++import type { PrivateCatalogLaneExecutor } from "./catalog";
++import type { PrivateOutboundLaneExecutor } from "./outbound";
+@@
+ export interface MiddlewareRuntimeExecutorEnv {
+   ENVIRONMENT?: string;
+   RELEASE?: string;
+   RUNTIME_EXECUTION_ENABLED?: string;
++  RUNTIME_CATALOG_EXECUTION_ENABLED?: string;
++  RUNTIME_CATALOG_FETCH_ENABLED?: string;
++  RUNTIME_CATALOG_APPLY_ENABLED?: string;
++  RUNTIME_OUTBOUND_EXECUTION_ENABLED?: string;
++  RUNTIME_OUTBOUND_MUTATION_ENABLED?: string;
+@@
+ export interface RuntimeExecutorWorkerDependencies {
+   database?: (env: MiddlewareRuntimeExecutorEnv) => DatabaseAdapter;
++  catalog?: (
++    env: MiddlewareRuntimeExecutorEnv,
++    database: DatabaseAdapter,
++  ) => PrivateCatalogLaneExecutor | null;
++  outbound?: (
++    env: MiddlewareRuntimeExecutorEnv,
++    database: DatabaseAdapter,
++  ) => PrivateOutboundLaneExecutor | null;
+   request?: typeof fetch;
+@@
+ function normalizedDependencies(
+   dependencies: RuntimeExecutorWorkerDependencies,
+ ): Required<RuntimeExecutorWorkerDependencies> {
+   return {
+     database: dependencies.database ?? defaultDatabase,
++    // Default null keeps both lanes disconnected even if a variable is set by
++    // mistake. The deployable composition must inject reviewed factories.
++    catalog: dependencies.catalog ?? (() => null),
++    outbound: dependencies.outbound ?? (() => null),
+     request: dependencies.request ?? fetch,
+@@
++function routePrivateLanes(input: Readonly<{
++  stock: Readonly<{ execute(envelope: RuntimeEnvelopeV1): Promise<RuntimeExecutionResult> }>;
++  catalog: PrivateCatalogLaneExecutor | null;
++  outbound: PrivateOutboundLaneExecutor | null;
++}>): Readonly<{ execute(envelope: RuntimeEnvelopeV1): Promise<RuntimeExecutionResult> }> {
++  return Object.freeze({
++    execute(envelope) {
++      if (envelope.job === "catalog.fetch-winerim" || envelope.job === "catalog.sync-master") {
++        return input.catalog?.execute(envelope) ?? Promise.resolve({
++          ok: false,
++          failure: { httpStatus: 503, message: "CATALOG_EXECUTOR_NOT_CONFIGURED" },
++        });
++      }
++      if (envelope.job === "outbound.process") {
++        return input.outbound?.execute(envelope) ?? Promise.resolve({
++          ok: false,
++          failure: { httpStatus: 503, message: "OUTBOUND_EXECUTOR_NOT_CONFIGURED" },
++        });
++      }
++      return input.stock.execute(envelope);
++    },
++  });
++}
++
+ export function createMiddlewareRuntimeExecutorWorker(
+@@
+-      return createRuntimeExecutorService(createConnectionScopedRuntimeExecutor(options)).fetch(request);
++      const stock = createConnectionScopedRuntimeExecutor(options);
++      const catalog = resolved.catalog(env, database);
++      const outbound = resolved.outbound(env, database);
++      return createRuntimeExecutorService(routePrivateLanes({ stock, catalog, outbound })).fetch(request);
+     },
+   };
+ }
+
+# Deliberately not applied. Before applying this hunk, the deployable worker
+# must inject reviewed catalog/outbound factories that construct the modules in
+# this directory. Merely setting an environment variable cannot connect a lane.

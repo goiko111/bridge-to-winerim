@@ -1,0 +1,44 @@
+name = "winerim-middleware-api"
+main = "cloudflare/workers/middleware-api/src/index.ts"
+compatibility_date = "2026-06-12"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "local"
+RELEASE = "dev"
+ALLOWED_ORIGIN = "http://localhost:8080"
+
+[env.staging]
+name = "winerim-middleware-api-staging"
+workers_dev = false
+routes = [
+  { pattern = "api-staging.middleware.winerim.wine", custom_domain = true }
+]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RELEASE = "staging"
+ALLOWED_ORIGIN = "https://staging.middleware.winerim.wine"
+POS_TEST_ALLOWED_HOSTS = ""
+REQUIRE_ACCESS_JWT = "true"
+CF_ACCESS_AUD = "73274f22dd76b3448149994f075d6de604c14d91c0568d6f9d280cd812babc2b"
+CF_ACCESS_TEAM_DOMAIN = "https://still-credit-1c67.cloudflareaccess.com"
+
+[[env.staging.hyperdrive]]
+binding = "MIDDLEWARE_DB"
+id = "04bde119c3354a5b9be3fadbf3c0b46d"
+
+[env.production]
+name = "winerim-middleware-api"
+workers_dev = false
+routes = [
+  { pattern = "api.middleware.winerim.wine/*", zone_name = "winerim.wine" }
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+RELEASE = "production"
+ALLOWED_ORIGIN = "https://middleware.winerim.wine"
+POS_TEST_ALLOWED_HOSTS = ""
+REQUIRE_ACCESS_JWT = "true"

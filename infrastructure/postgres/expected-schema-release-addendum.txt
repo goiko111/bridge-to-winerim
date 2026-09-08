@@ -1,0 +1,11 @@
+# Contract additions from the 13 release migrations, materialized by
+# 0002_release_schema_addendum.sql and merged into expected-schema.txt.
+TABLE agora_dispatch_locks
+TABLE connection_alerts
+TABLE connection_health_checks
+FUNCTION acquire_agora_dispatch_lock uuid,text,text,integer boolean
+FUNCTION release_agora_dispatch_lock uuid,text,text boolean
+COLUMN sales_line_items provider_sold_at timestamp_without_time_zone NULLABLE
+COLUMN sales_line_items provider_sold_at_source text NULLABLE
+INDEX sales_line_items idx_sales_line_items_connection_provider_sold_at connection_id,provider_sold_at PARTIAL_PROVIDER_SOLD_AT_NOT_NULL
+FOREIGN_KEY stock_sync_log stock_sync_log_sales_line_item_id_fkey sales_line_item_id sales_line_items id ON_DELETE_SET_NULL

@@ -1,0 +1,185 @@
+# Middleware runtime scaffold
+
+Staging-only scaffold for moving the existing five-minute dispatcher and
+`outbound_tasks` semantics to Cloudflare Queues and Cron Triggers.
+
+It is intentionally fail-closed:
+
+- `wrangler.middleware-runtime.toml` has no production environment or route;
+- `workers_dev=false` and `RUNTIME_EXECUTION_ENABLED=false`;
+- the cron and Queue producer bindings point only to existing staging assets;
+- the inert config has no Queue consumer, while its Hyperdrive and private
+  executor bindings can serve readiness without consuming messages;
+- `/health` is liveness-only and `/ready` stays `503` until every staging gate
+  is deliberately configured;
+- no Lovable REST, POS or Winerim call is used as a fallback.
+
+## Preserved contracts
+
+- one immutable envelope per `connectionId` and operation;
+- deterministic SHA-256 idempotency key per connection, job, logical scope and
+  payload;
+- five-minute UTC slot dedupe for Cron redelivery;
+- current Agora dispatcher actions through `buildLegacyRuntimeInvocation`;
+- batch size `10` and per-connection limit `2 req/s` as integration settings;
+- POS retry schedule `2, 4, 8, 16, 32, 60` minutes, capped at one hour;
+- POS business errors are terminal and do not trip the circuit breaker;
+- Winerim live-sale `409` and line-level `retryable=true` preserve the same
+  envelope/idempotency key and retry after one second, with a three-attempt cap
+  when that profile is used.
+- leaf envelopes exist for sales import, absolute stock sync and maintenance;
+  they intentionally have no legacy proxy mapping and require ported handlers.
+
+## Staging bindings
+
+The Queue names were checked with `wrangler queues list`. At the verification
+cut they had zero producers and zero consumers.
+
+| Worker binding | Existing Queue |
+|---|---|
+| `MIDDLEWARE_CATALOG_QUEUE` | `winerim-staging-catalog` |
+| `MIDDLEWARE_SALES_STOCK_QUEUE` | `winerim-staging-sales` |
+| `MIDDLEWARE_SALES_IMPORT_QUEUE` | `winerim-staging-sales` |
+| `MIDDLEWARE_STOCK_SYNC_QUEUE` | `winerim-staging-stock` |
+| `MIDDLEWARE_OUTBOUND_QUEUE` | `winerim-staging-outbound` |
+| `MIDDLEWARE_MAINTENANCE_QUEUE` | `winerim-staging-maintenance` |
+
+`winerim-staging-dead-letter` exists but is not bound by the inert config.
+The canary uses a dedicated Worker name and the non-deployable templates
+`wrangler.middleware-runtime-canary.toml.example` and
+`wrangler.middleware-runtime-executor-canary.toml.example`. They have no cron
+or producers and must be rendered with one reviewed connection plus the real
+Cloudflare Secrets Store coordinates before any dry-run or deploy.
+
+The canary consumer is bound to `winerim-staging-sales`, the producer Queue for
+the `sales-import` lane used by `winerim.sales-import-live`. It rejects another
+connection in memory and acknowledges it before opening Hyperdrive.
+
+Both reviewed configs use the middleware-owned staging Hyperdrive. The file
+`wrangler.middleware-runtime.hyperdrive.toml.example` remains documentation
+only and must never be passed to Wrangler directly.
+
+## Local gates
+
+Wrangler 4.118 requires Node 22 or newer.
+
+```sh
+npm run cf:runtime:test
+npm run cf:runtime:canary:render
+npm run cf:runtime:dry-run:staging
+npm run cf:runtime:dry-run:canary
+npm run cf:executor:dry-run:canary
+```
+
+Rendering requires these values in the invoking environment and writes only
+mode-`0600` temporary TOML files under `/tmp`:
+
+```sh
+RUNTIME_CANARY_CONNECTION_ID=<REVIEWED_UUID> \
+CLOUDFLARE_RUNTIME_VAULT_STORE_ID=<REAL_STORE_ID> \
+CLOUDFLARE_RUNTIME_VAULT_SECRET_NAME=<REAL_SECRET_NAME> \
+  npm run cf:runtime:canary:render
+```
+
+The executor template uses Cloudflare's Secrets Store binding
+`[[env.staging.secrets_store_secrets]]`; its runtime value must expose `.get()`.
+A normal Worker secret is a string and is intentionally rejected by readiness.
+
+The dry-run bundles the Worker and validates the Queue/cron configuration. It
+does not upload a Worker, create consumers or change remote resources. With
+`RUNTIME_EXECUTION_ENABLED=false`, the scheduled handler exits
+before loading connections or publishing messages.
+
+## Staging deploy runbook
+
+Do not run this sequence until the diff and Cloudflare account are confirmed.
+
+1. Confirm Node 22+, authenticated account and exact Queue inventory:
+
+   ```sh
+   node --version
+   npx wrangler whoami
+   npx wrangler queues list
+   ```
+
+2. Pass tests and dry-run, then record the current deployment version:
+
+   ```sh
+   npm run cf:runtime:test
+   npm run cf:runtime:dry-run:staging
+   npm run cf:runtime:deployments:staging
+   ```
+
+3. Deploy only the inert staging Worker:
+
+   ```sh
+   npm run cf:runtime:deploy:staging
+   npm run cf:runtime:deployments:staging
+   ```
+
+4. Confirm that the deployment has no routes or Queue consumers, execution is
+   disabled, and no Queue producer count or message count changes unexpectedly.
+
+No production environment is present in this configuration. Enabling runtime
+execution is a later gate that requires a middleware-owned staging Hyperdrive,
+the Postgres runtime tables, an injected `RUNTIME_EXECUTOR`, an active row in
+`runtime_canary_connections`, matching code-level connection allowlists, the
+private vault binding and an approved live-glass canary plan.
+
+## Rollback runbook
+
+Record the prior healthy inert Worker version before deployment. Code rollback
+uses that exact version ID:
+
+```sh
+npm run cf:runtime:rollback:staging -- <VERSION_ID>
+npm run cf:runtime:deployments:staging
+```
+
+Deploying or rolling back the inert Worker does not remove Queue consumers from
+another Worker. The canary therefore has the separate name
+`winerim-middleware-runtime-canary-staging`. Plan and dry-run its explicit
+removal without touching Queue assets:
+
+```sh
+npm run cf:runtime:canary:remove:plan
+npm run cf:runtime:canary:remove:dry-run
+```
+
+The actual removal is deliberately absent from package scripts. After checking
+the dry-run, execute the script only with both gates:
+
+```sh
+node scripts/remove-runtime-canary-consumer.mjs \
+  --apply \
+  --confirm-worker=winerim-middleware-runtime-canary-staging
+```
+
+## Integration hooks
+
+Already implemented locally:
+
+1. `scheduled()` loads enabled Agora connections from managed PostgreSQL and
+   publishes immutable envelopes by lane.
+2. Queue reservations, retries and terminal/success transitions use the
+   persistent `runtime_idempotency` and `runtime_execution_log` tables.
+3. Provider-neutral handlers and PostgreSQL/HTTP adapters exist for catalog,
+   sales, stock and outbound. HTTP adapters enforce host allowlists, timeouts,
+   response limits and blocked redirects.
+4. The outbound contract includes the `2 req/s` limiter and breaker decisions.
+
+Still required before execution can be enabled:
+
+1. Create and bind a middleware-owned staging Hyperdrive to both the API and
+   runtime Workers.
+2. Compose and deploy the private `RUNTIME_EXECUTOR` service over the reviewed
+   adapters, with encrypted per-connection credentials. The public runtime
+   Worker does not decrypt or expose secrets.
+3. Add reviewed consumers and the DLQ binding, then run a synthetic dry-run and
+   one non-critical staging canary before any production configuration.
+
+Cloudflare references:
+
+- https://developers.cloudflare.com/queues/configuration/javascript-apis/
+- https://developers.cloudflare.com/queues/configuration/batching-retries/
+- https://developers.cloudflare.com/workers/configuration/cron-triggers/

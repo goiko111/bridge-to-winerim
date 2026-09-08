@@ -1,8 +1,119 @@
 # DECISIONS_LOG
 
+## 2026-08-04 - REST por conexion es observacional durante servicio
+
+- El export REST se limita a GET secuencial/rate-limited, ventanas <=31 dias
+  y artefactos privados por conexion.
+- Aunque dos pasadas coincidan, no autoriza merge, cursor ni cutover porque
+  PostgREST no comparte snapshot transaccional entre tablas/paginas.
+- La consistencia autoritativa exige export oficial en staging, writer fence
+  externo, drain >=130 s y reconcile exacto de dos capturas estables.
+
+## 2026-08-04 - Baseline oficial, restore real y writer exclusivo
+
+- Todo plan de merge se liga a los bytes/SHA-256 del export Lovable y a un
+  backup restaurado en PostgreSQL descartable.
+- El import aborta ante WAL/conteos concurrentes; un COMMIT ambiguo exige
+  reconciliacion read-only antes de retry o restore.
+- Rotar solo Winerim no cerca Agora: cada cutover necesita evidencia externa
+  firmada de que el writer Lovable de esa conexion esta fuera del circuito.
+
+## 2026-08-04 - Albariza separa catalogo live de activacion del runtime
+
+- El catalogo se congela desde stock IDs completos + `wines/bulk`; la
+  paginacion general no autoriza writes.
+- Sin precio se excluye y stale se oculta con rollback, nunca se borra.
+- Tener familias/productos en Agora no abre consumer, cron, ventas ni stock;
+  esos gates requieren provision cifrado, fence y canary real independiente.
+
+## 2026-08-03 - Scope activo liga grant exacto y PREPARED se cierra append-only
+
+- El runtime compara los bytes exactos del grant con el SHA-256 inmutable del
+  scope `ACTIVE`; grant y proof que solo coinciden entre si no autorizan nada.
+- Un run no activado se cierra `PREPARED -> ABORTED`, retirando credenciales
+  inactivas sin borrar evidencia. Replays y reactivaciones fallan cerrados.
+- Sin venta legitima de copa no se activa el run B ni se sintetiza stock.
+
+## 2026-08-03 - Bundle revisado debe arrancar en Workerd
+
+- Los cuatro artefactos se generan con el bundler de Wrangler bajo Node 22+,
+  se fijan despues con `no_bundle` y SHA-256, y consumer/executor deben pasar
+  smoke de arranque Workerd antes de cualquier despliegue.
+- Se descarta el prebundle `esbuild platform=node`: conservaba `require()`
+  dinamicos de `pg` que el dry-run aceptaba pero Workerd no podia ejecutar.
+
+## 2026-08-03 - Agora compartido solo en lectura; Winerim writer exclusivo
+
+- El rescue de El Bejeque admite la credencial Agora no rotada solo en modo
+  `shared-read-only`, con catalogo y outbound mutables cerrados.
+- Winerim es la unica credencial exclusiva y debe coincidir con grant,
+  attestation, bundle, config y `run_id` antes de readiness.
+- Albariza usa recursos y onboarding separados; preview y canary preceden a
+  cualquier carga completa.
+
 > Append-only. Una decisión por bloque. Formato: fecha · decisión · razón · alternativa descartada.
 
 ---
+
+## 2026-08-03 - R2 autorizado; no sustituye el writer fence
+- **Decision**: activar R2 Standard, crear bucket exclusivo de El Bejeque y
+  validar su ciclo remoto. Mantener el deploy unido a la pareja de tokens
+  rotada y a la evidencia del writer fence.
+- **Razon**: R2 ya puede conservar DLQ/evidencia, pero no evita que Lovable
+  use las mismas credenciales si se recupera.
+- **Alternativa descartada**: desplegar con manifests parciales, hashes
+  ficticios o tokens compartidos solo porque el runtime permanezca inerte.
+- **Rollback / mitigacion**: bucket vacio, sin bindings ni Workers; cuatro
+  Queues sin productores/consumidores y todas las conexiones apagadas.
+
+## 2026-08-03 - Recursos rescue segregados y R2 con gate de coste
+- **Decision**: reservar `bejeque-20260803-a`, cuatro Queues dedicadas y una
+  vault key rescue namespaced en el unico Secrets Store disponible. Mantener
+  todo sin producer/consumer hasta completar la rotacion externa.
+- **Razon**: Cloudflare limita la beta a un store por cuenta; los nombres y
+  bindings separados evitan mezclar staging/rescue sin duplicar el store.
+- **Alternativa descartada**: reutilizar colas compartidas, reutilizar la key
+  staging o desplegar sin ledger R2.
+- **Rollback / mitigacion**: colas sin bindings, secreto revocable y conexion
+  rescue apagada. R2 exige checkout y no se habilita sin aprobacion explicita.
+
+## 2026-08-03 - Activacion versionada y drain antes de rotacion
+- **Decision**: cada canary usa un `run_id` unico y se activa en una sola
+  transaccion ligada a manifests SHA-256. Scope y credenciales retirados son
+  terminales, se conservan y no pueden reactivarse. `bootstrap` exige cero
+  recibos; `rotate` puede conservar solo recibos del candidato con todas las
+  generaciones anteriores terminales. Credenciales, RLS, readiness y vault
+  deben coincidir con el mismo `run_id` activo.
+- **Razon**: evita activaciones parciales, replay de artefactos y mezcla de
+  generaciones o evidencias.
+- **Alternativa descartada**: updates manuales separados, overwrite de
+  credenciales o reutilizar el mismo scope.
+- **Rollback / mitigacion**: pausar consumer/writer, revocar grants y esperar
+  `>=130 s` antes de rotar; `401/403` antiguo, probe nuevo, retiro append-only
+  y verificador exacto por UUID+`run_id`.
+
+## 2026-08-03 - Credenciales inactivas y retirada sin borrado
+- **Decision**: separar preparacion y activacion. El provisionador solo inserta
+  Agora+Winerim cifrados con `active=false`; la retirada desactiva
+  credenciales, scope y conexion, conservando filas y logs.
+- **Razon**: un render parcial, scope expirado o abort del canary debe quedar
+  fail-closed y auditable, sin abrir un segundo writer ni perder evidencia.
+- **Alternativa descartada**: `upsert` de credenciales activas, limpieza por
+  `DELETE/TRUNCATE` o reutilizar scripts antiguos de staging.
+- **Rollback / mitigacion**: SQL transaccional con identidad exacta del scope,
+  readback final y artefactos `0600`; la rotacion real sigue separada y gateada.
+
+## 2026-08-03 - El Bejeque acepta stock inactivo solo como sales-only
+- **Decision**: conservar identidades exactas con `stockActive=false` para
+  historico `live=false`, exigiendo `stockId` exacto, pero bloquearlas para
+  venta live y mutacion de stock.
+- **Razon**: recupera `23` variantes historicas inequívocas sin convertir
+  stock inactivo en stock operativo ni inventar mappings por nombre.
+- **Alternativa descartada**: rechazar todo stock inactivo o permitirlo en
+  live. La primera pierde historial verificable; la segunda puede descontar la
+  variante equivocada.
+- **Rollback / mitigacion**: transicion aditiva con SQL inverso probado sobre
+  backup cifrado PG17; runtime y conexion permanecen apagados.
 
 ## 2026-07-21 - Ampliar la evidencia SLA sin confundirla con cierre al 100%
 - **Decision**: registrar como verificadas en ambos sentidos dentro de siete
@@ -2869,3 +2980,13 @@ ninguna compensación de los efectos anteriores.
 **Alternativa descartada:** desactivar toda la conexión o insertar mappings sin
 lease. La primera afecta catálogo y observabilidad innecesariamente; la segunda
 ya demostró una carrera real con el cron.
+# 2026-08-03 20:13 CEST - Fuente remota y dos runs de canary
+
+- Solo `a80c9eb` publicado y congelado puede originar manifests del siguiente
+  deploy rescue.
+- El shadow es read-only y no comparte `run_id`, mensaje, idempotencia ni hash
+  con el canary live.
+- No desplegar manifests parciales. El orden es fence, executor, observer,
+  consumer inerte, readiness, activacion, shadow y luego un run live nuevo.
+- Albariza se carga por fases: familias, dos productos canary y solo despues
+  el resto del catalogo; una venta que mueva stock requiere gate separado.

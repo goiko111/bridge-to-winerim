@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+MANIFEST="$SCRIPT_DIR/migration-manifest.tsv"
+MIGRATIONS_DIR="$REPO_ROOT/supabase/migrations"
+PORTABLE_ADDENDUM="$SCRIPT_DIR/0002_release_schema_addendum.sql"
+RUNTIME_CREDENTIALS_ADDENDUM="$SCRIPT_DIR/0003_runtime_connection_credentials.sql"
+RUNTIME_CANARY_PRIVILEGES="$SCRIPT_DIR/0004_runtime_canary_least_privilege.sql"
+RUNTIME_CANARY_SCOPE="$SCRIPT_DIR/0005_runtime_canary_connection_scope.sql"
+PLATFORM_ROLE_HARDENING="$SCRIPT_DIR/0006_revoke_supabase_platform_roles.sql"
+RUNTIME_SALES_CANARY_PERMISSIONS="$SCRIPT_DIR/0007_runtime_sales_canary_permissions.sql"
+RUNTIME_SALES_COLUMN_PRIVILEGES="$SCRIPT_DIR/0008_runtime_sales_column_privileges.sql"
+RUNTIME_CATALOG_PERMISSIONS="$SCRIPT_DIR/0009_runtime_catalog_permissions.sql"
+RUNTIME_IDEMPOTENCY_LEASE_BINDING="$SCRIPT_DIR/0010_runtime_idempotency_lease_binding.sql"
+RUNTIME_SALES_CLAIM_IDENTITY="$SCRIPT_DIR/0011_runtime_sales_claim_identity.sql"
+RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY="$SCRIPT_DIR/0012_runtime_sales_claim_identity_immutability.sql"
+RUNTIME_CANARY_CONTROL_PLANE_HISTORY="$SCRIPT_DIR/0013_runtime_canary_control_plane_history.sql"
+RUNTIME_CANARY_PREPARED_ABORT="$MIGRATIONS_DIR/20260803203800_runtime_canary_prepared_abort.sql"
+RUNTIME_CATALOG_SOURCE_SCOPE="$SCRIPT_DIR/0014_runtime_catalog_source_scope.sql"
+RUNTIME_FLEET_CONNECTION_SCOPE="$SCRIPT_DIR/0015_runtime_fleet_connection_scope.sql"
+OUTPUT=${1:-"$SCRIPT_DIR/bootstrap-staging.generated.sql"}
+RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=0
+
+{
+  printf '%s\n' '-- Generated from reviewed migration-manifest.tsv. Do not edit by hand.'
+  printf '%s\n' '\set ON_ERROR_STOP on'
+  cat "$SCRIPT_DIR/bootstrap-prelude.sql"
+  while IFS=$'\t' read -r order file expected_sha phase action dependency note; do
+    if [ "$order" = "order" ] || [ -z "$order" ]; then
+      continue
+    fi
+    case "$action" in
+      INCLUDE|INCLUDE_SECURITY_GATE|INCLUDE_WITH_REVIEW)
+        actual_sha=$(shasum -a 256 "$MIGRATIONS_DIR/$file" | awk '{print $1}')
+        test "$actual_sha" = "$expected_sha" || {
+          printf 'Checksum mismatch for %s\n' "$file" >&2
+          exit 1
+        }
+        if [ "$MIGRATIONS_DIR/$file" = "$RUNTIME_CANARY_PREPARED_ABORT" ]; then
+          RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES=$((RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES + 1))
+          continue
+        fi
+        printf '\n-- BEGIN %s\n' "$file"
+        cat "$MIGRATIONS_DIR/$file"
+        printf '\n-- END %s\n' "$file"
+        ;;
+    esac
+  done < "$MANIFEST"
+  test "$RUNTIME_CANARY_PREPARED_ABORT_MANIFEST_ENTRIES" -eq 1 || {
+    printf 'Expected exactly one included manifest entry for %s\n' \
+      "$(basename "$RUNTIME_CANARY_PREPARED_ABORT")" >&2
+    exit 1
+  }
+  printf '\n-- BEGIN infrastructure hardening\n'
+  cat "$SCRIPT_DIR/0001_harden_runtime_roles.sql"
+  printf '\n-- END infrastructure hardening\n'
+  printf '\n-- BEGIN release schema addendum\n'
+  cat "$PORTABLE_ADDENDUM"
+  printf '\n-- END release schema addendum\n'
+  printf '\n-- BEGIN runtime credential vault schema\n'
+  cat "$RUNTIME_CREDENTIALS_ADDENDUM"
+  printf '\n-- END runtime credential vault schema\n'
+  printf '\n-- BEGIN runtime canary least privilege\n'
+  cat "$RUNTIME_CANARY_PRIVILEGES"
+  printf '\n-- END runtime canary least privilege\n'
+  printf '\n-- BEGIN runtime canary connection scope\n'
+  cat "$RUNTIME_CANARY_SCOPE"
+  printf '\n-- END runtime canary connection scope\n'
+  printf '\n-- BEGIN Supabase platform role hardening\n'
+  cat "$PLATFORM_ROLE_HARDENING"
+  printf '\n-- END Supabase platform role hardening\n'
+  printf '\n-- BEGIN runtime sales canary permissions\n'
+  cat "$RUNTIME_SALES_CANARY_PERMISSIONS"
+  printf '\n-- END runtime sales canary permissions\n'
+  printf '\n-- BEGIN runtime sales column privileges\n'
+  cat "$RUNTIME_SALES_COLUMN_PRIVILEGES"
+  printf '\n-- END runtime sales column privileges\n'
+  printf '\n-- BEGIN runtime catalog permissions\n'
+  cat "$RUNTIME_CATALOG_PERMISSIONS"
+  printf '\n-- END runtime catalog permissions\n'
+  printf '\n-- BEGIN runtime idempotency lease binding\n'
+  cat "$RUNTIME_IDEMPOTENCY_LEASE_BINDING"
+  printf '\n-- END runtime idempotency lease binding\n'
+  printf '\n-- BEGIN runtime sales claim identity\n'
+  cat "$RUNTIME_SALES_CLAIM_IDENTITY"
+  printf '\n-- END runtime sales claim identity\n'
+  printf '\n-- BEGIN runtime sales claim identity immutability\n'
+  cat "$RUNTIME_SALES_CLAIM_IDENTITY_IMMUTABILITY"
+  printf '\n-- END runtime sales claim identity immutability\n'
+  printf '\n-- BEGIN runtime canary control-plane history\n'
+  cat "$RUNTIME_CANARY_CONTROL_PLANE_HISTORY"
+  printf '\n-- END runtime canary control-plane history\n'
+  printf '\n-- BEGIN runtime canary prepared abort\n'
+  cat "$RUNTIME_CANARY_PREPARED_ABORT"
+  printf '\n-- END runtime canary prepared abort\n'
+  printf '\n-- BEGIN runtime catalog source scope\n'
+  cat "$RUNTIME_CATALOG_SOURCE_SCOPE"
+  printf '\n-- END runtime catalog source scope\n'
+  printf '\n-- BEGIN runtime fleet connection scope\n'
+  cat "$RUNTIME_FLEET_CONNECTION_SCOPE"
+  printf '\n-- END runtime fleet connection scope\n'
+} > "$OUTPUT"
+
+printf 'BOOTSTRAP_BUILT=%s\n' "$OUTPUT"
