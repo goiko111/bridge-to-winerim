@@ -2,6 +2,7 @@
 // Iterates all enabled Agora connections and invokes the appropriate proxy actions
 // Triggered by pg_cron via HTTP every 5 min (catalog, sales/stock, outbound queue)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
+import { selectTasksToRequeue } from "../_shared/agoraFailedTaskRecovery.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
