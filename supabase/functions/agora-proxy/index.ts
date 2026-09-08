@@ -11630,6 +11630,11 @@ ${costPricesXml}
           if (fmt === "GLASS") return (elig?.glass_sale_price ?? 0) > 0;
           if (fmt === "BOTTLE") return (elig?.bottle_sale_price ?? 0) > 0;
           if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
+          // Non-legacy formats: opt-in per connection + live positive price.
+          if (isExtendedFormat(fmt)) {
+            return isExtendedFormatPublishable(connection, fmt)
+              && extendedFormatPrice(elig, fmt) !== null;
+          }
           return false;
         });
         eligibleFormatsByWine.set(String(wineId), eligibleFormats);
