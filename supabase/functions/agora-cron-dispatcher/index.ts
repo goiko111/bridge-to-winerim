@@ -86,7 +86,38 @@ Deno.serve(async (req: Request) => {
       const before = connections.length;
       connections = connections.filter((c) => reachableIds.has(c.id));
       skippedByPreflight = before - connections.length;
+
+      // ── SELF-HEALING REQUEUE (Layer 5) ──
+      // The POS just answered. Tasks that had exhausted their attempts while it was
+      // down/overloaded are put back in the queue automatically, with a fresh
+      // attempt budget. Business rejections stay FAILED (see agoraFailedTaskRecovery).
+      if (job === "outbound-queue" && connections.length > 0) {
+        await Promise.all(connections.map(async (c) => {
+          try {
+            const { data: failedRows } = await supabase
+              .from("outbound_tasks")
+              .select("id, status, last_error")
+              .eq("connection_id", c.id)
+              .eq("status", "FAILED")
+              .order("updated_at", { ascending: true })
+              .limit(500);
+            const ids = selectTasksToRequeue((failedRows || []) as Array<{ id: string; status: string; last_error: string | null }>, 200);
+            if (ids.length === 0) return;
+            const { error: requeueError } = await supabase
+              .from("outbound_tasks")
+              .update({ status: "QUEUED", attempts: 0, next_retry_at: null })
+              .in("id", ids);
+            if (!requeueError) {
+              requeuedAfterRecovery += ids.length;
+              console.log(`[agora-cron-dispatcher] auto-requeued ${ids.length} recoverable tasks for ${c.location_name} (POS reachable again)`);
+            }
+          } catch (error) {
+            console.log(`[agora-cron-dispatcher] auto-requeue failed for ${c.location_name}: ${String(error)}`);
+          }
+        }));
+      }
     }
+
 
     if (!connections || connections.length === 0) {
       return new Response(JSON.stringify({ ok: true, dispatched: 0, job, skippedByBreaker, skippedByPreflight }), {
