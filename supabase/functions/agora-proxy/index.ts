@@ -799,6 +799,10 @@ function deterministicAgoraProductId(connection: any, wine: any, formatType: str
   const winerimId = Number(wine?.winerim_id || wine?.id || 0);
   const orderedDulceCode = saPedreraDulceCode(connection, wine);
   if (orderedDulceCode) return String(903000 + Number(orderedDulceCode.replace("D", "")));
+  if (isExtendedFormat(formatType)) {
+    const extendedId = extendedFormatProductId(wine, formatType);
+    if (extendedId) return extendedId;
+  }
   if (formatType === "MAGNUM") return String(900000 + winerimId);
   if (formatType === "GLASS") return String(700000 + winerimId);
   return String(500000 + winerimId);
