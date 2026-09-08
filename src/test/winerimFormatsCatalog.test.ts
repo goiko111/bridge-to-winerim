@@ -120,10 +120,10 @@ describe("Winerim format catalog", () => {
 
   it("extracts recognised price/stock rows and drops unknown variants", () => {
     const { rows, unknownVariants } = extractWinerimWineFormats([
-      { variant: "botella", price: 30, cost: 10, erpStock: { id: 1000, stock: 12 }, active: true },
-      { variant: "copa", price: 7.5, cost: 2.5, erpStock: { id: 1001, stock: 50 }, active: true },
-      { variant: "media-botella", price: 18, cost: 6, erpStock: { id: 1002, stock: 6 }, active: true },
-      { variant: "garrafa", price: 50, cost: 20, erpStock: { id: 1003, stock: 1 }, active: true },
+      { variant: "botella", price: 30, costPrice: 10, erpStock: { id: 1000, stock: 12 }, active: true },
+      { variant: "copa", price: 7.5, costPrice: 2.5, erpStock: { id: 1001, stock: 50 }, active: true },
+      { variant: "media-botella", price: 18, costPrice: 6, erpStock: { id: 1002, stock: 6 }, active: true },
+      { variant: "garrafa", price: 50, costPrice: 20, erpStock: { id: 1003, stock: 1 }, active: true },
       { variant: "", price: 1, active: true },
     ]);
 
@@ -143,7 +143,7 @@ describe("Winerim format catalog", () => {
     const { rows } = extractWinerimWineFormats([
       { variant: "botella", price: 30, active: true },
       { variant: "copa", price: 7.5, active: false },
-      { variant: "media-botella", price: 18, is_active: false },
+      { variant: "media-botella", price: 18, isActive: false },
       { variant: "magnum", price: 60 },
     ]);
 
