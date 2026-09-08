@@ -5266,6 +5266,9 @@ ${costPricesXml}
 
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
+      const extendedPrice = extendedFormatPrice(formatWine, fmt);
+      const isExtended = isExtendedFormat(fmt);
+      if (isExtended && (!extendedPrice || !isExtendedFormatPublishable(connection, fmt))) continue;
       const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, formatWine, fmt);
       const productId = deterministicAgoraProductId(connection, formatWine, fmt);
 
@@ -5273,17 +5276,25 @@ ${costPricesXml}
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
         : dedicatedSaPedreraFamily
           ? dedicatedSaPedreraFamily
-        : findFamilyId(wineType, fmt, formatWine);
+        // Extended formats live in the same family as the bottle of the wine,
+        // so the room finds them next to the reference they already know.
+        : findFamilyId(wineType, isExtended ? "BOTTLE" : fmt, formatWine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
 
-      const productName = formatProductName(isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE", wineName);
+      const productName = formatProductName(
+        isExtended ? fmt : isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE",
+        wineName,
+      );
       // Use REAL prices from normalized fields, never invent
       let mainPrice: string;
       let costPrice: string;
 
-      if (isMagnum) {
+      if (isExtended && extendedPrice) {
+        mainPrice = extendedPrice.sale.toFixed(2);
+        costPrice = extendedPrice.cost.toFixed(2);
+      } else if (isMagnum) {
         mainPrice = (Number(formatWine.magnum_sale_price) || 0).toFixed(2);
         costPrice = (Number(formatWine.magnum_purchase_price) || 0).toFixed(2);
       } else if (isGlass) {
@@ -5303,7 +5314,10 @@ ${costPricesXml}
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      const formatOrder = isMagnum ? 2 : isGlass ? 1 : 0; // BOT=0, COPA=1, MAG=2
+      // BOT=0, COPA=1, MAG=2, extended formats follow in catalog order
+      const formatOrder = isExtended
+        ? (extendedFormatOrder(fmt) ?? 3)
+        : isMagnum ? 2 : isGlass ? 1 : 0;
       productEntries.push({
         wineName: wineName.toLowerCase(),
         formatOrder,
