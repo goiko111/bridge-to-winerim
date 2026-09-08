@@ -10869,6 +10869,15 @@ ${costPricesXml}
           .eq("connection_id", task.connection_id).eq("winerim_id", winerimWineId).limit(1);
 
         let wineArr = cachedWineArr || [];
+        // Non-legacy format prices live in winerim_wine_formats, never inferred.
+        if (wineArr.length > 0 && isExtendedPublishEnabled(connection)) {
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("format_key, source_variant, sale_price, cost_price, is_active")
+            .eq("connection_id", task.connection_id)
+            .eq("winerim_id", winerimWineId);
+          attachExtendedFormatPrices(wineArr[0], formatRows || []);
+        }
         if (wineArr.length === 0) {
           const hiddenGlass = configuredHiddenGlassVariant(connection, winerimWineId);
           if (hiddenGlass) {
