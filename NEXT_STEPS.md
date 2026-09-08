@@ -2,6 +2,17 @@
 
 > Tareas pendientes priorizadas. Al retomar: leer este archivo + `CURRENT_STATE.md`.
 
+## P0 - Soporte de todos los formatos Winerim (plan aprobado 2026-09-07)
+
+- [x] Fase 1: migración + catálogo de formatos + relleno de `winerim_wine_formats`.
+- [x] Desplegar `winerim-proxy` y `agora-proxy` con soporte extendido.
+- [ ] Verificar finalización de cadenas `fetch-catalog` y timestamps actualizados.
+- [ ] Fase 2: validar descuento correcto de `media-botella`/`botella-pequena`
+  (ya cubierto por tests; falta evidencia operativa).
+- [ ] Fase 3: canario de publicación de formatos nuevos en una conexión piloto
+  (Ocean Club excluido por configuración actual).
+- [ ] Documentar conclusiones para infraestructura propia de Winerim.
+
 ## P0 - Corte operativo al cerrar 2026-07-22
 
 - [x] Publicar en `main` el hardening de ventas/cursor/monitor:

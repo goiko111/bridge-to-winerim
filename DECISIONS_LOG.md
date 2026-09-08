@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-09-08 - Backfill y tests de formatos Winerim sin desplegar frontend
+- **Decisión**: completar la fase 1 del plan de formatos (migración, catálogo,
+  backfill desde `raw_payload->'prices'`) y desplegar solo `winerim-proxy` y
+  `agora-proxy`. Añadir tests de normalización, identificadores deterministas,
+  fail-closed de precio/inactivo y descuento exacto de media-botella.
+- **Razón**: la publicación del frontend sigue bloqueada por findings críticos
+  preexistentes de RLS/Storage (`security-rls-publish-gate-2026-07-22.md`); no
+  es necesario ni seguro desplegar la UI solo para esta fase de backend.
+- **Alternativa descartada**: desplegar todo incluyendo frontend sin resolver
+  los hallazgos de seguridad; eso violaría el protocolo aprobado y el gate de
+  publicación.
+- **Rollback / mitigación**: el rollback de código es redeploy de
+  `winerim-proxy` y `agora-proxy` desde el hash anterior sano; los datos de
+  `winerim_wine_formats` son derivados y pueden regenerarse desde `raw_payload`.
+
+---
+
 ## 2026-07-21 - Ampliar la evidencia SLA sin confundirla con cierre al 100%
 - **Decision**: registrar como verificadas en ambos sentidos dentro de siete
   minutos a Casa Nene, El Higueron, Kava, PurOsushi, Cienvinos Ecija, Sa

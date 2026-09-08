@@ -62,6 +62,22 @@ describe("stock sync utils", () => {
     expect(findStockForVariant(stocks, "botella")?.id).toBe(102);
   });
 
+  it("deducts half-bottle and small-bottle stock exactly, never falling back to bottle", () => {
+    const stocks = parseWinerimStockRows({
+      stocks: [
+        { id: 201, stock: 8, winePrice: { variant: "media-botella" } },
+        { id: 202, stock: 4, winePrice: { variant: "botella-pequena" } },
+        { id: 203, stock: 12, winePrice: { variant: "botella" } },
+      ],
+    });
+
+    expect(findStockForVariant(stocks, "media-botella")?.id).toBe(201);
+    expect(findStockForVariant(stocks, "botella-pequena")?.id).toBe(202);
+    expect(findStockForVariant(stocks, "botella")?.id).toBe(203);
+    // No fallback: a half-bottle sale does not touch bottle stock.
+    expect(findStockForVariant(stocks, "media-botella")?.id).not.toBe(203);
+  });
+
   it("builds line-level idempotency keys per variant", () => {
     const glassKey = buildStockSyncIdempotencyKey("conn-1", "line-1", "copa");
     const bottleKey = buildStockSyncIdempotencyKey("conn-1", "line-1", "botella");
