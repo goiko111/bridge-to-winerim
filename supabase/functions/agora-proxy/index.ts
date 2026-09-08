@@ -5,6 +5,17 @@ import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirs
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
 import { isFormatEnabledForConnection } from "../_shared/winerimExtendedFormats.ts";
 import {
+  attachExtendedFormatPrices,
+  eligibleExtendedFormats,
+  extendedFormatOrder,
+  extendedFormatPrice,
+  extendedFormatProductId,
+  extendedFormatProductName,
+  isExtendedFormat,
+  isExtendedFormatPublishable,
+  isExtendedPublishEnabled,
+} from "../_shared/agoraExtendedFormatPublication.ts";
+import {
   extractWinerimWineFormats,
   isLegacyWinerimFormat,
   publishableWinerimFormats,
@@ -465,6 +476,8 @@ function earlierProviderSoldAt(current: unknown, next: unknown): string | null {
 function formatProductName(fmt: string, wineName: string): string {
   const f = String(fmt || "").toUpperCase();
   const normalizedWineName = String(wineName || "").replace(/\s+/g, " ").trim();
+  const extendedName = extendedFormatProductName(f, normalizedWineName);
+  if (extendedName) return extendedName;
   if (f === "MAGNUM") return `M ${normalizedWineName}`;
   if (f === "GLASS" || f === "COPA") return `C ${normalizedWineName}`;
   return `B ${normalizedWineName}`;
@@ -786,6 +799,10 @@ function deterministicAgoraProductId(connection: any, wine: any, formatType: str
   const winerimId = Number(wine?.winerim_id || wine?.id || 0);
   const orderedDulceCode = saPedreraDulceCode(connection, wine);
   if (orderedDulceCode) return String(903000 + Number(orderedDulceCode.replace("D", "")));
+  if (isExtendedFormat(formatType)) {
+    const extendedId = extendedFormatProductId(wine, formatType);
+    if (extendedId) return extendedId;
+  }
   if (formatType === "MAGNUM") return String(900000 + winerimId);
   if (formatType === "GLASS") return String(700000 + winerimId);
   return String(500000 + winerimId);
@@ -4333,6 +4350,21 @@ function validateWineForAgora(wine: any, formatType: string, connection?: any, p
     }
   }
 
+  // Non-legacy Winerim formats (media botella, jeroboam…): fail-closed. They
+  // need the connection canary switch AND a live positive price row.
+  if (isExtendedFormat(formatType)) {
+    const formatSlug = String(formatType || "").toLowerCase();
+    if (connection && !isExtendedFormatPublishable(connection, formatType)) {
+      missingFields.push("extended_format_publication_disabled");
+    } else if (!extendedFormatPrice(wine, formatType)) {
+      missingFields.push(`missing_${formatSlug}_sale_price`);
+    } else if (!(extendedFormatPrice(wine, formatType)!.cost > 0)) {
+      warnings.push(`missing_${formatSlug}_cost_price_will_use_zero`);
+    }
+  }
+
+
+
   return {
     valid: missingFields.length === 0,
     warnings,
@@ -4355,6 +4387,7 @@ function isFormatUnavailableForAgora(wine: any, formatType: string): boolean {
     const magnumPrice = wine.magnum_sale_price ? Number(wine.magnum_sale_price) : null;
     return !magnumPrice || magnumPrice <= 0;
   }
+  if (isExtendedFormat(fmt)) return extendedFormatPrice(wine, fmt) === null;
   return false;
 }
 
@@ -5233,6 +5266,9 @@ ${costPricesXml}
 
       const isMagnum = fmt === "MAGNUM";
       const isGlass = fmt === "GLASS";
+      const extendedPrice = extendedFormatPrice(formatWine, fmt);
+      const isExtended = isExtendedFormat(fmt);
+      if (isExtended && (!extendedPrice || !isExtendedFormatPublishable(connection, fmt))) continue;
       const dedicatedSaPedreraFamily = saPedreraDedicatedFamily(connection, formatWine, fmt);
       const productId = deterministicAgoraProductId(connection, formatWine, fmt);
 
@@ -5240,17 +5276,25 @@ ${costPricesXml}
         ? { id: "903925", needsCreate: false, familyName: "DULCES WINERIM" }
         : dedicatedSaPedreraFamily
           ? dedicatedSaPedreraFamily
-        : findFamilyId(wineType, fmt, formatWine);
+        // Extended formats live in the same family as the bottle of the wine,
+        // so the room finds them next to the reference they already know.
+        : findFamilyId(wineType, isExtended ? "BOTTLE" : fmt, formatWine);
       if (familyResult.needsCreate && !newFamilies.some(f => f.id === familyResult.id)) {
         newFamilies.push({ id: familyResult.id, name: familyResult.familyName });
       }
 
-      const productName = formatProductName(isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE", wineName);
+      const productName = formatProductName(
+        isExtended ? fmt : isMagnum ? "MAGNUM" : isGlass ? "GLASS" : "BOTTLE",
+        wineName,
+      );
       // Use REAL prices from normalized fields, never invent
       let mainPrice: string;
       let costPrice: string;
 
-      if (isMagnum) {
+      if (isExtended && extendedPrice) {
+        mainPrice = extendedPrice.sale.toFixed(2);
+        costPrice = extendedPrice.cost.toFixed(2);
+      } else if (isMagnum) {
         mainPrice = (Number(formatWine.magnum_sale_price) || 0).toFixed(2);
         costPrice = (Number(formatWine.magnum_purchase_price) || 0).toFixed(2);
       } else if (isGlass) {
@@ -5270,7 +5314,10 @@ ${costPricesXml}
         `        <CostPrice WarehouseId="${wh.Id}" CostPrice="${costPrice}" />`
       ).join("\n");
 
-      const formatOrder = isMagnum ? 2 : isGlass ? 1 : 0; // BOT=0, COPA=1, MAG=2
+      // BOT=0, COPA=1, MAG=2, extended formats follow in catalog order
+      const formatOrder = isExtended
+        ? (extendedFormatOrder(fmt) ?? 3)
+        : isMagnum ? 2 : isGlass ? 1 : 0;
       productEntries.push({
         wineName: wineName.toLowerCase(),
         formatOrder,
@@ -10822,6 +10869,15 @@ ${costPricesXml}
           .eq("connection_id", task.connection_id).eq("winerim_id", winerimWineId).limit(1);
 
         let wineArr = cachedWineArr || [];
+        // Non-legacy format prices live in winerim_wine_formats, never inferred.
+        if (wineArr.length > 0 && isExtendedPublishEnabled(connection)) {
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("format_key, source_variant, sale_price, cost_price, is_active")
+            .eq("connection_id", task.connection_id)
+            .eq("winerim_id", winerimWineId);
+          attachExtendedFormatPrices(wineArr[0], formatRows || []);
+        }
         if (wineArr.length === 0) {
           const hiddenGlass = configuredHiddenGlassVariant(connection, winerimWineId);
           if (hiddenGlass) {
@@ -11559,6 +11615,23 @@ ${costPricesXml}
             _agora_allow_inactive_bottle: effectiveWine._agora_allow_inactive_bottle,
           };
         }
+        if (isExtendedPublishEnabled(connection)) {
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("winerim_id, format_key, source_variant, sale_price, cost_price, is_active")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", chunk);
+          const rowsByWine = new Map<string, Record<string, unknown>[]>();
+          for (const row of (formatRows || []) as Record<string, unknown>[]) {
+            const key = String(row.winerim_id ?? "");
+            if (!rowsByWine.has(key)) rowsByWine.set(key, []);
+            rowsByWine.get(key)!.push(row);
+          }
+          for (const wineId of chunk) {
+            const target = wineEligibility[String(wineId)];
+            if (target) attachExtendedFormatPrices(target, rowsByWine.get(String(wineId)) || []);
+          }
+        }
       }
       for (const hiddenGlass of configuredHiddenGlassVariants(connection)) {
         if (!winerimWineIds.map(String).includes(hiddenGlass.winerim_id)) continue;
@@ -11583,6 +11656,11 @@ ${costPricesXml}
           if (fmt === "GLASS") return (elig?.glass_sale_price ?? 0) > 0;
           if (fmt === "BOTTLE") return (elig?.bottle_sale_price ?? 0) > 0;
           if (fmt === "MAGNUM") return (elig?.magnum_sale_price ?? 0) > 0;
+          // Non-legacy formats: opt-in per connection + live positive price.
+          if (isExtendedFormat(fmt)) {
+            return isExtendedFormatPublishable(connection, fmt)
+              && extendedFormatPrice(elig, fmt) !== null;
+          }
           return false;
         });
         eligibleFormatsByWine.set(String(wineId), eligibleFormats);
