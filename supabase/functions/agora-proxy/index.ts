@@ -11615,6 +11615,23 @@ ${costPricesXml}
             _agora_allow_inactive_bottle: effectiveWine._agora_allow_inactive_bottle,
           };
         }
+        if (isExtendedPublishEnabled(connection)) {
+          const { data: formatRows } = await supabase
+            .from("winerim_wine_formats")
+            .select("winerim_id, format_key, source_variant, sale_price, cost_price, is_active")
+            .eq("connection_id", connectionId)
+            .in("winerim_id", chunk);
+          const rowsByWine = new Map<string, Record<string, unknown>[]>();
+          for (const row of (formatRows || []) as Record<string, unknown>[]) {
+            const key = String(row.winerim_id ?? "");
+            if (!rowsByWine.has(key)) rowsByWine.set(key, []);
+            rowsByWine.get(key)!.push(row);
+          }
+          for (const wineId of chunk) {
+            const target = wineEligibility[String(wineId)];
+            if (target) attachExtendedFormatPrices(target, rowsByWine.get(String(wineId)) || []);
+          }
+        }
       }
       for (const hiddenGlass of configuredHiddenGlassVariants(connection)) {
         if (!winerimWineIds.map(String).includes(hiddenGlass.winerim_id)) continue;
