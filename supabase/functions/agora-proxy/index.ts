@@ -4387,6 +4387,7 @@ function isFormatUnavailableForAgora(wine: any, formatType: string): boolean {
     const magnumPrice = wine.magnum_sale_price ? Number(wine.magnum_sale_price) : null;
     return !magnumPrice || magnumPrice <= 0;
   }
+  if (isExtendedFormat(fmt)) return extendedFormatPrice(wine, fmt) === null;
   return false;
 }
 
