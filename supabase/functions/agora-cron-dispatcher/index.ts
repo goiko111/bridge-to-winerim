@@ -65,6 +65,7 @@ Deno.serve(async (req: Request) => {
     // dispatching. If unreachable, skip this round (the breaker will eventually
     // pause it on the natural call path; we just avoid filling the queue with FAILED).
     let skippedByPreflight = 0;
+    let requeuedAfterRecovery = 0;
     if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock")) {
       const checks = await Promise.all(connections.map(async (c) => {
         const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
