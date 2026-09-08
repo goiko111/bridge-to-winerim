@@ -83,11 +83,11 @@ describe("Winerim format catalog", () => {
     const half = winerimFormatAgoraId("media-botella", wineId);
     const small = winerimFormatAgoraId("botella-pequena", wineId);
 
-    expect(bottle).toBe("212345");
-    expect(glass).toBe("312345");
-    expect(magnum).toBe("412345");
-    expect(half).toBe("512345");
-    expect(small).toBe("612345");
+    expect(bottle).toBe("2012345");
+    expect(glass).toBe("3012345");
+    expect(magnum).toBe("4012345");
+    expect(half).toBe("5012345");
+    expect(small).toBe("6012345");
 
     const ids = [bottle, glass, magnum, half, small].filter(Boolean) as string[];
     expect(new Set(ids).size).toBe(ids.length);
