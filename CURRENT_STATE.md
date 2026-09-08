@@ -2,7 +2,59 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-07-22 14:35 CEST_
+_Última actualización: 2026-09-08 04:55 UTC_
+
+## Soporte de todos los formatos Winerim - fase 1 completada - 2026-09-08
+
+### Hechos
+
+- Migración `20260907033904_3acf9e1a-ee1f-42e1-9b39-3cbf1de8dfa5.sql` aplicada:
+  tabla `public.winerim_wine_formats` con `unique (connection_id, winerim_id,
+  format_key)`, GRANTs y RLS.
+- Backfill de `winerim_wine_formats` desde `raw_payload->'prices'` completado:
+  `10638` filas activas; `1005` filas obsoletas sin payload siguen presentes y
+  serán limpiadas por el próximo `fetch-catalog`.
+- `winerim-proxy` y `agora-proxy` desplegados desde `HEAD` limpio; el frontend
+  compila sin errores.
+- Se lanzó `fetch-catalog` inicial para las 19 conexiones Agora habilitadas.
+  Respuestas iniciales: la gran mayoría `no_source_changes_detected`; Abadía
+  Yuste reportó `8` cambios pero auto-push skipped por precios; Restaurante
+  Jardi intentó encolar `4` updates pero el TPV está inaccesible (cola encolada).
+- Tests nuevos pasan: `src/test/winerimFormatsCatalog.test.ts` (alias/typos,
+  namespaces deterministas 2M/3M/4M y 5M-18M, fail-closed) y
+  `src/test/stockSyncUtils.test.ts` (descuento exacto de media-botella y
+  botella-pequeña sin fallback a botella). `src/test/winerimFormatCapacity.test.ts`
+  sigue verde.
+- Quedan `17` tests estáticos preexistentes fallando en archivos de agora-proxy
+  por refactorizaciones previas del código fuente; no son regresiones de esta
+  fase.
+
+### Decisiones
+
+- Publicación de formatos ampliados queda activada por defecto, con exclusión
+  explícita de Ocean Club (`706b952e-767d-41af-9cba-8e225b16a877`) y opt-out por
+  conexión/formato. Coincide con el brief para infraestructura propia.
+- No se toman acciones sobre las tareas encoladas de Jardi hasta que el TPV vuelva
+  a responder; son fallos de conectividad, no de lógica.
+
+### Hipótesis
+
+- El backfill no generará una ola masiva de auto-push porque el digest de
+  formatos extendidos se computa ahora desde `winerim_wine_formats`, y un
+  `fetch-catalog` con datos iguales de Winerim no detecta cambio.
+
+### Tareas pendientes
+
+- Verificar que las cadenas `fetch-catalog` terminen sin errores y que los
+  `last_catalog_sync_at` se actualicen.
+- Fase 2: confirmar en conexiones con `media-botella`/`botella-pequena` que el
+  descuento ya no va contra botella.
+- Fase 3: canario de publicación de formatos nuevos (Ocean Club excluido por
+  ahora, salvo instrucción contraria).
+- Revisar con infra Winerim: lista cerrada de variantes, capacidad explícita,
+  stock independiente y aviso de altas.
+
+---
 
 ## Abadia Yuste - mapping legacy exacto y univoco - 2026-07-22
 
