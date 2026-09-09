@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Layout from "@/components/Layout";
+import AuthGate from "@/components/AuthGate";
 import Index from "./pages/Index";
 import Integrations from "./pages/Integrations";
 import AgoraWizard from "./pages/AgoraWizard";
@@ -32,6 +33,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <AuthGate>
       <BrowserRouter>
         <Layout>
           <Routes>
@@ -58,6 +60,7 @@ const App = () => (
           </Routes>
         </Layout>
       </BrowserRouter>
+      </AuthGate>
     </TooltipProvider>
   </QueryClientProvider>
 );
