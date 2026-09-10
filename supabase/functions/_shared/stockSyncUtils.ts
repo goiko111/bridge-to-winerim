@@ -176,6 +176,42 @@ export function salesImportQtyWhenStockDidNotMove(input: {
   return previousStock === newStock ? soldQty : 0;
 }
 
+/**
+ * Absolute stock writes clamp at zero, so when a venue sells more bottles than
+ * Winerim has in stock the surplus units never reach the sales history. This
+ * returns the units that the absolute stock write could NOT apply, so they can
+ * be recorded via POST /sales/import instead of being silently dropped.
+ *
+ * previousStock 1, newStock 0, soldQty 3 -> 2 unapplied units.
+ * previousStock 10, newStock 7, soldQty 3 -> 0 (fully applied).
+ */
+export function salesImportQtyForUnappliedStock(input: {
+  soldQty: unknown;
+  previousStock: unknown;
+  newStock: unknown;
+}): number {
+  const soldQty = Math.ceil(Math.abs(Number(input.soldQty || 0)));
+  if (!Number.isFinite(soldQty) || soldQty <= 0) return 0;
+
+  const previousStock = Number(input.previousStock || 0);
+  const newStock = Number(input.newStock || 0);
+  if (!Number.isFinite(previousStock) || !Number.isFinite(newStock)) return 0;
+
+  const applied = Math.max(0, previousStock - newStock);
+  return Math.max(0, soldQty - Math.floor(applied));
+}
+
+/**
+ * Canary gate: provider_config.record_stock_shortfall_sales === true makes the
+ * engine record the unapplied units in the Winerim sales history.
+ */
+export function isStockShortfallSalesImportEnabled(providerConfig: unknown): boolean {
+  const config = (providerConfig && typeof providerConfig === "object")
+    ? providerConfig as Record<string, unknown>
+    : {};
+  return config.record_stock_shortfall_sales === true;
+}
+
 export type WinerimSalesImportMode = "operational" | "historical";
 
 export type WinerimSalesImportSale = {
