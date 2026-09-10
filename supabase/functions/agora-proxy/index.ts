@@ -90,6 +90,8 @@ import {
   retryableWinerimSalesImportSales,
   signedWholeSaleQuantity,
   salesImportQtyWhenStockDidNotMove,
+  salesImportQtyForUnappliedStock,
+  isStockShortfallSalesImportEnabled,
   variantForAgoraFormat,
   WINERIM_SALES_IMPORT_MAX_ATTEMPTS,
   type WinerimSalesImportMode,
@@ -1615,6 +1617,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
+  const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -1931,6 +1934,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
     if (agg.variant === "copa") {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2079,6 +2083,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2169,6 +2174,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     .single();
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
+  const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -2501,6 +2507,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
     if (agg.variant === "copa") {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2652,6 +2659,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2758,6 +2766,7 @@ async function syncStockForDayIncrementalByDayTotal(
   }
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
+  const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -3047,6 +3056,7 @@ async function syncStockForDayIncrementalByDayTotal(
     const newStock = Math.max(0, Math.floor(previousStock - claim.deltaQty));
     if (claim.variant === "copa") {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -3213,6 +3223,7 @@ async function syncStockForDayIncrementalByDayTotal(
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
