@@ -13,6 +13,8 @@ import {
   retryableWinerimSalesImportSales,
   salesImportQtyWhenStockDidNotMove,
   signedWholeSaleQuantity,
+  salesImportQtyForUnappliedStock,
+  isStockShortfallSalesImportEnabled,
   variantForAgoraFormat,
   WINERIM_SALES_IMPORT_MAX_ATTEMPTS,
 } from "../../supabase/functions/_shared/stockSyncUtils";
@@ -257,5 +259,21 @@ describe("stock sync utils", () => {
       sales: [{ orderId: "line-ok", status: "imported", stockApplied: true }],
       errors: [{ orderId: "line-retry", retryable: true, error: "bottle busy" }],
     })).toEqual([retryable]);
+  });
+});
+
+describe("stock shortfall sales import", () => {
+  it("imports only the units the absolute stock write could not apply", () => {
+    expect(salesImportQtyForUnappliedStock({ soldQty: 3, previousStock: 1, newStock: 0 })).toBe(2);
+    expect(salesImportQtyForUnappliedStock({ soldQty: 3, previousStock: 0, newStock: 0 })).toBe(3);
+    expect(salesImportQtyForUnappliedStock({ soldQty: 3, previousStock: 10, newStock: 7 })).toBe(0);
+    expect(salesImportQtyForUnappliedStock({ soldQty: 0, previousStock: 0, newStock: 0 })).toBe(0);
+  });
+
+  it("stays disabled unless the connection opts in", () => {
+    expect(isStockShortfallSalesImportEnabled(null)).toBe(false);
+    expect(isStockShortfallSalesImportEnabled({})).toBe(false);
+    expect(isStockShortfallSalesImportEnabled({ record_stock_shortfall_sales: false })).toBe(false);
+    expect(isStockShortfallSalesImportEnabled({ record_stock_shortfall_sales: true })).toBe(true);
   });
 });
