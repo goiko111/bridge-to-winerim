@@ -1552,10 +1552,17 @@ async function importWinerimSaleIfStockDidNotMove(input: {
   previousStock: number;
   newStock: number;
   orderScope: string;
+  recordStockShortfallSales?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
   const live = input.variant === "copa";
   const qty = live
     ? Math.ceil(Number(input.soldQty || 0))
+    : input.recordStockShortfallSales
+    ? salesImportQtyForUnappliedStock({
+      soldQty: input.soldQty,
+      previousStock: input.previousStock,
+      newStock: input.newStock,
+    })
     : salesImportQtyWhenStockDidNotMove({
       soldQty: input.soldQty,
       previousStock: input.previousStock,
