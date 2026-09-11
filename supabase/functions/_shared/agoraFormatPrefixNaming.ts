@@ -9,6 +9,12 @@ export const AGORA_FORMAT_PREFIX_BY_FORMAT: Record<string, string> = {
 export interface AgoraPrefixCatalogProduct {
   productId: string | number;
   name: string;
+  /**
+   * Whether the button is sellable/visible in Agora. Hidden buttons (explicit
+   * false) never reserve a name, so an active Winerim button can adopt the
+   * prefixed name of an old hidden duplicate. Undefined means "assume visible".
+   */
+  visible?: boolean;
 }
 
 export interface AgoraPrefixMappingRow {
@@ -65,7 +71,7 @@ export function planAgoraFormatPrefixRenames(
     const name = String(product.name ?? "").replace(/\s+/g, " ").trim();
     if (!id) continue;
     catalogById.set(id, name);
-    if (name) usedNameKeys.set(normalizeAgoraProductNameKey(name), id);
+    if (name && product.visible !== false) usedNameKeys.set(normalizeAgoraProductNameKey(name), id);
   }
 
   const renames: AgoraPrefixRename[] = [];
