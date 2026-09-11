@@ -71,7 +71,7 @@ export function planAgoraFormatPrefixRenames(
     const name = String(product.name ?? "").replace(/\s+/g, " ").trim();
     if (!id) continue;
     catalogById.set(id, name);
-    if (name) usedNameKeys.set(normalizeAgoraProductNameKey(name), id);
+    if (name && product.visible !== false) usedNameKeys.set(normalizeAgoraProductNameKey(name), id);
   }
 
   const renames: AgoraPrefixRename[] = [];
