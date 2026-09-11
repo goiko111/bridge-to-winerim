@@ -8885,14 +8885,18 @@ serve(async (req) => {
       }
 
       const prefixProductElById = new Map<string, string>();
-      const prefixCatalogProducts: { productId: string; name: string }[] = [];
+      const prefixCatalogProducts: { productId: string; name: string; visible: boolean }[] = [];
       for (const product of extractXmlElementsWithAttrs(prefixCatalog.xml, "Product")) {
         const id = String(product.attrs.Id || "").trim();
         if (!id) continue;
         prefixProductElById.set(id, product.xml);
+        const directSale = String(product.attrs.UseAsDirectSale ?? "").trim().toLowerCase();
+        const saleableAsMain = String(product.attrs.SaleableAsMain ?? "").trim().toLowerCase();
+        const isHidden = directSale === "false" && saleableAsMain === "false";
         prefixCatalogProducts.push({
           productId: id,
           name: normalizeAgoraTextAttribute(decodeXmlAttribute(product.attrs.Name || "")),
+          visible: !isHidden,
         });
       }
 
