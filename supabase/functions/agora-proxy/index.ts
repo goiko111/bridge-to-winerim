@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames } from "../_shared/agoraProductNaming.ts";
+import { planAgoraFormatPrefixRenames } from "../_shared/agoraFormatPrefixNaming.ts";
 import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
 import { isFormatEnabledForConnection } from "../_shared/winerimExtendedFormats.ts";
@@ -8822,6 +8823,184 @@ serve(async (req) => {
         return new Response(JSON.stringify({ success: false, error: String(e) }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
+    }
+    if (action === "apply-winerim-format-prefixes") {
+      const dryRun = payload.dryRun !== false;
+      if (!dryRun && payload.confirm !== "APPLY_WINERIM_FORMAT_PREFIXES") {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Production rename requires confirm=APPLY_WINERIM_FORMAT_PREFIXES",
+        }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const requestedPrefixProductIds = new Set(
+        Array.isArray(payload.productIds)
+          ? payload.productIds.map((value: unknown) => String(value ?? "").trim()).filter(Boolean)
+          : [],
+      );
+      const prefixBatchSize = Math.max(1, Math.min(Number(payload.batchSize) || 40, 100));
+
+      let prefixMappingRows: any[] = [];
+      try {
+        prefixMappingRows = await selectAllConnectionRows(
+          supabase,
+          "product_mappings",
+          "provider_product_id,agora_product_id,format_type,status,winerim_wine_id",
+          connectionId,
+        );
+      } catch (mappingError) {
+        return new Response(JSON.stringify({ success: false, error: String(mappingError) }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const prefixMappings = prefixMappingRows
+        .filter((row) => ["CONFIRMED", "MANUAL", "AUTO"].includes(String(row.status || "").toUpperCase()))
+        .filter((row) => String(row.winerim_wine_id || "").trim())
+        .map((row) => ({
+          productId: String(row.agora_product_id || row.provider_product_id || "").trim(),
+          formatType: row.format_type,
+        }))
+        .filter((row) => row.productId)
+        .filter((row) => requestedPrefixProductIds.size === 0 || requestedPrefixProductIds.has(row.productId));
+
+      if (prefixMappings.length === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun,
+          renames: [],
+          skipped: [],
+          message: "No Winerim-linked Agora buttons matched the request.",
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      invalidateAgoraProductsCache(connectionId);
+      const prefixCatalog = await fetchAgoraProductsXmlCached(
+        connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+      );
+      if (!prefixCatalog.ok || !prefixCatalog.xml) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: `No se pudo leer catálogo Agora: HTTP ${prefixCatalog.status}`,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const prefixProductElById = new Map<string, string>();
+      const prefixCatalogProducts: { productId: string; name: string }[] = [];
+      for (const product of extractXmlElementsWithAttrs(prefixCatalog.xml, "Product")) {
+        const id = String(product.attrs.Id || "").trim();
+        if (!id) continue;
+        prefixProductElById.set(id, product.xml);
+        prefixCatalogProducts.push({
+          productId: id,
+          name: normalizeAgoraTextAttribute(decodeXmlAttribute(product.attrs.Name || "")),
+        });
+      }
+
+      const prefixPlan = planAgoraFormatPrefixRenames(prefixCatalogProducts, prefixMappings);
+      if (dryRun || prefixPlan.renames.length === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          dryRun,
+          catalogProducts: prefixCatalogProducts.length,
+          candidates: prefixMappings.length,
+          renames: prefixPlan.renames,
+          skipped: prefixPlan.skipped,
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      const prefixApplied: typeof prefixPlan.renames = [];
+      const prefixFailures: { productId: string; error: string }[] = [];
+      const xmlPrefixHeaders = {
+        "Api-Token": apiTokenClean,
+        Accept: "application/xml",
+        "Content-Type": "application/xml; charset=utf-8",
+      };
+
+      for (let index = 0; index < prefixPlan.renames.length; index += prefixBatchSize) {
+        const batch = prefixPlan.renames.slice(index, index + prefixBatchSize);
+        let batchXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n`;
+        const batchItems: typeof batch = [];
+        for (const rename of batch) {
+          const original = prefixProductElById.get(rename.productId);
+          if (!original) {
+            prefixFailures.push({ productId: rename.productId, error: "product_disappeared_from_catalog" });
+            continue;
+          }
+          let patched = setXmlAttrValue(original, "Name", rename.newName);
+          patched = setXmlAttrValue(patched, "ButtonText", rename.buttonText);
+          batchXml += `    ${patched}\n`;
+          batchItems.push(rename);
+        }
+        batchXml += `  </Products>\n</Import>`;
+        if (batchItems.length === 0) continue;
+
+        try {
+          const importRes = await fetchWithRetry(`${baseUrlClean}/api/import/`, {
+            method: "POST",
+            headers: xmlPrefixHeaders,
+            body: batchXml,
+          }, 60000);
+          const responseBody = await importRes.text().catch(() => "");
+          const parsed = parseAgoraImportResponse(importRes.status, responseBody);
+          if (!parsed.success) {
+            const message = parsed.errors.join("; ") || `HTTP ${importRes.status}: ${responseBody.slice(0, 300)}`;
+            for (const item of batchItems) prefixFailures.push({ productId: item.productId, error: message });
+            continue;
+          }
+          prefixApplied.push(...batchItems);
+        } catch (batchError) {
+          for (const item of batchItems) prefixFailures.push({ productId: item.productId, error: String(batchError) });
+        }
+      }
+
+      const prefixVerification: {
+        productId: string;
+        expectedName: string;
+        actualName: string | null;
+        ok: boolean;
+      }[] = [];
+      if (prefixApplied.length > 0) {
+        invalidateAgoraProductsCache(connectionId);
+        const fresh = await fetchAgoraProductsXmlCached(
+          connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true,
+        );
+        const freshNameById = new Map<string, string>();
+        if (fresh.ok && fresh.xml) {
+          for (const product of extractXmlElementsWithAttrs(fresh.xml, "Product")) {
+            const id = String(product.attrs.Id || "").trim();
+            if (id) freshNameById.set(id, normalizeAgoraTextAttribute(decodeXmlAttribute(product.attrs.Name || "")));
+          }
+        }
+        for (const item of prefixApplied) {
+          const actualName = freshNameById.get(item.productId) ?? null;
+          prefixVerification.push({
+            productId: item.productId,
+            expectedName: item.newName,
+            actualName,
+            ok: actualName === item.newName,
+          });
+        }
+
+        for (const item of prefixApplied) {
+          await supabase
+            .from("product_mappings")
+            .update({ provider_product_name: item.newName })
+            .eq("connection_id", connectionId)
+            .eq("provider_product_id", item.productId);
+        }
+      }
+
+      const prefixVerifiedCount = prefixVerification.filter((item) => item.ok).length;
+      return new Response(JSON.stringify({
+        success: prefixFailures.length === 0 && prefixVerifiedCount === prefixApplied.length,
+        dryRun: false,
+        planned: prefixPlan.renames.length,
+        applied: prefixApplied.length,
+        verified: prefixVerifiedCount,
+        failures: prefixFailures,
+        skipped: prefixPlan.skipped,
+        verification: prefixVerification.filter((item) => !item.ok).slice(0, 50),
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     if (action === "archive-products") {
       const sourceFamilyIds: string[] = (payload.sourceFamilyIds || []).map(String);
