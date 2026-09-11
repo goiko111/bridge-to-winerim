@@ -8926,8 +8926,8 @@ serve(async (req) => {
             prefixFailures.push({ productId: rename.productId, error: "product_disappeared_from_catalog" });
             continue;
           }
-          let patched = setXmlAttrValue(original, "Name", escapeXmlAttribute(rename.newName));
-          patched = setXmlAttrValue(patched, "ButtonText", escapeXmlAttribute(rename.buttonText));
+          let patched = setXmlAttrValue(original, "Name", rename.newName);
+          patched = setXmlAttrValue(patched, "ButtonText", rename.buttonText);
           batchXml += `    ${patched}\n`;
           batchItems.push(rename);
         }
