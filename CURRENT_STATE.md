@@ -7088,3 +7088,19 @@ _Última actualización: 2026-09-08 04:55 UTC_
 ### Tareas pendientes inmediatas
 - Conciliar los `19` efectos iniciales contra ERP y obtener equivalencia humana
   para las líneas legacy restantes antes de procesar `2026-07-15`.
+
+## 2026-09-11 14:46 UTC - Don Bernardo, duplicados prefijados acotados
+
+### Hechos
+- La unificación de nombres queda limitada a Don Bernardo Santander y Don Bernardo Ponzano.
+- En Santander, el Remírez de Ganuza Gran Reserva más reciente es Winerim `369277`, publicado como botella Agora `2369277` y verificado/vendible.
+- Se ocultó la botella anterior Agora `558668`, asociada al Winerim `58668`; la lectura posterior de la propia operación confirmó ambos flags de venta en `false`.
+- El intento de añadir el prefijo `B` a `2369277` falló con HTTP 500 de Agora y no se reintentó. La ficha permanece vendible con su nombre actual.
+- La copa `3369277` del vino actual figura `VERIFIED` en tracking, pero no aparece en el catálogo fresh; queda como incidencia separada y no se afirmó que esté vendible.
+
+### Decisiones
+- Nunca ocultar un botón anterior sin comprobar primero un sustituto Winerim vendible del mismo formato.
+- No extender la unificación a otros restaurantes sin nueva autorización.
+
+### Tareas pendientes inmediatas
+- Diagnosticar el conflicto de renombrado de `2369277` y la ausencia fresh de la copa `3369277`, sin tocar precios, ventas ni stock.

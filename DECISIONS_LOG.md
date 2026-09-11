@@ -2886,3 +2886,9 @@ ninguna compensación de los efectos anteriores.
 **Alternativa descartada:** desactivar toda la conexión o insertar mappings sin
 lease. La primera afecta catálogo y observabilidad innecesariamente; la segunda
 ya demostró una carrera real con el cron.
+
+## 2026-09-11 - Limitar prefijos a Don Bernardo y conservar siempre sustituto vendible
+- **Decisión**: aplicar la unificación solo en Santander y Ponzano; para Remírez de Ganuza Gran Reserva Santander conservar como canónica la ficha más reciente Winerim `369277` y ocultar únicamente la botella anterior `558668`.
+- **Razón**: `2369277` está publicada y verificada como botella vendible; la ficha anterior pertenece a otro registro Winerim más antiguo.
+- **Alternativa descartada**: ocultar por coincidencia de nombre sin validar formato y sustituto, o extender el cambio al resto de restaurantes.
+- **Mitigación**: la ocultación se verificó fresh. El renombrado fallido no se reintentó y no cambió la vendibilidad de la ficha actual.
