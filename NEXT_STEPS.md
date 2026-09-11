@@ -2039,3 +2039,9 @@
 - [ ] No desplegar `agora-proxy`, `_shared/stockSyncUtils.ts` ni el monitor
   modificado hasta cerrar estos puntos con pruebas de reintento, concurrencia y
   seleccion parcial.
+
+## P0 - Don Bernardo Santander/Ponzano · cierre de prefijos
+- [x] Limitar la unificación exclusivamente a Santander y Ponzano.
+- [x] Ocultar en Santander la botella antigua `558668` de Remírez de Ganuza Gran Reserva, manteniendo vendible la actual `2369277`.
+- [ ] Resolver de forma controlada el HTTP 500 al prefijar `2369277`; no reintentar a ciegas.
+- [ ] Reconciliar tracking `VERIFIED` de la copa actual `3369277` con su ausencia en catálogo fresh antes de afirmar que se puede vender.
