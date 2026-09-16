@@ -8747,6 +8747,14 @@ serve(async (req) => {
         const saleableAsMain = hasExactFlags ? u.saleableAsMain! : u.visible!;
         let patched = setAttr(original, "UseAsDirectSale", useAsDirectSale ? "true" : "false");
         patched = setAttr(patched, "SaleableAsMain", saleableAsMain ? "true" : "false");
+        const escAttr = (s: string) =>
+          s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        if (typeof u.newName === "string" && u.newName.trim().length > 0) {
+          patched = setAttr(patched, "Name", escAttr(u.newName.trim()));
+        }
+        if (typeof u.newButtonText === "string" && u.newButtonText.trim().length > 0) {
+          patched = setAttr(patched, "ButtonText", escAttr(u.newButtonText.trim()));
+        }
         xml += `    ${patched}\n`;
         applied.push({ id: pid, useAsDirectSale, saleableAsMain });
       }
