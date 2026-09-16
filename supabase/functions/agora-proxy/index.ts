@@ -8701,6 +8701,7 @@ serve(async (req) => {
         newName?: string;
         newButtonText?: string;
         saleFormatRenames?: { saleFormatId: string; newName: string; newButtonText?: string }[];
+        removeSaleFormatIds?: (string | number)[];
       }[] = payload.updates || [];
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
@@ -8768,6 +8769,19 @@ serve(async (req) => {
             sfPatched = setAttr(sfPatched, "ButtonText", escAttr(sfRename.newButtonText.trim()));
           }
           patched = patched.replace(sfMatch[0], sfPatched);
+        }
+        // Detach nested sale formats (e.g. a deterministic GLASS SaleFormat still held by a
+        // legacy product) so the Winerim-owned product can claim that SaleFormat id.
+        for (const rawRemoveId of (u.removeSaleFormatIds || [])) {
+          const rmId = String(rawRemoveId || "").trim();
+          if (!rmId) continue;
+          const rmRegex = new RegExp(
+            `\\s*<SaleFormat\\b[^>]*\\bId="${rmId}"[^>]*(?:/>|>[\\s\\S]*?</SaleFormat>)`,
+          );
+          const rmMatch = rmRegex.exec(patched);
+          if (!rmMatch) continue;
+          if (new RegExp(`\\bBaseSaleFormatId="${rmId}"`).test(patched)) continue;
+          patched = patched.replace(rmMatch[0], "");
         }
         xml += `    ${patched}\n`;
         applied.push({ id: pid, useAsDirectSale, saleableAsMain });
