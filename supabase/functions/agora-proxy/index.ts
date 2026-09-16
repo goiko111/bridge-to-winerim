@@ -8698,6 +8698,8 @@ serve(async (req) => {
         visible?: boolean;
         useAsDirectSale?: boolean;
         saleableAsMain?: boolean;
+        newName?: string;
+        newButtonText?: string;
       }[] = payload.updates || [];
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
