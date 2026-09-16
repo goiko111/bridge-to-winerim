@@ -8700,6 +8700,7 @@ serve(async (req) => {
         saleableAsMain?: boolean;
         newName?: string;
         newButtonText?: string;
+        saleFormatRenames?: { saleFormatId: string; newName: string; newButtonText?: string }[];
       }[] = payload.updates || [];
       if (!Array.isArray(updates) || updates.length === 0) {
         return new Response(JSON.stringify({ success: false, error: "No updates provided" }),
