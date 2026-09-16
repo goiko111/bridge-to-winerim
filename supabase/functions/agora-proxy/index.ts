@@ -8756,6 +8756,19 @@ serve(async (req) => {
         if (typeof u.newButtonText === "string" && u.newButtonText.trim().length > 0) {
           patched = setAttr(patched, "ButtonText", escAttr(u.newButtonText.trim()));
         }
+        for (const sfRename of (u.saleFormatRenames || [])) {
+          const sfId = String(sfRename.saleFormatId || "");
+          const desiredName = String(sfRename.newName || "").trim();
+          if (!sfId || !desiredName) continue;
+          const sfRegex = new RegExp(`<SaleFormat\\b[^>]*\\bId="${sfId}"[^>]*(?:/>|>[\\s\\S]*?</SaleFormat>)`);
+          const sfMatch = sfRegex.exec(patched);
+          if (!sfMatch) continue;
+          let sfPatched = setAttr(sfMatch[0], "Name", escAttr(desiredName));
+          if (typeof sfRename.newButtonText === "string" && sfRename.newButtonText.trim().length > 0) {
+            sfPatched = setAttr(sfPatched, "ButtonText", escAttr(sfRename.newButtonText.trim()));
+          }
+          patched = patched.replace(sfMatch[0], sfPatched);
+        }
         xml += `    ${patched}\n`;
         applied.push({ id: pid, useAsDirectSale, saleableAsMain });
       }
