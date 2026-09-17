@@ -61,6 +61,42 @@ export function variantForAgoraFormat(format: unknown): WinerimVariant {
 
 
 
+/**
+ * Per-button format exceptions: `provider_config.sales_format_overrides`.
+ *
+ * Some POS buttons carry a format label that does not match the Winerim format
+ * they really sell (e.g. a button labelled "BOT"/"Botella" that in the venue is
+ * the 500 ml small bottle). Stock deduction is fail-closed on format, so the
+ * only safe way to fix such a button is an explicit, per-connection override
+ * keyed by the Agora product id. Unknown variants are ignored (fail-closed).
+ *
+ *   { "680931": "botella-pequena" }
+ */
+export function normalizeSalesFormatOverrides(value: unknown): Record<string, WinerimVariant> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const overrides: Record<string, WinerimVariant> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const productId = String(key ?? "").trim();
+    const variant = normalizeWinerimVariant(raw);
+    if (productId && variant) overrides[productId] = variant;
+  }
+  return overrides;
+}
+
+/**
+ * Winerim variant for a sales line: explicit per-button override first, then the
+ * POS format label. Never guesses beyond the existing label resolution.
+ */
+export function salesVariantForLine(
+  line: { provider_product_id?: unknown; format?: unknown },
+  overrides?: Record<string, WinerimVariant> | null,
+): WinerimVariant {
+  const productId = String(line?.provider_product_id ?? "").trim();
+  const override = productId ? overrides?.[productId] : undefined;
+  if (override) return override;
+  return variantForAgoraFormat(line?.format);
+}
+
 export function signedWholeSaleQuantity(value: unknown): number {
   const quantity = Number(value || 0);
   if (!Number.isFinite(quantity) || quantity === 0) return 0;
