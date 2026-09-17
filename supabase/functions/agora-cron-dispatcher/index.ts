@@ -26,6 +26,20 @@ interface AgoraConnection {
   circuit_breaker_paused_until: string | null;
 }
 
+type DispatchReceipt = {
+  cycle_id: string;
+  connection_id: string;
+  job: DispatchBody["job"];
+  stage: "OWNER_FILTER" | "BREAKER" | "PREFLIGHT" | "DISPATCH";
+  outcome: string;
+  source_http_status?: number | null;
+  action?: string | null;
+  target_function?: string | null;
+  response_http_status?: number | null;
+  error_code?: string | null;
+  details?: Record<string, unknown>;
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -42,8 +56,16 @@ Deno.serve(async (req: Request) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+    const cycleId = crypto.randomUUID();
+    const receiptErrors: string[] = [];
+    const writeReceipts = async (receipts: DispatchReceipt[]) => {
+      if (receipts.length === 0) return;
+      const { error } = await supabase.from("agora_dispatch_receipts").insert(receipts);
+      if (error) receiptErrors.push(error.code || "RECEIPT_WRITE_FAILED");
+    };
 
-    // Load enabled Agora connections, EXCLUDING those paused by circuit breaker
+    // Productive ownership is enforced before breaker/preflight. Explicit
+    // ownership is mandatory: unset and own-infra rows never reach Lovable.
     const nowIso = new Date().toISOString();
     let query = supabase
       .from("pos_connections")
@@ -55,10 +77,36 @@ Deno.serve(async (req: Request) => {
     const { data: allConnections, error: connErr } = await query;
     if (connErr) throw connErr;
 
-    let connections = ((allConnections || []) as AgoraConnection[]).filter((c) =>
-      !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso
+    const enabledConnections = (allConnections || []) as AgoraConnection[];
+    const ownerEligible = enabledConnections.filter((c) => c.provider_config?.writer_owner === "lovable");
+    const skippedByWriterOwner = enabledConnections.length - ownerEligible.length;
+    await writeReceipts(
+      enabledConnections.map((connection) => ({
+        cycle_id: cycleId,
+        connection_id: connection.id,
+        job,
+        stage: "OWNER_FILTER",
+        outcome: connection.provider_config?.writer_owner === "lovable" ? "ELIGIBLE" : "SKIPPED",
+        details: { writer_owner: connection.provider_config?.writer_owner || "unset" },
+      })),
     );
-    const skippedByBreaker = (allConnections?.length || 0) - connections.length;
+
+    let connections = ownerEligible.filter(
+      (c) => !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso,
+    );
+    const skippedByBreaker = ownerEligible.length - connections.length;
+    await writeReceipts(
+      ownerEligible
+        .filter((connection) => !connections.some((candidate) => candidate.id === connection.id))
+        .map((connection) => ({
+          cycle_id: cycleId,
+          connection_id: connection.id,
+          job,
+          stage: "BREAKER",
+          outcome: "SKIPPED",
+          error_code: "CIRCUIT_BREAKER_PAUSED",
+        })),
+    );
 
     // ── PRE-FLIGHT (Layer 4): for jobs that hit the customer POS (outbound-queue,
     // sales-stock), do a 5s reachability probe per connection BEFORE
@@ -67,22 +115,39 @@ Deno.serve(async (req: Request) => {
     let skippedByPreflight = 0;
     let requeuedAfterRecovery = 0;
     if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock")) {
-      const checks = await Promise.all(connections.map(async (c) => {
-        const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
-        if (!baseUrl) return { id: c.id, ok: false };
-        const url = `${(baseUrl.startsWith("http") ? baseUrl : `http://${baseUrl}`)}/api/`;
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 5000);
-        try {
-          const r = await fetch(url, { method: "GET", headers: { "Api-Token": (c.api_token || "").trim() }, signal: ctrl.signal });
-          clearTimeout(t);
-          // Any HTTP response means the POS is reachable.
-          return { id: c.id, ok: true, status: r.status };
-        } catch {
-          clearTimeout(t);
-          return { id: c.id, ok: false };
-        }
-      }));
+      const checks = await Promise.all(
+        connections.map(async (c) => {
+          const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
+          if (!baseUrl) return { id: c.id, ok: false, errorCode: "MISSING_BASE_URL" };
+          const url = `${baseUrl.startsWith("http") ? baseUrl : `http://${baseUrl}`}/api/`;
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 5000);
+          try {
+            const r = await fetch(url, {
+              method: "GET",
+              headers: { "Api-Token": (c.api_token || "").trim() },
+              signal: ctrl.signal,
+            });
+            clearTimeout(t);
+            // Any HTTP response means the POS is reachable.
+            return { id: c.id, ok: true, status: r.status };
+          } catch {
+            clearTimeout(t);
+            return { id: c.id, ok: false, errorCode: "SOURCE_NETWORK_ERROR" };
+          }
+        }),
+      );
+      await writeReceipts(
+        checks.map((check) => ({
+          cycle_id: cycleId,
+          connection_id: check.id,
+          job,
+          stage: "PREFLIGHT",
+          outcome: check.ok ? "PASSED" : "SKIPPED",
+          source_http_status: check.status || null,
+          error_code: check.ok ? null : check.errorCode || `SOURCE_HTTP_${check.status || "UNKNOWN"}`,
+        })),
+      );
       const reachableIds = new Set(checks.filter((x) => x.ok).map((x) => x.id));
       const before = connections.length;
       connections = connections.filter((c) => reachableIds.has(c.id));
@@ -93,37 +158,55 @@ Deno.serve(async (req: Request) => {
       // down/overloaded are put back in the queue automatically, with a fresh
       // attempt budget. Business rejections stay FAILED (see agoraFailedTaskRecovery).
       if (job === "outbound-queue" && connections.length > 0) {
-        await Promise.all(connections.map(async (c) => {
-          try {
-            const { data: failedRows } = await supabase
-              .from("outbound_tasks")
-              .select("id, status, last_error")
-              .eq("connection_id", c.id)
-              .eq("status", "FAILED")
-              .order("updated_at", { ascending: true })
-              .limit(500);
-            const ids = selectTasksToRequeue((failedRows || []) as Array<{ id: string; status: string; last_error: string | null }>, 200);
-            if (ids.length === 0) return;
-            const { error: requeueError } = await supabase
-              .from("outbound_tasks")
-              .update({ status: "QUEUED", attempts: 0, next_retry_at: null })
-              .in("id", ids);
-            if (!requeueError) {
-              requeuedAfterRecovery += ids.length;
-              console.log(`[agora-cron-dispatcher] auto-requeued ${ids.length} recoverable tasks for ${c.location_name} (POS reachable again)`);
+        await Promise.all(
+          connections.map(async (c) => {
+            try {
+              const { data: failedRows } = await supabase
+                .from("outbound_tasks")
+                .select("id, status, last_error")
+                .eq("connection_id", c.id)
+                .eq("status", "FAILED")
+                .order("updated_at", { ascending: true })
+                .limit(500);
+              const ids = selectTasksToRequeue(
+                (failedRows || []) as Array<{ id: string; status: string; last_error: string | null }>,
+                200,
+              );
+              if (ids.length === 0) return;
+              const { error: requeueError } = await supabase
+                .from("outbound_tasks")
+                .update({ status: "QUEUED", attempts: 0, next_retry_at: null })
+                .in("id", ids);
+              if (!requeueError) {
+                requeuedAfterRecovery += ids.length;
+                console.log(
+                  `[agora-cron-dispatcher] auto-requeued ${ids.length} recoverable tasks for ${c.location_name} (POS reachable again)`,
+                );
+              }
+            } catch (error) {
+              console.log(`[agora-cron-dispatcher] auto-requeue failed for ${c.location_name}: ${String(error)}`);
             }
-          } catch (error) {
-            console.log(`[agora-cron-dispatcher] auto-requeue failed for ${c.location_name}: ${String(error)}`);
-          }
-        }));
+          }),
+        );
       }
     }
 
-
     if (!connections || connections.length === 0) {
-      return new Response(JSON.stringify({ ok: true, dispatched: 0, job, skippedByBreaker, skippedByPreflight }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          cycleId,
+          dispatched: 0,
+          job,
+          skippedByWriterOwner,
+          skippedByBreaker,
+          skippedByPreflight,
+          receiptErrors,
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     type DispatchRequest = {
@@ -143,12 +226,29 @@ Deno.serve(async (req: Request) => {
     const buildRequests = (connection: AgoraConnection): DispatchRequest[] => {
       if (job === "catalog") {
         return [
-          { connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "sync-master-data", connectionId: connection.id } },
-          { connection_id: connection.id, name: connection.location_name, functionName: "winerim-proxy", body: { action: "fetch-catalog", connectionId: connection.id } },
+          {
+            connection_id: connection.id,
+            name: connection.location_name,
+            functionName: "agora-proxy",
+            body: { action: "sync-master-data", connectionId: connection.id },
+          },
+          {
+            connection_id: connection.id,
+            name: connection.location_name,
+            functionName: "winerim-proxy",
+            body: { action: "fetch-catalog", connectionId: connection.id },
+          },
         ];
       }
       if (job === "outbound-queue") {
-        return [{ connection_id: connection.id, name: connection.location_name, functionName: "agora-proxy", body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true } }];
+        return [
+          {
+            connection_id: connection.id,
+            name: connection.location_name,
+            functionName: "agora-proxy",
+            body: { action: "process-xml-outbound-queue", connectionId: connection.id, serverLoop: true },
+          },
+        ];
       }
       // Prioritize the latency-sensitive paths. Closed-day catch-up can scan a
       // wider date range and must not prevent open tickets from reaching
@@ -224,22 +324,26 @@ Deno.serve(async (req: Request) => {
         p_ttl_seconds: 900,
       });
       if (lockError) {
-        return [{
-          connection_id: connection.id,
-          name: connection.location_name,
-          ok: false,
-          skipped: true,
-          reason: `LOCK_ERROR: ${lockError.message}`,
-        }];
+        return [
+          {
+            connection_id: connection.id,
+            name: connection.location_name,
+            ok: false,
+            skipped: true,
+            reason: `LOCK_ERROR: ${lockError.message}`,
+          },
+        ];
       }
       if (acquired !== true) {
-        return [{
-          connection_id: connection.id,
-          name: connection.location_name,
-          ok: true,
-          skipped: true,
-          reason: "DISPATCH_ALREADY_RUNNING",
-        }];
+        return [
+          {
+            connection_id: connection.id,
+            name: connection.location_name,
+            ok: true,
+            skipped: true,
+            reason: "DISPATCH_ALREADY_RUNNING",
+          },
+        ];
       }
 
       const results: unknown[] = [];
@@ -318,13 +422,33 @@ Deno.serve(async (req: Request) => {
         await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY_MS));
       }
     }
+    await writeReceipts(
+      allResults
+        .filter((result): result is Record<string, unknown> =>
+          Boolean(result && typeof result === "object" && "connection_id" in result),
+        )
+        .map((result) => ({
+          cycle_id: cycleId,
+          connection_id: String(result.connection_id),
+          job,
+          stage: "DISPATCH",
+          outcome: result.ok === true ? (result.skipped === true ? "SKIPPED" : "SUCCEEDED") : "FAILED",
+          action: typeof result.action === "string" ? result.action : null,
+          target_function: typeof result.function === "string" ? result.function : null,
+          response_http_status: typeof result.status === "number" ? result.status : null,
+          error_code: result.ok === true ? null : "DISPATCH_FAILED",
+          details: typeof result.reason === "string" ? { reason: result.reason } : {},
+        })),
+    );
     const summary = allResults;
 
     return new Response(
       JSON.stringify({
         ok: true,
+        cycleId,
         job,
         connections: connections.length,
+        skippedByWriterOwner,
         skippedByBreaker,
         skippedByPreflight,
         requeuedAfterRecovery,
@@ -332,14 +456,15 @@ Deno.serve(async (req: Request) => {
         dispatched: allResults.length - lockedCount,
         succeeded: okCount,
         results: summary,
+        receiptErrors,
         timestamp: new Date().toISOString(),
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
