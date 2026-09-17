@@ -94,6 +94,8 @@ import {
   salesImportQtyForUnappliedStock,
   isStockShortfallSalesImportEnabled,
   variantForAgoraFormat,
+  normalizeSalesFormatOverrides,
+  salesVariantForLine,
   WINERIM_SALES_IMPORT_MAX_ATTEMPTS,
   type WinerimSalesImportMode,
   type WinerimSalesImportSale,
@@ -1616,6 +1618,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   if (connectionError) {
     throw new Error(`Could not read stock sync configuration: ${connectionError.message}`);
   }
+  const salesFormatOverrides = normalizeSalesFormatOverrides(
+    (connection?.provider_config as Record<string, unknown> | null)?.sales_format_overrides,
+  );
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
@@ -1706,7 +1711,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
   const lineCandidates = mappedLines
     .map((line: any) => {
-      const variant = variantForAgoraFormat(line.format);
+      const variant = salesVariantForLine(line, salesFormatOverrides);
       const qty = signedWholeSaleQuantity(line.quantity);
       return {
         line,
@@ -2173,6 +2178,9 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     .select("provider_config")
     .eq("id", connectionId)
     .single();
+  const salesFormatOverrides = normalizeSalesFormatOverrides(
+    (connection?.provider_config as Record<string, unknown> | null)?.sales_format_overrides,
+  );
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
@@ -2256,7 +2264,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
     mappedLineCount++;
-    const variant = variantForAgoraFormat(line.format);
+    const variant = salesVariantForLine(line, salesFormatOverrides);
     const groupKey = buildStockSyncGroupKey(line.sales_event_id, line.winerim_product_id, variant);
     const existing = desiredGroups.get(groupKey);
     if (existing) {
@@ -2765,6 +2773,9 @@ async function syncStockForDayIncrementalByDayTotal(
   if (connectionError) {
     throw new Error(`Could not read stock sync configuration: ${connectionError.message}`);
   }
+  const salesFormatOverrides = normalizeSalesFormatOverrides(
+    (connection?.provider_config as Record<string, unknown> | null)?.sales_format_overrides,
+  );
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
@@ -2842,7 +2853,7 @@ async function syncStockForDayIncrementalByDayTotal(
     const qty = signedWholeSaleQuantity(line.quantity);
     if (qty === 0) continue;
     mappedLineCount++;
-    const variant = variantForAgoraFormat(line.format);
+    const variant = salesVariantForLine(line, salesFormatOverrides);
     const wineId = String(line.winerim_product_id);
     const key = `${wineId}::${variant}`;
     const existing = desiredTotals.get(key);
@@ -3338,6 +3349,7 @@ async function restoreStaleOpenTicketStock(
     disabledEvents: 0,
     errors: [],
   };
+  const salesFormatOverrides = normalizeSalesFormatOverrides(providerConfig?.sales_format_overrides);
   if (!isStaleOpenTicketRestoreEnabled(providerConfig)) return result;
   if (!winerimToken) {
     result.skipped++;
@@ -3444,7 +3456,7 @@ async function restoreStaleOpenTicketStock(
     for (const line of (definitiveLines || []) as any[]) {
       const day = dayByDefinitiveEventId.get(line.sales_event_id);
       const wineId = String(line.winerim_product_id || "");
-      const variant = variantForAgoraFormat(line.format);
+      const variant = salesVariantForLine(line, salesFormatOverrides);
       const qty = signedWholeSaleQuantity(line.quantity);
       if (!day || !wineId || qty === 0) continue;
       const key = `${day}::${wineId}::${variant}`;
