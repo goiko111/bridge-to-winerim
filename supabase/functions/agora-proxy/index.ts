@@ -3349,6 +3349,7 @@ async function restoreStaleOpenTicketStock(
     disabledEvents: 0,
     errors: [],
   };
+  const salesFormatOverrides = normalizeSalesFormatOverrides(providerConfig?.sales_format_overrides);
   if (!isStaleOpenTicketRestoreEnabled(providerConfig)) return result;
   if (!winerimToken) {
     result.skipped++;
