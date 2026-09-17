@@ -94,6 +94,8 @@ import {
   salesImportQtyForUnappliedStock,
   isStockShortfallSalesImportEnabled,
   variantForAgoraFormat,
+  normalizeSalesFormatOverrides,
+  salesVariantForLine,
   WINERIM_SALES_IMPORT_MAX_ATTEMPTS,
   type WinerimSalesImportMode,
   type WinerimSalesImportSale,
@@ -1089,6 +1091,20 @@ function isOpenTicketsStockSyncEnabled(connection: { provider_config?: unknown }
 
 function openTicketsStockCurrentDayOnly(providerConfig: Record<string, unknown>): boolean {
   return providerConfig.open_tickets_stock_current_day_only !== false;
+}
+
+// Per-button Winerim format exceptions (provider_config.sales_format_overrides).
+// deno-lint-ignore no-explicit-any
+async function loadSalesFormatOverrides(supabase: any, connectionId: string) {
+  const { data } = await supabase
+    .from("pos_connections")
+    .select("provider_config")
+    .eq("id", connectionId)
+    .maybeSingle();
+  const config = (data?.provider_config && typeof data.provider_config === "object")
+    ? data.provider_config as Record<string, unknown>
+    : {};
+  return normalizeSalesFormatOverrides(config.sales_format_overrides);
 }
 
 function isStockSyncDayAllowed(day: string, providerConfig: Record<string, unknown>): boolean {
