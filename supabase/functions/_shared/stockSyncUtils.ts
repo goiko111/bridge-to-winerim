@@ -193,7 +193,14 @@ export function isTerminalStockSyncError(error: unknown): boolean {
   return (
     msg.includes("wine not found") ||
     msg.includes("not found or not accessible") ||
-    /variant '[^']+' not found/.test(msg)
+    /variant '[^']+' not found/.test(msg) ||
+    // Certified sales import rejections Winerim marks as non-retryable: the
+    // wine/format simply cannot accept the movement, so retrying forever would
+    // keep the day cursor stuck.
+    msg.includes("not_applicable") ||
+    msg.includes("format_not_available") ||
+    msg.includes("wine_not_found") ||
+    msg.includes("variant_not_found")
   );
 }
 
