@@ -102,6 +102,13 @@ import {
   type WinerimSalesImportSale,
   type WinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
+import {
+  assessCertifiedWinerimSalesImportResponse,
+  buildCertifiedWinerimSalesImportBody,
+  certifiedModeForWinerimSalesImport,
+  isWinerimCertifiedSalesImportEnabled,
+  retryableCertifiedSales,
+} from "../_shared/winerimCertifiedSalesImport.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1408,7 +1415,15 @@ async function postWinerimSalesImportWithRetry(input: {
   live: boolean;
   mode: WinerimSalesImportMode;
   forceLive?: boolean;
+  certified?: boolean;
 }): Promise<Omit<WinerimSalesImportOutcome, "attempted" | "qty" | "orderId" | "live">> {
+  const certified = input.certified === true;
+  const certifiedMode = certifiedModeForWinerimSalesImport({ mode: input.mode, live: input.live });
+  const requireStockApplied = shouldRequireWinerimSalesImportStockApplied({
+    variant: input.variant,
+    mode: input.mode,
+    forceLive: input.forceLive,
+  });
   let pendingSales = input.sales;
   let attempts = 0;
   let lastStatus: number | undefined;
@@ -1420,13 +1435,20 @@ async function postWinerimSalesImportWithRetry(input: {
     if (attempts > 1) await waitForWinerimRetry(attempts - 1);
 
     try {
+      const requestBody = certified
+        ? buildCertifiedWinerimSalesImportBody({
+          mode: certifiedMode,
+          sales: pendingSales,
+          variant: input.variant,
+        })
+        : {
+          ...(input.live ? { live: true } : {}),
+          sales: pendingSales,
+        };
       const response = await fetch(`${input.winerimBase}/sales/import`, {
         method: "POST",
         headers: input.winerimHeaders,
-        body: JSON.stringify({
-          ...(input.live ? { live: true } : {}),
-          sales: pendingSales,
-        }),
+        body: JSON.stringify(requestBody),
       });
       lastStatus = response.status;
       lastText = await response.text();
@@ -1436,11 +1458,13 @@ async function postWinerimSalesImportWithRetry(input: {
         lastParsed = { raw: lastText.substring(0, 300) };
       }
 
-      if (response.status === 409 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
+      if (!certified && response.status === 409 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
         continue;
       }
 
-      const retryableSales = response.ok
+      const retryableSales = certified
+        ? retryableCertifiedSales(pendingSales, lastParsed)
+        : response.ok
         ? retryableWinerimSalesImportSales(pendingSales, lastParsed)
         : [];
       if (retryableSales.length > 0 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
@@ -1448,15 +1472,22 @@ async function postWinerimSalesImportWithRetry(input: {
         continue;
       }
 
-      const assessed = assessWinerimSalesImportResponse({
-        status: response.status,
-        response: lastParsed,
-        sales: pendingSales,
-        variant: input.variant,
-        live: input.live,
-        mode: input.mode,
-        forceLive: input.forceLive,
-      });
+      const assessed = certified
+        ? assessCertifiedWinerimSalesImportResponse({
+          status: response.status,
+          response: lastParsed,
+          sales: pendingSales,
+          requireStockApplied,
+        })
+        : assessWinerimSalesImportResponse({
+          status: response.status,
+          response: lastParsed,
+          sales: pendingSales,
+          variant: input.variant,
+          live: input.live,
+          mode: input.mode,
+          forceLive: input.forceLive,
+        });
       return {
         ok: assessed.ok,
         status: response.status,
@@ -1479,15 +1510,22 @@ async function postWinerimSalesImportWithRetry(input: {
     }
   }
 
-  const assessed = assessWinerimSalesImportResponse({
-    status: lastStatus || 0,
-    response: lastParsed,
-    sales: pendingSales,
-    variant: input.variant,
-    live: input.live,
-    mode: input.mode,
-    forceLive: input.forceLive,
-  });
+  const assessed = certified
+    ? assessCertifiedWinerimSalesImportResponse({
+      status: lastStatus || 0,
+      response: lastParsed,
+      sales: pendingSales,
+      requireStockApplied,
+    })
+    : assessWinerimSalesImportResponse({
+      status: lastStatus || 0,
+      response: lastParsed,
+      sales: pendingSales,
+      variant: input.variant,
+      live: input.live,
+      mode: input.mode,
+      forceLive: input.forceLive,
+    });
   return {
     ok: false,
     status: lastStatus,
@@ -1513,6 +1551,7 @@ async function importWinerimSalesOnly(input: {
   stockId: number;
   soldQty: number;
   orderScope: string;
+  certified?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
   const qty = Math.ceil(Math.abs(Number(input.soldQty || 0)));
   if (qty <= 0) return { attempted: false, ok: true, qty: 0 };
@@ -1531,6 +1570,7 @@ async function importWinerimSalesOnly(input: {
     variant: input.variant,
     live: false,
     mode: "historical",
+    certified: input.certified,
     sales: [{
       stockId: input.stockId,
       qty,
@@ -1563,6 +1603,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
   orderScope: string;
   recordStockShortfallSales?: boolean;
   forceLive?: boolean;
+  certified?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
   const live = input.variant === "copa" || input.forceLive === true;
   const qty = live
@@ -1594,6 +1635,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
     live,
     forceLive: input.forceLive,
     mode: "operational",
+    certified: input.certified,
     sales: [{
       stockId: input.stockId,
       qty,
@@ -1631,6 +1673,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
+  const certifiedSalesImport = isWinerimCertifiedSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -1947,6 +1990,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
     if (agg.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
@@ -2009,6 +2053,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
     if (!match.stockActive) {
       const salesImport = await importWinerimSalesOnly({
+        certified: certifiedSalesImport,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2097,6 +2142,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
@@ -2193,6 +2239,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
+  const certifiedSalesImport = isWinerimCertifiedSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -2525,6 +2572,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
     if (agg.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
@@ -2588,6 +2636,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
 
     if (!match.stockActive) {
       const salesImport = await importWinerimSalesOnly({
+        certified: certifiedSalesImport,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2678,6 +2727,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
@@ -2790,6 +2840,7 @@ async function syncStockForDayIncrementalByDayTotal(
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
   const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
+  const certifiedSalesImport = isWinerimCertifiedSalesImportEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -3079,6 +3130,7 @@ async function syncStockForDayIncrementalByDayTotal(
     const newStock = Math.max(0, Math.floor(previousStock - claim.deltaQty));
     if (claim.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
@@ -3168,6 +3220,7 @@ async function syncStockForDayIncrementalByDayTotal(
         continue;
       }
       const salesImport = await importWinerimSalesOnly({
+        certified: certifiedSalesImport,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -3247,6 +3300,7 @@ async function syncStockForDayIncrementalByDayTotal(
 
     if (r.ok) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
+        certified: certifiedSalesImport,
         recordStockShortfallSales,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
