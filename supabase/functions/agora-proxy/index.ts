@@ -93,6 +93,7 @@ import {
   salesImportQtyWhenStockDidNotMove,
   salesImportQtyForUnappliedStock,
   isStockShortfallSalesImportEnabled,
+  isLiveSalesImportForAllVariantsEnabled,
   variantForAgoraFormat,
   normalizeSalesFormatOverrides,
   salesVariantForLine,
@@ -1406,6 +1407,7 @@ async function postWinerimSalesImportWithRetry(input: {
   variant: WinerimVariant;
   live: boolean;
   mode: WinerimSalesImportMode;
+  forceLive?: boolean;
 }): Promise<Omit<WinerimSalesImportOutcome, "attempted" | "qty" | "orderId" | "live">> {
   let pendingSales = input.sales;
   let attempts = 0;
@@ -1453,6 +1455,7 @@ async function postWinerimSalesImportWithRetry(input: {
         variant: input.variant,
         live: input.live,
         mode: input.mode,
+        forceLive: input.forceLive,
       });
       return {
         ok: assessed.ok,
@@ -1483,6 +1486,7 @@ async function postWinerimSalesImportWithRetry(input: {
     variant: input.variant,
     live: input.live,
     mode: input.mode,
+    forceLive: input.forceLive,
   });
   return {
     ok: false,
@@ -1558,8 +1562,9 @@ async function importWinerimSaleIfStockDidNotMove(input: {
   newStock: number;
   orderScope: string;
   recordStockShortfallSales?: boolean;
+  forceLive?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
-  const live = input.variant === "copa";
+  const live = input.variant === "copa" || input.forceLive === true;
   const qty = live
     ? Math.ceil(Number(input.soldQty || 0))
     : input.recordStockShortfallSales
@@ -1587,6 +1592,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
     winerimHeaders: input.winerimHeaders,
     variant: input.variant,
     live,
+    forceLive: input.forceLive,
     mode: "operational",
     sales: [{
       stockId: input.stockId,
@@ -1624,6 +1630,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
+  const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -1938,9 +1945,10 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
     const previousStock = match.stock;
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
-    if (agg.variant === "copa") {
+    if (agg.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
         recordStockShortfallSales,
+        forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2184,6 +2192,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
+  const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -2514,9 +2523,10 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     }
     const previousStock = match.stock;
     const newStock = Math.max(0, Math.floor(previousStock - agg.qty));
-    if (agg.variant === "copa") {
+    if (agg.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
         recordStockShortfallSales,
+        forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
@@ -2779,6 +2789,7 @@ async function syncStockForDayIncrementalByDayTotal(
   const stockSyncStartDate = configuredStockSyncStartDate(connection?.provider_config);
   const stockSyncStartAt = configuredStockSyncStartAt(connection?.provider_config);
   const recordStockShortfallSales = isStockShortfallSalesImportEnabled(connection?.provider_config);
+  const liveSalesImportAllVariants = isLiveSalesImportForAllVariantsEnabled(connection?.provider_config);
   if (stockSyncStartDate && day < stockSyncStartDate) {
     return {
       synced: 0,
@@ -3066,9 +3077,10 @@ async function syncStockForDayIncrementalByDayTotal(
 
     const previousStock = match.stock;
     const newStock = Math.max(0, Math.floor(previousStock - claim.deltaQty));
-    if (claim.variant === "copa") {
+    if (claim.variant === "copa" || liveSalesImportAllVariants) {
       const salesImport = await importWinerimSaleIfStockDidNotMove({
         recordStockShortfallSales,
+        forceLive: liveSalesImportAllVariants,
         winerimBase: WINERIM_BASE,
         winerimHeaders,
         connectionId,
