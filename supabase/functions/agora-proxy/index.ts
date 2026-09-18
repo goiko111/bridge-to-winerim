@@ -102,6 +102,13 @@ import {
   type WinerimSalesImportSale,
   type WinerimVariant,
 } from "../_shared/stockSyncUtils.ts";
+import {
+  assessCertifiedWinerimSalesImportResponse,
+  buildCertifiedWinerimSalesImportBody,
+  certifiedModeForWinerimSalesImport,
+  isWinerimCertifiedSalesImportEnabled,
+  retryableCertifiedSales,
+} from "../_shared/winerimCertifiedSalesImport.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
