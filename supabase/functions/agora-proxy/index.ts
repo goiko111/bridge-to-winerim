@@ -1544,6 +1544,7 @@ async function importWinerimSalesOnly(input: {
   stockId: number;
   soldQty: number;
   orderScope: string;
+  certified?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
   const qty = Math.ceil(Math.abs(Number(input.soldQty || 0)));
   if (qty <= 0) return { attempted: false, ok: true, qty: 0 };
