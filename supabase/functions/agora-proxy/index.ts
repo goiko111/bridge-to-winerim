@@ -2883,12 +2883,17 @@ async function syncStockForDayIncrementalByDayTotal(
   const definitiveEventIdSet = new Set(definitiveEventIds);
   const desiredSource = desiredEventIds.some((id) => definitiveEventIdSet.has(id)) ? "definitive" : "open_ticket";
 
-  const { data: lines, error: linesError } = await supabase
-    .from("sales_line_items")
-    .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
-    .in("sales_event_id", desiredEventIds);
-  if (linesError) {
-    throw new Error(`Could not read sales lines for ${day}: ${linesError.message}`);
+  const lines: Record<string, unknown>[] = [];
+  for (let i = 0; i < desiredEventIds.length; i += 100) {
+    const lineChunk = desiredEventIds.slice(i, i + 100);
+    const { data: chunkLines, error: linesError } = await supabase
+      .from("sales_line_items")
+      .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
+      .in("sales_event_id", lineChunk);
+    if (linesError) {
+      throw new Error(`Could not read sales lines for ${day}: ${linesError.message}`);
+    }
+    for (const row of (chunkLines || [])) lines.push(row as Record<string, unknown>);
   }
 
   if (!lines || lines.length === 0) {
@@ -2956,8 +2961,8 @@ async function syncStockForDayIncrementalByDayTotal(
 
   const candidateWineIds = Array.from(new Set(Array.from(desiredTotals.values()).map((total) => total.winerimWineId)));
   const alreadyQtyByTotal = new Map<string, number>();
-  for (let i = 0; i < allDayEventIds.length; i += 500) {
-    const eventChunk = allDayEventIds.slice(i, i + 500);
+  for (let i = 0; i < allDayEventIds.length; i += 100) {
+    const eventChunk = allDayEventIds.slice(i, i + 100);
     const { data: syncedRows } = await supabase
       .from("stock_sync_log")
       .select("winerim_product_id, variant, quantity")
@@ -2980,19 +2985,22 @@ async function syncStockForDayIncrementalByDayTotal(
 
   const terminalTotals = new Set<string>();
   const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const { data: failedRows } = await supabase
-    .from("stock_sync_log")
-    .select("winerim_product_id, variant, error_message")
-    .eq("connection_id", connectionId)
-    .in("status", ["FAILED", "BLOCKED"])
-    .gte("created_at", recentTerminalCutoff)
-    .in("sales_event_id", allDayEventIds)
-    .in("winerim_product_id", candidateWineIds);
-  for (const row of (failedRows || []) as { winerim_product_id: string; variant?: string | null; error_message?: string | null }[]) {
-    if (!isTerminalStockSyncError(row.error_message)) continue;
-    const variant = normalizeWinerimVariant(row.variant);
-    if (!variant) continue;
-    terminalTotals.add(`${row.winerim_product_id}::${variant}`);
+  for (let i = 0; i < allDayEventIds.length; i += 100) {
+    const failedChunk = allDayEventIds.slice(i, i + 100);
+    const { data: failedRows } = await supabase
+      .from("stock_sync_log")
+      .select("winerim_product_id, variant, error_message")
+      .eq("connection_id", connectionId)
+      .in("status", ["FAILED", "BLOCKED"])
+      .gte("created_at", recentTerminalCutoff)
+      .in("sales_event_id", failedChunk)
+      .in("winerim_product_id", candidateWineIds);
+    for (const row of (failedRows || []) as { winerim_product_id: string; variant?: string | null; error_message?: string | null }[]) {
+      if (!isTerminalStockSyncError(row.error_message)) continue;
+      const variant = normalizeWinerimVariant(row.variant);
+      if (!variant) continue;
+      terminalTotals.add(`${row.winerim_product_id}::${variant}`);
+    }
   }
 
   const stalePendingBefore = new Date(Date.now() - 15 * 60_000).toISOString();
@@ -3037,8 +3045,10 @@ async function syncStockForDayIncrementalByDayTotal(
   const claimed: DeltaTotal[] = [];
   for (const total of deltaCandidates) {
     if (terminalTotals.has(total.key)) {
+      // Permanently rejected by Winerim (wine/format cannot take the movement).
+      // Skip it without marking the day as failed, otherwise the day cursor
+      // stays stuck forever on a line that can never be applied.
       skipped++;
-      failed++;
       continue;
     }
     if (existingTargetKeys.has(total.idempotencyKey)) {
