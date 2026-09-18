@@ -1428,13 +1428,20 @@ async function postWinerimSalesImportWithRetry(input: {
     if (attempts > 1) await waitForWinerimRetry(attempts - 1);
 
     try {
+      const requestBody = certified
+        ? buildCertifiedWinerimSalesImportBody({
+          mode: certifiedMode,
+          sales: pendingSales,
+          variant: input.variant,
+        })
+        : {
+          ...(input.live ? { live: true } : {}),
+          sales: pendingSales,
+        };
       const response = await fetch(`${input.winerimBase}/sales/import`, {
         method: "POST",
         headers: input.winerimHeaders,
-        body: JSON.stringify({
-          ...(input.live ? { live: true } : {}),
-          sales: pendingSales,
-        }),
+        body: JSON.stringify(requestBody),
       });
       lastStatus = response.status;
       lastText = await response.text();
@@ -1444,11 +1451,13 @@ async function postWinerimSalesImportWithRetry(input: {
         lastParsed = { raw: lastText.substring(0, 300) };
       }
 
-      if (response.status === 409 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
+      if (!certified && response.status === 409 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
         continue;
       }
 
-      const retryableSales = response.ok
+      const retryableSales = certified
+        ? retryableCertifiedSales(pendingSales, lastParsed)
+        : response.ok
         ? retryableWinerimSalesImportSales(pendingSales, lastParsed)
         : [];
       if (retryableSales.length > 0 && attempts < WINERIM_SALES_IMPORT_MAX_ATTEMPTS) {
@@ -1456,15 +1465,22 @@ async function postWinerimSalesImportWithRetry(input: {
         continue;
       }
 
-      const assessed = assessWinerimSalesImportResponse({
-        status: response.status,
-        response: lastParsed,
-        sales: pendingSales,
-        variant: input.variant,
-        live: input.live,
-        mode: input.mode,
-        forceLive: input.forceLive,
-      });
+      const assessed = certified
+        ? assessCertifiedWinerimSalesImportResponse({
+          status: response.status,
+          response: lastParsed,
+          sales: pendingSales,
+          requireStockApplied,
+        })
+        : assessWinerimSalesImportResponse({
+          status: response.status,
+          response: lastParsed,
+          sales: pendingSales,
+          variant: input.variant,
+          live: input.live,
+          mode: input.mode,
+          forceLive: input.forceLive,
+        });
       return {
         ok: assessed.ok,
         status: response.status,
