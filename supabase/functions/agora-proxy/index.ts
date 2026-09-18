@@ -1503,15 +1503,22 @@ async function postWinerimSalesImportWithRetry(input: {
     }
   }
 
-  const assessed = assessWinerimSalesImportResponse({
-    status: lastStatus || 0,
-    response: lastParsed,
-    sales: pendingSales,
-    variant: input.variant,
-    live: input.live,
-    mode: input.mode,
-    forceLive: input.forceLive,
-  });
+  const assessed = certified
+    ? assessCertifiedWinerimSalesImportResponse({
+      status: lastStatus || 0,
+      response: lastParsed,
+      sales: pendingSales,
+      requireStockApplied,
+    })
+    : assessWinerimSalesImportResponse({
+      status: lastStatus || 0,
+      response: lastParsed,
+      sales: pendingSales,
+      variant: input.variant,
+      live: input.live,
+      mode: input.mode,
+      forceLive: input.forceLive,
+    });
   return {
     ok: false,
     status: lastStatus,
