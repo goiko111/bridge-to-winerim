@@ -1628,6 +1628,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
     live,
     forceLive: input.forceLive,
     mode: "operational",
+    certified: input.certified,
     sales: [{
       stockId: input.stockId,
       qty,
