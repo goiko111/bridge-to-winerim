@@ -1596,6 +1596,7 @@ async function importWinerimSaleIfStockDidNotMove(input: {
   orderScope: string;
   recordStockShortfallSales?: boolean;
   forceLive?: boolean;
+  certified?: boolean;
 }): Promise<WinerimSalesImportOutcome> {
   const live = input.variant === "copa" || input.forceLive === true;
   const qty = live
