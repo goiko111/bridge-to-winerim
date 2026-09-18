@@ -1563,6 +1563,7 @@ async function importWinerimSalesOnly(input: {
     variant: input.variant,
     live: false,
     mode: "historical",
+    certified: input.certified,
     sales: [{
       stockId: input.stockId,
       qty,
