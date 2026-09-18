@@ -94,6 +94,7 @@ import {
   salesImportQtyForUnappliedStock,
   isStockShortfallSalesImportEnabled,
   isLiveSalesImportForAllVariantsEnabled,
+  shouldRequireWinerimSalesImportStockApplied,
   variantForAgoraFormat,
   normalizeSalesFormatOverrides,
   salesVariantForLine,
