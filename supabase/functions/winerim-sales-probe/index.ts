@@ -42,8 +42,16 @@ Deno.serve(async (req) => {
     const url = new URL(`${WINERIM_BASE}${path}`);
     for (const [k, v] of Object.entries(query)) url.searchParams.set(k, String(v));
 
+    const method = String(body.method || 'GET').toUpperCase();
+    const payload = body.payload ?? null;
     const res = await fetch(url.toString(), {
-      headers: { 'WINERIM-API-TOKEN': conn.winerim_api_token, Accept: 'application/json' },
+      method,
+      headers: {
+        'WINERIM-API-TOKEN': conn.winerim_api_token,
+        Accept: 'application/json',
+        ...(payload ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
     const text = await res.text();
 
