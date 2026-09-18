@@ -1408,7 +1408,15 @@ async function postWinerimSalesImportWithRetry(input: {
   live: boolean;
   mode: WinerimSalesImportMode;
   forceLive?: boolean;
+  certified?: boolean;
 }): Promise<Omit<WinerimSalesImportOutcome, "attempted" | "qty" | "orderId" | "live">> {
+  const certified = input.certified === true;
+  const certifiedMode = certifiedModeForWinerimSalesImport({ mode: input.mode, live: input.live });
+  const requireStockApplied = shouldRequireWinerimSalesImportStockApplied({
+    variant: input.variant,
+    mode: input.mode,
+    forceLive: input.forceLive,
+  });
   let pendingSales = input.sales;
   let attempts = 0;
   let lastStatus: number | undefined;
