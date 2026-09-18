@@ -248,6 +248,19 @@ export function isStockShortfallSalesImportEnabled(providerConfig: unknown): boo
   return config.record_stock_shortfall_sales === true;
 }
 
+/**
+ * Canary gate: provider_config.live_sales_import_all_variants === true routes
+ * bottle/magnum deductions through POST /sales/import live=true (same lane as
+ * glasses) so the Winerim history keeps the real provider sale timestamp
+ * instead of the push timestamp of an absolute PUT /stock write.
+ */
+export function isLiveSalesImportForAllVariantsEnabled(providerConfig: unknown): boolean {
+  const config = (providerConfig && typeof providerConfig === "object")
+    ? providerConfig as Record<string, unknown>
+    : {};
+  return config.live_sales_import_all_variants === true;
+}
+
 export type WinerimSalesImportMode = "operational" | "historical";
 
 export type WinerimSalesImportSale = {
@@ -316,8 +329,10 @@ export function retryableWinerimSalesImportSales(
 export function shouldRequireWinerimSalesImportStockApplied(input: {
   variant: WinerimVariant;
   mode: WinerimSalesImportMode;
+  forceLive?: boolean;
 }): boolean {
-  return input.mode === "operational" && input.variant === "copa";
+  if (input.mode !== "operational") return false;
+  return input.variant === "copa" || input.forceLive === true;
 }
 
 export function assessWinerimSalesImportResponse(input: {
@@ -327,6 +342,7 @@ export function assessWinerimSalesImportResponse(input: {
   variant: WinerimVariant;
   live: boolean;
   mode: WinerimSalesImportMode;
+  forceLive?: boolean;
 }): {
   ok: boolean;
   imported: number;
