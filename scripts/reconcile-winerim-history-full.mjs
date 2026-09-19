@@ -230,11 +230,13 @@ for (const conn of connections) {
   let stockMissing = 0;
 
   const unkeyed = [];
+  const matchedKeys = new Set();
   for (const l of lines) {
     const variant = normVariant(l.variant, l.format);
     const day = (l.sold_at || l.business_day).slice(0, 10);
     const matches = l.order_id ? byOrderId.get(l.order_id) || [] : [];
     if (matches.length === 0) { unkeyed.push({ ...l, variant, day }); continue; }
+    matchedKeys.add(`${l.winerim_product_id}|${variant}|${day}`);
 
     const entry = matches[0];
     usedEntries.add(entry.raw);
