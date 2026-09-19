@@ -91,3 +91,47 @@ restaurante, y no bloquea el resto de líneas.
 
 Detalle línea a línea:
 `/mnt/documents/don-quijote-recuperacion-historial-stock-2026-09.csv`.
+
+## 5. APLICADO — 19/09/2026 (GO de Goiko)
+
+Las 24 líneas se incorporaron con **historial y stock** en la misma operación
+certificada, con fechas y horas originales. Nada fuera de este ámbito.
+
+### Ticket T-42431 (16/09 17:45:16) — envío línea a línea
+
+| Vino | Uds | orderId | saleId | Stock antes → después |
+|---|---:|---|---|---|
+| Arzuaga Crianza | 6 | agora:8466c229:2026-09-16:232976:bot:4b2n1s | 182555 | 58 → 52 |
+| Muga Rosado | 11 | agora:8466c229:2026-09-16:232951:bot:1fzlgx4 | 182556 | 24 → 13 |
+| Gavi di Gavi Etiqueta Amarila | 10 | agora:8466c229:2026-09-16:243866:bot:hurnje | 182557 | 27 → 17 |
+| Conde de Haro Brut Rosé | 30 | agora:8466c229:2026-09-16:366714:bot:4b4zge | 182558 | 29 → 0 |
+
+`historyWritten=true` y `stockApplied=true` en las cuatro. Conde de Haro se
+registró como venta de **30** botellas; Winerim no baja de 0, así que el déficit
+de 1 botella queda pendiente de resolver con el restaurante (no bloqueó nada).
+El contrato no acepta importe: Winerim valora por catálogo, así que el descuento
+comercial del 10 % del ticket no viaja en el apunte.
+
+### Día 11/09 — por el mecanismo habitual
+
+`save-sales` de la conexión para `businessDay=2026-09-11`: 13 documentos,
+163 líneas guardadas, 20 líneas de vino resueltas, stock sincronizado sin
+fallos (12 apuntes agregados por vino/formato, 21 unidades) con la hora real de
+cada venta. Las 14 copas se enviaron con su `stock_id` de copa y **Winerim**
+aplicó su ajuste copa/botella; no hubo conversión ni descuento manual.
+
+### Lectura de verificación en Winerim
+
+- 11/09: 12 apuntes, todos `operation`, historial escrito, horas 18:33–23:00.
+- 16/09: 14 apuntes, los 4 del ticket con `effectiveAt = 17:45:16`.
+- Sin duplicados: cada clave determinista aparece una sola vez.
+- Stock resultante: Arzuaga 52 · Muga Rosado 11 · Gavi 16 · Conde de Haro 0 ·
+  La Planta 32 · Martínez Lacuesta 15 · Martivilli 21 · Viña Ardanza 5 ·
+  Gran Reserva 904 5 · Muga Crianza 12 · El Rincón de Nekeas 21.
+
+### Pendiente
+
+- Déficit de inventario de Conde de Haro Brut Rosé (al menos 1 botella).
+- 45 líneas AMBIGUAS (53 uds, 1.266,50 €) siguen sin importar: Winerim tiene
+  ventas del mismo vino/formato/día y no se puede probar la correspondencia.
+- Septiembre NO está cerrado: el corte llega al 19/09 exclusivo.
