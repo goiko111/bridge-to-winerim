@@ -334,7 +334,10 @@ for (const l of [...sales, ...refunds]) {
   const isRefund = l.qty < 0 || l.docType === "BasicRefund";
   const bucket = isRefund ? "DEVOLUCION" : bucketFor(l);
   summary[bucket] = summary[bucket] || { lineas: 0, unidades: 0, importe: 0, aIncorporar: 0 };
-  const missing = isRefund ? 0 : Math.max(0, l.qty - (l.covered || 0));
+  // An alias line is the same physical sale as its primary: it is never re-imported.
+  const missing = (isRefund || bucket === "REGISTRADA" || bucket === "REGISTRADA_ALIAS" || bucket === "AMBIGUA")
+    ? 0
+    : Math.max(0, l.qty - (l.covered || 0));
   summary[bucket].lineas += 1;
   summary[bucket].unidades += Math.abs(l.qty);
   summary[bucket].importe += Number(l.amount || 0);
