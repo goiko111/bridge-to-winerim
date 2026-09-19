@@ -287,16 +287,23 @@ for (const conn of connections) {
   }
 
   // Winerim entries never claimed by an Agora line -> possible duplicates / outside Agora.
-  let possibleDuplicates = 0;
+  let duplicatesOverMatched = 0;
+  let outsideAgora = 0;
   for (const r of resolved) {
     if (usedEntries.has(r.raw)) continue;
-    possibleDuplicates += 1;
+    const key = `${r.winerimId || UNKNOWN}|${r.variant}|${r.day}`;
+    const overlaps = matchedKeys.has(key);
+    if (overlaps) duplicatesOverMatched += 1; else outsideAgora += 1;
     const eff = effects(r.raw);
     csvRows.push([
-      conn.location_name, conn.id, "POSIBLE_DUPLICADA", UNKNOWN, r.local, UNKNOWN,
+      conn.location_name, conn.id, overlaps ? "POSIBLE_DUPLICADA" : "FUERA_DE_AGORA",
+      UNKNOWN, r.local, UNKNOWN,
       r.winerimId, r.wineName, r.variant, UNKNOWN, r.raw.qty, UNKNOWN,
       r.raw.amounts?.totalAmount, r.raw.orderId, r.origin, r.raw.sale?.saleId,
-      eff.history, eff.stock, UNKNOWN, "en Winerim sin linea de Agora que la respalde",
+      eff.history, eff.stock, UNKNOWN,
+      overlaps
+        ? "mismo vino/formato/dia ya registrado por el canal certificado: posible doble conteo"
+        : "en Winerim sin linea de Agora que la respalde (manual o fuera del TPV)",
     ].map(csvCell).join(","));
   }
 
@@ -310,7 +317,8 @@ for (const conn of connections) {
     operaciones: pagination?.sources?.operations ?? UNKNOWN,
     legado: pagination?.sources?.legacy ?? UNKNOWN,
     ...buckets,
-    POSIBLE_DUPLICADA: possibleDuplicates,
+    POSIBLE_DUPLICADA: duplicatesOverMatched,
+    FUERA_DE_AGORA: outsideAgora,
     solo_historial_sin_stock: historyOnly,
     stock_pendiente: stockMissing,
     error_historial: error || "",
