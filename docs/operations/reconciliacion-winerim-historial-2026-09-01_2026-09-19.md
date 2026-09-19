@@ -42,3 +42,44 @@ Las *candidatas* se emparejan por vino, formato y día: son indicios, no certeza
 Historial y stock se informan por separado; lo que Winerim no informa figura como `desconocido`.
 
 Detalle línea a línea: `/mnt/documents/reconciliacion-winerim-historial-2026-09-01_2026-09-19.csv`.
+## Comprobación previa del endpoint
+
+`GET /api/v2/sales/history?includeLegacy=true` sí devuelve el histórico anterior al canal
+certificado: cada entrada trae `source` (`operation` / `legacy`), `legacyKind`, `orderId`
+original, `stockId`/`priceId`, `qty`, `effectiveAt`, `appliedEffects` y el `saleId` de Winerim.
+Las entradas de legado llegan con `stockId: null`, `mode: null` y `appliedEffects: ["history"]`,
+así que el historial y el efecto sobre stock quedan separados por construcción.
+Paginación: `page` + `limit` (máximo 100); se recorren todas las páginas por restaurante.
+
+## Corrección de los totales de la fase 1
+
+En la tabla de la fase 1 los buckets se contaban por clave consultada, y una misma clave puede
+respaldar varias líneas locales: por eso algunos restaurantes sumaban más "confirmadas" que
+claves consultadas (Don Quijote 54 sobre 40, Jardi 6 sobre 5, Triana 34 sobre 7). Aquí cada
+línea de Ágora cae en un único bucket y **Clasificadas = Líneas Ágora** en todos los casos.
+
+## Líneas no clasificadas de Katsu, Don Quijote y Jardi
+
+- **Katsu Izakaya**: 5 faltantes comprobadas (Sarmentero Vendimia Seleccionada copa 15/09 x2 y
+  17/09 x1, Abad Dom Bueno Godello Esencia copa 17/09, Tarima Sparkling copa 18/09) y 3 ambiguas
+  (Craggy Range 04/09, Baladiña Sobre Lías 05/09, Sarmentero 10/09). Las 40 posibles duplicadas
+  son copas del mismo vino y día escritas por el sistema anterior sobre ventas que el canal
+  certificado ya registró en la migración del 18/09.
+- **Don Quijote Marbella**: 16 faltantes comprobadas, todas botellas (La Misión Menade 17/09 x3,
+  Gavi di Gavi, Conde de Haro, Arzuaga, Granbazán y Pol Roger del 08 y 17/09). Las 24 ambiguas y
+  16 posibles duplicadas son copas y magnums del 17 y 18/09 en las que Winerim guarda varias
+  entradas de una unidad para el mismo vino, formato y día: sin la clave original no se puede
+  decidir cuál corresponde a cuál línea del TPV.
+- **Restaurante Jardi**: 4 faltantes comprobadas (La Canya y Camins del Priorat 05/09,
+  Carrasviñas Verdejo 12/09, Inici 18/09), 27 candidatas por vino/formato/día y 10 ambiguas
+  (copas de Algars Blanc y Negre, varias unidades sueltas el mismo día). Las 6 posibles duplicadas
+  son copas de Algars Blanc del 12/09.
+
+## Limitaciones conocidas de esta fase
+
+- Las entradas de legado no traen `wineId`: se resuelven por `priceId`/`stockId` contra el
+  catálogo local de Winerim. Si el catálogo se resincroniza a mitad de la lectura, algún vino
+  puede quedar como `desconocido`; conviene relanzar el cruce tras un refresco de catálogo.
+- El emparejamiento sin clave es uno a uno por vino, formato y día. Cuando hay varias unidades
+  sueltas del mismo vino ese día, el resultado es *ambigua*, no faltante.
+- Ninguna cifra de esta tabla autoriza una importación: la recuperación se preparará aparte.
