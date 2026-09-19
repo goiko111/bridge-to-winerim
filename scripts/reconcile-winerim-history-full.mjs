@@ -293,17 +293,21 @@ for (const conn of connections) {
     if (usedEntries.has(r.raw)) continue;
     const key = `${r.winerimId || UNKNOWN}|${r.variant}|${r.day}`;
     const overlaps = matchedKeys.has(key);
-    if (overlaps) duplicatesOverMatched += 1; else outsideAgora += 1;
+    const ours = r.origin === "certified";
+    const duplicate = ours || overlaps;
+    if (duplicate) duplicatesOverMatched += 1; else outsideAgora += 1;
     const eff = effects(r.raw);
     csvRows.push([
-      conn.location_name, conn.id, overlaps ? "POSIBLE_DUPLICADA" : "FUERA_DE_AGORA",
+      conn.location_name, conn.id, duplicate ? "POSIBLE_DUPLICADA" : "FUERA_DE_AGORA",
       UNKNOWN, r.local, UNKNOWN,
       r.winerimId, r.wineName, r.variant, UNKNOWN, r.raw.qty, UNKNOWN,
       r.raw.amounts?.totalAmount, r.raw.orderId, r.origin, r.raw.sale?.saleId,
       eff.history, eff.stock, UNKNOWN,
-      overlaps
-        ? "mismo vino/formato/dia ya registrado por el canal certificado: posible doble conteo"
-        : "en Winerim sin linea de Agora que la respalde (manual o fuera del TPV)",
+      ours
+        ? "escrita por nuestro canal sin linea de Agora libre que la respalde: revisar doble envio o desglose por unidad"
+        : overlaps
+          ? "mismo vino/formato/dia ya registrado por el canal certificado: posible doble conteo"
+          : "en Winerim sin linea de Agora que la respalde (manual o fuera del TPV)",
     ].map(csvCell).join(","));
   }
 
