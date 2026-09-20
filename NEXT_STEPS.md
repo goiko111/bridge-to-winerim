@@ -2045,3 +2045,8 @@
 - [x] Ocultar en Santander la botella antigua `558668` de Remírez de Ganuza Gran Reserva, manteniendo vendible la actual `2369277`.
 - [ ] Resolver de forma controlada el HTTP 500 al prefijar `2369277`; no reintentar a ciegas.
 - [ ] Reconciliar tracking `VERIFIED` de la copa actual `3369277` con su ausencia en catálogo fresh antes de afirmar que se puede vender.
+
+## P0 - Restauraciones de visibilidad dentro de familia
+- [x] Retirar la venta directa de los productos restaurados en siete restaurantes, conservando familia y vendibilidad.
+- [x] Corregir y probar el auto-restaurado para usar flags explícitos y no crear teclas en pantalla principal.
+- [ ] Qtomas: corregir/verificar sus 14 productos restaurados cuando el TPV vuelva a responder; no reintentar en bucle.

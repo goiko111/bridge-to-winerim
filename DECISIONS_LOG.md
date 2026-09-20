@@ -2892,3 +2892,9 @@ ya demostró una carrera real con el cron.
 - **Razón**: `2369277` está publicada y verificada como botella vendible; la ficha anterior pertenece a otro registro Winerim más antiguo.
 - **Alternativa descartada**: ocultar por coincidencia de nombre sin validar formato y sustituto, o extender el cambio al resto de restaurantes.
 - **Mitigación**: la ocultación se verificó fresh. El renombrado fallido no se reintentó y no cambió la vendibilidad de la ficha actual.
+
+## 2026-09-20 - Restaurar dentro de la familia, nunca como venta directa
+- **Decisión**: el auto-restaurado de vinos de Ágora fija `UseAsDirectSale=false` y `SaleableAsMain=true`, conservando el `FamilyId` existente.
+- **Razón**: `visible=true` activaba ambos indicadores y colocaba teclas restauradas en la pantalla principal.
+- **Alternativa descartada**: seguir usando el atajo de visibilidad o reasignar familias; lo primero repite el fallo y lo segundo altera la organización del restaurante.
+- **Mitigación**: verificación fresh por producto; precios, stock, ventas y familias quedan intactos.
