@@ -13352,7 +13352,36 @@ ${costPricesXml}
         .from("winerim_wines").select("winerim_id, name, price, format, winery, grape_variety, region, vintage, raw_payload, wine_type, bottle_sale_price, bottle_purchase_price, glass_sale_price, glass_cost_price, magnum_sale_price, magnum_purchase_price, serve_by_glass, is_active")
         .eq("connection_id", connectionId).in("winerim_id", winerimWineIds);
 
-      const wines = (cachedWines || []).map((wine: any) => applyHiddenGlassVariantForAgora(connection, wine));
+      // Extended-format prices (HALF_BOTTLE / SMALL_BOTTLE / BENJAMIN) live in
+      // winerim_wine_formats, NOT on the wine row. Without attaching them here,
+      // extendedFormatPrice() returns null for every extended format and the
+      // evaluator reads "data not loaded" as "price removed", queueing a bogus
+      // AGORA_HIDE_PRODUCT for perfectly priced products.
+      const { data: extendedFormatRows, error: extendedFormatRowsError } = await supabase
+        .from("winerim_wine_formats")
+        .select("winerim_id, format_key, sale_price, cost_price, is_active")
+        .eq("connection_id", connectionId)
+        .in("winerim_id", winerimWineIds);
+      if (extendedFormatRowsError) {
+        // Fail closed: never decide visibility on an unreadable price table.
+        return new Response(JSON.stringify({
+          success: false,
+          error: `could_not_read_winerim_wine_formats: ${extendedFormatRowsError.message}`,
+        }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const extendedRowsByWine = new Map<string, Record<string, unknown>[]>();
+      for (const row of extendedFormatRows || []) {
+        const key = String((row as any).winerim_id);
+        if (!extendedRowsByWine.has(key)) extendedRowsByWine.set(key, []);
+        extendedRowsByWine.get(key)!.push(row as Record<string, unknown>);
+      }
+
+      const wines = (cachedWines || []).map((wine: any) =>
+        attachExtendedFormatPrices(
+          applyHiddenGlassVariantForAgora(connection, wine),
+          extendedRowsByWine.get(String(wine.winerim_id)) || [],
+        )
+      );
       const cachedWineIds = new Set(wines.map((wine: any) => String(wine.winerim_id)));
       const requestedWineIdSet = new Set(winerimWineIds.map(String));
       for (const hiddenGlass of configuredHiddenGlassVariants(connection)) {

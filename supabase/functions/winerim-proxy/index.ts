@@ -201,10 +201,25 @@ function buildWinerimHeaders(token: string): Record<string, string> {
 }
 
 // Fetch all wines from Winerim with pagination
-async function fetchAllWines(headers: Record<string, string>): Promise<Record<string, unknown>[]> {
+// ── CATALOG LIST WALK (completeness-aware) ──
+// A transient empty/short page from Winerim used to look exactly like "the
+// restaurant deleted those wines": the walk stopped early, reconciliation
+// marked every wine after that page inactive and Agora auto-hid its buttons.
+// So the walk now reports whether it really saw the whole catalog, and callers
+// must fail closed (skip reconciliation) when it did not.
+interface WineListWalk {
+  wines: Record<string, unknown>[];
+  complete: boolean;
+  incompleteReason: string | null;
+  expectedTotal: number | null;
+}
+
+async function fetchAllWines(headers: Record<string, string>): Promise<WineListWalk> {
   const allWines: Record<string, unknown>[] = [];
   let page = 1;
   const limit = 100;
+  let expectedTotal: number | null = null;
+  let incompleteReason: string | null = null;
 
   while (true) {
     const url = `${WINERIM_BASE_URL}/wines?page=${page}&limit=${limit}`;
@@ -219,17 +234,35 @@ async function fetchAllWines(headers: Record<string, string>): Promise<Record<st
     const data = await res.json();
 
     // Response format: { success: true, pagination: {...}, wines: [...] }
+    const pagination = (data?.pagination || {}) as Record<string, unknown>;
+    const totalPages = Number(pagination.total_pages || 0) || 1;
+    const reportedTotal = Number(pagination.total ?? pagination.total_items ?? pagination.count ?? 0);
+    if (Number.isFinite(reportedTotal) && reportedTotal > 0) expectedTotal = reportedTotal;
+
     const wines = data?.wines || [];
-    if (!Array.isArray(wines) || wines.length === 0) break;
+    if (!Array.isArray(wines) || wines.length === 0) {
+      // Empty page BEFORE the last announced page ⇒ the catalog was truncated
+      // by Winerim, not emptied by the restaurant.
+      if (page < totalPages) incompleteReason = `empty_page_${page}_of_${totalPages}`;
+      break;
+    }
 
     allWines.push(...wines);
 
-    const totalPages = data?.pagination?.total_pages || 1;
     if (page >= totalPages) break;
     page++;
   }
 
-  return allWines;
+  if (!incompleteReason && expectedTotal != null && allWines.length < expectedTotal) {
+    incompleteReason = `fetched_${allWines.length}_of_${expectedTotal}`;
+  }
+
+  return {
+    wines: allWines,
+    complete: incompleteReason === null,
+    incompleteReason,
+    expectedTotal,
+  };
 }
 
 // Result from fetchWineDetail including failure reason
@@ -632,7 +665,125 @@ serve(async (req) => {
         return result;
       };
 
+      // ── AUTO-RESTORE OF AUTOMATICALLY HIDDEN WINES ──
+      // Hiding is automatic, so un-hiding must be too: a wine hidden by a
+      // transient read failure (or by a price that has since been restored in
+      // Winerim) has to return to the POS without a human. Deliberate
+      // retirements (CONTROLLED_CATALOG_RECONCILIATION_RETIRED, manual hides)
+      // are never touched — only AUTO_DEACTIVATION / AUTO_PRICE_REMOVED.
+      const AUTOMATIC_HIDE_TRIGGERS = new Set(["AUTO_DEACTIVATION", "AUTO_PRICE_REMOVED"]);
+      let restoredVisibility: { winerimId: string; format: string; productId: string }[] = [];
 
+      const restoreAutoHiddenWines = async (
+        fetchedIds: Set<string>,
+      ): Promise<{ winerimId: string; format: string; productId: string }[]> => {
+        const restored: { winerimId: string; format: string; productId: string }[] = [];
+
+        const { data: hiddenRows } = await supabase
+          .from("winerim_push_tracking")
+          .select("winerim_wine_id, format, agora_product_id")
+          .eq("connection_id", connectionId)
+          .eq("source", "WINERIM")
+          .eq("sync_status", "HIDDEN");
+
+        const rows = (hiddenRows || []).filter((r: any) =>
+          r.agora_product_id && fetchedIds.has(String(r.winerim_wine_id))
+        );
+        if (rows.length === 0) return restored;
+
+        const wineIds = Array.from(new Set(rows.map((r: any) => String(r.winerim_wine_id))));
+
+        const { data: wineRows } = await supabase
+          .from("winerim_wines")
+          .select("winerim_id, is_active, pricing_status")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", wineIds);
+        const wineById = new Map<string, any>(
+          (wineRows || []).map((w: any) => [String(w.winerim_id), w]),
+        );
+
+        const { data: formatRows } = await supabase
+          .from("winerim_wine_formats")
+          .select("winerim_id, format_key, sale_price, is_active")
+          .eq("connection_id", connectionId)
+          .in("winerim_id", wineIds);
+        const formatByKey = new Map<string, any>(
+          (formatRows || []).map((f: any) => [`${String(f.winerim_id)}|${String(f.format_key).toUpperCase()}`, f]),
+        );
+
+        const { data: hideTasks } = await supabase
+          .from("outbound_tasks")
+          .select("payload_json, created_at")
+          .eq("connection_id", connectionId)
+          .eq("task_type", "AGORA_HIDE_PRODUCT")
+          .order("created_at", { ascending: false })
+          .limit(1000);
+        const lastTriggerByWine = new Map<string, string>();
+        for (const task of hideTasks || []) {
+          const payload = (task.payload_json || {}) as Record<string, unknown>;
+          const wineId = String(payload._winerim_wine_id || "");
+          if (!wineId || lastTriggerByWine.has(wineId)) continue;
+          lastTriggerByWine.set(wineId, String(payload._trigger_source || ""));
+        }
+
+        const candidates = rows.filter((r: any) => {
+          const wineId = String(r.winerim_wine_id);
+          const format = String(r.format || "").toUpperCase();
+          if (!AUTOMATIC_HIDE_TRIGGERS.has(lastTriggerByWine.get(wineId) || "")) return false;
+          const wine = wineById.get(wineId);
+          if (!wine || wine.is_active === false || wine.pricing_status !== "READY") return false;
+          const formatRow = formatByKey.get(`${wineId}|${format}`);
+          return Boolean(formatRow && formatRow.is_active !== false && Number(formatRow.sale_price) > 0);
+        });
+        if (candidates.length === 0) return restored;
+
+        for (let i = 0; i < candidates.length; i += 100) {
+          const slice = candidates.slice(i, i + 100);
+          const { data: visResult, error: visError } = await supabase.functions.invoke("agora-proxy", {
+            body: {
+              action: "set-product-visibility",
+              connectionId,
+              updates: slice.map((r: any) => ({ productId: String(r.agora_product_id), visible: true })),
+            },
+          });
+          if (visError || !visResult?.success) {
+            console.error(
+              `[winerim-proxy] auto-restore visibility call failed: ${visError?.message || visResult?.error}`,
+            );
+            continue;
+          }
+          // Only tracking rows Agora actually confirmed as visible are restored.
+          const verifiedIds = new Set(
+            ((visResult.verification || []) as any[])
+              .filter((v) => v?.ok === true)
+              .map((v) => String(v.id)),
+          );
+          for (const row of slice) {
+            const productId = String((row as any).agora_product_id);
+            if (!verifiedIds.has(productId)) continue;
+            await supabase
+              .from("winerim_push_tracking")
+              .update({ sync_status: "VERIFIED", last_error: null, verified_at: new Date().toISOString() })
+              .eq("connection_id", connectionId)
+              .eq("winerim_wine_id", String((row as any).winerim_wine_id))
+              .eq("format", String((row as any).format));
+            restored.push({
+              winerimId: String((row as any).winerim_wine_id),
+              format: String((row as any).format),
+              productId,
+            });
+          }
+        }
+
+        if (restored.length > 0) {
+          console.log(`[winerim-proxy] auto-restore: ${restored.length} auto-hidden product(s) made visible again`);
+        }
+        return restored;
+      };
+
+      let listWalkComplete = true;
+      let listWalkIncompleteReason: string | null = null;
+      let reconciliationSkippedReason: string | null = null;
       let listWinesFetched = 0;
       let listWinesUpserted = 0;
       let totalWines = 0;
@@ -681,9 +832,18 @@ serve(async (req) => {
       };
 
       if (mode === "start") {
-        const wines = await fetchAllWines(winerimHeaders);
+        const listWalk = await fetchAllWines(winerimHeaders);
+        const wines = listWalk.wines;
+        listWalkComplete = listWalk.complete;
+        listWalkIncompleteReason = listWalk.incompleteReason;
         listWinesFetched = wines.length;
         totalWines = wines.length;
+        if (!listWalkComplete) {
+          console.warn(
+            `[winerim-proxy] catalog list walk INCOMPLETE (${listWalkIncompleteReason}) — ` +
+            `deletion reconciliation and auto-hide are skipped this cycle`,
+          );
+        }
         // Pre-upsert snapshot: the only valid "previous" state for this cycle.
         preUpsertRows = await loadExistingWineRows(
           wines.map((w) => String(w.id || "")).filter(Boolean),
@@ -780,17 +940,41 @@ serve(async (req) => {
         // ── RECONCILIATION: detect wines deleted from Winerim ──
         // Any wine in our DB (still is_active=true) that no longer appears in /wines
         // was deleted in Winerim → mark inactive and queue HIDE for Agora.
+        // FAIL-CLOSED: never run this off a truncated list walk, and never let a
+        // single cycle deactivate a large slice of a live catalog — both patterns
+        // mean "we read badly", not "the restaurant deleted its wine list".
         const fetchedIds = new Set<string>(wines.map((w: any) => String(w.id || "")).filter(Boolean));
         const { data: dbActiveWines } = await supabase
           .from("winerim_wines")
           .select("winerim_id")
           .eq("connection_id", connectionId)
           .eq("is_active", true);
+        const activeWineCount = (dbActiveWines || []).length;
         const missingFromWinerim = (dbActiveWines || [])
           .map((r: any) => String(r.winerim_id))
           .filter((id: string) => id && !fetchedIds.has(id));
 
-        if (missingFromWinerim.length > 0) {
+        const MASS_DEACTIVATION_RATIO = 0.2;
+        const MASS_DEACTIVATION_FLOOR = 10;
+        const massDeactivation = activeWineCount > 0 &&
+          missingFromWinerim.length >= MASS_DEACTIVATION_FLOOR &&
+          missingFromWinerim.length > activeWineCount * MASS_DEACTIVATION_RATIO;
+
+        if (!listWalkComplete) {
+          reconciliationSkippedReason = `incomplete_list_walk:${listWalkIncompleteReason}`;
+        } else if (wines.length === 0) {
+          reconciliationSkippedReason = "empty_list_response";
+        } else if (massDeactivation) {
+          reconciliationSkippedReason =
+            `mass_deactivation_guard:${missingFromWinerim.length}_of_${activeWineCount}`;
+        }
+
+        if (missingFromWinerim.length > 0 && reconciliationSkippedReason) {
+          console.warn(
+            `[winerim-proxy] reconciliation SKIPPED (${reconciliationSkippedReason}) — ` +
+            `${missingFromWinerim.length} wine(s) left untouched, nothing hidden in Agora`,
+          );
+        } else if (missingFromWinerim.length > 0) {
           console.log(`[winerim-proxy] reconciliation: ${missingFromWinerim.length} wines deleted in Winerim → marking inactive`);
           await supabase
             .from("winerim_wines")
@@ -812,6 +996,16 @@ serve(async (req) => {
             console.error("[winerim-proxy] reconciliation auto-hide failed:", e);
           }
         }
+
+        // ── AUTO-RESTORE: a wine that came back with a live price must come back
+        // to the POS on its own. Only tracking rows hidden by an AUTOMATIC trigger
+        // are restored; deliberate retirements stay hidden.
+        try {
+          restoredVisibility = await restoreAutoHiddenWines(fetchedIds);
+        } catch (e) {
+          console.error("[winerim-proxy] auto-restore of hidden wines failed:", e);
+        }
+
 
         const allListedIds = wines.map((w) => String(w.id || "")).filter(Boolean);
         const listPage = allListedIds.slice(detailOffset, detailOffset + detailBatchSize);
@@ -1136,6 +1330,10 @@ serve(async (req) => {
           remainingDetails,
           nextDetailOffset: complete ? null : processedDetails,
           complete,
+          listWalkComplete,
+          listWalkIncompleteReason,
+          reconciliationSkippedReason,
+          restoredVisibility,
           enrichmentCompletedAt,
           detailRequestsAttempted: detailsResult.attempted,
           detailRequestsSucceeded: detailsResult.succeeded,

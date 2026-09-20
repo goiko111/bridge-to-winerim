@@ -1,0 +1,93 @@
+[
+    {
+        "Id": "786137",
+        "Name": "B Mahaia",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "B Mahaia",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "1164907",
+        "Name": "M Costalara",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "904289",
+        "ButtonText": "M Costalara",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "5180925",
+        "Name": "MB Figuero Crianza",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "MB Figuero Crianza",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "5180967",
+        "Name": "MB Muga Crianza",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "MB Muga Crianza",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "5181022",
+        "Name": "MB Abadía Retuerta Selección Especial",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "MB Abadía Retuerta S",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "6180931",
+        "Name": "BP Emilio Moro 500ml",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "BP Emilio Moro 500ml",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    },
+    {
+        "Id": "6180966",
+        "Name": "BP Luis Cañas",
+        "Color": "#8B0000",
+        "Order": "1",
+        "VatId": "3",
+        "FamilyId": "900157",
+        "ButtonText": "BP Luis Cañas",
+        "SaleableAsMain": "false",
+        "UseAsDirectSale": "false",
+        "PreparationTypeId": "",
+        "PreparationOrderId": ""
+    }
+]
