@@ -743,7 +743,13 @@ serve(async (req) => {
             body: {
               action: "set-product-visibility",
               connectionId,
-              updates: slice.map((r: any) => ({ productId: String(r.agora_product_id), visible: true })),
+              // Restore the product inside its existing Agora family without
+              // exposing it as a direct-sale button on the main screen.
+              updates: slice.map((r: any) => ({
+                productId: String(r.agora_product_id),
+                useAsDirectSale: false,
+                saleableAsMain: true,
+              })),
             },
           });
           if (visError || !visResult?.success) {

@@ -25,4 +25,7 @@
 - [x] Paso 3a: winerim-proxy ya no desactiva ni oculta con una lectura truncada/vacía/masiva y re-muestra solo lo oculto automáticamente cuando el precio vuelve
 - [x] Paso 3b: el evaluador automático ya carga precios de media botella/botella pequeña/benjamín (antes los leía como "sin precio" y los ocultaba)
 - [x] 4 órdenes de ocultación erróneas bloqueadas y visibilidad restaurada (5 formatos)
+- [x] 20/09: retirada la venta directa de los vinos restaurados, conservando sus familias (7 restaurantes verificados; Qtomas pendiente por timeout)
+- [x] 20/09: corregido el auto-restaurado para volver siempre a la familia existente, nunca a la pantalla principal
+- [ ] Qtomas: verificar/reaplicar retirada de venta directa cuando responda el TPV (dos intentos agotaron tiempo)
 - [ ] Costalara magnum sigue oculto a propósito (retirada controlada, sin precio)

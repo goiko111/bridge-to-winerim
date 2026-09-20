@@ -7104,3 +7104,17 @@ _Última actualización: 2026-09-08 04:55 UTC_
 
 ### Tareas pendientes inmediatas
 - Diagnosticar el conflicto de renombrado de `2369277` y la ausencia fresh de la copa `3369277`, sin tocar precios, ventas ni stock.
+
+## 2026-09-20 18:06 UTC - Restaurados fuera de pantalla principal
+
+### Hechos
+- Los productos restaurados habían conservado su `FamilyId`, pero el atajo de visibilidad activó también `UseAsDirectSale` y los expuso en la pantalla principal.
+- Se corrigieron y verificaron `29` productos en Taberna de Elia, Casa Nene, Don Bernardo Santander, El Higuerón, El Portón de Sorni, Cienvinos Écija y Sa Vida: `UseAsDirectSale=false`, `SaleableAsMain=true`, familia intacta.
+- Qtomas no respondió en dos intentos acotados; sus `14` productos quedan pendientes de verificación/corrección.
+- No se tocaron precios, stock, ventas ni familias.
+
+### Decisiones
+- Toda restauración automática debe conservar la familia y usar siempre flags explícitos: nunca el atajo `visible=true`.
+
+### Tareas pendientes inmediatas
+- Corregir y verificar Qtomas cuando vuelva a responder, sin más reintentos en esta pasada.

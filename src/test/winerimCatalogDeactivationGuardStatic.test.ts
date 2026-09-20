@@ -32,4 +32,10 @@ describe("Winerim catalog list walk: no deactivation from a bad read", () => {
     expect(source).toContain("(v) => v?.ok === true");
     expect(source).toContain('sync_status: "VERIFIED"');
   });
+
+  it("restores products inside their existing family, never as main-screen direct sales", () => {
+    expect(source).toContain("useAsDirectSale: false");
+    expect(source).toContain("saleableAsMain: true");
+    expect(source).not.toContain("productId: String(r.agora_product_id), visible: true");
+  });
 });
