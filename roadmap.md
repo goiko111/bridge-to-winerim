@@ -17,3 +17,12 @@
 - [ ] Decidir sobre doble registro en Winerim (109 uds) y exceso 17–18/09 Cienvinos
 - [ ] Luruna: mapeo de productos incompleto + bucle de reintentos con stock 0 (360 FAILED)
 - [ ] Confirmar con los restaurantes si regularizaron existencias (stock previo DESCONOCIDO)
+
+## Taberna de Elia — vinos activos que no aparecían en el TPV (Mahaia y más) — 2026-09-20
+- [x] Diagnóstico: ocultación automática por error momentáneo de lectura de precio, sin reactivación
+- [x] Paso 1: 6 vinos con precio vivo vueltos a mostrar y verificados en el TPV
+- [x] Paso 2: los 21 vinos "con error" son 404 reales en Winerim (borrados en esa cuenta): el ocultado fue correcto
+- [x] Paso 3a: winerim-proxy ya no desactiva ni oculta con una lectura truncada/vacía/masiva y re-muestra solo lo oculto automáticamente cuando el precio vuelve
+- [x] Paso 3b: el evaluador automático ya carga precios de media botella/botella pequeña/benjamín (antes los leía como "sin precio" y los ocultaba)
+- [x] 4 órdenes de ocultación erróneas bloqueadas y visibilidad restaurada (5 formatos)
+- [ ] Costalara magnum sigue oculto a propósito (retirada controlada, sin precio)
