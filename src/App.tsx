@@ -21,6 +21,7 @@ import TouchBistroWizard from "./pages/TouchBistroWizard";
 import ToastWizard from "./pages/ToastWizard";
 import NumierWizard from "./pages/NumierWizard";
 import SyncMonitor from "./pages/SyncMonitor";
+import QtomasRevision from "./pages/QtomasRevision";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
 import SettingsPage from "./pages/Settings";
@@ -53,6 +54,7 @@ const App = () => (
             <Route path="/integrations/toast" element={<ToastWizard />} />
             <Route path="/integrations/numier" element={<NumierWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
+            <Route path="/qtomas-revision" element={<QtomasRevision />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
             <Route path="/settings" element={<SettingsPage />} />

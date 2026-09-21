@@ -10,6 +10,7 @@ import {
   Settings,
   ChevronLeft,
   Wine,
+  ClipboardList,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/integrations", icon: Plug, label: "Integrations" },
   { to: "/sync-monitor", icon: Activity, label: "Sync Monitor" },
   { to: "/alerts", icon: Bell, label: "Alerts", badgeKey: "alerts" },
+  { to: "/qtomas-revision", icon: ClipboardList, label: "Revisión Qtomas" },
   { to: "/docs", icon: FileText, label: "Documentation" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
