@@ -904,6 +904,62 @@ export type Database = {
           },
         ]
       }
+      qtomas_review_decisions: {
+        Row: {
+          connection_id: string
+          created_at: string
+          decision_status: string
+          family: string | null
+          format_type: string
+          id: string
+          note: string | null
+          provider_product_id: string
+          provider_product_name: string
+          selected_winerim_id: string | null
+          selected_winerim_name: string | null
+          units_30d: number
+          updated_at: string
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          decision_status?: string
+          family?: string | null
+          format_type?: string
+          id?: string
+          note?: string | null
+          provider_product_id: string
+          provider_product_name?: string
+          selected_winerim_id?: string | null
+          selected_winerim_name?: string | null
+          units_30d?: number
+          updated_at?: string
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          decision_status?: string
+          family?: string | null
+          format_type?: string
+          id?: string
+          note?: string | null
+          provider_product_id?: string
+          provider_product_name?: string
+          selected_winerim_id?: string | null
+          selected_winerim_name?: string | null
+          units_30d?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "qtomas_review_decisions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sales_events: {
         Row: {
           business_day: string
