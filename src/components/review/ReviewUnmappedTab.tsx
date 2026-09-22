@@ -320,6 +320,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     ready: rows.filter((row) => row.decision_status === "READY_FOR_APPROVAL").length,
     no_match: rows.filter((row) => row.decision_status === "NO_MATCH").length,
     needs_confirmation: rows.filter((row) => row.decision_status === "NEEDS_CONFIRMATION").length,
+    applied: rows.filter((row) => row.decision_status === "APPLIED").length,
     sin_dato: rows.filter((row) => row.format_key === "SIN_DATO").length,
   }), [rows]);
 
@@ -328,10 +329,17 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     { label: "Unidades conocidas", value: counters.units },
     { label: DECISION_STATUS_LABELS.DRAFT, value: counters.draft },
     { label: DECISION_STATUS_LABELS.READY_FOR_APPROVAL, value: counters.ready },
+    { label: DECISION_STATUS_LABELS.APPLIED, value: counters.applied },
     { label: DECISION_STATUS_LABELS.NO_MATCH, value: counters.no_match },
     { label: DECISION_STATUS_LABELS.NEEDS_CONFIRMATION, value: counters.needs_confirmation },
     { label: "Sin dato de formato", value: counters.sin_dato },
   ];
+
+  const readyRows = useMemo(() => rows.filter((row) => canApplyDecision(row)), [rows]);
+  const selectedReadyRows = useMemo(
+    () => readyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
+    [readyRows, selected],
+  );
 
   const families = useMemo(() => {
     const counts = new Map<string, number>();
