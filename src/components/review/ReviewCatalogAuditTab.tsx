@@ -17,6 +17,7 @@ import {
   formatLatency,
   formatNumber,
 } from "@/lib/catalogReview";
+import ReviewAgoraCoverageTable from "./ReviewAgoraCoverageTable";
 
 type AuditRow = {
   winerim_id: string;
@@ -64,6 +65,9 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
   const [search, setSearch] = useState<string>(stored.search ?? "");
   const [status, setStatus] = useState<string>(stored.status ?? "");
   const [format, setFormat] = useState<string>(stored.format ?? "");
+  const [direction, setDirection] = useState<"winerim" | "agora">(
+    stored.direction === "agora" ? "agora" : "winerim",
+  );
   const [debounced, setDebounced] = useState(search);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<AuditRow[]>([]);
@@ -74,8 +78,8 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_KEY, JSON.stringify({ search, status, format }));
-  }, [search, status, format]);
+    localStorage.setItem(FILTER_KEY, JSON.stringify({ search, status, format, direction }));
+  }, [search, status, format, direction]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -87,6 +91,10 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
 
   const load = useCallback(async () => {
     if (!connectionId) return;
+    if (direction === "agora") {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     const [listRes, summaryRes] = await Promise.all([
@@ -115,7 +123,7 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
     }
     if (!summaryRes.error) setSummary(((summaryRes.data ?? [])[0] ?? null) as Summary | null);
     setLoading(false);
-  }, [connectionId, debounced, status, format, page]);
+  }, [connectionId, debounced, status, format, page, direction]);
 
   useEffect(() => {
     load();
@@ -212,6 +220,37 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
         </Button>
       </Card>
 
+      <Card className="flex flex-wrap items-center gap-2 p-3 text-xs">
+        <span className="text-muted-foreground">Dirección de la comparación:</span>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant={direction === "winerim" ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setDirection("winerim")}
+          >
+            Winerim → Ágora
+          </Button>
+          <Button
+            size="sm"
+            variant={direction === "agora" ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setDirection("agora")}
+          >
+            Ágora → Winerim
+          </Button>
+        </div>
+        <span className="text-muted-foreground">
+          {direction === "winerim"
+            ? "Cada variante activa de Winerim y si está en Ágora, con qué precio y en qué familia."
+            : "Cada producto de vino del catálogo de Ágora y si tiene vino de Winerim asociado."}
+        </span>
+      </Card>
+
+      {direction === "agora" ? (
+        <ReviewAgoraCoverageTable connectionId={connectionId} />
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
         {summaryChips.map((c) => (
           <Card key={c.label} className="p-3">
@@ -392,6 +431,8 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
           </Button>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

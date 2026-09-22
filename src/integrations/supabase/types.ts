@@ -1748,6 +1748,48 @@ export type Database = {
         Returns: boolean
       }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
+      review_agora_coverage: {
+        Args: {
+          p_connection_id: string
+          p_format?: string
+          p_limit?: number
+          p_offset?: number
+          p_search?: string
+          p_status?: string
+        }
+        Returns: {
+          agora_price: number
+          agora_saleable: boolean
+          agora_visible: boolean
+          comparison: string
+          coverage_status: string
+          family: string
+          format_key: string
+          link_source: string
+          linked_winerim_id: string
+          linked_winerim_name: string
+          name: string
+          next_action: string
+          provider_product_id: string
+          sale_format: string
+          total_count: number
+          winerim_active: boolean
+          winerim_price: number
+        }[]
+      }
+      review_agora_coverage_summary: {
+        Args: { p_connection_id: string }
+        Returns: {
+          agora_wine_products: number
+          identity_blocked: number
+          linked_no_price_ref: number
+          linked_ok: number
+          linked_price_mismatch: number
+          linked_wine_inactive: number
+          linked_wine_missing: number
+          not_in_winerim: number
+        }[]
+      }
       review_catalog_audit: {
         Args: {
           p_connection_id: string
