@@ -91,6 +91,10 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
 
   const load = useCallback(async () => {
     if (!connectionId) return;
+    if (direction === "agora") {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     const [listRes, summaryRes] = await Promise.all([
