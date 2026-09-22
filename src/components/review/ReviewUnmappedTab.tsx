@@ -509,6 +509,21 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
             return (
               <div key={key} className="p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-primary"
+                    aria-label={`Seleccionar ${row.provider_product_name}`}
+                    disabled={!canApplyDecision(row) || approving}
+                    checked={selected.has(key)}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(key);
+                        else next.delete(key);
+                        return next;
+                      })
+                    }
+                  />
                   <span className="font-mono text-[11px] text-muted-foreground">#{row.provider_product_id}</span>
                   <span className="font-medium">{row.provider_product_name}</span>
                   {row.legacy && <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">LEGACY</Badge>}
@@ -531,6 +546,16 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <ChevronDown className={`h-3.5 w-3.5 ${expanded === key ? "rotate-180" : ""}`} />
                     Decidir
                   </Button>
+                  {canApplyDecision(row) && (
+                    <Button
+                      size="sm"
+                      className="h-7 gap-1 text-[11px]"
+                      disabled={approving}
+                      onClick={() => approveRows([row])}
+                    >
+                      <Check className="h-3.5 w-3.5" /> Aprobar
+                    </Button>
+                  )}
                 </div>
 
                 <div className="mt-1 text-[11px] text-muted-foreground">
