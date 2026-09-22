@@ -146,3 +146,39 @@ describe("CSV", () => {
     expect(csv.split("\n")[1]).toBe('"x,y",PRICE_MISMATCH|HIDDEN,');
   });
 });
+
+describe("aprobación de decisiones", () => {
+  const base = {
+    provider_product_id: "123",
+    provider_product_name: "Pago de Carraovejas",
+    format_key: "BOTTLE",
+    decision_status: "READY_FOR_APPROVAL",
+    selected_winerim_id: "61109",
+    selected_winerim_name: "Pago de Carraovejas 2021",
+    selected_format_key: "BOTTLE",
+  };
+
+  it("solo aprueba decisiones listas con variante compatible", () => {
+    expect(canApplyDecision(base)).toBe(true);
+    expect(canApplyDecision({ ...base, decision_status: "DRAFT" })).toBe(false);
+    expect(canApplyDecision({ ...base, selected_format_key: "GLASS" })).toBe(false);
+    expect(canApplyDecision({ ...base, format_key: "SIN_DATO" })).toBe(false);
+    expect(canApplyDecision({ ...base, selected_winerim_id: null })).toBe(false);
+  });
+
+  it("construye un mapa CONFIRMED con el formato exacto", () => {
+    const payload = buildMappingPayload("conn-1", base);
+    expect(payload).toMatchObject({
+      connection_id: "conn-1",
+      provider_product_id: "123",
+      winerim_wine_id: "61109",
+      format_type: "BOTTLE",
+      status: "CONFIRMED",
+      match_method: "MANUAL_REVIEW",
+    });
+  });
+
+  it("no construye mapa si la decisión no es aprobable", () => {
+    expect(() => buildMappingPayload("conn-1", { ...base, selected_format_key: "GLASS" })).toThrow();
+  });
+});
