@@ -32,7 +32,20 @@ type Props = {
   connectionId: string;
   agoraFormatKey: string;
   onSelect: (variant: VariantRow) => void;
+  /** Agora product name used to prefill the search box. */
+  initialQuery?: string;
 };
+
+/** Strips POS format prefixes/suffixes so the Agora name searches well in Winerim. */
+export function cleanAgoraNameForSearch(name: string | null | undefined): string {
+  if (!name) return "";
+  let out = name.replace(/[_/|]+/g, " ").replace(/\s+/g, " ").trim();
+  const words =
+    "copa|copas|media copa|media botella|1\\/2 botella|botella|bot|btl|magnum|doble magnum|benjamin|benjamín|vino|cava|champagne|glass|b";
+  out = out.replace(new RegExp(`^(?:(?:${words})\\.?\\s+)+`, "i"), "");
+  out = out.replace(new RegExp(`\\s+(?:${words})\\.?$`, "i"), "");
+  return out.trim() || name.trim();
+}
 
 /**
  * Server-side search over ALL active Winerim wines of the connection.
