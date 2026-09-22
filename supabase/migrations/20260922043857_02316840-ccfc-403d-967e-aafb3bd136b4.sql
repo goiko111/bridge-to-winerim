@@ -1,0 +1,10 @@
+REVOKE ALL ON public.catalog_review_decisions FROM anon;
+REVOKE ALL ON public.catalog_readback_snapshots FROM anon;
+REVOKE ALL ON public.review_winerim_variants FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_unmapped_products(uuid, text, text, text, text, integer, integer, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_unmapped_counters(uuid, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_unmapped_families(uuid, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_search_winerim_variants(uuid, text, text, integer, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_legacy_products(uuid, text, text, integer, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_catalog_audit(uuid, text, text, text, integer, integer, integer) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.review_catalog_audit_summary(uuid, integer) FROM anon;
