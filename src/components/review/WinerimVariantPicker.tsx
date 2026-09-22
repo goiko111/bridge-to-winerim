@@ -121,6 +121,17 @@ export default function WinerimVariantPicker({
     return [...map.values()];
   }, [rows]);
 
+  // Preselect when the Agora name resolves to exactly one wine with one variant.
+  const autoDone = useRef(false);
+  useEffect(() => {
+    if (!autoSelect || autoDone.current || loading) return;
+    if (grouped.length !== 1 || grouped[0].variants.length !== 1 || total !== 1) return;
+    const only = grouped[0].variants[0];
+    if (!isVariantSelectable(agoraFormatKey, only.format_key)) return;
+    autoDone.current = true;
+    onSelect(only, { soleVariant: true, auto: true });
+  }, [autoSelect, loading, grouped, total, agoraFormatKey, onSelect]);
+
   return (
     <div className="space-y-2">
       <Input
