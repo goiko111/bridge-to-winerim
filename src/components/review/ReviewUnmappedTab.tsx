@@ -580,6 +580,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                       connectionId={connectionId}
                       agoraFormatKey={row.format_key}
                       initialQuery={row.provider_product_name}
+                      autoSelect={!row.selected_winerim_id}
                       onSelect={onSelectVariant(row)}
                     />
                     <div className="space-y-2">
