@@ -164,8 +164,21 @@ describe("aprobación de decisiones", () => {
     expect(canApplyDecision(base)).toBe(true);
     expect(canApplyDecision({ ...base, decision_status: "DRAFT" })).toBe(false);
     expect(canApplyDecision({ ...base, selected_format_key: "GLASS" })).toBe(false);
-    expect(canApplyDecision({ ...base, format_key: "SIN_DATO" })).toBe(false);
     expect(canApplyDecision({ ...base, selected_winerim_id: null })).toBe(false);
+    expect(canApplyDecision({ ...base, format_key: "SIN_DATO", selected_format_key: null })).toBe(false);
+  });
+
+  it("aprueba formato desconocido del TPV cuando el vino tiene una sola variante", () => {
+    // Guardar READY_FOR_APPROVAL con SIN_DATO solo se permite si la variante era única.
+    expect(canApplyDecision({ ...base, format_key: "SIN_DATO" })).toBe(true);
+    expect(
+      canApproveDecision({
+        agoraFormatKey: "SIN_DATO",
+        selectedWinerimId: "61109",
+        selectedFormatKey: "BOTTLE",
+        soleVariant: false,
+      }),
+    ).toBe(false);
   });
 
   it("construye un mapa CONFIRMED con el formato exacto", () => {
