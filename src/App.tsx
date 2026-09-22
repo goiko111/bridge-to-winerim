@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
 import Layout from "@/components/Layout";
 import AuthGate from "@/components/AuthGate";
 import Index from "./pages/Index";
@@ -21,7 +21,6 @@ import TouchBistroWizard from "./pages/TouchBistroWizard";
 import ToastWizard from "./pages/ToastWizard";
 import NumierWizard from "./pages/NumierWizard";
 import SyncMonitor from "./pages/SyncMonitor";
-import QtomasRevision from "./pages/QtomasRevision";
 import Revision from "./pages/Revision";
 import OperationsAudit from "./pages/OperationsAudit";
 import Alerts from "./pages/Alerts";
@@ -56,7 +55,7 @@ const App = () => (
             <Route path="/integrations/toast" element={<ToastWizard />} />
             <Route path="/integrations/numier" element={<NumierWizard />} />
             <Route path="/sync-monitor" element={<SyncMonitor />} />
-            <Route path="/qtomas-revision" element={<QtomasRevision />} />
+            <Route path="/qtomas-revision" element={<Navigate to="/revision?connection=57e8acbe-5b5f-433c-a0c6-e760c211acd3&tab=unmapped" replace />} />
             <Route path="/revision" element={<Revision />} />
             <Route path="/operations" element={<OperationsAudit />} />
             <Route path="/alerts" element={<Alerts />} />

@@ -3,16 +3,19 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Info, Loader2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { useReviewConnections } from "@/hooks/useReviewConnections";
 import ReviewUnmappedTab from "@/components/review/ReviewUnmappedTab";
 import ReviewLegacyTab from "@/components/review/ReviewLegacyTab";
 import ReviewCatalogAuditTab from "@/components/review/ReviewCatalogAuditTab";
 import { formatDateTime } from "@/lib/catalogReview";
+import { unmappedFilterKey } from "@/lib/reviewUnmapped";
 
 const TAB_KEY = "review.tab";
 
 export default function Revision() {
   const { connections, connection, connectionId, setConnectionId, loading, error } = useReviewConnections();
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<string>(() => localStorage.getItem(TAB_KEY) ?? "unmapped");
   const [unmappedSeed, setUnmappedSeed] = useState(0);
 
@@ -20,9 +23,18 @@ export default function Revision() {
     localStorage.setItem(TAB_KEY, tab);
   }, [tab]);
 
+  useEffect(() => {
+    const requestedConnection = searchParams.get("connection");
+    if (requestedConnection && connections.some((row) => row.id === requestedConnection)) {
+      setConnectionId(requestedConnection);
+    }
+    const requestedTab = searchParams.get("tab");
+    if (requestedTab && ["unmapped", "legacy", "audit"].includes(requestedTab)) setTab(requestedTab);
+  }, [connections, searchParams, setConnectionId]);
+
   const openInReview = (search: string) => {
     localStorage.setItem(
-      "review.unmapped.filters",
+      unmappedFilterKey(connectionId),
       JSON.stringify({ search, family: "", format: "", status: "", days: 30 }),
     );
     setUnmappedSeed((s) => s + 1);
@@ -75,7 +87,8 @@ export default function Revision() {
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
         <span>
           Los valores desconocidos se muestran como «Desconocido» o «—»: nunca se convierten en cero, falso ni éxito.
-          Legacy se muestra separado y no se oculta ni se remapea automáticamente.
+          Legacy es una procedencia, no un estado excluyente: si no tiene mapping confirmado aparece también en «Sin mapear»
+          con su distintivo. Nunca se oculta ni se remapea automáticamente.
         </span>
       </Card>
 

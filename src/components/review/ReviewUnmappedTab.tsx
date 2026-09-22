@@ -17,28 +17,17 @@ import {
   formatLabel,
   formatNumber,
 } from "@/lib/catalogReview";
-
-type UnmappedRow = {
-  provider_product_id: string;
-  provider_product_name: string;
-  family: string | null;
-  sale_format: string;
-  format_key: string;
-  units: number | null;
-  line_count: number | null;
-  last_sale_at: string | null;
-  agora_price: number | null;
-  decision_status: string;
-  selected_winerim_id: string | null;
-  selected_winerim_name: string | null;
-  selected_format_key: string | null;
-  note: string | null;
-  decided_at: string | null;
-  total_count: number;
-};
+import {
+  mergeUnmappedReviewRows,
+  unmappedFilterKey,
+  type LegacyReviewRow,
+  type QtomasDecision,
+  type ReviewDecision,
+  type UnmappedReviewRow,
+} from "@/lib/reviewUnmapped";
 
 const PAGE_SIZE = 25;
-const FILTER_KEY = "review.unmapped.filters";
+const RPC_PAGE_SIZE = 1000;
 
 type Filters = {
   search: string;
@@ -50,8 +39,47 @@ type Filters = {
 
 const DEFAULT_FILTERS: Filters = { search: "", family: "", format: "", status: "", days: 30 };
 
+async function loadAllUnmapped(connectionId: string, days: number) {
+  const rows: Omit<UnmappedReviewRow, "legacy" | "legacy_state">[] = [];
+  for (let offset = 0; ; offset += RPC_PAGE_SIZE) {
+    const { data, error } = await supabase.rpc("review_unmapped_products", {
+      p_connection_id: connectionId,
+      p_search: null,
+      p_family: null,
+      p_format: null,
+      p_status: null,
+      p_days: days,
+      p_limit: RPC_PAGE_SIZE,
+      p_offset: offset,
+    });
+    if (error) throw error;
+    const page = (data ?? []) as Omit<UnmappedReviewRow, "legacy" | "legacy_state">[];
+    rows.push(...page);
+    const total = Number((page[0] as { total_count?: number } | undefined)?.total_count ?? rows.length);
+    if (page.length < RPC_PAGE_SIZE || rows.length >= total) return rows;
+  }
+}
+
+async function loadAllLegacy(connectionId: string) {
+  const rows: LegacyReviewRow[] = [];
+  for (let offset = 0; ; offset += RPC_PAGE_SIZE) {
+    const { data, error } = await supabase.rpc("review_legacy_products", {
+      p_connection_id: connectionId,
+      p_search: null,
+      p_state: null,
+      p_limit: RPC_PAGE_SIZE,
+      p_offset: offset,
+    });
+    if (error) throw error;
+    const page = (data ?? []) as (LegacyReviewRow & { total_count?: number })[];
+    rows.push(...page);
+    const total = Number(page[0]?.total_count ?? rows.length);
+    if (page.length < RPC_PAGE_SIZE || rows.length >= total) return rows;
+  }
+}
+
 export default function ReviewUnmappedTab({ connectionId }: { connectionId: string }) {
-  const filterKey = `${FILTER_KEY}.${connectionId}`;
+  const filterKey = unmappedFilterKey(connectionId);
   const [filters, setFilters] = useState<Filters>(() => {
     try {
       const raw = localStorage.getItem(filterKey);
@@ -62,10 +90,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   });
   const [debouncedSearch, setDebouncedSearch] = useState(filters.search);
   const [page, setPage] = useState(0);
-  const [rows, setRows] = useState<UnmappedRow[]>([]);
-  const [total, setTotal] = useState(0);
-  const [counters, setCounters] = useState<Record<string, number> | null>(null);
-  const [families, setFamilies] = useState<{ family: string; rows_count: number }[]>([]);
+  const [rows, setRows] = useState<UnmappedReviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -87,49 +112,40 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     if (!connectionId) return;
     setLoading(true);
     setError(null);
-    const args = {
-      p_connection_id: connectionId,
-      p_search: debouncedSearch || null,
-      p_family: filters.family || null,
-      p_format: filters.format || null,
-      p_status: filters.status || null,
-      p_days: filters.days,
-    };
-    const [listRes, countersRes, familiesRes] = await Promise.all([
-      supabase.rpc("review_unmapped_products", {
-        ...args,
-        p_limit: PAGE_SIZE,
-        p_offset: page * PAGE_SIZE,
-      }),
-      supabase.rpc("review_unmapped_counters", {
-        p_connection_id: connectionId,
-        p_days: filters.days,
-      }),
-      supabase.rpc("review_unmapped_families", {
-        p_connection_id: connectionId,
-        p_days: filters.days,
-      }),
-    ]);
-    if (listRes.error) {
-      setError(listRes.error.message);
+    try {
+      const [activity, legacy, decisionsResult, qtomasResult] = await Promise.all([
+        loadAllUnmapped(connectionId, filters.days),
+        loadAllLegacy(connectionId),
+        supabase
+          .from("catalog_review_decisions")
+          .select("provider_product_id,sale_format,status,selected_winerim_id,selected_winerim_name,selected_format_key,note,decided_at")
+          .eq("connection_id", connectionId),
+        supabase
+          .from("qtomas_review_decisions")
+          .select("provider_product_id,format_type,decision_status,selected_winerim_id,selected_winerim_name,note,updated_at")
+          .eq("connection_id", connectionId),
+      ]);
+      if (decisionsResult.error) throw decisionsResult.error;
+      if (qtomasResult.error) throw qtomasResult.error;
+      setRows(mergeUnmappedReviewRows({
+        activity,
+        legacy,
+        decisions: (decisionsResult.data ?? []) as ReviewDecision[],
+        qtomasDecisions: (qtomasResult.data ?? []) as QtomasDecision[],
+      }));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "No se pudieron leer las referencias pendientes.");
       setRows([]);
-      setTotal(0);
-    } else {
-      const list = (listRes.data ?? []) as UnmappedRow[];
-      setRows(list);
-      setTotal(list.length ? Number(list[0].total_count) : 0);
     }
-    if (!countersRes.error) setCounters(((countersRes.data ?? [])[0] ?? null) as any);
-    if (!familiesRes.error) setFamilies((familiesRes.data ?? []) as any);
     setLoading(false);
-  }, [connectionId, debouncedSearch, filters.family, filters.format, filters.status, filters.days, page]);
+  }, [connectionId, filters.days]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const saveDecision = async (
-    row: UnmappedRow,
+    row: UnmappedReviewRow,
     patch: {
       status: DecisionStatus;
       winerimId?: string | null;
@@ -188,7 +204,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     });
   };
 
-  const onSelectVariant = (row: UnmappedRow) => (variant: VariantRow) => {
+  const onSelectVariant = (row: UnmappedReviewRow) => (variant: VariantRow) => {
     const approvable = canApproveDecision({
       agoraFormatKey: row.format_key,
       selectedWinerimId: variant.winerim_id,
@@ -207,7 +223,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   const exportCsv = () =>
     downloadCsv(
       `revision-sin-mapear-${connectionId}.csv`,
-      rows.map((r) => ({
+      filteredRows.map((r) => ({
         provider_product_id: r.provider_product_id,
         producto_agora: r.provider_product_name,
         familia: r.family ?? "",
@@ -224,24 +240,53 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         winerim_formato: r.selected_format_key ?? "",
         nota: r.note ?? "",
         decidido_en: r.decided_at ?? "",
+        origen: r.legacy ? "LEGACY" : "ACTIVIDAD",
       })),
     );
 
-  const counterChips = useMemo(
-    () =>
-      counters
-        ? [
-            { label: "Referencias", value: counters.total },
-            { label: "Unidades", value: counters.units },
-            { label: DECISION_STATUS_LABELS.DRAFT, value: counters.draft },
-            { label: DECISION_STATUS_LABELS.READY_FOR_APPROVAL, value: counters.ready },
-            { label: DECISION_STATUS_LABELS.NO_MATCH, value: counters.no_match },
-            { label: DECISION_STATUS_LABELS.NEEDS_CONFIRMATION, value: counters.needs_confirmation },
-            { label: "Sin dato de formato", value: counters.sin_dato },
-          ]
-        : [],
-    [counters],
-  );
+  const counters = useMemo(() => ({
+    total: rows.length,
+    units: rows.reduce((sum, row) => sum + (row.units ?? 0), 0),
+    draft: rows.filter((row) => row.decision_status === "DRAFT").length,
+    ready: rows.filter((row) => row.decision_status === "READY_FOR_APPROVAL").length,
+    no_match: rows.filter((row) => row.decision_status === "NO_MATCH").length,
+    needs_confirmation: rows.filter((row) => row.decision_status === "NEEDS_CONFIRMATION").length,
+    sin_dato: rows.filter((row) => row.format_key === "SIN_DATO").length,
+  }), [rows]);
+
+  const counterChips = [
+    { label: "Referencias", value: counters.total },
+    { label: "Unidades conocidas", value: counters.units },
+    { label: DECISION_STATUS_LABELS.DRAFT, value: counters.draft },
+    { label: DECISION_STATUS_LABELS.READY_FOR_APPROVAL, value: counters.ready },
+    { label: DECISION_STATUS_LABELS.NO_MATCH, value: counters.no_match },
+    { label: DECISION_STATUS_LABELS.NEEDS_CONFIRMATION, value: counters.needs_confirmation },
+    { label: "Sin dato de formato", value: counters.sin_dato },
+  ];
+
+  const families = useMemo(() => {
+    const counts = new Map<string, number>();
+    rows.forEach((row) => {
+      if (row.family) counts.set(row.family, (counts.get(row.family) ?? 0) + 1);
+    });
+    return [...counts.entries()]
+      .map(([family, rows_count]) => ({ family, rows_count }))
+      .sort((left, right) => right.rows_count - left.rows_count || left.family.localeCompare(right.family, "es"));
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const query = debouncedSearch.trim().toLocaleLowerCase("es-ES");
+    return rows.filter((row) => {
+      if (query && !row.provider_product_name.toLocaleLowerCase("es-ES").includes(query) && !row.provider_product_id.includes(query)) return false;
+      if (filters.family && row.family !== filters.family) return false;
+      if (filters.format && row.format_key !== filters.format) return false;
+      if (filters.status && row.decision_status !== filters.status) return false;
+      return true;
+    });
+  }, [rows, debouncedSearch, filters.family, filters.format, filters.status]);
+
+  const total = filteredRows.length;
+  const pageRows = filteredRows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -334,10 +379,10 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         </Card>
       ) : (
         <Card className="divide-y divide-border">
-          {rows.length === 0 && (
+          {total === 0 && (
             <p className="p-4 text-xs text-muted-foreground">No hay referencias con estos filtros.</p>
           )}
-          {rows.map((row) => {
+          {pageRows.map((row) => {
             const key = `${row.provider_product_id}::${row.sale_format}`;
             const blocked = row.format_key === "SIN_DATO";
             const approvable = canApproveDecision({
@@ -350,6 +395,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="font-mono text-[11px] text-muted-foreground">#{row.provider_product_id}</span>
                   <span className="font-medium">{row.provider_product_name}</span>
+                  {row.legacy && <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">LEGACY</Badge>}
                   <span className="text-muted-foreground">{row.family ?? "—"}</span>
                   <Badge variant={blocked ? "destructive" : "secondary"}>{formatLabel(row.format_key)}</Badge>
                   <span className="font-mono text-[10px] text-muted-foreground">{row.sale_format}</span>

@@ -24,7 +24,6 @@ const navItems = [
   { to: "/integrations", icon: Plug, label: "Integraciones" },
   { to: "/sync-monitor", icon: Activity, label: "Actividad" },
   { to: "/alerts", icon: Bell, label: "Incidencias", badgeKey: "alerts" },
-  { to: "/qtomas-revision", icon: ClipboardList, label: "Revisión Qtomas" },
   { to: "/docs", icon: FileText, label: "Documentación" },
   { to: "/settings", icon: Settings, label: "Configuración" },
 ];
@@ -40,7 +39,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     // while the monitoring migration is being rolled out.
     const fetchAlertCount = async () => {
       const [persistentRes, stockRes, outboundRes] = await Promise.allSettled([
-        supabase.from("connection_alerts" as any).select("id", { count: "exact", head: true }).in("status", ["OPEN", "ACKED"]),
+        supabase.from("connection_alerts" as never).select("id", { count: "exact", head: true }).in("status", ["OPEN", "ACKED"]),
         supabase.from("stock_sync_log").select("id", { count: "exact", head: true }).eq("status", "FAILED"),
         supabase.from("outbound_tasks").select("id", { count: "exact", head: true }).in("status", ["FAILED", "BLOCKED"]),
       ]);
