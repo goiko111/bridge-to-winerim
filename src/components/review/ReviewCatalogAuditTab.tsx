@@ -431,6 +431,8 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
           </Button>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
