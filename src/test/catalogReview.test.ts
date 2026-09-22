@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AUDIT_STATUS_LABELS,
   REVIEW_FORMAT_LABELS,
+  buildMappingPayload,
+  canApplyDecision,
   canApproveDecision,
   deriveAuditStatus,
   formatAuditStatusLabel,
