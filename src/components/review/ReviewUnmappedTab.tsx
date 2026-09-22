@@ -291,6 +291,61 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     load();
   };
 
+  /**
+   * Promote NEEDS_CONFIRMATION decisions that already have an exact variant chosen
+   * to READY_FOR_APPROVAL. Only touches the review decision, never mappings.
+   */
+  const promoteRows = async (targets: UnmappedReviewRow[]) => {
+    const promotable = targets.filter(isPromotable);
+    if (!promotable.length) {
+      toast({
+        title: "Nada que pasar",
+        description: "Solo se pasan decisiones «Necesita confirmación» que ya tienen vino y formato elegidos.",
+      });
+      return;
+    }
+    setApproving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const decidedAt = new Date().toISOString();
+    const { error: err } = await supabase.from("catalog_review_decisions").upsert(
+      promotable.map((row) => ({
+        connection_id: connectionId,
+        provider_product_id: row.provider_product_id,
+        sale_format: row.sale_format,
+        provider_product_name: row.provider_product_name,
+        family: row.family,
+        units_recent: row.units,
+        last_sale_at: row.last_sale_at,
+        selected_winerim_id: row.selected_winerim_id,
+        selected_winerim_name: row.selected_winerim_name,
+        selected_format_key: row.selected_format_key,
+        note: row.note ?? null,
+        status: "READY_FOR_APPROVAL",
+        decided_by: userData?.user?.id ?? null,
+        decided_at: decidedAt,
+      })),
+      { onConflict: "connection_id,provider_product_id,sale_format" },
+    );
+    setApproving(false);
+    if (err) {
+      toast({ title: "No se pudo actualizar", description: err.message, variant: "destructive" });
+      return;
+    }
+    setRows((prev) =>
+      prev.map((r) =>
+        promotable.some((p) => p.provider_product_id === r.provider_product_id && p.sale_format === r.sale_format)
+          ? { ...r, decision_status: "READY_FOR_APPROVAL", decided_at: decidedAt }
+          : r,
+      ),
+    );
+    toast({
+      title: `${promotable.length} decisión(es) listas para aprobar`,
+      description: "Solo cambia el estado de revisión: no crea mapas ni toca ventas, stock o catálogo.",
+    });
+  };
+
+
+
   const exportCsv = () =>
     downloadCsv(
       `revision-sin-mapear-${connectionId}.csv`,
