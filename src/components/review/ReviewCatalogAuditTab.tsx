@@ -220,6 +220,37 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
         </Button>
       </Card>
 
+      <Card className="flex flex-wrap items-center gap-2 p-3 text-xs">
+        <span className="text-muted-foreground">Dirección de la comparación:</span>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant={direction === "winerim" ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setDirection("winerim")}
+          >
+            Winerim → Ágora
+          </Button>
+          <Button
+            size="sm"
+            variant={direction === "agora" ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => setDirection("agora")}
+          >
+            Ágora → Winerim
+          </Button>
+        </div>
+        <span className="text-muted-foreground">
+          {direction === "winerim"
+            ? "Cada variante activa de Winerim y si está en Ágora, con qué precio y en qué familia."
+            : "Cada producto de vino del catálogo de Ágora y si tiene vino de Winerim asociado."}
+        </span>
+      </Card>
+
+      {direction === "agora" ? (
+        <ReviewAgoraCoverageTable connectionId={connectionId} />
+      ) : (
+      <>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
         {summaryChips.map((c) => (
           <Card key={c.label} className="p-3">
