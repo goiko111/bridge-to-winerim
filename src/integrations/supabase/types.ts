@@ -240,6 +240,9 @@ export type Database = {
       }
       catalog_review_decisions: {
         Row: {
+          applied_at: string | null
+          applied_by: string | null
+          applied_mapping_id: string | null
           connection_id: string
           created_at: string
           decided_at: string | null
@@ -260,6 +263,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          applied_at?: string | null
+          applied_by?: string | null
+          applied_mapping_id?: string | null
           connection_id: string
           created_at?: string
           decided_at?: string | null
@@ -280,6 +286,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          applied_at?: string | null
+          applied_by?: string | null
+          applied_mapping_id?: string | null
           connection_id?: string
           created_at?: string
           decided_at?: string | null
