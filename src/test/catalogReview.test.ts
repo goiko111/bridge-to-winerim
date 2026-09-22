@@ -4,6 +4,7 @@ import {
   REVIEW_FORMAT_LABELS,
   canApproveDecision,
   deriveAuditStatus,
+  formatAuditStatusLabel,
   formatBoolean,
   formatLatency,
   isVariantCompatible,
