@@ -185,9 +185,19 @@ export default function SyncMonitor() {
     .filter((c) => c.last_sync_at)
     .sort((a, b) => new Date(b.last_sync_at!).getTime() - new Date(a.last_sync_at!).getTime())[0];
 
+  // Lectura de ventas atrasada: más de 30 min sin leer (o sin ninguna lectura).
+  const STALE_MINUTES = 30;
+  const staleConns = enabledConns.filter((c) => {
+    if (!c.last_sync_at) return true;
+    return Date.now() - new Date(c.last_sync_at).getTime() > STALE_MINUTES * 60_000;
+  });
+  const minutesSince = (iso: string | null) =>
+    iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 60_000) : null;
+
   const successLogs = stockLogs.filter(l => l.status === "SUCCESS");
   const failedLogs = stockLogs.filter(l => l.status === "FAILED");
   const pendingLogs = stockLogs.filter(l => l.status === "PENDING");
+
 
   return (
     <div className="space-y-8">
