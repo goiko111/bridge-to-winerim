@@ -152,9 +152,15 @@ export function canApproveDecision(input: {
   agoraFormatKey: string | null | undefined;
   selectedWinerimId: string | null | undefined;
   selectedFormatKey: string | null | undefined;
+  /** True when the chosen wine has exactly one active Winerim variant. */
+  soleVariant?: boolean;
 }): boolean {
   if (!input.selectedWinerimId) return false;
-  return isVariantCompatible(input.agoraFormatKey, input.selectedFormatKey);
+  if (isVariantCompatible(input.agoraFormatKey, input.selectedFormatKey)) return true;
+  // POS did not report a format, but the wine only exists in one format: unambiguous.
+  const agoraUnknown = !input.agoraFormatKey || input.agoraFormatKey === "SIN_DATO";
+  const variantKnown = !!input.selectedFormatKey && input.selectedFormatKey !== "SIN_DATO";
+  return !!input.soleVariant && agoraUnknown && variantKnown;
 }
 
 export type AuditInput = {
