@@ -97,6 +97,8 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [approving, setApproving] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(filterKey, JSON.stringify(filters));
@@ -220,6 +222,71 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
       capacityLiters: variant.capacity_liters,
     });
     setExpanded(null);
+  };
+
+  /**
+   * Approval = create/confirm the product mapping only.
+   * Never touches sales, stock, cursors, prices or the Agora catalog.
+   */
+  const approveRows = async (targets: UnmappedReviewRow[]) => {
+    const applicable = targets.filter((row) => canApplyDecision(row));
+    if (!applicable.length) {
+      toast({ title: "Nada que aprobar", description: "Solo se aprueban decisiones «Listo para aprobar» con variante compatible." });
+      return;
+    }
+    setApproving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const { data: mappings, error: mapError } = await supabase
+      .from("product_mappings")
+      .upsert(
+        applicable.map((row) => buildMappingPayload(connectionId, row)),
+        { onConflict: "connection_id,provider_product_id" },
+      )
+      .select("id,provider_product_id");
+    if (mapError) {
+      setApproving(false);
+      toast({ title: "No se pudo aprobar", description: mapError.message, variant: "destructive" });
+      return;
+    }
+    const mappingByProduct = new Map((mappings ?? []).map((m) => [m.provider_product_id, m.id]));
+    const appliedAt = new Date().toISOString();
+    const { error: decisionError } = await supabase.from("catalog_review_decisions").upsert(
+      applicable.map((row) => ({
+        connection_id: connectionId,
+        provider_product_id: row.provider_product_id,
+        sale_format: row.sale_format,
+        provider_product_name: row.provider_product_name,
+        family: row.family,
+        units_recent: row.units,
+        last_sale_at: row.last_sale_at,
+        selected_winerim_id: row.selected_winerim_id,
+        selected_winerim_name: row.selected_winerim_name,
+        selected_format_key: row.selected_format_key,
+        note: row.note ?? null,
+        status: "APPLIED",
+        decided_by: userData?.user?.id ?? null,
+        decided_at: appliedAt,
+        applied_at: appliedAt,
+        applied_by: userData?.user?.id ?? null,
+        applied_mapping_id: mappingByProduct.get(row.provider_product_id) ?? null,
+      })),
+      { onConflict: "connection_id,provider_product_id,sale_format" },
+    );
+    setApproving(false);
+    if (decisionError) {
+      toast({
+        title: "Mapa creado, pero no se pudo marcar la decisión",
+        description: decisionError.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: `${applicable.length} mapa(s) creados`,
+        description: "Solo se creó el mapa de producto: no cambia ventas, stock, precios ni catálogo.",
+      });
+    }
+    setSelected(new Set());
+    load();
   };
 
   const exportCsv = () =>
