@@ -24,7 +24,14 @@ interface AgoraConnection {
   api_token: string | null;
   provider_config?: Record<string, unknown> | null;
   circuit_breaker_paused_until: string | null;
+  last_sync_at?: string | null;
 }
+
+// Watchdog: a sales read that has not run for this long is forced through, even
+// if the circuit breaker is still pausing the connection. Reading sales is
+// idempotent (cursor + idempotency keys), so a failed attempt costs nothing,
+// while a silently skipped read means stock is not deducted for hours.
+const SALES_READ_STALE_MINUTES = 30;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
