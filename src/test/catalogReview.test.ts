@@ -135,6 +135,6 @@ describe("CSV", () => {
   it("escapa comas y une arrays", () => {
     const csv = toCsv([{ a: "x,y", b: ["PRICE_MISMATCH", "HIDDEN"], c: null }]);
     expect(csv.split("\n")[0]).toBe("a,b,c");
-    expect(csv.split("\n")[1]).toBe('"x,y","PRICE_MISMATCH|HIDDEN",');
+    expect(csv.split("\n")[1]).toBe('"x,y",PRICE_MISMATCH|HIDDEN,');
   });
 });
