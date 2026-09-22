@@ -51,9 +51,10 @@ export function cleanAgoraNameForSearch(name: string | null | undefined): string
  * Server-side search over ALL active Winerim wines of the connection.
  * Selection is always wine + exact format; incompatible variants are blocked.
  */
-export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onSelect }: Props) {
-  const [query, setQuery] = useState("");
-  const [debounced, setDebounced] = useState("");
+export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onSelect, initialQuery }: Props) {
+  const prefill = cleanAgoraNameForSearch(initialQuery);
+  const [query, setQuery] = useState(prefill);
+  const [debounced, setDebounced] = useState(prefill);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<VariantRow[]>([]);
   const [total, setTotal] = useState(0);
