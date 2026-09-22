@@ -137,7 +137,7 @@ export function isVariantCompatible(
 
 /**
  * Selection is allowed when formats match, or when the POS format is unknown
- * ("Sin dato"): then the decision is stored as NEEDS_CONFIRMATION, never approvable.
+ * ("Sin dato"): the chosen exact variant defines the format and is approvable.
  */
 export function isVariantSelectable(
   agoraFormatKey: string | null | undefined,
@@ -152,16 +152,17 @@ export function canApproveDecision(input: {
   agoraFormatKey: string | null | undefined;
   selectedWinerimId: string | null | undefined;
   selectedFormatKey: string | null | undefined;
-  /** True when the chosen wine has exactly one active Winerim variant. */
+  /** Kept for compatibility: a sole variant is still unambiguous. */
   soleVariant?: boolean;
 }): boolean {
   if (!input.selectedWinerimId) return false;
   if (isVariantCompatible(input.agoraFormatKey, input.selectedFormatKey)) return true;
-  // POS did not report a format, but the wine only exists in one format: unambiguous.
+  // POS did not report a format: the operator picked an exact variant, so it is approvable.
   const agoraUnknown = !input.agoraFormatKey || input.agoraFormatKey === "SIN_DATO";
   const variantKnown = !!input.selectedFormatKey && input.selectedFormatKey !== "SIN_DATO";
-  return !!input.soleVariant && agoraUnknown && variantKnown;
+  return agoraUnknown && variantKnown;
 }
+
 
 export type AuditInput = {
   formatKey: string | null;

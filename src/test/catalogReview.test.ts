@@ -53,14 +53,15 @@ describe("compatibilidad de variantes", () => {
     expect(isVariantCompatible("GLASS", "GLASS")).toBe(true);
   });
 
-  it("bloquea la aprobación cuando el formato es SIN_DATO", () => {
+  it("acepta SIN_DATO del TPV con variante exacta y bloquea variante sin formato", () => {
     expect(
       canApproveDecision({ agoraFormatKey: "SIN_DATO", selectedWinerimId: "61109", selectedFormatKey: "BOTTLE" }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canApproveDecision({ agoraFormatKey: "BOTTLE", selectedWinerimId: "61109", selectedFormatKey: "SIN_DATO" }),
     ).toBe(false);
   });
+
 
   it("bloquea la aprobación sin vino seleccionado", () => {
     expect(canApproveDecision({ agoraFormatKey: "BOTTLE", selectedWinerimId: null, selectedFormatKey: "BOTTLE" })).toBe(
@@ -168,18 +169,25 @@ describe("aprobación de decisiones", () => {
     expect(canApplyDecision({ ...base, format_key: "SIN_DATO", selected_format_key: null })).toBe(false);
   });
 
-  it("aprueba formato desconocido del TPV cuando el vino tiene una sola variante", () => {
-    // Guardar READY_FOR_APPROVAL con SIN_DATO solo se permite si la variante era única.
+  it("aprueba formato desconocido del TPV cuando se elige una variante exacta", () => {
     expect(canApplyDecision({ ...base, format_key: "SIN_DATO" })).toBe(true);
     expect(
       canApproveDecision({
         agoraFormatKey: "SIN_DATO",
         selectedWinerimId: "61109",
         selectedFormatKey: "BOTTLE",
-        soleVariant: false,
+      }),
+    ).toBe(true);
+    // Sin formato en la variante sigue sin poder aprobarse.
+    expect(
+      canApproveDecision({
+        agoraFormatKey: "SIN_DATO",
+        selectedWinerimId: "61109",
+        selectedFormatKey: "SIN_DATO",
       }),
     ).toBe(false);
   });
+
 
   it("construye un mapa CONFIRMED con el formato exacto", () => {
     const payload = buildMappingPayload("conn-1", base);
