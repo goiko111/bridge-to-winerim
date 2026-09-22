@@ -187,7 +187,7 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
         { label: "Formato distinto", value: summary.format_mismatch },
         { label: "Familia distinta", value: summary.family_mismatch },
         { label: "No vendibles", value: summary.not_saleable },
-        { label: "Ocultos", value: summary.hidden },
+        { label: "Sin tecla principal / ocultos", value: summary.hidden },
         { label: "Envío pendiente", value: summary.pending_push },
         { label: "Envío fallido", value: summary.push_failed },
         { label: "Sin lectura fresca", value: summary.no_current_readback },
@@ -344,10 +344,12 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
                           ? "default"
                           : r.audit_status === "NO_CURRENT_READBACK" || r.audit_status === "AMBIGUOUS"
                             ? "outline"
-                            : "destructive"
+                            : r.audit_status === "HIDDEN" && r.agora_saleable === true
+                              ? "secondary"
+                              : "destructive"
                       }
                     >
-                      {AUDIT_STATUS_LABELS[r.audit_status] ?? r.audit_status}
+                      {formatAuditStatusLabel(r.audit_status, r.agora_saleable)}
                     </Badge>
                     {r.push_status && (
                       <div className="mt-1 font-mono text-[10px] text-muted-foreground">{r.push_status}</div>
