@@ -109,6 +109,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         p_days: filters.days,
       }),
     ]);
+    console.log("REVIEW_DEBUG", { args, listData: listRes.data, listError: listRes.error });
     if (listRes.error) {
       setError(listRes.error.message);
       setRows([]);
@@ -350,17 +351,14 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                   <span className="font-mono text-[11px] text-muted-foreground">#{row.provider_product_id}</span>
                   <span className="font-medium">{row.provider_product_name}</span>
                   <span className="text-muted-foreground">{row.family ?? "—"}</span>
-                  <Badge variant={blocked ? "destructive" : "secondary"}>
-                    {formatLabel(row.format_key)}
-                  </Badge>
+                  <Badge variant={blocked ? "destructive" : "secondary"}>{formatLabel(row.format_key)}</Badge>
                   <span className="font-mono text-[10px] text-muted-foreground">{row.sale_format}</span>
                   <span className="text-muted-foreground">
                     {row.units !== null ? `${formatNumber(row.units, 0)} uds` : "sin unidades"} ·{" "}
                     {row.last_sale_at ? formatDateTime(row.last_sale_at) : "sin última venta"}
                   </span>
                   <Badge variant={approvable ? "default" : "outline"}>
-                    {DECISION_STATUS_LABELS[(row.decision_status as DecisionStatus) ?? "DRAFT"] ??
-                      row.decision_status}
+                    {DECISION_STATUS_LABELS[(row.decision_status as DecisionStatus) ?? "DRAFT"] ?? row.decision_status}
                   </Badge>
                   <Button
                     size="sm"
