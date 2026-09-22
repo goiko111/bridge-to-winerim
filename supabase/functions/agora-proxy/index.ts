@@ -4,6 +4,7 @@ import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNam
 import { planAgoraFormatPrefixRenames } from "../_shared/agoraFormatPrefixNaming.ts";
 import { agoraSalesPairKey, canonicalAgoraSalesLineFormat, isAgoraSaleFormatFirstConnection, resolveAgoraSalesLineIdentityForConnection } from "../_shared/agoraSalesLineIdentity.ts";
 import { decideAgoraStockFence } from "../_shared/agoraStockFence.ts";
+import { buildAgoraWinerimSalesOrderScope } from "../_shared/agoraWinerimOrderScope.ts";
 import { isFormatEnabledForConnection } from "../_shared/winerimExtendedFormats.ts";
 import {
   attachExtendedFormatPrices,
@@ -2005,11 +2006,12 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         previousStock,
         newStock,
         soldAt: agg.providerSoldAt,
-        orderScope: [
-          ...agg.eventIds.slice().sort(),
-          ...agg.lineIds.slice().sort(),
-          String(agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          keys: [...agg.eventIds, ...agg.lineIds],
+          qty: agg.qty,
+        }),
       });
       if (!salesImport.ok) {
         await supabase.from("stock_sync_log").update({
@@ -2064,12 +2066,13 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         stockId: match.id,
         soldQty: agg.qty,
         soldAt: agg.providerSoldAt,
-        orderScope: [
-          "stock_inactive",
-          ...agg.eventIds.slice().sort(),
-          ...agg.lineIds.slice().sort(),
-          String(agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          prefix: "stock_inactive",
+          keys: [...agg.eventIds, ...agg.lineIds],
+          qty: agg.qty,
+        }),
       });
       if (!salesImport.ok) {
         await supabase.from("stock_sync_log").update({
@@ -2156,11 +2159,12 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
         previousStock: item.previousStock,
         newStock: item.newStock,
         soldAt: item.agg.providerSoldAt,
-        orderScope: [
-          ...item.agg.eventIds.slice().sort(),
-          ...item.agg.lineIds.slice().sort(),
-          String(item.agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          keys: [...item.agg.eventIds, ...item.agg.lineIds],
+          qty: item.agg.qty,
+        }),
       });
       if (salesImport.attempted && !salesImport.ok) {
         await supabase.from("stock_sync_log").update({
@@ -2587,10 +2591,12 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         previousStock,
         newStock,
         soldAt: agg.providerSoldAt,
-        orderScope: [
-          ...agg.groupKeys.slice().sort(),
-          String(agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          keys: agg.groupKeys,
+          qty: agg.qty,
+        }),
       });
       if (!salesImport.ok) {
         await supabase.from("stock_sync_log").update({
@@ -2647,11 +2653,13 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         stockId: match.id,
         soldQty: agg.qty,
         soldAt: agg.providerSoldAt,
-        orderScope: [
-          "stock_inactive",
-          ...agg.groupKeys.slice().sort(),
-          String(agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          prefix: "stock_inactive",
+          keys: agg.groupKeys,
+          qty: agg.qty,
+        }),
       });
       if (!salesImport.ok) {
         await supabase.from("stock_sync_log").update({
@@ -2741,10 +2749,12 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
         previousStock: item.previousStock,
         newStock: item.newStock,
         soldAt: item.agg.providerSoldAt,
-        orderScope: [
-          ...item.agg.groupKeys.slice().sort(),
-          String(item.agg.qty),
-        ].join("|"),
+        orderScope: buildAgoraWinerimSalesOrderScope({
+          connectionId,
+          day,
+          keys: item.agg.groupKeys,
+          qty: item.agg.qty,
+        }),
       });
       if (salesImport.attempted && !salesImport.ok) {
         await supabase.from("stock_sync_log").update({
