@@ -109,7 +109,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         p_days: filters.days,
       }),
     ]);
-    console.log("REVIEW_DEBUG", { args, listData: listRes.data, listError: listRes.error });
+    console.log("REVIEW_DEBUG_JSON", JSON.stringify({ args, listData: listRes.data, listError: listRes.error }));
     if (listRes.error) {
       setError(listRes.error.message);
       setRows([]);
