@@ -137,7 +137,7 @@ export function isVariantCompatible(
 
 /**
  * Selection is allowed when formats match, or when the POS format is unknown
- * ("Sin dato"): then the decision is stored as NEEDS_CONFIRMATION, never approvable.
+ * ("Sin dato"): the chosen exact variant defines the format and is approvable.
  */
 export function isVariantSelectable(
   agoraFormatKey: string | null | undefined,

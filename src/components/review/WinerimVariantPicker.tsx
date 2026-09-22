@@ -179,7 +179,7 @@ export default function WinerimVariantPicker({
                         compatible
                           ? "Seleccionar esta variante exacta"
                           : selectable
-                            ? "El TPV no indica formato: se guardará como «Necesita confirmación»"
+                            ? "El TPV no indica formato: se guardará con este formato exacto"
                             : `Formato incompatible con «${formatLabel(agoraFormatKey)}»: no se puede aprobar`
                       }
                       onClick={() => onSelect(v, { soleVariant: variants.length === 1 })}
