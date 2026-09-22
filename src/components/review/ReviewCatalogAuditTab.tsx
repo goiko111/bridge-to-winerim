@@ -123,7 +123,7 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
     }
     if (!summaryRes.error) setSummary(((summaryRes.data ?? [])[0] ?? null) as Summary | null);
     setLoading(false);
-  }, [connectionId, debounced, status, format, page]);
+  }, [connectionId, debounced, status, format, page, direction]);
 
   useEffect(() => {
     load();
