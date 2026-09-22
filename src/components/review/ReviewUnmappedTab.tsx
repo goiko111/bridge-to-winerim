@@ -5,12 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ChevronDown, Download, Loader2, Search } from "lucide-react";
+import { Check, ChevronDown, Download, Loader2, Search } from "lucide-react";
 import WinerimVariantPicker, { VariantRow } from "./WinerimVariantPicker";
 import {
   DECISION_STATUS_LABELS,
   DecisionStatus,
   REVIEW_FORMAT_FILTER_KEYS,
+  buildMappingPayload,
+  canApplyDecision,
   canApproveDecision,
   downloadCsv,
   formatDateTime,
