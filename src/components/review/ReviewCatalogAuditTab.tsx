@@ -78,8 +78,8 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_KEY, JSON.stringify({ search, status, format }));
-  }, [search, status, format]);
+    localStorage.setItem(FILTER_KEY, JSON.stringify({ search, status, format, direction }));
+  }, [search, status, format, direction]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
