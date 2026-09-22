@@ -65,6 +65,9 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
   const [search, setSearch] = useState<string>(stored.search ?? "");
   const [status, setStatus] = useState<string>(stored.status ?? "");
   const [format, setFormat] = useState<string>(stored.format ?? "");
+  const [direction, setDirection] = useState<"winerim" | "agora">(
+    stored.direction === "agora" ? "agora" : "winerim",
+  );
   const [debounced, setDebounced] = useState(search);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<AuditRow[]>([]);
