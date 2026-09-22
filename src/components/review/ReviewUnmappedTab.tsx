@@ -394,6 +394,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   ];
 
   const readyRows = useMemo(() => rows.filter((row) => canApplyDecision(row)), [rows]);
+  const promotableRows = useMemo(() => rows.filter((row) => isPromotable(row)), [rows]);
   const selectedReadyRows = useMemo(
     () => readyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
     [readyRows, selected],
@@ -535,6 +536,16 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
           </Button>
           <Button
             size="sm"
+            variant="secondary"
+            className="h-7 text-[11px]"
+            disabled={!promotableRows.length || approving}
+            title="Cambia solo el estado de revisión de las decisiones que ya tienen vino y formato elegidos."
+            onClick={() => promoteRows(promotableRows)}
+          >
+            Pasar a listo para aprobar ({promotableRows.length})
+          </Button>
+          <Button
+            size="sm"
             className="h-7 gap-1 text-[11px]"
             disabled={!selectedReadyRows.length || approving}
             onClick={() => approveRows(selectedReadyRows)}
@@ -604,6 +615,17 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <ChevronDown className={`h-3.5 w-3.5 ${expanded === key ? "rotate-180" : ""}`} />
                     Decidir
                   </Button>
+                  {isPromotable(row) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 text-[11px]"
+                      disabled={approving}
+                      onClick={() => promoteRows([row])}
+                    >
+                      Pasar a listo
+                    </Button>
+                  )}
                   {canApplyDecision(row) && (
                     <Button
                       size="sm"
