@@ -52,6 +52,20 @@ export const AUDIT_STATUS_LABELS: Record<string, string> = {
   AMBIGUOUS: "Ambiguo",
 };
 
+/**
+ * "Oculto" means not visible AND not saleable.
+ * When a product is saleable in its family but lacks a main-screen button,
+ * the accurate label is "Sin tecla principal".
+ */
+export function formatAuditStatusLabel(
+  status: string,
+  agoraSaleable: boolean | null | undefined,
+): string {
+  if (status !== "HIDDEN") return AUDIT_STATUS_LABELS[status] ?? status;
+  if (agoraSaleable === true) return "Sin tecla principal";
+  return "Oculto";
+}
+
 export const LEGACY_STATE_LABELS: Record<string, string> = {
   LEGACY_VISIBLE: "Legacy visible",
   LEGACY_HIDDEN: "Legacy oculto",
