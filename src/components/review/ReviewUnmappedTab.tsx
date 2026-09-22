@@ -14,6 +14,7 @@ import {
   buildMappingPayload,
   canApplyDecision,
   canApproveDecision,
+  isPromotable,
   downloadCsv,
   formatDateTime,
   formatLabel,

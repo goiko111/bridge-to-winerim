@@ -66,6 +66,22 @@ export function canApplyDecision(row: ApprovableDecisionRow): boolean {
   });
 }
 
+/**
+ * A NEEDS_CONFIRMATION decision can be promoted to READY_FOR_APPROVAL when the
+ * operator already picked an exact Winerim variant with a known format.
+ */
+export function isPromotable(row: ApprovableDecisionRow): boolean {
+  if (row.decision_status !== "NEEDS_CONFIRMATION") return false;
+  if (!row.selected_winerim_id) return false;
+  if (!row.selected_format_key || row.selected_format_key === "SIN_DATO") return false;
+  return canApproveDecision({
+    agoraFormatKey: row.format_key,
+    selectedWinerimId: row.selected_winerim_id,
+    selectedFormatKey: row.selected_format_key,
+    soleVariant: true,
+  });
+}
+
 /** Builds the CONFIRMED product_mapping row for an approved decision. Pure: no writes. */
 export function buildMappingPayload(connectionId: string, row: ApprovableDecisionRow) {
   if (!canApplyDecision(row)) throw new Error("La decisión no es aprobable");
