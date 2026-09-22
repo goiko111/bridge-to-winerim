@@ -31,9 +31,11 @@ const PAGE_SIZE = 40;
 type Props = {
   connectionId: string;
   agoraFormatKey: string;
-  onSelect: (variant: VariantRow) => void;
+  onSelect: (variant: VariantRow, meta: { soleVariant: boolean; auto?: boolean }) => void;
   /** Agora product name used to prefill the search box. */
   initialQuery?: string;
+  /** When true and the prefilled search returns exactly one variant, it is preselected. */
+  autoSelect?: boolean;
 };
 
 /** Strips POS format prefixes/suffixes so the Agora name searches well in Winerim. */
@@ -51,7 +53,13 @@ export function cleanAgoraNameForSearch(name: string | null | undefined): string
  * Server-side search over ALL active Winerim wines of the connection.
  * Selection is always wine + exact format; incompatible variants are blocked.
  */
-export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onSelect, initialQuery }: Props) {
+export default function WinerimVariantPicker({
+  connectionId,
+  agoraFormatKey,
+  onSelect,
+  initialQuery,
+  autoSelect,
+}: Props) {
   const prefill = cleanAgoraNameForSearch(initialQuery);
   const [query, setQuery] = useState(prefill);
   const [debounced, setDebounced] = useState(prefill);
@@ -113,6 +121,17 @@ export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onS
     return [...map.values()];
   }, [rows]);
 
+  // Preselect when the Agora name resolves to exactly one wine with one variant.
+  const autoDone = useRef(false);
+  useEffect(() => {
+    if (!autoSelect || autoDone.current || loading) return;
+    if (grouped.length !== 1 || grouped[0].variants.length !== 1 || total !== 1) return;
+    const only = grouped[0].variants[0];
+    if (!isVariantSelectable(agoraFormatKey, only.format_key)) return;
+    autoDone.current = true;
+    onSelect(only, { soleVariant: true, auto: true });
+  }, [autoSelect, loading, grouped, total, agoraFormatKey, onSelect]);
+
   return (
     <div className="space-y-2">
       <Input
@@ -163,7 +182,7 @@ export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onS
                             ? "El TPV no indica formato: se guardará como «Necesita confirmación»"
                             : `Formato incompatible con «${formatLabel(agoraFormatKey)}»: no se puede aprobar`
                       }
-                      onClick={() => onSelect(v)}
+                      onClick={() => onSelect(v, { soleVariant: variants.length === 1 })}
                       className="h-7 gap-1.5 text-[11px]"
                     >
                       <span>{formatLabel(v.format_key)}</span>

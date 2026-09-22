@@ -208,21 +208,23 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     });
   };
 
-  const onSelectVariant = (row: UnmappedReviewRow) => (variant: VariantRow) => {
-    const approvable = canApproveDecision({
-      agoraFormatKey: row.format_key,
-      selectedWinerimId: variant.winerim_id,
-      selectedFormatKey: variant.format_key,
-    });
-    saveDecision(row, {
-      status: approvable ? "READY_FOR_APPROVAL" : "NEEDS_CONFIRMATION",
-      winerimId: variant.winerim_id,
-      winerimName: variant.name,
-      formatKey: variant.format_key,
-      capacityLiters: variant.capacity_liters,
-    });
-    setExpanded(null);
-  };
+  const onSelectVariant =
+    (row: UnmappedReviewRow) => (variant: VariantRow, meta: { soleVariant: boolean; auto?: boolean }) => {
+      const approvable = canApproveDecision({
+        agoraFormatKey: row.format_key,
+        selectedWinerimId: variant.winerim_id,
+        selectedFormatKey: variant.format_key,
+        soleVariant: meta.soleVariant,
+      });
+      saveDecision(row, {
+        status: approvable ? "READY_FOR_APPROVAL" : "NEEDS_CONFIRMATION",
+        winerimId: variant.winerim_id,
+        winerimName: variant.name,
+        formatKey: variant.format_key,
+        capacityLiters: variant.capacity_liters,
+      });
+      if (!meta.auto) setExpanded(null);
+    };
 
   /**
    * Approval = create/confirm the product mapping only.
@@ -578,6 +580,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                       connectionId={connectionId}
                       agoraFormatKey={row.format_key}
                       initialQuery={row.provider_product_name}
+                      autoSelect={!row.selected_winerim_id}
                       onSelect={onSelectVariant(row)}
                     />
                     <div className="space-y-2">
