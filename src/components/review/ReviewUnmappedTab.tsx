@@ -577,6 +577,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <WinerimVariantPicker
                       connectionId={connectionId}
                       agoraFormatKey={row.format_key}
+                      initialQuery={row.provider_product_name}
                       onSelect={onSelectVariant(row)}
                     />
                     <div className="space-y-2">

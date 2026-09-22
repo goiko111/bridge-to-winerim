@@ -32,15 +32,29 @@ type Props = {
   connectionId: string;
   agoraFormatKey: string;
   onSelect: (variant: VariantRow) => void;
+  /** Agora product name used to prefill the search box. */
+  initialQuery?: string;
 };
+
+/** Strips POS format prefixes/suffixes so the Agora name searches well in Winerim. */
+export function cleanAgoraNameForSearch(name: string | null | undefined): string {
+  if (!name) return "";
+  let out = name.replace(/[_/|]+/g, " ").replace(/\s+/g, " ").trim();
+  const words =
+    "copa|copas|media copa|media botella|1\\/2 botella|botella|bot|btl|magnum|doble magnum|benjamin|benjamín|vino|cava|champagne|glass|b";
+  out = out.replace(new RegExp(`^(?:(?:${words})\\.?\\s+)+`, "i"), "");
+  out = out.replace(new RegExp(`\\s+(?:${words})\\.?$`, "i"), "");
+  return out.trim() || name.trim();
+}
 
 /**
  * Server-side search over ALL active Winerim wines of the connection.
  * Selection is always wine + exact format; incompatible variants are blocked.
  */
-export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onSelect }: Props) {
-  const [query, setQuery] = useState("");
-  const [debounced, setDebounced] = useState("");
+export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onSelect, initialQuery }: Props) {
+  const prefill = cleanAgoraNameForSearch(initialQuery);
+  const [query, setQuery] = useState(prefill);
+  const [debounced, setDebounced] = useState(prefill);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<VariantRow[]>([]);
   const [total, setTotal] = useState(0);
