@@ -51,9 +51,10 @@ type Filters = {
 const DEFAULT_FILTERS: Filters = { search: "", family: "", format: "", status: "", days: 30 };
 
 export default function ReviewUnmappedTab({ connectionId }: { connectionId: string }) {
+  const filterKey = `${FILTER_KEY}.${connectionId}`;
   const [filters, setFilters] = useState<Filters>(() => {
     try {
-      const raw = localStorage.getItem(FILTER_KEY);
+      const raw = localStorage.getItem(filterKey);
       return raw ? { ...DEFAULT_FILTERS, ...JSON.parse(raw) } : DEFAULT_FILTERS;
     } catch {
       return DEFAULT_FILTERS;
@@ -71,8 +72,8 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   const [saving, setSaving] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(FILTER_KEY, JSON.stringify(filters));
-  }, [filters]);
+    localStorage.setItem(filterKey, JSON.stringify(filters));
+  }, [filterKey, filters]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -109,7 +110,6 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         p_days: filters.days,
       }),
     ]);
-    console.log("REVIEW_DEBUG_JSON", JSON.stringify({ args, listData: listRes.data, listError: listRes.error }));
     if (listRes.error) {
       setError(listRes.error.message);
       setRows([]);
