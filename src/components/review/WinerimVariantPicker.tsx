@@ -182,7 +182,7 @@ export default function WinerimVariantPicker({
                             ? "El TPV no indica formato: se guardará como «Necesita confirmación»"
                             : `Formato incompatible con «${formatLabel(agoraFormatKey)}»: no se puede aprobar`
                       }
-                      onClick={() => onSelect(v)}
+                      onClick={() => onSelect(v, { soleVariant: variants.length === 1 })}
                       className="h-7 gap-1.5 text-[11px]"
                     >
                       <span>{formatLabel(v.format_key)}</span>
