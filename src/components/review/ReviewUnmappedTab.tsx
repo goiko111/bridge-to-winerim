@@ -31,7 +31,7 @@ import {
 } from "@/lib/reviewUnmapped";
 
 const PAGE_SIZE = 25;
-const RPC_PAGE_SIZE = 1000;
+const RPC_PAGE_SIZE = 200;
 
 type Filters = {
   search: string;
@@ -629,7 +629,8 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                   <Badge variant={blocked ? "destructive" : "secondary"}>{formatLabel(row.format_key)}</Badge>
                   <span className="font-mono text-[10px] text-muted-foreground">{row.sale_format}</span>
                   <span className="text-muted-foreground">
-                    {row.units !== null ? `${formatNumber(row.units, 0)} uds` : "sin unidades"} ·{" "}
+                    {row.units !== null ? `${formatNumber(row.units, 0)} uds` : "sin unidades"}
+                    {row.agora_price !== null && row.agora_price !== undefined ? ` · ${formatNumber(Number(row.agora_price), 2)} €` : ""} ·{" "}
                     {row.last_sale_at ? formatDateTime(row.last_sale_at) : "sin última venta"}
                   </span>
                   <Badge variant={approvable ? "default" : "outline"}>
