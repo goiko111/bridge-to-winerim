@@ -14,6 +14,7 @@ import {
   buildMappingPayload,
   canApplyDecision,
   canApproveDecision,
+  isPromotable,
   downloadCsv,
   formatDateTime,
   formatLabel,
@@ -291,6 +292,61 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     load();
   };
 
+  /**
+   * Promote NEEDS_CONFIRMATION decisions that already have an exact variant chosen
+   * to READY_FOR_APPROVAL. Only touches the review decision, never mappings.
+   */
+  const promoteRows = async (targets: UnmappedReviewRow[]) => {
+    const promotable = targets.filter(isPromotable);
+    if (!promotable.length) {
+      toast({
+        title: "Nada que pasar",
+        description: "Solo se pasan decisiones «Necesita confirmación» que ya tienen vino y formato elegidos.",
+      });
+      return;
+    }
+    setApproving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const decidedAt = new Date().toISOString();
+    const { error: err } = await supabase.from("catalog_review_decisions").upsert(
+      promotable.map((row) => ({
+        connection_id: connectionId,
+        provider_product_id: row.provider_product_id,
+        sale_format: row.sale_format,
+        provider_product_name: row.provider_product_name,
+        family: row.family,
+        units_recent: row.units,
+        last_sale_at: row.last_sale_at,
+        selected_winerim_id: row.selected_winerim_id,
+        selected_winerim_name: row.selected_winerim_name,
+        selected_format_key: row.selected_format_key,
+        note: row.note ?? null,
+        status: "READY_FOR_APPROVAL",
+        decided_by: userData?.user?.id ?? null,
+        decided_at: decidedAt,
+      })),
+      { onConflict: "connection_id,provider_product_id,sale_format" },
+    );
+    setApproving(false);
+    if (err) {
+      toast({ title: "No se pudo actualizar", description: err.message, variant: "destructive" });
+      return;
+    }
+    setRows((prev) =>
+      prev.map((r) =>
+        promotable.some((p) => p.provider_product_id === r.provider_product_id && p.sale_format === r.sale_format)
+          ? { ...r, decision_status: "READY_FOR_APPROVAL", decided_at: decidedAt }
+          : r,
+      ),
+    );
+    toast({
+      title: `${promotable.length} decisión(es) listas para aprobar`,
+      description: "Solo cambia el estado de revisión: no crea mapas ni toca ventas, stock o catálogo.",
+    });
+  };
+
+
+
   const exportCsv = () =>
     downloadCsv(
       `revision-sin-mapear-${connectionId}.csv`,
@@ -338,6 +394,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   ];
 
   const readyRows = useMemo(() => rows.filter((row) => canApplyDecision(row)), [rows]);
+  const promotableRows = useMemo(() => rows.filter((row) => isPromotable(row)), [rows]);
   const selectedReadyRows = useMemo(
     () => readyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
     [readyRows, selected],
@@ -479,6 +536,16 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
           </Button>
           <Button
             size="sm"
+            variant="secondary"
+            className="h-7 text-[11px]"
+            disabled={!promotableRows.length || approving}
+            title="Cambia solo el estado de revisión de las decisiones que ya tienen vino y formato elegidos."
+            onClick={() => promoteRows(promotableRows)}
+          >
+            Pasar a listo para aprobar ({promotableRows.length})
+          </Button>
+          <Button
+            size="sm"
             className="h-7 gap-1 text-[11px]"
             disabled={!selectedReadyRows.length || approving}
             onClick={() => approveRows(selectedReadyRows)}
@@ -548,6 +615,17 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <ChevronDown className={`h-3.5 w-3.5 ${expanded === key ? "rotate-180" : ""}`} />
                     Decidir
                   </Button>
+                  {isPromotable(row) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-7 text-[11px]"
+                      disabled={approving}
+                      onClick={() => promoteRows([row])}
+                    >
+                      Pasar a listo
+                    </Button>
+                  )}
                   {canApplyDecision(row) && (
                     <Button
                       size="sm"
