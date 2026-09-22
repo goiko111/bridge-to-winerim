@@ -31,9 +31,11 @@ const PAGE_SIZE = 40;
 type Props = {
   connectionId: string;
   agoraFormatKey: string;
-  onSelect: (variant: VariantRow) => void;
+  onSelect: (variant: VariantRow, meta: { soleVariant: boolean; auto?: boolean }) => void;
   /** Agora product name used to prefill the search box. */
   initialQuery?: string;
+  /** When true and the prefilled search returns exactly one variant, it is preselected. */
+  autoSelect?: boolean;
 };
 
 /** Strips POS format prefixes/suffixes so the Agora name searches well in Winerim. */
