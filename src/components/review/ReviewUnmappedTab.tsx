@@ -367,7 +367,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-7">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-8">
         {counterChips.map((c) => (
           <Card key={c.label} className="p-3">
             <div className="text-[11px] text-muted-foreground">{c.label}</div>
@@ -446,6 +446,45 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         <Button size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={exportCsv}>
           <Download className="h-3.5 w-3.5" /> CSV
         </Button>
+      </Card>
+
+      <Card className="flex flex-wrap items-center gap-3 p-3 text-xs">
+        <span className="font-medium">Listo para aprobar: {formatNumber(readyRows.length, 0)}</span>
+        <span className="text-muted-foreground">
+          Seleccionadas: {formatNumber(selectedReadyRows.length, 0)} · Aprobar crea solo el mapa del producto; no cambia
+          ventas, stock, precios, cursores ni catálogo.
+        </span>
+        <div className="ml-auto flex gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px]"
+            disabled={!readyRows.length || approving}
+            onClick={() =>
+              setSelected(new Set(readyRows.map((row) => `${row.provider_product_id}::${row.sale_format}`)))
+            }
+          >
+            Seleccionar todas
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[11px]"
+            disabled={!selected.size || approving}
+            onClick={() => setSelected(new Set())}
+          >
+            Limpiar
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 gap-1 text-[11px]"
+            disabled={!selectedReadyRows.length || approving}
+            onClick={() => approveRows(selectedReadyRows)}
+          >
+            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Aprobar seleccionadas ({selectedReadyRows.length})
+          </Button>
+        </div>
       </Card>
 
       {error && <Card className="p-3 text-xs text-destructive">{error}</Card>}
