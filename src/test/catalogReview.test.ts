@@ -121,6 +121,13 @@ describe("estado de auditoría", () => {
     ];
     for (const s of states) expect(AUDIT_STATUS_LABELS[s]).toBeTruthy();
   });
+
+  it("distingue 'Sin tecla principal' de 'Oculto' según vendibilidad", () => {
+    expect(formatAuditStatusLabel("HIDDEN", true)).toBe("Sin tecla principal");
+    expect(formatAuditStatusLabel("HIDDEN", false)).toBe("Oculto");
+    expect(formatAuditStatusLabel("HIDDEN", null)).toBe("Oculto");
+    expect(formatAuditStatusLabel("MISSING_IN_AGORA", true)).toBe("No está en Ágora");
+  });
 });
 
 describe("NULL como desconocido", () => {
