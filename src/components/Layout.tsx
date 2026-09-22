@@ -19,6 +19,7 @@ const navItems = [
   { to: "/integrations", icon: Plug, label: "Integrations" },
   { to: "/sync-monitor", icon: Activity, label: "Sync Monitor" },
   { to: "/alerts", icon: Bell, label: "Alerts", badgeKey: "alerts" },
+  { to: "/revision", icon: ClipboardList, label: "Revisión" },
   { to: "/qtomas-revision", icon: ClipboardList, label: "Revisión Qtomas" },
   { to: "/docs", icon: FileText, label: "Documentation" },
   { to: "/settings", icon: Settings, label: "Settings" },
