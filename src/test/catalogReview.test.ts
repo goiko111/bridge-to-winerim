@@ -53,14 +53,15 @@ describe("compatibilidad de variantes", () => {
     expect(isVariantCompatible("GLASS", "GLASS")).toBe(true);
   });
 
-  it("bloquea la aprobación cuando el formato es SIN_DATO", () => {
+  it("acepta SIN_DATO del TPV con variante exacta y bloquea variante sin formato", () => {
     expect(
       canApproveDecision({ agoraFormatKey: "SIN_DATO", selectedWinerimId: "61109", selectedFormatKey: "BOTTLE" }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canApproveDecision({ agoraFormatKey: "BOTTLE", selectedWinerimId: "61109", selectedFormatKey: "SIN_DATO" }),
     ).toBe(false);
   });
+
 
   it("bloquea la aprobación sin vino seleccionado", () => {
     expect(canApproveDecision({ agoraFormatKey: "BOTTLE", selectedWinerimId: null, selectedFormatKey: "BOTTLE" })).toBe(
