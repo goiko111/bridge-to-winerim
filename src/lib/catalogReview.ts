@@ -89,6 +89,19 @@ export function isVariantCompatible(
   return agoraFormatKey === variantFormatKey;
 }
 
+/**
+ * Selection is allowed when formats match, or when the POS format is unknown
+ * ("Sin dato"): then the decision is stored as NEEDS_CONFIRMATION, never approvable.
+ */
+export function isVariantSelectable(
+  agoraFormatKey: string | null | undefined,
+  variantFormatKey: string | null | undefined,
+): boolean {
+  if (!variantFormatKey || variantFormatKey === "SIN_DATO") return false;
+  if (!agoraFormatKey || agoraFormatKey === "SIN_DATO") return true;
+  return agoraFormatKey === variantFormatKey;
+}
+
 export function canApproveDecision(input: {
   agoraFormatKey: string | null | undefined;
   selectedWinerimId: string | null | undefined;

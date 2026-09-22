@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
-import { formatLabel, formatNumber, isVariantCompatible } from "@/lib/catalogReview";
+import { formatLabel, formatNumber, isVariantCompatible, isVariantSelectable } from "@/lib/catalogReview";
 
 export type VariantRow = {
   winerim_id: string;
@@ -135,16 +135,19 @@ export default function WinerimVariantPicker({ connectionId, agoraFormatKey, onS
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {variants.map((v) => {
                   const compatible = isVariantCompatible(agoraFormatKey, v.format_key);
+                  const selectable = isVariantSelectable(agoraFormatKey, v.format_key);
                   return (
                     <Button
                       key={`${v.winerim_id}-${v.format_key}`}
                       size="sm"
-                      variant={compatible ? "outline" : "ghost"}
-                      disabled={!compatible}
+                      variant={compatible ? "outline" : selectable ? "secondary" : "ghost"}
+                      disabled={!selectable}
                       title={
                         compatible
                           ? "Seleccionar esta variante exacta"
-                          : `Formato incompatible con «${formatLabel(agoraFormatKey)}»: no se puede aprobar`
+                          : selectable
+                            ? "El TPV no indica formato: se guardará como «Necesita confirmación»"
+                            : `Formato incompatible con «${formatLabel(agoraFormatKey)}»: no se puede aprobar`
                       }
                       onClick={() => onSelect(v)}
                       className="h-7 gap-1.5 text-[11px]"
