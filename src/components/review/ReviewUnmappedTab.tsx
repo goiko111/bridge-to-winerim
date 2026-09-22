@@ -140,9 +140,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         qtomasDecisions: (qtomasResult.data ?? []) as QtomasDecision[],
       }));
     } catch (loadError) {
-      const msg = loadError instanceof Error ? loadError.message : "No se pudieron leer las referencias pendientes.";
-      console.error("[review load error]", loadError);
-      setError(msg);
+      setError(loadError instanceof Error ? loadError.message : "No se pudieron leer las referencias pendientes.");
       setRows([]);
     }
     setLoading(false);
