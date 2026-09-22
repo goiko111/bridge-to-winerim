@@ -24,7 +24,14 @@ interface AgoraConnection {
   api_token: string | null;
   provider_config?: Record<string, unknown> | null;
   circuit_breaker_paused_until: string | null;
+  last_sync_at?: string | null;
 }
+
+// Watchdog: a sales read that has not run for this long is forced through, even
+// if the circuit breaker is still pausing the connection. Reading sales is
+// idempotent (cursor + idempotency keys), so a failed attempt costs nothing,
+// while a silently skipped read means stock is not deducted for hours.
+const SALES_READ_STALE_MINUTES = 30;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -45,9 +52,10 @@ Deno.serve(async (req: Request) => {
 
     // Load enabled Agora connections, EXCLUDING those paused by circuit breaker
     const nowIso = new Date().toISOString();
+    const now = Date.now();
     let query = supabase
       .from("pos_connections")
-      .select("id, location_name, base_url, api_token, provider_config, circuit_breaker_paused_until")
+      .select("id, location_name, base_url, api_token, provider_config, circuit_breaker_paused_until, last_sync_at")
       .eq("provider", "agora")
       .eq("enabled", true);
     if (body.connectionId) query = query.eq("id", body.connectionId);
@@ -55,18 +63,34 @@ Deno.serve(async (req: Request) => {
     const { data: allConnections, error: connErr } = await query;
     if (connErr) throw connErr;
 
-    let connections = ((allConnections || []) as AgoraConnection[]).filter((c) =>
-      !c.circuit_breaker_paused_until || c.circuit_breaker_paused_until < nowIso
-    );
-    const skippedByBreaker = (allConnections?.length || 0) - connections.length;
+    const salesReadStale = (c: AgoraConnection) =>
+      !c.last_sync_at || now - new Date(c.last_sync_at).getTime() > SALES_READ_STALE_MINUTES * 60_000;
 
-    // ── PRE-FLIGHT (Layer 4): for jobs that hit the customer POS (outbound-queue,
-    // sales-stock), do a 5s reachability probe per connection BEFORE
-    // dispatching. If unreachable, skip this round (the breaker will eventually
-    // pause it on the natural call path; we just avoid filling the queue with FAILED).
+    // ── WATCHDOG (Layer 6): the breaker may keep a connection paused, but a sales
+    // read that is already stale is always attempted. Never let stock go
+    // undeducted just because an earlier probe or call failed.
+    const forcedByWatchdog: string[] = [];
+    let connections = ((allConnections || []) as AgoraConnection[]).filter((c) => {
+      const paused = !!c.circuit_breaker_paused_until && c.circuit_breaker_paused_until >= nowIso;
+      if (!paused) return true;
+      if (job === "sales-stock" && salesReadStale(c)) {
+        forcedByWatchdog.push(c.location_name);
+        return true;
+      }
+      return false;
+    });
+    const skippedByBreaker = (allConnections?.length || 0) - connections.length;
+    if (forcedByWatchdog.length > 0) {
+      console.log(`[agora-cron-dispatcher] watchdog forced stale sales read for: ${forcedByWatchdog.join(", ")}`);
+    }
+
+    // ── PRE-FLIGHT (Layer 4): ONLY for outbound-queue, the job that writes to the
+    // customer POS. The sales read is deliberately exempt: it is idempotent and
+    // self-retrying, so a probe that fails (slow POS, transient network) must
+    // never cancel it — that silently left stock undeducted for hours.
     let skippedByPreflight = 0;
     let requeuedAfterRecovery = 0;
-    if (connections.length > 0 && (job === "outbound-queue" || job === "sales-stock")) {
+    if (connections.length > 0 && job === "outbound-queue") {
       const checks = await Promise.all(connections.map(async (c) => {
         const baseUrl = (c.base_url || "").trim().replace(/\/+$/, "");
         if (!baseUrl) return { id: c.id, ok: false };
