@@ -17,6 +17,7 @@ import {
   formatLatency,
   formatNumber,
 } from "@/lib/catalogReview";
+import ReviewAgoraCoverageTable from "./ReviewAgoraCoverageTable";
 
 type AuditRow = {
   winerim_id: string;
