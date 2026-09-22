@@ -215,6 +215,37 @@ export default function SyncMonitor() {
         </div>
       </div>
 
+      {staleConns.length > 0 && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">
+                Lectura de ventas atrasada en {staleConns.length}{" "}
+                {staleConns.length === 1 ? "restaurante" : "restaurantes"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Más de {STALE_MINUTES} minutos sin leer ventas. Las ventas no se pierden, pero el stock no se descuenta
+                hasta que la lectura vuelva a correr.
+              </p>
+              <ul className="mt-2 space-y-0.5 text-xs text-foreground">
+                {staleConns.map((c) => {
+                  const mins = minutesSince(c.last_sync_at);
+                  return (
+                    <li key={c.id}>
+                      <span className="font-medium">{c.location_name}</span>{" "}
+                      <span className="text-muted-foreground">
+                        {mins === null ? "— sin ninguna lectura registrada" : `— hace ${mins} min`}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-5">
         <div className="rounded-xl border border-border bg-card p-4 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Connections</p>
