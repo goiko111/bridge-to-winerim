@@ -1684,6 +1684,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      can_access_connection: {
+        Args: { _connection_id: string }
+        Returns: boolean
+      }
       claim_outbound_tasks: {
         Args: {
           p_connection_id: string
@@ -1726,6 +1730,7 @@ export type Database = {
         }
         Returns: undefined
       }
+      is_platform_admin: { Args: never; Returns: boolean }
       release_agora_dispatch_lock: {
         Args: { p_connection_id: string; p_job: string; p_lock_token: string }
         Returns: boolean
