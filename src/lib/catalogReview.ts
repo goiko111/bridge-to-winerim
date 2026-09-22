@@ -28,14 +28,57 @@ export const REVIEW_FORMAT_FILTER_KEYS = [
 
 export type ReviewFormatKey = (typeof REVIEW_FORMAT_FILTER_KEYS)[number];
 
-export type DecisionStatus = "DRAFT" | "READY_FOR_APPROVAL" | "NO_MATCH" | "NEEDS_CONFIRMATION";
+export type DecisionStatus =
+  | "DRAFT"
+  | "READY_FOR_APPROVAL"
+  | "NO_MATCH"
+  | "NEEDS_CONFIRMATION"
+  | "APPLIED";
 
 export const DECISION_STATUS_LABELS: Record<DecisionStatus, string> = {
   DRAFT: "Borrador",
   READY_FOR_APPROVAL: "Listo para aprobar",
   NO_MATCH: "Sin coincidencia",
   NEEDS_CONFIRMATION: "Necesita confirmación",
+  APPLIED: "Aprobado y aplicado",
 };
+
+export type ApprovableDecisionRow = {
+  provider_product_id: string;
+  provider_product_name: string;
+  format_key: string | null;
+  decision_status: string;
+  selected_winerim_id: string | null;
+  selected_winerim_name: string | null;
+  selected_format_key: string | null;
+};
+
+/** Only a saved READY_FOR_APPROVAL decision with a compatible variant can be applied. */
+export function canApplyDecision(row: ApprovableDecisionRow): boolean {
+  if (row.decision_status !== "READY_FOR_APPROVAL") return false;
+  return canApproveDecision({
+    agoraFormatKey: row.format_key,
+    selectedWinerimId: row.selected_winerim_id,
+    selectedFormatKey: row.selected_format_key,
+  });
+}
+
+/** Builds the CONFIRMED product_mapping row for an approved decision. Pure: no writes. */
+export function buildMappingPayload(connectionId: string, row: ApprovableDecisionRow) {
+  if (!canApplyDecision(row)) throw new Error("La decisión no es aprobable");
+  return {
+    connection_id: connectionId,
+    provider_product_id: row.provider_product_id,
+    provider_product_name: row.provider_product_name,
+    winerim_wine_id: row.selected_winerim_id,
+    winerim_wine_name: row.selected_winerim_name,
+    format_type: row.selected_format_key as string,
+    match_method: "MANUAL_REVIEW",
+    match_score: 1,
+    match_reasons: ["APPROVED_IN_REVIEW_CONSOLE"],
+    status: "CONFIRMED",
+  };
+}
 
 export const AUDIT_STATUS_LABELS: Record<string, string> = {
   MATCHED_LIVE: "Coincide en vivo",

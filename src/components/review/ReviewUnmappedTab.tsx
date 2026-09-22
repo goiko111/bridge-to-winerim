@@ -5,12 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { ChevronDown, Download, Loader2, Search } from "lucide-react";
+import { Check, ChevronDown, Download, Loader2, Search } from "lucide-react";
 import WinerimVariantPicker, { VariantRow } from "./WinerimVariantPicker";
 import {
   DECISION_STATUS_LABELS,
   DecisionStatus,
   REVIEW_FORMAT_FILTER_KEYS,
+  buildMappingPayload,
+  canApplyDecision,
   canApproveDecision,
   downloadCsv,
   formatDateTime,
@@ -95,6 +97,8 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [approving, setApproving] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(filterKey, JSON.stringify(filters));
@@ -220,6 +224,71 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     setExpanded(null);
   };
 
+  /**
+   * Approval = create/confirm the product mapping only.
+   * Never touches sales, stock, cursors, prices or the Agora catalog.
+   */
+  const approveRows = async (targets: UnmappedReviewRow[]) => {
+    const applicable = targets.filter((row) => canApplyDecision(row));
+    if (!applicable.length) {
+      toast({ title: "Nada que aprobar", description: "Solo se aprueban decisiones «Listo para aprobar» con variante compatible." });
+      return;
+    }
+    setApproving(true);
+    const { data: userData } = await supabase.auth.getUser();
+    const { data: mappings, error: mapError } = await supabase
+      .from("product_mappings")
+      .upsert(
+        applicable.map((row) => buildMappingPayload(connectionId, row)),
+        { onConflict: "connection_id,provider_product_id" },
+      )
+      .select("id,provider_product_id");
+    if (mapError) {
+      setApproving(false);
+      toast({ title: "No se pudo aprobar", description: mapError.message, variant: "destructive" });
+      return;
+    }
+    const mappingByProduct = new Map((mappings ?? []).map((m) => [m.provider_product_id, m.id]));
+    const appliedAt = new Date().toISOString();
+    const { error: decisionError } = await supabase.from("catalog_review_decisions").upsert(
+      applicable.map((row) => ({
+        connection_id: connectionId,
+        provider_product_id: row.provider_product_id,
+        sale_format: row.sale_format,
+        provider_product_name: row.provider_product_name,
+        family: row.family,
+        units_recent: row.units,
+        last_sale_at: row.last_sale_at,
+        selected_winerim_id: row.selected_winerim_id,
+        selected_winerim_name: row.selected_winerim_name,
+        selected_format_key: row.selected_format_key,
+        note: row.note ?? null,
+        status: "APPLIED",
+        decided_by: userData?.user?.id ?? null,
+        decided_at: appliedAt,
+        applied_at: appliedAt,
+        applied_by: userData?.user?.id ?? null,
+        applied_mapping_id: mappingByProduct.get(row.provider_product_id) ?? null,
+      })),
+      { onConflict: "connection_id,provider_product_id,sale_format" },
+    );
+    setApproving(false);
+    if (decisionError) {
+      toast({
+        title: "Mapa creado, pero no se pudo marcar la decisión",
+        description: decisionError.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: `${applicable.length} mapa(s) creados`,
+        description: "Solo se creó el mapa de producto: no cambia ventas, stock, precios ni catálogo.",
+      });
+    }
+    setSelected(new Set());
+    load();
+  };
+
   const exportCsv = () =>
     downloadCsv(
       `revision-sin-mapear-${connectionId}.csv`,
@@ -251,6 +320,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     ready: rows.filter((row) => row.decision_status === "READY_FOR_APPROVAL").length,
     no_match: rows.filter((row) => row.decision_status === "NO_MATCH").length,
     needs_confirmation: rows.filter((row) => row.decision_status === "NEEDS_CONFIRMATION").length,
+    applied: rows.filter((row) => row.decision_status === "APPLIED").length,
     sin_dato: rows.filter((row) => row.format_key === "SIN_DATO").length,
   }), [rows]);
 
@@ -259,10 +329,17 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     { label: "Unidades conocidas", value: counters.units },
     { label: DECISION_STATUS_LABELS.DRAFT, value: counters.draft },
     { label: DECISION_STATUS_LABELS.READY_FOR_APPROVAL, value: counters.ready },
+    { label: DECISION_STATUS_LABELS.APPLIED, value: counters.applied },
     { label: DECISION_STATUS_LABELS.NO_MATCH, value: counters.no_match },
     { label: DECISION_STATUS_LABELS.NEEDS_CONFIRMATION, value: counters.needs_confirmation },
     { label: "Sin dato de formato", value: counters.sin_dato },
   ];
+
+  const readyRows = useMemo(() => rows.filter((row) => canApplyDecision(row)), [rows]);
+  const selectedReadyRows = useMemo(
+    () => readyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
+    [readyRows, selected],
+  );
 
   const families = useMemo(() => {
     const counts = new Map<string, number>();
@@ -290,7 +367,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-7">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-8">
         {counterChips.map((c) => (
           <Card key={c.label} className="p-3">
             <div className="text-[11px] text-muted-foreground">{c.label}</div>
@@ -371,6 +448,45 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         </Button>
       </Card>
 
+      <Card className="flex flex-wrap items-center gap-3 p-3 text-xs">
+        <span className="font-medium">Listo para aprobar: {formatNumber(readyRows.length, 0)}</span>
+        <span className="text-muted-foreground">
+          Seleccionadas: {formatNumber(selectedReadyRows.length, 0)} · Aprobar crea solo el mapa del producto; no cambia
+          ventas, stock, precios, cursores ni catálogo.
+        </span>
+        <div className="ml-auto flex gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px]"
+            disabled={!readyRows.length || approving}
+            onClick={() =>
+              setSelected(new Set(readyRows.map((row) => `${row.provider_product_id}::${row.sale_format}`)))
+            }
+          >
+            Seleccionar todas
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[11px]"
+            disabled={!selected.size || approving}
+            onClick={() => setSelected(new Set())}
+          >
+            Limpiar
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 gap-1 text-[11px]"
+            disabled={!selectedReadyRows.length || approving}
+            onClick={() => approveRows(selectedReadyRows)}
+          >
+            {approving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Aprobar seleccionadas ({selectedReadyRows.length})
+          </Button>
+        </div>
+      </Card>
+
       {error && <Card className="p-3 text-xs text-destructive">{error}</Card>}
 
       {loading ? (
@@ -393,6 +509,21 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
             return (
               <div key={key} className="p-3">
                 <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 accent-primary"
+                    aria-label={`Seleccionar ${row.provider_product_name}`}
+                    disabled={!canApplyDecision(row) || approving}
+                    checked={selected.has(key)}
+                    onChange={(e) =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(key);
+                        else next.delete(key);
+                        return next;
+                      })
+                    }
+                  />
                   <span className="font-mono text-[11px] text-muted-foreground">#{row.provider_product_id}</span>
                   <span className="font-medium">{row.provider_product_name}</span>
                   {row.legacy && <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-200">LEGACY</Badge>}
@@ -415,6 +546,16 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <ChevronDown className={`h-3.5 w-3.5 ${expanded === key ? "rotate-180" : ""}`} />
                     Decidir
                   </Button>
+                  {canApplyDecision(row) && (
+                    <Button
+                      size="sm"
+                      className="h-7 gap-1 text-[11px]"
+                      disabled={approving}
+                      onClick={() => approveRows([row])}
+                    >
+                      <Check className="h-3.5 w-3.5" /> Aprobar
+                    </Button>
+                  )}
                 </div>
 
                 <div className="mt-1 text-[11px] text-muted-foreground">
