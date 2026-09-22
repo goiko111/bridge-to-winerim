@@ -164,6 +164,151 @@ export type Database = {
           },
         ]
       }
+      catalog_readback_snapshots: {
+        Row: {
+          agora_family_id: string | null
+          agora_family_name: string | null
+          agora_name: string | null
+          agora_price: number | null
+          agora_product_id: string | null
+          agora_saleable: boolean | null
+          agora_visible: boolean | null
+          connection_id: string
+          created_at: string
+          differences: string[]
+          expected_family_id: string | null
+          expected_price: number | null
+          format_key: string
+          found_in_agora: boolean | null
+          id: string
+          read_at: string
+          read_source: string
+          updated_at: string
+          winerim_wine_id: string
+        }
+        Insert: {
+          agora_family_id?: string | null
+          agora_family_name?: string | null
+          agora_name?: string | null
+          agora_price?: number | null
+          agora_product_id?: string | null
+          agora_saleable?: boolean | null
+          agora_visible?: boolean | null
+          connection_id: string
+          created_at?: string
+          differences?: string[]
+          expected_family_id?: string | null
+          expected_price?: number | null
+          format_key: string
+          found_in_agora?: boolean | null
+          id?: string
+          read_at?: string
+          read_source?: string
+          updated_at?: string
+          winerim_wine_id: string
+        }
+        Update: {
+          agora_family_id?: string | null
+          agora_family_name?: string | null
+          agora_name?: string | null
+          agora_price?: number | null
+          agora_product_id?: string | null
+          agora_saleable?: boolean | null
+          agora_visible?: boolean | null
+          connection_id?: string
+          created_at?: string
+          differences?: string[]
+          expected_family_id?: string | null
+          expected_price?: number | null
+          format_key?: string
+          found_in_agora?: boolean | null
+          id?: string
+          read_at?: string
+          read_source?: string
+          updated_at?: string
+          winerim_wine_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_readback_snapshots_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      catalog_review_decisions: {
+        Row: {
+          connection_id: string
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          family: string | null
+          id: string
+          last_sale_at: string | null
+          note: string | null
+          provider_product_id: string
+          provider_product_name: string | null
+          sale_format: string
+          selected_capacity_liters: number | null
+          selected_format_key: string | null
+          selected_winerim_id: string | null
+          selected_winerim_name: string | null
+          status: string
+          units_recent: number | null
+          updated_at: string
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          family?: string | null
+          id?: string
+          last_sale_at?: string | null
+          note?: string | null
+          provider_product_id: string
+          provider_product_name?: string | null
+          sale_format?: string
+          selected_capacity_liters?: number | null
+          selected_format_key?: string | null
+          selected_winerim_id?: string | null
+          selected_winerim_name?: string | null
+          status?: string
+          units_recent?: number | null
+          updated_at?: string
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          family?: string | null
+          id?: string
+          last_sale_at?: string | null
+          note?: string | null
+          provider_product_id?: string
+          provider_product_name?: string | null
+          sale_format?: string
+          selected_capacity_liters?: number | null
+          selected_format_key?: string | null
+          selected_winerim_id?: string | null
+          selected_winerim_name?: string | null
+          status?: string
+          units_recent?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "catalog_review_decisions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       classification_config: {
         Row: {
           connection_id: string
@@ -1505,7 +1650,29 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      review_winerim_variants: {
+        Row: {
+          capacity_liters: number | null
+          connection_id: string | null
+          cost_price: number | null
+          ean: string | null
+          format_key: string | null
+          grape_variety: string | null
+          is_active: boolean | null
+          name: string | null
+          origin: string | null
+          region: string | null
+          sale_price: number | null
+          sku: string | null
+          stock_id: number | null
+          variant_source: string | null
+          vintage: string | null
+          wine_type: string | null
+          winerim_id: string | null
+          winery: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       acquire_agora_dispatch_lock: {
@@ -1564,6 +1731,178 @@ export type Database = {
         Returns: boolean
       }
       rescue_zombie_outbound_tasks: { Args: never; Returns: number }
+      review_catalog_audit: {
+        Args: {
+          p_connection_id: string
+          p_format?: string
+          p_limit?: number
+          p_offset?: number
+          p_readback_max_age_minutes?: number
+          p_search?: string
+          p_status?: string
+        }
+        Returns: {
+          agora_family_id: string
+          agora_family_name: string
+          agora_price: number
+          agora_product_id: string
+          agora_saleable: boolean
+          agora_visible: boolean
+          applied_at: string
+          audit_status: string
+          capacity_liters: number
+          comparison: string
+          detected_at: string
+          differences: string[]
+          format_key: string
+          latency_seconds: number
+          next_action: string
+          push_error: string
+          push_status: string
+          queued_at: string
+          read_at: string
+          readback_fresh: boolean
+          stock_id: number
+          total_count: number
+          wine_name: string
+          wine_type: string
+          winerim_id: string
+          winerim_price: number
+        }[]
+      }
+      review_catalog_audit_summary: {
+        Args: { p_connection_id: string; p_readback_max_age_minutes?: number }
+        Returns: {
+          active_wines: number
+          ambiguous: number
+          expected_variants: number
+          family_mismatch: number
+          format_mismatch: number
+          hidden: number
+          last_read_at: string
+          legacy_only: number
+          matched_live: number
+          missing_in_agora: number
+          no_current_readback: number
+          not_saleable: number
+          pending_push: number
+          price_mismatch: number
+          push_failed: number
+          read_variants: number
+        }[]
+      }
+      review_format_key: { Args: { p: string }; Returns: string }
+      review_format_liters: { Args: { p: string }; Returns: number }
+      review_is_wine: {
+        Args: { p_family: string; p_format: string; p_winerim_id: string }
+        Returns: boolean
+      }
+      review_legacy_products: {
+        Args: {
+          p_connection_id: string
+          p_limit?: number
+          p_offset?: number
+          p_search?: string
+          p_state?: string
+        }
+        Returns: {
+          agora_saleable: boolean
+          agora_visible: boolean
+          family: string
+          format_key: string
+          last_sale_at: string
+          legacy_state: string
+          mapping_status: string
+          name: string
+          next_action: string
+          price: number
+          provider_product_id: string
+          reason: string
+          sale_format: string
+          source: string
+          total_count: number
+          tracking_status: string
+          units_recent: number
+        }[]
+      }
+      review_normalize_text: { Args: { p: string }; Returns: string }
+      review_search_winerim_variants: {
+        Args: {
+          p_connection_id: string
+          p_format?: string
+          p_limit?: number
+          p_offset?: number
+          p_query?: string
+        }
+        Returns: {
+          capacity_liters: number
+          cost_price: number
+          ean: string
+          format_key: string
+          grape_variety: string
+          name: string
+          origin: string
+          region: string
+          sale_price: number
+          sku: string
+          stock_id: number
+          total_count: number
+          variant_source: string
+          vintage: string
+          wine_type: string
+          winerim_id: string
+          winery: string
+        }[]
+      }
+      review_unmapped_counters: {
+        Args: { p_connection_id: string; p_days?: number }
+        Returns: {
+          draft: number
+          needs_confirmation: number
+          no_match: number
+          ready: number
+          sin_dato: number
+          total: number
+          units: number
+        }[]
+      }
+      review_unmapped_families: {
+        Args: { p_connection_id: string; p_days?: number }
+        Returns: {
+          family: string
+          rows_count: number
+        }[]
+      }
+      review_unmapped_products: {
+        Args: {
+          p_connection_id: string
+          p_days?: number
+          p_family?: string
+          p_format?: string
+          p_limit?: number
+          p_offset?: number
+          p_search?: string
+          p_status?: string
+        }
+        Returns: {
+          agora_price: number
+          decided_at: string
+          decision_status: string
+          family: string
+          format_key: string
+          last_sale_at: string
+          line_count: number
+          note: string
+          provider_product_id: string
+          provider_product_name: string
+          sale_format: string
+          selected_format_key: string
+          selected_winerim_id: string
+          selected_winerim_name: string
+          total_count: number
+          units: number
+        }[]
+      }
       schedule_next_catalog_batch: {
         Args: {
           conn_id: string
