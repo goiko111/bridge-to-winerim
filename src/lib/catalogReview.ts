@@ -60,6 +60,9 @@ export function canApplyDecision(row: ApprovableDecisionRow): boolean {
     agoraFormatKey: row.format_key,
     selectedWinerimId: row.selected_winerim_id,
     selectedFormatKey: row.selected_format_key,
+    // A stored READY_FOR_APPROVAL over an unknown POS format was only allowed
+    // when the wine had a single active variant, so the format is unambiguous.
+    soleVariant: true,
   });
 }
 
