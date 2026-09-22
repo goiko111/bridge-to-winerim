@@ -10,6 +10,7 @@ import {
   AUDIT_STATUS_LABELS,
   REVIEW_FORMAT_FILTER_KEYS,
   downloadCsv,
+  formatAuditStatusLabel,
   formatBoolean,
   formatDateTime,
   formatLabel,
