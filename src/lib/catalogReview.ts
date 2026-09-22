@@ -51,11 +51,16 @@ export type ApprovableDecisionRow = {
   selected_winerim_id: string | null;
   selected_winerim_name: string | null;
   selected_format_key: string | null;
+  force_ready: boolean | null;
 };
 
-/** Only a saved READY_FOR_APPROVAL decision with a compatible variant can be applied. */
+/**
+ * A READY_FOR_APPROVAL decision can be applied when formats are compatible,
+ * or when the operator explicitly forced it through review.
+ */
 export function canApplyDecision(row: ApprovableDecisionRow): boolean {
   if (row.decision_status !== "READY_FOR_APPROVAL") return false;
+  if (row.force_ready === true) return true;
   return canApproveDecision({
     agoraFormatKey: row.format_key,
     selectedWinerimId: row.selected_winerim_id,
@@ -67,8 +72,8 @@ export function canApplyDecision(row: ApprovableDecisionRow): boolean {
 }
 
 /**
- * A NEEDS_CONFIRMATION decision can be promoted to READY_FOR_APPROVAL when the
- * operator already picked an exact Winerim variant with a known format.
+ * A NEEDS_CONFIRMATION decision can be promoted to READY_FOR_APPROVAL automatically
+ * when formats already match and the operator picked an exact Winerim variant.
  */
 export function isPromotable(row: ApprovableDecisionRow): boolean {
   if (row.decision_status !== "NEEDS_CONFIRMATION") return false;
@@ -80,6 +85,18 @@ export function isPromotable(row: ApprovableDecisionRow): boolean {
     selectedFormatKey: row.selected_format_key,
     soleVariant: true,
   });
+}
+
+/**
+ * A NEEDS_CONFIRMATION decision can be forced to READY_FOR_APPROVAL by the operator
+ * whenever a concrete Winerim variant with a known format has been selected,
+ * even if the POS-reported format does not match it.
+ */
+export function canForceReady(row: ApprovableDecisionRow): boolean {
+  if (row.decision_status !== "NEEDS_CONFIRMATION") return false;
+  if (!row.selected_winerim_id) return false;
+  if (!row.selected_format_key || row.selected_format_key === "SIN_DATO") return false;
+  return true;
 }
 
 /** Builds the CONFIRMED product_mapping row for an approved decision. Pure: no writes. */

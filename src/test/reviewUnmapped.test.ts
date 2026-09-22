@@ -46,6 +46,7 @@ describe("unified unmapped review", () => {
       selected_winerim_id: null,
       selected_winerim_name: null,
       selected_format_key: null,
+      force_ready: false,
       note: null,
       decided_at: null,
     }];
@@ -73,6 +74,7 @@ describe("unified unmapped review", () => {
       selected_winerim_id: null,
       selected_winerim_name: null,
       selected_format_key: null,
+      force_ready: false,
       note: null,
       decided_at: null,
     }];
@@ -98,6 +100,7 @@ describe("unified unmapped review", () => {
       selected_winerim_id: null,
       selected_winerim_name: null,
       selected_format_key: null,
+      force_ready: false,
       note: null,
       decided_at: null,
     }];

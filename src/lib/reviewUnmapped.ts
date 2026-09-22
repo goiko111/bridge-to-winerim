@@ -5,6 +5,7 @@ export type ReviewDecision = {
   selected_winerim_id: string | null;
   selected_winerim_name: string | null;
   selected_format_key: string | null;
+  force_ready: boolean | null;
   note: string | null;
   decided_at: string | null;
 };
@@ -33,6 +34,7 @@ export type UnmappedReviewRow = {
   selected_winerim_id: string | null;
   selected_winerim_name: string | null;
   selected_format_key: string | null;
+  force_ready: boolean;
   note: string | null;
   decided_at: string | null;
   legacy: boolean;
@@ -89,6 +91,7 @@ function decisionFor(
     selected_winerim_id: qtomas.selected_winerim_id,
     selected_winerim_name: qtomas.selected_winerim_name,
     selected_format_key: qtomas.format_type || null,
+    force_ready: false,
     note: qtomas.note,
     decided_at: qtomas.updated_at,
   };
@@ -123,6 +126,7 @@ export function mergeUnmappedReviewRows(input: {
       selected_winerim_id: decision?.selected_winerim_id ?? row.selected_winerim_id,
       selected_winerim_name: decision?.selected_winerim_name ?? row.selected_winerim_name,
       selected_format_key: decision?.selected_format_key ?? row.selected_format_key,
+      force_ready: decision?.force_ready ?? row.force_ready ?? false,
       note: decision?.note ?? row.note,
       decided_at: decision?.decided_at ?? row.decided_at,
       legacy: false,
@@ -167,6 +171,7 @@ export function mergeUnmappedReviewRows(input: {
       selected_winerim_id: decision?.selected_winerim_id ?? null,
       selected_winerim_name: decision?.selected_winerim_name ?? null,
       selected_format_key: decision?.selected_format_key ?? null,
+      force_ready: decision?.force_ready ?? false,
       note: decision?.note ?? null,
       decided_at: decision?.decided_at ?? null,
       legacy: true,

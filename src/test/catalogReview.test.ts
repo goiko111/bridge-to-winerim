@@ -150,6 +150,8 @@ describe("CSV", () => {
   });
 });
 
+import { canForceReady } from "@/lib/catalogReview";
+
 describe("aprobación de decisiones", () => {
   const base = {
     provider_product_id: "123",
@@ -159,6 +161,7 @@ describe("aprobación de decisiones", () => {
     selected_winerim_id: "61109",
     selected_winerim_name: "Pago de Carraovejas 2021",
     selected_format_key: "BOTTLE",
+    force_ready: false,
   };
 
   it("solo aprueba decisiones listas con variante compatible", () => {
@@ -188,6 +191,15 @@ describe("aprobación de decisiones", () => {
     ).toBe(false);
   });
 
+  it("permite forzar a listo una decisión en confirmación con variante concreta", () => {
+    const needsConfirmation = { ...base, decision_status: "NEEDS_CONFIRMATION" };
+    expect(canForceReady(needsConfirmation)).toBe(true);
+    expect(canForceReady({ ...needsConfirmation, selected_winerim_id: null })).toBe(false);
+    expect(canForceReady({ ...needsConfirmation, selected_format_key: "SIN_DATO" })).toBe(false);
+    expect(canForceReady({ ...needsConfirmation, decision_status: "DRAFT" })).toBe(false);
+    // READY_FOR_APPROVAL forzada se puede aplicar aunque el formato no coincida.
+    expect(canApplyDecision({ ...needsConfirmation, decision_status: "READY_FOR_APPROVAL", force_ready: true })).toBe(true);
+  });
 
   it("construye un mapa CONFIRMED con el formato exacto", () => {
     const payload = buildMappingPayload("conn-1", base);
@@ -201,7 +213,13 @@ describe("aprobación de decisiones", () => {
     });
   });
 
-  it("no construye mapa si la decisión no es aprobable", () => {
+  it("construye un mapa CONFIRMED aunque la decisión esté forzada", () => {
+    const payload = buildMappingPayload("conn-1", { ...base, force_ready: true, selected_format_key: "GLASS" });
+    expect(payload.format_type).toBe("GLASS");
+    expect(payload.status).toBe("CONFIRMED");
+  });
+
+  it("no construye mapa si la decisión no es aprobable ni forzada", () => {
     expect(() => buildMappingPayload("conn-1", { ...base, selected_format_key: "GLASS" })).toThrow();
   });
 });

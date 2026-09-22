@@ -14,6 +14,7 @@ import {
   buildMappingPayload,
   canApplyDecision,
   canApproveDecision,
+  canForceReady,
   isPromotable,
   downloadCsv,
   formatDateTime,
@@ -123,7 +124,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         loadAllLegacy(connectionId),
         supabase
           .from("catalog_review_decisions")
-          .select("provider_product_id,sale_format,status,selected_winerim_id,selected_winerim_name,selected_format_key,note,decided_at")
+          .select("provider_product_id,sale_format,status,selected_winerim_id,selected_winerim_name,selected_format_key,force_ready,note,decided_at")
           .eq("connection_id", connectionId),
         supabase
           .from("qtomas_review_decisions")
@@ -157,6 +158,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
       winerimName?: string | null;
       formatKey?: string | null;
       capacityLiters?: number | null;
+      forceReady?: boolean;
       note?: string | null;
     },
   ) => {
@@ -176,6 +178,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
       selected_format_key: patch.formatKey ?? null,
       selected_capacity_liters: patch.capacityLiters ?? null,
       status: patch.status,
+      force_ready: patch.forceReady ?? row.force_ready ?? false,
       note: patch.note ?? row.note ?? null,
       decided_by: userData?.user?.id ?? null,
       decided_at: new Date().toISOString(),
@@ -197,6 +200,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
               selected_winerim_id: payload.selected_winerim_id,
               selected_winerim_name: payload.selected_winerim_name,
               selected_format_key: payload.selected_format_key,
+              force_ready: payload.force_ready,
               note: payload.note,
               decided_at: payload.decided_at,
             }
@@ -295,9 +299,10 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
   /**
    * Promote NEEDS_CONFIRMATION decisions that already have an exact variant chosen
    * to READY_FOR_APPROVAL. Only touches the review decision, never mappings.
+   * When forced=true, the operator explicitly accepts a format mismatch.
    */
-  const promoteRows = async (targets: UnmappedReviewRow[]) => {
-    const promotable = targets.filter(isPromotable);
+  const promoteRows = async (targets: UnmappedReviewRow[], forced: boolean) => {
+    const promotable = forced ? targets.filter(canForceReady) : targets.filter(isPromotable);
     if (!promotable.length) {
       toast({
         title: "Nada que pasar",
@@ -320,6 +325,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
         selected_winerim_id: row.selected_winerim_id,
         selected_winerim_name: row.selected_winerim_name,
         selected_format_key: row.selected_format_key,
+        force_ready: forced,
         note: row.note ?? null,
         status: "READY_FOR_APPROVAL",
         decided_by: userData?.user?.id ?? null,
@@ -335,13 +341,15 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
     setRows((prev) =>
       prev.map((r) =>
         promotable.some((p) => p.provider_product_id === r.provider_product_id && p.sale_format === r.sale_format)
-          ? { ...r, decision_status: "READY_FOR_APPROVAL", decided_at: decidedAt }
+          ? { ...r, decision_status: "READY_FOR_APPROVAL", force_ready: forced, decided_at: decidedAt }
           : r,
       ),
     );
     toast({
       title: `${promotable.length} decisión(es) listas para aprobar`,
-      description: "Solo cambia el estado de revisión: no crea mapas ni toca ventas, stock o catálogo.",
+      description: forced
+        ? "Marcadas como listas forzosamente por formato; no crea mapas ni toca ventas, stock o catálogo."
+        : "Solo cambia el estado de revisión: no crea mapas ni toca ventas, stock o catálogo.",
     });
   };
 
@@ -395,9 +403,14 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
 
   const readyRows = useMemo(() => rows.filter((row) => canApplyDecision(row)), [rows]);
   const promotableRows = useMemo(() => rows.filter((row) => isPromotable(row)), [rows]);
+  const forceReadyRows = useMemo(() => rows.filter((row) => canForceReady(row)), [rows]);
   const selectedReadyRows = useMemo(
     () => readyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
     [readyRows, selected],
+  );
+  const selectedForceReadyRows = useMemo(
+    () => forceReadyRows.filter((row) => selected.has(`${row.provider_product_id}::${row.sale_format}`)),
+    [forceReadyRows, selected],
   );
 
   const families = useMemo(() => {
@@ -518,9 +531,15 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
             size="sm"
             variant="outline"
             className="h-7 text-[11px]"
-            disabled={!readyRows.length || approving}
+            disabled={(!readyRows.length && !forceReadyRows.length) || approving}
             onClick={() =>
-              setSelected(new Set(readyRows.map((row) => `${row.provider_product_id}::${row.sale_format}`)))
+              setSelected(
+                new Set(
+                  [...readyRows, ...forceReadyRows].map(
+                    (row) => `${row.provider_product_id}::${row.sale_format}`,
+                  ),
+                ),
+              )
             }
           >
             Seleccionar todas
@@ -539,10 +558,20 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
             variant="secondary"
             className="h-7 text-[11px]"
             disabled={!promotableRows.length || approving}
-            title="Cambia solo el estado de revisión de las decisiones que ya tienen vino y formato elegidos."
-            onClick={() => promoteRows(promotableRows)}
+            title="Cambia solo el estado de revisión de las decisiones compatibles que ya tienen vino y formato elegidos."
+            onClick={() => promoteRows(promotableRows, false)}
           >
-            Pasar a listo para aprobar ({promotableRows.length})
+            Pasar a listo ({promotableRows.length})
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px]"
+            disabled={!selectedForceReadyRows.length || approving}
+            title="Pasa a listo las filas seleccionadas aunque el formato del TPV no coincida."
+            onClick={() => promoteRows(selectedForceReadyRows, true)}
+          >
+            Pasar seleccionadas a listo ({selectedForceReadyRows.length})
           </Button>
           <Button
             size="sm"
@@ -582,7 +611,7 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     type="checkbox"
                     className="h-3.5 w-3.5 accent-primary"
                     aria-label={`Seleccionar ${row.provider_product_name}`}
-                    disabled={!canApplyDecision(row) || approving}
+                    disabled={(!canApplyDecision(row) && !isPromotable(row) && !canForceReady(row)) || approving}
                     checked={selected.has(key)}
                     onChange={(e) =>
                       setSelected((prev) => {
@@ -615,13 +644,18 @@ export default function ReviewUnmappedTab({ connectionId }: { connectionId: stri
                     <ChevronDown className={`h-3.5 w-3.5 ${expanded === key ? "rotate-180" : ""}`} />
                     Decidir
                   </Button>
-                  {isPromotable(row) && (
+                  {(isPromotable(row) || canForceReady(row)) && (
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant={canForceReady(row) && !isPromotable(row) ? "default" : "secondary"}
                       className="h-7 text-[11px]"
                       disabled={approving}
-                      onClick={() => promoteRows([row])}
+                      title={
+                        canForceReady(row) && !isPromotable(row)
+                          ? "Pasa a listo aceptando el formato elegido aunque no coincida con el TPV"
+                          : "Pasa a listo automáticamente"
+                      }
+                      onClick={() => promoteRows([row], !isPromotable(row))}
                     >
                       Pasar a listo
                     </Button>

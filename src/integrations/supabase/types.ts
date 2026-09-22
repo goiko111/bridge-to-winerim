@@ -248,6 +248,7 @@ export type Database = {
           decided_at: string | null
           decided_by: string | null
           family: string | null
+          force_ready: boolean
           id: string
           last_sale_at: string | null
           note: string | null
@@ -271,6 +272,7 @@ export type Database = {
           decided_at?: string | null
           decided_by?: string | null
           family?: string | null
+          force_ready?: boolean
           id?: string
           last_sale_at?: string | null
           note?: string | null
@@ -294,6 +296,7 @@ export type Database = {
           decided_at?: string | null
           decided_by?: string | null
           family?: string | null
+          force_ready?: boolean
           id?: string
           last_sale_at?: string | null
           note?: string | null
@@ -1903,6 +1906,7 @@ export type Database = {
           decided_at: string
           decision_status: string
           family: string
+          force_ready: boolean
           format_key: string
           last_sale_at: string
           line_count: number
