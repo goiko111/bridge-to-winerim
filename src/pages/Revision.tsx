@@ -8,6 +8,7 @@ import { useReviewConnections } from "@/hooks/useReviewConnections";
 import ReviewUnmappedTab from "@/components/review/ReviewUnmappedTab";
 import ReviewLegacyTab from "@/components/review/ReviewLegacyTab";
 import ReviewCatalogAuditTab from "@/components/review/ReviewCatalogAuditTab";
+import ReviewMappedTab from "@/components/review/ReviewMappedTab";
 import { formatDateTime } from "@/lib/catalogReview";
 import { unmappedFilterKey } from "@/lib/reviewUnmapped";
 
@@ -29,7 +30,7 @@ export default function Revision() {
       setConnectionId(requestedConnection);
     }
     const requestedTab = searchParams.get("tab");
-    if (requestedTab && ["unmapped", "legacy", "audit"].includes(requestedTab)) setTab(requestedTab);
+    if (requestedTab && ["unmapped", "mapped", "legacy", "audit"].includes(requestedTab)) setTab(requestedTab);
   }, [connections, searchParams, setConnectionId]);
 
   const openInReview = (search: string) => {
@@ -104,11 +105,15 @@ export default function Revision() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="unmapped">Sin mapear</TabsTrigger>
+            <TabsTrigger value="mapped">Mapeados</TabsTrigger>
             <TabsTrigger value="legacy">Legacy</TabsTrigger>
             <TabsTrigger value="audit">Auditoría catálogo</TabsTrigger>
           </TabsList>
           <TabsContent value="unmapped" className="mt-4">
             <ReviewUnmappedTab key={`${connectionId}-${unmappedSeed}`} connectionId={connectionId} />
+          </TabsContent>
+          <TabsContent value="mapped" className="mt-4">
+            <ReviewMappedTab key={connectionId} connectionId={connectionId} />
           </TabsContent>
           <TabsContent value="legacy" className="mt-4">
             <ReviewLegacyTab key={connectionId} connectionId={connectionId} onOpenInReview={openInReview} />
