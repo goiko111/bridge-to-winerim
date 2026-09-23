@@ -70,6 +70,7 @@ export default function WinerimVariantPicker({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeInactive, setIncludeInactive] = useState(false);
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
