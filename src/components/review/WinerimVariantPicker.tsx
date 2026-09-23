@@ -219,6 +219,7 @@ export default function WinerimVariantPicker({
                       {v.stock_id !== null && (
                         <span className="font-mono text-muted-foreground">stock {v.stock_id}</span>
                       )}
+                      {v.format_is_active === false && <span className="text-muted-foreground">apagado</span>}
                       <span className="font-mono text-[10px] text-muted-foreground">
                         {v.variant_source ?? ""}
                       </span>
