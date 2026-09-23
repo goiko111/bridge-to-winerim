@@ -2050,3 +2050,22 @@
 - [x] Retirar la venta directa de los productos restaurados en siete restaurantes, conservando familia y vendibilidad.
 - [x] Corregir y probar el auto-restaurado para usar flags explícitos y no crear teclas en pantalla principal.
 - [ ] Qtomas: corregir/verificar sus 14 productos restaurados cuando el TPV vuelva a responder; no reintentar en bucle.
+
+---
+
+## Retomar 2026-09-24
+
+### Bloqueado por autorización
+- Desplegar `catalog-readback` (timeout 90 s + 1 reintento). Solo esa función.
+- Aplicar decisiones de Qtomas NEEDS_CONFIRMATION (12 vinos) y posibles duplicados
+  (Casa Esteban 6, Ponzano 23, Ocean Club 18, Sa Pedrera 7, Qtomas 8).
+- Casa Esteban: encender catálogo (publicaría 43 variantes ausentes).
+
+### Verificaciones inmediatas
+- O Centolo: confirmar que la lectura intradía ya trae las ventas del 23/09 y que
+  el stock se descuenta; revisar las 58 teclas sin vino (45 ambiguas, 13 con
+  prefijo WINERIM sin precio/formato).
+- Lanzar readback de catálogo de O Centolo tras el despliegue.
+- Canario de matrícula estable: revisar el 23/09 de Cienvinos.
+- Revisar duplicados Qtomas (Atlantis Albariño 77267 vs Godello 76575; Disznókó
+  5 vs 6 puttonyos; Tomás Postigo 3º vs 5º Año).
