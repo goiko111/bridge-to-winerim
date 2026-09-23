@@ -232,7 +232,9 @@ export default function WinerimVariantPicker({
         </div>
       )}
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>{total} variantes activas coinciden</span>
+        <span>
+          {total} variantes coinciden {includeInactive ? "(incluye apagadas)" : "(solo activas)"}
+        </span>
         <div className="flex gap-1">
           <Button
             size="sm"
