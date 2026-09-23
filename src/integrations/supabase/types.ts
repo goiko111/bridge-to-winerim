@@ -1884,6 +1884,50 @@ export type Database = {
           units_recent: number
         }[]
       }
+      review_mapped_products: {
+        Args: {
+          p_connection_id: string
+          p_days?: number
+          p_format?: string
+          p_limit?: number
+          p_offset?: number
+          p_search?: string
+          p_state?: string
+        }
+        Returns: {
+          agora_price: number
+          comparison: string
+          family: string
+          format_key: string
+          last_synced_at: string
+          mapped_at: string
+          mapped_state: string
+          match_method: string
+          provider_product_id: string
+          provider_product_name: string
+          total_count: number
+          units_recent: number
+          winerim_active: boolean
+          winerim_price: number
+          winerim_wine_id: string
+          winerim_wine_name: string
+        }[]
+      }
+      review_mapped_summary: {
+        Args: { p_connection_id: string; p_days?: number }
+        Returns: {
+          bottle_count: number
+          glass_count: number
+          mapped_total: number
+          no_price_ref: number
+          other_format_count: number
+          price_mismatch: number
+          state_ok: number
+          units_recent: number
+          wine_inactive: number
+          wine_missing: number
+        }[]
+      }
       review_normalize_text: { Args: { p: string }; Returns: string }
       review_search_winerim_variants: {
         Args: {
