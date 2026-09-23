@@ -119,7 +119,7 @@ export default function WinerimVariantPicker({
     return () => {
       cancelled = true;
     };
-  }, [connectionId, debounced, page]);
+  }, [connectionId, debounced, page, includeInactive]);
 
   // Group variants by wine so a wine with Bottle + Glass shows two exact options.
   const grouped = useMemo(() => {
