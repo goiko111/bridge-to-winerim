@@ -2924,3 +2924,20 @@ ya demostró una carrera real con el cron.
 - **Alternativa descartada**: paginar el export (Ágora no lo soporta) o subir el
   timeout sin reintento.
 - **Estado**: código listo, **pendiente de autorización para desplegar**.
+
+---
+
+## 2026-09-23 - Taller de Carne: BARRATALLER como tipo de preparación por defecto (GO)
+- **Decisión**: fijar en `pos_connections` de Taller de Carne
+  (`4f6cb49d-d1cd-4426-90d4-623bc359c257`) `default_preparation_type_id='8'`
+  (BARRATALLER) y `default_preparation_order_id='1'` (Bebidas).
+- **Razón**: Wilfredo Lawson reporta que los vinos creados con TALLER (id 6) no
+  imprimen comanda. El par tipo+orden debe estar completo: si falta el orden, el
+  generador de XML escribe ambos campos vacíos (`_force_empty_preparation`).
+- **Hecho comprobado**: lectura de catálogo del TPV a las 12:10 UTC del 23/09
+  (`agora_master_data.fetched_at`) muestra que los **80 productos Winerim ya
+  existentes tienen PreparationTypeId 8 y PreparationOrderId 1**, igual que el
+  resto de bebidas. No hay vinos que corregir; no se ha lanzado
+  `backfill-preparation`.
+- **Rollback**: volver ambos campos a NULL (se publicaría sin preparación).
+- **Particularidad COMANDAS** (`1a9eda26-...`) marcada RESOLVED con la evidencia.

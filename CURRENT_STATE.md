@@ -7160,3 +7160,14 @@ _Última actualización: 2026-09-23 11:10 UTC_
 
 ### Tareas pendientes inmediatas
 - Corregir y verificar Qtomas cuando vuelva a responder, sin más reintentos en esta pasada.
+
+### 2026-09-23 12:1x UTC — Taller de Carne, tipo de preparación
+**Hechos**: conexión `4f6cb49d-d1cd-4426-90d4-623bc359c257` con
+`default_preparation_type_id='8'` (BARRATALLER) y
+`default_preparation_order_id='1'` (Bebidas). Catálogo leído 12:10 UTC: 590
+productos, los 80 Winerim con PreparationTypeId 8 / PreparationOrderId 1.
+Sigue: catálogo apagado, `write_glass=false`, auto-push desactivado, ventas del
+día y tickets abiertos activos (última pasada 12:10 UTC, 4 facturas / 8 líneas,
+7 líneas sin resolver a vino).
+**Pendiente**: petición de un solo botón con ratios de venta (particularidad
+CATALOGO, OPEN).
