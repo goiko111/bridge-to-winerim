@@ -151,6 +151,18 @@ export default function WinerimVariantPicker({
         placeholder="Buscar por nombre, añada, bodega, región, uva, tipo, ID, SKU, EAN o formato"
         className="h-8 text-xs"
       />
+      <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          className="h-3 w-3 accent-primary"
+          checked={includeInactive}
+          onChange={(e) => {
+            setIncludeInactive(e.target.checked);
+            setPage(0);
+          }}
+        />
+        Incluir vinos y formatos apagados en Winerim (se pueden mapear; no se publican mientras estén apagados)
+      </label>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {loading ? (
         <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
