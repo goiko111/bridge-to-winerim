@@ -23,6 +23,8 @@ export type VariantRow = {
   stock_id: number | null;
   variant_source: string | null;
   origin: string | null;
+  wine_is_active?: boolean | null;
+  format_is_active?: boolean | null;
   total_count: number;
 };
 
