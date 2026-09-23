@@ -61,6 +61,7 @@ const App = () => (
             <Route path="/operations" element={<OperationsAudit />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
+            <Route path="/particularidades" element={<IntegrationSpecifics />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
