@@ -591,6 +591,59 @@ export type Database = {
           },
         ]
       }
+      integration_specifics: {
+        Row: {
+          category: string
+          connection_id: string
+          created_at: string
+          created_by: string | null
+          detail: string
+          id: string
+          impact: string
+          reported_at: string | null
+          reported_by: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          connection_id: string
+          created_at?: string
+          created_by?: string | null
+          detail?: string
+          id?: string
+          impact?: string
+          reported_at?: string | null
+          reported_by?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          connection_id?: string
+          created_at?: string
+          created_by?: string | null
+          detail?: string
+          id?: string
+          impact?: string
+          reported_at?: string | null
+          reported_by?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_specifics_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       outbound_tasks: {
         Row: {
           attempts: number

@@ -25,6 +25,7 @@ import Revision from "./pages/Revision";
 import OperationsAudit from "./pages/OperationsAudit";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
+import IntegrationSpecifics from "./pages/IntegrationSpecifics";
 import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
@@ -60,6 +61,7 @@ const App = () => (
             <Route path="/operations" element={<OperationsAudit />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
+            <Route path="/particularidades" element={<IntegrationSpecifics />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
