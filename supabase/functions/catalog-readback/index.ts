@@ -155,14 +155,14 @@ Deno.serve(async (req) => {
     // catalogues are never silently truncated (a truncated read would look like
     // "missing in Agora" for every variant beyond the cap).
     const PAGE = 1000;
-    async function readAllRows<T>(table: string, columns: string): Promise<T[]> {
+    // Paging without a deterministic ORDER BY would drop/duplicate rows between
+    // pages, which previously looked like "missing in Agora" false positives.
+    async function readAllRows<T>(table: string, columns: string, orderBy: string[]): Promise<T[]> {
       const out: T[] = [];
       for (let from = 0; ; from += PAGE) {
-        const { data, error } = await admin
-          .from(table)
-          .select(columns)
-          .eq("connection_id", connectionId)
-          .range(from, from + PAGE - 1);
+        let query = admin.from(table).select(columns).eq("connection_id", connectionId);
+        for (const col of orderBy) query = query.order(col, { ascending: true });
+        const { data, error } = await query.range(from, from + PAGE - 1);
         if (error) throw new Error(`${table}: ${error.message}`);
         const chunk = (data ?? []) as T[];
         out.push(...chunk);
@@ -174,10 +174,15 @@ Deno.serve(async (req) => {
     let variants: any[] = [];
     let tracking: any[] = [];
     try {
-      variants = await readAllRows<any>("review_winerim_variants", "winerim_id, format_key, sale_price");
+      variants = await readAllRows<any>(
+        "review_winerim_variants",
+        "winerim_id, format_key, sale_price",
+        ["winerim_id", "format_key"],
+      );
       tracking = await readAllRows<any>(
         "winerim_push_tracking",
         "winerim_wine_id, format, agora_product_id, agora_family_id",
+        ["winerim_wine_id", "format"],
       );
     } catch (err) {
       return json({
