@@ -79,10 +79,11 @@ export default function ReviewMappedTab({ connectionId }: { connectionId: string
     if (!connectionId) return;
     setLoading(true);
     setError(null);
-    const rpc = supabase.rpc as unknown as (fn: string, args: Record<string, unknown>) => Promise<{
-      data: unknown;
-      error: { message: string } | null;
-    }>;
+    const rpc = (fn: string, args: Record<string, unknown>) =>
+      (supabase.rpc as unknown as (f: string, a: Record<string, unknown>) => Promise<{
+        data: unknown;
+        error: { message: string } | null;
+      }>).call(supabase, fn, args);
     const [listRes, summaryRes] = await Promise.all([
       rpc("review_mapped_products", {
         p_connection_id: connectionId,
