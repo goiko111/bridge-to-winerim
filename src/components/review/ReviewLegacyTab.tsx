@@ -223,15 +223,19 @@ export default function ReviewLegacyTab({
                     <div className="mt-1 text-foreground">{r.next_action}</div>
                   </td>
                   <td className="px-3 py-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-[11px]"
-                      title="Abre este producto en «Sin mapear» para elegir el vino y formato de Winerim"
-                      onClick={() => onOpenInReview(r.provider_product_id)}
-                    >
-                      Mapear este producto
-                    </Button>
+                    {r.mapping_status === "CONFIRMED" ? (
+                      <span className="text-[11px] text-muted-foreground">Ya mapeado</span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-[11px]"
+                        title="Abre este producto en «Sin mapear» para elegir el vino y formato de Winerim"
+                        onClick={() => onOpenInReview(r.provider_product_id)}
+                      >
+                        Mapear este producto
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}
