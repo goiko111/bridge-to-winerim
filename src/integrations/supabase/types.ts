@@ -1685,6 +1685,30 @@ export type Database = {
         }
         Relationships: []
       }
+      review_winerim_variants_all: {
+        Row: {
+          capacity_liters: number | null
+          connection_id: string | null
+          cost_price: number | null
+          ean: string | null
+          format_is_active: boolean | null
+          format_key: string | null
+          grape_variety: string | null
+          is_active: boolean | null
+          name: string | null
+          origin: string | null
+          region: string | null
+          sale_price: number | null
+          sku: string | null
+          stock_id: number | null
+          variant_source: string | null
+          vintage: string | null
+          wine_type: string | null
+          winerim_id: string | null
+          winery: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       acquire_agora_dispatch_lock: {
@@ -1933,6 +1957,7 @@ export type Database = {
         Args: {
           p_connection_id: string
           p_format?: string
+          p_include_inactive?: boolean
           p_limit?: number
           p_offset?: number
           p_query?: string
@@ -1941,6 +1966,7 @@ export type Database = {
           capacity_liters: number
           cost_price: number
           ean: string
+          format_is_active: boolean
           format_key: string
           grape_variety: string
           name: string
@@ -1952,6 +1978,7 @@ export type Database = {
           total_count: number
           variant_source: string
           vintage: string
+          wine_is_active: boolean
           wine_type: string
           winerim_id: string
           winery: string
