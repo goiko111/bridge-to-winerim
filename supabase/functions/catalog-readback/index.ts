@@ -151,17 +151,41 @@ Deno.serve(async (req) => {
 
     const agoraProducts = parseProducts(xml);
 
-    // Expected variants come from the existing view; no duplication of catalogs.
-    const { data: variants, error: varErr } = await admin
-      .from("review_winerim_variants")
-      .select("winerim_id, format_key, sale_price")
-      .eq("connection_id", connectionId);
-    if (varErr) return json({ error: "VARIANTS_READ_FAILED", message: varErr.message, readOnly: true }, 500);
+    // PostgREST caps every response at 1000 rows: page through explicitly so large
+    // catalogues are never silently truncated (a truncated read would look like
+    // "missing in Agora" for every variant beyond the cap).
+    const PAGE = 1000;
+    async function readAllRows<T>(table: string, columns: string): Promise<T[]> {
+      const out: T[] = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin
+          .from(table)
+          .select(columns)
+          .eq("connection_id", connectionId)
+          .range(from, from + PAGE - 1);
+        if (error) throw new Error(`${table}: ${error.message}`);
+        const chunk = (data ?? []) as T[];
+        out.push(...chunk);
+        if (chunk.length < PAGE) return out;
+      }
+    }
 
-    const { data: tracking } = await admin
-      .from("winerim_push_tracking")
-      .select("winerim_wine_id, format, agora_product_id, agora_family_id")
-      .eq("connection_id", connectionId);
+    // Expected variants come from the existing view; no duplication of catalogs.
+    let variants: any[] = [];
+    let tracking: any[] = [];
+    try {
+      variants = await readAllRows<any>("review_winerim_variants", "winerim_id, format_key, sale_price");
+      tracking = await readAllRows<any>(
+        "winerim_push_tracking",
+        "winerim_wine_id, format, agora_product_id, agora_family_id",
+      );
+    } catch (err) {
+      return json({
+        error: "VARIANTS_READ_FAILED",
+        message: err instanceof Error ? err.message : String(err),
+        readOnly: true,
+      }, 500);
+    }
 
     const trackingIndex = new Map<string, { productId: string | null; familyId: string | null }>();
     for (const t of tracking ?? []) {
