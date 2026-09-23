@@ -2069,3 +2069,14 @@
 - Canario de matrícula estable: revisar el 23/09 de Cienvinos.
 - Revisar duplicados Qtomas (Atlantis Albariño 77267 vs Godello 76575; Disznókó
   5 vs 6 puttonyos; Tomás Postigo 3º vs 5º Año).
+
+## 2026-09-23 (cierre) — Taller de Carne
+- [x] Fijar BARRATALLER (8) + orden Bebidas (1) por defecto. Verificado.
+- [ ] Vigilar el primer vino nuevo publicado en Taller de Carne y confirmar con
+      Wilfredo que imprime comanda (no hay vinos antiguos con TALLER: los 80
+      existentes ya están en 8/1).
+- [ ] Particularidad CATALOGO abierta: ¿admite Ágora un único artículo con
+      formatos de venta y ratio (copa 0,125 / botella 0,75) vía importación XML?
+      Valorar impacto en el descuento de stock antes de prometer nada.
+- [ ] Taller de Carne sigue con catálogo apagado, `write_glass=false` y sin
+      auto-push: no tocar sin GO específico.
