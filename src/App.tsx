@@ -25,6 +25,7 @@ import Revision from "./pages/Revision";
 import OperationsAudit from "./pages/OperationsAudit";
 import Alerts from "./pages/Alerts";
 import Documentation from "./pages/Documentation";
+import IntegrationSpecifics from "./pages/IntegrationSpecifics";
 import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
