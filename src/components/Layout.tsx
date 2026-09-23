@@ -24,6 +24,7 @@ const navItems = [
   { to: "/integrations", icon: Plug, label: "Integraciones" },
   { to: "/sync-monitor", icon: Activity, label: "Actividad" },
   { to: "/alerts", icon: Bell, label: "Incidencias", badgeKey: "alerts" },
+  { to: "/particularidades", icon: ClipboardList, label: "Particularidades" },
   { to: "/docs", icon: FileText, label: "Documentación" },
   { to: "/settings", icon: Settings, label: "Configuración" },
 ];
