@@ -23,6 +23,8 @@ export type VariantRow = {
   stock_id: number | null;
   variant_source: string | null;
   origin: string | null;
+  wine_is_active?: boolean | null;
+  format_is_active?: boolean | null;
   total_count: number;
 };
 
@@ -68,6 +70,7 @@ export default function WinerimVariantPicker({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeInactive, setIncludeInactive] = useState(false);
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -86,13 +89,21 @@ export default function WinerimVariantPicker({
     (async () => {
       setLoading(true);
       setError(null);
-      const { data, error: err } = await supabase.rpc("review_search_winerim_variants", {
-        p_connection_id: connectionId,
-        p_query: debounced || null,
-        p_format: null,
-        p_limit: PAGE_SIZE,
-        p_offset: page * PAGE_SIZE,
-      });
+      const { data, error: err } = await (supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ data: VariantRow[] | null; error: { message: string } | null }>).call(
+        supabase,
+        "review_search_winerim_variants",
+        {
+          p_connection_id: connectionId,
+          p_query: debounced || null,
+          p_format: null,
+          p_limit: PAGE_SIZE,
+          p_offset: page * PAGE_SIZE,
+          p_include_inactive: includeInactive,
+        },
+      );
       if (cancelled) return;
       if (err) {
         setError(err.message);
@@ -108,7 +119,7 @@ export default function WinerimVariantPicker({
     return () => {
       cancelled = true;
     };
-  }, [connectionId, debounced, page]);
+  }, [connectionId, debounced, page, includeInactive]);
 
   // Group variants by wine so a wine with Bottle + Glass shows two exact options.
   const grouped = useMemo(() => {
@@ -140,6 +151,18 @@ export default function WinerimVariantPicker({
         placeholder="Buscar por nombre, añada, bodega, región, uva, tipo, ID, SKU, EAN o formato"
         className="h-8 text-xs"
       />
+      <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          className="h-3 w-3 accent-primary"
+          checked={includeInactive}
+          onChange={(e) => {
+            setIncludeInactive(e.target.checked);
+            setPage(0);
+          }}
+        />
+        Incluir vinos y formatos apagados en Winerim (se pueden mapear; no se publican mientras estén apagados)
+      </label>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {loading ? (
         <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground">
@@ -156,6 +179,7 @@ export default function WinerimVariantPicker({
                 <span className="font-medium">{head.name}</span>
                 {head.vintage && <span className="text-muted-foreground">{head.vintage}</span>}
                 {head.wine_type && <Badge variant="secondary">{head.wine_type}</Badge>}
+                {head.wine_is_active === false && <Badge variant="outline">Apagado en Winerim</Badge>}
                 <span className="font-mono text-[10px] text-muted-foreground">
                   ID {head.winerim_id}
                   {head.sku ? ` · SKU ${head.sku}` : ""}
@@ -195,6 +219,7 @@ export default function WinerimVariantPicker({
                       {v.stock_id !== null && (
                         <span className="font-mono text-muted-foreground">stock {v.stock_id}</span>
                       )}
+                      {v.format_is_active === false && <span className="text-muted-foreground">apagado</span>}
                       <span className="font-mono text-[10px] text-muted-foreground">
                         {v.variant_source ?? ""}
                       </span>
@@ -207,7 +232,9 @@ export default function WinerimVariantPicker({
         </div>
       )}
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>{total} variantes activas coinciden</span>
+        <span>
+          {total} variantes coinciden {includeInactive ? "(incluye apagadas)" : "(solo activas)"}
+        </span>
         <div className="flex gap-1">
           <Button
             size="sm"
