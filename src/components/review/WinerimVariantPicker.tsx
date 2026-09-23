@@ -179,6 +179,7 @@ export default function WinerimVariantPicker({
                 <span className="font-medium">{head.name}</span>
                 {head.vintage && <span className="text-muted-foreground">{head.vintage}</span>}
                 {head.wine_type && <Badge variant="secondary">{head.wine_type}</Badge>}
+                {head.wine_is_active === false && <Badge variant="outline">Apagado en Winerim</Badge>}
                 <span className="font-mono text-[10px] text-muted-foreground">
                   ID {head.winerim_id}
                   {head.sku ? ` · SKU ${head.sku}` : ""}
