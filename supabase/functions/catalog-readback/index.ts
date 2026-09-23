@@ -125,29 +125,51 @@ Deno.serve(async (req) => {
       xml = cached.xml;
       fromCache = true;
     } else {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
+      // The Products export of a large catalogue can take well over 30s on a slow
+      // POS line. Allow more time and retry once before failing, so a single slow
+      // response no longer surfaces as "The signal has been aborted".
+      const TIMEOUT_MS = 90000;
+      const attemptRead = async (): Promise<Response> => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        try {
+          return await fetch(`${baseUrl}/api/export-master/?filter=Products`, {
+            headers: { "Api-Token": String(conn.api_token || ""), Accept: "application/xml" },
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
       let res: Response;
       try {
-        res = await fetch(`${baseUrl}/api/export-master/?filter=Products`, {
-          headers: { "Api-Token": String(conn.api_token || ""), Accept: "application/xml" },
-          signal: controller.signal,
-        });
+        try {
+          res = await attemptRead();
+        } catch (_first) {
+          await new Promise((r) => setTimeout(r, 2000));
+          res = await attemptRead();
+        }
       } catch (err) {
-        clearTimeout(timer);
+        const raw = err instanceof Error ? err.message : String(err);
+        const timedOut = /abort/i.test(raw);
         return json({
           error: "AGORA_READ_FAILED",
-          message: err instanceof Error ? err.message : String(err),
+          reason: timedOut ? "TIMEOUT" : "NETWORK",
+          timeoutMs: timedOut ? TIMEOUT_MS : undefined,
+          message: timedOut
+            ? `El TPV no devolvió su catálogo en ${TIMEOUT_MS / 1000}s (2 intentos).`
+            : raw,
           readOnly: true,
         }, 502);
       }
-      clearTimeout(timer);
       if (!res.ok) {
         return json({ error: "AGORA_READ_FAILED", httpStatus: res.status, readOnly: true }, 502);
       }
       xml = await res.text();
       xmlCache.set(connectionId, { xml, fetchedAt: Date.now() });
     }
+
 
     const agoraProducts = parseProducts(xml);
 
