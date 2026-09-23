@@ -89,13 +89,21 @@ export default function WinerimVariantPicker({
     (async () => {
       setLoading(true);
       setError(null);
-      const { data, error: err } = await supabase.rpc("review_search_winerim_variants", {
-        p_connection_id: connectionId,
-        p_query: debounced || null,
-        p_format: null,
-        p_limit: PAGE_SIZE,
-        p_offset: page * PAGE_SIZE,
-      });
+      const { data, error: err } = await (supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ data: VariantRow[] | null; error: { message: string } | null }>).call(
+        supabase,
+        "review_search_winerim_variants",
+        {
+          p_connection_id: connectionId,
+          p_query: debounced || null,
+          p_format: null,
+          p_limit: PAGE_SIZE,
+          p_offset: page * PAGE_SIZE,
+          p_include_inactive: includeInactive,
+        },
+      );
       if (cancelled) return;
       if (err) {
         setError(err.message);
