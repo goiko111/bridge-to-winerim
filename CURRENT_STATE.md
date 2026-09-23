@@ -2,7 +2,49 @@
 
 > Estado vivo del proyecto. Actualizar en cada sesión (y durante si hay cambios significativos).
 
-_Última actualización: 2026-09-08 04:55 UTC_
+_Última actualización: 2026-09-23 11:10 UTC_
+
+## O Centolo + lecturas intradía en toda la flota Ágora - 2026-09-23
+
+### Hechos
+
+- O Centolo (`16bc1311-853d-4802-b262-63dc737ec567`): conexión duplicada inactiva
+  eliminada; 216 mapeos CONFIRMED; 171 vinos en carta; auto-push (altas, precios,
+  todos los formatos) activo y verificado end-to-end con Tarsus Roble
+  (botella `776171` 22 EUR, copa `976171` 4,20 -> 4,50 EUR, ambas VERIFIED).
+- Winerim API v2 solo devuelve vinos activos y no incluye indicador de estado:
+  un vino apagado es invisible para la integración (comprobado en O Centolo).
+- Frecuencias reales de cron (verificadas en `cron.job`): `agora-dispatch-catalog`,
+  `agora-dispatch-sales-stock` y `agora-dispatch-outbound-queue` cada 5 min;
+  `rescue-zombie-outbound-tasks` y `connection-health-monitor` cada 10 min.
+  Lote de catálogo = 100 vinos/vuelta (`detailBatchSize` por defecto).
+- O Centolo tenía 0 `sales_events` con 76 facturas vivas en Ágora el 23/09: la
+  causa es `sales_stock_sync_start_date = 2026-09-23` + lectura solo de días
+  cerrados (último cerrado 22/09, fuera de rango).
+- Familias de vino no-Winerim en O Centolo: `BLANCO BOTELLA` (42), `COPA VINO` (21),
+  `TINTO BOTELLA` (11), `VERMUTH` (7), `DULCES` (4). Las 42/9 "teclas Winerim en
+  BLANCO BOTELLA" fueron un falso positivo de un filtro `^[789]` que capturaba IDs
+  de 2 dígitos; las teclas Winerim reales (6-7 dígitos) están todas en familias
+  WINERIM (BLANCOS 18, COPAS 16, TINTOS 8, ESPUMOSOS 5).
+
+### Decisiones aplicadas
+
+- `intraday_sales_sync_enabled` y `open_tickets_sync_enabled` = true en las **29**
+  conexiones Ágora habilitadas (faltaban O Centolo, ambas, y Taller de Carne,
+  tickets abiertos). Verificado 29/29/29.
+
+### Hipótesis
+
+- Las ventas de O Centolo del 23/09 deberían aparecer en la primera pasada
+  intradía; pendiente de confirmar con lectura.
+
+### Tareas pendientes
+
+- Autorización para desplegar `catalog-readback` (timeout 30s -> 90s + 1 reintento).
+- 58 teclas del TPV sin vino en O Centolo; sin readback fresco de catálogo.
+- Decisiones abiertas: Qtomas NEEDS_CONFIRMATION (12), posibles duplicados
+  (Casa Esteban 6, Ponzano 23, Ocean Club 18, Sa Pedrera 7, Qtomas 8),
+  Casa Esteban catálogo apagado (43 variantes ausentes).
 
 ## Soporte de todos los formatos Winerim - fase 1 completada - 2026-09-08
 

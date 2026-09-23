@@ -2898,3 +2898,29 @@ ya demostró una carrera real con el cron.
 - **Razón**: `visible=true` activaba ambos indicadores y colocaba teclas restauradas en la pantalla principal.
 - **Alternativa descartada**: seguir usando el atajo de visibilidad o reasignar familias; lo primero repite el fallo y lo segundo altera la organización del restaurante.
 - **Mitigación**: verificación fresh por producto; precios, stock, ventas y familias quedan intactos.
+
+---
+
+## 2026-09-23 - Lectura intradía y de tickets abiertos obligatoria en toda la flota Ágora
+- **Decisión**: activar `intraday_sales_sync_enabled` y `open_tickets_sync_enabled`
+  en las 29 conexiones Ágora habilitadas, no solo en las que se fueron activando
+  caso a caso.
+- **Razón**: O Centolo tenía 76 facturas del día en el TPV y 0 ventas leídas por
+  depender solo del cierre de día; el descuento de stock llegaba con hasta 24 h de
+  retraso. Las lecturas son idempotentes (cursor + claves de idempotencia), así que
+  activarlas no tiene coste de escritura.
+- **Alternativa descartada**: mantener la activación caso a caso, que dejaba
+  conexiones nuevas leyendo solo días cerrados sin que nadie lo notase.
+- **Rollback / mitigación**: poner a `false` esos dos flags en `provider_config`;
+  no altera datos ya leídos.
+
+---
+
+## 2026-09-23 - Ampliar a 90 s con un reintento la lectura de catálogo (catalog-readback)
+- **Decisión**: subir el timeout de `/api/export-master/?filter=Products` de 30 s a
+  90 s y añadir un reintento, devolviendo `reason: TIMEOUT` en claro.
+- **Razón**: catálogos grandes en líneas lentas abortaban la lectura y la UI de
+  auditoría quedaba en blanco con `502 "The signal has been aborted"`.
+- **Alternativa descartada**: paginar el export (Ágora no lo soporta) o subir el
+  timeout sin reintento.
+- **Estado**: código listo, **pendiente de autorización para desplegar**.
