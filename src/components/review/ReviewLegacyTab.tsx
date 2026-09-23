@@ -227,9 +227,10 @@ export default function ReviewLegacyTab({
                       size="sm"
                       variant="ghost"
                       className="h-7 text-[11px]"
+                      title="Abre este producto en «Sin mapear» para elegir el vino y formato de Winerim"
                       onClick={() => onOpenInReview(r.provider_product_id)}
                     >
-                      Abrir en revisión
+                      Mapear este producto
                     </Button>
                   </td>
                 </tr>
