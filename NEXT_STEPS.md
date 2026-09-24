@@ -2085,3 +2085,7 @@
 - Hechos: modo VINOTECA_REGION_REFERENCE_NATIVE_FORMATS activo (WINE_TYPE, compound BOTTLE+BOTTLE_RETAIL, label "Tienda", ratio 1). GLASS/MAGNUM siguen planos (híbrido nuevo en agora-proxy). Dry-run: 186 botones, 169 con Tienda.
 - Bloqueo: TPV offline (Cloudflare 530/1033) a las 07:45. Tarea de prueba f2fef7e4 (vino 247843) queda QUEUED; el cron la reintenta.
 - Tareas: cuando responda, verificar 247843 (nombre del formato principal = "Botella"?), encolar el resto, ocultar teclas planas de botella (500k+id) y botella tienda.
+
+## 2026-09-24 07:45 UTC — Aplazados por el usuario
+- [ ] **Tintorera**: reintentar publicación Botella+Tienda cuando el TPV responda (offline a las 07:45). Tarea de prueba f2fef7e4 (vino 247843) QUEUED, la reintenta el cron. Luego: verificar nombre del formato principal, encolar el resto, ocultar teclas planas de botella. El usuario lo retoma más tarde.
+- [ ] **La Plata** (66616f2c-4222-481f-823d-efadbed4fc8a): conexión creada en solo lectura; TPV no responde (laplatabejar.dyndns.org:8984). Esperando confirmación del restaurante de que está encendido y la dirección es correcta. El usuario lo retoma más tarde.
