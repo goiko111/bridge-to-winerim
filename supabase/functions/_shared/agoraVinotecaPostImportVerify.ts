@@ -208,12 +208,16 @@ export function verifyVinotecaNativeFormatsImport(params: {
   // ── Preparation (base Product only) ──
   const actualPrepType = attr(actual.attrs, "PreparationTypeId");
   const actualPrepOrder = attr(actual.attrs, "PreparationOrderId");
-  if (actualPrepType !== VINOTECA_PREPARATION_TYPE_ID || actualPrepOrder !== VINOTECA_PREPARATION_ORDER_ID) {
+  // Expect the preparation route actually written in the import XML (per-connection
+  // routes in WINE_TYPE mode); fall back to the REGION-mode constants.
+  const expectedPrepType = attr(expected.attrs, "PreparationTypeId") || VINOTECA_PREPARATION_TYPE_ID;
+  const expectedPrepOrder = attr(expected.attrs, "PreparationOrderId") || VINOTECA_PREPARATION_ORDER_ID;
+  if (actualPrepType !== expectedPrepType || actualPrepOrder !== expectedPrepOrder) {
     baseOk = false;
     result.verified_preparation = false;
     fail({
       code: "PREPARATION_MISMATCH",
-      message: `Product ${plan.productId}: expected PreparationTypeId ${VINOTECA_PREPARATION_TYPE_ID}/PreparationOrderId ${VINOTECA_PREPARATION_ORDER_ID}, got ${actualPrepType || "(empty)"}/${actualPrepOrder || "(empty)"}`,
+      message: `Product ${plan.productId}: expected PreparationTypeId ${expectedPrepType}/PreparationOrderId ${expectedPrepOrder}, got ${actualPrepType || "(empty)"}/${actualPrepOrder || "(empty)"}`,
       field: "PreparationTypeId",
       context: {
         productId: plan.productId,
