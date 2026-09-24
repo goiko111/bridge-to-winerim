@@ -30,6 +30,8 @@ import {
 import {
   buildVinotecaReferencePlan,
   isVinotecaNativeFormatsConnection,
+  vinotecaCompoundFormats,
+  vinotecaFormatLabel,
   VINOTECA_PREPARATION_ORDER_ID,
   VINOTECA_PREPARATION_TYPE_ID,
   VINOTECA_REGION_FAMILY_COLOR,
@@ -5229,16 +5231,18 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       const wineId = String(wine.winerim_id || wine.id || "");
       const hasAdoptedRoute = vinotecaCatalogRoutes?.has(wineId) || false;
       const adoptedRoute = hasAdoptedRoute ? vinotecaCatalogRoutes?.get(wineId) : undefined;
+      const compound = vinotecaCompoundFormats(providerConfig);
+      const inCompound = (key: string) => !compound || compound.includes(key);
       const { plan, skipped } = buildVinotecaReferencePlan({
         winerimWineId: wine.winerim_id || wine.id,
         wineName: wine.name,
         region: wine.region ?? wine.raw_payload?.region,
         bottleSalePrice: extractBottleSalePrice(wine),
         bottleCostPrice: extractBottleCostPrice(wine),
-        glassSalePrice: extractGlassSalePrice(wine),
-        glassCostPrice: extractGlassCostPrice(wine, connection),
-        magnumSalePrice: wine.magnum_sale_price,
-        magnumCostPrice: wine.magnum_purchase_price,
+        glassSalePrice: inCompound("GLASS") ? extractGlassSalePrice(wine) : null,
+        glassCostPrice: inCompound("GLASS") ? extractGlassCostPrice(wine, connection) : null,
+        magnumSalePrice: inCompound("MAGNUM") ? wine.magnum_sale_price : null,
+        magnumCostPrice: inCompound("MAGNUM") ? wine.magnum_purchase_price : null,
         isActive: wine.is_active,
         // Extended Winerim formats (media botella, jeroboam, matusalem…) are
         // derived from what Winerim actually exposes for this wine and gated
@@ -5248,7 +5252,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
         )
           .filter((row) =>
             !isLegacyWinerimFormat(row.format_key)
-            && isFormatEnabledForConnection(row.format_key, connection?.provider_config, connection?.id)
+            && (compound
+              ? compound.includes(String(row.format_key).toUpperCase())
+              : isFormatEnabledForConnection(row.format_key, connection?.provider_config, connection?.id))
           )
           .map((row) => ({
             format: row.format_key,
@@ -5341,7 +5347,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
               const formatPrices = priceLists.map((pl) =>
                 `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
               ).join("\n");
-              const formatLabel = formatProductName(format.format, plan.wineName);
+              const formatLabel = vinotecaFormatLabel(format.format, providerConfig) || formatProductName(format.format, plan.wineName);
               const ratio = vinotecaFormatRatio(format.format, providerConfig);
               return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
