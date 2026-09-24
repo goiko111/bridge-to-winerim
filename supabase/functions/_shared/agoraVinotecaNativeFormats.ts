@@ -275,6 +275,7 @@ function nonNegativeAmount(value: unknown): number {
 export function buildVinotecaReferencePlan(
   input: VinotecaPriceInput,
   adoptedRoute?: VinotecaCatalogRoute | null,
+  options?: { requireRegion?: boolean },
 ): { plan: VinotecaReferencePlan | null; skipped: VinotecaSkippedReference | null } {
   const wineName = String(input.wineName ?? "").replace(/\s+/g, " ").trim();
   const winerimWineId = String(input.winerimWineId ?? "").trim();
