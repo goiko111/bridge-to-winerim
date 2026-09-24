@@ -299,7 +299,11 @@ export function buildVinotecaReferencePlan(
   }
 
   const region = normalizeVinotecaRegion(input.region);
-  if (!isValidVinotecaRegion(region)) {
+  // Region is an identity requirement only when the presentation groups by
+  // region. Connections that keep their Winerim wine-type families do not
+  // need it, so a missing region must not retire the reference there.
+  const requireRegion = options?.requireRegion !== false;
+  if (requireRegion && !isValidVinotecaRegion(region)) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "missing_region" } };
   }
 
