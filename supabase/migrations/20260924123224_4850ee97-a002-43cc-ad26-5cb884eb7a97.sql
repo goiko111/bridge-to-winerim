@@ -1,0 +1,2 @@
+ALTER TABLE public.agora_sales_variant_mappings DROP CONSTRAINT agora_sales_variant_mappings_format_type_check;
+ALTER TABLE public.agora_sales_variant_mappings ADD CONSTRAINT agora_sales_variant_mappings_format_type_check CHECK (format_type = ANY (ARRAY['BOTTLE','GLASS','MAGNUM','OTHER','BOTTLE_RETAIL']));
