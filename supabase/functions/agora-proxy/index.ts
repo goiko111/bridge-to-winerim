@@ -5156,6 +5156,10 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
 
   // ── VINOTECA_REGION_REFERENCE_NATIVE_FORMATS (Don Bernardo allowlist only) ──
   const vinotecaNativeFormats = isVinotecaNativeFormatsConnection(connection.id, providerConfig);
+  // Grouping variant: REGION keeps the VINOTECA ABIERTA > region layout,
+  // WINE_TYPE publishes inside the connection's existing Winerim families
+  // and routes the comanda with the connection's own preparation pair.
+  const vinotecaFamilyMode = vinotecaFamilySource(providerConfig);
   const vinotecaPlans: VinotecaReferencePlan[] = [];
   const vinotecaSkipped: VinotecaSkippedReference[] = [];
   const vinotecaRegionFamilies = new Map<string, { id: string; name: string }>();
@@ -5249,7 +5253,9 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
             salePrice: row.sale_price,
             costPrice: row.cost_price,
           })),
-      }, hasAdoptedRoute ? adoptedRoute : undefined);
+      }, hasAdoptedRoute ? adoptedRoute : undefined, {
+        requireRegion: vinotecaFamilyMode === "REGION",
+      });
 
       if (!plan) {
         if (skipped) vinotecaSkipped.push(skipped);
@@ -5270,7 +5276,36 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
       }
 
       vinotecaPlans.push(plan);
-      const familyResult = vinotecaFamilyForRegion(plan.region);
+      let familyResult: { id: string; name: string };
+      if (vinotecaFamilyMode === "WINE_TYPE") {
+        const wineTypeFamily = findFamilyId(extractWineType(wine), "BOTTLE", wine);
+        if (wineTypeFamily.needsCreate && !newFamilies.some((f) => f.id === wineTypeFamily.id)) {
+          newFamilies.push({ id: wineTypeFamily.id, name: wineTypeFamily.familyName });
+        }
+        familyResult = { id: String(wineTypeFamily.id), name: wineTypeFamily.familyName };
+      } else {
+        familyResult = vinotecaFamilyForRegion(plan.region);
+      }
+      const vinotecaPreparation = vinotecaFamilyMode === "WINE_TYPE"
+        ? preparationPairForFormat("BOTTLE")
+        : { typeId: VINOTECA_PREPARATION_TYPE_ID, orderId: VINOTECA_PREPARATION_ORDER_ID, valid: true };
+      if (!vinotecaPreparation.valid) {
+        vinotecaPlans.pop();
+        validationResults.push({
+          winerimId: plan.winerimWineId,
+          formatType: "BOTTLE",
+          validation: {
+            valid: false,
+            warnings: [],
+            missingFields: ["PreparationTypeId", "PreparationOrderId"],
+            error: {
+              code: "INVALID_PREPARATION_ROUTE",
+              message: vinotecaPreparation.error || "Invalid preparation route",
+            },
+          },
+        });
+        continue;
+      }
       const baseFormat = plan.formats.find((format) => format.isBase)!;
       const extraFormats = plan.formats.filter((format) => !format.isBase);
       const productColor = agoraProductColor(connection, extractWineType(wine));
@@ -5305,7 +5340,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
                 `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
               ).join("\n");
               const formatLabel = formatProductName(format.format, plan.wineName);
-              const ratio = format.format === "GLASS" ? "0.20" : "2.00";
+              const ratio = vinotecaFormatRatio(format.format, providerConfig);
               return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
