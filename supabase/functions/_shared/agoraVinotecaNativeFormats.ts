@@ -21,7 +21,51 @@ export const VINOTECA_REGION_REFERENCE_NATIVE_FORMATS = "VINOTECA_REGION_REFEREN
 export const VINOTECA_NATIVE_FORMATS_CONNECTION_IDS: readonly string[] = [
   "a700d425-9194-4758-95ff-7fee86419e14", // Don Bernardo Ponzano
   "79280cb8-0fe7-4a57-93a4-04172205ac70", // Don Bernardo Santander
+  "4f6cb49d-d1cd-4426-90d4-623bc359c257", // Taller de Carne (WINE_TYPE families)
 ];
+
+// ── Per-connection presentation options inside the native-formats contract ──
+// Identity (2M/3M/4M namespaces), sales resolution and verification are
+// unchanged. Only grouping, preparation route and ratio differ.
+
+/** REGION = VINOTECA ABIERTA > region. WINE_TYPE = existing Winerim families. */
+export function vinotecaFamilySource(
+  providerConfig: Record<string, unknown> | null | undefined,
+): "REGION" | "WINE_TYPE" {
+  return String(providerConfig?.native_formats_family_source ?? "").trim().toUpperCase() === "WINE_TYPE"
+    ? "WINE_TYPE"
+    : "REGION";
+}
+
+const VINOTECA_FORMAT_LITERS: Record<string, number | null> = Object.fromEntries(
+  WINERIM_FORMAT_CATALOG.map((format) => [format.key, format.liters]),
+);
+
+/**
+ * Agora SaleFormat Ratio for an additional format.
+ * Default (historical): GLASS 0.20, everything else 2.00.
+ * LITERS mode: nominal capacity in litres, with explicit per-connection
+ * overrides. Fail-closed: a format without a known capacity keeps the
+ * historical value instead of inventing one.
+ */
+export function vinotecaFormatRatio(
+  format: unknown,
+  providerConfig: Record<string, unknown> | null | undefined,
+): string {
+  const key = String(format ?? "").trim().toUpperCase();
+  const legacy = key === "GLASS" ? "0.20" : "2.00";
+  const mode = String(providerConfig?.native_formats_ratio_mode ?? "").trim().toUpperCase();
+  if (mode !== "LITERS") return legacy;
+
+  const overrides = providerConfig?.native_formats_ratio_overrides;
+  const override = overrides && typeof overrides === "object"
+    ? Number((overrides as Record<string, unknown>)[key])
+    : Number.NaN;
+  if (Number.isFinite(override) && override > 0) return override.toFixed(3);
+
+  const liters = VINOTECA_FORMAT_LITERS[key];
+  return typeof liters === "number" && liters > 0 ? liters.toFixed(3) : legacy;
+}
 
 export const VINOTECA_ROOT_FAMILY_NAME = "VINOTECA ABIERTA";
 export const VINOTECA_REGION_FAMILY_COLOR = "#722F37";
@@ -275,6 +319,7 @@ function nonNegativeAmount(value: unknown): number {
 export function buildVinotecaReferencePlan(
   input: VinotecaPriceInput,
   adoptedRoute?: VinotecaCatalogRoute | null,
+  options?: { requireRegion?: boolean },
 ): { plan: VinotecaReferencePlan | null; skipped: VinotecaSkippedReference | null } {
   const wineName = String(input.wineName ?? "").replace(/\s+/g, " ").trim();
   const winerimWineId = String(input.winerimWineId ?? "").trim();
@@ -298,7 +343,11 @@ export function buildVinotecaReferencePlan(
   }
 
   const region = normalizeVinotecaRegion(input.region);
-  if (!isValidVinotecaRegion(region)) {
+  // Region is an identity requirement only when the presentation groups by
+  // region. Connections that keep their Winerim wine-type families do not
+  // need it, so a missing region must not retire the reference there.
+  const requireRegion = options?.requireRegion !== false;
+  if (requireRegion && !isValidVinotecaRegion(region)) {
     return { plan: null, skipped: { winerimWineId, wineName, reason: "missing_region" } };
   }
 
