@@ -202,6 +202,23 @@ export function assessCertifiedWinerimSalesImportResponse(input: {
   }
 
   if (input.requireStockApplied && !stockApplied) {
+    // Restaurant has stock control disabled in Winerim: history is written,
+    // stock intentionally skipped. Terminal and correct — never retry.
+    const stockControlDisabled = targetLines.length > 0 &&
+      targetLines.every((line) =>
+        line.historyWritten === true && line.stockSkipReason === "stock_control_disabled"
+      );
+    if (stockControlDisabled) {
+      return {
+        ok: true,
+        imported: applied.length,
+        skipped: duplicates.length,
+        failed: 0,
+        stockApplied: false,
+        retryable: false,
+        receiptIds,
+      };
+    }
     return {
       ok: false,
       imported: applied.length,
