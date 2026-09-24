@@ -5347,9 +5347,13 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
               const formatPrices = priceLists.map((pl) =>
                 `            <Price PriceListId="${pl.Id}" MainPrice="${format.salePrice.toFixed(2)}" AddinPrice="0.00" MenuItemPrice="0.00" />`
               ).join("\n");
-              const formatLabel = vinotecaFormatLabel(format.format, providerConfig) || formatProductName(format.format, plan.wineName);
+              const configuredLabel = vinotecaFormatLabel(format.format, providerConfig);
+              const formatLabel = configuredLabel || formatProductName(format.format, plan.wineName);
+              // Agora enforces a globally unique SaleFormat Name: keep the short
+              // configured label on the button, but make the Name unique per wine.
+              const formatName = configuredLabel ? `${configuredLabel} ${String(plan.wineName || "").replace(/\s+/g, " ").trim()}`.trim() : formatLabel;
               const ratio = vinotecaFormatRatio(format.format, providerConfig);
-              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
+              return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatName)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
           return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${vinotecaPreparation.typeId}" PreparationOrderId="${vinotecaPreparation.orderId}" CostPrice="${baseCost}">
