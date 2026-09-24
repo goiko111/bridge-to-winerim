@@ -79,6 +79,7 @@ export type CertifiedSalesImportLine = {
   receiptId?: string;
   historyWritten?: boolean;
   stockApplied?: boolean;
+  stockSkipReason?: string;
   [key: string]: unknown;
 };
 
@@ -99,6 +100,7 @@ export function extractCertifiedSalesImportLines(response: unknown): CertifiedSa
         receiptId: raw.receiptId === undefined ? undefined : String(raw.receiptId),
         historyWritten: raw.historyWritten === true,
         stockApplied: raw.stockApplied === true,
+        stockSkipReason: raw.stockSkipReason === undefined ? undefined : String(raw.stockSkipReason),
       } as CertifiedSalesImportLine;
     });
 }
