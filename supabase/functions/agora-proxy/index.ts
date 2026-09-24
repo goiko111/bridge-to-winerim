@@ -5346,7 +5346,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
               return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatLabel)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
             : "";
-          return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${VINOTECA_PREPARATION_TYPE_ID}" PreparationOrderId="${VINOTECA_PREPARATION_ORDER_ID}" CostPrice="${baseCost}">
+          return `    <Product Id="${plan.productId}" Name="${escapeXml(finalProductName)}" ButtonText="${escapeXml(buttonText)}" Color="${productColor}" PLU="" FamilyId="${familyResult.id}" VatId="${defaultVatId}" UseAsDirectSale="false" SaleableAsMain="true" SaleableAsAddin="false" IsSoldByWeight="false" AskForPreparationNotes="false" AskForAddins="false" PrintWhenPriceIsZero="false" PreparationTypeId="${vinotecaPreparation.typeId}" PreparationOrderId="${vinotecaPreparation.orderId}" CostPrice="${baseCost}">
       <Barcodes />
       <Prices>
 ${pricesXml}
