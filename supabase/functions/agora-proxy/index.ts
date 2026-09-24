@@ -5388,13 +5388,17 @@ ${costPricesXml}
     }
   }
 
-  for (const wine of vinotecaNativeFormats ? [] : wines) {
+  // Hybrid native formats: formats outside native_formats_compound_formats
+  // (e.g. Tintorera GLASS/MAGNUM) keep their flat publication.
+  const vinotecaCompoundList = vinotecaNativeFormats ? vinotecaCompoundFormats(providerConfig) : null;
+  for (const wine of vinotecaNativeFormats && !vinotecaCompoundList ? [] : wines) {
 
     const winerimId = Number(wine.winerim_id || wine.id || 0);
     const orderedDulceCode = saPedreraDulceCode(connection, wine);
     const orderedDulceFormat = orderedDulceCode ? preferredSingleFormatForDulce(wine) : null;
 
     for (const fmt of formatTypes) {
+      if (vinotecaCompoundList && vinotecaCompoundList.includes(String(fmt).toUpperCase())) continue;
       const formatWine = applyHiddenGlassVariantForAgora(connection, wine);
       const wineName = formatWine.name || "Unknown Wine";
       const wineType = extractWineType(formatWine);
@@ -11283,19 +11287,21 @@ ${costPricesXml}
         // In VINOTECA_REGION_REFERENCE_NATIVE_FORMATS the identities are the
         // builder's deterministic ones (BOTTLE ProductId 2M+id, GLASS/MAGNUM
         // SaleFormatId 3M/4M+id), never the generic 500k/700k/900k scheme.
+        const taskCompoundList = vinotecaCompoundFormats((connection.provider_config || {}) as Record<string, unknown>);
+        const isCompoundFmt = (fmt: string) => !taskCompoundList || taskCompoundList.includes(String(fmt).toUpperCase());
         const vinotecaNativeFormatsTask = isVinotecaNativeFormatsConnection(
           connection.id,
           (connection.provider_config || {}) as Record<string, unknown>,
-        );
+        ) && fmtTypes.some((fmt: string) => isCompoundFmt(fmt));
         const vinotecaCatalogRoutes = await loadVinotecaCatalogRoutes(supabase, task.connection_id);
         const adoptedCatalogRoute = vinotecaCatalogRoutes?.get(String(winerimWineId));
         const productIdByFormat = Object.fromEntries(
           fmtTypes.map((fmt: string) => [
             fmt,
-            (vinotecaNativeFormatsTask && adoptedCatalogRoute
+            (vinotecaNativeFormatsTask && isCompoundFmt(fmt) && adoptedCatalogRoute
               ? adoptedCatalogRoute.formatIds[fmt as VinotecaFormat]
               : null)
-              || (vinotecaNativeFormatsTask ? vinotecaFormatId(fmt, winerimWineId) : null)
+              || (vinotecaNativeFormatsTask && isCompoundFmt(fmt) ? vinotecaFormatId(fmt, winerimWineId) : null)
               || deterministicAgoraProductId(connection, wineArr[0], fmt),
           ]),
         ) as Record<string, string>;
@@ -11845,7 +11851,7 @@ ${costPricesXml}
             provider_product_id: vinotecaPlanForTask!.productId,
             sale_format_id: format.agoraId,
             provider_product_name: vinotecaPlanForTask!.wineName,
-            provider_sale_format_name: formatProductName(format.format, vinotecaPlanForTask!.wineName),
+            provider_sale_format_name: vinotecaFormatLabel(format.format, (connection.provider_config || {}) as Record<string, unknown>) || formatProductName(format.format, vinotecaPlanForTask!.wineName),
             winerim_wine_id: winerimWineId,
             format_type: format.format,
             match_method: "WINERIM_NATIVE_IDEMPOTENT_XML_IMPORT",

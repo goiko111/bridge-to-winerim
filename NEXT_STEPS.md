@@ -2080,3 +2080,8 @@
       Valorar impacto en el descuento de stock antes de prometer nada.
 - [ ] Taller de Carne sigue con catálogo apagado, `write_glass=false` y sin
       auto-push: no tocar sin GO específico.
+
+## Tintorera — Botella + Tienda (2026-09-24)
+- Hechos: modo VINOTECA_REGION_REFERENCE_NATIVE_FORMATS activo (WINE_TYPE, compound BOTTLE+BOTTLE_RETAIL, label "Tienda", ratio 1). GLASS/MAGNUM siguen planos (híbrido nuevo en agora-proxy). Dry-run: 186 botones, 169 con Tienda.
+- Bloqueo: TPV offline (Cloudflare 530/1033) a las 07:45. Tarea de prueba f2fef7e4 (vino 247843) queda QUEUED; el cron la reintenta.
+- Tareas: cuando responda, verificar 247843 (nombre del formato principal = "Botella"?), encolar el resto, ocultar teclas planas de botella (500k+id) y botella tienda.
