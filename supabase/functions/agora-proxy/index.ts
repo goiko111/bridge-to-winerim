@@ -5351,7 +5351,7 @@ function generateImportXml(wines: any[], masterData: any, connection: any, forma
               const formatLabel = configuredLabel || formatProductName(format.format, plan.wineName);
               // Agora enforces a globally unique SaleFormat Name: keep the short
               // configured label on the button, but make the Name unique per wine.
-              const formatName = configuredLabel ? `${configuredLabel} ${String(plan.wineName || "").replace(/\s+/g, " ").trim()}`.trim() : formatLabel;
+              const formatName = configuredLabel ? `${configuredLabel} ${String(plan.wineName || "").replace(/\s+/g, " ").trim()} ${format.agoraId}`.trim() : formatLabel;
               const ratio = vinotecaFormatRatio(format.format, providerConfig);
               return `        <SaleFormat Id="${format.agoraId}" Name="${escapeXml(formatName)}" ButtonText="${escapeXml(truncate(formatLabel, 20))}" Ratio="${ratio}" SaleableAsMain="true" SaleableAsAddin="false">\n          <Prices>\n${formatPrices}\n          </Prices>\n        </SaleFormat>`;
             }).join("\n")}\n      </AdditionalSaleFormats>\n`
@@ -11855,7 +11855,7 @@ ${costPricesXml}
             provider_product_id: vinotecaPlanForTask!.productId,
             sale_format_id: format.agoraId,
             provider_product_name: vinotecaPlanForTask!.wineName,
-            provider_sale_format_name: (() => { const l = vinotecaFormatLabel(format.format, (connection.provider_config || {}) as Record<string, unknown>); return l ? `${l} ${String(vinotecaPlanForTask!.wineName || "").replace(/\s+/g, " ").trim()}`.trim() : formatProductName(format.format, vinotecaPlanForTask!.wineName); })(),
+            provider_sale_format_name: (() => { const l = vinotecaFormatLabel(format.format, (connection.provider_config || {}) as Record<string, unknown>); return l ? `${l} ${String(vinotecaPlanForTask!.wineName || "").replace(/\s+/g, " ").trim()} ${format.agoraId}`.trim() : formatProductName(format.format, vinotecaPlanForTask!.wineName); })(),
             winerim_wine_id: winerimWineId,
             format_type: format.format,
             match_method: "WINERIM_NATIVE_IDEMPOTENT_XML_IMPORT",
