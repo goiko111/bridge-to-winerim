@@ -92,6 +92,94 @@ describe("winerim certified sales import", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("accepts APPLIED with stock_control_disabled as terminal without faking stock", () => {
+    const result = assessCertifiedWinerimSalesImportResponse({
+      status: 200,
+      response: {
+        sales: [{
+          orderId: sale.orderId,
+          result: "APPLIED",
+          historyWritten: true,
+          stockApplied: false,
+          stockSkipReason: "stock_control_disabled",
+        }],
+      },
+      sales: [sale],
+      requireStockApplied: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.retryable).toBe(false);
+    expect(result.failed).toBe(0);
+    expect(result.stockApplied).toBe(false);
+    expect(result.imported).toBe(1);
+  });
+
+  it("accepts DUPLICATE with stock_control_disabled as terminal", () => {
+    const result = assessCertifiedWinerimSalesImportResponse({
+      status: 200,
+      response: {
+        sales: [{
+          orderId: sale.orderId,
+          result: "DUPLICATE",
+          historyWritten: true,
+          stockApplied: false,
+          stockSkipReason: "stock_control_disabled",
+        }],
+      },
+      sales: [sale],
+      requireStockApplied: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.retryable).toBe(false);
+    expect(result.failed).toBe(0);
+    expect(result.stockApplied).toBe(false);
+    expect(result.skipped).toBe(1);
+  });
+
+  it("still fails closed when stock is skipped for any other reason", () => {
+    const other = assessCertifiedWinerimSalesImportResponse({
+      status: 200,
+      response: {
+        sales: [{
+          orderId: sale.orderId,
+          result: "APPLIED",
+          historyWritten: true,
+          stockApplied: false,
+          stockSkipReason: "variant_inactive",
+        }],
+      },
+      sales: [sale],
+      requireStockApplied: true,
+    });
+    expect(other.ok).toBe(false);
+
+    const noReason = assessCertifiedWinerimSalesImportResponse({
+      status: 200,
+      response: {
+        sales: [{ orderId: sale.orderId, result: "APPLIED", historyWritten: true, stockApplied: false }],
+      },
+      sales: [sale],
+      requireStockApplied: true,
+    });
+    expect(noReason.ok).toBe(false);
+
+    const noHistory = assessCertifiedWinerimSalesImportResponse({
+      status: 200,
+      response: {
+        sales: [{
+          orderId: sale.orderId,
+          result: "APPLIED",
+          historyWritten: false,
+          stockApplied: false,
+          stockSkipReason: "stock_control_disabled",
+        }],
+      },
+      sales: [sale],
+      requireStockApplied: true,
+    });
+    expect(noHistory.ok).toBe(false);
+  });
+
   it("accepts a history-only line when stock is not required", () => {
     const result = assessCertifiedWinerimSalesImportResponse({
       status: 200,
