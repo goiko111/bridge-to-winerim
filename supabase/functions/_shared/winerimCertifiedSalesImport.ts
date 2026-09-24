@@ -79,6 +79,7 @@ export type CertifiedSalesImportLine = {
   receiptId?: string;
   historyWritten?: boolean;
   stockApplied?: boolean;
+  stockSkipReason?: string;
   [key: string]: unknown;
 };
 
@@ -99,6 +100,7 @@ export function extractCertifiedSalesImportLines(response: unknown): CertifiedSa
         receiptId: raw.receiptId === undefined ? undefined : String(raw.receiptId),
         historyWritten: raw.historyWritten === true,
         stockApplied: raw.stockApplied === true,
+        stockSkipReason: raw.stockSkipReason === undefined ? undefined : String(raw.stockSkipReason),
       } as CertifiedSalesImportLine;
     });
 }
@@ -200,6 +202,23 @@ export function assessCertifiedWinerimSalesImportResponse(input: {
   }
 
   if (input.requireStockApplied && !stockApplied) {
+    // Restaurant has stock control disabled in Winerim: history is written,
+    // stock intentionally skipped. Terminal and correct — never retry.
+    const stockControlDisabled = targetLines.length > 0 &&
+      targetLines.every((line) =>
+        line.historyWritten === true && line.stockSkipReason === "stock_control_disabled"
+      );
+    if (stockControlDisabled) {
+      return {
+        ok: true,
+        imported: applied.length,
+        skipped: duplicates.length,
+        failed: 0,
+        stockApplied: false,
+        retryable: false,
+        receiptIds,
+      };
+    }
     return {
       ok: false,
       imported: applied.length,
