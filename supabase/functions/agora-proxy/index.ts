@@ -11855,7 +11855,7 @@ ${costPricesXml}
             provider_product_id: vinotecaPlanForTask!.productId,
             sale_format_id: format.agoraId,
             provider_product_name: vinotecaPlanForTask!.wineName,
-            provider_sale_format_name: vinotecaFormatLabel(format.format, (connection.provider_config || {}) as Record<string, unknown>) || formatProductName(format.format, vinotecaPlanForTask!.wineName),
+            provider_sale_format_name: (() => { const l = vinotecaFormatLabel(format.format, (connection.provider_config || {}) as Record<string, unknown>); return l ? `${l} ${String(vinotecaPlanForTask!.wineName || "").replace(/\s+/g, " ").trim()}`.trim() : formatProductName(format.format, vinotecaPlanForTask!.wineName); })(),
             winerim_wine_id: winerimWineId,
             format_type: format.format,
             match_method: "WINERIM_NATIVE_IDEMPOTENT_XML_IMPORT",
