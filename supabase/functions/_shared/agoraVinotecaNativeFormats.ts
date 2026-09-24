@@ -22,7 +22,35 @@ export const VINOTECA_NATIVE_FORMATS_CONNECTION_IDS: readonly string[] = [
   "a700d425-9194-4758-95ff-7fee86419e14", // Don Bernardo Ponzano
   "79280cb8-0fe7-4a57-93a4-04172205ac70", // Don Bernardo Santander
   "4f6cb49d-d1cd-4426-90d4-623bc359c257", // Taller de Carne (WINE_TYPE families)
+  "1efe95c0-5fb7-404f-9947-416eed598a46", // Tintorera (WINE_TYPE, Botella + Tienda)
 ];
+
+/**
+ * Optional per-connection whitelist of formats grouped inside the single
+ * reference button (native_formats_compound_formats). Formats outside the
+ * list keep their existing flat publication (e.g. Tintorera: GLASS stays in
+ * COPAS WINERIM). null = historical behaviour (all formats grouped).
+ */
+export function vinotecaCompoundFormats(
+  providerConfig: Record<string, unknown> | null | undefined,
+): string[] | null {
+  const raw = providerConfig?.native_formats_compound_formats;
+  if (!Array.isArray(raw)) return null;
+  const list = raw.map((v) => String(v ?? "").trim().toUpperCase()).filter(Boolean);
+  return list.length > 0 ? list : null;
+}
+
+/** Explicit POS label for an additional format (native_formats_labels). */
+export function vinotecaFormatLabel(
+  format: unknown,
+  providerConfig: Record<string, unknown> | null | undefined,
+): string | null {
+  const labels = providerConfig?.native_formats_labels;
+  if (!labels || typeof labels !== "object") return null;
+  const value = (labels as Record<string, unknown>)[String(format ?? "").trim().toUpperCase()];
+  const label = String(value ?? "").trim();
+  return label || null;
+}
 
 // ── Per-connection presentation options inside the native-formats contract ──
 // Identity (2M/3M/4M namespaces), sales resolution and verification are
