@@ -2089,3 +2089,6 @@
 ## 2026-09-24 07:45 UTC — Aplazados por el usuario
 - [ ] **Tintorera**: reintentar publicación Botella+Tienda cuando el TPV responda (offline a las 07:45). Tarea de prueba f2fef7e4 (vino 247843) QUEUED, la reintenta el cron. Luego: verificar nombre del formato principal, encolar el resto, ocultar teclas planas de botella. El usuario lo retoma más tarde.
 - [ ] **La Plata** (66616f2c-4222-481f-823d-efadbed4fc8a): conexión creada en solo lectura; TPV no responde (laplatabejar.dyndns.org:8984). Esperando confirmación del restaurante de que está encendido y la dirección es correcta. El usuario lo retoma más tarde.
+
+## Pendiente (2026-09-27)
+- [ ] Vigilar 1-2 días los 503 de Winerim y confirmar con el compañero que las peticiones/hora bajaron.
