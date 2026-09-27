@@ -2941,3 +2941,17 @@ ya demostró una carrera real con el cron.
   `backfill-preparation`.
 - **Rollback**: volver ambos campos a NULL (se publicaría sin preparación).
 - **Particularidad COMANDAS** (`1a9eda26-...`) marcada RESOLVED con la evidencia.
+
+## 2026-09-27 — Reducción de carga API Winerim (~13k req/h → cientos)
+
+### Hechos
+- Winerim nos devolvía 503 por saturación; un compañero reportó ~13.000 peticiones/hora.
+- Causa: fetch-catalog pedía la ficha de CADA vino en CADA ciclo de 5 min, y ante 503 probaba hasta 4 endpoints × 4 intentos por vino.
+
+### Decisiones (GO del usuario)
+1. Enriquecimiento selectivo en winerim-proxy/fetch-catalog: solo se pide ficha de vinos mapeados (product_mappings), no-READY o allowlist; los READY sin mapear conservan su dato. Fail-open si falla el filtro.
+2. Ante 503 persistente se aborta el vino (no se prueban los demás endpoints) y el backoff sube a 2s→6s→18s (tope 30s).
+3. Cron agora-dispatch-catalog: */5 → */30 min. Ventas/stock y cola de envíos siguen a */5.
+
+### Despliegue
+- winerim-proxy redesplegada. Ninguna otra función tocada. Sin cambios de datos ni config de conexiones.
