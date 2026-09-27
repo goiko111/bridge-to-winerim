@@ -331,15 +331,19 @@ async function fetchWineDetail(
           last503 = true;
           retryCount++;
           if (retryCount <= maxRetries) {
-            const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 8000);
+            // Longer backoff: Winerim 503s mean their API is saturated; hammering
+            // it with short retries makes the saturation worse.
+            const delay = Math.min(2000 * Math.pow(3, retryCount - 1), 30000);
             console.log(`[winerim-proxy] wine detail ${wineId}: 503 from ${url}, retry ${retryCount}/${maxRetries} in ${delay}ms`);
             clearTimeout(timeout);
             await new Promise((r) => setTimeout(r, delay));
             continue;
           }
-          console.log(`[winerim-proxy] wine detail ${wineId}: 503 exhausted retries on ${url}`);
+          // Stop entirely on persistent 503: trying the other endpoint variants
+          // would multiply requests against an already-saturated API.
+          console.log(`[winerim-proxy] wine detail ${wineId}: 503 exhausted retries on ${url}, skipping remaining endpoints`);
           clearTimeout(timeout);
-          break;
+          return { wine: null, failureReason: "503_from_winerim", httpStatus: res.status };
         }
 
         if (!res.ok) {
@@ -1058,8 +1062,54 @@ serve(async (req) => {
         );
       }
 
-      const detailsResult = batchWineIds.length > 0
-        ? await fetchWineDetails(batchWineIds, winerimHeaders, 5)
+      // ── SELECTIVE ENRICHMENT (Winerim API load control) ──
+      // Fetching the detail of EVERY wine EVERY cycle was generating ~13k
+      // requests/hour against Winerim and getting us 503-throttled. Only wines
+      // that can actually change something need a detail fetch:
+      //   - mapped to a POS product (their prices are published),
+      //   - not READY (new, RETRYING, FAILED, MISSING — they still need data),
+      //   - in the priority allowlist.
+      // Fully enriched, unmapped, READY wines keep their stored data; they are
+      // not publishable anyway. Fail-open: if the filter queries fail, enrich
+      // the whole batch as before.
+      let enrichIds = batchWineIds;
+      if (batchWineIds.length > 0) {
+        try {
+          const [{ data: mappedRows, error: mappedErr }, { data: stateRows, error: stateErr }] = await Promise.all([
+            supabase
+              .from("product_mappings")
+              .select("winerim_wine_id")
+              .eq("connection_id", connectionId)
+              .in("winerim_wine_id", batchWineIds),
+            supabase
+              .from("winerim_wines")
+              .select("winerim_id, pricing_status")
+              .eq("connection_id", connectionId)
+              .in("winerim_id", batchWineIds),
+          ]);
+          if (mappedErr || stateErr) throw mappedErr || stateErr;
+          const mappedIds = new Set((mappedRows || []).map((r: any) => String(r.winerim_wine_id)));
+          const statusById = new Map((stateRows || []).map((r: any) => [String(r.winerim_id), r.pricing_status as string | null]));
+          const prioritySet = new Set(catalogPriorityWineIds);
+          enrichIds = batchWineIds.filter((id) =>
+            mappedIds.has(id) ||
+            prioritySet.has(id) ||
+            statusById.get(id) !== "READY"
+          );
+          if (enrichIds.length < batchWineIds.length) {
+            console.log(
+              `[winerim-proxy] selective enrichment: ${enrichIds.length}/${batchWineIds.length} wines need detail ` +
+              `(skipped ${batchWineIds.length - enrichIds.length} unmapped READY wines)`,
+            );
+          }
+        } catch (e) {
+          console.warn("[winerim-proxy] selective enrichment filter failed, enriching full batch:", e);
+          enrichIds = batchWineIds;
+        }
+      }
+
+      const detailsResult = enrichIds.length > 0
+        ? await fetchWineDetails(enrichIds, winerimHeaders, 5)
         : { details: new Map<string, Record<string, unknown>>(), failures: new Map<string, string>(), attempted: 0, succeeded: 0, failed: 0 };
       const existingBeforeDetails = await loadExistingWineRows(batchWineIds);
 
