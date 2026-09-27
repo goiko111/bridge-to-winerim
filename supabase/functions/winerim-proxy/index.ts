@@ -1122,7 +1122,9 @@ serve(async (req) => {
       let winesUpdatedWithBottlePrice = 0;
       let winesUpdatedWithGlassPrice = 0;
 
-      for (const winerimId of batchWineIds) {
+      // Only wines actually attempted get status updates; wines skipped by
+      // selective enrichment keep their stored state untouched.
+      for (const winerimId of enrichIds) {
         const detail = detailsResult.details.get(winerimId);
         if (!detail) {
           // Mark failed wines with pricing status
