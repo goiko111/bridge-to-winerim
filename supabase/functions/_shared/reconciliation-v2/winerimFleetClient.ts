@@ -16,6 +16,7 @@ type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type FetchLike = typeof fetch;
 
 const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const asInt = (value: unknown, label: string) => {
   if (!Number.isInteger(value)) throw new FleetContractError("INVALID_RESPONSE", `${label} debe ser entero`, 502);
   return Number(value);
