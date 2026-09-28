@@ -67,6 +67,9 @@ describe("restaurant business-day window", () => {
 describe("authoritative external resolution", () => {
   it("accepts exactly the 19 authorized SALE cases and rejects extras or omissions", () => {
     expect(compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, AUTHORIZED_EXTERNAL_RESOLUTIONS_19).state).toBe("MATCHED");
+    const legacyShape = AUTHORIZED_EXTERNAL_RESOLUTIONS_19.map((row) => ({ caseFingerprint: row.caseFingerprint, candidateTargets: row.candidateTargets.map((target) => ({ saleId: target.saleId, saleDetailId: target.saleDetailId, qty: target.qty })) }));
+    expect(compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, legacyShape).state).toBe("MATCHED");
+    expect(compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, legacyShape.map((row, index) => index === 0 ? { ...row, candidateTargets: row.candidateTargets.map((target) => ({ ...target, qty: target.qty + 1 })) } : row)).state).toBe("CARDINALITY_CONFLICT");
     const ocean = { caseFingerprint: "ocean-club-excluded", candidateTargets: [{ saleId: "183047", saleDetailId: null, qty: 1 }] };
     expect(compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, [...AUTHORIZED_EXTERNAL_RESOLUTIONS_19, ocean]).state).toBe("CARDINALITY_CONFLICT");
     expect(compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, AUTHORIZED_EXTERNAL_RESOLUTIONS_19.slice(1)).state).toBe("CARDINALITY_CONFLICT");
