@@ -4,6 +4,7 @@
 // excess is computed ONCE per group, never repeated per refund event.
 import fs from "node:fs";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { classifyAgoraRefunds } from "../supabase/functions/_shared/agoraTicketLifecycle.ts";
 
 const env = Object.fromEntries(fs.readFileSync(".env", "utf8").split("\n").filter((l) => l.includes("=")).map((l) => {
@@ -164,9 +165,13 @@ for (const dk of dayKeys) {
     const firstRef = g.refunds[0];
     const relInv = firstRef.c?.supersededEventId || firstRef.c?.relatedEventId;
     const newInv = events.filter((e) => definitive(e) && !superseded.has(e.id) && lines.some((l) => l.sales_event_id === e.id && sameGroup(l))).map((e) => e.provider_doc_id);
-    const lineIds = (rs) => rs.flatMap((r) => (r.lines || []).map((l) => l.lineId)).join(" ");
+    // Only real Winerim detail identities; never synthesize "sale:<id>" as a line id.
+    const lineIds = (rs) => rs.flatMap((r) => (r.lines || []).filter((l) => l.saleDetailId != null).map((l) => l.lineId || `detail:${l.saleDetailId}`)).join(" ");
+    const identityScope = cand.length && cand.every((r) => (r.lines || []).length && (r.lines || []).every((l) => l.saleDetailId != null)) ? "DETAIL" : "SALE";
     const reversible = ["CONFIRMED_DUPLICATE_STOCK", "CONFIRMED_DUPLICATE_HISTORY"].includes(status) ? excessHistory : 0;
     groups.push({
+      case_fingerprint: createHash("md5").update(`${cid}|${day}|${g.refunds.map((r) => r.ev.provider_doc_id).join(" ")}|${g.pid}|${g.fk}`).digest("hex"),
+      identity_scope: cand.length ? identityScope : "",
       restaurante: conn.location_name, connection_id: cid, dia: day,
       hora: g.refunds.map((r) => r.ev.raw_json?.Date).filter(Boolean).join(" "),
       agoraTicketId: [...new Set(g.refunds.flatMap((r) => (r.ev.raw_json?.InvoiceItems || []).map((i) => i.GlobalId)).filter(Boolean))].join(" "),
@@ -204,10 +209,10 @@ groups.sort((a, b) => (a.restaurante + a.dia + a.producto_agora).localeCompare(b
 fs.mkdirSync(OUT, { recursive: true });
 const cols = Object.keys(groups[0] || {});
 const esc = (v) => String(v ?? "").replace(/[;\n]/g, ",");
-fs.writeFileSync(`${OUT}/auditoria-forense-duplicados-agora-v2-${FROM}_${TO}.csv`, [cols.join(";"), ...groups.map((g) => cols.map((c) => esc(g[c])).join(";"))].join("\n"));
+fs.writeFileSync(`${OUT}/auditoria-forense-duplicados-agora-v3-${FROM}_${TO}.csv`, [cols.join(";"), ...groups.map((g) => cols.map((c) => esc(g[c])).join(";"))].join("\n"));
 // Audit rows (all cases incl. SUPERSEDED_AT_SOURCE). Never an executable queue.
 const audit = groups.map((g) => ({
-  case_fingerprint: `${g.connection_id}|${g.dia}|${g.devolucion}|${g.producto_agora.split(" ")[0]}|${g.formato_winerim}`,
+  case_fingerprint: g.case_fingerprint, identity_scope: g.identity_scope || null,
   connection_id: g.connection_id, business_day: g.dia, agora_ticket_id: g.agoraTicketId || null, source_line_id: g.sourceLineId || null,
   original_invoice: g.factura_original || null, new_invoice: g.factura_sustituta || null, refund_document: g.devolucion, refund_source: g.tipo,
   agora_product_id: g.producto_agora.split(" ")[0], winerim_wine_id: g.wineId, format_key: g.formato_winerim,
@@ -220,5 +225,5 @@ const audit = groups.map((g) => ({
   confidence: g.confianza, reason: g.evidencia,
   evidence: { excess_history: g.exceso_diario_historial, excess_stock: g.exceso_diario_stock, cancelled_at_source: g.qty_anulada_o_sustituida_agora, winerim_history_qty: g.qty_winerim_historial, winerim_stock_qty: g.qty_winerim_stock, agora_real_qty: g.qty_real_agora, action: g.accion },
 }));
-fs.writeFileSync(`${OUT}/auditoria-anulaciones-agora-v2-${FROM}_${TO}.json`, JSON.stringify(audit, null, 1));
+fs.writeFileSync(`${OUT}/auditoria-anulaciones-agora-v3-${FROM}_${TO}.json`, JSON.stringify(audit, null, 1));
 console.log(JSON.stringify({ grupos: groups.length }, null, 1));
