@@ -39,6 +39,9 @@ describe("runtime guardrails", () => {
     expect(source).toContain("MAX_PAGES");
     expect(source).toContain("client.credentialEvidence()");
     expect(client).toContain("async credentialEvidence()");
+    expect(source).toContain("activeBinding(db, body.connectionId)");
+    expect(source).toContain("bindingTimezone(binding)");
+    expect(source).toContain("CANDIDATE_BINDING_MISMATCH");
     expect(client).toContain('sales: "/sales/records"');
     expect(source).not.toMatch(/method\s*:\s*["'](?:PUT|PATCH|DELETE)["']/);
     expect(migration).toContain("candidate probe rate limited");

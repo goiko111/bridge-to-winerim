@@ -1,5 +1,5 @@
 import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
-import { fleetClient, MAX_PAGES } from "../_shared/reconciliation-v2/runtime.ts";
+import { activeBinding, bindingTimezone, fleetClient, MAX_PAGES } from "../_shared/reconciliation-v2/runtime.ts";
 import { CANDIDATE_PROBE_ACTION, assertClosedBusinessDay, nextBusinessDay, normalizeCandidateSales, parseCandidateProbeRequest } from "../_shared/reconciliation-v2/candidateProbe.ts";
 import { sha256Canonical } from "../_shared/reconciliation-v2/hash.ts";
 
@@ -42,8 +42,10 @@ Deno.serve(async (request) => {
       if (candidates.length !== 1) throw Object.assign(new Error("restaurantId no permitido por el discovery actual"), { status: 409, code: "RESTAURANT_NOT_DISCOVERED" });
       const candidate = candidates[0] as { restaurantId: number; erpId?: number | string; name?: string; timezone?: string; currency?: string; active?: boolean };
       if (candidate.active === false) throw Object.assign(new Error("El restaurante candidato está inactivo"), { status: 409, code: "RESTAURANT_INACTIVE" });
-      if (!candidate.timezone) throw Object.assign(new Error("El discovery no informa la zona horaria"), { status: 409, code: "RESTAURANT_TIMEZONE_MISSING" });
-      assertClosedBusinessDay(body.businessDay, candidate.timezone);
+      const binding = await activeBinding(db, body.connectionId);
+      if (binding.winerim_restaurant_id !== body.restaurantId) throw Object.assign(new Error("El binding activo no coincide con el restaurante candidato"), { status: 409, code: "CANDIDATE_BINDING_MISMATCH" });
+      const timezone = candidate.timezone || bindingTimezone(binding);
+      assertClosedBusinessDay(body.businessDay, timezone);
 
       const records: unknown[] = []; let salesPages = 0; let complete = false;
       for (let page = 1; page <= MAX_PAGES; page += 1) {
@@ -62,7 +64,7 @@ Deno.serve(async (request) => {
       return json(request, {
         ok: complete, mode: "AUDIT_ONLY", action: CANDIDATE_PROBE_ACTION, state: outcome,
         connectionId: body.connectionId,
-        candidate: { restaurantId: candidate.restaurantId, erpId: candidate.erpId ?? null, name: candidate.name ?? null, timezone: candidate.timezone, currency: candidate.currency ?? null, active: candidate.active ?? null },
+        candidate: { restaurantId: candidate.restaurantId, erpId: candidate.erpId ?? null, name: candidate.name ?? null, timezone, timezoneSource: candidate.timezone ? "fleet_discovery" : "active_binding", currency: candidate.currency ?? null, active: candidate.active ?? null },
         businessDay: body.businessDay, window: { from: body.businessDay, to: nextBusinessDay(body.businessDay) },
         discoveryPages: discovery.pagesRead, salesPages, calls: client.callCount, recordCount: evidence.length, evidenceHash, credential, evidence,
       }, complete ? 200 : 206);
