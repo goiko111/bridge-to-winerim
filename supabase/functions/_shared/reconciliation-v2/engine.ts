@@ -169,7 +169,19 @@ export function compareAuthorizedBatch(
   authoritative: Array<{ caseFingerprint: string; candidateTargets: CandidateTarget[] }>,
   observed: Array<{ caseFingerprint: string; candidateTargets: CandidateTarget[] }>,
 ) {
-  const key = (row: { caseFingerprint: string; candidateTargets: CandidateTarget[] }) => `${row.caseFingerprint}|${JSON.stringify(canonicalTargets(row.candidateTargets))}`;
+  // The persisted reversal audit predates the enriched evidence target. Its durable
+  // authorization identity is the case fingerprint plus the cancelled sale/detail
+  // and quantity. Receipt, wine, variant and format remain mandatory for causal
+  // stock evidence when present, but their absence in the legacy audit row must not
+  // make the same authorized case appear simultaneously extra and missing.
+  const authorizationTargets = (targets: CandidateTarget[]) => [...targets]
+    .map((target) => ({
+      saleId: String(target.saleId),
+      saleDetailId: target.saleDetailId == null ? null : String(target.saleDetailId),
+      qty: Number(target.qty),
+    }))
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const key = (row: { caseFingerprint: string; candidateTargets: CandidateTarget[] }) => `${row.caseFingerprint}|${JSON.stringify(authorizationTargets(row.candidateTargets))}`;
   const allowed = new Set(authoritative.map(key));
   const seen = new Set(observed.map(key));
   return {

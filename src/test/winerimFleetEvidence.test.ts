@@ -50,4 +50,10 @@ describe("adapted fleet-client coverage", () => {
 
 describe("adapted batch contract", () => {
   it("B1 detects additions and omissions in the authorized set", () => { const one = [{ caseFingerprint: "fp", candidateTargets: [target] }]; expect(compareAuthorizedBatch(one, one).state).toBe("MATCHED"); expect(compareAuthorizedBatch(one, []).state).toBe("CARDINALITY_CONFLICT"); });
+  it("B2 accepts the persisted legacy target shape without discarding enriched causal evidence", () => {
+    const rich = [{ caseFingerprint: "fp", candidateTargets: [target] }];
+    const persisted = [{ caseFingerprint: "fp", candidateTargets: [{ saleId: target.saleId, saleDetailId: null, qty: target.qty }] }];
+    expect(compareAuthorizedBatch(rich, persisted).state).toBe("MATCHED");
+    expect(compareAuthorizedBatch(rich, [{ ...persisted[0], candidateTargets: [{ ...persisted[0].candidateTargets[0], saleId: "different" }] }]).state).toBe("CARDINALITY_CONFLICT");
+  });
 });
