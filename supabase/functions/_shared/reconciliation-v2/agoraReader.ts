@@ -32,17 +32,48 @@ export type AgoraDbLine = {
 
 export type AgoraIdentityResolution = { line: AgoraLine | null; missing: string[]; rawLine: RawRow | null };
 
-function rawLines(raw: RawRow | null): RawRow[] {
-  return Array.isArray(raw?.lines) ? raw.lines.map(object).filter((line): line is RawRow => Boolean(line)) : [];
+type RawLineCandidate = { line: RawRow; container: RawRow; containerIndex: number | null };
+
+const field = (row: RawRow | null, camel: string, pascal: string) => row?.[camel] ?? row?.[pascal];
+const identifier = (value: unknown) => value == null || value === "" ? null : String(value).trim() || null;
+
+function candidateLines(container: RawRow, containerIndex: number | null): RawLineCandidate[] {
+  const values = Array.isArray(container.lines) ? container.lines : Array.isArray(container.Lines) ? container.Lines : [];
+  return values.map(object).filter((line): line is RawRow => Boolean(line)).map((line) => ({ line, container, containerIndex }));
 }
 
-function signatureMatches(row: AgoraDbLine, candidate: RawRow): boolean {
-  if (text(candidate.providerProductId) !== text(row.provider_product_id)) return false;
-  if (normalizedNumber(candidate.quantity) !== normalizedNumber(row.quantity)) return false;
-  if (normalizedNumber(candidate.totalAmount) !== normalizedNumber(row.total_amount)) return false;
-  if (normalizedTime(candidate.soldAt) !== normalizedTime(row.provider_sold_at)) return false;
-  const sourceName = normalizedText(candidate.productName); const rowName = normalizedText(row.name);
+function rawLines(raw: RawRow | null): RawLineCandidate[] {
+  if (!raw) return [];
+  const direct = candidateLines(raw, null);
+  const invoiceItems = (Array.isArray(raw.invoiceItems) ? raw.invoiceItems : Array.isArray(raw.InvoiceItems) ? raw.InvoiceItems : [])
+    .map(object).filter((item): item is RawRow => Boolean(item));
+  return [...direct, ...invoiceItems.flatMap((item, index) => candidateLines(item, index))];
+}
+
+function signatureMatches(row: AgoraDbLine, candidate: RawLineCandidate): boolean {
+  const line = candidate.line;
+  if (identifier(field(line, "providerProductId", "ProductId")) !== identifier(row.provider_product_id)) return false;
+  if (normalizedNumber(field(line, "quantity", "Quantity")) !== normalizedNumber(row.quantity)) return false;
+  const rowAmount = normalizedNumber(row.total_amount); const quantity = normalizedNumber(field(line, "quantity", "Quantity"));
+  const amounts = [field(line, "totalAmount", "TotalAmount"), field(line, "unitPrice", "UnitPrice"), field(line, "productPrice", "ProductPrice")]
+    .map((value, index) => index === 0 ? normalizedNumber(value) : quantity == null || normalizedNumber(value) == null ? null : normalizedNumber(Number(value) * quantity))
+    .filter((value): value is number => value != null);
+  if (rowAmount == null || !amounts.includes(rowAmount)) return false;
+  if (normalizedTime(field(line, "soldAt", "CreationDate")) !== normalizedTime(row.provider_sold_at)) return false;
+  const sourceName = normalizedText(field(line, "productName", "ProductName")); const rowName = normalizedText(row.name);
   return !sourceName || !rowName || sourceName === rowName;
+}
+
+function providerLineId(candidate: RawLineCandidate, raw: RawRow | null): string | null {
+  const explicit = identifier(field(candidate.line, "lineId", "LineId"));
+  if (explicit) return explicit;
+  const globalId = identifier(field(candidate.container, "globalId", "GlobalId")) ?? identifier(field(raw, "globalId", "GlobalId"));
+  const index = identifier(field(candidate.line, "index", "Index"));
+  return globalId && index != null ? `${globalId}:${index}` : null;
+}
+
+function providerAmount(candidate: RawLineCandidate): number | null {
+  return number(field(candidate.line, "totalAmount", "TotalAmount"));
 }
 
 /** Resolve only immutable identities from raw_json.lines[]; never promote local UUIDs to TPV identities. */
@@ -53,17 +84,20 @@ export function resolveAgoraIdentity(row: AgoraDbLine, restaurantId: number): Ag
   if (!allRawLines.length) missing.push("RAW_LINES_MISSING");
   else if (!candidates.length) missing.push("RAW_LINE_NOT_FOUND");
   else if (candidates.length > 1) missing.push("RAW_LINE_AMBIGUOUS");
-  const rawLine = candidates.length === 1 ? candidates[0] : null;
-  const sourceSystem = text(raw?.provider) ?? "AGORA";
-  const externalOrderId = text(raw?.lifecycleId) ?? text(raw?.documentId) ?? text(row.sales_event.provider_doc_id);
-  const orderId = text(raw?.documentId) ?? text(row.sales_event.provider_doc_id);
-  const sourceLineId = text(rawLine?.lineId); const effectiveAt = text(rawLine?.soldAt);
+  const rawCandidate = candidates.length === 1 ? candidates[0] : null;
+  const rawLine = rawCandidate?.line ?? null;
+  const sourceSystem = text(field(raw, "provider", "Provider")) ?? "AGORA";
+  const containerGlobalId = rawCandidate ? identifier(field(rawCandidate.container, "globalId", "GlobalId")) : null;
+  const externalOrderId = text(raw?.lifecycleId) ?? text(raw?.documentId) ?? containerGlobalId ?? identifier(field(raw, "globalId", "GlobalId")) ?? text(row.sales_event.provider_doc_id);
+  const orderId = text(raw?.documentId) ?? identifier(field(raw, "number", "Number")) ?? text(row.sales_event.provider_doc_id);
+  const sourceLineId = rawCandidate ? providerLineId(rawCandidate, raw) : null; const effectiveAt = text(field(rawLine, "soldAt", "CreationDate"));
   if (!externalOrderId) missing.push("EXTERNAL_ORDER_ID");
   if (!sourceLineId) missing.push("SOURCE_LINE_ID");
   if (!effectiveAt) missing.push("EFFECTIVE_AT");
   if (!row.winerim_product_id || !row.mapped) missing.push("WINERIM_PRODUCT_ID");
   if (number(row.quantity) == null) missing.push("QUANTITY");
   if (missing.length || !rawLine || !externalOrderId || !sourceLineId || !effectiveAt || !row.winerim_product_id) return { line: null, missing: [...new Set(missing)], rawLine };
+  const netAmount = providerAmount(rawCandidate!);
   const rawKind = `${text(raw?.kind) ?? ""} ${row.sales_event.doc_type}`.toLowerCase();
   return { missing: [], rawLine, line: {
     connectionId: row.connection_id,
@@ -75,12 +109,12 @@ export function resolveAgoraIdentity(row: AgoraDbLine, restaurantId: number): Ag
     orderId,
     sourceLineId,
     wineId: row.winerim_product_id,
-    wineName: row.name ?? text(rawLine.productName),
-    family: row.family ?? text(rawLine.familyName),
+    wineName: row.name ?? text(field(rawLine, "productName", "ProductName")),
+    family: row.family ?? text(field(rawLine, "familyName", "FamilyName")),
     providerProductId: row.provider_product_id,
     format: row.format,
     quantity: Number(row.quantity),
-    amountMinor: row.total_amount == null ? null : Math.round(Number(row.total_amount) * 100),
+    amountMinor: netAmount == null ? row.total_amount == null ? null : Math.round(Number(row.total_amount) * 100) : Math.round(netAmount * 100),
     effectiveAt,
     isOpen: /open|draft|ticket|order/.test(rawKind) && !/invoice|refund/.test(rawKind),
     isCancelled: Boolean(raw?.isRefund) || /refund|void|cancelled|canceled/.test(rawKind),
@@ -99,11 +133,18 @@ export function unresolvedAgoraEvidence(row: AgoraDbLine): string[] {
 export function agoraProviderIdentity(row: AgoraDbLine): string | null {
   const raw = object(row.sales_event.raw_json); const matches = rawLines(raw).filter((candidate) => signatureMatches(row, candidate));
   if (matches.length !== 1) return null;
-  const rawLine = matches[0]; const order = text(raw?.lifecycleId) ?? text(raw?.documentId) ?? text(row.sales_event.provider_doc_id);
-  const lineId = text(rawLine.lineId); const effectiveAt = text(rawLine.soldAt);
+  const candidate = matches[0]; const rawLine = candidate.line;
+  const order = text(raw?.lifecycleId) ?? text(raw?.documentId) ?? identifier(field(candidate.container, "globalId", "GlobalId")) ?? identifier(field(raw, "globalId", "GlobalId")) ?? identifier(field(raw, "number", "Number")) ?? text(row.sales_event.provider_doc_id);
+  const lineId = providerLineId(candidate, raw); const effectiveAt = text(field(rawLine, "soldAt", "CreationDate"));
   if (!order || !lineId || !effectiveAt || !row.provider_product_id) return null;
   const polarity = Boolean(raw?.isRefund) || /refund/i.test(`${raw?.kind ?? ""} ${row.sales_event.doc_type}`) ? "REFUND" : "SALE";
-  return [polarity, order, lineId, row.provider_product_id, row.format ?? "", row.quantity, row.total_amount ?? "", effectiveAt].join("|");
+  return [polarity, order, lineId, row.provider_product_id, row.format ?? "", row.quantity, providerAmount(candidate) ?? row.total_amount ?? "", effectiveAt].join("|");
+}
+
+/** Net amount reported by Ágora for the uniquely matched provider line. */
+export function agoraProviderAmount(row: AgoraDbLine): number | null {
+  const raw = object(row.sales_event.raw_json); const matches = rawLines(raw).filter((candidate) => signatureMatches(row, candidate));
+  return matches.length === 1 ? providerAmount(matches[0]) ?? number(row.total_amount) : null;
 }
 
 export function classifyAgoraCoverage(input: { eventCount: number; lineCount: number; pageComplete: boolean; unresolvedCount: number }) {
