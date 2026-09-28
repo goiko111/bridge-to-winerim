@@ -108,6 +108,140 @@ export type Database = {
           },
         ]
       }
+      agora_reversal_queue: {
+        Row: {
+          agora_product_id: string | null
+          agora_ticket_id: string | null
+          amount: number | null
+          approved_by: string | null
+          business_day: string | null
+          classification: string
+          confidence: string
+          connection_id: string
+          created_at: string
+          detected_at: string
+          effective_at: string | null
+          evidence: Json
+          executed_at: string | null
+          executed_by: string | null
+          format_key: string | null
+          history_applied: boolean | null
+          id: string
+          import_mode: string | null
+          last_error: string | null
+          new_invoice: string | null
+          order_id: string | null
+          original_invoice: string | null
+          original_qty: number | null
+          prepared_at: string | null
+          price_id: string | null
+          reason: string
+          receipt_id: string | null
+          refund_document: string | null
+          refund_source: string | null
+          reverse_qty: number
+          sale_detail_id: string | null
+          sale_id: string | null
+          source_line_id: string | null
+          status: string
+          stock_applied: boolean | null
+          stock_id: number | null
+          updated_at: string
+          verified_at: string | null
+          winerim_wine_id: string | null
+        }
+        Insert: {
+          agora_product_id?: string | null
+          agora_ticket_id?: string | null
+          amount?: number | null
+          approved_by?: string | null
+          business_day?: string | null
+          classification: string
+          confidence?: string
+          connection_id: string
+          created_at?: string
+          detected_at?: string
+          effective_at?: string | null
+          evidence?: Json
+          executed_at?: string | null
+          executed_by?: string | null
+          format_key?: string | null
+          history_applied?: boolean | null
+          id?: string
+          import_mode?: string | null
+          last_error?: string | null
+          new_invoice?: string | null
+          order_id?: string | null
+          original_invoice?: string | null
+          original_qty?: number | null
+          prepared_at?: string | null
+          price_id?: string | null
+          reason: string
+          receipt_id?: string | null
+          refund_document?: string | null
+          refund_source?: string | null
+          reverse_qty?: number
+          sale_detail_id?: string | null
+          sale_id?: string | null
+          source_line_id?: string | null
+          status?: string
+          stock_applied?: boolean | null
+          stock_id?: number | null
+          updated_at?: string
+          verified_at?: string | null
+          winerim_wine_id?: string | null
+        }
+        Update: {
+          agora_product_id?: string | null
+          agora_ticket_id?: string | null
+          amount?: number | null
+          approved_by?: string | null
+          business_day?: string | null
+          classification?: string
+          confidence?: string
+          connection_id?: string
+          created_at?: string
+          detected_at?: string
+          effective_at?: string | null
+          evidence?: Json
+          executed_at?: string | null
+          executed_by?: string | null
+          format_key?: string | null
+          history_applied?: boolean | null
+          id?: string
+          import_mode?: string | null
+          last_error?: string | null
+          new_invoice?: string | null
+          order_id?: string | null
+          original_invoice?: string | null
+          original_qty?: number | null
+          prepared_at?: string | null
+          price_id?: string | null
+          reason?: string
+          receipt_id?: string | null
+          refund_document?: string | null
+          refund_source?: string | null
+          reverse_qty?: number
+          sale_detail_id?: string | null
+          sale_id?: string | null
+          source_line_id?: string | null
+          status?: string
+          stock_applied?: boolean | null
+          stock_id?: number | null
+          updated_at?: string
+          verified_at?: string | null
+          winerim_wine_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agora_reversal_queue_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agora_sales_variant_mappings: {
         Row: {
           connection_id: string
