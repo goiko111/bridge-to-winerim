@@ -85,6 +85,7 @@ import {
   countXmlOpenTickets,
   parseOpenTickets,
 } from "../_shared/agoraOpenTickets.ts";
+import { excludeReopenSupersededEvents } from "../_shared/agoraTicketLifecycle.ts";
 import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
@@ -1702,7 +1703,7 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
     .eq("connection_id", connectionId).eq("business_day", day);
   if (eventsError) throw new Error(`sales_events lookup failed: ${eventsError.message}`);
 
-  const eligibleEvents = (events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+  const eligibleEvents = excludeReopenSupersededEvents((events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json)), events || []);
 
   if (eligibleEvents.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
@@ -2272,7 +2273,7 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
     .eq("connection_id", connectionId)
     .eq("business_day", day);
 
-  const eligibleEvents = (events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+  const eligibleEvents = excludeReopenSupersededEvents((events || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json)), events || []);
   if (eligibleEvents.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
   }
@@ -2876,7 +2877,7 @@ async function syncStockForDayIncrementalByDayTotal(
   }
 
   const allDayEventIds = (dayEvents || []).map((event: { id: string }) => event.id);
-  const eligibleEvents = (dayEvents || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json));
+  const eligibleEvents = excludeReopenSupersededEvents((dayEvents || []).filter((event: { raw_json?: unknown }) => !rawJsonDisablesStockSync(event.raw_json)), dayEvents || []);
   const eligibleEventIds = eligibleEvents.map((event: { id: string }) => event.id);
   if (eligibleEventIds.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No sales events for this day" };
