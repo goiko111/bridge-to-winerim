@@ -13209,7 +13209,9 @@ ${costPricesXml}
           attempted: trackingRows.length,
           updated: trackingUpdated,
           errors: trackingErrors,
+          skipped: auditOnly,
         },
+        certification,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
