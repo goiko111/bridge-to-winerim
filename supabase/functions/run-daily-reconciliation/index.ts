@@ -73,10 +73,15 @@ Deno.serve(async (request) => {
     const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId); const nextDay = plusDays(body.businessDay, 1); const cutoff = bindingCutoffHour(binding); const localFrom = `${body.businessDay}T${String(cutoff).padStart(2, "0")}:00:00`; const localTo = `${nextDay}T${String(cutoff).padStart(2, "0")}:00:00`;
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");
     const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
-    const resolutions = source.lines.map((row) => ({ row, resolution: resolveAgoraIdentity(row, binding.winerim_restaurant_id) }));
+    const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
+    const wineCandidates = source.lines.filter((row) => row.is_wine_candidate === true || (row.mapped === true && Boolean(row.winerim_product_id)));
+    const unmappedWine = wineCandidates.filter((row) => row.mapped !== true || !row.winerim_product_id);
+    const reconcilableWine = wineCandidates.filter((row) => row.mapped === true && Boolean(row.winerim_product_id));
+    const resolutions = reconcilableWine.map((row) => ({ row, resolution: resolveAgoraIdentity(row, binding.winerim_restaurant_id) }));
     const unresolved = resolutions.filter((item) => item.resolution.missing.length).map((item) => ({ row: item.row, missing: item.resolution.missing }));
     const agora = resolutions.map((item) => item.resolution.line).filter((row): row is NonNullable<typeof row> => Boolean(row));
-    const sourceCoverage = classifyAgoraCoverage({ eventCount: source.eventCount, lineCount: source.lines.length, pageComplete: source.complete, unresolvedCount: unresolved.length });
+    const sourceCoverage = classifyAgoraCoverage({ eventCount: source.eventCount, lineCount: source.lines.length, pageComplete: source.complete, unresolvedCount: providerUnresolved.length + unresolved.length });
+    if (unmappedWine.length) { sourceCoverage.complete = false; sourceCoverage.reasons.push("AGORA_WINE_MAPPING_INCOMPLETE"); }
     const sourceDiagnostic = source.eventCount === 0 || source.lines.length === 0 ? await zeroSourceDiagnostic(db, connectionId, body.businessDay) : null;
     const winerim = await paged<Record<string, unknown>>((from, to) => db.from("winerim_sales_lines")
       .select("*,winerim_sales_records!inner(restaurant_id,status)").eq("connection_id", connectionId)
@@ -108,7 +113,7 @@ Deno.serve(async (request) => {
     const dayAnalytics = analyticsLines.filter((row) => row.effectiveAt.startsWith(body.businessDay)); const sourceCount = dayAnalytics.length;
     const analytics = { series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: dayAnalytics.filter((line) => line.category === row.category).length, sourceLineCount: sourceCount, currency: row.currency, freshnessAt: now })), aggregates: buckets };
     if (!analyticsSource.complete || analyticsMissingIdentity > 0 || analyticsMissingAmount > 0) { completeness.agoraComplete = false; completeness.reason = [completeness.reason, analyticsSource.complete ? null : "ANALYTICS_SOURCE_INCOMPLETE", analyticsMissingIdentity ? "ANALYTICS_IDENTITY_FIELDS_MISSING" : null, analyticsMissingAmount ? "ANALYTICS_AMOUNT_MISSING" : null].filter(Boolean).join("+"); }
-    const metrics = { sourceLines: source.lines.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: unresolved.length, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
+    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
       const { error } = await db.rpc("reconciliation_v2_commit_run", { p_run_id: runId, p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_business_day: body.businessDay, p_source_cutoff_at: now, p_completeness: completeness, p_results: resultRows, p_metrics: metrics, p_analytics: analytics });
