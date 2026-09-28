@@ -101,7 +101,10 @@ for (const dk of dayKeys) {
     const agoraReal = sum((e) => definitive(e) && !superseded.has(e.id));
     const agoraNet = agoraReal - g.cancelled.FULL - g.cancelled.PARTIAL;
     const unitPrice = (() => { const l = lines.find((x) => sameGroup(x) && Number(x.quantity) > 0); return l ? Number(l.total_amount) / Number(l.quantity) : null; })();
-    const recs = rec.rows.filter((r) => String(r.wine?.wineId) === g.wine && String(r.variant?.format || "").toLowerCase() === g.fk && String(r.source?.externalOrderId || "").startsWith(prefix) && r.status === "confirmed")
+    // Line-level readback: copas live as serving lines inside "botella en uso" sales.
+    const recs = rec.rows.filter((r) => String(r.wine?.wineId) === g.wine && r.status === "confirmed")
+      .flatMap((r) => (r.lines || []).filter((l) => String(l.format || "").toLowerCase() === g.fk && String(l.source?.externalOrderId || r.source?.externalOrderId || "").startsWith(prefix))
+        .map((l) => ({ saleId: r.saleId, recordedAt: l.recordedAt || r.recordedAt, qty: Number(l.qty || 0), source: { externalOrderId: l.source?.externalOrderId || r.source?.externalOrderId }, lines: [l] })))
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)) || a.saleId - b.saleId);
     const winerimQty = recs.reduce((s, r) => s + Number(r.qty || 0), 0);
     const mv = (r) => (r.lines || []).flatMap((l) => l.stockEffect?.movements || []).filter((m) => m.exists);
