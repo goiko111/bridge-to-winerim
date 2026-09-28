@@ -1,136 +1,53 @@
-import { describe, it, expect } from "vitest";
-import { evaluateExternalResolution, reconcileDay, estimateCalls, type AuditCase, type ReadContext, type SaleRecord, type StockMovement } from "../../supabase/functions/_shared/winerimFleetEvidence";
-import { createFleetClient, redact } from "../../supabase/functions/_shared/winerimFleetClient";
+import { describe, expect, it } from "vitest";
+import { compareAuthorizedBatch, evaluateExternalResolution, reconcileLines } from "../../supabase/functions/_shared/reconciliation-v2/engine";
+import { createWinerimFleetClient } from "../../supabase/functions/_shared/reconciliation-v2/winerimFleetClient";
+import type { AgoraLine, ExternalResolutionCase, SaleDeletion, StockMovement, WinerimLine } from "../../supabase/functions/_shared/reconciliation-v2/types";
 
-const CONN = "8466c229-773d-4ad9-a747-9bb862d7ae6b";
-const sale = (saleId: number, status: SaleRecord["status"] = "confirmed", qty = 1): SaleRecord => ({
-  saleId, status, qty, wine: { wineId: 900 }, variant: { priceId: 11, stockId: 22, format: "botella" },
-  source: { externalOrderId: "agora:8466c229:2026-09-25:42531" },
-  lines: [{ lineId: `sale:${saleId}`, saleDetailId: null, format: "botella", qty, source: { externalOrderId: "agora:8466c229:2026-09-25:42531" }, stockEffect: { known: true, movements: [{ stockMovementId: saleId * 10, exists: true, difference: -qty }] } }],
-});
-const ret = (over: Partial<StockMovement> = {}): StockMovement => ({
-  movementId: 5001, recordedAt: "2026-09-27T10:05:00+02:00", variant: { priceId: 11, stockId: 22, format: "botella" }, wine: { wineId: 900 },
-  quantityBefore: 6, change: 1, quantityAfter: 7, stockControlled: true, category: "return", cause: "sale_cancelled", sale: null, ...over,
-});
-const baseCase = (o: Partial<AuditCase> = {}): AuditCase => ({
-  id: "c1", connection_id: CONN, identity_scope: "SALE", evidence_classification: "CONFIRMED_DUPLICATE_STOCK",
-  keep_sale_ids: "188510", candidate_targets: [{ saleId: "188690", saleDetailId: null, qty: 1 }], winerim_wine_id: "900",
-  reverse_qty: 1, history_units_excess: 1, bottles_overdeducted: 1, ...o,
-});
-const ctx = (o: Partial<ReadContext> = {}): ReadContext => ({
-  connectionId: CONN, winerimRestaurantId: 77, responseRestaurantId: 77,
-  deletions: [{ saleId: 188690, saleDetailId: null, lineId: "sale:188690", reason: "sale_cancelled", deletedAt: "2026-09-27T10:04:00+02:00", effectiveAt: null, externalOrderId: null }],
-  keptSales: [sale(188510)], candidateSalesStillPresent: [], returnMovements: [ret()],
-  checkedAt: "2026-09-28T07:00:00Z", runId: "r1", deletionsWindowStart: "2026-09-14T00:00:00Z", ...o,
-});
+const connectionId = "8466c229-773d-4ad9-a747-9bb862d7ae6b";
+const target = { saleId: "188690", saleDetailId: null, qty: 1, receiptId: "rcpt-1", wineId: "900", priceId: "11", stockId: "22", format: "botella" };
+const auditCase = (over: Partial<ExternalResolutionCase> = {}): ExternalResolutionCase => ({ id: "c1", connectionId, caseFingerprint: "fp-1", identityScope: "SALE", evidenceClassification: "CONFIRMED_DUPLICATE_STOCK", keepSaleIds: ["188510"], candidateTargets: [target], expectedRestoredQty: 1, ...over });
+const deletion = (over: Partial<SaleDeletion> = {}): SaleDeletion => ({ saleId: 188690, saleDetailId: null, lineId: "sale:188690", reason: "sale_cancelled", deletedAt: "2026-09-27T10:04:00+02:00", effectiveAt: null, externalOrderId: null, ...over });
+const movement = (over: Partial<StockMovement> = {}): StockMovement => ({ movementId: 5001, category: "return", change: 1, quantityBefore: 6, quantityAfter: 7, wine: { wineId: 900 }, variant: { priceId: 11, stockId: 22, format: "botella" }, sale: { saleId: 188690, saleDetailIds: [], receiptId: "rcpt-1", orderId: null }, reference: null, ...over });
+const evaluate = (over: Partial<Parameters<typeof evaluateExternalResolution>[0]> = {}) => evaluateExternalResolution({ auditCase: auditCase(), authoritativeBatch: [{ caseFingerprint: "fp-1", candidateTargets: [target] }], liveSaleIds: [], confirmedKeptSaleIds: [188510], deletions: [deletion()], movements: [movement()], checkedAt: "2026-09-28T07:00:00Z", ...over });
 
-describe("evaluateExternalResolution", () => {
-  it("E1 caso Don Quijote completo → RESOLVED_EXTERNALLY con todas las evidencias", () => {
-    const r = evaluateExternalResolution(baseCase(), ctx());
-    expect(r.verdict).toBe("RESOLVED_EXTERNALLY");
-    expect(r).toMatchObject({ cancelled_sale_id: 188690, kept_sale_id: 188510, deletion_reason: "sale_cancelled", movement_id: 5001, quantity_before: 6, change: 1, quantity_after: 7, run_id: "r1" });
-  });
-  it("E2 sin evento sale_cancelled (anulada antes de la ventana) → EVIDENCE_INCOMPLETE", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ deletions: [] })).verdict).toBe("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE");
-  });
-  it("E3 sin movimiento return → EVIDENCE_INCOMPLETE", () => {
-    const r = evaluateExternalResolution(baseCase(), ctx({ returnMovements: [] }));
-    expect(r.verdict).toBe("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE"); expect(r.missing).toContain("return_movement");
-  });
-  it("E4 cantidad restaurada distinta → CONFLICT", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ returnMovements: [ret({ change: 2, quantityAfter: 8 })] })).verdict).toBe("CONFLICT");
-  });
-  it("E5 venta conservada ausente → EVIDENCE_INCOMPLETE", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ keptSales: [] })).verdict).toBe("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE");
-  });
-  it("E6 venta conservada borrada → CONFLICT", () => {
-    const d = ctx().deletions.concat([{ saleId: 188510, saleDetailId: null, lineId: "sale:188510", reason: "sale_cancelled", deletedAt: "2026-09-27T10:00:00Z", effectiveAt: null, externalOrderId: null }]);
-    expect(evaluateExternalResolution(baseCase(), ctx({ deletions: d })).verdict).toBe("CONFLICT");
-  });
-  it("E7 candidata todavía viva → NOT_CANCELLED_YET", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ candidateSalesStillPresent: [sale(188690)] })).verdict).toBe("NOT_CANCELLED_YET");
-  });
-  it("E8 restaurante o conexión distintos → CONFLICT", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ responseRestaurantId: 78 })).verdict).toBe("CONFLICT");
-    expect(evaluateExternalResolution(baseCase(), ctx({ connectionId: "other" })).verdict).toBe("CONFLICT");
-  });
-  it("E9 caso DETAIL (copas) → BLOCKED_DETAIL_SCOPE aunque exista line_deleted", () => {
-    const r = evaluateExternalResolution(baseCase({ identity_scope: "DETAIL", candidate_targets: [{ saleId: "181057", saleDetailId: "41426", qty: 1 }] }), ctx());
-    expect(r.verdict).toBe("BLOCKED_DETAIL_SCOPE");
-  });
-  it("E10 line_deleted en caso SALE → CONFLICT (no se acepta como anulación completa)", () => {
-    const d = [{ ...ctx().deletions[0], reason: "line_deleted" as const, saleDetailId: 1 }];
-    expect(evaluateExternalResolution(baseCase(), ctx({ deletions: d })).verdict).toBe("CONFLICT");
-  });
-  it("E11 dos returns posibles → EVIDENCE_INCOMPLETE (ambiguo)", () => {
-    const r = evaluateExternalResolution(baseCase(), ctx({ returnMovements: [ret(), ret({ movementId: 5002 })] }));
-    expect(r.missing).toContain("return_movement_ambiguous");
-  });
-  it("E12 return fuera de ventana temporal no se atribuye", () => {
-    expect(evaluateExternalResolution(baseCase(), ctx({ returnMovements: [ret({ recordedAt: "2026-09-27T15:00:00+02:00" })] })).verdict).toBe("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE");
-  });
-  it("E13 return vinculado por sale.saleId se acepta aunque esté lejos en el tiempo", () => {
-    const m = ret({ recordedAt: "2026-09-28T01:00:00Z", sale: { saleId: 188690, saleExists: false, saleDetailIds: [], receiptId: "rcpt-1" } });
-    const r = evaluateExternalResolution(baseCase(), ctx({ returnMovements: [m] }));
-    expect(r.verdict).toBe("RESOLVED_EXTERNALLY"); expect(r.receipt_id).toBe("rcpt-1");
-  });
-  it("E14 duplicado solo de historial: resuelto sin return; con return inesperado → CONFLICT", () => {
-    const c = baseCase({ evidence_classification: "CONFIRMED_DUPLICATE_HISTORY", bottles_overdeducted: 0 });
-    expect(evaluateExternalResolution(c, ctx({ returnMovements: [] })).verdict).toBe("RESOLVED_EXTERNALLY");
-    expect(evaluateExternalResolution(c, ctx({ returnMovements: [ret({ sale: { saleId: 188690, saleExists: false, saleDetailIds: [] } })] })).verdict).toBe("CONFLICT");
-  });
-  it("E15 probable/ambiguo → NOT_ELIGIBLE", () => {
-    expect(evaluateExternalResolution(baseCase({ evidence_classification: "PROBABLE_DUPLICATE" }), ctx()).verdict).toBe("NOT_ELIGIBLE");
-  });
-  it("E16 movimiento sin cantidades (stock no controlado) → EVIDENCE_INCOMPLETE", () => {
-    const r = evaluateExternalResolution(baseCase(), ctx({ returnMovements: [ret({ stockControlled: false })] }));
-    expect(r.verdict).toBe("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE");
-  });
+describe("adapted external-resolution coverage", () => {
+  it("E1 resolves a whole-sale cancellation with exact evidence", () => expect(evaluate().verdict).toBe("RESOLVED_EXTERNALLY"));
+  it("E2 requires sale_cancelled", () => expect(evaluate({ deletions: [] }).missing).toContain("sale_cancelled"));
+  it("E3 requires a causally linked return", () => expect(evaluate({ movements: [] }).missing).toContain("return_movement_exact_link"));
+  it("E4 rejects an incorrect restored quantity", () => expect(evaluate({ movements: [movement({ change: 2, quantityAfter: 8 })] }).missing).toContain("movement_quantity_conflict"));
+  it("E5 requires every kept sale", () => expect(evaluate({ confirmedKeptSaleIds: [] }).missing).toContain("kept_sale_present"));
+  it("E6 reports a live candidate as not cancelled", () => expect(evaluate({ liveSaleIds: [188690] }).verdict).toBe("NOT_CANCELLED_YET"));
+  it("E7 blocks DETAIL scope", () => expect(evaluate({ auditCase: auditCase({ identityScope: "DETAIL" }) }).verdict).toBe("BLOCKED_DETAIL_SCOPE"));
+  it("E8 rejects non-confirmed duplicate classifications", () => expect(evaluate({ auditCase: auditCase({ evidenceClassification: "PROBABLE_DUPLICATE" }) }).verdict).toBe("NOT_ELIGIBLE"));
+  it("E9 requires exactly one candidate sale", () => expect(evaluate({ auditCase: auditCase({ candidateTargets: [target, { ...target, saleId: "188691" }] }) }).verdict).toBe("CARDINALITY_CONFLICT"));
+  it("E10 rejects a changed authoritative fingerprint", () => expect(evaluate({ auditCase: auditCase({ caseFingerprint: "changed" }) }).verdict).toBe("CARDINALITY_CONFLICT"));
+  it("E11 does not infer causality from matching wine and time", () => expect(evaluate({ movements: [movement({ sale: null, reference: null })] }).missing).toContain("return_movement_exact_link"));
+  it("E12 accepts an exact sale reference without temporal proximity", () => expect(evaluate({ movements: [movement({ sale: null, reference: { type: "sale", id: 188690 } })] }).verdict).toBe("RESOLVED_EXTERNALLY"));
+  it("E13 accepts several exact movements when their sum matches", () => expect(evaluate({ movements: [movement({ movementId: 1, change: 0.4, quantityAfter: 6.4 }), movement({ movementId: 2, change: 0.6, quantityBefore: 6.4, quantityAfter: 7 })] }).verdict).toBe("RESOLVED_EXTERNALLY"));
+  it("E14 requires quantities on linked movements", () => expect(evaluate({ movements: [movement({ change: null, quantityBefore: null, quantityAfter: null })] }).missing).toContain("movement_quantities"));
+  it("E15 history-only remains incomplete without independent stock readback", () => expect(evaluate({ auditCase: auditCase({ evidenceClassification: "CONFIRMED_DUPLICATE_HISTORY", expectedRestoredQty: 0 }), movements: [] }).missing).toContain("history_only_cancellation_stock_readback"));
+  it("E16 history-only conflicts with an exact unexpected return", () => expect(evaluate({ auditCase: auditCase({ evidenceClassification: "CONFIRMED_DUPLICATE_HISTORY", expectedRestoredQty: 0 }) }).verdict).toBe("CONFLICT"));
 });
 
-describe("reconcileDay (AUDIT_ONLY)", () => {
-  const g = { day: "2026-09-25", winerimWineId: "900", formatKey: "botella", agoraRealQty: 1, supersededQty: 1, cancelledQty: 0 };
-  it("R1 duplicado visible → WINERIM_EXCESS con acción manual", () => {
-    const [r] = reconcileDay([g], [sale(188510), sale(188690)], "agora:8466c229:2026-09-25:");
-    expect(r).toMatchObject({ status: "WINERIM_EXCESS", diff: 1, mode: "AUDIT_ONLY" });
-  });
-  it("R2 tras la anulación externa → MATCH", () => {
-    const d = [{ saleId: 188690, saleDetailId: null, lineId: "sale:188690", reason: "sale_cancelled" as const, deletedAt: "x", effectiveAt: null, externalOrderId: null }];
-    expect(reconcileDay([g], [sale(188510), sale(188690)], "agora:8466c229:2026-09-25:", d)[0].status).toBe("MATCH");
-  });
-  it("R3 venta que falta en Winerim → WINERIM_MISSING, nunca revertir", () => {
-    const [r] = reconcileDay([{ ...g, agoraRealQty: 2 }], [sale(188510)], "agora:8466c229:2026-09-25:");
-    expect(r.status).toBe("WINERIM_MISSING"); expect(r.manual_action).toMatch(/nunca revertir/);
-  });
-  it("R4 otro restaurante (prefijo distinto) no cuenta", () => {
-    expect(reconcileDay([g], [sale(188510)], "agora:ffffffff:2026-09-25:")[0].status).toBe("WINERIM_MISSING");
-  });
+const agora = (over: Partial<AgoraLine> = {}): AgoraLine => ({ connectionId, restaurantId: 839, businessDay: "2026-09-25", documentId: "42531", sourceSystem: "AGORA", externalOrderId: "T-42531", orderId: null, sourceLineId: "1", wineId: "900", format: "botella", quantity: 1, amountMinor: 2500, effectiveAt: "2026-09-25T21:00:00", isOpen: false, isCancelled: false, ...over });
+const winerim = (over: Partial<WinerimLine> = {}): WinerimLine => ({ restaurantId: 839, saleId: 188510, lineId: "sale:188510", saleDetailId: null, saleStatus: "confirmed", sourceSystem: "AGORA", externalOrderId: "T-42531", orderId: null, sourceLineId: "1", invoiceId: "42531", receiptId: "rcpt-1", wineId: "900", format: "botella", quantity: 1, amountMinor: 2500, effectiveAt: "2026-09-25T21:00:00", businessDay: "2026-09-25", stockEffect: { known: true, status: "APPLIED", stockApplied: true, receiptId: "rcpt-1", movementIds: [1], movementDifference: -1, unbackedQty: 0 }, ...over });
+const complete = { agoraComplete: true, winerimComplete: true, stockComplete: true, pagesRead: 1, expectedPages: 1 };
+
+describe("adapted daily audit coverage", () => {
+  it("R1 exact identity matches", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [winerim()], completeness: complete })[0].state).toBe("MATCHED"));
+  it("R2 duplicate exact identities are never consumed automatically", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [winerim(), winerim({ saleId: 188511, lineId: "sale:188511" })], completeness: complete })[0].state).toBe("CONFIRMED_DUPLICATE"));
+  it("R3 missing history stays audit-only", () => { const row = reconcileLines({ connectionId, agora: [agora()], winerim: [], completeness: complete })[0]; expect(row.state).toBe("MISSING_IN_WINERIM"); expect(row.mode).toBe("AUDIT_ONLY"); });
+  it("R4 incomplete pagination never becomes a proven missing sale", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [], completeness: { ...complete, winerimComplete: false } })[0].state).toBe("SOURCE_INCOMPLETE"));
 });
 
-describe("fleet client", () => {
-  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
-  it("C1 rechaza token que no es de flota", () => { expect(() => createFleetClient("abc")).toThrow(); });
-  it("C2 exige restaurantId y solo usa GET", async () => {
-    const seen: RequestInit[] = []; const urls: string[] = [];
-    const c = createFleetClient("wfk_ab12cd34_SECRET", (async (u: string, i: RequestInit) => { urls.push(u); seen.push(i); return ok({ data: [] }); }) as unknown as typeof fetch);
-    await c.salesSync(77, "2026-09-14T00:00:00Z");
-    expect(seen[0].method).toBe("GET"); expect(urls[0]).toContain("restaurantId=77");
-    await expect((c as any).movements(undefined, {})).rejects.toThrow(/restaurantId/);
-  });
-  it("C3 respeta Retry-After en 429", async () => {
-    let n = 0; const waits: number[] = [];
-    const c = createFleetClient("wfk_a_b", (async () => (++n === 1 ? new Response("", { status: 429, headers: { "Retry-After": "7" } }) : ok({ data: [] }))) as unknown as typeof fetch, async (ms) => { waits.push(ms); });
-    await c.restaurants(); expect(waits).toEqual([7000]); expect(c.calls).toBe(2);
-  });
-  it("C4 nunca devuelve el secreto en errores", () => {
-    expect(redact("fallo con wfk_ab12cd34_SECRETVALUE")).not.toContain("SECRETVALUE");
-  });
+describe("adapted fleet-client coverage", () => {
+  const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  it("C1 rejects non-fleet credentials", () => expect(() => createWinerimFleetClient({ token: "abc" })).toThrow());
+  it("C2 composes the relative /sales/records resource on the v2 base", async () => { const seen: string[] = []; const client = createWinerimFleetClient({ token: "wfk_test", fetchImpl: async (url) => { seen.push(String(url)); return ok({ restaurantId: 839, data: [], deletions: [], sync: { nextCursor: "c", hasMore: false } }); } }); await client.salesSync(839, { changedSince: "2026-09-27T00:00:00+02:00" }); expect(new URL(seen[0]).pathname).toBe("/api/v2/sales/records"); });
+  it("C3 stops immediately on authorization errors", async () => { let calls = 0; const client = createWinerimFleetClient({ token: "wfk_test", fetchImpl: async () => { calls += 1; return new Response("", { status: 403 }); }, sleep: async () => {} }); await expect(client.restaurants()).rejects.toMatchObject({ code: "HTTP_403" }); expect(calls).toBe(1); });
+  it("C4 bounds retries", async () => { let calls = 0; const client = createWinerimFleetClient({ token: "wfk_test", fetchImpl: async () => { calls += 1; return new Response("", { status: 503 }); }, sleep: async () => {} }); await expect(client.restaurants()).rejects.toMatchObject({ code: "HTTP_503" }); expect(calls).toBe(3); });
 });
 
-describe("estimateCalls", () => {
-  it("E-cost dentro del límite de 10.000/h", () => {
-    const e = estimateCalls({ restaurants: 25, days: 30, salesPagesPerDay: 2, syncPagesPerRun: 1, movementPagesPerRun: 1, runsPerDay: 24, cases: 21 });
-    expect(e.peakPerHour).toBeLessThan(10000);
-    expect(e).toMatchObject({ checkerOneShot: 71, reconcilerPerDay: 50, steadyStatePerDay: 1251, backfill: 1500 });
-  });
+describe("adapted batch contract", () => {
+  it("B1 detects additions and omissions in the authorized set", () => { const one = [{ caseFingerprint: "fp", candidateTargets: [target] }]; expect(compareAuthorizedBatch(one, one).state).toBe("MATCHED"); expect(compareAuthorizedBatch(one, []).state).toBe("CARDINALITY_CONFLICT"); });
 });

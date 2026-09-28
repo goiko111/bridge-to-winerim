@@ -10,7 +10,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:reconciliation": "vitest run src/test/reconciliationV2.test.ts src/test/winerimFleetClient.test.ts src/test/winerimFleetEvidence.test.ts src/test/reconciliationSql.test.ts src/test/reconciliationGuards.test.ts",
+    "typecheck:reconciliation": "tsc -p tsconfig.reconciliation.json",
+    "build:reconciliation": "vite build --config vite.reconciliation.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

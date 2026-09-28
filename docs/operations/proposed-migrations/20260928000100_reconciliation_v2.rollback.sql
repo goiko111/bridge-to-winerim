@@ -1,0 +1,32 @@
+-- Exact rollback for 20260928000100_reconciliation_v2.sql.
+-- Export audit evidence first if retention is required.
+drop view if exists public.reconciliation_v2_dashboard;
+drop view if exists public.reconciliation_v2_latest;
+drop function if exists public.reconciliation_v2_record_external_resolution(uuid,uuid,text,jsonb,text,text,text[],jsonb,timestamptz);
+drop function if exists public.reconciliation_v2_commit_sales_page(uuid,bigint,uuid,jsonb,jsonb,text,boolean,timestamptz);
+drop function if exists public.reconciliation_v2_commit_movement_page(uuid,bigint,uuid,jsonb,bigint,boolean,timestamptz);
+drop function if exists public.reconciliation_v2_commit_stock_snapshot(uuid,bigint,uuid,timestamptz,text,boolean,integer,jsonb);
+drop function if exists public.reconciliation_v2_commit_run(uuid,uuid,bigint,date,timestamptz,jsonb,jsonb,jsonb,jsonb);
+drop function if exists public.reconciliation_v2_release_lock(uuid,text,uuid);
+drop function if exists public.reconciliation_v2_claim_lock(uuid,text,uuid,integer);
+alter table if exists public.agora_reversal_audit drop column if exists external_resolution_status;
+drop table if exists public.reconciliation_v2_locks;
+drop table if exists public.reconciliation_v2_analytics_aggregates;
+drop table if exists public.reconciliation_v2_analytics_series;
+drop table if exists public.reconciliation_v2_category_rules;
+drop table if exists public.reconciliation_v2_external_resolutions;
+drop table if exists public.reconciliation_v2_manual_actions;
+drop table if exists public.reconciliation_v2_evidence;
+drop table if exists public.reconciliation_v2_results;
+drop table if exists public.reconciliation_v2_runs;
+drop table if exists public.winerim_stock_snapshot_items;
+drop table if exists public.winerim_stock_snapshots;
+drop table if exists public.winerim_stock_movements;
+drop table if exists public.winerim_sale_deletions;
+drop table if exists public.winerim_sales_lines;
+drop table if exists public.winerim_sales_records;
+drop table if exists public.winerim_sync_checkpoints;
+drop table if exists public.reconciliation_v2_connection_exclusions;
+drop table if exists public.winerim_restaurant_bindings;
+drop function if exists reconciliation_private.touch_updated_at();
+drop schema if exists reconciliation_private;

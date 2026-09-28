@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "allowImportingTsExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": [
+      "vite/client",
+      "vitest/globals"
+    ],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "src/features/daily-reconciliation/**/*.ts",
+    "src/features/daily-reconciliation/**/*.tsx",
+    "src/test/**/*.ts",
+    "supabase/functions/_shared/reconciliation-v2/analytics.ts",
+    "supabase/functions/_shared/reconciliation-v2/engine.ts",
+    "supabase/functions/_shared/reconciliation-v2/hash.ts",
+    "supabase/functions/_shared/reconciliation-v2/types.ts",
+    "supabase/functions/_shared/reconciliation-v2/time.ts",
+    "supabase/functions/_shared/reconciliation-v2/winerimFleetClient.ts",
+    "supabase/functions/_shared/reconciliation-v2/fixtures/**/*.ts"
+  ]
+}
