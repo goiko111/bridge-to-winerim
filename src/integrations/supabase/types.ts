@@ -124,11 +124,16 @@ export type Database = {
           created_at: string
           cup_classification: string | null
           eligible_for_reversal: boolean
+          endpoint_granularity: string | null
+          endpoint_partial_qty: boolean | null
+          endpoint_reverts_history: boolean | null
+          endpoint_reverts_stock: boolean | null
           evidence: Json
           evidence_classification: string
           format_key: string
           history_units_excess: number | null
           id: string
+          identity_scope: string | null
           import_mode: string | null
           keep_detail_ids: string | null
           keep_sale_ids: string | null
@@ -165,11 +170,16 @@ export type Database = {
           created_at?: string
           cup_classification?: string | null
           eligible_for_reversal?: boolean
+          endpoint_granularity?: string | null
+          endpoint_partial_qty?: boolean | null
+          endpoint_reverts_history?: boolean | null
+          endpoint_reverts_stock?: boolean | null
           evidence?: Json
           evidence_classification: string
           format_key: string
           history_units_excess?: number | null
           id?: string
+          identity_scope?: string | null
           import_mode?: string | null
           keep_detail_ids?: string | null
           keep_sale_ids?: string | null
@@ -206,11 +216,16 @@ export type Database = {
           created_at?: string
           cup_classification?: string | null
           eligible_for_reversal?: boolean
+          endpoint_granularity?: string | null
+          endpoint_partial_qty?: boolean | null
+          endpoint_reverts_history?: boolean | null
+          endpoint_reverts_stock?: boolean | null
           evidence?: Json
           evidence_classification?: string
           format_key?: string
           history_units_excess?: number | null
           id?: string
+          identity_scope?: string | null
           import_mode?: string | null
           keep_detail_ids?: string | null
           keep_sale_ids?: string | null
