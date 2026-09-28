@@ -129,7 +129,7 @@ export function createWinerimFleetClient(options: { token: string; fetchImpl?: F
     for (let attempt = 0; attempt < 3; attempt += 1) {
       callCount += 1;
       const response = await fetchImpl(`${baseUrl}${path}?${query}`, { method: "GET", headers: { Accept: "application/json", "WINERIM-API-TOKEN": options.token } });
-      if ([401, 403, 404].includes(response.status)) throw new FleetContractError(`HTTP_${response.status}`, `Winerim rechazó ${path}`, response.status);
+      if ([400, 401, 403, 404].includes(response.status)) throw new FleetContractError(`HTTP_${response.status}`, `Winerim rechazó ${path}`, response.status);
       if (!response.ok) {
         const delay = retryDelay(response, attempt);
         if (delay != null && attempt < 2) { await sleep(delay); continue; }
