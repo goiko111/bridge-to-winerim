@@ -108,9 +108,15 @@ for (const dk of dayKeys) {
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)) || a.saleId - b.saleId);
     const winerimQty = recs.reduce((s, r) => s + Number(r.qty || 0), 0);
     const mv = (r) => (r.lines || []).flatMap((l) => l.stockEffect?.movements || []).filter((m) => m.exists);
-    const stockQty = recs.reduce((s, r) => s + mv(r).reduce((a, m) => a - Number(m.difference || 0), 0), 0);
+    // A movementId is ONE physical movement even if repeated on every cup/detail line.
+    const distinctMv = (rs) => { const m = new Map(); for (const r of rs) for (const x of mv(r)) m.set(x.stockMovementId, x); return [...m.values()]; };
+    const mvUnits = (ms) => ms.reduce((a, m) => a - Number(m.difference || 0), 0);
+    const isCup = g.fk === "copa";
+    const stockQty = mvUnits(distinctMv(recs));
     const excessHistory = winerimQty - agoraReal;
-    const excessStock = stockQty - agoraReal;
+    // Cups: stock only moves when a bottle partition opens, so stock is not comparable with cup qty.
+    const excessStock = isCup ? 0 : stockQty - agoraReal;
+    const stockKnown = recs.every((r) => (r.lines || []).every((l) => l.stockEffect?.known === true));
     // Keep earliest sales up to the real qty; later ones are candidates.
     let acc = 0; const keep = [], cand = []; let split = false;
     for (const r of recs) {
