@@ -1575,6 +1575,59 @@ export type Database = {
           },
         ]
       }
+      reconciliation_v2_candidate_probe_audit: {
+        Row: {
+          business_day: string
+          completed_at: string | null
+          connection_id: string
+          error_code: string | null
+          evidence_hash: string | null
+          id: string
+          outcome: string
+          pages_read: number
+          record_count: number
+          requested_by: string
+          restaurant_id: number
+          started_at: string
+        }
+        Insert: {
+          business_day: string
+          completed_at?: string | null
+          connection_id: string
+          error_code?: string | null
+          evidence_hash?: string | null
+          id?: string
+          outcome?: string
+          pages_read?: number
+          record_count?: number
+          requested_by: string
+          restaurant_id: number
+          started_at?: string
+        }
+        Update: {
+          business_day?: string
+          completed_at?: string | null
+          connection_id?: string
+          error_code?: string | null
+          evidence_hash?: string | null
+          id?: string
+          outcome?: string
+          pages_read?: number
+          record_count?: number
+          requested_by?: string
+          restaurant_id?: number
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_candidate_probe_audit_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       reconciliation_v2_category_rules: {
         Row: {
           category: string
@@ -3224,6 +3277,15 @@ export type Database = {
         Returns: undefined
       }
       is_platform_admin: { Args: never; Returns: boolean }
+      reconciliation_v2_begin_candidate_probe: {
+        Args: {
+          p_business_day: string
+          p_connection_id: string
+          p_requested_by: string
+          p_restaurant_id: number
+        }
+        Returns: string
+      }
       reconciliation_v2_claim_lock: {
         Args: {
           p_connection_id: string

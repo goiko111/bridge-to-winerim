@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "test:reconciliation": "vitest run src/test/reconciliationV2.test.ts src/test/winerimFleetClient.test.ts src/test/winerimFleetEvidence.test.ts src/test/candidateProbe.test.ts src/test/reconciliationSql.test.ts src/test/reconciliationGuards.test.ts",
+    "typecheck:reconciliation": "tsc -p tsconfig.reconciliation.json",
+    "build:reconciliation": "vite build --config vite.reconciliation.config.ts"
+  }
+}

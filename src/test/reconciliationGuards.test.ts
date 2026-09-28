@@ -7,9 +7,9 @@ function files(root: string): string[] {
 }
 
 const functionRoot = resolve(process.cwd(), "supabase/functions");
-// Scope: only Reconciliation v3 sources. Pre-existing operational code (agora-proxy, winerim-proxy,
-// winerimCertifiedSalesImport) is intentionally out of scope and must not be modified by this package.
-const RECON_SCOPE = /(reconciliation-v2|winerim-fleet-reader|sync-sales-records|sync-stock-movements|refresh-current-stock|run-daily-reconciliation|read-reconciliation-results|verify-external-resolution|winerimFleetClient|winerimFleetEvidence)/;
+// Scope: only Reconciliation v3 sources (restored from base 961116a). Pre-existing operational code
+// (agora-proxy, winerim-proxy, winerimCertifiedSalesImport) is intentionally out of scope.
+const RECON_SCOPE = /(reconciliation-v2|winerim-fleet-reader|sync-sales-records|sync-stock-movements|refresh-current-stock|run-daily-reconciliation|read-reconciliation-results|verify-external-resolution|winerimFleetClient|winerimFleetEvidence|candidate_probe)/;
 const sources = files(functionRoot).filter((path) => /\.(ts|sql)$/.test(path) && RECON_SCOPE.test(path)).map((path) => [path, readFileSync(path, "utf8")] as const);
 
 describe("runtime guardrails", () => {
@@ -26,6 +26,21 @@ describe("runtime guardrails", () => {
     expect(source).toContain("reconciliation_v2_connection_exclusions");
     expect(source).toContain("CONNECTION_PERSISTED_EXCLUDED");
     expect(source).not.toContain("Ocean Club");
+  });
+
+  it("keeps the pre-binding probe fixed, bounded, audited and read-only", () => {
+    const source = readFileSync(join(functionRoot, "winerim-fleet-reader/index.ts"), "utf8");
+    const client = readFileSync(join(functionRoot, "_shared/reconciliation-v2/winerimFleetClient.ts"), "utf8");
+    const probe = readFileSync(join(functionRoot, "_shared/reconciliation-v2/candidateProbe.ts"), "utf8");
+    const migration = readdirSync(resolve(process.cwd(), "supabase/migrations")).map((n) => readFileSync(resolve(process.cwd(), "supabase/migrations", n), "utf8")).find((s) => s.includes("reconciliation_v2_begin_candidate_probe")) ?? "";
+    expect(probe).toContain("VERIFY_CANDIDATE_SALES");
+    expect(source).toContain("reconciliation_v2_begin_candidate_probe");
+    expect(source).toContain("reconciliation_v2_candidate_probe_audit");
+    expect(source).toContain("MAX_PAGES");
+    expect(client).toContain('sales: "/sales/records"');
+    expect(source).not.toMatch(/method\s*:\s*["'](?:PUT|PATCH|DELETE)["']/);
+    expect(migration).toContain("candidate probe rate limited");
+    expect(migration).toContain("revoke all on public.reconciliation_v2_candidate_probe_audit from public, anon, authenticated");
   });
 
   it("contains no Winerim write endpoint or repair executor", () => {
