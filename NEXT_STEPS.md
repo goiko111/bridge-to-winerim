@@ -2104,3 +2104,8 @@
 - Revisar STOCK_CONFLICT de copas con la regla de "botella en uso".
 - Esperar endpoint certificado de reversión de Winerim; hasta entonces nada pasa a READY_TO_REVERSE.
 - Roger de Flor (Don Quijote, 25/09): Ágora 5 copas reales, Winerim 3 → no hay duplicado sino defecto; no revertir.
+
+## 2026-09-28 — Auditoría vs cola de reversión (Hechos)
+- Nueva tabla agora_reversal_audit (220 casos, huella md5 determinista, todos PENDING_REVIEW, eligible_for_reversal=false). Cola agora_reversal_queue vaciada: solo admite casos promovidos desde la auditoría (trigger guard). Importación idempotente probada (2ª pasada inserta 0).
+- Reglas nuevas en scripts/audit-agora-duplicates-forensic.mjs: movementId deduplicado; copas no comparan stock (solo apertura de partición); keep/candidato por detalle; bloqueos STOCK_UNKNOWN/AMBIGUOUS/SOURCE_INCOMPLETE/ENDPOINT_GRANULARITY_UNKNOWN.
+- Tareas: verificación manual caso a caso; retirar ENDPOINT_GRANULARITY_UNKNOWN solo cuando Winerim publique contrato; ledger por ticket+sourceLineId+formato sigue pendiente (el filtro agregado no lo sustituye).

@@ -108,9 +108,15 @@ for (const dk of dayKeys) {
       .sort((a, b) => String(a.recordedAt).localeCompare(String(b.recordedAt)) || a.saleId - b.saleId);
     const winerimQty = recs.reduce((s, r) => s + Number(r.qty || 0), 0);
     const mv = (r) => (r.lines || []).flatMap((l) => l.stockEffect?.movements || []).filter((m) => m.exists);
-    const stockQty = recs.reduce((s, r) => s + mv(r).reduce((a, m) => a - Number(m.difference || 0), 0), 0);
+    // A movementId is ONE physical movement even if repeated on every cup/detail line.
+    const distinctMv = (rs) => { const m = new Map(); for (const r of rs) for (const x of mv(r)) m.set(x.stockMovementId, x); return [...m.values()]; };
+    const mvUnits = (ms) => ms.reduce((a, m) => a - Number(m.difference || 0), 0);
+    const isCup = g.fk === "copa";
+    const stockQty = mvUnits(distinctMv(recs));
     const excessHistory = winerimQty - agoraReal;
-    const excessStock = stockQty - agoraReal;
+    // Cups: stock only moves when a bottle partition opens, so stock is not comparable with cup qty.
+    const excessStock = isCup ? 0 : stockQty - agoraReal;
+    const stockKnown = recs.every((r) => (r.lines || []).every((l) => l.stockEffect?.known === true));
     // Keep earliest sales up to the real qty; later ones are candidates.
     let acc = 0; const keep = [], cand = []; let split = false;
     for (const r of recs) {
@@ -119,7 +125,10 @@ for (const dk of dayKeys) {
       else { if (acc < agoraReal) split = true; cand.push(r); acc += q; }
     }
     const candQty = cand.reduce((s, r) => s + Number(r.qty || 0), 0);
-    const candStockOk = cand.length > 0 && cand.every((r) => (r.lines || []).every((l) => l.stockEffect?.stockApplied === true && l.stockEffect?.receiptId) && mv(r).length > 0);
+    const keepMvIds = new Set(distinctMv(keep).map((m) => m.stockMovementId));
+    const ownCandMv = distinctMv(cand).filter((m) => !keepMvIds.has(m.stockMovementId));
+    const bottlesOver = mvUnits(ownCandMv); // physical units deducted ONLY by candidate details
+    const candStockOk = cand.length > 0 && cand.every((r) => (r.lines || []).every((l) => l.stockEffect?.stockApplied === true && l.stockEffect?.receiptId)) && ownCandMv.length > 0;
     const candHistOk = cand.length > 0 && cand.every((r) => r.source?.externalOrderId && (r.lines || []).every((l) => l.source?.receiptId));
     const hasAmb = g.cancelled.AMBIGUOUS > 0;
     const tipo = g.refunds.map((r) => r.kind === "SUPERSEDES" ? String(r.ev.raw_json.RefundSource) : r.kind === "FULL" ? "AnulacionTotal" : r.kind === "PARTIAL" ? "DevolucionParcial" : `Ambigua(${r.ev.raw_json.RefundSource || "?"})`);
@@ -129,10 +138,10 @@ for (const dk of dayKeys) {
     else if (g.cancelled.SUPERSEDES > 0 && g.cancelled.FULL + g.cancelled.PARTIAL === 0) {
       if (recs.length === 0 && agoraReal > 0) { status = "NEEDS_WINERIM_READBACK"; confidence = "low"; explanation = "No hay ventas Winerim con orderId de este día/vino/formato"; action = "Localizar ventas (posible venta anterior al arranque de stock o legacy)"; }
       else if (excessHistory === 0 && excessStock === 0) { status = "SUPERSEDED_AT_SOURCE"; confidence = "high"; explanation = "Sustitución probada en Ágora; Winerim registra exactamente la cantidad real: no llegó duplicado"; action = "Ninguna"; }
-      else if (excessHistory < 0 || excessStock < 0 || excessHistory > g.cancelled.SUPERSEDES || excessStock > excessHistory) { status = "STOCK_CONFLICT"; confidence = "medium"; explanation = `Exceso historial ${excessHistory}, stock ${excessStock}, sustituido en Ágora ${g.cancelled.SUPERSEDES}: incompatibles`; action = "Revisión manual"; }
-      else if (!split && candQty === excessHistory && candHistOk && candStockOk && excessStock === excessHistory) { status = "CONFIRMED_DUPLICATE_STOCK"; confidence = "high"; explanation = "Venta(s) posteriores a la real con recibo y movimiento de stock existentes; cantidad exacta = exceso"; action = "Candidata a reversión cuando exista el endpoint certificado"; }
-      else if (!split && candQty === excessHistory && candHistOk && excessStock === 0) { status = "CONFIRMED_DUPLICATE_HISTORY"; confidence = "high"; explanation = "Duplicado en historial sin efecto de stock (stock no controlado o history_only)"; action = "Candidata a reversión de historial"; }
-      else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = split ? "Exceso dentro de una venta que también contiene cantidad real (reversión parcial)" : "Falta recibo o movimiento en la(s) venta(s) candidata(s)"; action = "Completar trazabilidad antes de revertir"; }
+      else if (excessHistory < 0 || excessStock < 0 || excessHistory > g.cancelled.SUPERSEDES || excessStock > excessHistory) { status = "STOCK_CONFLICT"; confidence = "medium"; explanation = `Exceso historial ${excessHistory}, stock ${excessStock}, sustituido en Ágora ${g.cancelled.SUPERSEDES}: incompatibles`; action = excessHistory < 0 ? "Venta faltante en Winerim: nunca revertir" : "Revisión manual"; }
+      else if (!isCup && !split && candQty === excessHistory && candHistOk && candStockOk && bottlesOver === excessHistory) { status = "CONFIRMED_DUPLICATE_STOCK"; confidence = "high"; explanation = "Detalle(s) posteriores a la real con recibo y movimiento de stock propio; cantidad exacta = exceso"; action = "Candidata a reversión cuando exista el endpoint certificado"; }
+      else if (!split && candQty === excessHistory && candHistOk && (isCup || bottlesOver === 0)) { status = "CONFIRMED_DUPLICATE_HISTORY"; confidence = "high"; explanation = isCup ? "Copas duplicadas en historial; el stock de botella solo varía al abrir partición" : "Detalle(s) duplicados en historial; sin movimiento de stock propio (movimiento compartido con la venta real)"; action = "Candidata a reversión de historial"; }
+      else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = split ? "Exceso dentro de un detalle que también contiene cantidad real (reversión parcial)" : "Falta recibo o movimiento en los detalles candidatos"; action = "Completar trazabilidad antes de revertir"; }
     } else {
       // Cancellations / partial refunds: Winerim must reflect agoraNet.
       const pend = winerimQty - Math.max(0, agoraNet);
@@ -140,6 +149,18 @@ for (const dk of dayKeys) {
       else if (pend <= 0) { status = "SUPERSEDED_AT_SOURCE"; confidence = "high"; explanation = "Anulación ya neutra en Winerim"; action = "Ninguna"; }
       else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = `Anulación pendiente de reflejar: Winerim ${winerimQty}, neto Ágora ${agoraNet}`; action = `Revertir ${pend} cuando exista el endpoint`; }
     }
+    let cupClass = null;
+    if (isCup && recs.length) {
+      if (!stockKnown) cupClass = "CUP_STOCK_UNKNOWN";
+      else if (excessHistory < 0) cupClass = "CUP_REAL_STOCK_CONFLICT";
+      else if (ownCandMv.length > 0) cupClass = "CUP_OPENING_EFFECT_CONFIRMED";
+      else cupClass = "CUP_HISTORY_MATCHED_STOCK_NOT_EXPECTED";
+    }
+    const blockers = [];
+    if (!stockKnown) blockers.push("STOCK_UNKNOWN");
+    if (status === "AMBIGUOUS") blockers.push("AMBIGUOUS");
+    if (!cand.length || !candHistOk || split) blockers.push("SOURCE_INCOMPLETE");
+    blockers.push("ENDPOINT_GRANULARITY_UNKNOWN");
     const firstRef = g.refunds[0];
     const relInv = firstRef.c?.supersededEventId || firstRef.c?.relatedEventId;
     const newInv = events.filter((e) => definitive(e) && !superseded.has(e.id) && lines.some((l) => l.sales_event_id === e.id && sameGroup(l))).map((e) => e.provider_doc_id);
@@ -162,15 +183,18 @@ for (const dk of dayKeys) {
       exceso_atribuible_demostrado: reversible,
       importe_real: unitPrice != null ? +(unitPrice * agoraReal).toFixed(2) : "",
       importe_duplicado: unitPrice != null && reversible ? +(unitPrice * reversible).toFixed(2) : 0,
-      saleId_conservar: keep.map((r) => r.saleId).join(" "), lineId_conservar: lineIds(keep),
-      saleId_candidata: cand.map((r) => r.saleId).join(" "), lineId_candidata: lineIds(cand),
+      saleId_conservar: [...new Set(keep.map((r) => r.saleId))].join(" "), lineId_conservar: lineIds(keep),
+      saleId_candidata: [...new Set(cand.map((r) => r.saleId))].join(" "), lineId_candidata: lineIds(cand),
       saleDetailId: cand.flatMap((r) => (r.lines || []).map((l) => l.saleDetailId).filter(Boolean)).join(" "),
-      orderId: cand.map((r) => r.source?.externalOrderId).join(" "),
-      receiptId: cand.flatMap((r) => (r.lines || []).map((l) => l.source?.receiptId).filter(Boolean)).join(" "),
+      orderId: [...new Set(cand.map((r) => r.source?.externalOrderId))].join(" "),
+      receiptId: [...new Set(cand.flatMap((r) => (r.lines || []).map((l) => l.source?.receiptId).filter(Boolean)))].join(" "),
       modo_importacion: [...new Set(cand.flatMap((r) => (r.lines || []).map((l) => l.source?.mode)))].join(" "),
-      movementId: cand.flatMap((r) => mv(r).map((m) => `${m.stockMovementId}(${m.unitsBefore}->${m.unitsAfter})`)).join(" "),
+      movementId: distinctMv(cand).map((m) => `${m.stockMovementId}(${m.unitsBefore}->${m.unitsAfter})${keepMvIds.has(m.stockMovementId) ? "[compartido]" : ""}`).join(" "),
+      unidades_historial_de_mas: reversible,
+      botellas_descontadas_de_mas: ["CONFIRMED_DUPLICATE_STOCK"].includes(status) ? bottlesOver : 0,
+      clasificacion_copa: cupClass || "", bloqueos: blockers.join(" "),
       efecto_historial: cand.length ? `+${candQty} en historial` : "ninguno",
-      efecto_stock: cand.length ? `-${cand.reduce((s, r) => s + mv(r).reduce((a, m) => a - Number(m.difference || 0), 0), 0)} en stock` : "ninguno",
+      efecto_stock: cand.length ? `-${bottlesOver} en stock (movimientos propios)` : "ninguno",
       qty_reversible_exacta: reversible, confianza: confidence, evidencia: explanation, accion: action, estado: status,
     });
   }
@@ -180,22 +204,21 @@ groups.sort((a, b) => (a.restaurante + a.dia + a.producto_agora).localeCompare(b
 fs.mkdirSync(OUT, { recursive: true });
 const cols = Object.keys(groups[0] || {});
 const esc = (v) => String(v ?? "").replace(/[;\n]/g, ",");
-fs.writeFileSync(`${OUT}/auditoria-forense-duplicados-agora-${FROM}_${TO}.csv`, [cols.join(";"), ...groups.map((g) => cols.map((c) => esc(g[c])).join(";"))].join("\n"));
-const queueStatus = (s) => ["CONFIRMED_DUPLICATE_STOCK", "CONFIRMED_DUPLICATE_HISTORY", "PROBABLE_DUPLICATE"].includes(s) ? "PROBABLE_DUPLICATE" : s;
-const queue = groups.filter((g) => g.estado !== "SUPERSEDED_AT_SOURCE").map((g) => ({
+fs.writeFileSync(`${OUT}/auditoria-forense-duplicados-agora-v2-${FROM}_${TO}.csv`, [cols.join(";"), ...groups.map((g) => cols.map((c) => esc(g[c])).join(";"))].join("\n"));
+// Audit rows (all cases incl. SUPERSEDED_AT_SOURCE). Never an executable queue.
+const audit = groups.map((g) => ({
+  case_fingerprint: `${g.connection_id}|${g.dia}|${g.devolucion}|${g.producto_agora.split(" ")[0]}|${g.formato_winerim}`,
   connection_id: g.connection_id, business_day: g.dia, agora_ticket_id: g.agoraTicketId || null, source_line_id: g.sourceLineId || null,
   original_invoice: g.factura_original || null, new_invoice: g.factura_sustituta || null, refund_document: g.devolucion, refund_source: g.tipo,
   agora_product_id: g.producto_agora.split(" ")[0], winerim_wine_id: g.wineId, format_key: g.formato_winerim,
   original_qty: g.qty_real_agora, reverse_qty: g.qty_reversible_exacta, amount: g.importe_duplicado,
-  sale_id: g.saleId_candidata || null, sale_detail_id: g.saleDetailId || null, receipt_id: g.receiptId || null, order_id: g.orderId || null,
-  import_mode: g.modo_importacion || null, classification: g.estado, status: queueStatus(g.estado), confidence: g.confianza, reason: g.evidencia,
-  evidence: { keep_sale_ids: g.saleId_conservar, movements: g.movementId, excess_history: g.exceso_diario_historial, excess_stock: g.exceso_diario_stock, cancelled_at_source: g.qty_anulada_o_sustituida_agora },
+  keep_sale_ids: g.saleId_conservar || null, keep_detail_ids: g.lineId_conservar || null,
+  candidate_sale_id: g.saleId_candidata || null, candidate_detail_ids: g.saleDetailId || null, receipt_id: g.receiptId || null, order_id: g.orderId || null,
+  import_mode: g.modo_importacion || null, movement_ids: g.movementId || null,
+  history_units_excess: g.unidades_historial_de_mas, bottles_overdeducted: g.botellas_descontadas_de_mas,
+  evidence_classification: g.estado, cup_classification: g.clasificacion_copa || null, blockers: g.bloqueos ? g.bloqueos.split(" ") : [],
+  confidence: g.confianza, reason: g.evidencia,
+  evidence: { excess_history: g.exceso_diario_historial, excess_stock: g.exceso_diario_stock, cancelled_at_source: g.qty_anulada_o_sustituida_agora, winerim_history_qty: g.qty_winerim_historial, winerim_stock_qty: g.qty_winerim_stock, agora_real_qty: g.qty_real_agora, action: g.accion },
 }));
-fs.writeFileSync(`${OUT}/cola-anulaciones-agora-${FROM}_${TO}.json`, JSON.stringify(queue, null, 1));
-const summ = {};
-for (const g of groups) {
-  const s = summ[g.restaurante] ||= { casos: 0, CONFIRMED_DUPLICATE_STOCK: 0, CONFIRMED_DUPLICATE_HISTORY: 0, PROBABLE_DUPLICATE: 0, AMBIGUOUS: 0, STOCK_CONFLICT: 0, NEEDS_WINERIM_READBACK: 0, SUPERSEDED_AT_SOURCE: 0, unidades_de_mas: 0, importe_duplicado: 0, formatos: {} };
-  s.casos++; s[g.estado]++; s.unidades_de_mas += g.qty_reversible_exacta; s.importe_duplicado = +(s.importe_duplicado + Number(g.importe_duplicado || 0)).toFixed(2);
-  if (g.qty_reversible_exacta) s.formatos[g.formato_winerim] = (s.formatos[g.formato_winerim] || 0) + g.qty_reversible_exacta;
-}
-console.log(JSON.stringify({ grupos: groups.length, cola: queue.length, resumen: summ }, null, 1));
+fs.writeFileSync(`${OUT}/auditoria-anulaciones-agora-v2-${FROM}_${TO}.json`, JSON.stringify(audit, null, 1));
+console.log(JSON.stringify({ grupos: groups.length }, null, 1));

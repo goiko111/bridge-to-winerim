@@ -108,12 +108,147 @@ export type Database = {
           },
         ]
       }
+      agora_reversal_audit: {
+        Row: {
+          agora_product_id: string
+          agora_ticket_id: string | null
+          amount: number | null
+          blockers: string[]
+          bottles_overdeducted: number | null
+          business_day: string
+          candidate_detail_ids: string | null
+          candidate_sale_id: string | null
+          case_fingerprint: string
+          confidence: string
+          connection_id: string
+          created_at: string
+          cup_classification: string | null
+          eligible_for_reversal: boolean
+          evidence: Json
+          evidence_classification: string
+          format_key: string
+          history_units_excess: number | null
+          id: string
+          import_mode: string | null
+          keep_detail_ids: string | null
+          keep_sale_ids: string | null
+          movement_ids: string | null
+          new_invoice: string | null
+          order_id: string | null
+          original_invoice: string | null
+          original_qty: number | null
+          reason: string | null
+          receipt_id: string | null
+          refund_document: string
+          refund_source: string | null
+          reverse_qty: number
+          source_file: string | null
+          source_line_id: string | null
+          updated_at: string
+          verified_at: string | null
+          verified_by: string | null
+          winerim_wine_id: string | null
+          workflow_status: string
+        }
+        Insert: {
+          agora_product_id: string
+          agora_ticket_id?: string | null
+          amount?: number | null
+          blockers?: string[]
+          bottles_overdeducted?: number | null
+          business_day: string
+          candidate_detail_ids?: string | null
+          candidate_sale_id?: string | null
+          case_fingerprint: string
+          confidence?: string
+          connection_id: string
+          created_at?: string
+          cup_classification?: string | null
+          eligible_for_reversal?: boolean
+          evidence?: Json
+          evidence_classification: string
+          format_key: string
+          history_units_excess?: number | null
+          id?: string
+          import_mode?: string | null
+          keep_detail_ids?: string | null
+          keep_sale_ids?: string | null
+          movement_ids?: string | null
+          new_invoice?: string | null
+          order_id?: string | null
+          original_invoice?: string | null
+          original_qty?: number | null
+          reason?: string | null
+          receipt_id?: string | null
+          refund_document: string
+          refund_source?: string | null
+          reverse_qty?: number
+          source_file?: string | null
+          source_line_id?: string | null
+          updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          winerim_wine_id?: string | null
+          workflow_status?: string
+        }
+        Update: {
+          agora_product_id?: string
+          agora_ticket_id?: string | null
+          amount?: number | null
+          blockers?: string[]
+          bottles_overdeducted?: number | null
+          business_day?: string
+          candidate_detail_ids?: string | null
+          candidate_sale_id?: string | null
+          case_fingerprint?: string
+          confidence?: string
+          connection_id?: string
+          created_at?: string
+          cup_classification?: string | null
+          eligible_for_reversal?: boolean
+          evidence?: Json
+          evidence_classification?: string
+          format_key?: string
+          history_units_excess?: number | null
+          id?: string
+          import_mode?: string | null
+          keep_detail_ids?: string | null
+          keep_sale_ids?: string | null
+          movement_ids?: string | null
+          new_invoice?: string | null
+          order_id?: string | null
+          original_invoice?: string | null
+          original_qty?: number | null
+          reason?: string | null
+          receipt_id?: string | null
+          refund_document?: string
+          refund_source?: string | null
+          reverse_qty?: number
+          source_file?: string | null
+          source_line_id?: string | null
+          updated_at?: string
+          verified_at?: string | null
+          verified_by?: string | null
+          winerim_wine_id?: string | null
+          workflow_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agora_reversal_audit_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agora_reversal_queue: {
         Row: {
           agora_product_id: string | null
           agora_ticket_id: string | null
           amount: number | null
           approved_by: string | null
+          audit_case_id: string | null
           business_day: string | null
           classification: string
           confidence: string
@@ -121,6 +256,7 @@ export type Database = {
           created_at: string
           detected_at: string
           effective_at: string | null
+          endpoint_granularity_supported: boolean
           evidence: Json
           executed_at: string | null
           executed_by: string | null
@@ -155,6 +291,7 @@ export type Database = {
           agora_ticket_id?: string | null
           amount?: number | null
           approved_by?: string | null
+          audit_case_id?: string | null
           business_day?: string | null
           classification: string
           confidence?: string
@@ -162,6 +299,7 @@ export type Database = {
           created_at?: string
           detected_at?: string
           effective_at?: string | null
+          endpoint_granularity_supported?: boolean
           evidence?: Json
           executed_at?: string | null
           executed_by?: string | null
@@ -196,6 +334,7 @@ export type Database = {
           agora_ticket_id?: string | null
           amount?: number | null
           approved_by?: string | null
+          audit_case_id?: string | null
           business_day?: string | null
           classification?: string
           confidence?: string
@@ -203,6 +342,7 @@ export type Database = {
           created_at?: string
           detected_at?: string
           effective_at?: string | null
+          endpoint_granularity_supported?: boolean
           evidence?: Json
           executed_at?: string | null
           executed_by?: string | null
@@ -233,6 +373,13 @@ export type Database = {
           winerim_wine_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "agora_reversal_queue_audit_case_id_fkey"
+            columns: ["audit_case_id"]
+            isOneToOne: false
+            referencedRelation: "agora_reversal_audit"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "agora_reversal_queue_connection_id_fkey"
             columns: ["connection_id"]
