@@ -125,7 +125,10 @@ for (const dk of dayKeys) {
       else { if (acc < agoraReal) split = true; cand.push(r); acc += q; }
     }
     const candQty = cand.reduce((s, r) => s + Number(r.qty || 0), 0);
-    const candStockOk = cand.length > 0 && cand.every((r) => (r.lines || []).every((l) => l.stockEffect?.stockApplied === true && l.stockEffect?.receiptId) && mv(r).length > 0);
+    const keepMvIds = new Set(distinctMv(keep).map((m) => m.stockMovementId));
+    const ownCandMv = distinctMv(cand).filter((m) => !keepMvIds.has(m.stockMovementId));
+    const bottlesOver = mvUnits(ownCandMv); // physical units deducted ONLY by candidate details
+    const candStockOk = cand.length > 0 && cand.every((r) => (r.lines || []).every((l) => l.stockEffect?.stockApplied === true && l.stockEffect?.receiptId)) && ownCandMv.length > 0;
     const candHistOk = cand.length > 0 && cand.every((r) => r.source?.externalOrderId && (r.lines || []).every((l) => l.source?.receiptId));
     const hasAmb = g.cancelled.AMBIGUOUS > 0;
     const tipo = g.refunds.map((r) => r.kind === "SUPERSEDES" ? String(r.ev.raw_json.RefundSource) : r.kind === "FULL" ? "AnulacionTotal" : r.kind === "PARTIAL" ? "DevolucionParcial" : `Ambigua(${r.ev.raw_json.RefundSource || "?"})`);
@@ -135,10 +138,10 @@ for (const dk of dayKeys) {
     else if (g.cancelled.SUPERSEDES > 0 && g.cancelled.FULL + g.cancelled.PARTIAL === 0) {
       if (recs.length === 0 && agoraReal > 0) { status = "NEEDS_WINERIM_READBACK"; confidence = "low"; explanation = "No hay ventas Winerim con orderId de este día/vino/formato"; action = "Localizar ventas (posible venta anterior al arranque de stock o legacy)"; }
       else if (excessHistory === 0 && excessStock === 0) { status = "SUPERSEDED_AT_SOURCE"; confidence = "high"; explanation = "Sustitución probada en Ágora; Winerim registra exactamente la cantidad real: no llegó duplicado"; action = "Ninguna"; }
-      else if (excessHistory < 0 || excessStock < 0 || excessHistory > g.cancelled.SUPERSEDES || excessStock > excessHistory) { status = "STOCK_CONFLICT"; confidence = "medium"; explanation = `Exceso historial ${excessHistory}, stock ${excessStock}, sustituido en Ágora ${g.cancelled.SUPERSEDES}: incompatibles`; action = "Revisión manual"; }
-      else if (!split && candQty === excessHistory && candHistOk && candStockOk && excessStock === excessHistory) { status = "CONFIRMED_DUPLICATE_STOCK"; confidence = "high"; explanation = "Venta(s) posteriores a la real con recibo y movimiento de stock existentes; cantidad exacta = exceso"; action = "Candidata a reversión cuando exista el endpoint certificado"; }
-      else if (!split && candQty === excessHistory && candHistOk && excessStock === 0) { status = "CONFIRMED_DUPLICATE_HISTORY"; confidence = "high"; explanation = "Duplicado en historial sin efecto de stock (stock no controlado o history_only)"; action = "Candidata a reversión de historial"; }
-      else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = split ? "Exceso dentro de una venta que también contiene cantidad real (reversión parcial)" : "Falta recibo o movimiento en la(s) venta(s) candidata(s)"; action = "Completar trazabilidad antes de revertir"; }
+      else if (excessHistory < 0 || excessStock < 0 || excessHistory > g.cancelled.SUPERSEDES || excessStock > excessHistory) { status = "STOCK_CONFLICT"; confidence = "medium"; explanation = `Exceso historial ${excessHistory}, stock ${excessStock}, sustituido en Ágora ${g.cancelled.SUPERSEDES}: incompatibles`; action = excessHistory < 0 ? "Venta faltante en Winerim: nunca revertir" : "Revisión manual"; }
+      else if (!isCup && !split && candQty === excessHistory && candHistOk && candStockOk && bottlesOver === excessHistory) { status = "CONFIRMED_DUPLICATE_STOCK"; confidence = "high"; explanation = "Detalle(s) posteriores a la real con recibo y movimiento de stock propio; cantidad exacta = exceso"; action = "Candidata a reversión cuando exista el endpoint certificado"; }
+      else if (!split && candQty === excessHistory && candHistOk && (isCup || bottlesOver === 0)) { status = "CONFIRMED_DUPLICATE_HISTORY"; confidence = "high"; explanation = isCup ? "Copas duplicadas en historial; el stock de botella solo varía al abrir partición" : "Detalle(s) duplicados en historial; sin movimiento de stock propio (movimiento compartido con la venta real)"; action = "Candidata a reversión de historial"; }
+      else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = split ? "Exceso dentro de un detalle que también contiene cantidad real (reversión parcial)" : "Falta recibo o movimiento en los detalles candidatos"; action = "Completar trazabilidad antes de revertir"; }
     } else {
       // Cancellations / partial refunds: Winerim must reflect agoraNet.
       const pend = winerimQty - Math.max(0, agoraNet);
@@ -146,6 +149,18 @@ for (const dk of dayKeys) {
       else if (pend <= 0) { status = "SUPERSEDED_AT_SOURCE"; confidence = "high"; explanation = "Anulación ya neutra en Winerim"; action = "Ninguna"; }
       else { status = "PROBABLE_DUPLICATE"; confidence = "medium"; explanation = `Anulación pendiente de reflejar: Winerim ${winerimQty}, neto Ágora ${agoraNet}`; action = `Revertir ${pend} cuando exista el endpoint`; }
     }
+    let cupClass = null;
+    if (isCup && recs.length) {
+      if (!stockKnown) cupClass = "CUP_STOCK_UNKNOWN";
+      else if (excessHistory < 0) cupClass = "CUP_REAL_STOCK_CONFLICT";
+      else if (ownCandMv.length > 0) cupClass = "CUP_OPENING_EFFECT_CONFIRMED";
+      else cupClass = "CUP_HISTORY_MATCHED_STOCK_NOT_EXPECTED";
+    }
+    const blockers = [];
+    if (!stockKnown) blockers.push("STOCK_UNKNOWN");
+    if (status === "AMBIGUOUS") blockers.push("AMBIGUOUS");
+    if (!cand.length || !candHistOk || split) blockers.push("SOURCE_INCOMPLETE");
+    blockers.push("ENDPOINT_GRANULARITY_UNKNOWN");
     const firstRef = g.refunds[0];
     const relInv = firstRef.c?.supersededEventId || firstRef.c?.relatedEventId;
     const newInv = events.filter((e) => definitive(e) && !superseded.has(e.id) && lines.some((l) => l.sales_event_id === e.id && sameGroup(l))).map((e) => e.provider_doc_id);
