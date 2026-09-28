@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
-import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../_shared/reconciliation-v2/agoraReader.ts";
+import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, classifyWineCandidate, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
@@ -56,6 +56,19 @@ async function zeroSourceDiagnostic(db: SupabaseClient, connectionId: string, bu
   return { checked: true, code: "AGORA_ZERO_DAY_BOUNDED_DIAGNOSTIC", counts };
 }
 
+async function currentProductClassifications(db: SupabaseClient, connectionId: string, lines: AgoraDbLine[]) {
+  const ids = [...new Set(lines.map((row) => row.provider_product_id).filter((value): value is string => Boolean(value)))];
+  const rows: ProviderProductClassification[] = [];
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const { data, error } = await db.from("provider_products")
+      .select("provider_product_id,is_wine_candidate,classification_override,winerim_wine_id")
+      .eq("connection_id", connectionId).in("provider_product_id", ids.slice(offset, offset + 200));
+    if (error) throw Object.assign(new Error("No se pudo leer la clasificación viva del catálogo"), { status: 500, code: "PRODUCT_CLASSIFICATION_READ_FAILED" });
+    rows.push(...((data ?? []) as ProviderProductClassification[]));
+  }
+  return new Map(rows.map((row) => [row.provider_product_id, row]));
+}
+
 function toWinerim(row: Record<string, unknown>): WinerimLine {
   return {
     restaurantId: Number(row.restaurant_id), saleId: Number(row.sale_id), lineId: String(row.line_id), saleDetailId: row.sale_detail_id == null ? null : Number(row.sale_detail_id),
@@ -74,13 +87,17 @@ Deno.serve(async (request) => {
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");
     const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
     const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
-    const wineCandidates = source.lines.filter((row) => row.is_wine_candidate === true || (row.mapped === true && Boolean(row.winerim_product_id)));
+    const productClassifications = await currentProductClassifications(db, connectionId, source.lines);
+    const classifiedSource = source.lines.map((row) => ({ row, classification: classifyWineCandidate(row, productClassifications.get(row.provider_product_id) ?? null) }));
+    const wineCandidates = classifiedSource.filter((item) => item.classification === "WINE").map((item) => item.row);
+    const unknownWineClassification = classifiedSource.filter((item) => item.classification === "UNKNOWN").map((item) => item.row);
     const unmappedWine = wineCandidates.filter((row) => row.mapped !== true || !row.winerim_product_id);
     const reconcilableWine = wineCandidates.filter((row) => row.mapped === true && Boolean(row.winerim_product_id));
     const resolutions = reconcilableWine.map((row) => ({ row, resolution: resolveAgoraIdentity(row, binding.winerim_restaurant_id) }));
     const unresolved = resolutions.filter((item) => item.resolution.missing.length).map((item) => ({ row: item.row, missing: item.resolution.missing }));
     const agora = resolutions.map((item) => item.resolution.line).filter((row): row is NonNullable<typeof row> => Boolean(row));
     const sourceCoverage = classifyAgoraCoverage({ eventCount: source.eventCount, lineCount: source.lines.length, pageComplete: source.complete, unresolvedCount: providerUnresolved.length + unresolved.length });
+    if (unknownWineClassification.length) { sourceCoverage.complete = false; sourceCoverage.reasons.push("AGORA_WINE_CLASSIFICATION_INCOMPLETE"); }
     if (unmappedWine.length) { sourceCoverage.complete = false; sourceCoverage.reasons.push("AGORA_WINE_MAPPING_INCOMPLETE"); }
     const sourceDiagnostic = source.eventCount === 0 || source.lines.length === 0 ? await zeroSourceDiagnostic(db, connectionId, body.businessDay) : null;
     const winerim = await paged<Record<string, unknown>>((from, to) => db.from("winerim_sales_lines")
@@ -124,7 +141,7 @@ Deno.serve(async (request) => {
     // complete daily sales-reconciliation source into SOURCE_INCOMPLETE because of
     // unrelated historical dashboard rows.
     const analytics = { coverage: analyticsCoverage, series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: dayAnalytics.filter((line) => line.category === row.category).length, sourceLineCount: sourceCount, currency: row.currency, freshnessAt: now })), aggregates: buckets };
-    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
+    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
       const { error } = await db.rpc("reconciliation_v2_commit_run", { p_run_id: runId, p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_business_day: body.businessDay, p_source_cutoff_at: now, p_completeness: completeness, p_results: resultRows, p_metrics: metrics, p_analytics: analytics });
