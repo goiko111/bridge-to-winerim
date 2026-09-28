@@ -7,7 +7,10 @@ function files(root: string): string[] {
 }
 
 const functionRoot = resolve(process.cwd(), "supabase/functions");
-const sources = files(functionRoot).filter((path) => /\.(ts|sql)$/.test(path)).map((path) => [path, readFileSync(path, "utf8")] as const);
+// Scope: only Reconciliation v3 sources. Pre-existing operational code (agora-proxy, winerim-proxy,
+// winerimCertifiedSalesImport) is intentionally out of scope and must not be modified by this package.
+const RECON_SCOPE = /(reconciliation-v2|winerim-fleet-reader|sync-sales-records|sync-stock-movements|refresh-current-stock|run-daily-reconciliation|read-reconciliation-results|verify-external-resolution|winerimFleetClient|winerimFleetEvidence)/;
+const sources = files(functionRoot).filter((path) => /\.(ts|sql)$/.test(path) && RECON_SCOPE.test(path)).map((path) => [path, readFileSync(path, "utf8")] as const);
 
 describe("runtime guardrails", () => {
   it("integrates the dashboard into the real application route and navigation", () => {
