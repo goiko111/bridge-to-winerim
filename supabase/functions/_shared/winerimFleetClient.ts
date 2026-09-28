@@ -21,7 +21,7 @@ export function createFleetClient(token: string, fetchImpl: typeof fetch = fetch
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
     for (let attempt = 0; attempt < 3; attempt++) {
       calls++;
-      const r = await fetchImpl(`${BASE}${path}${q.size ? `?${q}` : ""}`, { method: "GET", headers: { "WINERIM-API-TOKEN": token, Accept: "application/json" } });
+      const r = await fetchImpl(`${BASE}${path}${q.toString() ? `?${q.toString()}` : ""}`, { method: "GET", headers: { "WINERIM-API-TOKEN": token, Accept: "application/json" } });
       if (r.status === 429) { await sleep(Math.min(120, Number(r.headers.get("Retry-After") || 30)) * 1000); continue; }
       if (r.status === 503) { await sleep(3000 * (attempt + 1)); continue; }
       if (!r.ok) throw new FleetReadError(r.status, redact(`HTTP ${r.status} ${path}: ${(await r.text()).slice(0, 200)}`));
