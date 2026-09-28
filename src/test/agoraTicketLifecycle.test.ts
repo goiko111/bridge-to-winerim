@@ -56,6 +56,10 @@ describe("open ticket lifecycle", () => {
     expect(bottles).toBe(1);
     expect(classifyAgoraRefunds(all)).toEqual([{ kind: "REOPEN_SUPERSEDES", refundEventId: "e2", supersededEventId: "e1" }]);
   });
+  it("5b. ticket → invoice conversion (ConvertToStandard) supersedes the ticket", () => {
+    const all = [inv("e1", 7, [atauta(1)], T), refund("e2", 7, [atauta(-1)], "ConvertToStandard"), inv("e3", 8, [atauta(1)], "f")];
+    expect(excludeReopenSupersededEvents([all[0], all[2]], all).map((e) => e.id)).toEqual(["e3"]);
+  });
   it("6. line removed before close → reversal pending, never negative write", () => {
     expect(planLineAction(line(0), 1)).toMatchObject({ kind: "REVERSAL_PENDING", reverseQty: 1 });
   });

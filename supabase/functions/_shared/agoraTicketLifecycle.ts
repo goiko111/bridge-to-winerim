@@ -115,7 +115,9 @@ export function classifyAgoraRefunds(events: LifecycleEvent[]): RefundClassifica
       continue;
     }
     const invoice = matches[0];
-    const isReopen = str(raw.RefundSource).toLowerCase() === "reopen";
+    // Reopen (payment change) and ConvertToStandard (ticket → invoice) both
+    // cancel a document and re-issue the same lines: never a new sale.
+    const isReopen = ["reopen", "converttostandard"].includes(str(raw.RefundSource).toLowerCase());
     const exact = refundExactlyNegatesInvoice(raw, obj(invoice.raw_json));
     if (isReopen && exact) {
       out.push({ kind: "REOPEN_SUPERSEDES", refundEventId: refund.id, supersededEventId: invoice.id });
