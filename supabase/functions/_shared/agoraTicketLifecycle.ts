@@ -224,3 +224,33 @@ export const WINERIM_REVERSAL_ENABLED = false as const;
 export async function executeWinerimReversal(_req: ReversalRequest): Promise<ReversalResult> {
   return { executed: false, reason: "winerim_reversal_endpoint_not_available" };
 }
+
+// ── Frozen products for unresolved reopen / convert refunds ────────────
+//
+// A Reopen / ConvertToStandard refund that cannot be proven line by line
+// (no unique related invoice, or not an exact negation) is AMBIGUOUS. Its
+// products are frozen for that business day: no new stock writes for them.
+// The remaining (exact) lines of the ticket and the day keep flowing.
+
+function isReopenOrConvert(event: LifecycleEvent): boolean {
+  return ["reopen", "converttostandard"].includes(str(obj(event.raw_json).RefundSource).toLowerCase());
+}
+
+export function ambiguousReopenFrozenProductIds(events: LifecycleEvent[]): Set<string> {
+  const byId = new Map(events.map((e) => [e.id, e]));
+  const out = new Set<string>();
+  for (const c of classifyAgoraRefunds(events)) {
+    if (c.kind !== "AMBIGUOUS") continue;
+    const refund = byId.get(c.refundEventId);
+    if (!refund || !isReopenOrConvert(refund)) continue;
+    for (const line of linesOf(obj(refund.raw_json))) {
+      const pid = str(line.ProductId);
+      if (pid) out.add(pid);
+    }
+  }
+  return out;
+}
+
+export function isFrozenLine(line: { provider_product_id?: unknown }, frozen: Set<string>): boolean {
+  return frozen.size > 0 && frozen.has(str(line.provider_product_id));
+}
