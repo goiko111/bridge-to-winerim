@@ -11,6 +11,16 @@ describe("Winerim fleet client", () => {
     expect(new URL(urls[0]).pathname).toBe("/api/v2/sales/records"); expect(urls[0]).not.toContain("path=");
   });
 
+  it("exposes only a stable public credential fingerprint", async () => {
+    const token = "wfk_test";
+    const client = createWinerimFleetClient({ token, fetchImpl: async () => response({ data: [], pagination: { page: 1, limit: 100, total: 0, totalPages: 1, hasMore: false } }) });
+    const evidence = await client.credentialEvidence();
+    expect(evidence.prefix).toBe("wfk_");
+    expect(evidence.fingerprint).toMatch(/^sha256:[0-9a-f]{16}$/);
+    expect(JSON.stringify(evidence)).not.toContain(token);
+    await expect(client.credentialEvidence()).resolves.toEqual(evidence);
+  });
+
   it("stops on auth errors and bounds retries", async () => {
     let calls = 0; const denied = createWinerimFleetClient({ token: "wfk_test", fetchImpl: async () => { calls += 1; return response({}, 401); }, sleep: async () => {} });
     await expect(denied.restaurants()).rejects.toMatchObject({ code: "HTTP_401" }); expect(calls).toBe(1);

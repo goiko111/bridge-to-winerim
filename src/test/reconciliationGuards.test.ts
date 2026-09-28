@@ -37,6 +37,8 @@ describe("runtime guardrails", () => {
     expect(source).toContain("reconciliation_v2_begin_candidate_probe");
     expect(source).toContain("reconciliation_v2_candidate_probe_audit");
     expect(source).toContain("MAX_PAGES");
+    expect(source).toContain("client.credentialEvidence()");
+    expect(client).toContain("async credentialEvidence()");
     expect(client).toContain('sales: "/sales/records"');
     expect(source).not.toMatch(/method\s*:\s*["'](?:PUT|PATCH|DELETE)["']/);
     expect(migration).toContain("candidate probe rate limited");
