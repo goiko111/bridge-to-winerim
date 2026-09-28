@@ -3498,6 +3498,25 @@ async function restoreStaleOpenTicketStock(
     stockRows.push(...(chunkRows || []));
   }
 
+  const days = Array.from(new Set(staleEvents.map((event: { business_day: string }) => event.business_day)));
+  const { data: dayEvents } = await supabase
+    .from("sales_events")
+    .select("id, business_day, doc_type, raw_json")
+    .eq("connection_id", connectionId)
+    .in("business_day", days);
+
+  const dayByDefinitiveEventId = new Map<string, string>();
+  // Same lifecycle filter as the writers, applied per business day.
+  const restoreSuperseded = new Set<string>();
+  const restoreFrozen = new Set<string>();
+  for (const d of days) {
+    const evs = (dayEvents || []).filter((e: { business_day: string }) => e.business_day === d);
+    const kept = new Set(excludeReopenSupersededEvents(evs, evs).map((e: { id: string }) => e.id));
+    for (const e of evs as { id: string }[]) if (!kept.has(e.id)) restoreSuperseded.add(e.id);
+    for (const pid of ambiguousReopenFrozenProductIds(evs)) restoreFrozen.add(`${d}::${pid}`);
+  }
+  const frozenRestoreKeys = restoreFrozen;
+
   const positiveRows: any[] = [];
   const provisionalNetByKey = new Map<string, number>();
   const eventKeys = new Map<string, Set<string>>();
@@ -3522,23 +3541,6 @@ async function restoreStaleOpenTicketStock(
 
   if (positiveRows.length === 0) return result;
 
-  const days = Array.from(new Set(staleEvents.map((event: { business_day: string }) => event.business_day)));
-  const { data: dayEvents } = await supabase
-    .from("sales_events")
-    .select("id, business_day, doc_type, raw_json")
-    .eq("connection_id", connectionId)
-    .in("business_day", days);
-
-  const dayByDefinitiveEventId = new Map<string, string>();
-  // Same lifecycle filter as the writers, applied per business day.
-  const restoreSuperseded = new Set<string>();
-  const restoreFrozen = new Set<string>();
-  for (const d of days) {
-    const evs = (dayEvents || []).filter((e: { business_day: string }) => e.business_day === d);
-    const kept = new Set(excludeReopenSupersededEvents(evs, evs).map((e: { id: string }) => e.id));
-    for (const e of evs as { id: string }[]) if (!kept.has(e.id)) restoreSuperseded.add(e.id);
-    for (const pid of ambiguousReopenFrozenProductIds(evs)) restoreFrozen.add(`${d}::${pid}`);
-  }
   const definitiveEventIds = (dayEvents || [])
     .filter((event: { id: string; business_day: string; doc_type?: string | null; raw_json?: unknown }) =>
       String(event.doc_type || "").toLowerCase() !== "openticket" && !rawJsonDisablesStockSync(event.raw_json) &&
