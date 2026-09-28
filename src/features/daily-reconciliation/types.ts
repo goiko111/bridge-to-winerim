@@ -1,6 +1,6 @@
 export type FleetBinding = { connection_id: string; winerim_restaurant_id: number; status: string; exclusion_reason: string | null; verified_at: string; metadata: Record<string, unknown> };
 export type FleetPayload = { ok: boolean; mode: "AUDIT_ONLY"; bindings: FleetBinding[]; dashboard: Array<{ connection_id: string; business_day: string; state: string; line_count: number; revenue_minor: number; freshness_at: string }>; checkpoints: Array<{ connection_id: string; stream: string; last_complete_at: string | null; coverage_complete: boolean; last_error_code: string | null }>; readCoverage: { complete: boolean } };
-export type ResultRow = { id: string; business_day: string; state: string; agora_line: Record<string, unknown> | null; winerim_line: Record<string, unknown> | null; evidence: Record<string, unknown>; manual_action: string; last_seen_at: string };
+export type ResultRow = { id: string; business_day: string; state: string; canonical_state: string; state_contract_version: string; agora_line: Record<string, unknown> | null; winerim_line: Record<string, unknown> | null; evidence: Record<string, unknown>; manual_action: string; last_seen_at: string };
 export type ReconciliationPayload = {
   ok: boolean; mode: "AUDIT_ONLY"; results: ResultRow[];
   dashboard: Array<{ business_day: string; state: string; line_count: number; revenue_minor: number; freshness_at: string }>;

@@ -20,6 +20,7 @@
     "src/features/daily-reconciliation/**/*.ts",
     "src/features/daily-reconciliation/**/*.tsx",
     "src/test/**/*.ts",
+    "supabase/functions/_shared/reconciliation-v2/agoraReader.ts",
     "supabase/functions/_shared/reconciliation-v2/analytics.ts",
     "supabase/functions/_shared/reconciliation-v2/engine.ts",
     "supabase/functions/_shared/reconciliation-v2/hash.ts",

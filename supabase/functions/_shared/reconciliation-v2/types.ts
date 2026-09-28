@@ -1,25 +1,53 @@
 export const RECONCILIATION_STATES = [
   "MATCHED",
-  "MISSING_IN_WINERIM",
-  "EXTRA_IN_WINERIM",
-  "QUANTITY_MISMATCH",
-  "AMOUNT_MISMATCH",
-  "CONFIRMED_DUPLICATE",
-  "PROBABLE_DUPLICATE",
-  "PARTIAL_STOCK",
+  "HISTORY_MISSING",
+  "STOCK_MISSING",
+  "BOTH_MISSING",
   "STOCK_UNKNOWN",
-  "STOCK_CONFLICT",
   "AMBIGUOUS",
   "SOURCE_INCOMPLETE",
   "DELETED_OR_CANCELLED",
-  "OPEN_PENDING",
-  "REVERSAL_PENDING",
-  "RESOLVED_EXTERNALLY",
-  "EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE",
-  "CARDINALITY_CONFLICT",
+  "OPEN",
 ] as const;
 
 export type ReconciliationState = (typeof RECONCILIATION_STATES)[number];
+
+export const LEGACY_RECONCILIATION_STATES = [
+  "MISSING_IN_WINERIM", "EXTRA_IN_WINERIM", "QUANTITY_MISMATCH", "AMOUNT_MISMATCH",
+  "CONFIRMED_DUPLICATE", "PROBABLE_DUPLICATE", "PARTIAL_STOCK", "STOCK_CONFLICT",
+  "OPEN_PENDING", "REVERSAL_PENDING", "RESOLVED_EXTERNALLY",
+  "EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE", "CARDINALITY_CONFLICT",
+] as const;
+export type LegacyReconciliationState = (typeof LEGACY_RECONCILIATION_STATES)[number];
+
+/** Stable public contract. Existing rows are translated explicitly at read time. */
+export function canonicalizeReconciliationState(state: string): ReconciliationState {
+  switch (state) {
+    case "MATCHED":
+    case "RESOLVED_EXTERNALLY": return "MATCHED";
+    case "HISTORY_MISSING":
+    case "MISSING_IN_WINERIM": return "HISTORY_MISSING";
+    case "STOCK_MISSING":
+    case "PARTIAL_STOCK":
+    case "STOCK_CONFLICT": return "STOCK_MISSING";
+    case "BOTH_MISSING": return "BOTH_MISSING";
+    case "STOCK_UNKNOWN":
+    case "EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE": return "STOCK_UNKNOWN";
+    case "SOURCE_INCOMPLETE": return "SOURCE_INCOMPLETE";
+    case "DELETED_OR_CANCELLED":
+    case "REVERSAL_PENDING": return "DELETED_OR_CANCELLED";
+    case "OPEN":
+    case "OPEN_PENDING": return "OPEN";
+    case "AMBIGUOUS":
+    case "EXTRA_IN_WINERIM":
+    case "QUANTITY_MISMATCH":
+    case "AMOUNT_MISMATCH":
+    case "CONFIRMED_DUPLICATE":
+    case "PROBABLE_DUPLICATE":
+    case "CARDINALITY_CONFLICT": return "AMBIGUOUS";
+    default: return "SOURCE_INCOMPLETE";
+  }
+}
 
 export type SourceCompleteness = {
   agoraComplete: boolean;

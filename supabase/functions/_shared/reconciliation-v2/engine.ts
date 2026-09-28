@@ -54,16 +54,17 @@ function sourceLineKey(line: AgoraLine): string {
 
 function classifyMatched(a: AgoraLine, w: WinerimLine): Pick<ReconciliationResult, "state" | "manualAction" | "evidence"> {
   if (a.quantity !== w.quantity) {
-    return { state: "QUANTITY_MISMATCH", manualAction: "Revisar cantidades; no corregir automáticamente", evidence: { agoraQuantity: a.quantity, winerimQuantity: w.quantity } };
+    return { state: "AMBIGUOUS", manualAction: "Revisar cantidades; no corregir automáticamente", evidence: { reason: "QUANTITY_MISMATCH", agoraQuantity: a.quantity, winerimQuantity: w.quantity } };
   }
   if (a.amountMinor != null && w.amountMinor != null && cents(a.amountMinor) !== cents(w.amountMinor)) {
-    return { state: "AMOUNT_MISMATCH", manualAction: "Revisar importe observado; no completar desde catálogo", evidence: { agoraAmountMinor: a.amountMinor, winerimAmountMinor: w.amountMinor } };
+    return { state: "AMBIGUOUS", manualAction: "Revisar importe observado; no completar desde catálogo", evidence: { reason: "AMOUNT_MISMATCH", agoraAmountMinor: a.amountMinor, winerimAmountMinor: w.amountMinor } };
   }
   if (!w.stockEffect.known) {
     return { state: "STOCK_UNKNOWN", manualAction: "Historial emparejado; efecto de stock no demostrable", evidence: { stockStatus: w.stockEffect.status } };
   }
-  if (w.stockEffect.status === "PARTIAL" || Number(w.stockEffect.unbackedQty ?? 0) > 0) return { state: "PARTIAL_STOCK", manualAction: "Revisar remanente de stock; no aplicar automáticamente", evidence: { quantity: a.quantity, unbackedQty: w.stockEffect.unbackedQty, stockStatus: w.stockEffect.status } };
-  if (w.stockEffect.status === "MOVEMENT_MISSING" || w.stockEffect.status === "CONFLICT") return { state: "STOCK_CONFLICT", manualAction: "Revisar recibo y movimiento de stock", evidence: { stockStatus: w.stockEffect.status } };
+  if (w.stockEffect.status === "PARTIAL" || Number(w.stockEffect.unbackedQty ?? 0) > 0) return { state: "STOCK_MISSING", manualAction: "Revisar remanente de stock; no aplicar automáticamente", evidence: { reason: "PARTIAL_STOCK", quantity: a.quantity, unbackedQty: w.stockEffect.unbackedQty, stockStatus: w.stockEffect.status } };
+  if (w.stockEffect.status === "MOVEMENT_MISSING") return { state: "STOCK_MISSING", manualAction: "Revisar recibo y movimiento de stock", evidence: { reason: "MOVEMENT_MISSING", stockStatus: w.stockEffect.status } };
+  if (w.stockEffect.status === "CONFLICT") return { state: "AMBIGUOUS", manualAction: "Revisar recibo y movimiento de stock", evidence: { reason: "STOCK_CONFLICT", stockStatus: w.stockEffect.status } };
   if (w.stockEffect.stockApplied !== true && !["APPLIED", "HISTORY_ONLY"].includes(w.stockEffect.status)) return { state: "STOCK_UNKNOWN", manualAction: "Historial emparejado; efecto de stock no demostrable", evidence: { stockStatus: w.stockEffect.status, stockApplied: w.stockEffect.stockApplied } };
   return { state: "MATCHED", manualAction: "Ninguna", evidence: { receiptId: w.stockEffect.receiptId, movementIds: w.stockEffect.movementIds } };
 }
@@ -95,11 +96,11 @@ export function reconcileLines(input: {
       continue;
     }
     if (agora.isOpen) {
-      results.push({ ...base, winerim: null, state: "OPEN_PENDING", evidence: {}, manualAction: "Esperar al cierre del documento" });
+      results.push({ ...base, winerim: null, state: "OPEN", evidence: {}, manualAction: "Esperar al cierre del documento" });
       continue;
     }
     if (agora.isCancelled) {
-      results.push({ ...base, winerim: null, state: "REVERSAL_PENDING", evidence: { stockStatus: "UNKNOWN", reason: "causal_stock_link_required" }, manualAction: "Verificar anulación y vínculo causal de stock; el mismo vino/formato/cantidad no basta" });
+      results.push({ ...base, winerim: null, state: "DELETED_OR_CANCELLED", evidence: { stockStatus: "UNKNOWN", reason: "causal_stock_link_required" }, manualAction: "Verificar anulación y vínculo causal de stock; el mismo vino/formato/cantidad no basta" });
       continue;
     }
 
@@ -111,12 +112,12 @@ export function reconcileLines(input: {
       matchKind = "UNIQUE_SIGNATURE_FALLBACK";
     }
     if (candidates.length > 1) {
-      results.push({ ...base, winerim: null, state: exact.length > 1 ? "CONFIRMED_DUPLICATE" : "AMBIGUOUS", evidence: { matchKind, candidateLineIds: candidates.map((index) => input.winerim[index].lineId) }, manualAction: "Revisión manual; ninguna línea se consume" });
+      results.push({ ...base, winerim: null, state: "AMBIGUOUS", evidence: { reason: exact.length > 1 ? "CONFIRMED_DUPLICATE" : "AMBIGUOUS_MATCH", matchKind, candidateLineIds: candidates.map((index) => input.winerim[index].lineId) }, manualAction: "Revisión manual; ninguna línea se consume" });
       continue;
     }
     if (candidates.length === 0) {
       const deleted = input.winerim.find((line) => deletedSales.has(line.saleId) || deletedLines.has(line.lineId));
-      results.push({ ...base, winerim: deleted ?? null, state: deleted ? "DELETED_OR_CANCELLED" : "MISSING_IN_WINERIM", evidence: { matchKind }, manualAction: deleted ? "Verificar la anulación" : "Revisar alta manual; no importar automáticamente" });
+      results.push({ ...base, winerim: deleted ?? null, state: deleted ? "DELETED_OR_CANCELLED" : "HISTORY_MISSING", evidence: { matchKind }, manualAction: deleted ? "Verificar la anulación" : "Revisar alta manual; no importar automáticamente" });
       continue;
     }
 
@@ -134,16 +135,17 @@ export function reconcileLines(input: {
   for (const index of available) {
     const winerim = input.winerim[index];
     const deleted = deletedSales.has(winerim.saleId) || deletedLines.has(winerim.lineId) || winerim.saleStatus === "rejected";
+    const sourceIncomplete = !input.completeness.agoraComplete || !input.completeness.winerimComplete;
     results.push({
       connectionId: input.connectionId,
       restaurantId: winerim.restaurantId,
       businessDay: winerim.businessDay ?? winerim.effectiveAt.slice(0, 10),
       sourceLineKey: `winerim:${winerim.saleId}:${winerim.lineId}`,
-      state: deleted ? "DELETED_OR_CANCELLED" : "EXTRA_IN_WINERIM",
+      state: sourceIncomplete ? "SOURCE_INCOMPLETE" : deleted ? "DELETED_OR_CANCELLED" : "AMBIGUOUS",
       agora: null,
       winerim,
-      evidence: {},
-      manualAction: deleted ? "Ninguna" : "Revisar origen antes de cualquier actuación",
+      evidence: sourceIncomplete ? { completeness: input.completeness } : deleted ? {} : { reason: "EXTRA_IN_WINERIM" },
+      manualAction: sourceIncomplete ? "Completar la lectura antes de clasificar" : deleted ? "Ninguna" : "Revisar origen antes de cualquier actuación",
       mode: "AUDIT_ONLY",
     });
   }

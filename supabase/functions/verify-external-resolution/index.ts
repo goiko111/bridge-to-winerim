@@ -11,22 +11,18 @@ Deno.serve(async (request) => {
   const options = preflight(request); if (options) return options;
   try {
     assertPost(request); const { db } = await requirePlatformAdmin(request); const body = await parseJson<Body>(request); const dryRun = asDryRun(body.dryRun);
-    const [{ data: allAudits, error: auditError }, { data: bindings, error: bindingError }] = await Promise.all([
+    const [{ data: audits, error: auditError }, { count: detailBlocked, error: detailError }] = await Promise.all([
       db.from("agora_reversal_audit")
       .select("id,connection_id,case_fingerprint,identity_scope,evidence_classification,keep_sale_ids,candidate_targets,bottles_overdeducted")
       .eq("identity_scope", "SALE").like("evidence_classification", "CONFIRMED_DUPLICATE%"),
-      db.from("winerim_restaurant_bindings").select("connection_id,status"),
+      db.from("agora_reversal_audit").select("id", { count: "exact", head: true }).eq("identity_scope", "DETAIL").like("evidence_classification", "CONFIRMED_DUPLICATE%"),
     ]);
-    if (auditError || bindingError) throw Object.assign(new Error("No se pudo leer la auditoría o sus exclusiones persistidas"), { status: 500, code: "REVERSAL_AUDIT_READ_FAILED" });
-    const status = new Map((bindings ?? []).map((binding) => [String(binding.connection_id), String(binding.status)]));
-    const audits = (allAudits ?? []).filter((row) => status.get(String(row.connection_id)) === "ACTIVE");
+    if (auditError || detailError) throw Object.assign(new Error("No se pudo leer la auditoría global autorizada"), { status: 500, code: "REVERSAL_AUDIT_READ_FAILED" });
     const observed = (audits ?? []).map((row) => ({ caseFingerprint: row.case_fingerprint, candidateTargets: row.candidate_targets as CandidateTarget[] }));
     const cardinality = compareAuthorizedBatch(AUTHORIZED_EXTERNAL_RESOLUTIONS_19, observed);
-    if (cardinality.state !== "MATCHED" || (audits ?? []).length !== 19) {
-      return json(request, { ok: false, mode: "AUDIT_ONLY", dryRun, verdict: "CARDINALITY_CONFLICT", authoritative: 19, observed: audits?.length ?? 0, extra: cardinality.extra, missing: cardinality.missing }, 409);
+    if (cardinality.state !== "MATCHED" || (audits ?? []).length !== 19 || detailBlocked !== 6) {
+      return json(request, { ok: false, mode: "AUDIT_ONLY", verificationScope: "GLOBAL_AUTHORIZED_EXTERNAL_RESOLUTIONS", dryRun, verdict: "CARDINALITY_CONFLICT", authoritativeSaleCases: 19, observedSaleCases: audits?.length ?? 0, expectedDetailCasesBlocked: 6, observedDetailCasesBlocked: detailBlocked ?? 0, extra: cardinality.extra, missing: cardinality.missing }, 409);
     }
-    const { count: detailBlocked, error: detailError } = await db.from("agora_reversal_audit").select("id", { count: "exact", head: true }).eq("identity_scope", "DETAIL").like("evidence_classification", "CONFIRMED_DUPLICATE%");
-    if (detailError) throw Object.assign(new Error("No se pudo comprobar el bloqueo DETAIL"), { status: 500, code: "DETAIL_SCOPE_READ_FAILED" });
 
     const evidenceByConnection = new Map<string, { live: Record<string, unknown>[]; deletions: Record<string, unknown>[]; movements: Record<string, unknown>[] }>();
     for (const connectionId of [...new Set((audits ?? []).map((row) => String(row.connection_id)))]) {
@@ -68,6 +64,6 @@ Deno.serve(async (request) => {
       }
       if (authoritative.connectionId !== row.connection_id) throw Object.assign(new Error("El caso cambió de conexión"), { status: 409, code: "CASE_CONNECTION_CONFLICT" });
     }
-    return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun, authoritativeCases: 19, detailCasesBlocked: detailBlocked ?? 0, evidence });
+    return json(request, { ok: true, mode: "AUDIT_ONLY", verificationScope: "GLOBAL_AUTHORIZED_EXTERNAL_RESOLUTIONS", dryRun, authoritativeSaleCases: 19, detailCasesBlocked: detailBlocked ?? 0, evidence });
   } catch (error) { return safeError(request, error); }
 });

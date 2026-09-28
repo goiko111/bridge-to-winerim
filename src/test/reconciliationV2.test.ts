@@ -29,15 +29,20 @@ describe("reconciliation engine", () => {
     expect(result[0].state).toBe("SOURCE_INCOMPLETE");
   });
 
+  it("does not classify Winerim-only rows when Ágora coverage is zero", () => {
+    const result = reconcile({ agora: [], winerim: [winerim()], completeness: { ...complete, agoraComplete: false, reason: "AGORA_NO_EVENTS_FOR_BUSINESS_DAY" } });
+    expect(result[0].state).toBe("SOURCE_INCOMPLETE");
+  });
+
   it("keeps source cancellations pending until a causally linked stock effect exists", () => {
     const result = reconcile({ agora: [agora({ isCancelled: true, externalOrderId: "T1", sourceLineId: "L1" })], winerim: [], completeness: complete });
-    expect(result[0].state).toBe("REVERSAL_PENDING"); expect(result[0].evidence.stockStatus).toBe("UNKNOWN");
+    expect(result[0].state).toBe("DELETED_OR_CANCELLED"); expect(result[0].evidence.stockStatus).toBe("UNKNOWN");
   });
 
   it.each([
     [{ known: false, status: "UNKNOWN", stockApplied: null, receiptId: null, movementIds: [], movementDifference: null, unbackedQty: null }, "STOCK_UNKNOWN"],
-    [{ known: true, status: "MOVEMENT_MISSING", stockApplied: null, receiptId: "R", movementIds: [], movementDifference: null, unbackedQty: null }, "STOCK_CONFLICT"],
-    [{ known: true, status: "PARTIAL", stockApplied: true, receiptId: "R", movementIds: [1], movementDifference: -1, unbackedQty: 1 }, "PARTIAL_STOCK"],
+    [{ known: true, status: "MOVEMENT_MISSING", stockApplied: null, receiptId: "R", movementIds: [], movementDifference: null, unbackedQty: null }, "STOCK_MISSING"],
+    [{ known: true, status: "PARTIAL", stockApplied: true, receiptId: "R", movementIds: [1], movementDifference: -1, unbackedQty: 1 }, "STOCK_MISSING"],
   ])("keeps stock evidence states explicit", (stockEffect, state) => {
     const result = reconcile({ agora: [agora({ quantity: 2 })], winerim: [winerim({ quantity: 2, stockEffect })], completeness: complete });
     expect(result[0].state).toBe(state);

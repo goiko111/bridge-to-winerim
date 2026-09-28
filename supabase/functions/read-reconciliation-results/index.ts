@@ -33,7 +33,7 @@ Deno.serve(async (request) => {
     const connectionId = url.searchParams.get("connectionId") ?? ""; const from = url.searchParams.get("from") ?? ""; const to = url.searchParams.get("to") ?? "";
     if (!uuid.test(connectionId) || !day.test(from) || !day.test(to) || from > to) throw Object.assign(new Error("Filtros inválidos"), { status: 400, code: "INVALID_FILTERS" });
     await assertConnectionAccess(auth, connectionId); const state = url.searchParams.get("state"); const format = url.searchParams.get("format") ?? "json";
-    const results = await paged<Record<string, unknown>>((start, end) => { let query = db.from("reconciliation_v2_latest").select("*").eq("connection_id", connectionId).gte("business_day", from).lte("business_day", to).order("business_day", { ascending: false }).order("id").range(start, end); if (state) query = query.eq("state", state); return query; });
+    const results = await paged<Record<string, unknown>>((start, end) => { let query = db.from("reconciliation_v2_latest").select("*").eq("connection_id", connectionId).gte("business_day", from).lte("business_day", to).order("business_day", { ascending: false }).order("id").range(start, end); if (state) query = query.eq("canonical_state", state); return query; });
     const [dashboard, analytics, aggregates, checkpoints, snapshots, movements] = await Promise.all([
       paged<Record<string, unknown>>((start, end) => db.from("reconciliation_v2_dashboard").select("*").eq("connection_id", connectionId).gte("business_day", from).lte("business_day", to).order("business_day").range(start, end)),
       paged<Record<string, unknown>>((start, end) => db.from("reconciliation_v2_analytics_series").select("*").eq("connection_id", connectionId).gte("business_day", from).lte("business_day", to).order("business_day").range(start, end)),
@@ -47,8 +47,8 @@ Deno.serve(async (request) => {
     const sets = { results, dashboard, analytics, aggregates, checkpoints, snapshots, stockItems, movements }; const complete = Object.values(sets).every((item) => item.complete);
     if (format === "csv") {
       if (!complete) return json(request, { ok: false, code: "EXPORT_INCOMPLETE", message: "El export superó el límite explícito; reduce el rango. No se genera un CSV parcial.", readCoverage: { complete: false } }, 409);
-      const header = ["fecha","estado","referencia","formato","factura","hora","unidades_agora","importe_agora","sale_id_winerim","unidades_winerim","accion_manual"];
-      const rows = results.rows.map((row) => { const a = (row.agora_line ?? {}) as Record<string, unknown>; const w = (row.winerim_line ?? {}) as Record<string, unknown>; return [row.business_day,row.state,a.wineName ?? a.wineId,a.format,a.documentId,a.effectiveAt,a.quantity,a.amountMinor,w.saleId,w.quantity,row.manual_action].map(csvCell).join(","); });
+      const header = ["fecha","estado","estado_origen","referencia","formato","factura","hora","unidades_agora","importe_agora","sale_id_winerim","unidades_winerim","accion_manual"];
+      const rows = results.rows.map((row) => { const a = (row.agora_line ?? {}) as Record<string, unknown>; const w = (row.winerim_line ?? {}) as Record<string, unknown>; return [row.business_day,row.canonical_state,row.state,a.wineName ?? a.wineId,a.format,a.documentId,a.effectiveAt,a.quantity,a.amountMinor,w.saleId,w.quantity,row.manual_action].map(csvCell).join(","); });
       return new Response([header.map(csvCell).join(","), ...rows].join("\n"), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename=reconciliation-${connectionId}-${from}-${to}.csv`, ...corsFor(request) } });
     }
     if (format !== "json") throw Object.assign(new Error("format debe ser json o csv"), { status: 400, code: "INVALID_FORMAT" });
