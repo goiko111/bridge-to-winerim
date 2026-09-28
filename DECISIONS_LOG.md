@@ -2955,3 +2955,9 @@ ya demostró una carrera real con el cron.
 
 ### Despliegue
 - winerim-proxy redesplegada. Ninguna otra función tocada. Sin cambios de datos ni config de conexiones.
+
+## 2026-09-28 — Ciclo de vida de tickets Ágora (prevención de duplicados)
+- **Hecho:** desplegado `agora-proxy` con filtro de reaperturas/conversiones en las 3 rutas de escritura de stock y en la restauración de tickets abiertos. Mismas 18 pruebas fallidas antes y después (5 ficheros estáticos); 19/19 nuevas en verde.
+- **Decisión:** una reapertura/conversión no demostrable línea a línea congela solo sus productos ese día (AMBIGUOUS, sin escritura); el resto sigue. Tickets abiertos se siguen procesando.
+- **Decisión:** cola `agora_reversal_queue` creada (lectura por restaurante, escritura solo servidor). Cargados 29 casos como PROBABLE_DUPLICATE (22 CONFIRMED_DUPLICATE_STOCK, 1 HISTORY, 6 probables). Ninguno READY_TO_REVERSE; ninguna reversión ejecutada.
+- **Hipótesis:** los STOCK_CONFLICT de copas se deben en parte a que el stock de copa solo se mueve al abrir botella; requieren revisión con otra regla.

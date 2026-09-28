@@ -2098,3 +2098,9 @@
 - [ ] GO para aplicar la migración de la cola de anulaciones y cargar los 104 duplicados como REVERSAL_PENDING_API.
 - [ ] Revisar a mano los casos AMBIGUOUS (sin negación exacta línea a línea).
 - [ ] Fase 2: conectar el libro por línea (ticket+línea+formato) al flujo de tickets abiertos.
+
+## 2026-09-28 — Pendiente tras auditoría forense de duplicados
+- Cargar en la cola los 185 casos restantes (AMBIGUOUS 99, STOCK_CONFLICT 53, NEEDS_WINERIM_READBACK 33) desde /mnt/documents/cola-anulaciones-agora-2026-09-01_2026-09-30.json.
+- Revisar STOCK_CONFLICT de copas con la regla de "botella en uso".
+- Esperar endpoint certificado de reversión de Winerim; hasta entonces nada pasa a READY_TO_REVERSE.
+- Roger de Flor (Don Quijote, 25/09): Ágora 5 copas reales, Winerim 3 → no hay duplicado sino defecto; no revertir.
