@@ -118,6 +118,7 @@ export type Database = {
           business_day: string
           candidate_detail_ids: string | null
           candidate_sale_id: string | null
+          candidate_targets: Json
           case_fingerprint: string
           confidence: string
           connection_id: string
@@ -164,6 +165,7 @@ export type Database = {
           business_day: string
           candidate_detail_ids?: string | null
           candidate_sale_id?: string | null
+          candidate_targets?: Json
           case_fingerprint: string
           confidence?: string
           connection_id: string
@@ -210,6 +212,7 @@ export type Database = {
           business_day?: string
           candidate_detail_ids?: string | null
           candidate_sale_id?: string | null
+          candidate_targets?: Json
           case_fingerprint?: string
           confidence?: string
           connection_id?: string
