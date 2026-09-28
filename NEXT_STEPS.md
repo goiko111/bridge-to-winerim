@@ -2092,3 +2092,9 @@
 
 ## Pendiente (2026-09-27)
 - [ ] Vigilar 1-2 días los 503 de Winerim y confirmar con el compañero que las peticiones/hora bajaron.
+
+## 2026-09-28
+- [ ] GO para desplegar agora-proxy con el filtro de documentos reemplazados.
+- [ ] GO para aplicar la migración de la cola de anulaciones y cargar los 104 duplicados como REVERSAL_PENDING_API.
+- [ ] Revisar a mano los casos AMBIGUOUS (sin negación exacta línea a línea).
+- [ ] Fase 2: conectar el libro por línea (ticket+línea+formato) al flujo de tickets abiertos.

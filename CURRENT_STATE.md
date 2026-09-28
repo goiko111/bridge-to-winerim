@@ -7171,3 +7171,9 @@ día y tickets abiertos activos (última pasada 12:10 UTC, 4 facturas / 8 línea
 7 líneas sin resolver a vino).
 **Pendiente**: petición de un solo botón con ratios de venta (particularidad
 CATALOGO, OPEN).
+
+## 2026-09-28 — Reaperturas / conversiones Ágora (NO desplegado)
+- Hecho: causa raíz del doble descuento = el objetivo diario suma la factura original y la reemitida; la devolución Reopen/ConvertToStandard se excluía pero la factura original seguía contando.
+- Hecho: arreglo en `_shared/agoraTicketLifecycle.ts` + filtro en las 3 rutas de stock de agora-proxy. 16 pruebas nuevas OK; 18 fallos estáticos preexistentes sin cambio.
+- Hecho: auditoría septiembre (solo lectura) 227 líneas, 104 duplicados probados, en /mnt/documents/auditoria-reaperturas-anulaciones-2026-09-01_2026-09-30.csv.
+- Tarea: migración de cola de anulaciones propuesta en docs/operations/proposed-migrations (sin aplicar). Libro por línea (planLineAction) sin conectar al flujo vivo.
