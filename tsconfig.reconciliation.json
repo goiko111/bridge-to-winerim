@@ -24,6 +24,7 @@
     "supabase/functions/_shared/reconciliation-v2/engine.ts",
     "supabase/functions/_shared/reconciliation-v2/hash.ts",
     "supabase/functions/_shared/reconciliation-v2/candidateProbe.ts",
+    "supabase/functions/_shared/reconciliation-v2/closure.ts",
     "supabase/functions/_shared/reconciliation-v2/types.ts",
     "supabase/functions/_shared/reconciliation-v2/time.ts",
     "supabase/functions/_shared/reconciliation-v2/winerimFleetClient.ts",
