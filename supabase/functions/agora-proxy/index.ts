@@ -11974,7 +11974,40 @@ ${costPricesXml}
     }
 
     // ── QUEUE XML OUTBOUND TASKS (with idempotent CREATE/UPDATE guard) ──
-    if (action === "queue-xml-outbound") {
+    // ── SAFE REPUSH (single wine + single format, explicit confirmation) ──
+    // Re-validates eligibility against current Winerim data, then reuses the
+    // queue-xml-outbound path (which already dedupes QUEUED/RUNNING tasks).
+    let safeRepushValidated = false;
+    if (action === "safe-repush-one") {
+      const reject = (code: string, message: string, status = 409) => new Response(
+        JSON.stringify({ success: false, code, error: message }),
+        { status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+      const wineId = String(payload.winerimWineId || "").trim();
+      const format = String(payload.format || "").trim().toUpperCase();
+      if (!wineId || !format) return reject("INVALID_INPUT", "winerimWineId y format son obligatorios", 400);
+      if (payload.confirm !== true) return reject("CONFIRMATION_REQUIRED", "Requiere confirm=true explícito", 400);
+      if (connectionId === "706b952e-767d-41af-9cba-8e225b16a877") return reject("CONNECTION_EXCLUDED", "Conexión excluida");
+      const { data: wine } = await supabase
+        .from("winerim_wines")
+        .select("winerim_id, name, is_active, serve_by_glass, bottle_sale_price, glass_sale_price, magnum_sale_price, raw_payload, wine_type")
+        .eq("connection_id", connectionId).eq("winerim_id", wineId).maybeSingle();
+      if (!wine) return reject("WINE_NOT_IN_MENU", "El vino no está en la carta sincronizada (SOLO_INVENTARIO o sin catálogo)");
+      const effective = applyHiddenGlassVariantForAgora(connection, wine);
+      if (effective.is_active === false) return reject("WINE_INACTIVE", "El vino no está activo en carta");
+      if (isFormatUnavailableForAgora(effective, format)) return reject("FORMAT_UNAVAILABLE", `Formato ${format} sin precio o no publicable`);
+      const { data: sharedMappings } = await supabase
+        .from("product_mappings").select("provider_product_id, winerim_wine_id")
+        .eq("connection_id", connectionId).eq("status", "CONFIRMED").eq("format_type", format)
+        .eq("winerim_wine_id", wineId);
+      if ((sharedMappings || []).length > 1) return reject("AMBIGUOUS_MAPPING", "Varios productos Ágora para el mismo vino y formato");
+      payload.winerimWineIds = [wineId];
+      payload.formatTypes = [format];
+      payload._trigger_source = "SAFE_REPUSH_ONE";
+      safeRepushValidated = true;
+    }
+
+    if (action === "queue-xml-outbound" || safeRepushValidated) {
       const winerimWineIds = payload.winerimWineIds || [];
       const formatTypes = payload.formatTypes || ["BOTTLE"];
       const familyOverrideId = payload.familyOverrideId || null;
@@ -13136,7 +13169,9 @@ ${costPricesXml}
 
       const trackingErrors: string[] = [];
       let trackingUpdated = 0;
-      for (let offset = 0; offset < trackingRows.length; offset += 250) {
+      // auditOnly: pure readback, never stamps tracking metadata.
+      const auditOnly = payload.auditOnly === true;
+      for (let offset = 0; !auditOnly && offset < trackingRows.length; offset += 250) {
         const chunk = trackingRows.slice(offset, offset + 250);
         const { error: trackingError } = await supabase
           .from("winerim_push_tracking")
@@ -13147,6 +13182,17 @@ ${costPricesXml}
           trackingUpdated += chunk.length;
         }
       }
+      const certification = trackingRows.map((row) => ({
+        winerimWineId: row.winerim_wine_id,
+        format: row.format,
+        agoraProductId: row.agora_product_id,
+        state: !actualProductById.has(String(row.agora_product_id))
+          ? "SOURCE_INCOMPLETE"
+          : row.sync_status === "VERIFIED"
+            ? "AUTO_SYNC_CERTIFICADA_POR_READBACK"
+            : row.sync_status === "HIDDEN" ? "NO_OPERATIVA" : "CONFIGURADA_SIN_CERTIFICAR",
+        reason: row.last_error,
+      }));
 
       return new Response(JSON.stringify({
         ...verifyResult,
