@@ -30,6 +30,32 @@ export type AgoraDbLine = {
   };
 };
 
+export type ProviderProductClassification = {
+  provider_product_id: string;
+  is_wine_candidate?: boolean | null;
+  classification_override?: string | null;
+  winerim_wine_id?: string | null;
+};
+
+export type WineCandidateClassification = "WINE" | "NOT_WINE" | "UNKNOWN";
+
+/**
+ * Classify against the current provider catalogue, not the historical flag copied
+ * into a sales line. Explicit mappings remain authoritative. A stale positive flag
+ * without a current catalogue row is UNKNOWN and must fail closed upstream.
+ */
+export function classifyWineCandidate(
+  row: AgoraDbLine,
+  product: ProviderProductClassification | null,
+): WineCandidateClassification {
+  if (row.mapped === true && Boolean(row.winerim_product_id)) return "WINE";
+  if (!product) return row.is_wine_candidate === true ? "UNKNOWN" : "NOT_WINE";
+  const override = normalizedText(product.classification_override).replace(/[\s-]+/g, "_");
+  if (override === "not_wine") return "NOT_WINE";
+  if (override === "wine") return "WINE";
+  return product.is_wine_candidate === true || Boolean(product.winerim_wine_id) ? "WINE" : "NOT_WINE";
+}
+
 export type AgoraIdentityResolution = { line: AgoraLine | null; missing: string[]; rawLine: RawRow | null };
 
 type RawLineCandidate = { line: RawRow; container: RawRow; containerIndex: number | null };

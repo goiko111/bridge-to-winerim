@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../../supabase/functions/_shared/reconciliation-v2/agoraReader";
+import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, classifyWineCandidate, resolveAgoraIdentity, type AgoraDbLine } from "../../supabase/functions/_shared/reconciliation-v2/agoraReader";
 import { canonicalizeReconciliationState, RECONCILIATION_STATES } from "../../supabase/functions/_shared/reconciliation-v2/types";
 
 const connectionId = "1c5177f1-9459-4ee9-8b6e-4780f8b6b96b";
@@ -20,6 +20,26 @@ const dbLine = (rawLine: ReturnType<typeof providerLine>, lines = [rawLine], ove
 });
 
 describe("Agora raw_json.lines adapter", () => {
+  it("uses the live provider catalogue over a stale sales-line wine flag", () => {
+    const raw = providerLine(0, { providerProductId: "566", productName: "NAVAJAS BRASA", familyName: "PLATOS CARTA" });
+    const stale = dbLine(raw, [raw], { provider_product_id: "566", mapped: false, winerim_product_id: null, is_wine_candidate: true });
+    expect(classifyWineCandidate(stale, { provider_product_id: "566", is_wine_candidate: false, classification_override: "NOT_WINE", winerim_wine_id: null })).toBe("NOT_WINE");
+  });
+
+  it("accepts current catalogue wine evidence and explicit mappings", () => {
+    const raw = providerLine(0, { providerProductId: "99" });
+    const unmapped = dbLine(raw, [raw], { provider_product_id: "99", mapped: false, winerim_product_id: null, is_wine_candidate: false });
+    expect(classifyWineCandidate(unmapped, { provider_product_id: "99", is_wine_candidate: true, classification_override: null, winerim_wine_id: null })).toBe("WINE");
+    const mapped = dbLine(raw, [raw], { provider_product_id: "100", mapped: true, winerim_product_id: "700", is_wine_candidate: false });
+    expect(classifyWineCandidate(mapped, null)).toBe("WINE");
+  });
+
+  it("fails closed when only a stale positive flag remains", () => {
+    const raw = providerLine(0, { providerProductId: "404", productName: "Producto retirado", familyName: "BEBIDAS" });
+    const stale = dbLine(raw, [raw], { provider_product_id: "404", mapped: false, winerim_product_id: null, is_wine_candidate: true });
+    expect(classifyWineCandidate(stale, null)).toBe("UNKNOWN");
+  });
+
   it("resolves the actual Clinic invoice shape with immutable line identity", () => {
     const rawLine = providerLine(0, { lineId: "27747:0:0", providerProductId: "1789", quantity: 3, totalAmount: 0, soldAt: "2026-09-08T14:56:42" });
     const row = dbLine(rawLine, [rawLine], { quantity: 3, total_amount: 0, provider_sold_at: "2026-09-08T14:56:42", sales_event: { provider_doc_id: "27747", business_day: "2026-09-08", doc_type: "BasicInvoice", raw_json: { businessDay: "2026-09-08", documentId: "27747", lifecycleId: "27747", identitySource: "FALLBACK", isRefund: false, kind: "DEFINITIVE_INVOICE", provider: "agora", lines: [rawLine] } } });
