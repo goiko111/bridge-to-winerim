@@ -12,6 +12,7 @@ import {
   Wine,
   ClipboardList,
   ShieldCheck,
+  ChartNoAxesCombined,
   Menu,
   X,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Resumen" },
   { to: "/operations", icon: ShieldCheck, label: "Operación y auditoría" },
+  { to: "/audit/reconciliation", icon: ChartNoAxesCombined, label: "Conciliación diaria" },
   { to: "/revision", icon: ClipboardList, label: "Revisión de catálogo" },
   { to: "/integrations", icon: Plug, label: "Integraciones" },
   { to: "/sync-monitor", icon: Activity, label: "Actividad" },

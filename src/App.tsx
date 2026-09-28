@@ -28,6 +28,7 @@ import Documentation from "./pages/Documentation";
 import IntegrationSpecifics from "./pages/IntegrationSpecifics";
 import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import { DailyReconciliationDashboard } from "./features/daily-reconciliation/DailyReconciliationDashboard";
 
 const queryClient = new QueryClient();
 
@@ -59,6 +60,7 @@ const App = () => (
             <Route path="/qtomas-revision" element={<Navigate to="/revision?connection=57e8acbe-5b5f-433c-a0c6-e760c211acd3&tab=unmapped" replace />} />
             <Route path="/revision" element={<Revision />} />
             <Route path="/operations" element={<OperationsAudit />} />
+            <Route path="/audit/reconciliation" element={<DailyReconciliationDashboard />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/docs" element={<Documentation />} />
             <Route path="/particularidades" element={<IntegrationSpecifics />} />
