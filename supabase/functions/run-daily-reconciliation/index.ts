@@ -88,7 +88,7 @@ Deno.serve(async (request) => {
     const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
     const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
     const productClassifications = await currentProductClassifications(db, connectionId, source.lines);
-    const classifiedSource = source.lines.map((row) => ({ row, classification: classifyWineCandidate(row, productClassifications.get(row.provider_product_id) ?? null) }));
+    const classifiedSource = source.lines.map((row) => ({ row, classification: classifyWineCandidate(row, row.provider_product_id ? productClassifications.get(row.provider_product_id) ?? null : null) }));
     const wineCandidates = classifiedSource.filter((item) => item.classification === "WINE").map((item) => item.row);
     const unknownWineClassification = classifiedSource.filter((item) => item.classification === "UNKNOWN").map((item) => item.row);
     const unmappedWine = wineCandidates.filter((row) => row.mapped !== true || !row.winerim_product_id);
