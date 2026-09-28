@@ -2109,3 +2109,8 @@
 - Nueva tabla agora_reversal_audit (220 casos, huella md5 determinista, todos PENDING_REVIEW, eligible_for_reversal=false). Cola agora_reversal_queue vaciada: solo admite casos promovidos desde la auditoría (trigger guard). Importación idempotente probada (2ª pasada inserta 0).
 - Reglas nuevas en scripts/audit-agora-duplicates-forensic.mjs: movementId deduplicado; copas no comparan stock (solo apertura de partición); keep/candidato por detalle; bloqueos STOCK_UNKNOWN/AMBIGUOUS/SOURCE_INCOMPLETE/ENDPOINT_GRANULARITY_UNKNOWN.
 - Tareas: verificación manual caso a caso; retirar ENDPOINT_GRANULARITY_UNKNOWN solo cuando Winerim publique contrato; ledger por ticket+sourceLineId+formato sigue pendiente (el filtro agregado no lo sustituye).
+
+## De la O — propuesta de reactivar envío automático de precios (pendiente de GO)
+- Solo actualización de precio de vinos ya certificados; sin altas automáticas.
+- Lectura de vuelta en modo auditoría tras cada envío; si hay 1 desvío, se vuelve a manual.
+- Revisión a las 24 h y a los 7 días antes de extender a otro restaurante.
