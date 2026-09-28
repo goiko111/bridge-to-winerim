@@ -143,6 +143,10 @@ export function createWinerimFleetClient(options: { token: string; fetchImpl?: F
 
   return {
     get callCount() { return callCount; },
+    async credentialEvidence(): Promise<{ prefix: "wfk_"; fingerprint: string }> {
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(options.token)));
+      return { prefix: "wfk_", fingerprint: `sha256:${hex(digest).slice(0, 16)}` };
+    },
     async restaurants(page = 1, cursor?: string): Promise<RestaurantPage> {
       const raw = await fixedGet(ROUTES.restaurants, { page, cursor, limit: 100 });
       if (!isObject(raw)) throw new FleetContractError("INVALID_RESPONSE", "Respuesta /restaurants inválida", 502);
