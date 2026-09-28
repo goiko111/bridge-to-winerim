@@ -191,6 +191,8 @@ for (const dk of dayKeys) {
       saleId_conservar: [...new Set(keep.map((r) => r.saleId))].join(" "), lineId_conservar: lineIds(keep),
       saleId_candidata: [...new Set(cand.map((r) => r.saleId))].join(" "), lineId_candidata: lineIds(cand),
       saleDetailId: cand.flatMap((r) => (r.lines || []).map((l) => l.saleDetailId).filter(Boolean)).join(" "),
+      // One structured target per real Winerim detail (or per sale when no detail id). Never a joined string.
+      candidate_targets: cand.flatMap((r) => (r.lines || []).map((l) => ({ saleId: String(r.saleId), saleDetailId: l.saleDetailId != null ? String(l.saleDetailId) : null, qty: Number(l.qty || 0) }))),
       orderId: [...new Set(cand.map((r) => r.source?.externalOrderId))].join(" "),
       receiptId: [...new Set(cand.flatMap((r) => (r.lines || []).map((l) => l.source?.receiptId).filter(Boolean)))].join(" "),
       modo_importacion: [...new Set(cand.flatMap((r) => (r.lines || []).map((l) => l.source?.mode)))].join(" "),
@@ -218,7 +220,7 @@ const audit = groups.map((g) => ({
   agora_product_id: g.producto_agora.split(" ")[0], winerim_wine_id: g.wineId, format_key: g.formato_winerim,
   original_qty: g.qty_real_agora, reverse_qty: g.qty_reversible_exacta, amount: g.importe_duplicado,
   keep_sale_ids: g.saleId_conservar || null, keep_detail_ids: g.lineId_conservar || null,
-  candidate_sale_id: g.saleId_candidata || null, candidate_detail_ids: g.saleDetailId || null, receipt_id: g.receiptId || null, order_id: g.orderId || null,
+  candidate_sale_id: g.saleId_candidata || null, candidate_detail_ids: null, candidate_targets: g.candidate_targets, receipt_id: g.receiptId || null, order_id: g.orderId || null,
   import_mode: g.modo_importacion || null, movement_ids: g.movementId || null,
   history_units_excess: g.unidades_historial_de_mas, bottles_overdeducted: g.botellas_descontadas_de_mas,
   evidence_classification: g.estado, cup_classification: g.clasificacion_copa || null, blockers: g.bloqueos ? g.bloqueos.split(" ") : [],
