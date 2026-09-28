@@ -131,6 +131,7 @@ export type Database = {
           endpoint_reverts_stock: boolean | null
           evidence: Json
           evidence_classification: string
+          external_resolution_status: string | null
           format_key: string
           history_units_excess: number | null
           id: string
@@ -178,6 +179,7 @@ export type Database = {
           endpoint_reverts_stock?: boolean | null
           evidence?: Json
           evidence_classification: string
+          external_resolution_status?: string | null
           format_key: string
           history_units_excess?: number | null
           id?: string
@@ -225,6 +227,7 @@ export type Database = {
           endpoint_reverts_stock?: boolean | null
           evidence?: Json
           evidence_classification?: string
+          external_resolution_status?: string | null
           format_key?: string
           history_units_excess?: number | null
           id?: string
@@ -1469,6 +1472,524 @@ export type Database = {
           },
         ]
       }
+      reconciliation_v2_analytics_aggregates: {
+        Row: {
+          category: string
+          connection_id: string
+          coverage_complete: boolean
+          freshness_at: string
+          period_kind: string
+          period_start: string
+          quantity: number
+          revenue_minor: number
+          revenue_share: number | null
+          ticket_count: number
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          connection_id: string
+          coverage_complete: boolean
+          freshness_at: string
+          period_kind: string
+          period_start: string
+          quantity?: number
+          revenue_minor?: number
+          revenue_share?: number | null
+          ticket_count?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          connection_id?: string
+          coverage_complete?: boolean
+          freshness_at?: string
+          period_kind?: string
+          period_start?: string
+          quantity?: number
+          revenue_minor?: number
+          revenue_share?: number | null
+          ticket_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_analytics_aggregates_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_analytics_series: {
+        Row: {
+          business_day: string
+          category: string
+          classified_line_count: number
+          connection_id: string
+          coverage_complete: boolean
+          currency: string | null
+          freshness_at: string
+          quantity: number
+          revenue_minor: number
+          source_line_count: number
+          ticket_count: number
+          updated_at: string
+        }
+        Insert: {
+          business_day: string
+          category: string
+          classified_line_count?: number
+          connection_id: string
+          coverage_complete: boolean
+          currency?: string | null
+          freshness_at: string
+          quantity?: number
+          revenue_minor?: number
+          source_line_count?: number
+          ticket_count?: number
+          updated_at?: string
+        }
+        Update: {
+          business_day?: string
+          category?: string
+          classified_line_count?: number
+          connection_id?: string
+          coverage_complete?: boolean
+          currency?: string | null
+          freshness_at?: string
+          quantity?: number
+          revenue_minor?: number
+          source_line_count?: number
+          ticket_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_analytics_series_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_category_rules: {
+        Row: {
+          category: string
+          connection_id: string
+          created_at: string
+          evidence_source: string
+          family_key: string | null
+          provider_product_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          connection_id: string
+          created_at?: string
+          evidence_source: string
+          family_key?: string | null
+          provider_product_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          connection_id?: string
+          created_at?: string
+          evidence_source?: string
+          family_key?: string | null
+          provider_product_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_category_rules_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_connection_exclusions: {
+        Row: {
+          connection_id: string
+          created_at: string
+          reason: string
+          source: string
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          reason: string
+          source: string
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          reason?: string
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_connection_exclusions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_evidence: {
+        Row: {
+          captured_at: string
+          connection_id: string
+          content_hash: string
+          created_at: string
+          evidence_type: string
+          id: string
+          payload: Json
+          result_id: string
+          source_ref: string
+        }
+        Insert: {
+          captured_at: string
+          connection_id: string
+          content_hash: string
+          created_at?: string
+          evidence_type: string
+          id?: string
+          payload?: Json
+          result_id: string
+          source_ref: string
+        }
+        Update: {
+          captured_at?: string
+          connection_id?: string
+          content_hash?: string
+          created_at?: string
+          evidence_type?: string
+          id?: string
+          payload?: Json
+          result_id?: string
+          source_ref?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_evidence_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_evidence_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_latest"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_evidence_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_results"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_external_resolutions: {
+        Row: {
+          audit_case_id: string
+          candidate_targets: Json
+          case_fingerprint: string
+          checked_at: string
+          connection_id: string
+          created_at: string
+          evidence: Json
+          evidence_hash: string
+          id: string
+          missing: string[]
+          verdict: string
+        }
+        Insert: {
+          audit_case_id: string
+          candidate_targets: Json
+          case_fingerprint: string
+          checked_at: string
+          connection_id: string
+          created_at?: string
+          evidence?: Json
+          evidence_hash: string
+          id?: string
+          missing?: string[]
+          verdict: string
+        }
+        Update: {
+          audit_case_id?: string
+          candidate_targets?: Json
+          case_fingerprint?: string
+          checked_at?: string
+          connection_id?: string
+          created_at?: string
+          evidence?: Json
+          evidence_hash?: string
+          id?: string
+          missing?: string[]
+          verdict?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_external_resolutions_audit_case_id_fkey"
+            columns: ["audit_case_id"]
+            isOneToOne: false
+            referencedRelation: "agora_reversal_audit"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_external_resolutions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_locks: {
+        Row: {
+          connection_id: string
+          created_at: string
+          expires_at: string
+          owner_id: string
+          stream: string
+          updated_at: string
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          expires_at: string
+          owner_id: string
+          stream: string
+          updated_at?: string
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          expires_at?: string
+          owner_id?: string
+          stream?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_locks_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_manual_actions: {
+        Row: {
+          action_type: string
+          actor_id: string | null
+          connection_id: string
+          created_at: string
+          id: string
+          note: string | null
+          result_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          action_type: string
+          actor_id?: string | null
+          connection_id: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          result_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          action_type?: string
+          actor_id?: string | null
+          connection_id?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          result_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_manual_actions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_manual_actions_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_latest"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_manual_actions_result_id_fkey"
+            columns: ["result_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_results"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_results: {
+        Row: {
+          agora_line: Json | null
+          business_day: string
+          connection_id: string
+          evidence: Json
+          first_seen_at: string
+          id: string
+          last_seen_at: string
+          manual_action: string
+          mode: string
+          restaurant_id: number
+          revision_hash: string
+          run_id: string
+          source_line_key: string
+          state: string
+          winerim_line: Json | null
+        }
+        Insert: {
+          agora_line?: Json | null
+          business_day: string
+          connection_id: string
+          evidence?: Json
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          manual_action: string
+          mode?: string
+          restaurant_id: number
+          revision_hash: string
+          run_id: string
+          source_line_key: string
+          state: string
+          winerim_line?: Json | null
+        }
+        Update: {
+          agora_line?: Json | null
+          business_day?: string
+          connection_id?: string
+          evidence?: Json
+          first_seen_at?: string
+          id?: string
+          last_seen_at?: string
+          manual_action?: string
+          mode?: string
+          restaurant_id?: number
+          revision_hash?: string
+          run_id?: string
+          source_line_key?: string
+          state?: string
+          winerim_line?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_results_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_runs: {
+        Row: {
+          agora_complete: boolean
+          business_day: string
+          completed_at: string | null
+          connection_id: string
+          created_at: string
+          error_code: string | null
+          expected_pages: number | null
+          id: string
+          metrics: Json
+          mode: string
+          pages_read: number
+          restaurant_id: number
+          source_cutoff_at: string
+          started_at: string
+          status: string
+          stock_complete: boolean
+          updated_at: string
+          winerim_complete: boolean
+        }
+        Insert: {
+          agora_complete?: boolean
+          business_day: string
+          completed_at?: string | null
+          connection_id: string
+          created_at?: string
+          error_code?: string | null
+          expected_pages?: number | null
+          id?: string
+          metrics?: Json
+          mode?: string
+          pages_read?: number
+          restaurant_id: number
+          source_cutoff_at: string
+          started_at?: string
+          status: string
+          stock_complete?: boolean
+          updated_at?: string
+          winerim_complete?: boolean
+        }
+        Update: {
+          agora_complete?: boolean
+          business_day?: string
+          completed_at?: string | null
+          connection_id?: string
+          created_at?: string
+          error_code?: string | null
+          expected_pages?: number | null
+          id?: string
+          metrics?: Json
+          mode?: string
+          pages_read?: number
+          restaurant_id?: number
+          source_cutoff_at?: string
+          started_at?: string
+          status?: string
+          stock_complete?: boolean
+          updated_at?: string
+          winerim_complete?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_runs_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sales_events: {
         Row: {
           business_day: string
@@ -1871,6 +2392,536 @@ export type Database = {
           },
         ]
       }
+      winerim_restaurant_bindings: {
+        Row: {
+          connection_id: string
+          created_at: string
+          exclusion_reason: string | null
+          fleet_scope: string
+          metadata: Json
+          status: string
+          updated_at: string
+          verified_at: string
+          verified_via: string
+          winerim_restaurant_id: number
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          exclusion_reason?: string | null
+          fleet_scope?: string
+          metadata?: Json
+          status?: string
+          updated_at?: string
+          verified_at?: string
+          verified_via?: string
+          winerim_restaurant_id: number
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          exclusion_reason?: string | null
+          fleet_scope?: string
+          metadata?: Json
+          status?: string
+          updated_at?: string
+          verified_at?: string
+          verified_via?: string
+          winerim_restaurant_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_restaurant_bindings_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: true
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_sale_deletions: {
+        Row: {
+          connection_id: string
+          created_at: string
+          deleted_at: string
+          effective_at: string | null
+          external_order_id: string | null
+          line_id: string
+          raw: Json
+          reason: string
+          sale_detail_id: number | null
+          sale_id: number
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          deleted_at: string
+          effective_at?: string | null
+          external_order_id?: string | null
+          line_id: string
+          raw: Json
+          reason: string
+          sale_detail_id?: number | null
+          sale_id: number
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          deleted_at?: string
+          effective_at?: string | null
+          external_order_id?: string | null
+          line_id?: string
+          raw?: Json
+          reason?: string
+          sale_detail_id?: number | null
+          sale_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_sale_deletions_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_sales_lines: {
+        Row: {
+          connection_id: string
+          created_at: string
+          effective_at: string
+          external_order_id: string | null
+          format_key: string | null
+          invoice_id: string | null
+          line_id: string
+          line_type: string
+          price_id: number | null
+          qty: number
+          raw: Json
+          receipt_id: string | null
+          sale_detail_id: number | null
+          sale_id: number
+          source_line_id: string | null
+          source_system: string | null
+          stock_applied: boolean | null
+          stock_effect_known: boolean
+          stock_effect_status: string
+          stock_id: number | null
+          stock_movement_difference: number | null
+          stock_movement_ids: number[] | null
+          stock_unbacked_qty: number | null
+          total_amount_minor: number | null
+          unit_amount_minor: number | null
+          updated_at: string
+          wine_id: number
+        }
+        Insert: {
+          connection_id: string
+          created_at?: string
+          effective_at: string
+          external_order_id?: string | null
+          format_key?: string | null
+          invoice_id?: string | null
+          line_id: string
+          line_type: string
+          price_id?: number | null
+          qty: number
+          raw: Json
+          receipt_id?: string | null
+          sale_detail_id?: number | null
+          sale_id: number
+          source_line_id?: string | null
+          source_system?: string | null
+          stock_applied?: boolean | null
+          stock_effect_known: boolean
+          stock_effect_status: string
+          stock_id?: number | null
+          stock_movement_difference?: number | null
+          stock_movement_ids?: number[] | null
+          stock_unbacked_qty?: number | null
+          total_amount_minor?: number | null
+          unit_amount_minor?: number | null
+          updated_at?: string
+          wine_id: number
+        }
+        Update: {
+          connection_id?: string
+          created_at?: string
+          effective_at?: string
+          external_order_id?: string | null
+          format_key?: string | null
+          invoice_id?: string | null
+          line_id?: string
+          line_type?: string
+          price_id?: number | null
+          qty?: number
+          raw?: Json
+          receipt_id?: string | null
+          sale_detail_id?: number | null
+          sale_id?: number
+          source_line_id?: string | null
+          source_system?: string | null
+          stock_applied?: boolean | null
+          stock_effect_known?: boolean
+          stock_effect_status?: string
+          stock_id?: number | null
+          stock_movement_difference?: number | null
+          stock_movement_ids?: number[] | null
+          stock_unbacked_qty?: number | null
+          total_amount_minor?: number | null
+          unit_amount_minor?: number | null
+          updated_at?: string
+          wine_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_sales_lines_connection_id_sale_id_fkey"
+            columns: ["connection_id", "sale_id"]
+            isOneToOne: false
+            referencedRelation: "winerim_sales_records"
+            referencedColumns: ["connection_id", "sale_id"]
+          },
+        ]
+      }
+      winerim_sales_records: {
+        Row: {
+          amount_minor: number | null
+          connection_id: string
+          created_at: string
+          currency: string | null
+          deleted_at: string | null
+          effective_at: string
+          external_order_id: string | null
+          format_key: string | null
+          price_id: number
+          qty: number
+          raw: Json
+          recorded_at: string | null
+          restaurant_id: number
+          sale_id: number
+          served_qty: number | null
+          source_channel: string | null
+          source_contract: string | null
+          source_origin: string | null
+          source_updated_at: string
+          status: string
+          stock_id: number | null
+          time_reliable: boolean
+          updated_at: string
+          wine_id: number
+        }
+        Insert: {
+          amount_minor?: number | null
+          connection_id: string
+          created_at?: string
+          currency?: string | null
+          deleted_at?: string | null
+          effective_at: string
+          external_order_id?: string | null
+          format_key?: string | null
+          price_id: number
+          qty: number
+          raw: Json
+          recorded_at?: string | null
+          restaurant_id: number
+          sale_id: number
+          served_qty?: number | null
+          source_channel?: string | null
+          source_contract?: string | null
+          source_origin?: string | null
+          source_updated_at: string
+          status: string
+          stock_id?: number | null
+          time_reliable: boolean
+          updated_at?: string
+          wine_id: number
+        }
+        Update: {
+          amount_minor?: number | null
+          connection_id?: string
+          created_at?: string
+          currency?: string | null
+          deleted_at?: string | null
+          effective_at?: string
+          external_order_id?: string | null
+          format_key?: string | null
+          price_id?: number
+          qty?: number
+          raw?: Json
+          recorded_at?: string | null
+          restaurant_id?: number
+          sale_id?: number
+          served_qty?: number | null
+          source_channel?: string | null
+          source_contract?: string | null
+          source_origin?: string | null
+          source_updated_at?: string
+          status?: string
+          stock_id?: number | null
+          time_reliable?: boolean
+          updated_at?: string
+          wine_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_sales_records_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_stock_movements: {
+        Row: {
+          category: string
+          cause: string | null
+          connection_id: string
+          created_at: string
+          format_key: string | null
+          linked_sale_detail_ids: number[] | null
+          linked_sale_id: number | null
+          movement_id: number
+          order_id: string | null
+          price_id: number | null
+          quantity_after: number | null
+          quantity_before: number | null
+          quantity_change: number | null
+          raw: Json
+          receipt_id: string | null
+          recorded_at: string
+          reference_id: string | null
+          reference_type: string | null
+          restaurant_id: number
+          stock_controlled: boolean
+          stock_id: number | null
+          wine_id: number | null
+        }
+        Insert: {
+          category: string
+          cause?: string | null
+          connection_id: string
+          created_at?: string
+          format_key?: string | null
+          linked_sale_detail_ids?: number[] | null
+          linked_sale_id?: number | null
+          movement_id: number
+          order_id?: string | null
+          price_id?: number | null
+          quantity_after?: number | null
+          quantity_before?: number | null
+          quantity_change?: number | null
+          raw: Json
+          receipt_id?: string | null
+          recorded_at: string
+          reference_id?: string | null
+          reference_type?: string | null
+          restaurant_id: number
+          stock_controlled: boolean
+          stock_id?: number | null
+          wine_id?: number | null
+        }
+        Update: {
+          category?: string
+          cause?: string | null
+          connection_id?: string
+          created_at?: string
+          format_key?: string | null
+          linked_sale_detail_ids?: number[] | null
+          linked_sale_id?: number | null
+          movement_id?: number
+          order_id?: string | null
+          price_id?: number | null
+          quantity_after?: number | null
+          quantity_before?: number | null
+          quantity_change?: number | null
+          raw?: Json
+          receipt_id?: string | null
+          recorded_at?: string
+          reference_id?: string | null
+          reference_type?: string | null
+          restaurant_id?: number
+          stock_controlled?: boolean
+          stock_id?: number | null
+          wine_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_stock_movements_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_stock_snapshot_items: {
+        Row: {
+          connection_id: string
+          format_key: string | null
+          max_qty: number | null
+          price_amount: number | null
+          raw: Json
+          slugname: string | null
+          snapshot_id: string
+          stock: number | null
+          stock_active: boolean
+          stock_id: number
+          threshold: number | null
+          threshold_active: boolean
+          vintage: string | null
+          wine_id: number
+          wine_name: string | null
+        }
+        Insert: {
+          connection_id: string
+          format_key?: string | null
+          max_qty?: number | null
+          price_amount?: number | null
+          raw: Json
+          slugname?: string | null
+          snapshot_id: string
+          stock?: number | null
+          stock_active: boolean
+          stock_id: number
+          threshold?: number | null
+          threshold_active: boolean
+          vintage?: string | null
+          wine_id: number
+          wine_name?: string | null
+        }
+        Update: {
+          connection_id?: string
+          format_key?: string | null
+          max_qty?: number | null
+          price_amount?: number | null
+          raw?: Json
+          slugname?: string | null
+          snapshot_id?: string
+          stock?: number | null
+          stock_active?: boolean
+          stock_id?: number
+          threshold?: number | null
+          threshold_active?: boolean
+          vintage?: string | null
+          wine_id?: number
+          wine_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_stock_snapshot_items_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "winerim_stock_snapshot_items_snapshot_id_fkey"
+            columns: ["snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "winerim_stock_snapshots"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_stock_snapshots: {
+        Row: {
+          captured_at: string
+          complete: boolean
+          connection_id: string
+          content_hash: string
+          created_at: string
+          id: string
+          item_count: number
+          page_count: number
+          restaurant_id: number
+          source_contract: string
+        }
+        Insert: {
+          captured_at: string
+          complete: boolean
+          connection_id: string
+          content_hash: string
+          created_at?: string
+          id?: string
+          item_count: number
+          page_count: number
+          restaurant_id: number
+          source_contract?: string
+        }
+        Update: {
+          captured_at?: string
+          complete?: boolean
+          connection_id?: string
+          content_hash?: string
+          created_at?: string
+          id?: string
+          item_count?: number
+          page_count?: number
+          restaurant_id?: number
+          source_contract?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_stock_snapshots_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      winerim_sync_checkpoints: {
+        Row: {
+          after_id: number | null
+          connection_id: string
+          coverage_complete: boolean
+          created_at: string
+          cursor: string | null
+          last_complete_at: string | null
+          last_error_code: string | null
+          last_request_id: string | null
+          overlap_from: string | null
+          stream: string
+          updated_at: string
+        }
+        Insert: {
+          after_id?: number | null
+          connection_id: string
+          coverage_complete?: boolean
+          created_at?: string
+          cursor?: string | null
+          last_complete_at?: string | null
+          last_error_code?: string | null
+          last_request_id?: string | null
+          overlap_from?: string | null
+          stream: string
+          updated_at?: string
+        }
+        Update: {
+          after_id?: number | null
+          connection_id?: string
+          coverage_complete?: boolean
+          created_at?: string
+          cursor?: string | null
+          last_complete_at?: string | null
+          last_error_code?: string | null
+          last_request_id?: string | null
+          overlap_from?: string | null
+          stream?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_sync_checkpoints_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       winerim_wine_formats: {
         Row: {
           connection_id: string
@@ -2014,6 +3065,60 @@ export type Database = {
       }
     }
     Views: {
+      reconciliation_v2_dashboard: {
+        Row: {
+          business_day: string | null
+          connection_id: string | null
+          freshness_at: string | null
+          line_count: number | null
+          revenue_minor: number | null
+          state: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_results_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reconciliation_v2_latest: {
+        Row: {
+          agora_line: Json | null
+          business_day: string | null
+          connection_id: string | null
+          evidence: Json | null
+          first_seen_at: string | null
+          id: string | null
+          last_seen_at: string | null
+          manual_action: string | null
+          mode: string | null
+          restaurant_id: number | null
+          revision_hash: string | null
+          run_id: string | null
+          source_line_key: string | null
+          state: string | null
+          winerim_line: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_results_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reconciliation_v2_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "reconciliation_v2_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       review_winerim_variants: {
         Row: {
           capacity_liters: number | null
@@ -2119,6 +3224,85 @@ export type Database = {
         Returns: undefined
       }
       is_platform_admin: { Args: never; Returns: boolean }
+      reconciliation_v2_claim_lock: {
+        Args: {
+          p_connection_id: string
+          p_owner_id: string
+          p_stream: string
+          p_ttl_seconds?: number
+        }
+        Returns: boolean
+      }
+      reconciliation_v2_commit_movement_page: {
+        Args: {
+          p_connection_id: string
+          p_has_more: boolean
+          p_movements: Json
+          p_next_after_id: number
+          p_overlap_from: string
+          p_request_id: string
+          p_restaurant_id: number
+        }
+        Returns: Json
+      }
+      reconciliation_v2_commit_run: {
+        Args: {
+          p_analytics: Json
+          p_business_day: string
+          p_completeness: Json
+          p_connection_id: string
+          p_metrics: Json
+          p_restaurant_id: number
+          p_results: Json
+          p_run_id: string
+          p_source_cutoff_at: string
+        }
+        Returns: string
+      }
+      reconciliation_v2_commit_sales_page: {
+        Args: {
+          p_connection_id: string
+          p_deletions: Json
+          p_has_more: boolean
+          p_next_cursor: string
+          p_overlap_from: string
+          p_records: Json
+          p_request_id: string
+          p_restaurant_id: number
+        }
+        Returns: Json
+      }
+      reconciliation_v2_commit_stock_snapshot: {
+        Args: {
+          p_captured_at: string
+          p_complete: boolean
+          p_connection_id: string
+          p_content_hash: string
+          p_items: Json
+          p_page_count: number
+          p_request_id: string
+          p_restaurant_id: number
+        }
+        Returns: string
+      }
+      reconciliation_v2_record_external_resolution: {
+        Args: {
+          p_audit_case_id: string
+          p_candidate_targets: Json
+          p_case_fingerprint: string
+          p_checked_at: string
+          p_connection_id: string
+          p_evidence: Json
+          p_evidence_hash: string
+          p_missing: string[]
+          p_verdict: string
+        }
+        Returns: string
+      }
+      reconciliation_v2_release_lock: {
+        Args: { p_connection_id: string; p_owner_id: string; p_stream: string }
+        Returns: boolean
+      }
       release_agora_dispatch_lock: {
         Args: { p_connection_id: string; p_job: string; p_lock_token: string }
         Returns: boolean
