@@ -2961,3 +2961,8 @@ ya demostró una carrera real con el cron.
 - **Decisión:** una reapertura/conversión no demostrable línea a línea congela solo sus productos ese día (AMBIGUOUS, sin escritura); el resto sigue. Tickets abiertos se siguen procesando.
 - **Decisión:** cola `agora_reversal_queue` creada (lectura por restaurante, escritura solo servidor). Cargados 29 casos como PROBABLE_DUPLICATE (22 CONFIRMED_DUPLICATE_STOCK, 1 HISTORY, 6 probables). Ninguno READY_TO_REVERSE; ninguna reversión ejecutada.
 - **Hipótesis:** los STOCK_CONFLICT de copas se deben en parte a que el stock de copa solo se mueve al abrir botella; requieren revisión con otra regla.
+
+## 2026-09-28 — De la O certificado (altas y precios) por lectura de vuelta
+- Hechos: lectura en modo auditoría, 258/258 vinos de carta exactos en Ágora (producto, formato, precio); 0 filas de seguimiento selladas.
+- Decisión (usuario): los 2 vinos retirados de Winerim que siguen a la venta en Ágora se mantienen visibles como «catálogo extra intencionado»; no cuentan como desvío.
+- Salvedad: sus ventas no descuentan stock Winerim y se revisan como «vino retirado»; su precio no se sincroniza.
