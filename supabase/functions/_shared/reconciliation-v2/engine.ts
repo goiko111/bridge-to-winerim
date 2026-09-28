@@ -13,6 +13,14 @@ import type {
 const norm = (value: string | null | undefined) => String(value ?? "").trim().toLowerCase();
 const cents = (value: number | null) => value == null ? null : Math.round(value);
 
+/** Normalize only contractually equivalent POS/Winerim format labels. */
+export function canonicalFormat(value: string | null | undefined): string {
+  const normalized = norm(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s_]+/g, "-");
+  if (["bot", "bottle", "botella"].includes(normalized)) return "botella";
+  if (["cop", "glass", "copa"].includes(normalized)) return "copa";
+  return normalized;
+}
+
 function exactIdentityMatches(a: AgoraLine, w: WinerimLine): boolean {
   const order = norm(a.externalOrderId || a.orderId);
   const winerimOrder = norm(w.externalOrderId || w.orderId);
@@ -23,19 +31,82 @@ function exactIdentityMatches(a: AgoraLine, w: WinerimLine): boolean {
       norm(a.sourceSystem) === norm(w.sourceSystem) &&
       order === winerimOrder &&
       norm(a.sourceLineId) === norm(w.sourceLineId) &&
-      norm(a.format) === norm(w.format),
+      canonicalFormat(a.format) === canonicalFormat(w.format),
+  );
+}
+
+function fallbackSignatureMatches(a: AgoraLine, w: WinerimLine): boolean {
+  return (
+    a.businessDay === (w.businessDay ?? w.effectiveAt.slice(0, 10)) &&
+    a.effectiveAt === w.effectiveAt &&
+    norm(a.wineId) === norm(w.wineId) &&
+    canonicalFormat(a.format) === canonicalFormat(w.format)
   );
 }
 
 function fallbackMatches(a: AgoraLine, w: WinerimLine): boolean {
   return (
-    a.businessDay === (w.businessDay ?? w.effectiveAt.slice(0, 10)) &&
-    a.effectiveAt === w.effectiveAt &&
-    norm(a.wineId) === norm(w.wineId) &&
-    norm(a.format) === norm(w.format) &&
+    fallbackSignatureMatches(a, w) &&
     a.quantity === w.quantity &&
     cents(a.amountMinor) === cents(w.amountMinor)
   );
+}
+
+function aggregateWinerimLines(lines: WinerimLine[]): WinerimLine {
+  const first = lines[0];
+  const stockStatuses = new Set(lines.map((line) => line.stockEffect.status));
+  const stockStatus = stockStatuses.size === 1
+    ? lines[0].stockEffect.status
+    : lines.some((line) => line.stockEffect.status === "CONFLICT")
+    ? "CONFLICT"
+    : lines.some((line) => line.stockEffect.status === "PARTIAL" || Number(line.stockEffect.unbackedQty ?? 0) > 0)
+    ? "PARTIAL"
+    : lines.some((line) => line.stockEffect.status === "MOVEMENT_MISSING")
+    ? "MOVEMENT_MISSING"
+    : "UNKNOWN";
+  const receiptIds = [...new Set(lines.map((line) => line.stockEffect.receiptId).filter(Boolean))];
+  const stockAppliedValues = [...new Set(lines.map((line) => line.stockEffect.stockApplied))];
+  return {
+    ...first,
+    lineId: `aggregate:${lines.map((line) => line.lineId).sort().join(",")}`,
+    saleDetailId: null,
+    saleStatus: lines.some((line) => line.saleStatus === "rejected") ? "rejected" : lines.some((line) => line.saleStatus === "pending") ? "pending" : "confirmed",
+    format: canonicalFormat(first.format),
+    quantity: lines.reduce((sum, line) => sum + line.quantity, 0),
+    amountMinor: lines.every((line) => line.amountMinor != null) ? lines.reduce((sum, line) => sum + Number(line.amountMinor), 0) : null,
+    stockEffect: {
+      known: lines.every((line) => line.stockEffect.known),
+      status: stockStatus,
+      stockApplied: stockAppliedValues.length === 1 ? stockAppliedValues[0] : null,
+      receiptId: receiptIds.length === 1 ? receiptIds[0] : null,
+      movementIds: [...new Set(lines.flatMap((line) => line.stockEffect.movementIds))],
+      movementDifference: lines.every((line) => line.stockEffect.movementDifference != null)
+        ? lines.reduce((sum, line) => sum + Number(line.stockEffect.movementDifference), 0)
+        : null,
+      unbackedQty: lines.every((line) => line.stockEffect.unbackedQty != null)
+        ? lines.reduce((sum, line) => sum + Number(line.stockEffect.unbackedQty), 0)
+        : null,
+    },
+  };
+}
+
+function groupedFallbackMatches(a: AgoraLine, winerim: WinerimLine[], available: Set<number>): number[][] {
+  if (a.amountMinor == null) return [];
+  const bySale = new Map<number, number[]>();
+  for (const index of available) {
+    const line = winerim[index];
+    if (!fallbackSignatureMatches(a, line)) continue;
+    const group = bySale.get(line.saleId) ?? [];
+    group.push(index);
+    bySale.set(line.saleId, group);
+  }
+  return [...bySale.values()].filter((indexes) => {
+    if (indexes.length < 2) return false;
+    const lines = indexes.map((index) => winerim[index]);
+    if (lines.some((line) => line.amountMinor == null)) return false;
+    return lines.reduce((sum, line) => sum + line.quantity, 0) === a.quantity &&
+      cents(lines.reduce((sum, line) => sum + Number(line.amountMinor), 0)) === cents(a.amountMinor);
+  });
 }
 
 function sourceLineKey(line: AgoraLine): string {
@@ -106,6 +177,7 @@ export function reconcileLines(input: {
 
     const exact = [...available].filter((index) => exactIdentityMatches(agora, input.winerim[index]));
     let candidates = exact;
+    let matchedIndexes: number[] = [];
     let matchKind = "EXACT_SOURCE_IDENTITY";
     if (candidates.length === 0) {
       candidates = [...available].filter((index) => fallbackMatches(agora, input.winerim[index]));
@@ -116,20 +188,33 @@ export function reconcileLines(input: {
       continue;
     }
     if (candidates.length === 0) {
+      const grouped = groupedFallbackMatches(agora, input.winerim, available);
+      if (grouped.length > 1) {
+        results.push({ ...base, winerim: null, state: "AMBIGUOUS", evidence: { reason: "AMBIGUOUS_GROUPED_MATCH", matchKind: "GROUPED_DETAIL_FALLBACK", candidateLineIds: grouped.flatMap((indexes) => indexes.map((index) => input.winerim[index].lineId)) }, manualAction: "Revisión manual; ningún grupo se consume" });
+        continue;
+      }
+      if (grouped.length === 1) {
+        matchedIndexes = grouped[0];
+        matchKind = "GROUPED_DETAIL_FALLBACK";
+      }
+    } else {
+      matchedIndexes = [candidates[0]];
+    }
+    if (matchedIndexes.length === 0) {
       const deleted = input.winerim.find((line) => deletedSales.has(line.saleId) || deletedLines.has(line.lineId));
       results.push({ ...base, winerim: deleted ?? null, state: deleted ? "DELETED_OR_CANCELLED" : "HISTORY_MISSING", evidence: { matchKind }, manualAction: deleted ? "Verificar la anulación" : "Revisar alta manual; no importar automáticamente" });
       continue;
     }
 
-    const index = candidates[0];
-    available.delete(index);
-    const winerim = input.winerim[index];
-    if (deletedSales.has(winerim.saleId) || deletedLines.has(winerim.lineId) || winerim.saleStatus === "rejected") {
-      results.push({ ...base, winerim, state: "DELETED_OR_CANCELLED", evidence: { matchKind }, manualAction: "Verificar que la anulación es la correcta" });
+    matchedIndexes.forEach((index) => available.delete(index));
+    const matchedLines = matchedIndexes.map((index) => input.winerim[index]);
+    const winerim = matchedLines.length === 1 ? matchedLines[0] : aggregateWinerimLines(matchedLines);
+    if (matchedLines.some((line) => deletedSales.has(line.saleId) || deletedLines.has(line.lineId) || line.saleStatus === "rejected")) {
+      results.push({ ...base, winerim, state: "DELETED_OR_CANCELLED", evidence: { matchKind, memberLineIds: matchedLines.map((line) => line.lineId) }, manualAction: "Verificar que la anulación es la correcta" });
       continue;
     }
     const classification = classifyMatched(agora, winerim);
-    results.push({ ...base, winerim, ...classification, evidence: { ...classification.evidence, matchKind } });
+    results.push({ ...base, winerim, ...classification, evidence: { ...classification.evidence, matchKind, ...(matchedLines.length > 1 ? { memberLineIds: matchedLines.map((line) => line.lineId) } : {}) } });
   }
 
   for (const index of available) {
@@ -203,7 +288,7 @@ function movementCausallyLinked(movement: StockMovement, candidate: CandidateTar
   if (candidate.wineId != null && String(movement.wine.wineId) !== String(candidate.wineId)) return false;
   if (candidate.priceId != null && String(movement.variant.priceId) !== String(candidate.priceId)) return false;
   if (candidate.stockId != null && String(movement.variant.stockId) !== String(candidate.stockId)) return false;
-  if (candidate.format != null && norm(movement.variant.format) !== norm(candidate.format)) return false;
+  if (candidate.format != null && canonicalFormat(movement.variant.format) !== canonicalFormat(candidate.format)) return false;
   return true;
 }
 

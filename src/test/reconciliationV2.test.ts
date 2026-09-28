@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildAnalytics } from "../../supabase/functions/_shared/reconciliation-v2/analytics";
-import { compareAuthorizedBatch, evaluateExternalResolution, reconcileLines } from "../../supabase/functions/_shared/reconciliation-v2/engine";
+import { canonicalFormat, compareAuthorizedBatch, evaluateExternalResolution, reconcileLines } from "../../supabase/functions/_shared/reconciliation-v2/engine";
 import { AUTHORIZED_EXTERNAL_RESOLUTIONS_19 } from "../../supabase/functions/_shared/reconciliation-v2/fixtures/authorized-external-resolutions-19";
 import type { AgoraLine, ExternalResolutionCase, StockMovement, WinerimLine } from "../../supabase/functions/_shared/reconciliation-v2/types";
 import { businessWindow } from "../../supabase/functions/_shared/reconciliation-v2/time";
@@ -22,6 +22,47 @@ describe("reconciliation engine", () => {
     expect(reconcile({ agora: [a], winerim: [one], completeness: complete })[0].evidence.matchKind).toBe("UNIQUE_SIGNATURE_FALLBACK");
     const ambiguous = reconcile({ agora: [a], winerim: [one, { ...one, saleId: 101, lineId: "WL-2" }], completeness: complete });
     expect(ambiguous[0].state).toBe("AMBIGUOUS");
+  });
+
+  it("normalizes only known equivalent Ágora and Winerim format labels", () => {
+    expect(canonicalFormat("BOT")).toBe("botella");
+    expect(canonicalFormat("COPA")).toBe("copa");
+    expect(canonicalFormat("media-copa")).toBe("media-copa");
+    const result = reconcile({ agora: [agora({ externalOrderId: null, sourceLineId: null, format: "BOT" })], winerim: [winerim({ externalOrderId: null, sourceLineId: null, format: "botella" })], completeness: complete });
+    expect(result[0].state).toBe("MATCHED");
+    expect(result[0].evidence.matchKind).toBe("UNIQUE_SIGNATURE_FALLBACK");
+  });
+
+  it("groups detail rows from the same Winerim sale when their quantity and amount exactly equal one Ágora line", () => {
+    const source = agora({ externalOrderId: null, sourceLineId: null, format: "COPA", quantity: 4, amountMinor: 3200 });
+    const targets = Array.from({ length: 4 }, (_, index) => winerim({
+      externalOrderId: null,
+      sourceLineId: null,
+      saleId: 118501,
+      lineId: `detail-${index + 1}`,
+      saleDetailId: index + 1,
+      format: "copa",
+      quantity: 1,
+      amountMinor: 800,
+      stockEffect: { known: true, status: "APPLIED", stockApplied: true, receiptId: "R-GROUP", movementIds: [20 + index], movementDifference: 0, unbackedQty: 0 },
+    }));
+    const result = reconcile({ agora: [source], winerim: targets, completeness: complete });
+    expect(result).toHaveLength(1);
+    expect(result[0].state).toBe("MATCHED");
+    expect(result[0].winerim?.quantity).toBe(4);
+    expect(result[0].evidence.matchKind).toBe("GROUPED_DETAIL_FALLBACK");
+    expect(result[0].evidence.memberLineIds).toHaveLength(4);
+  });
+
+  it("does not group identical rows from different Winerim sales", () => {
+    const source = agora({ externalOrderId: null, sourceLineId: null, format: "COPA", quantity: 2, amountMinor: 1600 });
+    const targets = [
+      winerim({ externalOrderId: null, sourceLineId: null, saleId: 1, lineId: "dup-1", format: "copa", quantity: 1, amountMinor: 800 }),
+      winerim({ externalOrderId: null, sourceLineId: null, saleId: 2, lineId: "dup-2", format: "copa", quantity: 1, amountMinor: 800 }),
+    ];
+    const result = reconcile({ agora: [source], winerim: targets, completeness: complete });
+    expect(result[0].state).toBe("HISTORY_MISSING");
+    expect(result.filter((row) => row.evidence.reason === "EXTRA_IN_WINERIM")).toHaveLength(2);
   });
 
   it("never classifies incomplete sources as a proven missing sale", () => {
