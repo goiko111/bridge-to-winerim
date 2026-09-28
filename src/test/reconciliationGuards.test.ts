@@ -32,7 +32,7 @@ describe("runtime guardrails", () => {
     const source = readFileSync(join(functionRoot, "winerim-fleet-reader/index.ts"), "utf8");
     const client = readFileSync(join(functionRoot, "_shared/reconciliation-v2/winerimFleetClient.ts"), "utf8");
     const probe = readFileSync(join(functionRoot, "_shared/reconciliation-v2/candidateProbe.ts"), "utf8");
-    const migration = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928000200_candidate_probe.sql"), "utf8");
+    const migration = readdirSync(resolve(process.cwd(), "supabase/migrations")).map((n) => readFileSync(resolve(process.cwd(), "supabase/migrations", n), "utf8")).find((s) => s.includes("reconciliation_v2_begin_candidate_probe")) ?? "";
     expect(probe).toContain("VERIFY_CANDIDATE_SALES");
     expect(source).toContain("reconciliation_v2_begin_candidate_probe");
     expect(source).toContain("reconciliation_v2_candidate_probe_audit");
