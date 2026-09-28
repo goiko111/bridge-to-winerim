@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS public.agora_reversal_queue_audit_case_uidx;
+CREATE UNIQUE INDEX agora_reversal_queue_case_target_uidx ON public.agora_reversal_queue (audit_case_id, sale_id, coalesce(sale_detail_id,''));
