@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const sql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928000100_reconciliation_v2.sql"), "utf8");
+// Applied once via the migration tool; the platform stored it under its own versioned name
+// (identical SQL minus the two header comment lines). Keeping a second copy would register a duplicate migration.
+const sql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928084312_d44bc070-e653-4209-9f14-2188f0019ae6.sql"), "utf8");
 
 describe("migration security invariants", () => {
   it("uses RLS, security-invoker views and service-role-only mutating RPCs", () => {
