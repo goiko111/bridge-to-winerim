@@ -1,9 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const sql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928000100_reconciliation_v2.sql"), "utf8");
-const stateSql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928000300_reconciliation_state_contract.sql"), "utf8");
+// Lovable renames migration files on apply; locate them by content.
+const findMigration = (marker: string) => { const dir = resolve(process.cwd(), "supabase/migrations"); return readdirSync(dir).sort().map((n) => readFileSync(resolve(dir, n), "utf8")).find((t) => t.includes(marker)) ?? ""; };
+const sql = findMigration("reconciliation_v2_commit_sales_page");
+const stateSql = findMigration("state_contract_version");
 
 describe("migration security invariants", () => {
   it("uses RLS, security-invoker views and service-role-only mutating RPCs", () => {
