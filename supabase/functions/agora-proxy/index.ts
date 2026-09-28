@@ -85,7 +85,7 @@ import {
   countXmlOpenTickets,
   parseOpenTickets,
 } from "../_shared/agoraOpenTickets.ts";
-import { excludeReopenSupersededEvents } from "../_shared/agoraTicketLifecycle.ts";
+import { ambiguousReopenFrozenProductIds, excludeReopenSupersededEvents, isFrozenLine } from "../_shared/agoraTicketLifecycle.ts";
 import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
@@ -1726,8 +1726,10 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   // deno-lint-ignore no-explicit-any
+  const frozenProductIds = ambiguousReopenFrozenProductIds(events || []);
   const mappedLines = (lines as any[]).filter((l: any) =>
     l.winerim_product_id &&
+    !isFrozenLine(l, frozenProductIds) &&
     (l.is_wine_candidate || !openTicketEventIds.has(l.sales_event_id)) &&
     providerSaleIsAfterStockStart(l.provider_sold_at, stockSyncStartAt)
   );
@@ -2284,10 +2286,12 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
       .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() === "openticket")
       .map((event: { id: string }) => event.id),
   );
-  const { data: lines } = await supabase
+  const { data: rawIncrementalLines } = await supabase
     .from("sales_line_items")
     .select("id, sales_event_id, name, quantity, winerim_product_id, provider_product_id, is_wine_candidate, format, provider_sold_at")
     .in("sales_event_id", eventIds);
+  const incrementalFrozenProductIds = ambiguousReopenFrozenProductIds(events || []);
+  const lines = (rawIncrementalLines || []).filter((l: { provider_product_id?: unknown }) => !isFrozenLine(l, incrementalFrozenProductIds));
 
   if (!lines || lines.length === 0) {
     return { synced: 0, skipped: 0, failed: 0, message: "No line items found" };
@@ -2898,6 +2902,7 @@ async function syncStockForDayIncrementalByDayTotal(
   const definitiveEventIdSet = new Set(definitiveEventIds);
   const desiredSource = desiredEventIds.some((id) => definitiveEventIdSet.has(id)) ? "definitive" : "open_ticket";
 
+  const dayTotalFrozenProductIds = ambiguousReopenFrozenProductIds(dayEvents || []);
   const lines: Record<string, unknown>[] = [];
   for (let i = 0; i < desiredEventIds.length; i += 100) {
     const lineChunk = desiredEventIds.slice(i, i + 100);
@@ -2908,7 +2913,10 @@ async function syncStockForDayIncrementalByDayTotal(
     if (linesError) {
       throw new Error(`Could not read sales lines for ${day}: ${linesError.message}`);
     }
-    for (const row of (chunkLines || [])) lines.push(row as Record<string, unknown>);
+    for (const row of (chunkLines || [])) {
+      if (isFrozenLine(row as { provider_product_id?: unknown }, dayTotalFrozenProductIds)) continue;
+      lines.push(row as Record<string, unknown>);
+    }
   }
 
   if (!lines || lines.length === 0) {
@@ -3490,6 +3498,25 @@ async function restoreStaleOpenTicketStock(
     stockRows.push(...(chunkRows || []));
   }
 
+  const days = Array.from(new Set(staleEvents.map((event: { business_day: string }) => event.business_day)));
+  const { data: dayEvents } = await supabase
+    .from("sales_events")
+    .select("id, business_day, doc_type, raw_json")
+    .eq("connection_id", connectionId)
+    .in("business_day", days);
+
+  const dayByDefinitiveEventId = new Map<string, string>();
+  // Same lifecycle filter as the writers, applied per business day.
+  const restoreSuperseded = new Set<string>();
+  const restoreFrozen = new Set<string>();
+  for (const d of days) {
+    const evs = (dayEvents || []).filter((e: { business_day: string }) => e.business_day === d);
+    const kept = new Set(excludeReopenSupersededEvents(evs, evs).map((e: { id: string }) => e.id));
+    for (const e of evs as { id: string }[]) if (!kept.has(e.id)) restoreSuperseded.add(e.id);
+    for (const pid of ambiguousReopenFrozenProductIds(evs)) restoreFrozen.add(`${d}::${pid}`);
+  }
+  const frozenRestoreKeys = restoreFrozen;
+
   const positiveRows: any[] = [];
   const provisionalNetByKey = new Map<string, number>();
   const eventKeys = new Map<string, Set<string>>();
@@ -3502,6 +3529,7 @@ async function restoreStaleOpenTicketStock(
     const qty = Number(row.quantity || 0);
     if (!event || !wineId || !variant || !Number.isFinite(qty)) continue;
     const key = `${event.business_day}::${wineId}::${variant}`;
+    if (frozenRestoreKeys.has(`${event.business_day}::${String(row.provider_product_id || "")}`)) continue;
     provisionalNetByKey.set(key, (provisionalNetByKey.get(key) || 0) + qty);
     if (!eventKeys.has(event.id)) eventKeys.set(event.id, new Set<string>());
     eventKeys.get(event.id)!.add(key);
@@ -3513,17 +3541,10 @@ async function restoreStaleOpenTicketStock(
 
   if (positiveRows.length === 0) return result;
 
-  const days = Array.from(new Set(staleEvents.map((event: { business_day: string }) => event.business_day)));
-  const { data: dayEvents } = await supabase
-    .from("sales_events")
-    .select("id, business_day, doc_type, raw_json")
-    .eq("connection_id", connectionId)
-    .in("business_day", days);
-
-  const dayByDefinitiveEventId = new Map<string, string>();
   const definitiveEventIds = (dayEvents || [])
     .filter((event: { id: string; business_day: string; doc_type?: string | null; raw_json?: unknown }) =>
-      String(event.doc_type || "").toLowerCase() !== "openticket" && !rawJsonDisablesStockSync(event.raw_json)
+      String(event.doc_type || "").toLowerCase() !== "openticket" && !rawJsonDisablesStockSync(event.raw_json) &&
+      !restoreSuperseded.has(event.id)
     )
     .map((event: { id: string; business_day: string }) => {
       dayByDefinitiveEventId.set(event.id, event.business_day);

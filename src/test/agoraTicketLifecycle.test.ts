@@ -110,3 +110,25 @@ describe("open ticket lifecycle", () => {
     expect(prepareReversal({ receiptId: "x", qty: 1, historyApplied: true, stockApplied: false })).toMatchObject({ effects: { history: true, stock: false } });
   });
 });
+
+import { ambiguousReopenFrozenProductIds, isFrozenLine } from "../../supabase/functions/_shared/agoraTicketLifecycle";
+
+describe("ambiguous reopen freezes only affected products", () => {
+  const inv = (id: string, n: string, lines: any[]) => ({ id, doc_type: "Invoice", raw_json: { Serie: "T", Number: n, InvoiceItems: [{ Lines: lines }] } });
+  const ref = (id: string, n: string, src: string, lines: any[]) => ({ id, doc_type: "Refund", raw_json: { _agora_refund: true, RefundSource: src, RelatedInvoice: { Serie: "T", Number: n }, InvoiceItems: [{ Lines: lines }] } });
+  const l = (p: string, q: number) => ({ ProductId: p, SaleFormatId: "1", Index: 0, CreationDate: "2026-09-25T21:00:00", UnitPrice: 10, Quantity: q });
+  it("non-exact reopen freezes its products, others keep flowing", () => {
+    const ev = [inv("a", "1", [l("P1", 2), l("P2", 1)]), ref("r", "1", "Reopen", [l("P1", -1)])];
+    const f = ambiguousReopenFrozenProductIds(ev);
+    expect([...f]).toEqual(["P1"]);
+    expect(isFrozenLine({ provider_product_id: "P2" }, f)).toBe(false);
+  });
+  it("exact reopen freezes nothing", () => {
+    const ev = [inv("a", "1", [l("P1", 1)]), ref("r", "1", "Reopen", [l("P1", -1)])];
+    expect(ambiguousReopenFrozenProductIds(ev).size).toBe(0);
+  });
+  it("partial refund (not reopen) freezes nothing", () => {
+    const ev = [inv("a", "1", [l("P1", 2)]), ref("r", "1", "Manual", [l("P1", -1)])];
+    expect(ambiguousReopenFrozenProductIds(ev).size).toBe(0);
+  });
+});

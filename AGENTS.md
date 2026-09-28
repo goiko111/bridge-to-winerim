@@ -1,0 +1,1 @@
+- Agora stock writers must apply excludeReopenSupersededEvents + ambiguousReopenFrozenProductIds from _shared/agoraTicketLifecycle.ts — prevents reopen/convert double sales.
