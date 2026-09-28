@@ -126,6 +126,12 @@ export function decideCatalogChange(options: {
       : { outcome: "skipped", reason: "new_wine_not_priced", nextFingerprint };
   }
 
+  // A wine first seen without price (skipped as new_wine_not_priced) that
+  // becomes priced now is still an ALTA: only this transition, never a sweep.
+  if (pricingReady && previous.pricing_status != null && previous.pricing_status !== "READY") {
+    return { outcome: "new", nextFingerprint };
+  }
+
   const previousFingerprint = computeWinerimCatalogFingerprint(previous, fingerprintOptions);
   if (!previousFingerprint) {
     return { outcome: "skipped", reason: "previous_fingerprint_unavailable", nextFingerprint };
