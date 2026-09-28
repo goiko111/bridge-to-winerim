@@ -84,7 +84,7 @@ export function evaluateExternalResolution(c: AuditCase, ctx: ReadContext): Evid
   if (c.identity_scope !== "SALE" || !c.evidence_classification.startsWith("CONFIRMED_DUPLICATE")) return out("NOT_ELIGIBLE");
   const targets = c.candidate_targets || [];
   const saleIds = [...new Set(targets.map((t) => t.saleId))];
-  if (saleIds.length !== 1 || targets.some((t) => t.saleDetailId != null && targets.length > 1 && false)) return out("NOT_ELIGIBLE", ["single_candidate_sale_required"]);
+  if (saleIds.length !== 1) return out("NOT_ELIGIBLE", ["single_candidate_sale_required"]);
   const candId = Number(saleIds[0]);
   base.cancelled_sale_id = candId;
   const detailIds = targets.map((t) => t.saleDetailId).filter(Boolean) as string[];
@@ -135,10 +135,6 @@ export function evaluateExternalResolution(c: AuditCase, ctx: ReadContext): Evid
       else if (m.change !== expected) return out("CONFLICT", [`restored_${m.change}_expected_${expected}`]);
       else if (m.quantityAfter - m.quantityBefore !== m.change) missing.push("movement_inconsistent");
     }
-  }
-  if (!base.receipt_id) {
-    const r = ctx.keptSales.flatMap((s) => s.lines).find((l) => l.stockEffect?.receiptId)?.stockEffect?.receiptId;
-    base.receipt_id = null; void r; // receiptId only when the cancelled sale/return provides it
   }
   if (missing.length) return out("EXTERNAL_RESOLUTION_EVIDENCE_INCOMPLETE", missing);
   return { ...base, verdict: "RESOLVED_EXTERNALLY", missing: [] };
