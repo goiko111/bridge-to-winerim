@@ -70,4 +70,14 @@ describe("runtime guardrails", () => {
     expect(source).toContain('code: "CONNECTION_FORBIDDEN"');
     expect(source).toContain('code: "EXPORT_INCOMPLETE"');
   });
+
+  it("keeps the global 19 SALE / 6 DETAIL verifier independent from daily restaurant bindings", () => {
+    const globalVerifier = readFileSync(join(functionRoot, "verify-external-resolution/index.ts"), "utf8");
+    const daily = readFileSync(join(functionRoot, "run-daily-reconciliation/index.ts"), "utf8");
+    expect(globalVerifier).toContain('verificationScope: "GLOBAL_AUTHORIZED_EXTERNAL_RESOLUTIONS"');
+    expect(globalVerifier).toContain("detailBlocked !== 6");
+    expect(globalVerifier).not.toContain("winerim_restaurant_bindings");
+    expect(daily).not.toContain("verify-external-resolution");
+    expect(daily).not.toContain("AUTHORIZED_EXTERNAL_RESOLUTIONS_19");
+  });
 });

@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Applied once via the migration tool; the platform stored it under its own versioned name
-// (identical SQL minus the two header comment lines). Keeping a second copy would register a duplicate migration.
-const sql = readFileSync(resolve(process.cwd(), "supabase/migrations/20260928084312_d44bc070-e653-4209-9f14-2188f0019ae6.sql"), "utf8");
+// Lovable renames migration files on apply; locate them by content.
+const findMigration = (marker: string) => { const dir = resolve(process.cwd(), "supabase/migrations"); return readdirSync(dir).sort().map((n) => readFileSync(resolve(dir, n), "utf8")).find((t) => t.includes(marker)) ?? ""; };
+const sql = findMigration("reconciliation_v2_commit_sales_page");
+const stateSql = findMigration("state_contract_version");
 
 describe("migration security invariants", () => {
   it("uses RLS, security-invoker views and service-role-only mutating RPCs", () => {
@@ -30,5 +31,11 @@ describe("migration security invariants", () => {
   it("shows only results belonging to the latest run for a restaurant day", () => {
     expect(sql).toContain("latest.id=result.run_id");
     expect(sql).toContain("order by connection_id,business_day,source_cutoff_at desc");
+  });
+
+  it("publishes the canonical state contract while preserving the persisted legacy value", () => {
+    expect(stateSql).toContain("canonical_state"); expect(stateSql).toContain("state_contract_version");
+    for (const state of ["MATCHED","HISTORY_MISSING","STOCK_MISSING","BOTH_MISSING","STOCK_UNKNOWN","AMBIGUOUS","SOURCE_INCOMPLETE","DELETED_OR_CANCELLED","OPEN"]) expect(stateSql).toContain(`'${state}'`);
+    expect(stateSql).toContain("canonical_state as state");
   });
 });

@@ -3141,6 +3141,7 @@ export type Database = {
         Row: {
           agora_line: Json | null
           business_day: string | null
+          canonical_state: string | null
           connection_id: string | null
           evidence: Json | null
           first_seen_at: string | null
@@ -3153,6 +3154,7 @@ export type Database = {
           run_id: string | null
           source_line_key: string | null
           state: string | null
+          state_contract_version: string | null
           winerim_line: Json | null
         }
         Relationships: [

@@ -35,8 +35,8 @@ const complete = { agoraComplete: true, winerimComplete: true, stockComplete: tr
 
 describe("adapted daily audit coverage", () => {
   it("R1 exact identity matches", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [winerim()], completeness: complete })[0].state).toBe("MATCHED"));
-  it("R2 duplicate exact identities are never consumed automatically", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [winerim(), winerim({ saleId: 188511, lineId: "sale:188511" })], completeness: complete })[0].state).toBe("CONFIRMED_DUPLICATE"));
-  it("R3 missing history stays audit-only", () => { const row = reconcileLines({ connectionId, agora: [agora()], winerim: [], completeness: complete })[0]; expect(row.state).toBe("MISSING_IN_WINERIM"); expect(row.mode).toBe("AUDIT_ONLY"); });
+  it("R2 duplicate exact identities are never consumed automatically", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [winerim(), winerim({ saleId: 188511, lineId: "sale:188511" })], completeness: complete })[0].state).toBe("AMBIGUOUS"));
+  it("R3 missing history stays audit-only", () => { const row = reconcileLines({ connectionId, agora: [agora()], winerim: [], completeness: complete })[0]; expect(row.state).toBe("HISTORY_MISSING"); expect(row.mode).toBe("AUDIT_ONLY"); });
   it("R4 incomplete pagination never becomes a proven missing sale", () => expect(reconcileLines({ connectionId, agora: [agora()], winerim: [], completeness: { ...complete, winerimComplete: false } })[0].state).toBe("SOURCE_INCOMPLETE"));
 });
 
