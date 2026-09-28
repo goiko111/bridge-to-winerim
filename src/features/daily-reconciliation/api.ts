@@ -1,9 +1,9 @@
-import { supabase } from "@/integrations/supabase/client";
+import { createClient } from "@supabase/supabase-js";
 import type { FleetPayload, ReconciliationPayload } from "./types";
 
-// Reuse the app's single auth client (shared session storage) instead of a second GoTrue instance.
 const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL ?? "").replace(/\/$/, "");
 const anonKey = String(import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? "");
+const supabase = createClient(supabaseUrl, anonKey, { auth: { persistSession: true } });
 
 async function request(path: string): Promise<Response> {
   const { data, error } = await supabase.auth.getSession();
