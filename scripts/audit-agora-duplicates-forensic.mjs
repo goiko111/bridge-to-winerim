@@ -210,7 +210,7 @@ process.stderr.write("\n");
 groups.sort((a, b) => (a.restaurante + a.dia + a.producto_agora).localeCompare(b.restaurante + b.dia + b.producto_agora));
 fs.mkdirSync(OUT, { recursive: true });
 const cols = Object.keys(groups[0] || {});
-const esc = (v) => String(v ?? "").replace(/[;\n]/g, ",");
+const esc = (v) => (typeof v === "object" && v !== null ? JSON.stringify(v) : String(v ?? "")).replace(/[;\n]/g, ",");
 fs.writeFileSync(`${OUT}/auditoria-forense-duplicados-agora-v3-${FROM}_${TO}.csv`, [cols.join(";"), ...groups.map((g) => cols.map((c) => esc(g[c])).join(";"))].join("\n"));
 // Audit rows (all cases incl. SUPERSEDED_AT_SOURCE). Never an executable queue.
 const audit = groups.map((g) => ({
