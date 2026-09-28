@@ -1,0 +1,47 @@
+-- INERT EXAMPLE ONLY. Do not execute during the first deployment.
+-- Activate only after two successful manual AUDIT_ONLY cycles and use Vault-held
+-- credentials. The 15-minute job fans out active bindings for incremental sales
+-- and movements. The 06:00 Europe/Madrid job rereads the previous three business
+-- days with a 24-hour overlap, then reconciles each restaurant/day.
+--
+-- Required behavior of the scheduler wrapper:
+-- 1. Read ACTIVE bindings dynamically; never expect a fixed fleet count.
+-- 2. Skip persisted EXCLUDED/DISABLED bindings.
+-- 3. One connection/day per invocation; locks prevent overlap.
+-- 4. A 206/SOURCE_INCOMPLETE response is retained and retried only on the next
+--    scheduled cycle; it is never treated as success.
+-- 5. No call to refresh-current-stock until WINERIM_STOCK_CONTRACT_ACK is set.
+-- 6. No auto-repair under any state.
+--
+-- Activation gate (all mandatory):
+-- - migration + seven Edge Functions deployed and hashes recorded;
+-- - one ACTIVE non-excluded canary completes two manual cycles on two closed
+--   business days with identical row counts on immediate rerun;
+-- - `sales_records` and `stock_movements` checkpoints show complete 24-hour
+--   overlap and monotonic cursor/after_id;
+-- - tenant-isolation smoke test passes and direct raw-table SELECT is denied;
+-- - WINERIM_STOCK_CONTRACT_ACK remains unset unless the canonical contract gate
+--   has independently passed.
+--
+-- Recommended wrapper contract (create in a separate reviewed migration):
+--   reconciliation-v2-orchestrator(mode := 'AUDIT_ONLY', businessDay := null)
+-- It must derive each restaurant's `metadata.timezone` and
+-- `metadata.businessDayCutoffHour` (defaults Europe/Madrid / 06:00), call the
+-- three ingestion functions serially per connection, and only reconcile the
+-- last closed business day. Different connections may run in bounded parallel.
+--
+-- EXAMPLE ONLY — intentionally commented and therefore inert:
+-- select cron.schedule(
+--   'reconciliation-v2-incremental',
+--   '*/15 * * * *',
+--   $$select net.http_post(url := '<SUPABASE_URL>/functions/v1/reconciliation-v2-orchestrator',
+--       headers := jsonb_build_object('Authorization','Bearer ' || '<VAULT_SECRET>'),
+--       body := '{"mode":"AUDIT_ONLY","phase":"INCREMENTAL"}'::jsonb);$$
+-- );
+-- select cron.schedule(
+--   'reconciliation-v2-daily-close',
+--   '20 5 * * *', -- wrapper resolves restaurant-local cutoff; this is only a wake-up
+--   $$select net.http_post(url := '<SUPABASE_URL>/functions/v1/reconciliation-v2-orchestrator',
+--       headers := jsonb_build_object('Authorization','Bearer ' || '<VAULT_SECRET>'),
+--       body := '{"mode":"AUDIT_ONLY","phase":"DAILY_CLOSE"}'::jsonb);$$
+-- );
