@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
-import { agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../_shared/reconciliation-v2/agoraReader.ts";
+import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
@@ -96,12 +96,12 @@ Deno.serve(async (request) => {
     const { data: rules, error: rulesError } = await db.from("reconciliation_v2_category_rules").select("provider_product_id,family_key,category").eq("connection_id", connectionId);
     if (rulesError) throw Object.assign(new Error("No se pudieron leer reglas de categoría"), { status: 500, code: "CATEGORY_RULE_READ_FAILED" });
     const categories = new Map((rules ?? []).map((rule) => [`${rule.provider_product_id ?? ""}|${rule.family_key ?? ""}`, rule.category as AnalyticsCategory]));
-    const definitive = analyticsSource.lines.filter((row) => definitiveDocument(row.sales_event.doc_type)); const identities = definitive.map((row) => ({ row, identity: agoraProviderIdentity(row) })); const analyticsMissingIdentity = identities.filter((item) => !item.identity).length; const analyticsMissingAmount = identities.filter((item) => item.row.total_amount == null).length;
-    const unique = [...new Map(identities.filter((item): item is { row: AgoraDbLine; identity: string } => Boolean(item.identity) && item.row.total_amount != null).map((item) => [item.identity, item.row])).values()];
+    const definitive = analyticsSource.lines.filter((row) => definitiveDocument(row.sales_event.doc_type)); const identities = definitive.map((row) => ({ row, identity: agoraProviderIdentity(row), amount: agoraProviderAmount(row) })); const analyticsMissingIdentity = identities.filter((item) => !item.identity).length; const analyticsMissingAmount = identities.filter((item) => item.amount == null).length;
+    const unique = [...new Map(identities.filter((item): item is { row: AgoraDbLine; identity: string; amount: number } => Boolean(item.identity) && item.amount != null).map((item) => [item.identity, { ...item.row, provider_amount: item.amount }])).values()];
     const analyticsLines: AnalyticsLine[] = unique.map((row: AgoraDbLine & Record<string, unknown>) => {
       const explicit = categories.get(`${row.provider_product_id ?? ""}|${row.family ?? ""}`) ?? categories.get(`${row.provider_product_id ?? ""}|`) ?? categories.get(`|${row.family ?? ""}`);
       const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
-      return { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(row.total_amount ?? 0) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) };
+      return { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(row.provider_amount ?? 0) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) };
     });
     const buckets = buildAnalytics(analyticsLines, body.businessDay).map((row) => ({ ...row, freshnessAt: now }));
     const dayBuckets = buckets.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");

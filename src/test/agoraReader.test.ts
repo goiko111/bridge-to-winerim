@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../../supabase/functions/_shared/reconciliation-v2/agoraReader";
+import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, resolveAgoraIdentity, type AgoraDbLine } from "../../supabase/functions/_shared/reconciliation-v2/agoraReader";
 import { canonicalizeReconciliationState, RECONCILIATION_STATES } from "../../supabase/functions/_shared/reconciliation-v2/types";
 
 const connectionId = "1c5177f1-9459-4ee9-8b6e-4780f8b6b96b";
@@ -27,6 +27,43 @@ describe("Agora raw_json.lines adapter", () => {
     expect(resolved.missing).toEqual([]);
     expect(resolved.line).toMatchObject({ restaurantId: 346, documentId: "27747", externalOrderId: "27747", sourceLineId: "27747:0:0", quantity: 3, amountMinor: 0, effectiveAt: "2026-09-08T14:56:42" });
     expect(agoraProviderIdentity(row)).toContain("SALE|27747|27747:0:0|1789");
+  });
+
+  it("resolves the persisted Agora BasicInvoice shape InvoiceItems[].Lines[]", () => {
+    const persistedLine = { Index: 0, ProductId: 5707431, ProductName: "B Taittinger Brut Réserve", FamilyName: "ESPUMOSOS WINERIM", Quantity: 1, TotalAmount: 75, CreationDate: "2026-09-26T13:34:17" };
+    const row = dbLine(providerLine(0), [], {
+      provider_product_id: "5707431", provider_sold_at: "2026-09-26T13:34:17", quantity: 1, total_amount: 75,
+      name: "B Taittinger Brut Réserve", family: "ESPUMOSOS WINERIM", winerim_product_id: "70743",
+      sales_event: { provider_doc_id: "27980", business_day: "2026-09-26", doc_type: "BasicInvoice", raw_json: { BusinessDay: "2026-09-26", Number: 27980, DocumentType: "BasicInvoice", InvoiceItems: [{ GlobalId: "14487be3-9f68-4d3e-a82c-44672f570f80", Lines: [persistedLine] }] } },
+    });
+    const resolved = resolveAgoraIdentity(row, 346);
+    expect(resolved.missing).toEqual([]);
+    expect(resolved.line).toMatchObject({ externalOrderId: "14487be3-9f68-4d3e-a82c-44672f570f80", orderId: "27980", sourceLineId: "14487be3-9f68-4d3e-a82c-44672f570f80:0", wineId: "70743", effectiveAt: "2026-09-26T13:34:17", amountMinor: 7500 });
+    expect(agoraProviderIdentity(row)).toContain("SALE|14487be3-9f68-4d3e-a82c-44672f570f80|14487be3-9f68-4d3e-a82c-44672f570f80:0|5707431");
+  });
+
+  it("resolves the persisted Agora OpenTicket shape Lines[] and preserves OPEN", () => {
+    const persistedLine = { Index: 2, ProductId: 6051891, ProductName: "B Celler Kripta Rosat Trepat 2018", FamilyName: "ESPUMOSOS WINERIM", Quantity: 1, TotalAmount: 31, CreationDate: "2026-09-26T21:28:32" };
+    const row = dbLine(providerLine(0), [], {
+      provider_product_id: "6051891", provider_sold_at: "2026-09-26T21:28:32", quantity: 1, total_amount: 31,
+      name: "B Celler Kripta Rosat Trepat 2018", family: "ESPUMOSOS WINERIM", winerim_product_id: "105189",
+      sales_event: { provider_doc_id: "open_ticket:028c51f8-62f4-4d07-9a06-1b393242cc79", business_day: "2026-09-26", doc_type: "OpenTicket", raw_json: { BusinessDay: "2026-09-26", GlobalId: "028c51f8-62f4-4d07-9a06-1b393242cc79", Lines: [persistedLine] } },
+    });
+    const resolved = resolveAgoraIdentity(row, 346);
+    expect(resolved.missing).toEqual([]);
+    expect(resolved.line).toMatchObject({ externalOrderId: "028c51f8-62f4-4d07-9a06-1b393242cc79", sourceLineId: "028c51f8-62f4-4d07-9a06-1b393242cc79:2", isOpen: true });
+  });
+
+  it("uses Agora net amount while matching a fully discounted persisted line by gross evidence", () => {
+    const discounted = { Index: 23, ProductId: 578, ProductName: "CARAJILLO BAILEYS", FamilyName: "CAFETERIA", Quantity: 1, TotalAmount: 0, UnitPrice: 3.75, ProductPrice: 3.75, DiscountRate: 1, CreationDate: "2026-09-26T16:58:42" };
+    const row = dbLine(providerLine(0), [], {
+      provider_product_id: "578", provider_sold_at: "2026-09-26T16:58:42", quantity: 1, total_amount: 3.75,
+      name: "CARAJILLO BAILEYS", family: "CAFETERIA", winerim_product_id: null, mapped: false, is_wine_candidate: false,
+      sales_event: { provider_doc_id: "3074", business_day: "2026-09-26", doc_type: "BasicInvoice", raw_json: { Number: 3074, InvoiceItems: [{ GlobalId: "32cbbe91-495d-4706-a86f-0ee3c766296d", Lines: [discounted] }] } },
+    });
+    expect(agoraProviderIdentity(row)).toContain("|0|2026-09-26T16:58:42");
+    expect(agoraProviderAmount(row)).toBe(0);
+    expect(resolveAgoraIdentity(row, 346).missing).toEqual(["WINERIM_PRODUCT_ID"]);
   });
 
   it("demonstrates a usable Clinic-size 360-line day and fails closed only on duplicate signatures", () => {

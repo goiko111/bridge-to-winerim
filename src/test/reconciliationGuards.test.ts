@@ -25,6 +25,8 @@ describe("runtime guardrails", () => {
     const source = readFileSync(join(functionRoot, "winerim-fleet-reader/index.ts"), "utf8");
     expect(source).toContain("reconciliation_v2_connection_exclusions");
     expect(source).toContain("CONNECTION_PERSISTED_EXCLUDED");
+    expect(source).toContain("reconciliation_v2_connection_exclusions");
+    expect(source).toContain("CONNECTION_PERSISTED_EXCLUDED");
     expect(source).not.toContain("Ocean Club");
   });
 
