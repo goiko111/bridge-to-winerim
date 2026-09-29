@@ -38,11 +38,11 @@ describe("analytics raw_json projection", () => {
   it("projection drops unrelated payload volume", () => {
     expect(JSON.stringify(projectRaw(raws[0])).length).toBeLessThan(JSON.stringify(raws[0]).length / 10);
   });
-  it("analytics window uses the projected RPC, operational day keeps full rows", () => {
+  it("analytics window uses the projected RPC, operational day keeps full rows", async () => {
     const src = readFileSync("supabase/functions/run-daily-reconciliation/index.ts", "utf8");
     expect(src).toContain('sourceRows(db, connectionId, day, plusDays(day, 1), true)');
     expect(src).toContain('db.rpc("reconciliation_v2_analytics_events"');
-    const sql = readFileSync(new URL("../../supabase/migrations/", import.meta.url).pathname + require("node:fs").readdirSync("supabase/migrations").filter((f: string) => readFileSync(`supabase/migrations/${f}`, "utf8").includes("reconciliation_v2_analytics_events")).pop(), "utf8");
+    const { readdirSync } = await import("node:fs"); const file = readdirSync("supabase/migrations").filter((f) => readFileSync(`supabase/migrations/${f}`, "utf8").includes("reconciliation_v2_analytics_events")).pop(); const sql = readFileSync(`supabase/migrations/${file}`, "utf8");
     for (const k of LINE_KEYS) expect(sql).toContain(`'${k}'`);
     expect(sql).not.toMatch(/grant execute on function public\.reconciliation_v2_analytics_events[^;]*(anon|authenticated)/i);
   });
