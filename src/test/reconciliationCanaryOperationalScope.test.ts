@@ -20,7 +20,7 @@ describe("dryRun canary operational scope", () => {
   it("keeps certification independent of analytics (same completeness/results expressions)", () => {
     expect(handler).toMatch(/winerimComplete: winerim\.complete && deletions\.complete && salesCp\?\.coverage_complete === true/);
     expect(handler).toMatch(/let results = historical \? \[\] : reconcileLines\(\{ connectionId, agora, winerim: winerimRows, deletions: deletionRows, completeness \}\)/);
-    const beforeAnalytics = handler.slice(0, handler.indexOf("const finishAnalytics"));
+    const beforeAnalytics = handler.slice(0, handler.indexOf("type Bucket = "));
     expect(beforeAnalytics).not.toMatch(/buildAnalytics|analytics_aggregate/);
   });
   it("bounds daily source volume and fails closed beyond it", () => {
