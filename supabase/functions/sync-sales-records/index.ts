@@ -5,6 +5,8 @@ import { activeBinding, addBusinessDays, businessWindow, changedSinceFrom, check
 import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 
 type Body = { connectionId: string; dryRun?: boolean; maxPages?: number; overlapBusinessDay?: string; historicalRange?: boolean; from?: string; to?: string };
+// Technical diagnostic only: Postgres SQLSTATE + truncated message, never the page payload.
+const commitError = (message: string, code: string, error: { code?: string; message?: string }) => Object.assign(new Error(message), { status: 500, code, pgCode: error.code ?? null, pgMessage: String(error.message ?? "").slice(0, 200) });
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 
 Deno.serve(async (request) => {
@@ -35,7 +37,7 @@ Deno.serve(async (request) => {
       finalCursor = nextCursor;
       if (!dryRun) {
         const { error } = await db.rpc("reconciliation_v2_commit_sales_page", { p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_request_id: crypto.randomUUID(), p_records: page.data, p_deletions: page.deletions, p_next_cursor: nextCursor, p_has_more: hasMore, p_overlap_from: changedSince ?? saved?.overlap_from ?? new Date(Date.now() - 86_400_000).toISOString() });
-        if (error) throw Object.assign(new Error("Falló el commit atómico de ventas"), { status: 500, code: "SALES_PAGE_COMMIT_FAILED" });
+        if (error) throw commitError("Falló el commit atómico de ventas", "SALES_PAGE_COMMIT_FAILED", error);
       }
       if (!hasMore) { complete = true; break; }
       cursor = nextCursor; changedSince = undefined;
@@ -54,7 +56,7 @@ Deno.serve(async (request) => {
           const hasMore = page.pagination!.hasMore;
           if (!dryRun) {
             const { error } = await db.rpc("reconciliation_v2_commit_sales_page", { p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_request_id: crypto.randomUUID(), p_records: page.data, p_deletions: [], p_next_cursor: finalCursor, p_has_more: hasMore, p_overlap_from: window.to });
-            if (error) throw Object.assign(new Error("Falló el commit atómico del solape diario"), { status: 500, code: "SALES_OVERLAP_COMMIT_FAILED" });
+            if (error) throw commitError("Falló el commit atómico del solape diario", "SALES_OVERLAP_COMMIT_FAILED", error);
           }
           if (!hasMore) { overlap.complete = true; break; }
         }

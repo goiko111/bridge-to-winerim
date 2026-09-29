@@ -3429,6 +3429,10 @@ export type Database = {
         }
         Returns: string
       }
+      reconciliation_v2_json_array: {
+        Args: { p_field: string; p_value: Json }
+        Returns: Json
+      }
       reconciliation_v2_record_external_resolution: {
         Args: {
           p_audit_case_id: string

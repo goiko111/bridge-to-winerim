@@ -1,4 +1,4 @@
-import type { AgoraLine } from "./types.ts";
+import type { AgoraLine } from "../../../supabase/functions/_shared/reconciliation-v2/types.ts";
 
 type RawRow = Record<string, unknown>;
 
