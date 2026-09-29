@@ -1,17 +1,22 @@
-// Clinic-only AUDIT_ONLY daily scheduler logic. Pure and dependency-injected so it is testable.
+// Fleet AUDIT_ONLY daily scheduler logic (every ACTIVE binding; Ocean Club hard-excluded). Pure and dependency-injected so it is testable.
 import { addBusinessDays, bindingCutoffHour, bindingTimezone, businessWindow, type BindingMetadata } from "./time.ts";
 
 export const PIPELINE_VERSION = "clinic-audit-v1";
 export const SCHEDULER_LOCK_STREAM = "scheduler:daily";
 export const SCHEDULER_LOCK_TTL_SECONDS = 900;
 export const CLINIC_CONNECTION_ID = "1c5177f1-9459-4ee9-8b6e-4780f8b6b96b";
-/** Only connections allowed to run under the scheduler identity. Ocean Club and the rest of the fleet stay out. */
-export const SCHEDULER_CONNECTIONS: ReadonlySet<string> = new Set([CLINIC_CONNECTION_ID]);
+/** Never runs under the scheduler identity, whatever its binding says (client_closed). */
+export const SCHEDULER_EXCLUDED_CONNECTIONS: ReadonlySet<string> = new Set(["706b952e-767d-41af-9cba-8e225b16a877"]);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Scope = ACTIVE binding (enforced by activeBinding() in every step) minus the hard exclusions. */
+export function schedulerScopeAllows(connectionId: unknown): connectionId is string {
+  return typeof connectionId === "string" && UUID.test(connectionId) && !SCHEDULER_EXCLUDED_CONNECTIONS.has(connectionId.toLowerCase());
+}
 
 const fail = (message: string, status: number, code: string) => Object.assign(new Error(message), { status, code });
 
 export function assertSchedulerRequest(input: { connectionId: unknown; dryRun: unknown; historical: boolean; businessDay: unknown }): void {
-  if (typeof input.connectionId !== "string" || !SCHEDULER_CONNECTIONS.has(input.connectionId)) throw fail("Conexión fuera del alcance del scheduler", 403, "SCHEDULER_SCOPE_DENIED");
+  if (typeof input.connectionId !== "string" || !schedulerScopeAllows(input.connectionId)) throw fail("Conexión fuera del alcance del scheduler", 403, "SCHEDULER_SCOPE_DENIED");
   if (input.historical) throw fail("El scheduler no puede usar el modo histórico", 403, "SCHEDULER_HISTORICAL_FORBIDDEN");
   if (input.dryRun !== false) throw fail("El scheduler exige dryRun:false explícito", 400, "SCHEDULER_REQUIRES_EXPLICIT_DRYRUN_FALSE");
   if (typeof input.businessDay !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input.businessDay)) throw fail("El scheduler exige un día de negocio explícito", 400, "SCHEDULER_EXPLICIT_DAY_REQUIRED");
@@ -91,4 +96,17 @@ export async function runScheduledPipeline(binding: BindingMetadata, deps: Sched
       return await failWith(code);
     }
   } finally { await deps.release(); }
+}
+
+export type FleetRow = { connectionId: string; outcome: SchedulerOutcome["outcome"] | "DISPATCH_FAILED"; businessDay: string | null; errorCode?: string | null };
+/** The fleet is reconciled only if every enabled connection is bound and every bound one SUCCEEDED for its day. */
+export function summarizeFleet(rows: FleetRow[], unboundConnections: number) {
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.outcome] = (counts[row.outcome] ?? 0) + 1;
+  const reasons: string[] = [];
+  if (unboundConnections > 0) reasons.push(`BLOQUEADO_SIN_BINDING:${unboundConnections}`);
+  const notOk = rows.filter((r) => r.outcome !== "SUCCEEDED");
+  if (notOk.length) reasons.push(`CONEXIONES_NO_CONCILIADAS:${notOk.length}`);
+  if (rows.length === 0) reasons.push("SIN_CONEXIONES_VINCULADAS");
+  return { fleetReconciled: reasons.length === 0, counts, reasons };
 }
