@@ -162,56 +162,65 @@ Deno.serve(async (request) => {
     phase("hashed", { results: resultRows.length });
 
     // Operational/analytics split: a dryRun canary certifies only sources, checkpoints,
-    // identity and classification for the requested business_day. The 28-day analytics
-    // window (raw_json per day) is not needed for that and is never loaded in dryRun;
-    // it only runs on the committing path (scheduler), where it is persisted with the run.
-    const computeAnalytics = async () => {
+    // identity and classification for the requested business_day. Analytics are never
+    // computed in dryRun; on the committing path they come from the bounded PostgreSQL
+    // aggregate (reconciliation_v2_analytics_aggregate) — no historical raw_json reaches the Worker.
+    type Bucket = ReturnType<typeof buildAnalytics>[number];
+    const finishAnalytics = (buckets: Bucket[], stats: { complete: boolean; identityLines: number; included: number; missingIdentity: number; missingAmount: number; anchorLines: number; anchorCategoryLines: Record<string, number> }) => {
+      const withFreshness = buckets.map((row) => ({ ...row, freshnessAt: now }));
+      const dayBuckets = withFreshness.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
+      const analyticsCoverage = {
+        complete: stats.complete && stats.missingIdentity === 0 && stats.missingAmount === 0,
+        reasons: [stats.complete ? null : "ANALYTICS_SOURCE_INCOMPLETE", stats.missingIdentity ? "ANALYTICS_IDENTITY_FIELDS_MISSING" : null, stats.missingAmount ? "ANALYTICS_AMOUNT_MISSING" : null].filter((value): value is string => Boolean(value)),
+        sourceLines: stats.identityLines,
+        includedLines: stats.included,
+        missingIdentityLines: stats.missingIdentity,
+        missingAmountLines: stats.missingAmount,
+      };
+      const analytics = { coverage: analyticsCoverage, series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: stats.anchorCategoryLines[row.category] ?? 0, sourceLineCount: stats.anchorLines, currency: row.currency, freshnessAt: now })), aggregates: withFreshness };
+      return { analytics, analyticsCoverage };
+    };
+    // Legacy JS path — kept ONLY for the read-only equivalence check (dryRun + analyticsEquivalenceDays).
+    const legacyAnalytics = async (days: number) => {
       const { data: rules, error: rulesError } = await db.from("reconciliation_v2_category_rules").select("provider_product_id,family_key,category").eq("connection_id", connectionId);
       if (rulesError) throw Object.assign(new Error("No se pudieron leer reglas de categoría"), { status: 500, code: "CATEGORY_RULE_READ_FAILED" });
       const categories = new Map((rules ?? []).map((rule) => [`${rule.provider_product_id ?? ""}|${rule.family_key ?? ""}`, rule.category as AnalyticsCategory]));
-      // Bounded streaming: the 28-day window is read one business day at a time and each
-      // chunk is reduced to compact AnalyticsLine rows before the next is loaded, so raw_json
-      // for the whole range is never resident at once (Cienvinos: 12k events / 79k lines → 546).
-      // Map.set keeps last-wins semantics identical to the previous single-pass implementation.
-      const uniqueAnalytics = new Map<string, AnalyticsLine>(); let analyticsComplete = true; let analyticsIdentityLines = 0; let analyticsMissingIdentity = 0; let analyticsMissingAmount = 0;
-      for (let offsetDay = -27; offsetDay <= 0; offsetDay += 1) {
+      const uniqueAnalytics = new Map<string, AnalyticsLine>(); let complete = true; let identityLines = 0; let missingIdentity = 0; let missingAmount = 0;
+      for (let offsetDay = -(days - 1); offsetDay <= 0; offsetDay += 1) {
         const day = plusDays(body.businessDay, offsetDay);
         const chunk = offsetDay === 0 ? source : await sourceRows(db, connectionId, day, plusDays(day, 1), true);
-        analyticsComplete = analyticsComplete && chunk.complete;
+        complete = complete && chunk.complete;
         for (const row of chunk.lines) {
           if (!definitiveDocument(row.sales_event.doc_type)) continue;
-          analyticsIdentityLines += 1; const identity = agoraProviderIdentity(row); const amount = agoraProviderAmount(row);
-          if (!identity) analyticsMissingIdentity += 1; if (amount == null) analyticsMissingAmount += 1;
+          identityLines += 1; const identity = agoraProviderIdentity(row); const amount = agoraProviderAmount(row);
+          if (!identity) missingIdentity += 1; if (amount == null) missingAmount += 1;
           if (!identity || amount == null) continue;
           const explicit = categories.get(`${row.provider_product_id ?? ""}|${row.family ?? ""}`) ?? categories.get(`${row.provider_product_id ?? ""}|`) ?? categories.get(`|${row.family ?? ""}`);
           const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
           uniqueAnalytics.set(identity, { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(amount) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) });
         }
-        phase("analytics_day", { offsetDay, lines: chunk.lines.length, unique: uniqueAnalytics.size });
       }
-      const analyticsSource = { complete: analyticsComplete };
-      const analyticsLines: AnalyticsLine[] = [...uniqueAnalytics.values()]; const identities = { length: analyticsIdentityLines }; const unique = analyticsLines;
-      const buckets = buildAnalytics(analyticsLines, body.businessDay).map((row) => ({ ...row, freshnessAt: now }));
-      phase("analytics_buckets", { lines: analyticsLines.length, buckets: buckets.length });
-      const dayBuckets = buckets.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
-      const dayAnalytics = analyticsLines.filter((row) => row.effectiveAt.startsWith(body.businessDay)); const sourceCount = dayAnalytics.length;
-      const analyticsCoverage = {
-        complete: analyticsSource.complete && analyticsMissingIdentity === 0 && analyticsMissingAmount === 0,
-        reasons: [analyticsSource.complete ? null : "ANALYTICS_SOURCE_INCOMPLETE", analyticsMissingIdentity ? "ANALYTICS_IDENTITY_FIELDS_MISSING" : null, analyticsMissingAmount ? "ANALYTICS_AMOUNT_MISSING" : null].filter((value): value is string => Boolean(value)),
-        sourceLines: identities.length,
-        includedLines: unique.length,
-        missingIdentityLines: analyticsMissingIdentity,
-        missingAmountLines: analyticsMissingAmount,
-      };
-      // Analytics spans 28 days and may legitimately include older rows written with
-      // a previous payload shape. Report that coverage explicitly, but do not turn a
-      // complete daily sales-reconciliation source into SOURCE_INCOMPLETE because of
-      // unrelated historical dashboard rows.
-      const analytics = { coverage: analyticsCoverage, series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: dayAnalytics.filter((line) => line.category === row.category).length, sourceLineCount: sourceCount, currency: row.currency, freshnessAt: now })), aggregates: buckets };
-      return { analytics, analyticsCoverage };
+      const lines = [...uniqueAnalytics.values()]; const anchor = lines.filter((row) => row.effectiveAt.startsWith(body.businessDay));
+      const anchorCategoryLines: Record<string, number> = {}; for (const row of anchor) anchorCategoryLines[row.category] = (anchorCategoryLines[row.category] ?? 0) + 1;
+      return finishAnalytics(buildAnalytics(lines, body.businessDay), { complete, identityLines, included: lines.length, missingIdentity, missingAmount, anchorLines: anchor.length, anchorCategoryLines });
     };
+    // Persistent path: bounded SQL aggregate. Any RPC failure throws → nothing is committed (fail-closed).
+    const rpcAnalytics = async (days: number) => {
+      const { data, error } = await db.rpc("reconciliation_v2_analytics_aggregate", { p_connection_id: connectionId, p_from: plusDays(body.businessDay, -(days - 1)), p_to: nextDay, p_anchor: body.businessDay });
+      const agg = object(data);
+      if (error || !agg || !Array.isArray(agg.buckets)) throw Object.assign(new Error("Falló el agregado de analíticas"), { status: 500, code: "ANALYTICS_AGGREGATE_FAILED" });
+      const buckets = rpcBucketsToAnalytics(agg.buckets as Record<string, unknown>[]);
+      return finishAnalytics(buckets, { complete: source.complete, identityLines: Number(agg.identityLines), included: Number(agg.includedLines), missingIdentity: Number(agg.missingIdentityLines), missingAmount: Number(agg.missingAmountLines), anchorLines: Number(agg.anchorLines), anchorCategoryLines: (object(agg.anchorCategoryLines) ?? {}) as Record<string, number> });
+    };
+    const equivalenceDays = body.analyticsEquivalenceDays;
+    if (equivalenceDays !== undefined) {
+      if (!dryRun || auth.scheduler || historical || !Number.isInteger(equivalenceDays) || Number(equivalenceDays) < 1 || Number(equivalenceDays) > 28) throw Object.assign(new Error("analyticsEquivalenceDays solo en dryRun manual, 1..28"), { status: 400, code: "ANALYTICS_EQUIVALENCE_INVALID" });
+      const legacy = await legacyAnalytics(Number(equivalenceDays)); phase("equivalence_legacy_done");
+      const sql = await rpcAnalytics(Number(equivalenceDays)); phase("equivalence_rpc_done");
+      return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun: true, analyticsEquivalence: compareAnalytics(legacy.analytics, sql.analytics), days: equivalenceDays });
+    }
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
-    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await computeAnalytics();
+    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await rpcAnalytics(28);
     phase("analytics_done");
     const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
