@@ -11,7 +11,7 @@ import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconci
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
 import { applyWriterReceipts, extractWriterReceipts, writerReceiptOverlayMode } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
-type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown };
+type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown; analyticsEquivalenceDays?: number };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const plusDays = (day: string, amount: number) => { const date = new Date(`${day}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + amount); return date.toISOString().slice(0, 10); };
@@ -19,6 +19,31 @@ const object = (value: unknown): Record<string, unknown> | null => value && type
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 const definitiveDocument = (value: string) => /invoice|refund/i.test(value) && !/open|draft|ticket|order|void|cancelled|canceled/i.test(value);
 function sourceCurrency(row: AgoraDbLine): string | null { const raw = object(row.sales_event.raw_json); return text(raw?.currency) ?? text(object(raw?.amounts)?.currency); }
+
+/** Rebuild buildAnalytics()-shaped buckets from the SQL aggregate (costs are never known → null). */
+export function rpcBucketsToAnalytics(rows: Record<string, unknown>[]): ReturnType<typeof buildAnalytics> {
+  const totals = new Map<string, number>();
+  for (const row of rows) if (row.category === "ALL") totals.set(`${row.period}|${row.periodStart}`, Number(row.revenueMinor));
+  return rows.map((row) => {
+    const total = totals.get(`${row.period}|${row.periodStart}`) ?? 0; const revenueMinor = Number(row.revenueMinor);
+    return { period: String(row.period) as never, periodStart: String(row.periodStart), category: String(row.category) as never, quantity: Number(row.quantity), revenueMinor, revenueShare: total === 0 ? null : row.category === "ALL" ? 1 : revenueMinor / total, costMinor: null, marginMinor: null, ticketCount: Number(row.ticketCount), currency: row.currency == null ? null : String(row.currency) };
+  }).sort((a, b) => `${a.period}|${a.periodStart}|${a.category}`.localeCompare(`${b.period}|${b.periodStart}|${b.category}`));
+}
+
+/** Exact comparison except quantity float-summation noise (|Δ| ≤ 1e-9, documented). */
+export function compareAnalytics(legacy: { coverage: Record<string, unknown>; series: Record<string, unknown>[]; aggregates: Record<string, unknown>[] }, sql: typeof legacy) {
+  const diffs: string[] = []; let quantityNoise = 0;
+  const same = (a: unknown, b: unknown, key: string, where: string) => {
+    if (key === "quantity" && typeof a === "number" && typeof b === "number") { if (a === b) return; if (Math.abs(a - b) <= 1e-9) { quantityNoise += 1; return; } }
+    if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${where}.${key}`);
+  };
+  for (const key of new Set([...Object.keys(legacy.coverage), ...Object.keys(sql.coverage)])) same(legacy.coverage[key], sql.coverage[key], key, "coverage");
+  for (const [name, a, b] of [["series", legacy.series, sql.series], ["aggregates", legacy.aggregates, sql.aggregates]] as const) {
+    if (a.length !== b.length) { diffs.push(`${name}.length ${a.length}≠${b.length}`); continue; }
+    a.forEach((row, index) => { for (const key of new Set([...Object.keys(row), ...Object.keys(b[index])])) same(row[key], b[index][key], key, `${name}[${index}]`); });
+  }
+  return { equal: diffs.length === 0, diffCount: diffs.length, diffs: diffs.slice(0, 50), quantityNoise, buckets: legacy.aggregates.length, coverage: { legacy: legacy.coverage, sql: sql.coverage } };
+}
 
 async function paged<T>(builder: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>): Promise<{ rows: T[]; complete: boolean }> {
   const rows: T[] = [];
