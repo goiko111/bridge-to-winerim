@@ -68,19 +68,19 @@ const wf = (wineId: string, format: string | null) => `${norm(wineId)}|${canonic
 export function applyWriterReceipts(results: ReconciliationResult[], receipts: WriterReceipt[], known: WinerimLine[]) {
   const knownDetails = new Set(known.flatMap((w) => w.saleDetailId == null ? [] : [`${w.saleId}|${w.saleDetailId}`]));
   const knownDetailFromLine = new Set(known.map((w) => { const m = /^detail:(\d+)$/.exec(w.lineId); return m ? `${w.saleId}|${m[1]}` : `${w.saleId}|sale`; }));
-  const usable = receipts.filter((r) => r.saleDetailIds.length ? !r.saleDetailIds.some((d) => knownDetails.has(`${r.saleId}|${d}`) || knownDetailFromLine.has(`${r.saleId}|${d}`)) : !knownDetailFromLine.has(`${r.saleId}|sale`));
+  const usable = receipts.filter((r) => !knownDetailFromLine.has(`${r.saleId}|sale`) && !r.saleDetailIds.some((d) => knownDetails.has(`${r.saleId}|${d}`) || knownDetailFromLine.has(`${r.saleId}|${d}`)));
   const excludedAlreadyInRange = receipts.length - usable.length;
   const missing = results.filter((r) => r.state === "HISTORY_MISSING" && r.agora && !r.agora.isOpen && !r.agora.isCancelled);
   const agoraBySig = new Map<string, ReconciliationResult[]>(); for (const r of missing) { const a = r.agora as AgoraLine; const k = sig(a.wineId, a.format, a.effectiveAt); agoraBySig.set(k, [...(agoraBySig.get(k) ?? []), r]); }
   const receiptsBySig = new Map<string, WriterReceipt[]>(); for (const r of usable) { const k = sig(r.wineId, r.format, r.effectiveAtLocal); receiptsBySig.set(k, [...(receiptsBySig.get(k) ?? []), r]); }
-  const consumed = new Set<WriterReceipt>(); const decided = new Map<ReconciliationResult, ReconciliationResult>();
+  const confirmedReceipts = new Set<WriterReceipt>(); const decided = new Map<ReconciliationResult, ReconciliationResult>();
   for (const [k, rows] of agoraBySig) {
     const cands = receiptsBySig.get(k) ?? []; if (!cands.length) continue;
     const a = rows[0].agora as AgoraLine; const qty = cands.reduce((s, r) => s + r.quantity, 0);
     const amount = cands.every((r) => r.amountMinor != null) ? cands.reduce((s, r) => s + Number(r.amountMinor), 0) : null;
     const reasons = [rows.length !== 1 ? "MULTIPLE_AGORA_LINES_SAME_SIGNATURE" : null, qty !== a.quantity ? "QUANTITY_MISMATCH" : null, amount == null || a.amountMinor == null || Math.round(amount) !== Math.round(a.amountMinor) ? "AMOUNT_MISMATCH" : null].filter(Boolean) as string[];
-    cands.forEach((c) => consumed.add(c));
     if (reasons.length) { for (const row of rows) decided.set(row, ambiguous(row, cands, reasons)); continue; }
+    cands.forEach((c) => confirmedReceipts.add(c));
     const row = rows[0]; const movementIds = cands.flatMap((c) => c.stock.movementIds);
     decided.set(row, {
       ...row, state: "MATCHED",
@@ -95,7 +95,7 @@ export function applyWriterReceipts(results: ReconciliationResult[], receipts: W
     });
   }
   // Same wine+format receipts exist but no exact signature: never force, mark AMBIGUOUS.
-  const leftoverByWf = new Map<string, WriterReceipt[]>(); for (const r of usable) if (!consumed.has(r)) { const k = wf(r.wineId, r.format); leftoverByWf.set(k, [...(leftoverByWf.get(k) ?? []), r]); }
+  const leftoverByWf = new Map<string, WriterReceipt[]>(); for (const r of usable) if (!confirmedReceipts.has(r)) { const k = wf(r.wineId, r.format); leftoverByWf.set(k, [...(leftoverByWf.get(k) ?? []), r]); }
   for (const row of missing) {
     if (decided.has(row)) continue; const a = row.agora as AgoraLine; const cands = leftoverByWf.get(wf(a.wineId, a.format)) ?? [];
     if (cands.length) decided.set(row, ambiguous(row, cands, ["EFFECTIVE_AT_MISMATCH"]));

@@ -80,8 +80,7 @@ describe("writer receipts as second causal source (historical_range)", () => {
   it("receipt already represented by a range line is not reused (no double consumption)", () => {
     const range: WinerimLine = { restaurantId: 568, saleId: 191531, lineId: "sale:191531", saleDetailId: null, saleStatus: "confirmed", sourceSystem: "agora", externalOrderId: null, orderId: null, sourceLineId: null, invoiceId: null, receiptId: "r", wineId: "352358", format: "copa", quantity: 2, amountMinor: 2100, effectiveAt: `${DAY}T19:50:12`, businessDay: DAY, stockEffect: { known: true, status: "APPLIED", stockApplied: true, receiptId: "r", movementIds: [238408], movementDifference: -1, unbackedQty: null } };
     const agora = [agoraLine("352358", "19:50:12", 2, 21)];
-    const detailLine = { ...range, lineId: "detail:53321" };
-    const out = run(agora, [log("352358", [sale("352358", "19:50:12", 2, 21, 191531, [53321, 53322])])], [range, detailLine]);
+    const out = run(agora, [log("352358", [sale("352358", "19:50:12", 2, 21, 191531, [53321, 53322])])], [range]);
     expect(out.excludedAlreadyInRange).toBe(1); expect(out.results[0].state).toBe("MATCHED");
     expect((out.results[0].evidence as Record<string, unknown>).evidenceKind).not.toBe("WRITER_RECEIPT");
   });
