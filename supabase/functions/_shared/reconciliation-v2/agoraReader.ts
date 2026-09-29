@@ -207,3 +207,41 @@ export function classifyAgoraCoverage(input: { eventCount: number; lineCount: nu
   if (input.unresolvedCount > 0) reasons.push("AGORA_IDENTITY_UNRESOLVED");
   return { complete: reasons.length === 0, reasons };
 }
+
+/**
+ * Two explicit coverages. wineReconciliationCoverage gates the wine reconciliation:
+ * only WINE lines without identity, UNKNOWN classifications and WINE without mapping
+ * block it. analyticsCoverage measures every source line (identity + amount) and is
+ * never relaxed by classification. No payloads: counts and product id/name only.
+ */
+export function splitSourceCoverage(input: {
+  eventCount: number; pageComplete: boolean;
+  classified: { row: AgoraDbLine; classification: WineCandidateClassification }[];
+  hasProviderIdentity: (row: AgoraDbLine) => boolean;
+  hasAmount: (row: AgoraDbLine) => boolean;
+  unresolvedMappedWine: number; unmappedWine: number;
+}) {
+  const noId = input.classified.filter((c) => !input.hasProviderIdentity(c.row));
+  const unresolvedWineLines = noId.filter((c) => c.classification === "WINE").length + input.unresolvedMappedWine;
+  const unresolvedNonWineLines = noId.filter((c) => c.classification === "NOT_WINE").length;
+  const unresolvedUnknownLines = noId.filter((c) => c.classification === "UNKNOWN").length;
+  const unknown = input.classified.filter((c) => c.classification === "UNKNOWN");
+  const groups = new Map<string, { providerProductId: string | null; name: string | null; count: number }>();
+  for (const c of unknown) {
+    const id = c.row.provider_product_id ? String(c.row.provider_product_id) : null;
+    const name = c.row.name == null ? null : String(c.row.name);
+    const key = `${id}|${name}`; const g = groups.get(key) ?? { providerProductId: id, name, count: 0 }; g.count++; groups.set(key, g);
+  }
+  const unknownProducts = [...groups.values()].sort((a, b) => b.count - a.count || String(a.providerProductId).localeCompare(String(b.providerProductId)));
+  const wine = classifyAgoraCoverage({ eventCount: input.eventCount, lineCount: input.classified.length, pageComplete: input.pageComplete, unresolvedCount: unresolvedWineLines + unresolvedUnknownLines });
+  if (unknown.length) { wine.complete = false; wine.reasons.push("AGORA_WINE_CLASSIFICATION_INCOMPLETE"); }
+  if (input.unmappedWine) { wine.complete = false; wine.reasons.push("AGORA_WINE_MAPPING_INCOMPLETE"); }
+  const missingAmountLines = input.classified.filter((c) => !input.hasAmount(c.row)).length;
+  const analytics = classifyAgoraCoverage({ eventCount: input.eventCount, lineCount: input.classified.length, pageComplete: input.pageComplete, unresolvedCount: noId.length });
+  if (missingAmountLines) { analytics.complete = false; analytics.reasons.push("AGORA_AMOUNT_MISSING"); }
+  return {
+    wineReconciliationCoverage: wine,
+    analyticsCoverage: { ...analytics, lines: input.classified.length, missingIdentityLines: noId.length, missingAmountLines },
+    metrics: { unresolvedAllLines: noId.length + input.unresolvedMappedWine, unresolvedWineLines, unresolvedNonWineLines, unresolvedUnknownLines, unknownClassificationLines: unknown.length, unknownProducts },
+  };
+}
