@@ -26,7 +26,7 @@ export function toLocalWallClock(iso: string, timeZone: string): string | null {
 }
 
 /** Extracts only acknowledgements that prove history: log SUCCESS, sale httpStatus 200, historyWritten true, APPLIED, receipt + orderId of this connection/day/wine. */
-export function extractWriterReceipts(rows: Array<{ id: string; status: string | null; winerim_response: unknown }>, input: { connectionId: string; businessDay: string; timeZone: string }): { receipts: WriterReceipt[]; rejected: Record<string, number> } {
+export function extractWriterReceipts(rows: Array<{ id: string; status: string | null; winerim_product_id?: string | null; winerim_response: unknown }>, input: { connectionId: string; businessDay: string; timeZone: string }): { receipts: WriterReceipt[]; rejected: Record<string, number> } {
   const rejected: Record<string, number> = {}; const bump = (k: string) => { rejected[k] = (rejected[k] ?? 0) + 1; };
   const seen = new Set<string>(); const receipts: WriterReceipt[] = [];
   const orderPrefix = `agora:${input.connectionId.slice(0, 8)}:${input.businessDay}:`;
@@ -38,7 +38,7 @@ export function extractWriterReceipts(rows: Array<{ id: string; status: string |
       if (num(s.httpStatus) !== 200 || norm(s.result) !== "applied") { bump("NOT_HTTP_200_APPLIED"); continue; }
       if (s.historyWritten !== true) { bump("HISTORY_NOT_WRITTEN"); continue; }
       const receiptId = str(s.receiptId); const orderId = str(s.orderId); const saleId = num(s.saleId); const eff = str(s.effectiveAt);
-      const wineId = str(response?.winerimProductId) ?? null; const format = canonicalFormat(str(s.variant));
+      const wineId = str(row.winerim_product_id); const format = canonicalFormat(str(s.variant));
       const wineFromOrder = orderId?.startsWith(orderPrefix) ? orderId.slice(orderPrefix.length).split(":")[0] : null;
       if (!receiptId || !orderId || saleId == null || !eff || norm(s.sourceSystem) !== "agora" || !wineFromOrder) { bump("IDENTITY_INCOMPLETE_OR_FOREIGN"); continue; }
       if (wineId && norm(wineId) !== norm(wineFromOrder)) { bump("ORDER_WINE_MISMATCH"); continue; }
