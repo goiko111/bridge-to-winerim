@@ -34,6 +34,7 @@ import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
 import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
 import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
+import SalesExportPanel from "@/components/SalesExportPanel";
 import AgoraManualMatchPanel from "@/components/AgoraManualMatchPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
@@ -5038,7 +5039,10 @@ export default function AgoraWizard() {
             <StepSalesAnalytics connectionId={connectionId} />
           )}
           {currentStep === 13 && (
-            <AgoraTodaysSalesStock connectionId={connectionId} />
+            <div className="space-y-6">
+              <SalesExportPanel connectionId={connectionId} connectionName={locationName} />
+              <AgoraTodaysSalesStock connectionId={connectionId} />
+            </div>
           )}
           {currentStep === 14 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
