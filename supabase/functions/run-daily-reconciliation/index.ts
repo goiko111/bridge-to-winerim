@@ -5,9 +5,11 @@ import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
 import type { SaleDeletion, WinerimLine } from "../_shared/reconciliation-v2/types.ts";
-import { activeBinding, bindingCutoffHour, checkpoint, claim, release } from "../_shared/reconciliation-v2/runtime.ts";
+import { activeBinding, bindingCutoffHour, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
+import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
+import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
 
-type Body = { connectionId: string; businessDay: string; dryRun?: boolean };
+type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const plusDays = (day: string, amount: number) => { const date = new Date(`${day}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + amount); return date.toISOString().slice(0, 10); };
@@ -82,7 +84,7 @@ Deno.serve(async (request) => {
   const owner = crypto.randomUUID(); let locked = false; let connectionId = ""; let lockStream = ""; let dbForFinally: SupabaseClient | null = null;
   try {
     assertPost(request); const { db } = await requirePlatformAdmin(request); dbForFinally = db; const body = await parseJson<Body>(request);
-    connectionId = body.connectionId; if (!validDay(body.businessDay)) throw Object.assign(new Error("businessDay inválido"), { status: 400, code: "INVALID_BUSINESS_DAY" });
+    connectionId = body.connectionId; const historical = body.salesSourceMode !== undefined; if (historical) validateHistoricalReconcileRequest(body); if (!validDay(body.businessDay)) throw Object.assign(new Error("businessDay inválido"), { status: 400, code: "INVALID_BUSINESS_DAY" });
     const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId); const nextDay = plusDays(body.businessDay, 1); const cutoff = bindingCutoffHour(binding); const localFrom = `${body.businessDay}T${String(cutoff).padStart(2, "0")}:00:00`; const localTo = `${nextDay}T${String(cutoff).padStart(2, "0")}:00:00`;
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");
     const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
@@ -110,7 +112,20 @@ Deno.serve(async (request) => {
     });
     const deletionRows = deletions.rows.map((row) => ({ saleId: Number(row.sale_id), saleDetailId: row.sale_detail_id == null ? null : Number(row.sale_detail_id), lineId: String(row.line_id), reason: String(row.reason), deletedAt: String(row.deleted_at), effectiveAt: row.effective_at == null ? null : String(row.effective_at), externalOrderId: row.external_order_id == null ? null : String(row.external_order_id) })) as SaleDeletion[];
     const completeness = { agoraComplete: sourceCoverage.complete, winerimComplete: winerim.complete && deletions.complete && salesCp?.coverage_complete === true, stockComplete: movementCp?.coverage_complete === true, pagesRead: 0, expectedPages: null, reason: sourceCoverage.reasons.length ? sourceCoverage.reasons.join("+") : null };
-    const results = reconcileLines({ connectionId, agora, winerim: winerimRows, deletions: deletionRows, completeness });
+    let results = historical ? [] : reconcileLines({ connectionId, agora, winerim: winerimRows, deletions: deletionRows, completeness });
+    let historicalEvidence: Record<string, unknown> | null = null;
+    if (historical) {
+      // Manual AUDIT_ONLY: Winerim range read in memory; no checkpoint, cursor, lock or commit is touched.
+      const window = businessWindow(binding, body.businessDay);
+      const range = validateHistoricalRange({ historicalRange: true, dryRun: true, from: window.from, to: window.to, maxPages: 100 }, binding);
+      const read = await readHistoricalRange(fleetClient(), binding.winerim_restaurant_id, range);
+      const rangeLines = rangeRecordsToWinerimLines(read.records, binding.winerim_restaurant_id, body.businessDay, localFrom, localTo);
+      completeness.winerimComplete = read.evidence.coverageComplete && winerim.complete && deletions.complete;
+      const out = reconcileHistorical({ connectionId, agora, rangeLines, persistedLines: winerimRows, deletions: deletionRows, completeness });
+      results = out.results;
+      const { lineSummary: _omit, ...rangeEvidence } = read.evidence;
+      historicalEvidence = { salesSourceMode: "historical_range", range: rangeEvidence, rangeLinesInDay: rangeLines.length, persistedOnlyLines: out.persistedOnlyLines, agoraRepresentations: agora.length, agoraEconomicLines: out.economicAgora.length, supersededOpen: out.supersededOpen };
+    }
     const now = new Date().toISOString(); const runId = crypto.randomUUID();
     const resultRows = await Promise.all(results.map(async (row) => ({ ...row, revisionHash: await sha256Hex(row) })));
 
@@ -147,7 +162,7 @@ Deno.serve(async (request) => {
       const { error } = await db.rpc("reconciliation_v2_commit_run", { p_run_id: runId, p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_business_day: body.businessDay, p_source_cutoff_at: now, p_completeness: completeness, p_results: resultRows, p_metrics: metrics, p_analytics: analytics });
       if (error) throw Object.assign(new Error("Falló el commit atómico de conciliación"), { status: 500, code: "RECONCILIATION_COMMIT_FAILED" });
     }
-    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
+    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
   finally { if (locked && dbForFinally) { try { await release(dbForFinally, connectionId, lockStream, owner); } catch { /* TTL is the recovery path */ } } }
 });
