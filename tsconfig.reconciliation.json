@@ -31,6 +31,7 @@
     "supabase/functions/_shared/reconciliation-v2/scheduler.ts",
     "supabase/functions/_shared/reconciliation-v2/historicalSales.ts",
     "supabase/functions/_shared/reconciliation-v2/historicalReconcile.ts",
+    "supabase/functions/_shared/reconciliation-v2/writerReceipts.ts",
     "supabase/functions/_shared/reconciliation-v2/winerimFleetClient.ts",
     "supabase/functions/_shared/reconciliation-v2/fixtures/**/*.ts"
   ]
