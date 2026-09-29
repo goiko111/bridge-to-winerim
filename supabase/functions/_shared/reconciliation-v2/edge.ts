@@ -97,5 +97,6 @@ export function safeError(request: Request, error: unknown): Response {
   const status = typeof error === "object" && error && "status" in error ? Number((error as { status: unknown }).status) : 500;
   const code = typeof error === "object" && error && "code" in error ? String((error as { code: unknown }).code) : "UNEXPECTED_ERROR";
   const message = error instanceof Error ? error.message : "Error inesperado";
-  return json(request, { ok: false, code, message }, Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500);
+  const diag = typeof error === "object" && error && "pgCode" in error ? { pgCode: (error as { pgCode: unknown }).pgCode, pgMessage: (error as { pgMessage?: unknown }).pgMessage } : {};
+  return json(request, { ok: false, code, message, ...diag }, Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500);
 }
