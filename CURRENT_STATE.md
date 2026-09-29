@@ -7184,3 +7184,9 @@ CATALOGO, OPEN).
 
 ## 2026-09-29 — run-daily-reconciliation historical_range (v11, solo lectura)
 - Hechos: desplegada solo run-daily-reconciliation. Clinic 25/09: rango 8 ventas/15 líneas (9 del día) + 1 línea guardada (186783); Ágora 24→12 (12 OpenTicket sustituidos). 7 MATCHED (stock APPLIED), 1 AMBIGUOUS (27976, 109480, ventas 188378/188409), 4 HISTORY_MISSING (27970:118501, 27978:71263, 27979:71263, 27979:118501); 2 sobrantes Winerim 188378/188409. Contadores idénticos, locks 0.
+
+## 2026-09-29 — Scheduler diario Clinic-only (AUDIT_ONLY)
+- Hechos: job pg_cron id 15 `reconciliation-v2-clinic-daily-audit`, `15 5 * * *` UTC (07:15 CEST / 06:15 CET). Orquestador `reconciliation-v2-scheduler` (pipeline `clinic-audit-v1`): ventas → movimientos → conciliación; día cerrado calculado (Europe/Madrid, corte 06:00); lock `scheduler:daily` TTL 900 s; idempotente por conexión+día+versión; mismo error dos veces → BLOCKED.
+- Identidad: secreto Vault `reconciliation_scheduler_key_v1`; hash en `reconciliation_v2_scheduler_identities`. Tablas técnicas solo service_role.
+- Prueba manual 2026-09-29 03:19 UTC: día 27/09, ingesta COMPLETE (ventas +1 record/+7 líneas, movimientos +2), conciliación run 2600d088 SOURCE_INCOMPLETE (AGORA_NO_EVENTS_FOR_BUSINESS_DAY), 0 resultados. Tablas de negocio intactas; locks 0.
+- Rollback: supabase/rollback/reconciliation_v2_clinic_scheduler.rollback.sql.
