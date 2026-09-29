@@ -31,8 +31,12 @@ async function paged<T>(builder: (from: number, to: number) => PromiseLike<{ dat
   return { rows, complete: false };
 }
 
-async function sourceRows(db: SupabaseClient, connectionId: string, fromDay: string, toDay: string) {
-  const events = await paged<Record<string, unknown>>((from, to) => db.from("sales_events")
+async function sourceRows(db: SupabaseClient, connectionId: string, fromDay: string, toDay: string, projected = false) {
+  // projected=true (analytics only): PostgreSQL returns definitive documents with raw_json reduced
+  // to the keys read by agoraProviderIdentity/agoraProviderAmount/sourceCurrency — never full payloads.
+  const events = await paged<Record<string, unknown>>((from, to) => projected
+    ? db.rpc("reconciliation_v2_analytics_events", { p_connection_id: connectionId, p_from: fromDay, p_to: toDay }).range(from, to)
+    : db.from("sales_events")
     .select("id,provider_doc_id,business_day,doc_type,raw_json")
     .eq("connection_id", connectionId).gte("business_day", fromDay).lt("business_day", toDay)
     .order("business_day").order("id").range(from, to));
@@ -166,7 +170,7 @@ Deno.serve(async (request) => {
       const uniqueAnalytics = new Map<string, AnalyticsLine>(); let analyticsComplete = true; let analyticsIdentityLines = 0; let analyticsMissingIdentity = 0; let analyticsMissingAmount = 0;
       for (let offsetDay = -27; offsetDay <= 0; offsetDay += 1) {
         const day = plusDays(body.businessDay, offsetDay);
-        const chunk = offsetDay === 0 ? source : await sourceRows(db, connectionId, day, plusDays(day, 1));
+        const chunk = offsetDay === 0 ? source : await sourceRows(db, connectionId, day, plusDays(day, 1), true);
         analyticsComplete = analyticsComplete && chunk.complete;
         for (const row of chunk.lines) {
           if (!definitiveDocument(row.sales_event.doc_type)) continue;
