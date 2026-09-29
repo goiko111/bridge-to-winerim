@@ -6,12 +6,12 @@ import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
 import type { SaleDeletion, WinerimLine } from "../_shared/reconciliation-v2/types.ts";
-import { activeBinding, bindingCutoffHour, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
+import { activeBinding, bindingCutoffHour, bindingTimezone, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
 import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
-import { applyWriterReceipts, extractWriterReceipts } from "../_shared/reconciliation-v2/writerReceipts.ts";
+import { applyWriterReceipts, extractWriterReceipts, writerReceiptOverlayMode } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
-type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string };
+type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const plusDays = (day: string, amount: number) => { const date = new Date(`${day}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + amount); return date.toISOString().slice(0, 10); };
@@ -73,6 +73,12 @@ async function currentProductClassifications(db: SupabaseClient, connectionId: s
   return new Map(rows.map((row) => [row.provider_product_id, row]));
 }
 
+async function readAcks(db: SupabaseClient, connectionId: string, businessDay: string) {
+  return await paged<{ id: string; status: string | null; winerim_product_id: string | null; winerim_response: unknown }>((from, to) => db.from("stock_sync_log")
+    .select("id,status,winerim_product_id,winerim_response").eq("connection_id", connectionId).eq("status", "SUCCESS")
+    .eq("winerim_response->>businessDay", businessDay).order("created_at").order("id").range(from, to));
+}
+
 function toWinerim(row: Record<string, unknown>): WinerimLine {
   return {
     restaurantId: Number(row.restaurant_id), saleId: Number(row.sale_id), lineId: String(row.line_id), saleDetailId: row.sale_detail_id == null ? null : Number(row.sale_detail_id),
@@ -117,6 +123,15 @@ Deno.serve(async (request) => {
     const completeness = { agoraComplete: sourceCoverage.complete, winerimComplete: winerim.complete && deletions.complete && salesCp?.coverage_complete === true, stockComplete: movementCp?.coverage_complete === true, pagesRead: 0, expectedPages: null, reason: sourceCoverage.reasons.length ? sourceCoverage.reasons.join("+") : null };
     let results = historical ? [] : reconcileLines({ connectionId, agora, winerim: winerimRows, deletions: deletionRows, completeness });
     let historicalEvidence: Record<string, unknown> | null = null;
+    const overlayMode = writerReceiptOverlayMode({ requested: body.writerReceiptsOverlay, dryRun, scheduler: Boolean(auth.scheduler), historical });
+    let writerReceiptEvidence: Record<string, unknown> = { mode: overlayMode };
+    if (overlayMode === "NORMAL_DRY_RUN") {
+      const acks = await readAcks(db, connectionId, body.businessDay);
+      const extracted = extractWriterReceipts(acks.rows, { connectionId, businessDay: body.businessDay, timeZone: bindingTimezone(binding) });
+      const applied = acks.complete && completeness.agoraComplete && completeness.winerimComplete ? applyWriterReceipts(results, extracted.receipts, winerimRows) : { results, usableReceipts: 0, excludedAlreadyInRange: 0, confirmed: 0 };
+      results = applied.results;
+      writerReceiptEvidence = { mode: overlayMode, logsRead: acks.rows.length, logsComplete: acks.complete, applied: acks.complete && completeness.agoraComplete && completeness.winerimComplete, receipts: extracted.receipts.length, rejected: extracted.rejected, excludedAlreadyInRange: applied.excludedAlreadyInRange, usable: applied.usableReceipts, confirmedLines: applied.confirmed };
+    }
     if (historical) {
       // Manual AUDIT_ONLY: Winerim range read in memory; no checkpoint, cursor, lock or commit is touched.
       const window = businessWindow(binding, body.businessDay);
@@ -126,9 +141,7 @@ Deno.serve(async (request) => {
       completeness.winerimComplete = read.evidence.coverageComplete && winerim.complete && deletions.complete;
       const out = reconcileHistorical({ connectionId, agora, rangeLines, persistedLines: winerimRows, deletions: deletionRows, completeness });
       // Second causal source (read-only): persisted writer acknowledgements for this connection/day.
-      const acks = await paged<{ id: string; status: string | null; winerim_product_id: string | null; winerim_response: unknown }>((from, to) => db.from("stock_sync_log")
-        .select("id,status,winerim_product_id,winerim_response").eq("connection_id", connectionId).eq("status", "SUCCESS")
-        .eq("winerim_response->>businessDay", body.businessDay).order("created_at").order("id").range(from, to));
+      const acks = await readAcks(db, connectionId, body.businessDay);
       const extracted = extractWriterReceipts(acks.rows, { connectionId, businessDay: body.businessDay, timeZone: window.timezone });
       const applied = acks.complete ? applyWriterReceipts(out.results, extracted.receipts, out.winerimLines) : { results: out.results, usableReceipts: 0, excludedAlreadyInRange: 0, confirmed: 0 };
       results = applied.results;
@@ -171,7 +184,7 @@ Deno.serve(async (request) => {
       const { error } = await db.rpc("reconciliation_v2_commit_run", { p_run_id: runId, p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_business_day: body.businessDay, p_source_cutoff_at: now, p_completeness: completeness, p_results: resultRows, p_metrics: metrics, p_analytics: analytics });
       if (error) throw Object.assign(new Error("Falló el commit atómico de conciliación"), { status: 500, code: "RECONCILIATION_COMMIT_FAILED" });
     }
-    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
+    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, writerReceipts: writerReceiptEvidence, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
   finally { if (locked && dbForFinally) { try { await release(dbForFinally, connectionId, lockStream, owner); } catch { /* TTL is the recovery path */ } } }
 });
