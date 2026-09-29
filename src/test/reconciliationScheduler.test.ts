@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSchedulerRequest, CLINIC_CONNECTION_ID, closedBusinessDay, runScheduledPipeline, type SchedulerDeps, type StateRow, type StepResult } from "../../supabase/functions/_shared/reconciliation-v2/scheduler";
+import { assertSchedulerRequest, CLINIC_CONNECTION_ID, summarizeFleet, closedBusinessDay, runScheduledPipeline, type SchedulerDeps, type StateRow, type StepResult } from "../../supabase/functions/_shared/reconciliation-v2/scheduler";
 
 const binding = { metadata: { timezone: "Europe/Madrid", businessDayCutoffHour: 6 } };
 const ok = (day: string, extra: Record<string, unknown> = {}): StepResult => ({ status: 200, body: { dryRun: false, state: "COMPLETE", overlap: { businessDay: day, complete: true }, ...extra } });
@@ -43,7 +43,18 @@ describe("closedBusinessDay (Europe/Madrid, corte 06:00)", () => {
 
 describe("assertSchedulerRequest", () => {
   const base = { connectionId: CLINIC_CONNECTION_ID, dryRun: false, historical: false, businessDay: "2026-09-28" };
-  it("solo Clinic", () => { expect(() => assertSchedulerRequest({ ...base, connectionId: "706b952e-767d-41af-9cba-8e225b16a877" })).toThrow(/alcance/); });
+  it("Ocean Club excluido y connectionId inválido rechazado", () => {
+    expect(() => assertSchedulerRequest({ ...base, connectionId: "706b952e-767d-41af-9cba-8e225b16a877" })).toThrow(/alcance/);
+    expect(() => assertSchedulerRequest({ ...base, connectionId: "no-uuid" })).toThrow(/alcance/);
+    expect(() => assertSchedulerRequest({ ...base, connectionId: "21ee3345-1090-4e83-94f2-43126d6e7695" })).not.toThrow();
+  });
+  it("flota no conciliada con conexiones sin binding o incompletas", () => {
+    const ok = { connectionId: CLINIC_CONNECTION_ID, outcome: "SUCCEEDED" as const, businessDay: "2026-09-28" };
+    expect(summarizeFleet([ok], 0).fleetReconciled).toBe(true);
+    expect(summarizeFleet([ok], 24).reasons).toContain("BLOQUEADO_SIN_BINDING:24");
+    expect(summarizeFleet([ok, { ...ok, outcome: "SOURCE_INCOMPLETE" }], 0).fleetReconciled).toBe(false);
+    expect(summarizeFleet([], 0).fleetReconciled).toBe(false);
+  });
   it("rechaza modo histórico, dryRun implícito y día ausente", () => {
     expect(() => assertSchedulerRequest({ ...base, historical: true })).toThrow(/histórico/);
     expect(() => assertSchedulerRequest({ ...base, dryRun: undefined })).toThrow(/dryRun/);
