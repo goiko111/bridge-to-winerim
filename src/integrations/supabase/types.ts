@@ -3359,6 +3359,16 @@ export type Database = {
         Returns: undefined
       }
       is_platform_admin: { Args: never; Returns: boolean }
+      reconciliation_v2_analytics_events: {
+        Args: { p_connection_id: string; p_from: string; p_to: string }
+        Returns: {
+          business_day: string
+          doc_type: string
+          id: string
+          provider_doc_id: string
+          raw_json: Json
+        }[]
+      }
       reconciliation_v2_begin_candidate_probe: {
         Args: {
           p_business_day: string
@@ -3433,6 +3443,9 @@ export type Database = {
         Args: { p_field: string; p_value: Json }
         Returns: Json
       }
+      reconciliation_v2_project_raw: { Args: { r: Json }; Returns: Json }
+      reconciliation_v2_project_raw_line: { Args: { l: Json }; Returns: Json }
+      reconciliation_v2_project_raw_lines: { Args: { a: Json }; Returns: Json }
       reconciliation_v2_record_external_resolution: {
         Args: {
           p_audit_case_id: string
