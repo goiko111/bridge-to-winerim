@@ -1,8 +1,8 @@
 // POST /api/v2/sales/cancel — pure contract layer (per API_TOKEN_V2_DOCUMENTATION HTML, 2026-09).
-// Transport is DISABLED: nothing here performs network calls. Real cancellations need a separate GO,
+// Transport ENABLED (GO 2026-09-29) only via winerim-sales-cancel with dual nominal approval and readback.
 // nominal human approval and readback. Never compensate a sale with PUT /stock.
 
-export const CANCEL_EXECUTION_ENABLED = false as const;
+export const CANCEL_EXECUTION_ENABLED: boolean = true; // GO 2026-09-29: manual, dual approval + readback
 export const CANCEL_MAX_ENTRIES = 100;
 
 export type ImportMode = "history_and_stock" | "history_only" | "stock_only" | "legacy" | "UNKNOWN";

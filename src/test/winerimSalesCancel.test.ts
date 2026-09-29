@@ -53,8 +53,10 @@ describe("respuesta 200 mixta y UNCERTAIN", () => {
 });
 
 describe("transporte", () => {
-  it("desactivado siempre", () => {
-    expect(CANCEL_EXECUTION_ENABLED).toBe(false);
-    expect(() => assertCancelExecutionAllowed({ approvedBy: "a", secondCheckBy: "b" })).toThrow(/desactivado/);
+  it("activo solo con dos aprobadores distintos", () => {
+    expect(CANCEL_EXECUTION_ENABLED).toBe(true);
+    expect(() => assertCancelExecutionAllowed({ approvedBy: "a", secondCheckBy: "b" })).not.toThrow();
+    expect(() => assertCancelExecutionAllowed({ approvedBy: "a", secondCheckBy: "a" })).toThrow(/doble/);
+    expect(() => assertCancelExecutionAllowed({ approvedBy: "a", secondCheckBy: null })).toThrow(/doble/);
   });
 });
