@@ -11,7 +11,7 @@ import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconci
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
 import { applyWriterReceipts, extractWriterReceipts, writerReceiptOverlayMode } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
-type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown; analyticsEquivalenceDays?: number };
+type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown; analyticsEquivalenceDays?: number; analyticsProjectionBackfillDays?: number };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const plusDays = (day: string, amount: number) => { const date = new Date(`${day}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + amount); return date.toISOString().slice(0, 10); };
@@ -229,7 +229,7 @@ Deno.serve(async (request) => {
       const anchorCategoryLines: Record<string, number> = {}; for (const row of anchor) anchorCategoryLines[row.category] = (anchorCategoryLines[row.category] ?? 0) + 1;
       return finishAnalytics(buildAnalytics(lines, body.businessDay), { complete, identityLines, included: lines.length, missingIdentity, missingAmount, anchorLines: anchor.length, anchorCategoryLines });
     };
-    // Persistent path: bounded SQL aggregate. Any RPC failure throws → nothing is committed (fail-closed).
+    // Persistent path: bounded SQL aggregate over the compact projection (never raw_json). Any RPC failure throws → nothing is committed (fail-closed).
     const rpcAnalytics = async (days: number) => {
       const { data, error } = await db.rpc("reconciliation_v2_analytics_aggregate", { p_connection_id: connectionId, p_from: plusDays(body.businessDay, -(days - 1)), p_to: nextDay, p_anchor: body.businessDay });
       const agg = object(data);
@@ -237,6 +237,24 @@ Deno.serve(async (request) => {
       const buckets = rpcBucketsToAnalytics(agg.buckets as Record<string, unknown>[]);
       return finishAnalytics(buckets, { complete: source.complete, identityLines: Number(agg.identityLines), included: Number(agg.includedLines), missingIdentity: Number(agg.missingIdentityLines), missingAmount: Number(agg.missingAmountLines), anchorLines: Number(agg.anchorLines), anchorCategoryLines: (object(agg.anchorCategoryLines) ?? {}) as Record<string, number> });
     };
+    // Incremental projection: refresh exactly one business_day slice (technical table, no raw_json persisted).
+    const refreshDay = async (day: string, onlyMissing: boolean) => {
+      const { data, error } = await db.rpc("reconciliation_v2_analytics_refresh_day", { p_connection_id: connectionId, p_business_day: day, p_only_missing: onlyMissing });
+      if (error || !object(data)) throw Object.assign(new Error(`Falló el refresco de la proyección ${day}${error ? ` (${(error as { code?: string }).code ?? "?"}: ${String((error as { message?: string }).message ?? "").slice(0, 160)})` : ""}`), { status: 500, code: "ANALYTICS_PROJECTION_REFRESH_FAILED", day });
+      return object(data)!;
+    };
+    const backfillDays = body.analyticsProjectionBackfillDays;
+    if (backfillDays !== undefined) {
+      if (!dryRun || auth.scheduler || historical || !Number.isInteger(backfillDays) || Number(backfillDays) < 1 || Number(backfillDays) > 28) throw Object.assign(new Error("analyticsProjectionBackfillDays solo en dryRun manual, 1..28"), { status: 400, code: "ANALYTICS_BACKFILL_INVALID" });
+      const journal: Record<string, unknown>[] = [];
+      for (let offset = -(Number(backfillDays) - 1); offset <= 0; offset += 1) {
+        const day = plusDays(body.businessDay, offset); const started = Date.now();
+        try { journal.push({ ...(await refreshDay(day, true)), ms: Date.now() - started }); }
+        catch (error) { return json(request, { ok: false, mode: "AUDIT_ONLY", dryRun: true, backfill: journal, stoppedAt: day, error: String((error as Error).message).slice(0, 240) }, 500); }
+        phase("backfill_day", { day, ms: Date.now() - started });
+      }
+      return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun: true, backfill: journal });
+    }
     const equivalenceDays = body.analyticsEquivalenceDays;
     if (equivalenceDays !== undefined) {
       if (!dryRun || auth.scheduler || historical || !Number.isInteger(equivalenceDays) || Number(equivalenceDays) < 1 || Number(equivalenceDays) > 28) throw Object.assign(new Error("analyticsEquivalenceDays solo en dryRun manual, 1..28"), { status: 400, code: "ANALYTICS_EQUIVALENCE_INVALID" });
@@ -245,7 +263,7 @@ Deno.serve(async (request) => {
       return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun: true, analyticsEquivalence: compareAnalytics(legacy.analytics, sql.analytics), days: equivalenceDays });
     }
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
-    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await rpcAnalytics(28);
+    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await (async () => { await refreshDay(plusDays(body.businessDay, -1), false); await refreshDay(body.businessDay, false); phase("projection_refreshed"); return rpcAnalytics(28); })();
     phase("analytics_done");
     const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
