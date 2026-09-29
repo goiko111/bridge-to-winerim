@@ -5,7 +5,7 @@ export interface YurestClientConfig {
   providerToken: string;
   storeId: number;
   timeoutMs?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (url: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>;
 }
 
 export interface YurestListParams {

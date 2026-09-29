@@ -2,7 +2,7 @@ export interface HoldedClientConfig {
   baseUrl?: string;
   apiToken: string;
   timeoutMs?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (url: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>;
 }
 
 export interface HoldedListParams {
