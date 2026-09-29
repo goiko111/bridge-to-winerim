@@ -100,9 +100,13 @@ Deno.serve(async (request) => {
     connectionId = body.connectionId; const historical = body.salesSourceMode !== undefined; if (historical) validateHistoricalReconcileRequest(body); if (!validDay(body.businessDay)) throw Object.assign(new Error("businessDay inválido"), { status: 400, code: "INVALID_BUSINESS_DAY" });
     const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId); const nextDay = plusDays(body.businessDay, 1); const cutoff = bindingCutoffHour(binding); const localFrom = `${body.businessDay}T${String(cutoff).padStart(2, "0")}:00:00`; const localTo = `${nextDay}T${String(cutoff).padStart(2, "0")}:00:00`;
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");
+    // Phase markers: timing + counts only, never row data.
+    const t0 = performance.now(); const phase = (name: string, extra: Record<string, number> = {}) => console.log(`[rdr-phase] ${JSON.stringify({ phase: name, ms: Math.round(performance.now() - t0), dryRun, ...extra })}`);
     const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
+    phase("source_loaded", { events: source.eventCount, lines: source.lines.length });
     const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
     const productClassifications = await currentProductClassifications(db, connectionId, source.lines);
+    phase("classifications_loaded", { products: productClassifications.size });
     const classifiedSource = source.lines.map((row) => ({ row, classification: classifyWineCandidate(row, row.provider_product_id ? productClassifications.get(row.provider_product_id) ?? null : null) }));
     const wineCandidates = classifiedSource.filter((item) => item.classification === "WINE").map((item) => item.row);
     const unknownWineClassification = classifiedSource.filter((item) => item.classification === "UNKNOWN").map((item) => item.row);
@@ -153,7 +157,9 @@ Deno.serve(async (request) => {
       historicalEvidence = { salesSourceMode: "historical_range", range: rangeEvidence, rangeLinesInDay: rangeLines.length, persistedOnlyLines: out.persistedOnlyLines, agoraRepresentations: agora.length, agoraEconomicLines: out.economicAgora.length, supersededOpen: out.supersededOpen, writerReceipts: { logsRead: acks.rows.length, logsComplete: acks.complete, receipts: extracted.receipts.length, rejected: extracted.rejected, excludedAlreadyInRange: applied.excludedAlreadyInRange, usable: applied.usableReceipts, confirmedLines: applied.confirmed } };
     }
     const now = new Date().toISOString(); const runId = crypto.randomUUID();
+    phase("reconciled", { results: results.length });
     const resultRows = await Promise.all(results.map(async (row) => ({ ...row, revisionHash: await sha256Hex(row) })));
+    phase("hashed", { results: resultRows.length });
 
     // Operational/analytics split: a dryRun canary certifies only sources, checkpoints,
     // identity and classification for the requested business_day. The 28-day analytics
@@ -181,10 +187,12 @@ Deno.serve(async (request) => {
           const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
           uniqueAnalytics.set(identity, { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(amount) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) });
         }
+        phase("analytics_day", { offsetDay, lines: chunk.lines.length, unique: uniqueAnalytics.size });
       }
       const analyticsSource = { complete: analyticsComplete };
       const analyticsLines: AnalyticsLine[] = [...uniqueAnalytics.values()]; const identities = { length: analyticsIdentityLines }; const unique = analyticsLines;
       const buckets = buildAnalytics(analyticsLines, body.businessDay).map((row) => ({ ...row, freshnessAt: now }));
+      phase("analytics_buckets", { lines: analyticsLines.length, buckets: buckets.length });
       const dayBuckets = buckets.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
       const dayAnalytics = analyticsLines.filter((row) => row.effectiveAt.startsWith(body.businessDay)); const sourceCount = dayAnalytics.length;
       const analyticsCoverage = {
@@ -204,10 +212,13 @@ Deno.serve(async (request) => {
     };
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
     const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await computeAnalytics();
+    phase("analytics_done");
     const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
+      phase("commit_start", { results: resultRows.length });
       const { error } = await db.rpc("reconciliation_v2_commit_run", { p_run_id: runId, p_connection_id: connectionId, p_restaurant_id: binding.winerim_restaurant_id, p_business_day: body.businessDay, p_source_cutoff_at: now, p_completeness: completeness, p_results: resultRows, p_metrics: metrics, p_analytics: analytics });
+      phase("commit_done");
       if (error) throw Object.assign(new Error("Falló el commit atómico de conciliación"), { status: 500, code: "RECONCILIATION_COMMIT_FAILED" });
     }
     return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, writerReceipts: writerReceiptEvidence, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
