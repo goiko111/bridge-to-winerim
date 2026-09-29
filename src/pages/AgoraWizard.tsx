@@ -5038,7 +5038,10 @@ export default function AgoraWizard() {
             <StepSalesAnalytics connectionId={connectionId} />
           )}
           {currentStep === 13 && (
-            <AgoraTodaysSalesStock connectionId={connectionId} />
+            <div className="space-y-6">
+              <SalesExportPanel connectionId={connectionId} connectionName={locationName} />
+              <AgoraTodaysSalesStock connectionId={connectionId} />
+            </div>
           )}
           {currentStep === 14 && (
             <StepGoLive syncMode={syncMode} frequency={frequency} backfill={backfill}
