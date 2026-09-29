@@ -11,7 +11,7 @@ import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconci
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
 import { applyWriterReceipts, extractWriterReceipts, writerReceiptOverlayMode } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
-type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown };
+type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown; analyticsEquivalenceDays?: number };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 const plusDays = (day: string, amount: number) => { const date = new Date(`${day}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + amount); return date.toISOString().slice(0, 10); };
@@ -19,6 +19,31 @@ const object = (value: unknown): Record<string, unknown> | null => value && type
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 const definitiveDocument = (value: string) => /invoice|refund/i.test(value) && !/open|draft|ticket|order|void|cancelled|canceled/i.test(value);
 function sourceCurrency(row: AgoraDbLine): string | null { const raw = object(row.sales_event.raw_json); return text(raw?.currency) ?? text(object(raw?.amounts)?.currency); }
+
+/** Rebuild buildAnalytics()-shaped buckets from the SQL aggregate (costs are never known → null). */
+export function rpcBucketsToAnalytics(rows: Record<string, unknown>[]): ReturnType<typeof buildAnalytics> {
+  const totals = new Map<string, number>();
+  for (const row of rows) if (row.category === "ALL") totals.set(`${row.period}|${row.periodStart}`, Number(row.revenueMinor));
+  return rows.map((row) => {
+    const total = totals.get(`${row.period}|${row.periodStart}`) ?? 0; const revenueMinor = Number(row.revenueMinor);
+    return { period: String(row.period) as never, periodStart: String(row.periodStart), category: String(row.category) as never, quantity: Number(row.quantity), revenueMinor, revenueShare: total === 0 ? null : row.category === "ALL" ? 1 : revenueMinor / total, costMinor: null, marginMinor: null, ticketCount: Number(row.ticketCount), currency: row.currency == null ? null : String(row.currency) };
+  }).sort((a, b) => `${a.period}|${a.periodStart}|${a.category}`.localeCompare(`${b.period}|${b.periodStart}|${b.category}`));
+}
+
+/** Exact comparison except quantity float-summation noise (|Δ| ≤ 1e-9, documented). */
+export function compareAnalytics(legacy: { coverage: Record<string, unknown>; series: Record<string, unknown>[]; aggregates: Record<string, unknown>[] }, sql: typeof legacy) {
+  const diffs: string[] = []; let quantityNoise = 0;
+  const same = (a: unknown, b: unknown, key: string, where: string) => {
+    if (key === "quantity" && typeof a === "number" && typeof b === "number") { if (a === b) return; if (Math.abs(a - b) <= 1e-9) { quantityNoise += 1; return; } }
+    if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${where}.${key}`);
+  };
+  for (const key of new Set([...Object.keys(legacy.coverage), ...Object.keys(sql.coverage)])) same(legacy.coverage[key], sql.coverage[key], key, "coverage");
+  for (const [name, a, b] of [["series", legacy.series, sql.series], ["aggregates", legacy.aggregates, sql.aggregates]] as const) {
+    if (a.length !== b.length) { diffs.push(`${name}.length ${a.length}≠${b.length}`); continue; }
+    a.forEach((row, index) => { for (const key of new Set([...Object.keys(row), ...Object.keys(b[index])])) same(row[key], b[index][key], key, `${name}[${index}]`); });
+  }
+  return { equal: diffs.length === 0, diffCount: diffs.length, diffs: diffs.slice(0, 50), quantityNoise, buckets: legacy.aggregates.length, coverage: { legacy: legacy.coverage, sql: sql.coverage } };
+}
 
 async function paged<T>(builder: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>): Promise<{ rows: T[]; complete: boolean }> {
   const rows: T[] = [];
@@ -162,56 +187,65 @@ Deno.serve(async (request) => {
     phase("hashed", { results: resultRows.length });
 
     // Operational/analytics split: a dryRun canary certifies only sources, checkpoints,
-    // identity and classification for the requested business_day. The 28-day analytics
-    // window (raw_json per day) is not needed for that and is never loaded in dryRun;
-    // it only runs on the committing path (scheduler), where it is persisted with the run.
-    const computeAnalytics = async () => {
+    // identity and classification for the requested business_day. Analytics are never
+    // computed in dryRun; on the committing path they come from the bounded PostgreSQL
+    // aggregate (reconciliation_v2_analytics_aggregate) — no historical raw_json reaches the Worker.
+    type Bucket = ReturnType<typeof buildAnalytics>[number];
+    const finishAnalytics = (buckets: Bucket[], stats: { complete: boolean; identityLines: number; included: number; missingIdentity: number; missingAmount: number; anchorLines: number; anchorCategoryLines: Record<string, number> }) => {
+      const withFreshness = buckets.map((row) => ({ ...row, freshnessAt: now }));
+      const dayBuckets = withFreshness.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
+      const analyticsCoverage = {
+        complete: stats.complete && stats.missingIdentity === 0 && stats.missingAmount === 0,
+        reasons: [stats.complete ? null : "ANALYTICS_SOURCE_INCOMPLETE", stats.missingIdentity ? "ANALYTICS_IDENTITY_FIELDS_MISSING" : null, stats.missingAmount ? "ANALYTICS_AMOUNT_MISSING" : null].filter((value): value is string => Boolean(value)),
+        sourceLines: stats.identityLines,
+        includedLines: stats.included,
+        missingIdentityLines: stats.missingIdentity,
+        missingAmountLines: stats.missingAmount,
+      };
+      const analytics = { coverage: analyticsCoverage, series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: stats.anchorCategoryLines[row.category] ?? 0, sourceLineCount: stats.anchorLines, currency: row.currency, freshnessAt: now })), aggregates: withFreshness };
+      return { analytics, analyticsCoverage };
+    };
+    // Legacy JS path — kept ONLY for the read-only equivalence check (dryRun + analyticsEquivalenceDays).
+    const legacyAnalytics = async (days: number) => {
       const { data: rules, error: rulesError } = await db.from("reconciliation_v2_category_rules").select("provider_product_id,family_key,category").eq("connection_id", connectionId);
       if (rulesError) throw Object.assign(new Error("No se pudieron leer reglas de categoría"), { status: 500, code: "CATEGORY_RULE_READ_FAILED" });
       const categories = new Map((rules ?? []).map((rule) => [`${rule.provider_product_id ?? ""}|${rule.family_key ?? ""}`, rule.category as AnalyticsCategory]));
-      // Bounded streaming: the 28-day window is read one business day at a time and each
-      // chunk is reduced to compact AnalyticsLine rows before the next is loaded, so raw_json
-      // for the whole range is never resident at once (Cienvinos: 12k events / 79k lines → 546).
-      // Map.set keeps last-wins semantics identical to the previous single-pass implementation.
-      const uniqueAnalytics = new Map<string, AnalyticsLine>(); let analyticsComplete = true; let analyticsIdentityLines = 0; let analyticsMissingIdentity = 0; let analyticsMissingAmount = 0;
-      for (let offsetDay = -27; offsetDay <= 0; offsetDay += 1) {
+      const uniqueAnalytics = new Map<string, AnalyticsLine>(); let complete = true; let identityLines = 0; let missingIdentity = 0; let missingAmount = 0;
+      for (let offsetDay = -(days - 1); offsetDay <= 0; offsetDay += 1) {
         const day = plusDays(body.businessDay, offsetDay);
         const chunk = offsetDay === 0 ? source : await sourceRows(db, connectionId, day, plusDays(day, 1), true);
-        analyticsComplete = analyticsComplete && chunk.complete;
+        complete = complete && chunk.complete;
         for (const row of chunk.lines) {
           if (!definitiveDocument(row.sales_event.doc_type)) continue;
-          analyticsIdentityLines += 1; const identity = agoraProviderIdentity(row); const amount = agoraProviderAmount(row);
-          if (!identity) analyticsMissingIdentity += 1; if (amount == null) analyticsMissingAmount += 1;
+          identityLines += 1; const identity = agoraProviderIdentity(row); const amount = agoraProviderAmount(row);
+          if (!identity) missingIdentity += 1; if (amount == null) missingAmount += 1;
           if (!identity || amount == null) continue;
           const explicit = categories.get(`${row.provider_product_id ?? ""}|${row.family ?? ""}`) ?? categories.get(`${row.provider_product_id ?? ""}|`) ?? categories.get(`|${row.family ?? ""}`);
           const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
           uniqueAnalytics.set(identity, { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(amount) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) });
         }
-        phase("analytics_day", { offsetDay, lines: chunk.lines.length, unique: uniqueAnalytics.size });
       }
-      const analyticsSource = { complete: analyticsComplete };
-      const analyticsLines: AnalyticsLine[] = [...uniqueAnalytics.values()]; const identities = { length: analyticsIdentityLines }; const unique = analyticsLines;
-      const buckets = buildAnalytics(analyticsLines, body.businessDay).map((row) => ({ ...row, freshnessAt: now }));
-      phase("analytics_buckets", { lines: analyticsLines.length, buckets: buckets.length });
-      const dayBuckets = buckets.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
-      const dayAnalytics = analyticsLines.filter((row) => row.effectiveAt.startsWith(body.businessDay)); const sourceCount = dayAnalytics.length;
-      const analyticsCoverage = {
-        complete: analyticsSource.complete && analyticsMissingIdentity === 0 && analyticsMissingAmount === 0,
-        reasons: [analyticsSource.complete ? null : "ANALYTICS_SOURCE_INCOMPLETE", analyticsMissingIdentity ? "ANALYTICS_IDENTITY_FIELDS_MISSING" : null, analyticsMissingAmount ? "ANALYTICS_AMOUNT_MISSING" : null].filter((value): value is string => Boolean(value)),
-        sourceLines: identities.length,
-        includedLines: unique.length,
-        missingIdentityLines: analyticsMissingIdentity,
-        missingAmountLines: analyticsMissingAmount,
-      };
-      // Analytics spans 28 days and may legitimately include older rows written with
-      // a previous payload shape. Report that coverage explicitly, but do not turn a
-      // complete daily sales-reconciliation source into SOURCE_INCOMPLETE because of
-      // unrelated historical dashboard rows.
-      const analytics = { coverage: analyticsCoverage, series: dayBuckets.map((row) => ({ businessDay: row.periodStart, category: row.category, revenueMinor: row.revenueMinor, quantity: row.quantity, ticketCount: row.ticketCount, classifiedLineCount: dayAnalytics.filter((line) => line.category === row.category).length, sourceLineCount: sourceCount, currency: row.currency, freshnessAt: now })), aggregates: buckets };
-      return { analytics, analyticsCoverage };
+      const lines = [...uniqueAnalytics.values()]; const anchor = lines.filter((row) => row.effectiveAt.startsWith(body.businessDay));
+      const anchorCategoryLines: Record<string, number> = {}; for (const row of anchor) anchorCategoryLines[row.category] = (anchorCategoryLines[row.category] ?? 0) + 1;
+      return finishAnalytics(buildAnalytics(lines, body.businessDay), { complete, identityLines, included: lines.length, missingIdentity, missingAmount, anchorLines: anchor.length, anchorCategoryLines });
     };
+    // Persistent path: bounded SQL aggregate. Any RPC failure throws → nothing is committed (fail-closed).
+    const rpcAnalytics = async (days: number) => {
+      const { data, error } = await db.rpc("reconciliation_v2_analytics_aggregate", { p_connection_id: connectionId, p_from: plusDays(body.businessDay, -(days - 1)), p_to: nextDay, p_anchor: body.businessDay });
+      const agg = object(data);
+      if (error || !agg || !Array.isArray(agg.buckets)) throw Object.assign(new Error(`Falló el agregado de analíticas${error ? ` (${(error as { code?: string }).code ?? "?"}: ${String((error as { message?: string }).message ?? "").slice(0, 160)})` : ""}`), { status: 500, code: "ANALYTICS_AGGREGATE_FAILED" });
+      const buckets = rpcBucketsToAnalytics(agg.buckets as Record<string, unknown>[]);
+      return finishAnalytics(buckets, { complete: source.complete, identityLines: Number(agg.identityLines), included: Number(agg.includedLines), missingIdentity: Number(agg.missingIdentityLines), missingAmount: Number(agg.missingAmountLines), anchorLines: Number(agg.anchorLines), anchorCategoryLines: (object(agg.anchorCategoryLines) ?? {}) as Record<string, number> });
+    };
+    const equivalenceDays = body.analyticsEquivalenceDays;
+    if (equivalenceDays !== undefined) {
+      if (!dryRun || auth.scheduler || historical || !Number.isInteger(equivalenceDays) || Number(equivalenceDays) < 1 || Number(equivalenceDays) > 28) throw Object.assign(new Error("analyticsEquivalenceDays solo en dryRun manual, 1..28"), { status: 400, code: "ANALYTICS_EQUIVALENCE_INVALID" });
+      const legacy = await legacyAnalytics(Number(equivalenceDays)); phase("equivalence_legacy_done");
+      const sql = await rpcAnalytics(Number(equivalenceDays)); phase("equivalence_rpc_done");
+      return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun: true, analyticsEquivalence: compareAnalytics(legacy.analytics, sql.analytics), days: equivalenceDays });
+    }
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
-    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await computeAnalytics();
+    const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await rpcAnalytics(28);
     phase("analytics_done");
     const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
