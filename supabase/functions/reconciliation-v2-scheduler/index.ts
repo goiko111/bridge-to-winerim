@@ -4,7 +4,7 @@
 // a fleet summary; with connectionId it runs that single restaurant.
 import { assertPost, json, parseJson, requireAdminOrScheduler, safeError, SCHEDULER_KEY_HEADER } from "../_shared/reconciliation-v2/edge.ts";
 import { activeBinding } from "../_shared/reconciliation-v2/runtime.ts";
-import { closedBusinessDay, type FleetRow, PIPELINE_VERSION, runScheduledPipeline, SCHEDULER_LOCK_STREAM, SCHEDULER_LOCK_TTL_SECONDS, schedulerScopeAllows, type StepResult, summarizeFleet } from "../_shared/reconciliation-v2/scheduler.ts";
+import { type FleetRow, PIPELINE_VERSION, runScheduledPipeline, SCHEDULER_LOCK_STREAM, SCHEDULER_LOCK_TTL_SECONDS, schedulerScopeAllows, type StepResult, summarizeFleet } from "../_shared/reconciliation-v2/scheduler.ts";
 
 const CONCURRENCY = 2;
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
@@ -26,10 +26,10 @@ Deno.serve(async (request) => {
       // ── Dispatcher ──
       const { data: bindings, error } = await db.from("winerim_restaurant_bindings").select("connection_id,metadata").eq("status", "ACTIVE");
       if (error) throw Object.assign(new Error("Bindings"), { status: 500, code: "BINDINGS_READ_FAILED" });
-      const { count: enabled, error: cErr } = await db.from("pos_connections").select("id", { count: "exact", head: true }).eq("provider", "agora").eq("enabled", true);
+      const { count: enabled, error: cErr } = await db.from("pos_connections").select("id", { count: "exact", head: true }).eq("provider", "agora").eq("enabled", true).neq("id", "706b952e-767d-41af-9cba-8e225b16a877");
       if (cErr) throw Object.assign(new Error("Conexiones"), { status: 500, code: "CONNECTIONS_READ_FAILED" });
       const targets = (bindings ?? []).filter((b) => schedulerScopeAllows(b.connection_id));
-      const unbound = Math.max(0, (enabled ?? 0) - targets.length - 1 /* Ocean Club, excluded by design */);
+      const unbound = Math.max(0, (enabled ?? 0) - targets.length);
       const work = async () => {
         const rows: FleetRow[] = []; const queue = [...targets];
         await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
@@ -70,7 +70,6 @@ Deno.serve(async (request) => {
       movements: (day) => post("sync-stock-movements", { connectionId, dryRun: false, maxPages: 100, overlapBusinessDay: day }),
       reconcile: (day) => post("run-daily-reconciliation", { connectionId, businessDay: day, dryRun: false }),
     });
-    void closedBusinessDay;
     return json(request, { ok: outcome.outcome === "SUCCEEDED", mode: "AUDIT_ONLY", pipelineVersion: PIPELINE_VERSION, connectionId, ...outcome });
   } catch (error) { return safeError(request, error); }
 });
