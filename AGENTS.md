@@ -1,2 +1,3 @@
 - Agora stock writers must apply excludeReopenSupersededEvents + ambiguousReopenFrozenProductIds from _shared/agoraTicketLifecycle.ts — prevents reopen/convert double sales.
 - sync-sales-records historicalRange mode is read-only by construction (no checkpoint/lock/commit) — protects the operational cursor.
+- run-daily-reconciliation salesSourceMode:historical_range is manual dryRun-only; open-ticket dedupe and multi-sale AMBIGUOUS overlay live only in historicalReconcile.ts — normal/scheduler engine untouched.
