@@ -517,7 +517,7 @@ function commercialDCode(wineName: string | null | undefined): string | null {
   return match ? `D${match[1]}` : null;
 }
 
-function commercialGenericCode(wineName: string | null | undefined): { prefix: string; number: number } | null {
+function commercialGenericCode(wineName: string | null | undefined): { prefix: string; number: number; suffix?: string } | null {
   const text = String(wineName || "").toUpperCase();
   const magnum = text.match(/\bMAGNUM\s*[-_ ]?(\d{1,3})\b/);
   if (magnum) return { prefix: "MAGNUM", number: Number(magnum[1]) };
@@ -1587,7 +1587,6 @@ async function importWinerimSalesOnly(input: {
   });
   return {
     attempted: true,
-    ok: result.ok,
     qty,
     live: false,
     orderId,
@@ -3853,8 +3852,9 @@ async function syncStockForDays(
       totals.skipped += Number(result.skipped || 0);
       totals.failed += Number(result.failed || 0);
       totals.checkedDays++;
-      if (Array.isArray(result.errors)) {
-        totals.errors.push(...result.errors.map((err: unknown) => `${day}: ${String(err)}`));
+      const dayErrors = (result as { errors?: unknown[] }).errors;
+      if (Array.isArray(dayErrors)) {
+        totals.errors.push(...dayErrors.map((err: unknown) => `${day}: ${String(err)}`));
       }
     } catch (e) {
       totals.failed++;
@@ -10589,8 +10589,8 @@ serve(async (req) => {
         }
       }
       const targetCodes = (requestedCodes || Array.from(winesByCode.keys()))
-        .sort((a, b) => Number(a.replace("D", "")) - Number(b.replace("D", "")));
-      const missingCodes = requestedCodes ? targetCodes.filter((code) => !winesByCode.has(code)) : [];
+        .sort((a: string, b: string) => Number(a.replace("D", "")) - Number(b.replace("D", "")));
+      const missingCodes = requestedCodes ? targetCodes.filter((code: string) => !winesByCode.has(code)) : [];
       if (missingCodes.length > 0) {
         return new Response(JSON.stringify({ success: false, error: `Faltan vinos activos Winerim: ${missingCodes.join(", ")}` }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -10599,7 +10599,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({ success: false, error: "No hay vinos activos Winerim con codigo D### en postre/dulce." }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const orderedWines = targetCodes.map((code) => winesByCode.get(code)).filter(Boolean);
+      const orderedWines = targetCodes.map((code: string) => winesByCode.get(code)).filter(Boolean);
 
       const cached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
       if (!cached.ok) {

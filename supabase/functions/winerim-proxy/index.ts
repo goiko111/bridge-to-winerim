@@ -1280,7 +1280,6 @@ serve(async (req) => {
               createCandidates: autoCreateIds.length,
               updateCandidates: autoUpdateIds.length,
               fingerprintSkipped: fingerprintSkippedIds.size,
-          unknownWinerimVariants: [...unknownVariantsSeen],
               unknownWinerimVariants: [...unknownVariantsSeen],
               parts,
             };

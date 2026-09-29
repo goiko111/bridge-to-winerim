@@ -5,7 +5,7 @@ export interface TspoonlabClientConfig {
   orderCenterId?: string;
   recipeCenterId?: string;
   timeoutMs?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: (url: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>;
 }
 
 export interface TspoonlabListParams {
