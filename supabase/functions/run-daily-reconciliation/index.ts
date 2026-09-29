@@ -237,7 +237,7 @@ Deno.serve(async (request) => {
       const buckets = rpcBucketsToAnalytics(agg.buckets as Record<string, unknown>[]);
       return finishAnalytics(buckets, { complete: source.complete, identityLines: Number(agg.identityLines), included: Number(agg.includedLines), missingIdentity: Number(agg.missingIdentityLines), missingAmount: Number(agg.missingAmountLines), anchorLines: Number(agg.anchorLines), anchorCategoryLines: (object(agg.anchorCategoryLines) ?? {}) as Record<string, number> });
     };
-    // Incremental projection: refresh exactly one business_day slice (technical table, no raw_json persisted).
+    // Incremental projection: refresh exactly one business_day slice (compact technical table).
     const refreshDay = async (day: string, onlyMissing: boolean) => {
       const { data, error } = await db.rpc("reconciliation_v2_analytics_refresh_day", { p_connection_id: connectionId, p_business_day: day, p_only_missing: onlyMissing });
       if (error || !object(data)) throw Object.assign(new Error(`Falló el refresco de la proyección ${day}${error ? ` (${(error as { code?: string }).code ?? "?"}: ${String((error as { message?: string }).message ?? "").slice(0, 160)})` : ""}`), { status: 500, code: "ANALYTICS_PROJECTION_REFRESH_FAILED", day });
