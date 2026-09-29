@@ -5,10 +5,12 @@ const src = readFileSync("supabase/functions/run-daily-reconciliation/index.ts",
 const handler = src.slice(src.indexOf("Deno.serve("));
 const rpcBlock = handler.slice(handler.indexOf("const rpcAnalytics = async"), handler.indexOf("const backfillDays"));
 // Latest migration defining the projection (Lovable renames files; locate by content, newest wins).
-const migration = readdirSync("supabase/migrations").sort().reverse().map((f) => readFileSync(`supabase/migrations/${f}`, "utf8")).find((s) => s.includes("create or replace function reconciliation_private.refresh_analytics_day")) ?? "";
+const files = readdirSync("supabase/migrations").sort().reverse().map((f) => readFileSync(`supabase/migrations/${f}`, "utf8"));
+const migration = files.find((s) => s.includes("create table if not exists reconciliation_private.analytics_line_projection")) ?? "";
+const latestRefresh = files.find((s) => s.includes("create or replace function reconciliation_private.refresh_analytics_day")) ?? "";
 const fnBody = (name: string) => { const i = migration.indexOf(`create or replace function ${name}(`); return migration.slice(i, migration.indexOf("end $$;", i)); };
 const aggregate = fnBody("reconciliation_private.analytics_aggregate");
-const refresh = fnBody("reconciliation_private.refresh_analytics_day");
+const refresh = latestRefresh.slice(latestRefresh.indexOf("create or replace function reconciliation_private.refresh_analytics_day("), latestRefresh.indexOf("end $$;", latestRefresh.indexOf("create or replace function reconciliation_private.refresh_analytics_day(")));
 
 describe("run-daily-reconciliation persistent analytics via incremental projection", () => {
   it("persistent path refreshes only anchor-1 and anchor, then aggregates (never 28 raw days)", () => {
