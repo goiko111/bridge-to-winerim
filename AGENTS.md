@@ -1,1 +1,2 @@
 - Agora stock writers must apply excludeReopenSupersededEvents + ambiguousReopenFrozenProductIds from _shared/agoraTicketLifecycle.ts — prevents reopen/convert double sales.
+- sync-sales-records  mode is read-only by construction (no checkpoint/lock/commit) — protects the operational cursor.

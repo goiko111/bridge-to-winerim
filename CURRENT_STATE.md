@@ -7177,3 +7177,7 @@ CATALOGO, OPEN).
 - Hecho: arreglo en `_shared/agoraTicketLifecycle.ts` + filtro en las 3 rutas de stock de agora-proxy. 16 pruebas nuevas OK; 18 fallos estáticos preexistentes sin cambio.
 - Hecho: auditoría septiembre (solo lectura) 227 líneas, 104 duplicados probados, en /mnt/documents/auditoria-reaperturas-anulaciones-2026-09-01_2026-09-30.csv.
 - Tarea: migración de cola de anulaciones propuesta en docs/operations/proposed-migrations (sin aplicar). Libro por línea (planLineAction) sin conectar al flujo vivo.
+
+## 2026-09-29 — sync-sales-records modo histórico (solo lectura)
+- Hechos: añadido `historicalRange:true` (from/to autoridad, dryRun obligatorio, ≤7 días alineados al corte, maxPages 1–100; sin checkpoint/lock/commit). Desplegada solo sync-sales-records. Canary Clinic 25/09: 200 COMPLETE, 1 página, 1 llamada, 8 ventas/15 líneas (9 con hora del 25/09). Contadores idénticos, locks 0.
+- Hipótesis: el filtro from/to de Winerim es por fecha de la venta, no de la línea (la venta 186783 con copa del 25/09 no aparece).
