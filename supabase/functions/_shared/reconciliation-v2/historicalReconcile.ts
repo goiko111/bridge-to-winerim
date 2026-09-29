@@ -71,10 +71,10 @@ const signature = (a: AgoraLine, w: WinerimLine) => a.businessDay === (w.busines
 export function markMultiSaleAmbiguity(results: ReconciliationResult[], winerim: WinerimLine[]): ReconciliationResult[] {
   return results.map((row) => {
     if (row.state !== "HISTORY_MISSING" || !row.agora || row.agora.amountMinor == null) return row;
-    const agora = row.agora; const candidates = winerim.filter((w) => signature(agora, w));
+    const agora = row.agora; const agoraAmount = agora.amountMinor as number; const candidates = winerim.filter((w) => signature(agora, w));
     if (new Set(candidates.map((w) => w.saleId)).size < 2 || candidates.some((w) => w.amountMinor == null)) return row;
     const qty = candidates.reduce((s, w) => s + w.quantity, 0); const amount = candidates.reduce((s, w) => s + Number(w.amountMinor), 0);
-    if (qty !== agora.quantity || Math.round(amount) !== Math.round(agora.amountMinor)) return row;
+    if (qty !== agora.quantity || Math.round(amount) !== Math.round(agoraAmount)) return row;
     return { ...row, state: "AMBIGUOUS", evidence: { reason: "MULTI_SALE_SIGNATURE_SUM", matchKind: "NOT_GROUPED_DISTINCT_SALES", candidateLineIds: candidates.map((w) => w.lineId), candidateSaleIds: [...new Set(candidates.map((w) => w.saleId))] }, manualAction: "Revisión manual; ventas Winerim distintas no se agrupan ni se consumen" };
   });
 }
