@@ -34,6 +34,7 @@ import AgoraPriceListProbePanel from "@/components/AgoraPriceListProbePanel";
 import AgoraConnectionCompare from "@/components/AgoraConnectionCompare";
 import AgoraWinesInPosPanel from "@/components/AgoraWinesInPosPanel";
 import AgoraTodaysSalesStock from "@/components/AgoraTodaysSalesStock";
+import SalesExportPanel from "@/components/SalesExportPanel";
 import AgoraManualMatchPanel from "@/components/AgoraManualMatchPanel";
 import PostWriteVerificationDisplay, { adaptVerificationResult } from "@/components/PostWriteVerificationDisplay";
 import { ConnectionHealthPanel } from "@/components/ConnectionHealthPanel";
