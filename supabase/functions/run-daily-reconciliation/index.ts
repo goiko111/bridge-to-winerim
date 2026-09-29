@@ -140,9 +140,9 @@ Deno.serve(async (request) => {
     const resolutions = reconcilableWine.map((row) => ({ row, resolution: resolveAgoraIdentity(row, binding.winerim_restaurant_id) }));
     const unresolved = resolutions.filter((item) => item.resolution.missing.length).map((item) => ({ row: item.row, missing: item.resolution.missing }));
     const agora = resolutions.map((item) => item.resolution.line).filter((row): row is NonNullable<typeof row> => Boolean(row));
-    const sourceCoverage = classifyAgoraCoverage({ eventCount: source.eventCount, lineCount: source.lines.length, pageComplete: source.complete, unresolvedCount: providerUnresolved.length + unresolved.length });
-    if (unknownWineClassification.length) { sourceCoverage.complete = false; sourceCoverage.reasons.push("AGORA_WINE_CLASSIFICATION_INCOMPLETE"); }
-    if (unmappedWine.length) { sourceCoverage.complete = false; sourceCoverage.reasons.push("AGORA_WINE_MAPPING_INCOMPLETE"); }
+    const split = splitSourceCoverage({ eventCount: source.eventCount, pageComplete: source.complete, classified: classifiedSource, hasProviderIdentity: (row) => Boolean(agoraProviderIdentity(row)), hasAmount: (row) => agoraProviderAmount(row) != null || row.total_amount != null, unresolvedMappedWine: unresolved.length, unmappedWine: unmappedWine.length });
+    // Operational gate = wine reconciliation coverage only; analytics coverage reported separately, never relaxed.
+    const sourceCoverage = split.wineReconciliationCoverage;
     const sourceDiagnostic = source.eventCount === 0 || source.lines.length === 0 ? await zeroSourceDiagnostic(db, connectionId, body.businessDay) : null;
     const winerim = await paged<Record<string, unknown>>((from, to) => db.from("winerim_sales_lines")
       .select("*,winerim_sales_records!inner(restaurant_id,status)").eq("connection_id", connectionId)
@@ -265,7 +265,7 @@ Deno.serve(async (request) => {
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
     const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await (async () => { await refreshDay(plusDays(body.businessDay, -1), false); await refreshDay(body.businessDay, false); phase("projection_refreshed"); return rpcAnalytics(28); })();
     phase("analytics_done");
-    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
+    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, ...split.metrics, wineReconciliationCoverage: split.wineReconciliationCoverage, sourceAnalyticsCoverage: split.analyticsCoverage, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
       phase("commit_start", { results: resultRows.length });

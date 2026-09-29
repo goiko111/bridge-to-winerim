@@ -229,7 +229,7 @@ export function splitSourceCoverage(input: {
   const groups = new Map<string, { providerProductId: string | null; name: string | null; count: number }>();
   for (const c of unknown) {
     const id = c.row.provider_product_id ? String(c.row.provider_product_id) : null;
-    const name = (c.row as Record<string, unknown>).product_name == null ? null : String((c.row as Record<string, unknown>).product_name);
+    const name = c.row.name == null ? null : String(c.row.name);
     const key = `${id}|${name}`; const g = groups.get(key) ?? { providerProductId: id, name, count: 0 }; g.count++; groups.set(key, g);
   }
   const unknownProducts = [...groups.values()].sort((a, b) => b.count - a.count || String(a.providerProductId).localeCompare(String(b.providerProductId)));
