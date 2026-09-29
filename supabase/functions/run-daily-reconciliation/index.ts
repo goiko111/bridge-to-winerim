@@ -251,7 +251,7 @@ Deno.serve(async (request) => {
         const day = plusDays(body.businessDay, offset); const started = Date.now();
         try { journal.push({ ...(await refreshDay(day, true)), ms: Date.now() - started }); }
         catch (error) { return json(request, { ok: false, mode: "AUDIT_ONLY", dryRun: true, backfill: journal, stoppedAt: day, error: String((error as Error).message).slice(0, 240) }, 500); }
-        phase("backfill_day", { day, ms: Date.now() - started });
+        phase("backfill_day", { offset, ms: Date.now() - started });
       }
       return json(request, { ok: true, mode: "AUDIT_ONLY", dryRun: true, backfill: journal });
     }
