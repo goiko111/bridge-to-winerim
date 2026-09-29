@@ -233,7 +233,7 @@ Deno.serve(async (request) => {
     const rpcAnalytics = async (days: number) => {
       const { data, error } = await db.rpc("reconciliation_v2_analytics_aggregate", { p_connection_id: connectionId, p_from: plusDays(body.businessDay, -(days - 1)), p_to: nextDay, p_anchor: body.businessDay });
       const agg = object(data);
-      if (error || !agg || !Array.isArray(agg.buckets)) throw Object.assign(new Error("Falló el agregado de analíticas"), { status: 500, code: "ANALYTICS_AGGREGATE_FAILED" });
+      if (error || !agg || !Array.isArray(agg.buckets)) throw Object.assign(new Error(`Falló el agregado de analíticas${error ? ` (${(error as { code?: string }).code ?? "?"}: ${String((error as { message?: string }).message ?? "").slice(0, 160)})` : ""}`), { status: 500, code: "ANALYTICS_AGGREGATE_FAILED" });
       const buckets = rpcBucketsToAnalytics(agg.buckets as Record<string, unknown>[]);
       return finishAnalytics(buckets, { complete: source.complete, identityLines: Number(agg.identityLines), included: Number(agg.includedLines), missingIdentity: Number(agg.missingIdentityLines), missingAmount: Number(agg.missingAmountLines), anchorLines: Number(agg.anchorLines), anchorCategoryLines: (object(agg.anchorCategoryLines) ?? {}) as Record<string, number> });
     };
