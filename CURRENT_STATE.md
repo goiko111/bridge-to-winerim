@@ -7194,3 +7194,7 @@ CATALOGO, OPEN).
 ## v19 — acuses del writer como segunda fuente causal (29/09)
 Hechos: writerReceipts.ts + integración en run-daily-reconciliation (solo historical_range dryRun); 12 pruebas nuevas; desplegada solo run-daily-reconciliation. Canary Sa Vida 28/09: 25 MATCHED (10 rango + 15 WRITER_RECEIPT), 6 AMBIGUOUS de Ágora (3×280997, 2×148394 caso 1 €/hora, 1×148702 acuse de 2 copas incluye la del ticket abierto), 1 OPEN, 0 HISTORY_MISSING; 5 líneas Winerim sobrantes (191456×3, 191668×2) siguen AMBIGUOUS. Readback sin cambios.
 Hallazgo (solo lectura de código): agora-proxy agrega copas por vino/formato/día y usa earlierProviderSoldAt (≈l.1903, 2343) → reutiliza la hora más temprana. Cambio al writer requiere otro gate.
+
+## v20 — overlay en ruta normal + inventario de flota (29/09)
+Hechos: gate writerReceiptsOverlay (OFF por defecto; exige dryRun:true; scheduler denegado; solo con fuentes completas). Desplegada solo run-daily-reconciliation. Canaries Sa Vida 27/09 y 28/09 normales dryRun: HTTP 206, winerimComplete=false (Sa Vida sin checkpoint de ventas) → todo SOURCE_INCOMPLETE (52 y 62), overlay no aplicado (fail-closed). Discovery de flota: 1.032 restaurantes, timezone null en todos → READY_EXACT = 0.
+Tareas: GO para checkpoint/ingesta de Sa Vida antes de que la ruta normal sea útil; Goiko confirma identidad + Europe/Madrid/06:00 por cohorte.
