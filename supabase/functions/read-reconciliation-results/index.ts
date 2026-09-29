@@ -22,13 +22,30 @@ Deno.serve(async (request) => {
     const { db: auth } = await requireAuthenticated(request); const db = serverClient(); const url = new URL(request.url);
     if (url.searchParams.get("view") === "fleet") {
       const { data: isAdmin, error: roleError } = await auth.rpc("is_platform_admin"); if (roleError || isAdmin !== true) throw Object.assign(new Error("La vista de flota requiere rol de plataforma"), { status: 403, code: "FLEET_FORBIDDEN" });
-      const [bindings, dashboard, checkpoints] = await Promise.all([
+      const [bindings, connections, dashboard, checkpoints] = await Promise.all([
         paged<Record<string, unknown>>((from, to) => db.from("winerim_restaurant_bindings").select("connection_id,winerim_restaurant_id,status,exclusion_reason,verified_at,metadata").order("connection_id").range(from, to)),
+        paged<Record<string, unknown>>((from, to) => db.from("pos_connections").select("id,location_name,provider,enabled").eq("provider", "agora").eq("enabled", true).order("location_name").range(from, to)),
         paged<Record<string, unknown>>((from, to) => db.from("reconciliation_v2_dashboard").select("connection_id,business_day,state,line_count,revenue_minor,freshness_at").order("business_day", { ascending: false }).range(from, to)),
         paged<Record<string, unknown>>((from, to) => db.from("winerim_sync_checkpoints").select("connection_id,stream,last_complete_at,coverage_complete,last_error_code").order("connection_id").range(from, to)),
       ]);
-      const complete = bindings.complete && dashboard.complete && checkpoints.complete;
-      return json(request, { ok: complete, mode: "AUDIT_ONLY", bindings: bindings.rows, dashboard: dashboard.rows, checkpoints: checkpoints.rows, readCoverage: { complete, pages: { bindings: bindings.pages, dashboard: dashboard.pages, checkpoints: checkpoints.pages } } }, complete ? 200 : 206);
+      const bindingByConnection = new Map(bindings.rows.map((binding) => [String(binding.connection_id), binding]));
+      const fleet = connections.rows.map((connection) => {
+        const connectionId = String(connection.id); const binding = bindingByConnection.get(connectionId);
+        const metadata = binding?.metadata && typeof binding.metadata === "object" && !Array.isArray(binding.metadata) ? binding.metadata as Record<string, unknown> : {};
+        return {
+          connection_id: connectionId,
+          location_name: connection.location_name == null ? null : String(connection.location_name),
+          provider: String(connection.provider),
+          enabled: connection.enabled === true,
+          winerim_restaurant_id: binding?.winerim_restaurant_id ?? null,
+          status: binding?.status ?? "UNBOUND",
+          exclusion_reason: binding?.exclusion_reason ?? null,
+          verified_at: binding?.verified_at ?? null,
+          metadata: { ...metadata, restaurantName: connection.location_name ?? metadata.restaurantName ?? null },
+        };
+      });
+      const complete = bindings.complete && connections.complete && dashboard.complete && checkpoints.complete;
+      return json(request, { ok: complete, mode: "AUDIT_ONLY", bindings: fleet, dashboard: dashboard.rows, checkpoints: checkpoints.rows, readCoverage: { complete, pages: { bindings: bindings.pages, connections: connections.pages, dashboard: dashboard.pages, checkpoints: checkpoints.pages } } }, complete ? 200 : 206);
     }
     const connectionId = url.searchParams.get("connectionId") ?? ""; const from = url.searchParams.get("from") ?? ""; const to = url.searchParams.get("to") ?? "";
     if (!uuid.test(connectionId) || !day.test(from) || !day.test(to) || from > to) throw Object.assign(new Error("Filtros inválidos"), { status: 400, code: "INVALID_FILTERS" });
