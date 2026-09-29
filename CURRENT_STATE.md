@@ -7198,3 +7198,9 @@ Hallazgo (solo lectura de código): agora-proxy agrega copas por vino/formato/d�
 ## v20 — overlay en ruta normal + inventario de flota (29/09)
 Hechos: gate writerReceiptsOverlay (OFF por defecto; exige dryRun:true; scheduler denegado; solo con fuentes completas). Desplegada solo run-daily-reconciliation. Canaries Sa Vida 27/09 y 28/09 normales dryRun: HTTP 206, winerimComplete=false (Sa Vida sin checkpoint de ventas) → todo SOURCE_INCOMPLETE (52 y 62), overlay no aplicado (fail-closed). Discovery de flota: 1.032 restaurantes, timezone null en todos → READY_EXACT = 0.
 Tareas: GO para checkpoint/ingesta de Sa Vida antes de que la ruta normal sea útil; Goiko confirma identidad + Europe/Madrid/06:00 por cohorte.
+
+## 2026-09-29 05:10 UTC — Cohorte 1, hito fuentes técnicas
+- Hechos: run-daily-reconciliation desplegada con analíticas de 28 días leídas día a día (sin cargar el rango entero). Cienvinos sigue en 546: los logs muestran "CPU Time exceeded" (no memoria); causa probable = búsqueda cuadrática de líneas raw (agoraProviderIdentity/Amount recorren raw_json por cada línea, ~79k líneas). No es writer ni agora-proxy. Stop por error repetido.
+- Hechos: ingesta read-only Winerim (dryRun:false, solo mirrors/checkpoints) completa para Qtomas, Cienvinos y Don Quijote (4 checkpoints coverage_complete). El Portón: SALES_PAGE_COMMIT_FAILED en la primera página → sin checkpoint, no reintentado.
+- Hechos: canaries 27/09 y 28/09 incompletos en los cuatro; nadie añadido al scheduler (solo Clinic).
+- Tareas (GO): optimizar identidad Ágora (índice raw por evento) para Cienvinos; diagnosticar el commit de ventas de El Portón; resolver productos candidatos a vino sin fila en provider_products.

@@ -151,17 +151,30 @@ Deno.serve(async (request) => {
     const now = new Date().toISOString(); const runId = crypto.randomUUID();
     const resultRows = await Promise.all(results.map(async (row) => ({ ...row, revisionHash: await sha256Hex(row) })));
 
-    const analyticsSource = await sourceRows(db, connectionId, plusDays(body.businessDay, -27), nextDay);
     const { data: rules, error: rulesError } = await db.from("reconciliation_v2_category_rules").select("provider_product_id,family_key,category").eq("connection_id", connectionId);
     if (rulesError) throw Object.assign(new Error("No se pudieron leer reglas de categoría"), { status: 500, code: "CATEGORY_RULE_READ_FAILED" });
     const categories = new Map((rules ?? []).map((rule) => [`${rule.provider_product_id ?? ""}|${rule.family_key ?? ""}`, rule.category as AnalyticsCategory]));
-    const definitive = analyticsSource.lines.filter((row) => definitiveDocument(row.sales_event.doc_type)); const identities = definitive.map((row) => ({ row, identity: agoraProviderIdentity(row), amount: agoraProviderAmount(row) })); const analyticsMissingIdentity = identities.filter((item) => !item.identity).length; const analyticsMissingAmount = identities.filter((item) => item.amount == null).length;
-    const unique = [...new Map(identities.filter((item): item is { row: AgoraDbLine; identity: string; amount: number } => Boolean(item.identity) && item.amount != null).map((item) => [item.identity, { ...item.row, provider_amount: item.amount }])).values()];
-    const analyticsLines: AnalyticsLine[] = unique.map((row: AgoraDbLine & Record<string, unknown>) => {
-      const explicit = categories.get(`${row.provider_product_id ?? ""}|${row.family ?? ""}`) ?? categories.get(`${row.provider_product_id ?? ""}|`) ?? categories.get(`|${row.family ?? ""}`);
-      const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
-      return { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(row.provider_amount ?? 0) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) };
-    });
+    // Bounded streaming: the 28-day window is read one business day at a time and each
+    // chunk is reduced to compact AnalyticsLine rows before the next is loaded, so raw_json
+    // for the whole range is never resident at once (Cienvinos: 12k events / 79k lines → 546).
+    // Map.set keeps last-wins semantics identical to the previous single-pass implementation.
+    const uniqueAnalytics = new Map<string, AnalyticsLine>(); let analyticsComplete = true; let analyticsIdentityLines = 0; let analyticsMissingIdentity = 0; let analyticsMissingAmount = 0;
+    for (let offsetDay = -27; offsetDay <= 0; offsetDay += 1) {
+      const day = plusDays(body.businessDay, offsetDay);
+      const chunk = offsetDay === 0 ? source : await sourceRows(db, connectionId, day, plusDays(day, 1));
+      analyticsComplete = analyticsComplete && chunk.complete;
+      for (const row of chunk.lines) {
+        if (!definitiveDocument(row.sales_event.doc_type)) continue;
+        analyticsIdentityLines += 1; const identity = agoraProviderIdentity(row); const amount = agoraProviderAmount(row);
+        if (!identity) analyticsMissingIdentity += 1; if (amount == null) analyticsMissingAmount += 1;
+        if (!identity || amount == null) continue;
+        const explicit = categories.get(`${row.provider_product_id ?? ""}|${row.family ?? ""}`) ?? categories.get(`${row.provider_product_id ?? ""}|`) ?? categories.get(`|${row.family ?? ""}`);
+        const category: AnalyticsCategory = row.mapped === true && row.winerim_product_id ? "WINE" : explicit ?? "UNCLASSIFIED";
+        uniqueAnalytics.set(identity, { connectionId, effectiveAt: String(row.sales_event.business_day) + "T12:00:00Z", category, quantity: Number(row.quantity), revenueMinor: Math.round(Number(amount) * 100), costMinor: null, ticketId: row.sales_event.provider_doc_id, isReturn: row.sales_event.doc_type.toLowerCase().includes("refund"), currency: sourceCurrency(row) });
+      }
+    }
+    const analyticsSource = { complete: analyticsComplete };
+    const analyticsLines: AnalyticsLine[] = [...uniqueAnalytics.values()]; const identities = { length: analyticsIdentityLines }; const unique = analyticsLines;
     const buckets = buildAnalytics(analyticsLines, body.businessDay).map((row) => ({ ...row, freshnessAt: now }));
     const dayBuckets = buckets.filter((row) => row.period === "DAY" && row.periodStart === body.businessDay && row.category !== "ALL");
     const dayAnalytics = analyticsLines.filter((row) => row.effectiveAt.startsWith(body.businessDay)); const sourceCount = dayAnalytics.length;
