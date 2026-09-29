@@ -7181,3 +7181,6 @@ CATALOGO, OPEN).
 ## 2026-09-29 — sync-sales-records modo histórico (solo lectura)
 - Hechos: añadido `historicalRange:true` (from/to autoridad, dryRun obligatorio, ≤7 días alineados al corte, maxPages 1–100; sin checkpoint/lock/commit). Desplegada solo sync-sales-records. Canary Clinic 25/09: 200 COMPLETE, 1 página, 1 llamada, 8 ventas/15 líneas (9 con hora del 25/09). Contadores idénticos, locks 0.
 - Hipótesis: el filtro from/to de Winerim es por fecha de la venta, no de la línea (la venta 186783 con copa del 25/09 no aparece).
+
+## 2026-09-29 — run-daily-reconciliation historical_range (v11, solo lectura)
+- Hechos: desplegada solo run-daily-reconciliation. Clinic 25/09: rango 8 ventas/15 líneas (9 del día) + 1 línea guardada (186783); Ágora 24→12 (12 OpenTicket sustituidos). 7 MATCHED (stock APPLIED), 1 AMBIGUOUS (27976, 109480, ventas 188378/188409), 4 HISTORY_MISSING (27970:118501, 27978:71263, 27979:71263, 27979:118501); 2 sobrantes Winerim 188378/188409. Contadores idénticos, locks 0.
