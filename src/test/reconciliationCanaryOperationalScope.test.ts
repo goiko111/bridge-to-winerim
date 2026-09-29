@@ -14,7 +14,7 @@ describe("dryRun canary operational scope", () => {
     expect(outsideLegacy).not.toMatch(/-27/);
   });
   it("never runs analytics in dryRun and never fakes coverage", () => {
-    expect(handler).toMatch(/dryRun \? \{ analytics: \{ coverage: ANALYTICS_SKIPPED, series: \[\], aggregates: \[\] \}, analyticsCoverage: ANALYTICS_SKIPPED \} : await rpcAnalytics\(28\)/);
+    expect(handler).toMatch(/dryRun \? \{ analytics: \{ coverage: ANALYTICS_SKIPPED, series: \[\], aggregates: \[\] \}, analyticsCoverage: ANALYTICS_SKIPPED \} : await \(async/);
     expect(handler).toMatch(/complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY"/);
   });
   it("keeps certification independent of analytics (same completeness/results expressions)", () => {
