@@ -76,6 +76,32 @@ function rawLines(raw: RawRow | null): RawLineCandidate[] {
   return [...direct, ...invoiceItems.flatMap((item, index) => candidateLines(item, index))];
 }
 
+// Per-event index: raw_json lines are flattened and bucketed once per sales event by the
+// strict part of the signature (productId|quantity|soldAt). signatureMatches still runs on
+// the bucket, so the matched set is identical to the previous full scan (order preserved).
+type RawIndex = { all: RawLineCandidate[]; buckets: Map<string, RawLineCandidate[]> };
+const rawIndexCache = new WeakMap<object, RawIndex>();
+const strictKey = (productId: unknown, quantity: unknown, soldAt: unknown) => `${identifier(productId) ?? ""}\u0001${normalizedNumber(quantity) ?? ""}\u0001${normalizedTime(soldAt) ?? ""}`;
+function rawIndex(raw: RawRow | null): RawIndex {
+  if (!raw) return { all: [], buckets: new Map() };
+  const cached = rawIndexCache.get(raw); if (cached) return cached;
+  const all = rawLines(raw); const buckets = new Map<string, RawLineCandidate[]>();
+  for (const candidate of all) {
+    const key = strictKey(field(candidate.line, "providerProductId", "ProductId"), field(candidate.line, "quantity", "Quantity"), field(candidate.line, "soldAt", "CreationDate"));
+    const bucket = buckets.get(key); if (bucket) bucket.push(candidate); else buckets.set(key, [candidate]);
+  }
+  const index = { all, buckets }; rawIndexCache.set(raw, index); return index;
+}
+const matchCache = new WeakMap<object, RawLineCandidate[]>();
+/** Candidates whose full signature matches the DB line; memoised per row object. */
+export function matchingRawLines(row: AgoraDbLine): RawLineCandidate[] {
+  const cached = matchCache.get(row); if (cached) return cached;
+  const index = rawIndex(object(row.sales_event.raw_json));
+  const bucket = index.buckets.get(strictKey(row.provider_product_id, row.quantity, row.provider_sold_at)) ?? [];
+  const matches = bucket.filter((candidate) => signatureMatches(row, candidate)); matchCache.set(row, matches); return matches;
+}
+export function rawLineCount(row: AgoraDbLine): number { return rawIndex(object(row.sales_event.raw_json)).all.length; }
+
 function signatureMatches(row: AgoraDbLine, candidate: RawLineCandidate): boolean {
   const line = candidate.line;
   if (identifier(field(line, "providerProductId", "ProductId")) !== identifier(row.provider_product_id)) return false;
@@ -105,9 +131,9 @@ function providerAmount(candidate: RawLineCandidate): number | null {
 /** Resolve only immutable identities from raw_json.lines[]; never promote local UUIDs to TPV identities. */
 export function resolveAgoraIdentity(row: AgoraDbLine, restaurantId: number): AgoraIdentityResolution {
   const raw = object(row.sales_event.raw_json);
-  const allRawLines = rawLines(raw); const candidates = allRawLines.filter((candidate) => signatureMatches(row, candidate));
+  const candidates = matchingRawLines(row);
   const missing: string[] = [];
-  if (!allRawLines.length) missing.push("RAW_LINES_MISSING");
+  if (!rawLineCount(row)) missing.push("RAW_LINES_MISSING");
   else if (!candidates.length) missing.push("RAW_LINE_NOT_FOUND");
   else if (candidates.length > 1) missing.push("RAW_LINE_AMBIGUOUS");
   const rawCandidate = candidates.length === 1 ? candidates[0] : null;
@@ -157,7 +183,7 @@ export function unresolvedAgoraEvidence(row: AgoraDbLine): string[] {
 
 /** Stable provider identity for analytics, including non-wine/unmapped lines. */
 export function agoraProviderIdentity(row: AgoraDbLine): string | null {
-  const raw = object(row.sales_event.raw_json); const matches = rawLines(raw).filter((candidate) => signatureMatches(row, candidate));
+  const raw = object(row.sales_event.raw_json); const matches = matchingRawLines(row);
   if (matches.length !== 1) return null;
   const candidate = matches[0]; const rawLine = candidate.line;
   const order = text(raw?.lifecycleId) ?? text(raw?.documentId) ?? identifier(field(candidate.container, "globalId", "GlobalId")) ?? identifier(field(raw, "globalId", "GlobalId")) ?? identifier(field(raw, "number", "Number")) ?? text(row.sales_event.provider_doc_id);
@@ -169,7 +195,7 @@ export function agoraProviderIdentity(row: AgoraDbLine): string | null {
 
 /** Net amount reported by Ágora for the uniquely matched provider line. */
 export function agoraProviderAmount(row: AgoraDbLine): number | null {
-  const raw = object(row.sales_event.raw_json); const matches = rawLines(raw).filter((candidate) => signatureMatches(row, candidate));
+  const matches = matchingRawLines(row);
   return matches.length === 1 ? providerAmount(matches[0]) ?? number(row.total_amount) : null;
 }
 
