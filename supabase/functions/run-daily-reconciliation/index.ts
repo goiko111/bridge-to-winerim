@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { asDryRun, assertPost, json, parseJson, preflight, requireAdminOrScheduler, safeError } from "../_shared/reconciliation-v2/edge.ts";
 import { assertSchedulerRequest } from "../_shared/reconciliation-v2/scheduler.ts";
+import { attributeByProviderLine, lineTimeAttributionMode } from "../_shared/reconciliation-v2/lineTimeAttribution.ts";
 import { agoraProviderAmount, agoraProviderIdentity, classifyWineCandidate, splitSourceCoverage, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
@@ -127,7 +128,16 @@ Deno.serve(async (request) => {
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");
     // Phase markers: timing + counts only, never row data.
     const t0 = performance.now(); const phase = (name: string, extra: Record<string, number> = {}) => console.log(`[rdr-phase] ${JSON.stringify({ phase: name, ms: Math.round(performance.now() - t0), dryRun, ...extra })}`);
-    const source = await sourceRows(db, connectionId, body.businessDay, nextDay);
+    // Opt-in per-line attribution (AUDIT_ONLY normal path only): exact provider_sold_at vs cutoff; invalid → SOURCE_INCOMPLETE.
+    const { data: connCfg, error: connCfgError } = await db.from("pos_connections").select("provider_config").eq("id", connectionId).single(); if (connCfgError) throw connCfgError;
+    const lineAttribution = historical ? "EVENT_DAY" : lineTimeAttributionMode(connCfg?.provider_config);
+    let lineAttributionMetrics: Record<string, unknown> = { mode: lineAttribution };
+    let source = await (lineAttribution === "PROVIDER_LINE" ? sourceRows(db, connectionId, plusDays(body.businessDay, -1), plusDays(body.businessDay, 2)) : sourceRows(db, connectionId, body.businessDay, nextDay));
+    if (lineAttribution === "PROVIDER_LINE") {
+      const attributed = attributeByProviderLine(source.lines, { businessDay: body.businessDay, localFrom, localTo });
+      lineAttributionMetrics = { mode: lineAttribution, loadedLines: source.lines.length, keptLines: attributed.lines.length, outsideWindow: attributed.outsideWindow, invalidTimestamp: attributed.invalidTimestamp };
+      source = { lines: attributed.lines, complete: source.complete && attributed.complete, eventCount: new Set(attributed.lines.map((row) => String((row.sales_event as Record<string, unknown>).id ?? row.sales_event.provider_doc_id))).size };
+    }
     phase("source_loaded", { events: source.eventCount, lines: source.lines.length });
     const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
     const productClassifications = await currentProductClassifications(db, connectionId, source.lines);
@@ -265,7 +275,7 @@ Deno.serve(async (request) => {
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
     const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await (async () => { await refreshDay(plusDays(body.businessDay, -1), false); await refreshDay(body.businessDay, false); phase("projection_refreshed"); return rpcAnalytics(28); })();
     phase("analytics_done");
-    const metrics = { sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, ...split.metrics, wineReconciliationCoverage: split.wineReconciliationCoverage, sourceAnalyticsCoverage: split.analyticsCoverage, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
+    const metrics = { lineTimeAttribution: lineAttributionMetrics, sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, ...split.metrics, wineReconciliationCoverage: split.wineReconciliationCoverage, sourceAnalyticsCoverage: split.analyticsCoverage, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
       phase("commit_start", { results: resultRows.length });

@@ -7204,3 +7204,8 @@ Tareas: GO para checkpoint/ingesta de Sa Vida antes de que la ruta normal sea ú
 - Hechos: ingesta read-only Winerim (dryRun:false, solo mirrors/checkpoints) completa para Qtomas, Cienvinos y Don Quijote (4 checkpoints coverage_complete). El Portón: SALES_PAGE_COMMIT_FAILED en la primera página → sin checkpoint, no reintentado.
 - Hechos: canaries 27/09 y 28/09 incompletos en los cuatro; nadie añadido al scheduler (solo Clinic).
 - Tareas (GO): optimizar identidad Ágora (índice raw por evento) para Cienvinos; diagnosticar el commit de ventas de El Portón; resolver productos candidatos a vino sin fila en provider_products.
+
+## 2026-09-29 16:40 — Santander + Sa Vida PROVIDER_LINE
+- Hechos: reencolados (REQUEUE_CURRENT_SCOPE) LaLomba Finca Valhonta y Dominio de Calogía en Don Bernardo Santander; los otros bloqueos del 16/09 ya tenían envío posterior OK. Aalto PS no se envía: Winerim tiene precio 0 / formato inactivo (sale_price_missing).
+- Hechos: Sa Vida provider_config.line_time_attribution=PROVIDER_LINE; run-daily-reconciliation desplegada con atribución por provider_sold_at (ventana ±1 día, invalid → SOURCE_INCOMPLETE). DryRun 27/09: 224 líneas, 52 vinos; 28/09: 345 líneas, 62 vinos; 0 timestamps inválidos; Winerim incompleto (sin checkpoints de sync para Sa Vida).
+- Tareas: precio Aalto PS en Winerim; sincronizar Winerim de Sa Vida antes de certificar.
