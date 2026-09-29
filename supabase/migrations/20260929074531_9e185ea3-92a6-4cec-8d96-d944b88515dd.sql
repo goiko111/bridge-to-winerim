@@ -1,0 +1,2 @@
+create policy "service_role only" on reconciliation_private.analytics_line_projection for all to service_role using (true) with check (true);
+create policy "service_role only" on reconciliation_private.analytics_projection_days for all to service_role using (true) with check (true);

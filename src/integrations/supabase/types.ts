@@ -3378,6 +3378,14 @@ export type Database = {
           raw_json: Json
         }[]
       }
+      reconciliation_v2_analytics_refresh_day: {
+        Args: {
+          p_business_day: string
+          p_connection_id: string
+          p_only_missing?: boolean
+        }
+        Returns: Json
+      }
       reconciliation_v2_begin_candidate_probe: {
         Args: {
           p_business_day: string
@@ -3740,15 +3748,6 @@ export type Database = {
           units: number
         }[]
       }
-      rv2_field: { Args: { c: string; o: Json; p: string }; Returns: Json }
-      rv2_ident: { Args: { j: Json }; Returns: string }
-      rv2_norm: { Args: { n: number }; Returns: number }
-      rv2_ntext: { Args: { s: string }; Returns: string }
-      rv2_num: { Args: { j: Json }; Returns: number }
-      rv2_text: { Args: { j: Json }; Returns: string }
-      rv2_time_key: { Args: { j: Json }; Returns: string }
-      rv2_trim: { Args: { s: string }; Returns: string }
-      rv2_truthy: { Args: { j: Json }; Returns: boolean }
       schedule_next_catalog_batch: {
         Args: {
           conn_id: string
