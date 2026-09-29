@@ -2043,6 +2043,86 @@ export type Database = {
           },
         ]
       }
+      reconciliation_v2_scheduler_identities: {
+        Row: {
+          created_at: string
+          id: string
+          key_sha256: string
+          label: string
+          revoked_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          key_sha256: string
+          label: string
+          revoked_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          key_sha256?: string
+          label?: string
+          revoked_at?: string | null
+        }
+        Relationships: []
+      }
+      reconciliation_v2_scheduler_state: {
+        Row: {
+          attempts: number
+          business_day: string
+          connection_id: string
+          created_at: string
+          error_code: string | null
+          evidence: Json
+          finished_at: string | null
+          id: string
+          pipeline_version: string
+          run_id: string | null
+          started_at: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          business_day: string
+          connection_id: string
+          created_at?: string
+          error_code?: string | null
+          evidence?: Json
+          finished_at?: string | null
+          id?: string
+          pipeline_version: string
+          run_id?: string | null
+          started_at?: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          business_day?: string
+          connection_id?: string
+          created_at?: string
+          error_code?: string | null
+          evidence?: Json
+          finished_at?: string | null
+          id?: string
+          pipeline_version?: string
+          run_id?: string | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reconciliation_v2_scheduler_state_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sales_events: {
         Row: {
           business_day: string

@@ -1,0 +1,2 @@
+create policy "deny client access to scheduler identities" on public.reconciliation_v2_scheduler_identities as restrictive for all to anon, authenticated using (false) with check (false);
+create policy "deny client access to scheduler state" on public.reconciliation_v2_scheduler_state as restrictive for all to anon, authenticated using (false) with check (false);

@@ -1,13 +1,16 @@
-import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { asDryRun, assertPost, json, parseJson, preflight, requireAdminOrScheduler, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { assertSchedulerRequest } from "../_shared/reconciliation-v2/scheduler.ts";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { activeBinding, addBusinessDays, businessWindow, checkpoint, claim, fleetClient, MAX_PAGES, release } from "../_shared/reconciliation-v2/runtime.ts";
 
 type Body = { connectionId: string; dryRun?: boolean; maxPages?: number; overlapBusinessDay?: string };
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 Deno.serve(async (request) => {
   const options = preflight(request); if (options) return options;
-  const owner = crypto.randomUUID(); let locked = false; let connectionId = "";
+  const owner = crypto.randomUUID(); let locked = false; let connectionId = ""; let dbRef: SupabaseClient | null = null;
   try {
-    assertPost(request); const { db } = await requirePlatformAdmin(request); const body = await parseJson<Body>(request);
+    assertPost(request); const auth = await requireAdminOrScheduler(request); const db = auth.db; dbRef = db; const body = await parseJson<Body>(request);
+    if (auth.scheduler) assertSchedulerRequest({ connectionId: body.connectionId, dryRun: body.dryRun, historical: false, businessDay: body.overlapBusinessDay });
     connectionId = body.connectionId; const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId);
     const saved = await checkpoint(db, connectionId, "stock_movements"); const maxPages = Math.max(1, Math.min(body.maxPages ?? MAX_PAGES, MAX_PAGES));
     const client = fleetClient(); let afterId = saved?.after_id == null ? undefined : Number(saved.after_id); let pagesRead = 0; let movements = 0; let complete = false;
@@ -48,5 +51,5 @@ Deno.serve(async (request) => {
     const allComplete = complete && overlap.complete;
     return json(request, { ok: allComplete, mode: "AUDIT_ONLY", dryRun, state: allComplete ? "COMPLETE" : "SOURCE_INCOMPLETE", pagesRead: pagesRead + (complete ? 1 : 0), movements, overlap, calls: client.callCount }, allComplete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
-  finally { if (locked) { try { const { db } = await requirePlatformAdmin(request); await release(db, connectionId, "stock_movements", owner); } catch { /* TTL is the recovery path */ } } }
+  finally { if (locked && dbRef) { try { await release(dbRef, connectionId, "stock_movements", owner); } catch { /* TTL is the recovery path */ } } }
 });

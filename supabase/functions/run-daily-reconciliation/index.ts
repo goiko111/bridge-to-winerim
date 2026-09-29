@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { asDryRun, assertPost, json, parseJson, preflight, requireAdminOrScheduler, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { assertSchedulerRequest } from "../_shared/reconciliation-v2/scheduler.ts";
 import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, classifyWineCandidate, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
@@ -83,7 +84,8 @@ Deno.serve(async (request) => {
   const options = preflight(request); if (options) return options;
   const owner = crypto.randomUUID(); let locked = false; let connectionId = ""; let lockStream = ""; let dbForFinally: SupabaseClient | null = null;
   try {
-    assertPost(request); const { db } = await requirePlatformAdmin(request); dbForFinally = db; const body = await parseJson<Body>(request);
+    assertPost(request); const auth = await requireAdminOrScheduler(request); const db = auth.db; dbForFinally = db; const body = await parseJson<Body>(request);
+    if (auth.scheduler) assertSchedulerRequest({ connectionId: body.connectionId, dryRun: body.dryRun, historical: body.salesSourceMode !== undefined, businessDay: body.businessDay });
     connectionId = body.connectionId; const historical = body.salesSourceMode !== undefined; if (historical) validateHistoricalReconcileRequest(body); if (!validDay(body.businessDay)) throw Object.assign(new Error("businessDay inválido"), { status: 400, code: "INVALID_BUSINESS_DAY" });
     const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId); const nextDay = plusDays(body.businessDay, 1); const cutoff = bindingCutoffHour(binding); const localFrom = `${body.businessDay}T${String(cutoff).padStart(2, "0")}:00:00`; const localTo = `${nextDay}T${String(cutoff).padStart(2, "0")}:00:00`;
     const salesCp = await checkpoint(db, connectionId, "sales_records"); const movementCp = await checkpoint(db, connectionId, "stock_movements");

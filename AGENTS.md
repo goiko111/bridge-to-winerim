@@ -1,3 +1,4 @@
 - Agora stock writers must apply excludeReopenSupersededEvents + ambiguousReopenFrozenProductIds from _shared/agoraTicketLifecycle.ts — prevents reopen/convert double sales.
 - sync-sales-records historicalRange mode is read-only by construction (no checkpoint/lock/commit) — protects the operational cursor.
 - run-daily-reconciliation salesSourceMode:historical_range is manual dryRun-only; open-ticket dedupe and multi-sale AMBIGUOUS overlay live only in historicalReconcile.ts — normal/scheduler engine untouched.
+- Reconciliation scheduler: only `reconciliation-v2-scheduler` (cron job `reconciliation-v2-clinic-daily-audit`, 05:15 UTC) runs the daily AUDIT_ONLY pipeline, and only for connections in `SCHEDULER_CONNECTIONS` (Clinic); its identity is a Vault key validated by SHA-256 in `reconciliation_v2_scheduler_identities` — no human JWT, fleet stays out.

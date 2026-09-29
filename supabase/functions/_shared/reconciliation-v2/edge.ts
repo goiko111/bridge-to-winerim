@@ -25,6 +25,26 @@ export async function requirePlatformAdmin(request: Request): Promise<{ userId: 
   return { userId: data.user.id, db: serverClient() };
 }
 
+export const SCHEDULER_KEY_HEADER = "x-reconciliation-scheduler-key";
+
+/**
+ * Platform admin JWT, or the rotating scheduler service identity. The scheduler key is
+ * never stored in plaintext here: only its SHA-256 lives in a service-role-only table.
+ * Callers MUST apply assertSchedulerRequest() when `scheduler` is true.
+ */
+export async function requireAdminOrScheduler(request: Request): Promise<{ userId: string | null; db: SupabaseClient; scheduler: boolean }> {
+  const key = request.headers.get(SCHEDULER_KEY_HEADER);
+  if (key == null) return { ...(await requirePlatformAdmin(request)), scheduler: false };
+  if (key.length < 32 || key.length > 256) throw Object.assign(new Error("Identidad de servicio inválida"), { status: 401, code: "SCHEDULER_IDENTITY_INVALID" });
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key)));
+  const hash = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const db = serverClient();
+  const { data, error } = await db.from("reconciliation_v2_scheduler_identities").select("id").eq("key_sha256", hash).is("revoked_at", null).maybeSingle();
+  if (error) throw Object.assign(new Error("No se pudo validar la identidad de servicio"), { status: 500, code: "SCHEDULER_IDENTITY_CHECK_FAILED" });
+  if (!data) throw Object.assign(new Error("Identidad de servicio inválida o revocada"), { status: 401, code: "SCHEDULER_IDENTITY_INVALID" });
+  return { userId: null, db, scheduler: true };
+}
+
 export async function requireAuthenticated(request: Request): Promise<{ userId: string; db: SupabaseClient }> {
   const authorization = request.headers.get("Authorization") ?? "";
   if (!authorization.startsWith("Bearer ")) throw Object.assign(new Error("Falta autenticación"), { status: 401 });

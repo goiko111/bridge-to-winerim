@@ -1,4 +1,6 @@
-import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { asDryRun, assertPost, json, parseJson, preflight, requireAdminOrScheduler, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { assertSchedulerRequest } from "../_shared/reconciliation-v2/scheduler.ts";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { activeBinding, addBusinessDays, businessWindow, changedSinceFrom, checkpoint, claim, fleetClient, MAX_PAGES, release } from "../_shared/reconciliation-v2/runtime.ts";
 import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 
@@ -7,9 +9,10 @@ const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number
 
 Deno.serve(async (request) => {
   const options = preflight(request); if (options) return options;
-  const owner = crypto.randomUUID(); let locked = false; let connectionId = "";
+  const owner = crypto.randomUUID(); let locked = false; let connectionId = ""; let dbRef: SupabaseClient | null = null;
   try {
-    assertPost(request); const { db } = await requirePlatformAdmin(request); const body = await parseJson<Body>(request);
+    assertPost(request); const auth = await requireAdminOrScheduler(request); const db = auth.db; dbRef = db; const body = await parseJson<Body>(request);
+    if (auth.scheduler) assertSchedulerRequest({ connectionId: body.connectionId, dryRun: body.dryRun, historical: body.historicalRange !== undefined, businessDay: body.overlapBusinessDay });
     connectionId = body.connectionId;
     if (body.historicalRange !== undefined) {
       // Isolated read-only mode: never reads/writes checkpoints, never locks, never commits.
@@ -60,5 +63,5 @@ Deno.serve(async (request) => {
     const allComplete = complete && overlap.complete; const state = allComplete ? "COMPLETE" : "SOURCE_INCOMPLETE";
     return json(request, { ok: allComplete, mode: "AUDIT_ONLY", dryRun, state, pagesRead: pagesRead + (complete ? 1 : 0), records, deletions, overlap, calls: client.callCount }, allComplete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
-  finally { if (locked) { try { const { db } = await requirePlatformAdmin(request); await release(db, connectionId, "sales_records", owner); } catch { /* lease expires; never mask the primary result */ } } }
+  finally { if (locked && dbRef) { try { await release(dbRef, connectionId, "sales_records", owner); } catch { /* lease expires; never mask the primary result */ } } }
 });
