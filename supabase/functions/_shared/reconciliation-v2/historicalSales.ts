@@ -46,8 +46,9 @@ export function validateHistoricalRange(body: HistoricalRangeInput, binding: Bin
   return { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), maxPages: maxPages as number, timezone: window.timezone, cutoff: window.cutoff, businessDays };
 }
 
-type RecordLike = { saleId?: unknown; lines?: unknown };
-type LineLike = { effectiveAt?: unknown; recordedAt?: unknown };
+type RecordLike = { saleId?: unknown; lines?: unknown; wine?: { wineId?: unknown } };
+type LineLike = { effectiveAt?: unknown; recordedAt?: unknown; format?: unknown; qty?: unknown; totalAmount?: unknown; lineType?: unknown; lineId?: unknown; source?: { sourceLineId?: unknown; invoiceId?: unknown } };
+export type HistoricalLineSummary = { saleId: unknown; wineId: unknown; lineId: unknown; lineType: unknown; format: unknown; qty: unknown; totalAmount: unknown; effectiveAt: unknown; invoiceId: unknown };
 
 export async function readHistoricalRange(client: Pick<WinerimFleetClient, "salesByDate" | "callCount">, restaurantId: number, range: HistoricalRange) {
   const records: unknown[] = []; let pagesRead = 0; let complete = false; let reportedTotal: number | null = null;
@@ -56,11 +57,12 @@ export async function readHistoricalRange(client: Pick<WinerimFleetClient, "sale
     pagesRead += 1; records.push(...result.data); reportedTotal = result.pagination?.total ?? reportedTotal;
     if (!result.pagination!.hasMore) { complete = true; break; }
   }
-  const timestamps: string[] = []; let lineCount = 0; let linesWithoutTimestamp = 0;
+  const timestamps: string[] = []; let lineCount = 0; let linesWithoutTimestamp = 0; const lineSummary: HistoricalLineSummary[] = [];
   for (const record of records as RecordLike[]) {
     const lines = Array.isArray(record?.lines) ? record.lines as LineLike[] : [];
     lineCount += lines.length;
     for (const line of lines) {
+      lineSummary.push({ saleId: record?.saleId ?? null, wineId: record?.wine?.wineId ?? null, lineId: line?.lineId ?? null, lineType: line?.lineType ?? null, format: line?.format ?? null, qty: line?.qty ?? null, totalAmount: line?.totalAmount ?? null, effectiveAt: line?.effectiveAt ?? null, invoiceId: line?.source?.invoiceId ?? null });
       const value = typeof line?.effectiveAt === "string" ? line.effectiveAt : typeof line?.recordedAt === "string" ? line.recordedAt : null;
       if (value) timestamps.push(value); else linesWithoutTimestamp += 1;
     }
@@ -76,6 +78,7 @@ export async function readHistoricalRange(client: Pick<WinerimFleetClient, "sale
       firstTimestamp: timestamps[0] ?? null, lastTimestamp: timestamps.at(-1) ?? null,
       finalCursor: "NOT_AVAILABLE_IN_DATE_MODE" as const, paginationEnded: complete,
       coverageComplete: complete && totalMatches !== false,
+      lineSummary,
     },
   };
 }
