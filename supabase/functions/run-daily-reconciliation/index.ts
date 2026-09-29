@@ -9,6 +9,7 @@ import type { SaleDeletion, WinerimLine } from "../_shared/reconciliation-v2/typ
 import { activeBinding, bindingCutoffHour, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
 import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
+import { applyWriterReceipts, extractWriterReceipts } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
 type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string };
 const PAGE = 1000; const MAX_DB_PAGES = 100;
@@ -124,9 +125,15 @@ Deno.serve(async (request) => {
       const rangeLines = rangeRecordsToWinerimLines(read.records, binding.winerim_restaurant_id, body.businessDay, localFrom, localTo);
       completeness.winerimComplete = read.evidence.coverageComplete && winerim.complete && deletions.complete;
       const out = reconcileHistorical({ connectionId, agora, rangeLines, persistedLines: winerimRows, deletions: deletionRows, completeness });
-      results = out.results;
+      // Second causal source (read-only): persisted writer acknowledgements for this connection/day.
+      const acks = await paged<{ id: string; status: string | null; winerim_product_id: string | null; winerim_response: unknown }>((from, to) => db.from("stock_sync_log")
+        .select("id,status,winerim_product_id,winerim_response").eq("connection_id", connectionId).eq("status", "SUCCESS")
+        .eq("winerim_response->>businessDay", body.businessDay).order("created_at").order("id").range(from, to));
+      const extracted = extractWriterReceipts(acks.rows, { connectionId, businessDay: body.businessDay, timeZone: window.timezone });
+      const applied = acks.complete ? applyWriterReceipts(out.results, extracted.receipts, out.winerimLines) : { results: out.results, usableReceipts: 0, excludedAlreadyInRange: 0, confirmed: 0 };
+      results = applied.results;
       const { lineSummary: _omit, ...rangeEvidence } = read.evidence;
-      historicalEvidence = { salesSourceMode: "historical_range", range: rangeEvidence, rangeLinesInDay: rangeLines.length, persistedOnlyLines: out.persistedOnlyLines, agoraRepresentations: agora.length, agoraEconomicLines: out.economicAgora.length, supersededOpen: out.supersededOpen };
+      historicalEvidence = { salesSourceMode: "historical_range", range: rangeEvidence, rangeLinesInDay: rangeLines.length, persistedOnlyLines: out.persistedOnlyLines, agoraRepresentations: agora.length, agoraEconomicLines: out.economicAgora.length, supersededOpen: out.supersededOpen, writerReceipts: { logsRead: acks.rows.length, logsComplete: acks.complete, receipts: extracted.receipts.length, rejected: extracted.rejected, excludedAlreadyInRange: applied.excludedAlreadyInRange, usable: applied.usableReceipts, confirmedLines: applied.confirmed } };
     }
     const now = new Date().toISOString(); const runId = crypto.randomUUID();
     const resultRows = await Promise.all(results.map(async (row) => ({ ...row, revisionHash: await sha256Hex(row) })));

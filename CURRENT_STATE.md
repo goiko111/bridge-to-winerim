@@ -7190,3 +7190,7 @@ CATALOGO, OPEN).
 - Identidad: secreto Vault `reconciliation_scheduler_key_v1`; hash en `reconciliation_v2_scheduler_identities`. Tablas técnicas solo service_role.
 - Prueba manual 2026-09-29 03:19 UTC: día 27/09, ingesta COMPLETE (ventas +1 record/+7 líneas, movimientos +2), conciliación run 2600d088 SOURCE_INCOMPLETE (AGORA_NO_EVENTS_FOR_BUSINESS_DAY), 0 resultados. Tablas de negocio intactas; locks 0.
 - Rollback: supabase/rollback/reconciliation_v2_clinic_scheduler.rollback.sql.
+
+## v19 — acuses del writer como segunda fuente causal (29/09)
+Hechos: writerReceipts.ts + integración en run-daily-reconciliation (solo historical_range dryRun); 12 pruebas nuevas; desplegada solo run-daily-reconciliation. Canary Sa Vida 28/09: 25 MATCHED (10 rango + 15 WRITER_RECEIPT), 6 AMBIGUOUS de Ágora (3×280997, 2×148394 caso 1 €/hora, 1×148702 acuse de 2 copas incluye la del ticket abierto), 1 OPEN, 0 HISTORY_MISSING; 5 líneas Winerim sobrantes (191456×3, 191668×2) siguen AMBIGUOUS. Readback sin cambios.
+Hallazgo (solo lectura de código): agora-proxy agrega copas por vino/formato/día y usa earlierProviderSoldAt (≈l.1903, 2343) → reutiliza la hora más temprana. Cambio al writer requiere otro gate.
