@@ -1,7 +1,8 @@
 import { asDryRun, assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
 import { activeBinding, addBusinessDays, businessWindow, changedSinceFrom, checkpoint, claim, fleetClient, MAX_PAGES, release } from "../_shared/reconciliation-v2/runtime.ts";
+import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 
-type Body = { connectionId: string; dryRun?: boolean; maxPages?: number; overlapBusinessDay?: string };
+type Body = { connectionId: string; dryRun?: boolean; maxPages?: number; overlapBusinessDay?: string; historicalRange?: boolean; from?: string; to?: string };
 const validDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 
 Deno.serve(async (request) => {
@@ -9,7 +10,15 @@ Deno.serve(async (request) => {
   const owner = crypto.randomUUID(); let locked = false; let connectionId = "";
   try {
     assertPost(request); const { db } = await requirePlatformAdmin(request); const body = await parseJson<Body>(request);
-    connectionId = body.connectionId; const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId);
+    connectionId = body.connectionId;
+    if (body.historicalRange !== undefined) {
+      // Isolated read-only mode: never reads/writes checkpoints, never locks, never commits.
+      const binding = await activeBinding(db, connectionId);
+      const range = validateHistoricalRange(body, binding);
+      const { evidence } = await readHistoricalRange(fleetClient(), binding.winerim_restaurant_id, range);
+      return json(request, { ok: evidence.coverageComplete, mode: "HISTORICAL_RANGE_READ_ONLY", dryRun: true, state: evidence.coverageComplete ? "COMPLETE" : "SOURCE_INCOMPLETE", ...evidence }, evidence.coverageComplete ? 200 : 206);
+    }
+    const dryRun = asDryRun(body.dryRun); const binding = await activeBinding(db, connectionId);
     const saved = await checkpoint(db, connectionId, "sales_records");
     const maxPages = Math.max(1, Math.min(body.maxPages ?? MAX_PAGES, MAX_PAGES));
     const client = fleetClient(); let cursor = saved?.cursor ? String(saved.cursor) : undefined;
