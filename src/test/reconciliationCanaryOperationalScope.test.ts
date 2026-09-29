@@ -9,8 +9,9 @@ const outsideLegacy = handler.slice(0, legacyStart) + handler.slice(legacyEnd);
 
 describe("dryRun canary operational scope", () => {
   it("reads Agora raw data only for [businessDay, nextDay) outside the legacy equivalence closure", () => {
-    const calls = [...outsideLegacy.matchAll(/sourceRows\(db, connectionId, ([^)]*)\)/g)].map((m) => m[1]);
-    expect(calls).toEqual(["body.businessDay, nextDay"]);
+    const calls = [...outsideLegacy.matchAll(/sourceRows\(db, connectionId, ((?:[^()]|\([^()]*\))*)\)/g)].map((m) => m[1]);
+    // PROVIDER_LINE opt-in reads a bounded 3-day neighbourhood and filters per line to [localFrom, localTo).
+    expect(calls).toEqual(["plusDays(body.businessDay, -1), plusDays(body.businessDay, 2)", "body.businessDay, nextDay"]);
     expect(outsideLegacy).not.toMatch(/-27/);
   });
   it("never runs analytics in dryRun and never fakes coverage", () => {
