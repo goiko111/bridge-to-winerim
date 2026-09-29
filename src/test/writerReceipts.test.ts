@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyWriterReceipts, extractWriterReceipts, toLocalWallClock } from "../../supabase/functions/_shared/reconciliation-v2/writerReceipts";
+import { applyWriterReceipts, extractWriterReceipts, toLocalWallClock, writerReceiptOverlayMode } from "../../supabase/functions/_shared/reconciliation-v2/writerReceipts";
 import { reconcileLines } from "../../supabase/functions/_shared/reconciliation-v2/engine";
 import { reconcileHistorical } from "../../supabase/functions/_shared/reconciliation-v2/historicalReconcile";
 import type { AgoraLine, WinerimLine } from "../../supabase/functions/_shared/reconciliation-v2/types";
@@ -87,5 +87,14 @@ describe("writer receipts as second causal source (historical_range)", () => {
   it("Clinic historical regression: without receipts the 7/1/4 path is unchanged", () => {
     const rows = reconcileHistorical({ connectionId: "1c5177f1-9459-4ee9-8b6e-4780f8b6b96b", agora: [], rangeLines: [], persistedLines: [], deletions: [], completeness }).results;
     expect(applyWriterReceipts(rows, [], []).results).toEqual(rows);
+  });
+  it("normal-path gate: default OFF, explicit + dryRun only, scheduler denied, non-boolean rejected", () => {
+    expect(writerReceiptOverlayMode({ requested: undefined, dryRun: true, scheduler: false, historical: false })).toBe("OFF");
+    expect(writerReceiptOverlayMode({ requested: false, dryRun: true, scheduler: false, historical: false })).toBe("OFF");
+    expect(writerReceiptOverlayMode({ requested: true, dryRun: true, scheduler: false, historical: false })).toBe("NORMAL_DRY_RUN");
+    expect(() => writerReceiptOverlayMode({ requested: true, dryRun: false, scheduler: false, historical: false })).toThrow(/dryRun/);
+    expect(() => writerReceiptOverlayMode({ requested: true, dryRun: true, scheduler: true, historical: false })).toThrow(/scheduler/);
+    expect(() => writerReceiptOverlayMode({ requested: "yes", dryRun: true, scheduler: false, historical: false })).toThrow(/booleano/);
+    expect(writerReceiptOverlayMode({ requested: undefined, dryRun: true, scheduler: false, historical: true })).toBe("HISTORICAL");
   });
 });

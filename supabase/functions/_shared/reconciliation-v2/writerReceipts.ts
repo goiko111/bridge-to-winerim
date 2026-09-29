@@ -106,3 +106,18 @@ export function applyWriterReceipts(results: ReconciliationResult[], receipts: W
 function ambiguous(row: ReconciliationResult, cands: WriterReceipt[], reasons: string[]): ReconciliationResult {
   return { ...row, state: "AMBIGUOUS", evidence: { evidenceKind: "WRITER_RECEIPT_INCOMPATIBLE", reasons, candidateSaleIds: [...new Set(cands.map((c) => c.saleId))], candidateSaleDetailIds: cands.flatMap((c) => c.saleDetailIds), candidateReceiptIds: cands.map((c) => c.receiptId), candidateQty: cands.reduce((s, c) => s + c.quantity, 0), candidateEffectiveAt: [...new Set(cands.map((c) => c.effectiveAtLocal))], stockEffect: "UNKNOWN" }, manualAction: "Revisión manual; acuse del writer no compatible, no se consume" };
 }
+
+/**
+ * Feature gate for the normal (non-historical) AUDIT_ONLY path. Default OFF.
+ * Enabled only when explicitly requested (writerReceiptsOverlay:true), dryRun:true (nothing is persisted)
+ * and not invoked by the scheduler. historical_range keeps its own always-on overlay.
+ */
+export const WRITER_RECEIPTS_OVERLAY_FLAG = "writerReceiptsOverlay";
+export function writerReceiptOverlayMode(input: { requested: unknown; dryRun: boolean; scheduler: boolean; historical: boolean }): "HISTORICAL" | "NORMAL_DRY_RUN" | "OFF" {
+  if (input.requested !== undefined && typeof input.requested !== "boolean") throw Object.assign(new Error("writerReceiptsOverlay debe ser booleano"), { status: 400, code: "INVALID_WRITER_RECEIPTS_OVERLAY" });
+  if (input.historical) return "HISTORICAL";
+  if (input.requested !== true) return "OFF";
+  if (input.scheduler) throw Object.assign(new Error("El scheduler no puede activar writerReceiptsOverlay"), { status: 403, code: "WRITER_RECEIPTS_OVERLAY_SCHEDULER_DENIED" });
+  if (input.dryRun !== true) throw Object.assign(new Error("writerReceiptsOverlay exige dryRun:true"), { status: 400, code: "WRITER_RECEIPTS_OVERLAY_DRY_RUN_REQUIRED" });
+  return "NORMAL_DRY_RUN";
+}
