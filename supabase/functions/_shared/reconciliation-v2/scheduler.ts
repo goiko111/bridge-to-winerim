@@ -105,7 +105,7 @@ export function summarizeFleet(rows: FleetRow[], unboundConnections: number) {
   for (const row of rows) counts[row.outcome] = (counts[row.outcome] ?? 0) + 1;
   const reasons: string[] = [];
   if (unboundConnections > 0) reasons.push(`BLOQUEADO_SIN_BINDING:${unboundConnections}`);
-  const notOk = rows.filter((r) => r.outcome !== "SUCCEEDED" && r.outcome !== "ALREADY_DONE");
+  const notOk = rows.filter((r) => r.outcome !== "SUCCEEDED");
   if (notOk.length) reasons.push(`CONEXIONES_NO_CONCILIADAS:${notOk.length}`);
   if (rows.length === 0) reasons.push("SIN_CONEXIONES_VINCULADAS");
   return { fleetReconciled: reasons.length === 0, counts, reasons };
