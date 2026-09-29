@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { asDryRun, assertPost, json, parseJson, preflight, requireAdminOrScheduler, safeError } from "../_shared/reconciliation-v2/edge.ts";
 import { assertSchedulerRequest } from "../_shared/reconciliation-v2/scheduler.ts";
-import { agoraProviderAmount, agoraProviderIdentity, classifyAgoraCoverage, classifyWineCandidate, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
+import { agoraProviderAmount, agoraProviderIdentity, classifyWineCandidate, splitSourceCoverage, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
@@ -140,7 +140,7 @@ Deno.serve(async (request) => {
     const resolutions = reconcilableWine.map((row) => ({ row, resolution: resolveAgoraIdentity(row, binding.winerim_restaurant_id) }));
     const unresolved = resolutions.filter((item) => item.resolution.missing.length).map((item) => ({ row: item.row, missing: item.resolution.missing }));
     const agora = resolutions.map((item) => item.resolution.line).filter((row): row is NonNullable<typeof row> => Boolean(row));
-    const split = splitSourceCoverage({ eventCount: source.eventCount, pageComplete: source.complete, classified: classifiedSource, hasProviderIdentity: (row) => Boolean(agoraProviderIdentity(row)), hasAmount: (row) => agoraProviderAmount(row) != null || row.total_amount != null, unresolvedMappedWine: unresolved.length, unmappedWine: unmappedWine.length });
+    const split = splitSourceCoverage({ eventCount: source.eventCount, pageComplete: source.complete, classified: classifiedSource, hasProviderIdentity: (row) => Boolean(agoraProviderIdentity(row)), hasAmount: (row) => agoraProviderAmount(row) != null, unresolvedMappedWine: unresolved.length, unmappedWine: unmappedWine.length });
     // Operational gate = wine reconciliation coverage only; analytics coverage reported separately, never relaxed.
     const sourceCoverage = split.wineReconciliationCoverage;
     const sourceDiagnostic = source.eventCount === 0 || source.lines.length === 0 ? await zeroSourceDiagnostic(db, connectionId, body.businessDay) : null;
