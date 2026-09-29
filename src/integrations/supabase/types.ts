@@ -2466,6 +2466,68 @@ export type Database = {
           },
         ]
       }
+      winerim_cancel_requests: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          connection_id: string
+          correlation_id: string
+          created_at: string
+          eligibility: Json
+          error_code: string | null
+          executed_at: string | null
+          id: string
+          payload: Json
+          readback: Json | null
+          requested_by: string
+          response: Json | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          connection_id: string
+          correlation_id: string
+          created_at?: string
+          eligibility?: Json
+          error_code?: string | null
+          executed_at?: string | null
+          id?: string
+          payload: Json
+          readback?: Json | null
+          requested_by: string
+          response?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          connection_id?: string
+          correlation_id?: string
+          created_at?: string
+          eligibility?: Json
+          error_code?: string | null
+          executed_at?: string | null
+          id?: string
+          payload?: Json
+          readback?: Json | null
+          requested_by?: string
+          response?: Json | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "winerim_cancel_requests_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "pos_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       winerim_push_tracking: {
         Row: {
           agora_family_id: string | null

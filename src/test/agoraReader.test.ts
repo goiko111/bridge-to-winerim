@@ -26,18 +26,20 @@ describe("Agora raw_json.lines adapter", () => {
     expect(classifyWineCandidate(stale, { provider_product_id: "566", is_wine_candidate: false, classification_override: "NOT_WINE", winerim_wine_id: null })).toBe("NOT_WINE");
   });
 
-  it("accepts current catalogue wine evidence and explicit mappings", () => {
+  it("only Winerim catalogue evidence or explicit WINE override makes a wine", () => {
     const raw = providerLine(0, { providerProductId: "99" });
     const unmapped = dbLine(raw, [raw], { provider_product_id: "99", mapped: false, winerim_product_id: null, is_wine_candidate: false });
-    expect(classifyWineCandidate(unmapped, { provider_product_id: "99", is_wine_candidate: true, classification_override: null, winerim_wine_id: null })).toBe("WINE");
+    expect(classifyWineCandidate(unmapped, { provider_product_id: "99", is_wine_candidate: true, classification_override: null, winerim_wine_id: null })).toBe("NOT_WINE");
+    expect(classifyWineCandidate(unmapped, { provider_product_id: "99", is_wine_candidate: false, classification_override: null, winerim_wine_id: "5" })).toBe("WINE");
+    expect(classifyWineCandidate(unmapped, { provider_product_id: "99", is_wine_candidate: false, classification_override: "WINE", winerim_wine_id: null })).toBe("WINE");
     const mapped = dbLine(raw, [raw], { provider_product_id: "100", mapped: true, winerim_product_id: "700", is_wine_candidate: false });
     expect(classifyWineCandidate(mapped, null)).toBe("WINE");
   });
 
-  it("fails closed when only a stale positive flag remains", () => {
+  it("a product absent from the catalogue is NOT_WINE, never UNKNOWN", () => {
     const raw = providerLine(0, { providerProductId: "404", productName: "Producto retirado", familyName: "BEBIDAS" });
     const stale = dbLine(raw, [raw], { provider_product_id: "404", mapped: false, winerim_product_id: null, is_wine_candidate: true });
-    expect(classifyWineCandidate(stale, null)).toBe("UNKNOWN");
+    expect(classifyWineCandidate(stale, null)).toBe("NOT_WINE");
   });
 
   it("resolves the actual Clinic invoice shape with immutable line identity", () => {

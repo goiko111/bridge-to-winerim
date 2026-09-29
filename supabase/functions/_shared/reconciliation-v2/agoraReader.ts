@@ -40,20 +40,20 @@ export type ProviderProductClassification = {
 export type WineCandidateClassification = "WINE" | "NOT_WINE" | "UNKNOWN";
 
 /**
- * Classify against the current provider catalogue, not the historical flag copied
- * into a sales line. Explicit mappings remain authoritative. A stale positive flag
- * without a current catalogue row is UNKNOWN and must fail closed upstream.
+ * Business rule (GO 2026-09-29): a product is WINE only if it is in the Winerim
+ * catalogue (explicit mapping or winerim_wine_id) or carries an explicit WINE
+ * override. Anything not in the Winerim catalogue is NOT_WINE — no UNKNOWN.
  */
 export function classifyWineCandidate(
   row: AgoraDbLine,
   product: ProviderProductClassification | null,
 ): WineCandidateClassification {
   if (row.mapped === true && Boolean(row.winerim_product_id)) return "WINE";
-  if (!product) return row.is_wine_candidate === true ? "UNKNOWN" : "NOT_WINE";
+  if (!product) return "NOT_WINE";
   const override = normalizedText(product.classification_override).replace(/[\s-]+/g, "_");
   if (override === "not_wine") return "NOT_WINE";
   if (override === "wine") return "WINE";
-  return product.is_wine_candidate === true || Boolean(product.winerim_wine_id) ? "WINE" : "NOT_WINE";
+  return Boolean(product.winerim_wine_id) ? "WINE" : "NOT_WINE";
 }
 
 export type AgoraIdentityResolution = { line: AgoraLine | null; missing: string[]; rawLine: RawRow | null };
