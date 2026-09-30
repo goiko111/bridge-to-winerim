@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { callerDeniedResponse, decideCaller, supabaseCallerDeps } from "../_shared/connectionCallerGuard.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildDuplicateSafeAgoraProductLabels, buildDuplicateSafeAgoraProductNames, configuredAgoraProductNameOverride } from "../_shared/agoraProductNaming.ts";
 import { planAgoraFormatPrefixRenames } from "../_shared/agoraFormatPrefixNaming.ts";
@@ -5725,6 +5726,13 @@ serve(async (req) => {
     // ── FIX PRIORITY 1: Read body ONCE ──
     const payload = await req.json();
     const { action, connectionId, businessDay, daysBack, lastBusinessDay, filter } = payload;
+
+    // Control de llamante: interno (clave de servicio) o usuario con acceso al restaurante.
+    const callerDecision = await decideCaller(
+      req.headers.get("Authorization"), connectionId,
+      supabaseCallerDeps(createClient, supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") ?? "", supabaseKey),
+    );
+    if (!callerDecision.ok) return callerDeniedResponse(callerDecision, corsHeaders);
 
     const { data: connection, error: connError } = await supabase
       .from("pos_connections")
