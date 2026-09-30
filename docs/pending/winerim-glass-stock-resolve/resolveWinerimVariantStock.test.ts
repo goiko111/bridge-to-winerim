@@ -17,7 +17,7 @@ const stockRows = [
 const wines = [
   { id: 242208, prices: [
     { isGlass: false, format: "botella", priceId: 271717, stockId: 277910 },
-    { isGlass: true, priceId: 900001, stockId: 371017, glass: { bottlePriceId: 271717, bottleStockId: 277910, glassesPerBottle: 6 } },
+    { isGlass: true, priceId: 900001, stockId: 371017, glass: { bottlePriceId: 271717, bottleStockId: 277910, glassesPerBottle: 6, serviceable: true } },
   ] },
 ];
 
@@ -28,11 +28,20 @@ describe("resolver copa por /wines o /stock, no por /stock/wine/{id}", () => {
   it("Quinta de Couselo copa: stockId 371017 y priceId de la copa (desde /wines)", () => {
     const r = resolveVariant("242208", "copa", W, S);
     expect(r).toMatchObject({ ok: true, value: { stockId: 371017, priceId: 900001, stockActive: false, source: "wines" } });
-    if (r.ok) expect(r.value.glass).toEqual({ bottlePriceId: 271717, bottleStockId: 277910, glassesPerBottle: 6 });
+    if (r.ok) expect(r.value.glass).toEqual({ bottlePriceId: 271717, bottleStockId: 277910, glassesPerBottle: 6, serviceable: true });
   });
 
-  it("Cillar de Silos copa: si /wines no la trae, sale de /stock (371038, stockActive=false)", () => {
-    expect(resolveVariant("242234", "copa", W, S)).toMatchObject({ ok: true, value: { stockId: 371038, source: "stock" } });
+  it("Cillar de Silos copa: si /wines no la trae, sale de /stock (371038) pero sin serviceable → cola «pendiente de configurar en Winerim»", () => {
+    const r = resolveVariant("242234", "copa", W, S);
+    expect(r).toMatchObject({ ok: false, code: "GLASS_NOT_SERVICEABLE" });
+    if (!r.ok) expect(r.serviceProblem).toContain("ausente");
+  });
+
+  it("Cillar de Silos copa con serviceable=true en /wines: se envía (371038)", () => {
+    const W2 = indexFromWines([{ id: 242234, prices: [
+      { isGlass: true, priceId: 900003, stockId: 371038, isActive: false, glass: { bottlePriceId: 271743, bottleStockId: 277936, glassesPerBottle: 6, serviceable: true } },
+    ] }], norm);
+    expect(resolveVariant("242234", "copa", W2, S)).toMatchObject({ ok: true, value: { stockId: 371038, priceId: 900003, isActive: false } });
   });
 
   it("nunca cae a botella si falta la copa", () => {
