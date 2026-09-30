@@ -73,18 +73,17 @@ export function indexFromStock(rows: unknown[], normalize: (s: unknown) => Varia
   return out;
 }
 
-export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" | "VARIANT_INACTIVE" };
+export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" };
 
 /**
  * /wines manda (trae priceId). /stock completa stock/stockActive.
  * Si ambos dan stockId distinto para la misma variante → falla cerrado (no envía).
  * Nunca cae a otra variante (copa ≠ botella).
  */
-export function resolveVariant(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>, opts: { allowInactive?: boolean } = {}): ResolveResult {
-  const r = resolveRaw(wineId, variant, wines, stock);
-  // Falla cerrado: variante inactiva no se envía hasta que Winerim confirme que la acepta.
-  if (r.ok && r.value.isActive === false && !opts.allowInactive) return { ok: false, code: "VARIANT_INACTIVE" };
-  return r;
+// Decisión de producto Goiko 2026-09-30 19:35: una venta real se registra aunque la copa
+// esté inactiva (oculta) en la carta. isActive se conserva solo para informar.
+export function resolveVariant(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
+  return resolveRaw(wineId, variant, wines, stock);
 }
 
 function resolveRaw(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
