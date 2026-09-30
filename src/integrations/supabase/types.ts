@@ -3430,6 +3430,17 @@ export type Database = {
         }
         Returns: Json
       }
+      reconciliation_v2_analytics_daily: {
+        Args: { p_connection_id: string; p_from: string; p_to: string }
+        Returns: {
+          business_day: string
+          category: string
+          currency: string
+          quantity: number
+          revenue_minor: number
+          ticket_count: number
+        }[]
+      }
       reconciliation_v2_analytics_events: {
         Args: { p_connection_id: string; p_from: string; p_to: string }
         Returns: {
