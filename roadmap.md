@@ -13,3 +13,12 @@
 - [x] B10 Abierto→factura: caso real (Ponzano bien, Q Tomas doble)
 - [x] C10-12 Documento motor de convergencia
 - [ ] Seguridad: winerim-sales-probe abierto sin login (esperando GO para retirarlo)
+
+## 30-sep tarde
+- [x] Seguridad: winerim-sales-probe eliminada (404)
+- [ ] Seguridad: revisar funciones sin control de llamante (agora-proxy, clover-webhooks, holded, icg, numier, tspoonlab, yurest)
+- [x] Q Tomas 1-2: causa confirmada + freno LATE_DEFINITIVE (sin desplegar, espera OK)
+- [x] Q Tomas 3: envios_de_mas_septiembre.xlsx (preliminar)
+- [ ] Prioridad 2 a/c: vinos no reconocidos (solo lectura)
+- [ ] Taberna de Elia 19+3 → 0; Albariza +6 copas
+- [ ] Diseño motor: añadir puntos del 30-sep
