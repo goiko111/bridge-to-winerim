@@ -16,9 +16,9 @@ export type ResolvedVariant = {
   stock: number | null;
   stockActive: boolean | null;
   source: "wines" | "stock";
-  /** isActive de la variante en /wines (null si no viene). Copa inactiva: pendiente de confirmar con Winerim si acepta ventas. */
+  /** isActive de la variante en /wines (null si no viene). Copa inactiva: Winerim la acepta si la botella está activa y con partición (respuesta equipo Winerim 2026-09-30). */
   isActive: boolean | null;
-  glass?: { bottlePriceId: number | null; bottleStockId: number | null; glassesPerBottle: number | null };
+  glass?: { bottlePriceId: number | null; bottleStockId: number | null; glassesPerBottle: number | null; serviceable: boolean | null };
 };
 
 const num = (v: unknown): number | null => {
@@ -47,7 +47,7 @@ export function indexFromWines(wines: unknown[], normalize: (s: unknown) => Vari
       if (out.has(key + ":AMBIGUOUS")) continue;
       out.set(key, {
         wineId, variant, stockId, priceId: num(p.priceId ?? p.id), stock: null, stockActive: null, source: "wines", isActive: typeof p.isActive === "boolean" ? p.isActive as boolean : null,
-        ...(variant === "copa" ? { glass: { bottlePriceId: num(g?.bottlePriceId), bottleStockId: num(g?.bottleStockId), glassesPerBottle: num(g?.glassesPerBottle) } } : {}),
+        ...(variant === "copa" ? { glass: { bottlePriceId: num(g?.bottlePriceId), bottleStockId: num(g?.bottleStockId), glassesPerBottle: num(g?.glassesPerBottle), serviceable: typeof g?.serviceable === "boolean" ? g.serviceable as boolean : null } } : {}),
       });
     }
   }
@@ -73,17 +73,27 @@ export function indexFromStock(rows: unknown[], normalize: (s: unknown) => Varia
   return out;
 }
 
-export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" };
+export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" | "GLASS_NOT_SERVICEABLE"; serviceProblem?: string };
 
 /**
  * /wines manda (trae priceId). /stock completa stock/stockActive.
  * Si ambos dan stockId distinto para la misma variante → falla cerrado (no envía).
  * Nunca cae a otra variante (copa ≠ botella).
  */
-// Decisión de producto Goiko 2026-09-30 19:35: una venta real se registra aunque la copa
-// esté inactiva (oculta) en la carta. isActive se conserva solo para informar.
+// Decisión de producto Goiko 2026-09-30 19:35 + respuesta del equipo de Winerim:
+// una venta de copa desactivada se acepta si la botella está activa y con partición,
+// es decir, glass.serviceable === true. Si no (p. ej. Sa Pedrera Iamontanum 326344,
+// copa sin botella en la ficha), la línea va a la cola «pendiente de configurar en
+// Winerim» con el serviceProblem, y no se envía.
 export function resolveVariant(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
-  return resolveRaw(wineId, variant, wines, stock);
+  const r = resolveRaw(wineId, variant, wines, stock);
+  if (r.ok && variant === "copa") {
+    const serviceable = r.value.glass?.serviceable ?? null;
+    if (serviceable !== true) {
+      return { ok: false, code: "GLASS_NOT_SERVICEABLE", serviceProblem: serviceable === false ? "glass.serviceable=false" : "glass.serviceable ausente (sin botella/partición en la ficha de Winerim)" };
+    }
+  }
+  return r;
 }
 
 function resolveRaw(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
