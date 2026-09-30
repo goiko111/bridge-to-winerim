@@ -3,6 +3,7 @@ export type FleetPayload = { ok: boolean; mode: "AUDIT_ONLY"; bindings: FleetBin
 export type ResultRow = { id: string; business_day: string; state: string; canonical_state: string; state_contract_version: string; agora_line: Record<string, unknown> | null; winerim_line: Record<string, unknown> | null; evidence: Record<string, unknown>; manual_action: string; last_seen_at: string };
 export type ReconciliationPayload = {
   ok: boolean; mode: "AUDIT_ONLY"; results: ResultRow[];
+  dayAggregate: { groups: WineFormatGroup[]; summary: { groups: number; matchedGroups: number; closedQty: number; openQty: number; winerimQty: number; absDiff: number; unitMatchPct: number; complete: boolean; fullMatch: boolean } } | null;
   dashboard: Array<{ business_day: string; state: string; line_count: number; revenue_minor: number; freshness_at: string }>;
   analytics: Array<{ business_day: string; category: "WINE" | "OTHER_BEVERAGE" | "FOOD" | "UNCLASSIFIED"; revenue_minor: number; quantity: number; ticket_count: number; currency: string | null; freshness_at: string; coverage_complete: boolean }>;
   aggregates: Array<{ period_kind: string; period_start: string; category: string; revenue_minor: number; revenue_share: number | null; quantity: number; ticket_count: number }>;
@@ -12,3 +13,4 @@ export type ReconciliationPayload = {
   stockMovements: Array<{ movement_id: number; recorded_at: string; wine_id: number | null; format_key: string | null; quantity_before: number | null; quantity_change: number | null; quantity_after: number | null; category: string; cause: string | null; linked_sale_id: number | null; receipt_id: string | null }>;
   readCoverage: { complete: boolean; pages: Record<string, number> };
 };
+export type WineFormatGroup = { businessDay: string; wineId: string; format: string; agoraName: string | null; winerimName: string | null; closedQty: number; openQty: number; winerimQty: number; expectedQty: number; diff: number; state: "MATCHED" | "SHORT_IN_WINERIM" | "EXCESS_IN_WINERIM" | "SOURCE_INCOMPLETE"; lines: number };
