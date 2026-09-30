@@ -87,6 +87,7 @@ import {
   parseOpenTickets,
 } from "../_shared/agoraOpenTickets.ts";
 import { ambiguousReopenFrozenProductIds, excludeReopenSupersededEvents, isFrozenLine } from "../_shared/agoraTicketLifecycle.ts";
+import { dayConvertRefundFreeze, isFrozen as isConvertFrozen } from "../_shared/agoraConvertRefundFreeze.ts";
 import { openTicketRestoreAllowed } from "../_shared/agoraOpenTicketRestoreGuard.ts";
 import { closedTicketGlobalIds } from "../_shared/reconciliation-v2/dayAggregate.ts";
 import {
@@ -2908,7 +2909,7 @@ async function syncStockForDayIncrementalByDayTotal(
   const definitiveEventIdSet = new Set(definitiveEventIds);
   const desiredSource = desiredEventIds.some((id) => definitiveEventIdSet.has(id)) ? "definitive" : "open_ticket";
 
-  const dayTotalFrozenProductIds = ambiguousReopenFrozenProductIds(dayEvents || []);
+  const dayTotalFreeze = dayConvertRefundFreeze(dayEvents || []);
   const lines: Record<string, unknown>[] = [];
   for (let i = 0; i < desiredEventIds.length; i += 100) {
     const lineChunk = desiredEventIds.slice(i, i + 100);
@@ -2920,7 +2921,7 @@ async function syncStockForDayIncrementalByDayTotal(
       throw new Error(`Could not read sales lines for ${day}: ${linesError.message}`);
     }
     for (const row of (chunkLines || [])) {
-      if (isFrozenLine(row as { provider_product_id?: unknown }, dayTotalFrozenProductIds)) continue;
+      if (isConvertFrozen(row as { sales_event_id: string; provider_product_id?: unknown }, dayTotalFreeze)) continue;
       lines.push(row as Record<string, unknown>);
     }
   }
