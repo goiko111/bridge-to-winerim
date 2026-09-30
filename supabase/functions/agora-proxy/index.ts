@@ -86,7 +86,8 @@ import {
   parseOpenTickets,
 } from "../_shared/agoraOpenTickets.ts";
 import { ambiguousReopenFrozenProductIds, excludeReopenSupersededEvents, isFrozenLine } from "../_shared/agoraTicketLifecycle.ts";
-import { LATE_DEFINITIVE_REVIEW, shouldHoldLateDefinitive } from "../_shared/agoraLateInvoiceGuard.ts";
+import { openTicketRestoreAllowed } from "../_shared/agoraOpenTicketRestoreGuard.ts";
+import { closedTicketGlobalIds } from "../_shared/reconciliation-v2/dayAggregate.ts";
 import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
@@ -1128,6 +1129,10 @@ function staleOpenTicketRestoreLookbackHours(providerConfig: Record<string, unkn
   const parsed = Number(providerConfig.open_tickets_restore_lookback_hours ?? 96);
   if (!Number.isFinite(parsed)) return 96;
   return Math.min(168, Math.max(1, parsed));
+}
+
+function nextIsoDay(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10);
 }
 
 function todayInTimeZone(timeZone: string): string {
@@ -3063,49 +3068,6 @@ async function syncStockForDayIncrementalByDayTotal(
     }
   }
 
-  if (desiredSource === "definitive" && deltaCandidates.length > 0) {
-    const openEventIds = (dayEvents || [])
-      .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() === "openticket")
-      .map((event: { id: string }) => event.id);
-    let openTicketSuccessSends = 0;
-    for (let i = 0; i < openEventIds.length; i += 100) {
-      const { count } = await supabase
-        .from("stock_sync_log")
-        .select("id", { count: "exact", head: true })
-        .eq("connection_id", connectionId)
-        .eq("status", "SUCCESS")
-        .in("sales_event_id", openEventIds.slice(i, i + 100));
-      openTicketSuccessSends += Number(count || 0);
-    }
-    const timeZone = String((connection?.provider_config as Record<string, unknown> | null)?.sales_timezone || "Europe/Madrid");
-    if (shouldHoldLateDefinitive({ day, desiredSource, nowIso: new Date().toISOString(), timeZone, openTicketSuccessSends })) {
-      for (const total of deltaCandidates) {
-        const reviewKey = `${total.idempotencyKey}:${LATE_DEFINITIVE_REVIEW}`;
-        if (existingTargetKeys.has(total.idempotencyKey)) continue;
-        await supabase.from("stock_sync_log").insert({
-          connection_id: connectionId,
-          sales_event_id: total.firstEventId,
-          sales_line_item_id: total.firstLineId,
-          provider_product_id: total.providerProductId,
-          winerim_product_id: total.winerimWineId,
-          product_name: `${total.name} [${total.variant}]`,
-          quantity: total.deltaQty,
-          variant: total.variant,
-          idempotency_key: reviewKey,
-          status: "BLOCKED",
-          error_message: `${LATE_DEFINITIVE_REVIEW}: factura tras medianoche con ${openTicketSuccessSends} envíos open_ticket; revisar a mano`,
-        });
-      }
-      return {
-        synced: 0,
-        skipped: deltaCandidates.length,
-        failed: 0,
-        held: deltaCandidates.length,
-        message: LATE_DEFINITIVE_REVIEW,
-      };
-    }
-  }
-
   let skipped = desiredTotals.size - deltaCandidates.length;
   let failed = 0;
   const claimed: DeltaTotal[] = [];
@@ -3515,6 +3477,20 @@ async function restoreStaleOpenTicketStock(
     .filter((event: { provider_doc_id?: string | null; raw_json?: unknown }) =>
       !currentOpenDocIds.has(String(event.provider_doc_id || "")) && !rawJsonDisablesStockSync(event.raw_json)
     );
+  // Solo días de negocio cerrados (06:00 del día siguiente) y nunca un ticket
+  // con factura vinculada por GlobalId: el abierto cuenta como venta.
+  const candidateDays = Array.from(new Set((staleEvents as { business_day: string }[]).map((e) => e.business_day)));
+  const linkDays = Array.from(new Set(candidateDays.flatMap((d) => [d, nextIsoDay(d)])));
+  const { data: linkEvents } = linkDays.length
+    ? await supabase.from("sales_events").select("doc_type, provider_doc_id, raw_json").eq("connection_id", connectionId).in("business_day", linkDays)
+    : { data: [] };
+  const invoicedGlobalIds = closedTicketGlobalIds(((linkEvents || []) as any[]).map((e) => ({ ...e, doc_type: String(e.doc_type || ""), provider_doc_id: String(e.provider_doc_id || "") })));
+  const nowIso = new Date().toISOString();
+  const tz = String(providerConfig.sales_timezone || "Europe/Madrid");
+  const cutoffHour = Number(providerConfig.business_day_cutoff_hour ?? 6);
+  staleEvents.splice(0, staleEvents.length, ...staleEvents.filter((event: { business_day: string; provider_doc_id?: string | null; raw_json?: unknown }) =>
+    openTicketRestoreAllowed({ event, nowIso, timeZone: tz, cutoffHour, invoicedGlobalIds })
+  ));
   result.checkedEvents = staleEvents.length;
   if (staleEvents.length === 0) return result;
 
