@@ -58,18 +58,31 @@ describe("resolver copa por /wines o /stock, no por /stock/wine/{id}", () => {
     expect(resolveVariant("5", "copa", new Map(), S3)).toEqual({ ok: false, code: "VARIANT_AMBIGUOUS" });
   });
 
-  it("copa inactiva (isActive=false en /wines, caso Valdelainos 327193): se envía con priceId y stockId de la copa", () => {
+  it("copa inactiva pero serviceable (isActive=false, caso Valdelainos 327193): se envía con priceId y stockId de la copa", () => {
     const Wi = indexFromWines([{ id: 327193, prices: [
       { isGlass: false, format: "botella", priceId: 362825, stockId: 369018, isActive: true },
-      { isGlass: true, priceId: 900002, stockId: 369017, isActive: false, glass: { bottlePriceId: 362825, bottleStockId: 369018, glassesPerBottle: 6 } },
+      { isGlass: true, priceId: 900002, stockId: 369017, isActive: false, glass: { bottlePriceId: 362825, bottleStockId: 369018, glassesPerBottle: 6, serviceable: true } },
     ] }], norm);
     const Si = indexFromStock([{ id: 369017, wineId: 327193, variant: "copa", stock: 0, stockActive: false }], norm);
     expect(resolveVariant("327193", "copa", Wi, Si)).toMatchObject({ ok: true, value: { stockId: 369017, priceId: 900002, isActive: false, source: "wines" } });
     expect(resolveVariant("327193", "botella", Wi, Si)).toMatchObject({ ok: true, value: { stockId: 369018, isActive: true } });
   });
 
-  it("stockActive=false por sí solo no bloquea (es lo normal en copas)", () => {
-    const Si = indexFromStock([{ id: 371038, wineId: 242234, variant: "copa", stockActive: false }], norm);
-    expect(resolveVariant("242234", "copa", new Map(), Si)).toMatchObject({ ok: true });
+  it("Sa Pedrera Iamontanum copa (326344): sin botella en la ficha → cola «pendiente de configurar en Winerim», no se envía", () => {
+    const Wp = indexFromWines([{ id: 326344, prices: [
+      { isGlass: true, priceId: 900004, stockId: 400001, isActive: false, glass: { bottlePriceId: null, bottleStockId: null, glassesPerBottle: null, serviceable: false } },
+    ] }], norm);
+    const r = resolveVariant("326344", "copa", Wp, new Map());
+    expect(r).toMatchObject({ ok: false, code: "GLASS_NOT_SERVICEABLE", serviceProblem: "glass.serviceable=false" });
+  });
+
+  it("copa sin datos de glass en /wines → cola, no se envía", () => {
+    const Wn = indexFromWines([{ id: 7, prices: [{ isGlass: true, priceId: 1, stockId: 2 }] }], norm);
+    expect(resolveVariant("7", "copa", Wn, new Map())).toMatchObject({ ok: false, code: "GLASS_NOT_SERVICEABLE" });
+  });
+
+  it("stockActive=false por sí solo no bloquea la botella", () => {
+    const Sb = indexFromStock([{ id: 277910, wineId: 242208, variant: "botella", stockActive: false }], norm);
+    expect(resolveVariant("242208", "botella", new Map(), Sb)).toMatchObject({ ok: true });
   });
 });
