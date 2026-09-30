@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertRefundFreeze, isFrozen, type Ev } from "./convertRefundLineFreeze";
+import { convertRefundFreeze, isFrozen, type Ev } from "../../../supabase/functions/_shared/agoraConvertRefundFreeze.ts";
 
 // Caso real El Higuerón 30-sep: T 20549 (22-sep) → J 593 ConvertToStandard + F 512.
 const L = (pid: string, idx: number, q: number, created = "2026-09-22T15:02:43") =>
