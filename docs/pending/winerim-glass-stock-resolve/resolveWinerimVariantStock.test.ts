@@ -49,14 +49,13 @@ describe("resolver copa por /wines o /stock, no por /stock/wine/{id}", () => {
     expect(resolveVariant("5", "copa", new Map(), S3)).toEqual({ ok: false, code: "VARIANT_AMBIGUOUS" });
   });
 
-  it("copa inactiva (isActive=false en /wines, caso Valdelainos 327193): no envía salvo permiso explícito", () => {
+  it("copa inactiva (isActive=false en /wines, caso Valdelainos 327193): se envía con priceId y stockId de la copa", () => {
     const Wi = indexFromWines([{ id: 327193, prices: [
       { isGlass: false, format: "botella", priceId: 362825, stockId: 369018, isActive: true },
       { isGlass: true, priceId: 900002, stockId: 369017, isActive: false, glass: { bottlePriceId: 362825, bottleStockId: 369018, glassesPerBottle: 6 } },
     ] }], norm);
     const Si = indexFromStock([{ id: 369017, wineId: 327193, variant: "copa", stock: 0, stockActive: false }], norm);
-    expect(resolveVariant("327193", "copa", Wi, Si)).toEqual({ ok: false, code: "VARIANT_INACTIVE" });
-    expect(resolveVariant("327193", "copa", Wi, Si, { allowInactive: true })).toMatchObject({ ok: true, value: { stockId: 369017, isActive: false } });
+    expect(resolveVariant("327193", "copa", Wi, Si)).toMatchObject({ ok: true, value: { stockId: 369017, priceId: 900002, isActive: false, source: "wines" } });
     expect(resolveVariant("327193", "botella", Wi, Si)).toMatchObject({ ok: true, value: { stockId: 369018, isActive: true } });
   });
 
