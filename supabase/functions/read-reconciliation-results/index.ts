@@ -61,6 +61,21 @@ Deno.serve(async (request) => {
     ]);
     let stockItems = { rows: [] as Record<string, unknown>[], complete: true, pages: 0 };
     if (snapshots.rows[0]?.id) stockItems = await paged<Record<string, unknown>>((start, end) => db.from("winerim_stock_snapshot_items").select("stock_id,wine_id,wine_name,vintage,format_key,price_amount,stock,stock_active,threshold,max_qty").eq("snapshot_id", snapshots.rows[0].id).order("wine_name").range(start, end));
+    // Live daily category totals from the compact projection (current classification rules), replacing stored DAY rows.
+    const { data: daily, error: dailyError } = await db.rpc("reconciliation_v2_analytics_daily", { p_connection_id: connectionId, p_from: from, p_to: to });
+    if (!dailyError && Array.isArray(daily)) {
+      aggregates.rows = [...aggregates.rows.filter((row) => row.period_kind !== "DAY"), ...daily.map((row: Record<string, unknown>) => ({ connection_id: connectionId, period_kind: "DAY", period_start: row.business_day, business_day: row.business_day, category: row.category, revenue_minor: Number(row.revenue_minor ?? 0), quantity: Number(row.quantity ?? 0), ticket_count: Number(row.ticket_count ?? 0), currency: row.currency ?? "EUR", coverage_complete: true }))];
+    }
+    // Winerim wine names for display.
+    const winerimIds = [...new Set(results.rows.map((row) => (row.winerim_line as Record<string, unknown> | null)?.wineId).filter((id) => id != null).map(String))];
+    if (winerimIds.length) {
+      const names = new Map<string, string>();
+      for (let i = 0; i < winerimIds.length; i += 200) {
+        const { data } = await db.from("winerim_wines").select("winerim_id,name,vintage").eq("connection_id", connectionId).in("winerim_id", winerimIds.slice(i, i + 200));
+        for (const w of data ?? []) names.set(String(w.winerim_id), `${w.name ?? ""}${w.vintage ? ` ${w.vintage}` : ""}`.trim());
+      }
+      for (const row of results.rows) { const w = row.winerim_line as Record<string, unknown> | null; if (w && w.wineId != null) w.wineName = names.get(String(w.wineId)) ?? null; }
+    }
     const sets = { results, dashboard, analytics, aggregates, checkpoints, snapshots, stockItems, movements }; const complete = Object.values(sets).every((item) => item.complete);
     if (format === "csv") {
       if (!complete) return json(request, { ok: false, code: "EXPORT_INCOMPLETE", message: "El export superó el límite explícito; reduce el rango. No se genera un CSV parcial.", readCoverage: { complete: false } }, 409);
