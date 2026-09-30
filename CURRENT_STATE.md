@@ -11,7 +11,10 @@ _Última actualización: 2026-09-23 11:10 UTC_
 - 61348 (Q Tomas, Bobal blanco, 29-sep): Winerim tiene 3 botellas confirmadas (ventas 191832, 191846, 192097) = 3 de Ágora.
 - Fallo menor: el envío de 22:08 del 61348 queda etiquetado con la factura 26270 en vez de la 26273. Solo afecta a la etiqueta del registro, no al stock ni al historial. Las 3 líneas llevan la hora 15:08:40.
 
+- Copas «no encontradas» de Casa Nene e Higuerón: fallo nuestro — /stock/wine/{id} omite formatos con stockActive=false; /stock sí los trae. Nunca se enviaron.
+
 ### Tareas pendientes
+- Arreglo de lectura de formatos inactivos (pendiente OK).
 - OK de Goiko al paquete docs/pending/caller-guard-log-only (solo registro 24 h + devolución de abiertos b).
 - (a) 24 locales: solo simulación.
 
