@@ -16,6 +16,8 @@ export type ResolvedVariant = {
   stock: number | null;
   stockActive: boolean | null;
   source: "wines" | "stock";
+  /** isActive de la variante en /wines (null si no viene). Copa inactiva: pendiente de confirmar con Winerim si acepta ventas. */
+  isActive: boolean | null;
   glass?: { bottlePriceId: number | null; bottleStockId: number | null; glassesPerBottle: number | null };
 };
 
@@ -44,7 +46,7 @@ export function indexFromWines(wines: unknown[], normalize: (s: unknown) => Vari
       if (out.has(key)) { out.delete(key); out.set(key + ":AMBIGUOUS", null as unknown as ResolvedVariant); continue; }
       if (out.has(key + ":AMBIGUOUS")) continue;
       out.set(key, {
-        wineId, variant, stockId, priceId: num(p.priceId ?? p.id), stock: null, stockActive: null, source: "wines",
+        wineId, variant, stockId, priceId: num(p.priceId ?? p.id), stock: null, stockActive: null, source: "wines", isActive: typeof p.isActive === "boolean" ? p.isActive as boolean : null,
         ...(variant === "copa" ? { glass: { bottlePriceId: num(g?.bottlePriceId), bottleStockId: num(g?.bottleStockId), glassesPerBottle: num(g?.glassesPerBottle) } } : {}),
       });
     }
@@ -65,26 +67,33 @@ export function indexFromStock(rows: unknown[], normalize: (s: unknown) => Varia
     if (out.has(key + ":AMBIGUOUS")) continue;
     out.set(key, {
       wineId: String(wineId), variant, stockId, priceId: num(r?.priceId), stock: Number.isFinite(Number(r?.stock)) ? Number(r?.stock) : null,
-      stockActive: typeof r?.stockActive === "boolean" ? r.stockActive as boolean : null, source: "stock",
+      stockActive: typeof r?.stockActive === "boolean" ? r.stockActive as boolean : null, source: "stock", isActive: typeof r?.isActive === "boolean" ? r.isActive as boolean : null,
     });
   }
   return out;
 }
 
-export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" };
+export type ResolveResult = { ok: true; value: ResolvedVariant } | { ok: false; code: "VARIANT_NOT_FOUND" | "VARIANT_AMBIGUOUS" | "STOCK_ID_MISMATCH" | "VARIANT_INACTIVE" };
 
 /**
  * /wines manda (trae priceId). /stock completa stock/stockActive.
  * Si ambos dan stockId distinto para la misma variante → falla cerrado (no envía).
  * Nunca cae a otra variante (copa ≠ botella).
  */
-export function resolveVariant(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
+export function resolveVariant(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>, opts: { allowInactive?: boolean } = {}): ResolveResult {
+  const r = resolveRaw(wineId, variant, wines, stock);
+  // Falla cerrado: variante inactiva no se envía hasta que Winerim confirme que la acepta.
+  if (r.ok && r.value.isActive === false && !opts.allowInactive) return { ok: false, code: "VARIANT_INACTIVE" };
+  return r;
+}
+
+function resolveRaw(wineId: string, variant: Variant, wines: Map<string, ResolvedVariant>, stock: Map<string, ResolvedVariant>): ResolveResult {
   const key = `${wineId}:${variant}`;
   if (wines.has(key + ":AMBIGUOUS") || stock.has(key + ":AMBIGUOUS")) return { ok: false, code: "VARIANT_AMBIGUOUS" };
   const w = wines.get(key);
   const s = stock.get(key);
   if (w && s && w.stockId !== s.stockId) return { ok: false, code: "STOCK_ID_MISMATCH" };
-  if (w) return { ok: true, value: { ...w, stock: s?.stock ?? null, stockActive: s?.stockActive ?? null, priceId: w.priceId ?? s?.priceId ?? null } };
+  if (w) return { ok: true, value: { ...w, stock: s?.stock ?? null, stockActive: s?.stockActive ?? null, isActive: w.isActive ?? s?.isActive ?? null, priceId: w.priceId ?? s?.priceId ?? null } };
   if (s) return { ok: true, value: s };
   return { ok: false, code: "VARIANT_NOT_FOUND" };
 }
