@@ -4,8 +4,12 @@
 - [x] A3 Columna Formato
 - [x] A4 Don Bernardo Ponzano/Santander
 - [x] A5 Excel 29-sep v2
-- [ ] B6 Hora que envía el bridge por copa (payload Cienvinos)
+- [x] A6 Abiertas sin factura suman en el cuadre
+- [~] A7 Cada línea por su effectiveAt (Winerim ya lo hace; 26/45 no reproducido — esperando cálculo del usuario)
+- [x] B6 Hora que envía el bridge por copa (primera copa del día)
 - [ ] B7 Copas que no llegan (Casa Nene, Higuerón, Sa Pedrera, Albariza)
-- [~] B8 Borrado 419 ventas Albariza (no fue nuestra herramienta; falta registro de Winerim)
+- [x] B8 Borrado Albariza (lo hizo el usuario, cerrado)
 - [x] B9 Flags de tickets abiertos
-- [ ] C10-12 Diseño motor de convergencia (documento)
+- [x] B10 Abierto→factura: caso real (Ponzano bien, Q Tomas doble)
+- [x] C10-12 Documento motor de convergencia
+- [ ] Seguridad: winerim-sales-probe abierto sin login (esperando GO para retirarlo)
