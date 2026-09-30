@@ -9,3 +9,5 @@
 
 - Reconciliation wine classification: WINE only if mapped / winerim_wine_id / explicit WINE override; everything else NOT_WINE (no UNKNOWN) — user GO 2026-09-29, avoids manual classification blocking days.- Reconciliation day verdict = `_shared/reconciliation-v2/dayAggregate.ts`: OPEN snapshots superseded by an invoice (InvoiceItems GlobalId, fallback product+soldAt+qty) are dropped, and units are compared per (day, Winerim wine, format) against closed docs only — Winerim groups servings into «Botella en uso» with the first-glass time, so line/time matching is explanation only.
 - Ágora product ids in the Winerim-native range (N_000_000 + wine) compare by wine remainder in agoraReader — ingestion may store the copa variant while the raw ticket keeps the botella id (Don Bernardo).
+
+- Cambios de funciones pendientes de OK se preparan fuera de `supabase/functions/` (p. ej. `/tmp` o `docs/pending/`): editar ahí despliega solo — el 30-sep se publicaron agora-proxy y winerim-proxy sin OK.
