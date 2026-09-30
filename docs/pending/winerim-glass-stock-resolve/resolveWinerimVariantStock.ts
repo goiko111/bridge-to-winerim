@@ -16,9 +16,9 @@ export type ResolvedVariant = {
   stock: number | null;
   stockActive: boolean | null;
   source: "wines" | "stock";
-  /** isActive de la variante en /wines (null si no viene). Copa inactiva: pendiente de confirmar con Winerim si acepta ventas. */
+  /** isActive de la variante en /wines (null si no viene). Copa inactiva: Winerim la acepta si la botella está activa y con partición (respuesta equipo Winerim 2026-09-30). */
   isActive: boolean | null;
-  glass?: { bottlePriceId: number | null; bottleStockId: number | null; glassesPerBottle: number | null };
+  glass?: { bottlePriceId: number | null; bottleStockId: number | null; glassesPerBottle: number | null; serviceable: boolean | null };
 };
 
 const num = (v: unknown): number | null => {
@@ -47,7 +47,7 @@ export function indexFromWines(wines: unknown[], normalize: (s: unknown) => Vari
       if (out.has(key + ":AMBIGUOUS")) continue;
       out.set(key, {
         wineId, variant, stockId, priceId: num(p.priceId ?? p.id), stock: null, stockActive: null, source: "wines", isActive: typeof p.isActive === "boolean" ? p.isActive as boolean : null,
-        ...(variant === "copa" ? { glass: { bottlePriceId: num(g?.bottlePriceId), bottleStockId: num(g?.bottleStockId), glassesPerBottle: num(g?.glassesPerBottle) } } : {}),
+        ...(variant === "copa" ? { glass: { bottlePriceId: num(g?.bottlePriceId), bottleStockId: num(g?.bottleStockId), glassesPerBottle: num(g?.glassesPerBottle), serviceable: typeof g?.serviceable === "boolean" ? g.serviceable as boolean : null } } : {}),
       });
     }
   }
