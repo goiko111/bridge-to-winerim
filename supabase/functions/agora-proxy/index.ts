@@ -120,6 +120,38 @@ import {
   isWinerimCertifiedSalesImportEnabled,
   retryableCertifiedSales,
 } from "../_shared/winerimCertifiedSalesImport.ts";
+import { indexFromWines, resolveVariant } from "../_shared/resolveWinerimVariantStock.ts";
+
+// Copa fallback (OK Goiko 2026-09-30): /stock/wine/{id} omits inactive glasses.
+// Resolve the glass via GET /wines/{id} prices[] (isGlass, stockId) even if
+// isActive=false; send only when glass.serviceable === true, otherwise the line
+// stays FAILED with a PENDING_WINERIM_CONFIG reason (no retry storm, no send).
+const glassFallbackCache = new Map<string, Promise<{ id: number; stock: number; stockActive: boolean; variant: WinerimVariant } | { error: string }>>();
+function resolveGlassViaWines(winerimBase: string, headers: Record<string, string>, wineId: string) {
+  const key = `${winerimBase}|${headers["WINERIM-API-TOKEN"] || ""}|${wineId}`;
+  if (!glassFallbackCache.has(key)) {
+    glassFallbackCache.set(key, (async () => {
+      try {
+        const r = await fetch(`${winerimBase}/wines/${wineId}`, { method: "GET", headers });
+        if (!r.ok) return { error: `Variant 'copa' not found for wine ${wineId} (GET /wines/${wineId} → ${r.status})` };
+        const body = await r.json();
+        const wine = body?.data && !Array.isArray(body.data) ? body.data : body;
+        const idx = indexFromWines([wine], (s) => normalizeWinerimVariant(s) as string | null);
+        const res = resolveVariant(wineId, "copa", idx, new Map());
+        if (!res.ok) {
+          return { error: res.code === "GLASS_NOT_SERVICEABLE"
+            ? `PENDING_WINERIM_CONFIG: copa of wine ${wineId} not serviceable (${res.serviceProblem})`
+            : `Variant 'copa' not found for wine ${wineId} (${res.code} in /wines)` };
+        }
+        return { id: res.value.stockId, stock: 0, stockActive: false, variant: "copa" as WinerimVariant };
+      } catch (e) {
+        return { error: `Variant 'copa' not found for wine ${wineId} (${String(e)})` };
+      }
+    })());
+  }
+  return glassFallbackCache.get(key)!;
+}
+
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1994,10 +2026,15 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
 
   for (const agg of toProcess) {
     const fetchedStocks = wineStockCache.get(agg.winerimWineId);
-    const match = fetchedStocks?.find(s => s.variant === agg.variant);
+    let match = fetchedStocks?.find(s => s.variant === agg.variant);
+    let glassErr: string | null = null;
+    if (!match && agg.variant === "copa") {
+      const g = await resolveGlassViaWines(WINERIM_BASE, winerimHeaders, agg.winerimWineId);
+      if ("error" in g) glassErr = g.error; else match = g;
+    }
 
     if (!match) {
-      const err = wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
+      const err = glassErr || wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
       await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).in("id", agg.logIds);
       failed++; continue;
     }
@@ -2582,9 +2619,14 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   let synced = 0;
   for (const agg of toProcess) {
     const fetchedStocks = wineStockCache.get(agg.winerimWineId);
-    const match = fetchedStocks?.find((stock) => stock.variant === agg.variant);
+    let match = fetchedStocks?.find((stock) => stock.variant === agg.variant);
+    let glassErr: string | null = null;
+    if (!match && agg.variant === "copa") {
+      const g = await resolveGlassViaWines(WINERIM_BASE, winerimHeaders, agg.winerimWineId);
+      if ("error" in g) glassErr = g.error; else match = g;
+    }
     if (!match) {
-      const err = wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
+      const err = glassErr || wineFetchErrors.get(agg.winerimWineId) || `Variant '${agg.variant}' not found for wine ${agg.winerimWineId}`;
       await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).in("id", agg.logIds);
       failed++;
       continue;
@@ -3159,9 +3201,14 @@ async function syncStockForDayIncrementalByDayTotal(
   let synced = 0;
   for (let i = 0; i < claimed.length; i++) {
     const claim = claimed[i];
-    const match = wineStockCache.get(claim.winerimWineId)?.find((stock) => stock.variant === claim.variant);
+    let match = wineStockCache.get(claim.winerimWineId)?.find((stock) => stock.variant === claim.variant);
+    let glassErr: string | null = null;
+    if (!match && claim.variant === "copa") {
+      const g = await resolveGlassViaWines(WINERIM_BASE, winerimHeaders, claim.winerimWineId);
+      if ("error" in g) glassErr = g.error; else match = g;
+    }
     if (!match) {
-      const err = wineFetchErrors.get(claim.winerimWineId) || `Variant '${claim.variant}' not found for wine ${claim.winerimWineId}`;
+      const err = glassErr || wineFetchErrors.get(claim.winerimWineId) || `Variant '${claim.variant}' not found for wine ${claim.winerimWineId}`;
       await supabase.from("stock_sync_log").update({ status: "FAILED", error_message: err }).eq("id", claim.logId);
       failed++;
       continue;
