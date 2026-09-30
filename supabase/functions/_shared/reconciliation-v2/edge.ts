@@ -58,10 +58,13 @@ function allowedOrigins(): Set<string> {
   return new Set((Deno.env.get("EDGE_ALLOWED_ORIGINS") ?? "").split(",").map((origin) => origin.trim()).filter(Boolean));
 }
 
+// Orígenes propios del proyecto (preview y publicado); el acceso sigue exigiendo JWT.
+const PROJECT_ORIGIN = /^https:\/\/([a-z0-9-]+--)?a61b5b89-4c36-44fc-aaf2-9c7c3f3cfd8d\.(lovableproject\.com|lovable\.app)$|^https:\/\/bridge-to-winerim\.lovable\.app$/;
+
 export function corsFor(request: Request): HeadersInit {
   const origin = request.headers.get("Origin") ?? "";
   const allowed = allowedOrigins();
-  return origin && allowed.has(origin) ? {
+  return origin && (allowed.has(origin) || PROJECT_ORIGIN.test(origin)) ? {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
