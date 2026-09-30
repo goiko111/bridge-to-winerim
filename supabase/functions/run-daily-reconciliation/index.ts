@@ -5,6 +5,7 @@ import { attributeByProviderLine, lineTimeAttributionMode } from "../_shared/rec
 import { agoraProviderAmount, agoraProviderIdentity, classifyWineCandidate, splitSourceCoverage, resolveAgoraIdentity, type AgoraDbLine, type ProviderProductClassification } from "../_shared/reconciliation-v2/agoraReader.ts";
 import { buildAnalytics, type AnalyticsCategory, type AnalyticsLine } from "../_shared/reconciliation-v2/analytics.ts";
 import { reconcileLines } from "../_shared/reconciliation-v2/engine.ts";
+import { aggregateByWineFormat, closedTicketGlobalIds, supersededOpenLines } from "../_shared/reconciliation-v2/dayAggregate.ts";
 import { sha256Hex } from "../_shared/reconciliation-v2/hash.ts";
 import type { SaleDeletion, WinerimLine } from "../_shared/reconciliation-v2/types.ts";
 import { activeBinding, bindingCutoffHour, bindingTimezone, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
@@ -138,7 +139,13 @@ Deno.serve(async (request) => {
       lineAttributionMetrics = { mode: lineAttribution, loadedLines: source.lines.length, keptLines: attributed.lines.length, outsideWindow: attributed.outsideWindow, invalidTimestamp: attributed.invalidTimestamp };
       source = { lines: attributed.lines, complete: source.complete && attributed.complete, eventCount: new Set(attributed.lines.map((row) => String((row.sales_event as Record<string, unknown>).id ?? row.sales_event.provider_doc_id))).size };
     }
-    phase("source_loaded", { events: source.eventCount, lines: source.lines.length });
+    // One version per ticket: drop OPEN snapshots whose ticket was closed into an invoice (D..D+1).
+    const closedDocs = await paged<Record<string, unknown>>((from, to) => db.from("sales_events").select("id,provider_doc_id,doc_type,raw_json")
+      .eq("connection_id", connectionId).neq("doc_type", "OpenTicket").gte("business_day", plusDays(body.businessDay, -1)).lt("business_day", plusDays(body.businessDay, 2)).order("id").range(from, to));
+    const dedupe = supersededOpenLines(source.lines, closedTicketGlobalIds(closedDocs.rows as never));
+    const openDedupe = { superseded: dedupe.superseded.length, byLink: dedupe.byLink, byFallback: dedupe.byFallback, complete: closedDocs.complete };
+    source = { ...source, lines: dedupe.kept, complete: source.complete && closedDocs.complete };
+    phase("source_loaded", { events: source.eventCount, lines: source.lines.length, supersededOpen: dedupe.superseded.length });
     const providerUnresolved = source.lines.filter((row) => !agoraProviderIdentity(row));
     const productClassifications = await currentProductClassifications(db, connectionId, source.lines);
     phase("classifications_loaded", { products: productClassifications.size });
@@ -275,7 +282,7 @@ Deno.serve(async (request) => {
     const ANALYTICS_SKIPPED = { complete: null, skipped: "DRY_RUN_OPERATIONAL_ONLY", reasons: [] as string[], sourceLines: 0, includedLines: 0, missingIdentityLines: 0, missingAmountLines: 0 };
     const { analytics, analyticsCoverage } = dryRun ? { analytics: { coverage: ANALYTICS_SKIPPED, series: [], aggregates: [] }, analyticsCoverage: ANALYTICS_SKIPPED } : await (async () => { await refreshDay(plusDays(body.businessDay, -1), false); await refreshDay(body.businessDay, false); phase("projection_refreshed"); return rpcAnalytics(28); })();
     phase("analytics_done");
-    const metrics = { lineTimeAttribution: lineAttributionMetrics, sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, ...split.metrics, wineReconciliationCoverage: split.wineReconciliationCoverage, sourceAnalyticsCoverage: split.analyticsCoverage, analyticsCoverage, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
+    const metrics = { lineTimeAttribution: lineAttributionMetrics, sourceLines: source.lines.length, providerIdentifiedLines: source.lines.length - providerUnresolved.length, wineCandidateLines: wineCandidates.length, mappedWineLines: reconcilableWine.length, unmappedWineLines: unmappedWine.length, unknownWineClassificationLines: unknownWineClassification.length, eligibleAgoraLines: agora.length, unresolvedSourceLines: providerUnresolved.length + unresolved.length, ...split.metrics, wineReconciliationCoverage: split.wineReconciliationCoverage, sourceAnalyticsCoverage: split.analyticsCoverage, analyticsCoverage, openDedupe, dayAggregate: aggregateByWineFormat(results as never, completeness.agoraComplete && completeness.winerimComplete).summary, winerimLines: winerimRows.length, states: Object.fromEntries(results.map((row) => row.state).map((state, _, all) => [state, all.filter((value) => value === state).length])) };
     if (!dryRun) {
       lockStream = `reconcile:${body.businessDay}`; await claim(db, connectionId, lockStream, owner); locked = true;
       phase("commit_start", { results: resultRows.length });
@@ -283,7 +290,7 @@ Deno.serve(async (request) => {
       phase("commit_done");
       if (error) throw Object.assign(new Error("Falló el commit atómico de conciliación"), { status: 500, code: "RECONCILIATION_COMMIT_FAILED" });
     }
-    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, writerReceipts: writerReceiptEvidence, completeness, sourceDiagnostic, metrics, results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
+    return json(request, { ok: completeness.agoraComplete && completeness.winerimComplete, mode: "AUDIT_ONLY", dryRun, runId, historical: historicalEvidence, writerReceipts: writerReceiptEvidence, completeness, sourceDiagnostic, metrics, dayAggregate: aggregateByWineFormat(results as never, completeness.agoraComplete && completeness.winerimComplete), results: resultRows, analytics }, completeness.agoraComplete && completeness.winerimComplete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
   finally { if (locked && dbForFinally) { try { await release(dbForFinally, connectionId, lockStream, owner); } catch { /* TTL is the recovery path */ } } }
 });

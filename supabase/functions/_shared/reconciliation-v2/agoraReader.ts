@@ -1,4 +1,5 @@
 import type { AgoraLine } from "./types.ts";
+import { resolveAgoraFormat } from "./dayAggregate.ts";
 
 type RawRow = Record<string, unknown>;
 
@@ -62,6 +63,15 @@ type RawLineCandidate = { line: RawRow; container: RawRow; containerIndex: numbe
 
 const field = (row: RawRow | null, camel: string, pascal: string) => row?.[camel] ?? row?.[pascal];
 const identifier = (value: unknown) => value == null || value === "" ? null : String(value).trim() || null;
+/**
+ * Winerim-native Ágora products encode the format in the id (idBase N_000_000 + wine).
+ * Ingestion may store the resolved format variant (e.g. copa 3xxxxxx) while the raw
+ * ticket keeps the sold product (botella 2xxxxxx). Both identify the same wine line.
+ */
+const productKey = (value: unknown) => {
+  const id = identifier(value); if (!id || !/^\d+$/.test(id)) return id;
+  const n = Number(id); return n >= 2_000_000 && n < 16_000_000 ? `native:${n % 1_000_000}` : id;
+};
 
 function candidateLines(container: RawRow, containerIndex: number | null): RawLineCandidate[] {
   const values = Array.isArray(container.lines) ? container.lines : Array.isArray(container.Lines) ? container.Lines : [];
@@ -81,7 +91,7 @@ function rawLines(raw: RawRow | null): RawLineCandidate[] {
 // the bucket, so the matched set is identical to the previous full scan (order preserved).
 type RawIndex = { all: RawLineCandidate[]; buckets: Map<string, RawLineCandidate[]> };
 const rawIndexCache = new WeakMap<object, RawIndex>();
-const strictKey = (productId: unknown, quantity: unknown, soldAt: unknown) => `${identifier(productId) ?? ""}\u0001${normalizedNumber(quantity) ?? ""}\u0001${normalizedTime(soldAt) ?? ""}`;
+const strictKey = (productId: unknown, quantity: unknown, soldAt: unknown) => `${productKey(productId) ?? ""}\u0001${normalizedNumber(quantity) ?? ""}\u0001${normalizedTime(soldAt) ?? ""}`;
 function rawIndex(raw: RawRow | null): RawIndex {
   if (!raw) return { all: [], buckets: new Map() };
   const cached = rawIndexCache.get(raw); if (cached) return cached;
@@ -104,7 +114,7 @@ export function rawLineCount(row: AgoraDbLine): number { return rawIndex(object(
 
 function signatureMatches(row: AgoraDbLine, candidate: RawLineCandidate): boolean {
   const line = candidate.line;
-  if (identifier(field(line, "providerProductId", "ProductId")) !== identifier(row.provider_product_id)) return false;
+  if (productKey(field(line, "providerProductId", "ProductId")) !== productKey(row.provider_product_id)) return false;
   if (normalizedNumber(field(line, "quantity", "Quantity")) !== normalizedNumber(row.quantity)) return false;
   const rowAmount = normalizedNumber(row.total_amount); const quantity = normalizedNumber(field(line, "quantity", "Quantity"));
   const amounts = [field(line, "totalAmount", "TotalAmount"), field(line, "unitPrice", "UnitPrice"), field(line, "productPrice", "ProductPrice")]
@@ -164,7 +174,7 @@ export function resolveAgoraIdentity(row: AgoraDbLine, restaurantId: number): Ag
     wineName: row.name ?? text(field(rawLine, "productName", "ProductName")),
     family: row.family ?? text(field(rawLine, "familyName", "FamilyName")),
     providerProductId: row.provider_product_id,
-    format: row.format,
+    format: resolveAgoraFormat(row.format).format,
     quantity: Number(row.quantity),
     amountMinor: netAmount == null ? row.total_amount == null ? null : Math.round(Number(row.total_amount) * 100) : Math.round(netAmount * 100),
     effectiveAt,

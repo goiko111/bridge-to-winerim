@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { aggregateByWineFormat, resolveAgoraFormat } from "../_shared/reconciliation-v2/dayAggregate.ts";
 import { corsFor, json, preflight, requireAuthenticated, safeError, serverClient } from "../_shared/reconciliation-v2/edge.ts";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -76,6 +77,10 @@ Deno.serve(async (request) => {
       }
       for (const row of results.rows) { const w = row.winerim_line as Record<string, unknown> | null; if (w && w.wineId != null) w.wineName = names.get(String(w.wineId)) ?? null; }
     }
+    // Display format from recognised labels only (Ágora may carry the product name in `format`).
+    for (const row of results.rows) { const a = row.agora_line as Record<string, unknown> | null; if (a) { const f = resolveAgoraFormat(a.format == null ? null : String(a.format)); a.formatRaw = a.format; a.format = f.format; a.formatInferred = f.inferred; } }
+    // Day comparison by (day, Winerim wine, format) summing units; line detail is explanation only.
+    const dayAggregate = state ? null : aggregateByWineFormat(results.rows.map((row) => ({ businessDay: String(row.business_day), state: String(row.canonical_state) as never, agora: row.agora_line as Record<string, unknown> | null, winerim: row.winerim_line as Record<string, unknown> | null })), results.complete);
     const sets = { results, dashboard, analytics, aggregates, checkpoints, snapshots, stockItems, movements }; const complete = Object.values(sets).every((item) => item.complete);
     if (format === "csv") {
       if (!complete) return json(request, { ok: false, code: "EXPORT_INCOMPLETE", message: "El export superó el límite explícito; reduce el rango. No se genera un CSV parcial.", readCoverage: { complete: false } }, 409);
@@ -84,6 +89,6 @@ Deno.serve(async (request) => {
       return new Response([header.map(csvCell).join(","), ...rows].join("\n"), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename=reconciliation-${connectionId}-${from}-${to}.csv`, ...corsFor(request) } });
     }
     if (format !== "json") throw Object.assign(new Error("format debe ser json o csv"), { status: 400, code: "INVALID_FORMAT" });
-    return json(request, { ok: complete, mode: "AUDIT_ONLY", filters: { connectionId, from, to, state }, results: results.rows, dashboard: dashboard.rows, analytics: analytics.rows, aggregates: aggregates.rows, coverage: checkpoints.rows, stockSnapshots: snapshots.rows, stockItems: stockItems.rows, stockMovements: movements.rows, readCoverage: { complete, pages: Object.fromEntries(Object.entries(sets).map(([key, item]) => [key, item.pages])) } }, complete ? 200 : 206);
+    return json(request, { ok: complete, mode: "AUDIT_ONLY", filters: { connectionId, from, to, state }, results: results.rows, dayAggregate, dashboard: dashboard.rows, analytics: analytics.rows, aggregates: aggregates.rows, coverage: checkpoints.rows, stockSnapshots: snapshots.rows, stockItems: stockItems.rows, stockMovements: movements.rows, readCoverage: { complete, pages: Object.fromEntries(Object.entries(sets).map(([key, item]) => [key, item.pages])) } }, complete ? 200 : 206);
   } catch (error) { return safeError(request, error); }
 });
