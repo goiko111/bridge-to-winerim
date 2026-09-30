@@ -37,7 +37,7 @@ describe("suma por día, vino y formato", () => {
   });
   it("devolución resta y el abierto no absorbido se informa aparte", () => {
     const out = aggregateByWineFormat([A(2), A(-1, { isCancelled: true }), A(1, { isOpen: true }), W(1)]);
-    expect(out.groups[0]).toMatchObject({ closedQty: 1, openQty: 1, expectedQty: 1, diff: 0, state: "MATCHED" });
+    expect(out.groups[0]).toMatchObject({ closedQty: 1, openQty: 1, expectedQty: 2, diff: -1, state: "SHORT_IN_WINERIM" });
   });
   it("fuente incompleta nunca se certifica", () => {
     const out = aggregateByWineFormat([{ ...A(1), state: "SOURCE_INCOMPLETE" }, W(1)]);

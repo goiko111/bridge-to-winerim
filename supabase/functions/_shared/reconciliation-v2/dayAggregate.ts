@@ -75,7 +75,7 @@ type ResultLike = Pick<ReconciliationResult, "businessDay" | "state"> & { agora:
 
 /**
  * Day comparison by (day, Winerim wine, format) summing units, not sales. Line
- * matching stays only as explanation. OPEN lines not superseded are reported as openQty, never mixed.
+ * matching stays only as explanation. OPEN lines not superseded count as sales (openQty column, included in expectedQty).
  */
 export function aggregateByWineFormat(results: ResultLike[], sourceComplete = true): { groups: WineFormatGroup[]; summary: { groups: number; matchedGroups: number; closedQty: number; openQty: number; winerimQty: number; absDiff: number; unitMatchPct: number; complete: boolean; fullMatch: boolean } } {
   const map = new Map<string, WineFormatGroup>(); let complete = sourceComplete;
@@ -102,14 +102,14 @@ export function aggregateByWineFormat(results: ResultLike[], sourceComplete = tr
     }
   }
   const groups = [...map.values()].map((g) => {
-    // Certified comparison: closed documents (invoices − refunds). Un-superseded OPEN lines are reported apart (still open or removed before closing).
-    const expectedQty = round(g.closedQty); const diff = round(g.winerimQty - expectedQty);
+    // User GO 2026-09-30: an OPEN ticket counts as a sale. Expected = closed docs (invoices − refunds) + un-superseded OPEN lines (own column).
+    const expectedQty = round(g.closedQty + g.openQty); const diff = round(g.winerimQty - expectedQty);
     const state: WineFormatGroup["state"] = !complete ? "SOURCE_INCOMPLETE" : Math.abs(diff) < 1e-9 ? "MATCHED" : diff < 0 ? "SHORT_IN_WINERIM" : "EXCESS_IN_WINERIM";
     return { ...g, closedQty: round(g.closedQty), openQty: round(g.openQty), winerimQty: round(g.winerimQty), expectedQty, diff, state };
   }).sort((x, y) => x.businessDay.localeCompare(y.businessDay) || Math.abs(y.diff) - Math.abs(x.diff) || x.wineId.localeCompare(y.wineId));
   const closedQty = round(groups.reduce((s, g) => s + g.closedQty, 0)); const openQty = round(groups.reduce((s, g) => s + g.openQty, 0));
   const winerimQty = round(groups.reduce((s, g) => s + g.winerimQty, 0)); const absDiff = round(groups.reduce((s, g) => s + Math.abs(g.diff), 0));
-  const expected = closedQty; const matchedGroups = groups.filter((g) => g.state === "MATCHED").length;
+  const expected = round(closedQty + openQty); const matchedGroups = groups.filter((g) => g.state === "MATCHED").length;
   const unitMatchPct = expected > 0 ? Math.max(0, Math.round((1 - absDiff / Math.max(expected, winerimQty)) * 1000) / 10) : winerimQty === 0 ? 100 : 0;
   return { groups, summary: { groups: groups.length, matchedGroups, closedQty, openQty, winerimQty, absDiff, unitMatchPct, complete, fullMatch: complete && matchedGroups === groups.length } };
 }
