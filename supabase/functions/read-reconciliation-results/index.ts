@@ -10,7 +10,7 @@ async function paged<T>(make: (from: number, to: number) => PromiseLike<{ data: 
   return { rows, complete: false, pages: MAX_PAGES };
 }
 async function assertConnectionAccess(auth: SupabaseClient, connectionId: string) {
-  const [{ data: admin, error: adminError }, { data: allowed, error: accessError }] = await Promise.all([auth.rpc("is_platform_admin"), auth.rpc("can_access_connection", { p_connection_id: connectionId })]);
+  const [{ data: admin, error: adminError }, { data: allowed, error: accessError }] = await Promise.all([auth.rpc("is_platform_admin"), auth.rpc("can_access_connection", { _connection_id: connectionId })]);
   if (adminError || accessError) throw Object.assign(new Error("No se pudo validar el acceso al restaurante"), { status: 500, code: "ACCESS_CHECK_FAILED" });
   if (admin !== true && allowed !== true) throw Object.assign(new Error("Sin acceso a este restaurante"), { status: 403, code: "CONNECTION_FORBIDDEN" });
 }
