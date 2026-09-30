@@ -4,6 +4,17 @@
 
 _Última actualización: 2026-09-23 11:10 UTC_
 
+## Paquete agora-proxy/winerim-proxy para OK de Goiko - 2026-09-30 16:55
+
+### Hechos
+- agora-proxy (v862, código 743806f2) y winerim-proxy se publicaron solos a las 16:40 con el control de llamante bloqueando; 0 rechazos por permisos observados.
+- 61348 (Q Tomas, Bobal blanco, 29-sep): Winerim tiene 3 botellas confirmadas (ventas 191832, 191846, 192097) = 3 de Ágora.
+- Fallo menor: el envío de 22:08 del 61348 queda etiquetado con la factura 26270 en vez de la 26273. Solo afecta a la etiqueta del registro, no al stock ni al historial. Las 3 líneas llevan la hora 15:08:40.
+
+### Tareas pendientes
+- OK de Goiko al paquete docs/pending/caller-guard-log-only (solo registro 24 h + devolución de abiertos b).
+- (a) 24 locales: solo simulación.
+
 ## O Centolo + lecturas intradía en toda la flota Ágora - 2026-09-23
 
 ### Hechos
