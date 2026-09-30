@@ -86,6 +86,7 @@ import {
   parseOpenTickets,
 } from "../_shared/agoraOpenTickets.ts";
 import { ambiguousReopenFrozenProductIds, excludeReopenSupersededEvents, isFrozenLine } from "../_shared/agoraTicketLifecycle.ts";
+import { LATE_DEFINITIVE_REVIEW, shouldHoldLateDefinitive } from "../_shared/agoraLateInvoiceGuard.ts";
 import {
   assessWinerimSalesImportResponse,
   buildStockSyncGroupKey,
@@ -3059,6 +3060,49 @@ async function syncStockForDayIncrementalByDayTotal(
       .in("idempotency_key", chunk);
     for (const row of (existingRows || []) as { idempotency_key: string }[]) {
       existingTargetKeys.add(row.idempotency_key);
+    }
+  }
+
+  if (desiredSource === "definitive" && deltaCandidates.length > 0) {
+    const openEventIds = (dayEvents || [])
+      .filter((event: { doc_type?: string | null }) => String(event.doc_type || "").toLowerCase() === "openticket")
+      .map((event: { id: string }) => event.id);
+    let openTicketSuccessSends = 0;
+    for (let i = 0; i < openEventIds.length; i += 100) {
+      const { count } = await supabase
+        .from("stock_sync_log")
+        .select("id", { count: "exact", head: true })
+        .eq("connection_id", connectionId)
+        .eq("status", "SUCCESS")
+        .in("sales_event_id", openEventIds.slice(i, i + 100));
+      openTicketSuccessSends += Number(count || 0);
+    }
+    const timeZone = String((connection?.provider_config as Record<string, unknown> | null)?.sales_timezone || "Europe/Madrid");
+    if (shouldHoldLateDefinitive({ day, desiredSource, nowIso: new Date().toISOString(), timeZone, openTicketSuccessSends })) {
+      for (const total of deltaCandidates) {
+        const reviewKey = `${total.idempotencyKey}:${LATE_DEFINITIVE_REVIEW}`;
+        if (existingTargetKeys.has(total.idempotencyKey)) continue;
+        await supabase.from("stock_sync_log").insert({
+          connection_id: connectionId,
+          sales_event_id: total.firstEventId,
+          sales_line_item_id: total.firstLineId,
+          provider_product_id: total.providerProductId,
+          winerim_product_id: total.winerimWineId,
+          product_name: `${total.name} [${total.variant}]`,
+          quantity: total.deltaQty,
+          variant: total.variant,
+          idempotency_key: reviewKey,
+          status: "BLOCKED",
+          error_message: `${LATE_DEFINITIVE_REVIEW}: factura tras medianoche con ${openTicketSuccessSends} envíos open_ticket; revisar a mano`,
+        });
+      }
+      return {
+        synced: 0,
+        skipped: deltaCandidates.length,
+        failed: 0,
+        held: deltaCandidates.length,
+        message: LATE_DEFINITIVE_REVIEW,
+      };
     }
   }
 
