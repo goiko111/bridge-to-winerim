@@ -4,6 +4,7 @@ import { addBusinessDays, bindingCutoffHour, bindingTimezone, businessWindow, ty
 export const PIPELINE_VERSION = "clinic-audit-v1";
 export const SCHEDULER_LOCK_STREAM = "scheduler:daily";
 export const SCHEDULER_LOCK_TTL_SECONDS = 900;
+export const MAX_SOURCE_INCOMPLETE_ATTEMPTS = 3;
 export const CLINIC_CONNECTION_ID = "1c5177f1-9459-4ee9-8b6e-4780f8b6b96b";
 /** Never runs under the scheduler identity, whatever its binding says (client_closed). */
 export const SCHEDULER_EXCLUDED_CONNECTIONS: ReadonlySet<string> = new Set(["706b952e-767d-41af-9cba-8e225b16a877"]);
@@ -68,7 +69,9 @@ export async function runScheduledPipeline(binding: BindingMetadata, deps: Sched
   if (!(await deps.claim())) return { outcome: "LOCK_BUSY", businessDay: day };
   try {
     const existing = await deps.getState(day);
-    if (existing?.status === "SUCCEEDED" || existing?.status === "SOURCE_INCOMPLETE") return { outcome: "ALREADY_DONE", businessDay: day };
+    if (existing?.status === "SUCCEEDED") return { outcome: "ALREADY_DONE", businessDay: day };
+    // SOURCE_INCOMPLETE is retried by the later wake-ups (09:05/11:05 UTC) up to MAX_SOURCE_INCOMPLETE_ATTEMPTS.
+    if (existing?.status === "SOURCE_INCOMPLETE" && (existing.attempts ?? 0) >= MAX_SOURCE_INCOMPLETE_ATTEMPTS) return { outcome: "ALREADY_DONE", businessDay: day };
     if (existing?.status === "BLOCKED") return { outcome: "BLOCKED", businessDay: day, errorCode: existing.error_code };
     const previous = await deps.lastOtherState(day);
     if (previous?.status === "BLOCKED") return { outcome: "BLOCKED", businessDay: day, errorCode: previous.error_code };
