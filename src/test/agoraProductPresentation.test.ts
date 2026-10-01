@@ -5,8 +5,10 @@ import {
   AGORA_SORT_ALPHABETICAL_WINE_NAME,
   agoraProductButtonText,
   agoraProductColor,
+  buildAgoraGlassPresentation,
   buildUniqueAgoraButtonTexts,
   compareAgoraWineNames,
+  nextAgoraGlassOrder,
   shouldSortAgoraProductsAlphabetically,
   stripAgoraFormatPrefix,
 } from "../../supabase/functions/_shared/agoraProductPresentation";
@@ -46,7 +48,7 @@ describe("Agora product presentation", () => {
     expect(agoraProductButtonText(connection, "M Viña Real", 20)).toBe("Viña Real [M]");
   });
 
-  it("uses configured wine-type colors without changing the default fallback", () => {
+  it("uses configured colors and the agreed semantic defaults", () => {
     const connection = {
       provider_config: {
         agora_product_color_by_wine_type: {
@@ -57,7 +59,41 @@ describe("Agora product presentation", () => {
     };
     expect(agoraProductColor(connection, "Tinto")).toBe("#800040");
     expect(agoraProductColor(connection, "Champagne")).toBe("#FF8080");
-    expect(agoraProductColor(connection, "Blanco")).toBe("#8B0000");
+    expect(agoraProductColor(connection, "Blanco")).toBe("#FFFFFF");
+    expect(agoraProductColor(connection, "Rosado")).toBe("#DC82EF");
+    expect(agoraProductColor(connection, "Generoso")).toBe("#F1C097");
+    expect(agoraProductColor(connection, "Postre")).toBe("#F5A623");
+    expect(agoraProductColor(connection, "desconocido")).toBe("#8B0000");
+  });
+
+  it("orders glasses by wine type and then by prefixless wine name", () => {
+    expect(buildAgoraGlassPresentation({}, [
+      { key: "sweet", name: "C Don PX", wineType: "postre" },
+      { key: "white-b", name: "C Leirana", wineType: "blanco" },
+      { key: "red", name: "C Clio", wineType: "tinto" },
+      { key: "white-a", name: "C Albenc", wineType: "blanco" },
+      { key: "fortified", name: "C Fino", wineType: "generoso" },
+    ])).toEqual({
+      red: { order: 100, color: "#800040" },
+      "white-a": { order: 200, color: "#FFFFFF" },
+      "white-b": { order: 300, color: "#FFFFFF" },
+      fortified: { order: 400, color: "#F1C097" },
+      sweet: { order: 500, color: "#F5A623" },
+    });
+  });
+
+  it("places a new glass in an available alphabetical gap without moving existing glasses", () => {
+    const existing = [
+      { name: "C Albenc", color: "#FFFFFF", order: 200 },
+      { name: "C Leirana", color: "#FFFFFF", order: 400 },
+      { name: "C Clio", color: "#800040", order: 100 },
+    ];
+    expect(nextAgoraGlassOrder("blanco", "C Belondrade", existing)).toBe(300);
+    expect(existing).toEqual([
+      { name: "C Albenc", color: "#FFFFFF", order: 200 },
+      { name: "C Leirana", color: "#FFFFFF", order: 400 },
+      { name: "C Clio", color: "#800040", order: 100 },
+    ]);
   });
 
   it("keeps the format suffix when equal names need a stable disambiguator", () => {
