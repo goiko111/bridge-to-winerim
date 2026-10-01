@@ -106,6 +106,19 @@ describe("runScheduledPipeline", () => {
     const h = harness(now, { reconcile: async () => ({ status: 206, body: { dryRun: false, runId: "r2" } }) });
     expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("SOURCE_INCOMPLETE");
   });
+  it("SOURCE_INCOMPLETE se reintenta hasta 3 intentos y luego para", async () => {
+    const h = harness(now, { reconcile: async () => { h.calls.push("reconcile"); return { status: 206, body: { dryRun: false, runId: "r2" } }; } });
+    for (let i = 0; i < 3; i++) expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("SOURCE_INCOMPLETE");
+    expect(h.states.get("2026-09-28")?.attempts).toBe(3);
+    h.calls.length = 0;
+    expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("ALREADY_DONE"); expect(h.calls).toEqual([]);
+  });
+  it("SOURCE_INCOMPLETE que en el reintento cuadra pasa a SUCCEEDED", async () => {
+    let n = 0; const h = harness(now, { reconcile: async () => ({ status: n++ ? 200 : 206, body: { dryRun: false, runId: "r" } }) });
+    expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("SOURCE_INCOMPLETE");
+    expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("SUCCEEDED");
+    expect((await runScheduledPipeline(binding, h.deps)).outcome).toBe("ALREADY_DONE");
+  });
   it("siempre libera el lock", async () => {
     const h = harness(now, { sales: async () => { throw Object.assign(new Error("x"), { code: "BOOM" }); } });
     await runScheduledPipeline(binding, h.deps); h.setLock(null);
