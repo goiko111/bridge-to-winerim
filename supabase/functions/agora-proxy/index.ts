@@ -12520,6 +12520,59 @@ ${costPricesXml}
                 failed++;
               }
               processed++;
+            } else if ((t as any).task_type === "AGORA_RESTORE_PRODUCT") {
+              // Incidencia 1-oct: restore prior attributes on an EXISTING product.
+              // Fail closed: needs a fresh read and the product present in Agora.
+              const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
+              if (!fullTask) { failed++; processed++; continue; }
+              const p = fullTask.payload_json as Record<string, unknown>;
+              const pid = String(p._product_id || "");
+              const newAttempts = usedAtomicClaim ? (fullTask.attempts || 1) : ((fullTask.attempts || 0) + 1);
+              const cached = await fetchAgoraProductsXmlCached(connectionId, baseUrlClean, apiTokenClean, fetchWithRetry, 30000, true);
+              if (!cached.ok || !cached.xml?.includes("<Product")) {
+                await registerFailure(t.id, `RESTORE_READ_FAILED HTTP ${cached.status}`, newAttempts);
+                failed++; processed++; continue;
+              }
+              const original = findXmlElementByAttr(cached.xml, "Product", "Id", pid);
+              const originalRaw = (() => {
+                const re = new RegExp(`<Product\\b[^>]*\\bId="${pid}"[^>]*\\/>|<Product\\b[^>]*\\bId="${pid}"[^>]*>[\\s\\S]*?<\\/Product>`);
+                return re.exec(cached.xml)?.[0] || null;
+              })();
+              if (!original || !originalRaw) {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: "RESTORE_PRODUCT_NOT_IN_AGORA" }).eq("id", t.id);
+                failed++; processed++; continue;
+              }
+              const patch = restoreAgoraProductXml(originalRaw, (p._restore_attrs || {}) as Record<string, string>, p._restore_main_price as string | undefined, String(p._price_list_id || "1"));
+              if (!patch.ok) {
+                await supabase.from("outbound_tasks").update({ status: "FAILED", last_error: patch.error }).eq("id", t.id);
+                failed++; processed++; continue;
+              }
+              if (!usedAtomicClaim) await supabase.from("outbound_tasks").update({ status: "RUNNING", attempts: newAttempts }).eq("id", t.id);
+              const restoreXml = `<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n<Import>\n  <Products>\n    ${patch.xml}\n  </Products>\n</Import>`;
+              const res = await fetchWithRetry(`${baseUrlClean}/api/import/`, {
+                method: "POST",
+                headers: { ...headers, Accept: "application/xml", "Content-Type": "application/xml; charset=utf-8" },
+                body: restoreXml,
+              });
+              const resBody = await readResponseTextBestEffort(res);
+              if (res.ok) {
+                await supabase.from("outbound_tasks").update({ status: "SUCCESS", last_error: null }).eq("id", t.id);
+                invalidateAgoraProductsCache(connectionId);
+                if (p._unhide === true) {
+                  await supabase.from("winerim_push_tracking").update({ sync_status: "VERIFIED" })
+                    .eq("connection_id", connectionId).eq("agora_product_id", pid).eq("sync_status", "HIDDEN");
+                }
+                if ((p._restore_attrs as any)?.FamilyId) {
+                  await supabase.from("winerim_push_tracking").update({ agora_family_id: String((p._restore_attrs as any).FamilyId) })
+                    .eq("connection_id", connectionId).eq("agora_product_id", pid);
+                }
+                await registerSuccess();
+                succeeded++;
+              } else {
+                await registerFailure(t.id, `HTTP ${res.status}: ${resBody}`, newAttempts);
+                failed++;
+              }
+              processed++;
             } else if ((t as any).task_type === "AGORA_MIGRATE_FAMILY") {
               const { data: fullTask } = await supabase.from("outbound_tasks").select("*").eq("id", t.id).single();
               if (!fullTask) { failed++; processed++; continue; }
