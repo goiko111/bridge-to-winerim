@@ -11,6 +11,7 @@ import type { SaleDeletion, WinerimLine } from "../_shared/reconciliation-v2/typ
 import { activeBinding, bindingCutoffHour, bindingTimezone, businessWindow, checkpoint, claim, fleetClient, release } from "../_shared/reconciliation-v2/runtime.ts";
 import { readHistoricalRange, validateHistoricalRange } from "../_shared/reconciliation-v2/historicalSales.ts";
 import { rangeRecordsToWinerimLines, reconcileHistorical, validateHistoricalReconcileRequest } from "../_shared/reconciliation-v2/historicalReconcile.ts";
+import { agoraReadAfterClose, AGORA_NOT_READ_AFTER_CLOSE } from "../_shared/reconciliation-v2/agoraFreshness.ts";
 import { applyWriterReceipts, extractWriterReceipts, writerReceiptOverlayMode } from "../_shared/reconciliation-v2/writerReceipts.ts";
 
 type Body = { connectionId: string; businessDay: string; dryRun?: boolean; salesSourceMode?: string; writerReceiptsOverlay?: unknown; analyticsEquivalenceDays?: number; analyticsProjectionBackfillDays?: number };
@@ -130,7 +131,7 @@ Deno.serve(async (request) => {
     // Phase markers: timing + counts only, never row data.
     const t0 = performance.now(); const phase = (name: string, extra: Record<string, number> = {}) => console.log(`[rdr-phase] ${JSON.stringify({ phase: name, ms: Math.round(performance.now() - t0), dryRun, ...extra })}`);
     // Opt-in per-line attribution (AUDIT_ONLY normal path only): exact provider_sold_at vs cutoff; invalid → SOURCE_INCOMPLETE.
-    const { data: connCfg, error: connCfgError } = await db.from("pos_connections").select("provider_config").eq("id", connectionId).single(); if (connCfgError) throw connCfgError;
+    const { data: connCfg, error: connCfgError } = await db.from("pos_connections").select("provider_config,last_sync_at").eq("id", connectionId).single(); if (connCfgError) throw connCfgError;
     const lineAttribution = historical ? "EVENT_DAY" : lineTimeAttributionMode(connCfg?.provider_config);
     let lineAttributionMetrics: Record<string, unknown> = { mode: lineAttribution };
     let source = await (lineAttribution === "PROVIDER_LINE" ? sourceRows(db, connectionId, plusDays(body.businessDay, -1), plusDays(body.businessDay, 2)) : sourceRows(db, connectionId, body.businessDay, nextDay));
@@ -170,7 +171,9 @@ Deno.serve(async (request) => {
       const parent = row.winerim_sales_records as Record<string, unknown>; return { ...toWinerim({ ...row, restaurant_id: parent.restaurant_id, sale_status: parent.status }), businessDay: body.businessDay };
     });
     const deletionRows = deletions.rows.map((row) => ({ saleId: Number(row.sale_id), saleDetailId: row.sale_detail_id == null ? null : Number(row.sale_detail_id), lineId: String(row.line_id), reason: String(row.reason), deletedAt: String(row.deleted_at), effectiveAt: row.effective_at == null ? null : String(row.effective_at), externalOrderId: row.external_order_id == null ? null : String(row.external_order_id) })) as SaleDeletion[];
-    const completeness = { agoraComplete: sourceCoverage.complete, winerimComplete: winerim.complete && deletions.complete && salesCp?.coverage_complete === true, stockComplete: movementCp?.coverage_complete === true, pagesRead: 0, expectedPages: null, reason: sourceCoverage.reasons.length ? sourceCoverage.reasons.join("+") : null };
+    const agoraFresh = agoraReadAfterClose(binding, body.businessDay, connCfg?.last_sync_at as string | null);
+    const sourceReasons = [...sourceCoverage.reasons, ...(agoraFresh.ok ? [] : [AGORA_NOT_READ_AFTER_CLOSE])];
+    const completeness = { agoraComplete: sourceCoverage.complete && agoraFresh.ok, agoraReadAfterClose: agoraFresh, winerimComplete: winerim.complete && deletions.complete && salesCp?.coverage_complete === true, stockComplete: movementCp?.coverage_complete === true, pagesRead: 0, expectedPages: null, reason: sourceReasons.length ? sourceReasons.join("+") : null };
     let results = historical ? [] : reconcileLines({ connectionId, agora, winerim: winerimRows, deletions: deletionRows, completeness });
     let historicalEvidence: Record<string, unknown> | null = null;
     const overlayMode = writerReceiptOverlayMode({ requested: body.writerReceiptsOverlay, dryRun, scheduler: Boolean(auth.scheduler), historical });

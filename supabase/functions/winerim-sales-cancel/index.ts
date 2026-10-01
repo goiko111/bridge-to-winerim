@@ -1,4 +1,6 @@
 import { assertPost, json, parseJson, preflight, requirePlatformAdmin, safeError } from "../_shared/reconciliation-v2/edge.ts";
+import { agoraReadAfterClose } from "../_shared/reconciliation-v2/agoraFreshness.ts";
+import { activeBinding } from "../_shared/reconciliation-v2/runtime.ts";
 import { assertCancelExecutionAllowed, buildCancelPayload, parseCancelResponse, type CancelEntry } from "../_shared/winerimSalesCancel.ts";
 
 // Manual cancellations in Winerim: PREPARE (admin A) -> APPROVE (admin B, distinct) -> EXECUTE -> READBACK.
@@ -8,7 +10,7 @@ const SOURCE_SYSTEM = "agora";
 const err = (m: string, status: number, code: string) => Object.assign(new Error(m), { status, code });
 const UUID = /^[0-9a-f-]{36}$/i;
 
-type Body = { action?: string; connectionId?: string; requestId?: string; cancels?: CancelEntry[]; reason?: string };
+type Body = { action?: string; connectionId?: string; requestId?: string; cancels?: CancelEntry[]; reason?: string; businessDay?: string };
 
 async function token(db: Awaited<ReturnType<typeof requirePlatformAdmin>>["db"], connectionId: string) {
   const { data } = await db.from("pos_connections").select("winerim_api_token").eq("id", connectionId).maybeSingle();
@@ -33,6 +35,12 @@ Deno.serve(async (request) => {
 
     if (action === "PREPARE") {
       if (!body.connectionId || !UUID.test(body.connectionId)) throw err("connectionId inválido", 400, "INVALID_CONNECTION");
+      // Gate: the day must be closed AND Ágora read successfully after the close; otherwise vanished tickets may just be unread invoices.
+      if (!body.businessDay || !/^\d{4}-\d{2}-\d{2}$/.test(body.businessDay)) throw err("businessDay obligatorio", 400, "BUSINESS_DAY_REQUIRED");
+      const binding = await activeBinding(db as never, body.connectionId);
+      const { data: conn } = await db.from("pos_connections").select("last_sync_at").eq("id", body.connectionId).maybeSingle();
+      const fresh = agoraReadAfterClose(binding, body.businessDay, conn?.last_sync_at ?? null);
+      if (!fresh.ok) throw Object.assign(err("Ágora no se ha leído bien después del cierre del día", 409, "AGORA_NOT_READ_AFTER_CLOSE"), { details: fresh });
       const correlationId = `cancel-${crypto.randomUUID()}`;
       const payload = buildCancelPayload(SOURCE_SYSTEM, correlationId, (body.cancels ?? []).map((c) => ({ ...c, reason: c.reason ?? body.reason })));
       const { data, error } = await db.from("winerim_cancel_requests").insert({ connection_id: body.connectionId, correlation_id: correlationId, payload, requested_by: userId }).select("id,status,correlation_id").single();
