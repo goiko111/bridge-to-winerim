@@ -14057,7 +14057,7 @@ ${costPricesXml}
 
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
-        totalWines: wines.length, eventType: evtType, forceEvaluate, dryRun,
+        totalWines: wines.length, eventType: evtType, forceEvaluate, dryRun, autoCreateCapExceeded,
         failClosedExcluded,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
