@@ -1249,6 +1249,23 @@ serve(async (req) => {
       // every processed batch on every cron pass.
       // Deploy marker 2026-06-10: required before re-enabling Sa Pedrera automatic catalog pushes.
       let autoPushResult: Record<string, unknown> | null = null;
+      // Repeated CREATE candidates: a wine already tracked or mapped to an Agora
+      // product is never a new alta, so it must not re-enter CREATE every cycle.
+      if (autoCreateCandidateIds.size > 0) {
+        const candidateList = Array.from(autoCreateCandidateIds);
+        const known = new Set<string>();
+        for (let i = 0; i < candidateList.length; i += 500) {
+          const chunk = candidateList.slice(i, i + 500);
+          const { data: tracked } = await supabase.from("winerim_push_tracking")
+            .select("winerim_wine_id").eq("connection_id", connectionId).in("winerim_wine_id", chunk);
+          for (const r of tracked || []) known.add(String((r as any).winerim_wine_id));
+          const { data: mapped } = await supabase.from("product_mappings")
+            .select("winerim_wine_id, agora_product_id").eq("connection_id", connectionId).in("winerim_wine_id", chunk);
+          for (const r of mapped || []) if ((r as any).agora_product_id) known.add(String((r as any).winerim_wine_id));
+        }
+        for (const id of known) autoCreateCandidateIds.delete(id);
+        if (known.size > 0) console.log(`[winerim-proxy] create candidates dropped (already tracked/mapped): ${known.size}`);
+      }
       const autoCreateIds = Array.from(autoCreateCandidateIds);
       const autoUpdateIds = Array.from(autoUpdateCandidateIds)
         .filter((id) => !autoCreateCandidateIds.has(id));
