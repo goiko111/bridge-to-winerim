@@ -18,4 +18,17 @@ describe("restoreAgoraProductXml", () => {
     expect(restoreAgoraProductXml(prod, { VatId: "1" }, undefined).ok).toBe(false);
     expect(restoreAgoraProductXml(prod, {}, "5", "7").ok).toBe(false);
   });
+  it("restores Color and ButtonText without touching anything else", () => {
+    const red = `<Product Id="973017" Name="C Habla de Ti" ButtonText="X" Color="#8B0000" FamilyId="901954"><Prices><Price PriceListId="1" MainPrice="4.20" /></Prices></Product>`;
+    const r = restoreAgoraProductXml(red, { Color: "#FFFFFF", ButtonText: "C Habla de Ti Sauvig" }, undefined);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.xml).toContain('Color="#FFFFFF"');
+    expect(r.xml).toContain('ButtonText="C Habla de Ti Sauvig"');
+    expect(r.xml).toContain('FamilyId="901954"');
+    expect(r.xml).toContain('MainPrice="4.20"');
+  });
+  it("rejects a non-hex color", () => {
+    expect(restoreAgoraProductXml(prod, { Color: "red" }, undefined).ok).toBe(false);
+  });
 });
