@@ -132,17 +132,39 @@ export default function ReviewCatalogAuditTab({ connectionId }: { connectionId: 
   /** Read-only readback: reads Agora's product master and stores a snapshot. */
   const runReadback = async () => {
     setReading(true);
-    const { data, error: err } = await supabase.functions.invoke("catalog-readback", {
-      body: { connectionId, forceRefresh: true },
-    });
-    setReading(false);
+    let data: any = null;
+    let err: any = null;
+    try {
+      ({ data, error: err } = await supabase.functions.invoke("catalog-readback", {
+        body: { connectionId, forceRefresh: true },
+      }));
+    } catch (e) {
+      err = e;
+    } finally {
+      setReading(false);
+    }
+    // A 502 from the function (TPV caído, timeout…) llega como error: leemos su cuerpo
+    // para mostrar un aviso claro en vez de romper la pantalla.
     if (err) {
-      toast({ title: "No se pudo leer Ágora", description: err.message, variant: "destructive" });
+      let body: any = null;
+      try {
+        body = await err?.context?.json?.();
+      } catch {
+        body = null;
+      }
+      const http = body?.httpStatus;
+      const description =
+        body?.error === "AGORA_READ_FAILED"
+          ? http === 530 || http === 502 || http === 503 || http === 504
+            ? `El servidor Ágora del local no responde (HTTP ${http}). Inténtalo cuando vuelva a estar en línea.`
+            : body?.message ?? `Ágora respondió con error${http ? ` HTTP ${http}` : ""}.`
+          : body?.message ?? body?.error ?? err?.message ?? "Error desconocido";
+      toast({ title: "No se pudo leer Ágora", description, variant: "destructive" });
       return;
     }
     const res = data as any;
     if (res?.error) {
-      toast({ title: "Lectura de Ágora no disponible", description: res.error, variant: "destructive" });
+      toast({ title: "Lectura de Ágora no disponible", description: res.message ?? res.error, variant: "destructive" });
       return;
     }
     toast({
