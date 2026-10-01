@@ -23,3 +23,10 @@ describe("control de llamante agora-proxy / winerim-proxy", () => {
   it("fallo al comprobar → 500, nunca pasa", async () =>
     expect(await decideCaller("Bearer user-jwt", CONN, deps({ isPlatformAdmin: async () => { throw new Error("rpc"); } }))).toMatchObject({ ok: false, status: 500 }));
 });
+
+describe("llamada interna solo con cabecera apikey (supabase-js con clave sb_secret)", () => {
+  it("apikey = clave de servicio sin Authorization → interno", async () =>
+    expect(await decideCaller(null, CONN, deps(), "svc-key")).toMatchObject({ ok: true, kind: "internal" }));
+  it("apikey distinta sin Authorization → 401", async () =>
+    expect(await decideCaller(null, CONN, deps(), "anon")).toMatchObject({ ok: false, status: 401 }));
+});
