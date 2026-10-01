@@ -38,7 +38,8 @@ function qtyByFp(raw: Json, sign: 1 | -1): Map<string, number> | null {
 }
 function sameMap(a: Map<string, number>, b: Map<string, number>) {
   if (a.size !== b.size) return false;
-  for (const [k, v] of a) if (Math.abs((b.get(k) ?? NaN) - v) > 1e-9) return false;
+  // Clave ausente → NaN; NaN > x es false, así que hay que exigir la igualdad en positivo.
+  for (const [k, v] of a) { const w = b.get(k); if (w === undefined || !(Math.abs(w - v) <= 1e-9)) return false; }
   return true;
 }
 

@@ -1845,7 +1845,9 @@ async function syncStockForDay(supabase: any, connectionId: string, day: string,
   }
 
   if (candidateWineIds.length > 0) {
-    const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    // OK Goiko 2026-10-01: los fallos terminales anteriores a la publicación del arreglo
+  // de copas (03:47 UTC) no bloquean días >= 30-sep (eran VARIANT_NOT_FOUND del bug body.data).
+  const recentTerminalCutoff = terminalFailureCutoffIso(Date.now(), day);
     const { data: failedRows } = await supabase
       .from("stock_sync_log")
       .select("sales_event_id, winerim_product_id, variant, error_message")
@@ -2446,7 +2448,9 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
   }
 
   const terminalGroups = new Set<string>();
-  const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  // OK Goiko 2026-10-01: los fallos terminales anteriores a la publicación del arreglo
+  // de copas (03:47 UTC) no bloquean días >= 30-sep (eran VARIANT_NOT_FOUND del bug body.data).
+  const recentTerminalCutoff = terminalFailureCutoffIso(Date.now(), day);
   const { data: failedRows } = await supabase
     .from("stock_sync_log")
     .select("sales_event_id, winerim_product_id, variant, error_message")
@@ -2890,6 +2894,12 @@ async function syncStockForDayIncremental(supabase: any, connectionId: string, d
 // current Agora state is the desired total, stock_sync_log.SUCCESS is what was
 // already discounted, and only the positive delta is sent to Winerim.
 // deno-lint-ignore no-explicit-any
+export function terminalFailureCutoffIso(nowMs: number, day: string): string {
+  const rolling = new Date(nowMs - 24 * 60 * 60_000).toISOString();
+  const GLASS_FIX_PUBLISHED_AT = "2026-10-01T03:47:00.000Z";
+  return day >= "2026-09-30" && GLASS_FIX_PUBLISHED_AT > rolling ? GLASS_FIX_PUBLISHED_AT : rolling;
+}
+
 async function syncStockForDayIncrementalByDayTotal(
   supabase: any,
   connectionId: string,
@@ -3059,7 +3069,9 @@ async function syncStockForDayIncrementalByDayTotal(
   }
 
   const terminalTotals = new Set<string>();
-  const recentTerminalCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  // OK Goiko 2026-10-01: los fallos terminales anteriores a la publicación del arreglo
+  // de copas (03:47 UTC) no bloquean días >= 30-sep (eran VARIANT_NOT_FOUND del bug body.data).
+  const recentTerminalCutoff = terminalFailureCutoffIso(Date.now(), day);
   for (let i = 0; i < allDayEventIds.length; i += 100) {
     const failedChunk = allDayEventIds.slice(i, i + 100);
     const { data: failedRows } = await supabase
