@@ -6,13 +6,14 @@ export function restoreAgoraProductXml(
   mainPrice: string | undefined,
   priceListId = "1",
 ): { ok: true; xml: string } | { ok: false; error: string } {
-  const allowed = new Set(["FamilyId", "Name", "ButtonText", "Order", "SaleableAsMain", "UseAsDirectSale"]);
+  const allowed = new Set(["FamilyId", "Name", "ButtonText", "Order", "SaleableAsMain", "UseAsDirectSale", "Color"]);
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const openMatch = /^<Product\b[^>]*?(\/?)>/.exec(productXml);
   if (!openMatch) return { ok: false, error: "RESTORE_BAD_PRODUCT_XML" };
   let open = openMatch[0];
   for (const [k, v] of Object.entries(attrs)) {
     if (!allowed.has(k)) return { ok: false, error: `RESTORE_ATTR_NOT_ALLOWED:${k}` };
+    if (k === "Color" && !/^#[0-9A-F]{6}$/i.test(String(v))) return { ok: false, error: "RESTORE_BAD_COLOR" };
     const re = new RegExp(`\\s${k}="[^"]*"`);
     const val = ` ${k}="${esc(String(v))}"`;
     open = re.test(open) ? open.replace(re, val) : open.replace(/\s*(\/?)>$/, `${val}$1>`);
