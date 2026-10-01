@@ -135,7 +135,10 @@ function resolveGlassViaWines(winerimBase: string, headers: Record<string, strin
         const r = await fetch(`${winerimBase}/wines/${wineId}`, { method: "GET", headers });
         if (!r.ok) return { error: `Variant 'copa' not found for wine ${wineId} (GET /wines/${wineId} → ${r.status})` };
         const body = await r.json();
-        const wine = body?.data && !Array.isArray(body.data) ? body.data : body;
+        // GET /wines/{id} returns {success:true, wine:{...}} (OK Goiko 2026-10-01).
+        const wine = body?.wine && typeof body.wine === "object" && !Array.isArray(body.wine)
+          ? body.wine
+          : body?.data && !Array.isArray(body.data) ? body.data : body;
         const idx = indexFromWines([wine], (s) => normalizeWinerimVariant(s) as string | null);
         const res = resolveVariant(wineId, "copa", idx, new Map());
         if (!res.ok) {
@@ -3912,7 +3915,15 @@ async function syncStockForDays(
   options: { incremental?: boolean; desiredEventIdsByDay?: Record<string, string[]> } = {},
 ): Promise<StockSyncTotals> {
   const totals: StockSyncTotals = { synced: 0, skipped: 0, failed: 0, checkedDays: 0, errors: [] };
-  for (const day of days) {
+  // Send cutoff (OK Goiko 2026-10-01): business days before 2026-09-30 are held
+  // as «septiembre pendiente de aprobar» — never sent nor marked as sent.
+  const SEND_CUTOFF_DAY = "2026-09-30";
+  const held = days.filter((d) => d < SEND_CUTOFF_DAY);
+  if (held.length > 0) {
+    console.log(JSON.stringify({ tag: "SEPTEMBER_PENDING_APPROVAL", connectionId, days: held, sent: false }));
+    totals.skipped += held.length;
+  }
+  for (const day of days.filter((d) => d >= SEND_CUTOFF_DAY)) {
     try {
       const result = options.incremental
         ? await syncStockForDayIncrementalByDayTotal(supabase, connectionId, day, winerimToken, options.desiredEventIdsByDay?.[day])
