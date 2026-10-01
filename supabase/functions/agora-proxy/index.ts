@@ -1,3 +1,4 @@
+import { restoreAgoraProductXml } from "../_shared/agoraRestoreProduct.ts";
 import { AUTO_CREATE_MAX_PER_CYCLE, applyAutoCreateCap, guardCreateFormats } from "../_shared/agoraAutoCreateGuard.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { callerDeniedResponse, decideCaller, supabaseCallerDeps } from "../_shared/connectionCallerGuard.ts";
@@ -12410,7 +12411,7 @@ ${costPricesXml}
         if (runConsecutiveFailures >= 10) break;
         if (TIME_BUDGET_MS - (Date.now() - startTime) < MIN_TIME_FOR_CLAIM_MS) break;
 
-        const taskTypes = ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT"];
+        const taskTypes = ["AGORA_XML_UPSERT_PRODUCT", "AGORA_MIGRATE_FAMILY", "AGORA_HIDE_PRODUCT", "AGORA_RESTORE_PRODUCT"];
         const { data: claimedTasks, error: claimErr } = await supabase.rpc("claim_outbound_tasks", {
           p_connection_id: connectionId,
           p_task_types: taskTypes,
