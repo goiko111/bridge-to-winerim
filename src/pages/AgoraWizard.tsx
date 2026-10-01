@@ -770,9 +770,24 @@ function StepSalesMapping({
             const { data, error } = await supabase.functions.invoke("agora-proxy", {
               body: { action: "auto-sync-sales", connectionId: smConnectionId },
             });
-            if (error) throw error;
+            if (error) {
+              // 502 controlado (p. ej. closed_day_scan_failed): leer el cuerpo y mostrarlo como aviso.
+              let body: any = null;
+              try { body = await (error as any)?.context?.json?.(); } catch { body = null; }
+              setAutoSyncResult({
+                failed: true,
+                daysSynced: 0,
+                message: body?.reason === "closed_day_scan_failed"
+                  ? `No se pudieron leer las ventas de Ágora del ${body.blockedDay}: el servidor del local no responde. No se ha avanzado nada; el programador lo reintentará solo.`
+                  : body?.message ?? error.message,
+              } as any);
+              return;
+            }
             setAutoSyncResult(data);
-          } catch (err) { console.error("Auto-sync error:", err); }
+          } catch (err: any) {
+            console.error("Auto-sync error:", err);
+            setAutoSyncResult({ failed: true, daysSynced: 0, message: err?.message ?? "Error desconocido" } as any);
+          }
           finally { setAutoSyncing(false); }
         }}>
           {autoSyncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
@@ -782,8 +797,10 @@ function StepSalesMapping({
       </div>
 
       {autoSyncResult && (
-        <div className={`rounded-lg border p-3 text-xs ${autoSyncResult.daysSynced > 0 ? "border-success/30 bg-success/5" : "border-border bg-secondary/20"}`}>
-          {autoSyncResult.message ? (
+        <div className={`rounded-lg border p-3 text-xs ${(autoSyncResult as any).failed ? "border-destructive/30 bg-destructive/5" : autoSyncResult.daysSynced > 0 ? "border-success/30 bg-success/5" : "border-border bg-secondary/20"}`}>
+          {(autoSyncResult as any).failed ? (
+            <p className="text-destructive">{autoSyncResult.message}</p>
+          ) : autoSyncResult.message ? (
             <p className="text-muted-foreground flex items-center gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> {autoSyncResult.message}</p>
           ) : (
             <>
