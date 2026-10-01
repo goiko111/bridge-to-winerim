@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAutoCreateCap, guardCreateFormats } from "./agoraAutoCreateGuard.ts";
+import { applyAutoCreateCap, guardCreateFormats } from "../../supabase/functions/_shared/agoraAutoCreateGuard.ts";
 
 const base = () => ({
   formats: ["BOTTLE", "GLASS"],
