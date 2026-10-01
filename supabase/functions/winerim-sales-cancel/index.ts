@@ -43,7 +43,7 @@ Deno.serve(async (request) => {
       if (!fresh.ok) throw Object.assign(err("Ágora no se ha leído bien después del cierre del día", 409, "AGORA_NOT_READ_AFTER_CLOSE"), { details: fresh });
       const correlationId = `cancel-${crypto.randomUUID()}`;
       const payload = buildCancelPayload(SOURCE_SYSTEM, correlationId, (body.cancels ?? []).map((c) => ({ ...c, reason: c.reason ?? body.reason })));
-      const { data, error } = await db.from("winerim_cancel_requests").insert({ connection_id: body.connectionId, correlation_id: correlationId, payload: { ...payload, businessDay: body.businessDay }, requested_by: userId }).select("id,status,correlation_id").single();
+      const { data, error } = await db.from("winerim_cancel_requests").insert({ connection_id: body.connectionId, correlation_id: correlationId, payload, requested_by: userId }).select("id,status,correlation_id").single();
       if (error) throw err("No se pudo registrar la petición", 500, "CANCEL_PREPARE_FAILED");
       return json(request, { ok: true, request: data, payload });
     }
