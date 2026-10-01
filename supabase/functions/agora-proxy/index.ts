@@ -13650,7 +13650,9 @@ ${costPricesXml}
       // ── UPDATE differential guard precompute ──
       // Read the current Agora Products XML ONCE and load custom family mappings ONCE.
       // If the diff finds no exportable change per format, we skip queueing that format.
-      const updateDiffEnabled = evtType === "UPDATE" && (providerConfig as any).auto_push_update_diff_enabled !== false;
+      // CREATE also needs the fresh Products read: it may only create products that do not exist.
+      const updateDiffEnabled = evtType === "CREATE" || (evtType === "UPDATE" && (providerConfig as any).auto_push_update_diff_enabled !== false);
+      const pendingCreates: { wine: any; formatTypes: string[] }[] = [];
       let updateDiffCurrentXml: string | null = null;
       let updateDiffError: string | null = null;
       let updateDiffCustomMappings: Record<string, { id: string; name: string }> | undefined = undefined;
@@ -13786,34 +13788,11 @@ ${costPricesXml}
           const hideFormats = formatsToHide.map((push: any) => String(push.format || "").toUpperCase());
 
           if (!existingHide || existingHide.length === 0) {
-            const productIds = formatsToHide.map((push: any) => push.agora_product_id).filter(Boolean);
-            if (autoPushWritesEnabled) {
-              await supabase.from("outbound_tasks").insert({
-                connection_id: connectionId,
-                task_type: "AGORA_HIDE_PRODUCT",
-                payload_json: {
-                  _winerim_wine_id: wine.winerim_id,
-                  _product_ids: productIds,
-                  _wine_name: wine.name,
-                  _formats: hideFormats,
-                  _trigger_source: "AUTO_PRICE_REMOVED",
-                },
-                status: "QUEUED",
-              });
-              for (const p of formatsToHide) {
-                await supabase.from("winerim_push_tracking")
-                  .update({ sync_status: "HIDDEN" })
-                  .eq("connection_id", connectionId)
-                  .eq("winerim_wine_id", wine.winerim_id)
-                  .eq("format", p.format);
-              }
-            }
-            hidQueued++;
+            // AUTO_PRICE_REMOVED never hides anything (incidencia 1-oct): warn only.
+            console.warn(`[evaluate-auto-push] AUTO_PRICE_REMOVED warn-only connection=${connectionId} wine=${wine.winerim_id} formats=${hideFormats.join("+")}`);
             skippedReasons.push({
               winerim_id: wine.winerim_id,
-              reason: !autoPushWritesEnabled
-                ? `price_missing_would_hide:${hideFormats.join("+")}`
-                : `price_missing_hide_queued:${hideFormats.join("+")}`,
+              reason: `price_missing_warn_only_no_hide:${hideFormats.join("+")}`,
             });
           } else {
             skippedReasons.push({ winerim_id: wine.winerim_id, reason: `price_missing_hide_already_pending:${hideFormats.join("+")}` });
@@ -13888,22 +13867,44 @@ ${costPricesXml}
         if (formatTypes.length === 0) { skipped++; continue; }
 
         if (evtType === "CREATE") {
-          const { data: verifiedPushes } = await supabase
-            .from("winerim_push_tracking")
-            .select("format, agora_product_id, sync_status")
-            .eq("connection_id", connectionId)
-            .eq("winerim_wine_id", wine.winerim_id)
-            .in("format", formatTypes)
-            .in("sync_status", ["VERIFIED", "PUSHED"]);
-          const verifiedFormats = new Set((verifiedPushes || [])
-            .filter((push: any) => Boolean(push.agora_product_id))
-            .map((push: any) => String(push.format || "").toUpperCase()));
-
-          if (formatTypes.every((fmt) => verifiedFormats.has(fmt))) {
-            skipped++;
-            skippedReasons.push({ winerim_id: wine.winerim_id, reason: "create_skipped:formats_already_verified" });
-            continue;
+          // Only create what does not exist: no tracking row (any status), no mapped
+          // agora_product_id and no Agora product with the expected Id. Fail closed.
+          const { data: anyTracking } = await supabase
+            .from("winerim_push_tracking").select("format")
+            .eq("connection_id", connectionId).eq("winerim_wine_id", wine.winerim_id);
+          const { data: anyMapping } = await supabase
+            .from("product_mappings").select("format_type, agora_product_id")
+            .eq("connection_id", connectionId).eq("winerim_wine_id", String(wine.winerim_id));
+          const mappedRows = (anyMapping || []).filter((m: any) => Boolean(m.agora_product_id));
+          const mappedFormats = new Set(mappedRows.map((m: any) => String(m.format_type || "").toUpperCase()));
+          if (mappedRows.some((m: any) => !m.format_type)) for (const f of formatTypes) mappedFormats.add(f);
+          const expectedProductIdByFormat = new Map<string, string | null>();
+          if (updateDiffCurrentXml) {
+            for (const fmt of formatTypes) {
+              try {
+                const { xml } = generateImportXml([wine], masterData, connection, [fmt], updateDiffCustomMappings, false,
+                  updateDiffIsGeoMode ? updateDiffGeoConfig : undefined, updateDiffIsGeoMode ? [wine] : undefined,
+                  updateDiffScopedPriceListIds, undefined, updateDiffVinotecaRoutes);
+                const ids = extractXmlElementsWithAttrs(xml, "Product").map((p) => String(p.attrs.Id || "")).filter(Boolean);
+                expectedProductIdByFormat.set(fmt, ids.length === 1 ? ids[0] : null);
+              } catch (_e) { expectedProductIdByFormat.set(fmt, null); }
+            }
           }
+          const existingIds = updateDiffCurrentXml
+            ? new Set(extractXmlElementsWithAttrs(updateDiffCurrentXml, "Product").map((p) => String(p.attrs.Id || "")).filter(Boolean))
+            : null;
+          const guard = guardCreateFormats({
+            formats: formatTypes,
+            trackedFormats: new Set((anyTracking || []).map((t: any) => String(t.format || "").toUpperCase())),
+            mappedFormats,
+            expectedProductIdByFormat,
+            existingAgoraProductIds: existingIds,
+          });
+          if (guard.dropped.length > 0) {
+            skippedReasons.push({ winerim_id: wine.winerim_id, reason: `create_guard:${guard.dropped.join(",")}` });
+          }
+          if (guard.keep.length === 0) { skipped++; continue; }
+          formatTypes.splice(0, formatTypes.length, ...guard.keep);
         }
 
         if (evtType === "UPDATE" && updateDiffEnabled && updateDiffCurrentXml && !forceEvaluate) {
@@ -14006,6 +14007,8 @@ ${costPricesXml}
           continue;
         }
 
+        if (evtType === "CREATE") { pendingCreates.push({ wine, formatTypes: [...formatTypes] }); continue; }
+
         await supabase.from("outbound_tasks").insert({
           connection_id: connectionId,
           task_type: "AGORA_XML_UPSERT_PRODUCT",
@@ -14013,7 +14016,7 @@ ${costPricesXml}
             _winerim_wine_id: wine.winerim_id,
             _format_types: formatTypes,
             _write_mode: "XML_IMPORT",
-            _trigger_source: evtType === "CREATE" ? "AUTO_CREATE" : "AUTO_UPDATE",
+            _trigger_source: "AUTO_UPDATE",
             _requested_at: new Date().toISOString(),
             ...autoPushScopePayload,
           },
@@ -14022,7 +14025,34 @@ ${costPricesXml}
         queued++;
       }
 
-      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} dryRun=${dryRun} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued}`);
+      let autoCreateCapExceeded = false;
+      if (pendingCreates.length > 0) {
+        const cap = applyAutoCreateCap(pendingCreates);
+        autoCreateCapExceeded = cap.capExceeded;
+        if (cap.capExceeded) {
+          console.warn(`[evaluate-auto-push] AUTO_CREATE_CAP_EXCEEDED connection=${connectionId} candidates=${pendingCreates.length} max=${AUTO_CREATE_MAX_PER_CYCLE} queued=0`);
+          skipped += pendingCreates.length;
+        }
+        for (const item of cap.queue) {
+          await supabase.from("outbound_tasks").insert({
+            connection_id: connectionId,
+            task_type: "AGORA_XML_UPSERT_PRODUCT",
+            payload_json: {
+              _winerim_wine_id: item.wine.winerim_id,
+              _format_types: item.formatTypes,
+              _write_mode: "XML_IMPORT",
+              _trigger_source: "AUTO_CREATE",
+              _create_only: true,
+              _requested_at: new Date().toISOString(),
+              ...autoPushScopePayload,
+            },
+            status: "QUEUED",
+          });
+          queued++;
+        }
+      }
+
+      console.log(`[evaluate-auto-push] connection=${connectionId} event=${evtType} forceEvaluate=${forceEvaluate} dryRun=${dryRun} queued=${queued} wouldQueue=${wouldQueue} skipped=${skipped} hidQueued=${hidQueued} capExceeded=${autoCreateCapExceeded}`);
 
       return new Response(JSON.stringify({
         success: true, queued, wouldQueue, skipped, hidQueued, skippedReasons,
