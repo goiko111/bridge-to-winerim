@@ -1,4 +1,5 @@
 # Roadmap conciliación 29-sep
+- [~] Albariza: ordenar y recolorear las 50 copas; asegurar color/posición de altas futuras; publicar y verificar readback
 - [x] A1 Una sola versión por ticket
 - [x] A2 Cuadre por día/vino/formato en unidades
 - [x] A3 Columna Formato

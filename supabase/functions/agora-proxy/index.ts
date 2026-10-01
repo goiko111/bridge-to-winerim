@@ -72,6 +72,7 @@ import {
   buildUniqueAgoraButtonTexts,
   canonicalAgoraWineType,
   compareAgoraWineNames,
+  nextAgoraGlassOrder,
   shouldSortAgoraProductsAlphabetically,
 } from "../_shared/agoraProductPresentation.ts";
 import { isAgoraTimestampOldEnough } from "../_shared/agoraLocalTime.ts";
@@ -11446,13 +11447,16 @@ ${costPricesXml}
         const namingCatalog = await fetchAgoraProductsXmlCached(
           task.connection_id, baseUrlClean, apiTokenClean, fetchWithRetry, 30000,
         );
-        const namingProductsById = new Map<string, { Id: string; Name: string }>();
+        const namingProductsById = new Map<string, { Id: string; Name: string; FamilyId?: string; Order?: string; Color?: string }>();
         const namingProducts = namingCatalog.ok
           ? extractXmlElementsWithAttrs(namingCatalog.xml, "Product").map((product) => ({
               Id: String(product.attrs.Id || ""),
               Name: decodeXmlAttribute(product.attrs.Name || ""),
+              FamilyId: String(product.attrs.FamilyId || ""),
+              Order: String(product.attrs.Order || ""),
+              Color: String(product.attrs.Color || ""),
             }))
-          : ((masterData.products_summary_json || []) as { Id: string; Name: string }[]);
+          : ((masterData.products_summary_json || []) as { Id: string; Name: string; FamilyId?: string; Order?: string; Color?: string }[]);
         for (const product of namingProducts) {
           if (product.Id && product.Name) namingProductsById.set(String(product.Id), product);
         }
@@ -11492,7 +11496,7 @@ ${costPricesXml}
         const geoConfig = (connection.provider_config as any)?.geographic_config as GeographicFamilyConfig | undefined;
         const isGeoMode = (connection.provider_config as any)?.family_structure_mode === "GEOGRAPHIC_FAMILIES" && geoConfig;
         const frozenPriceListIds = normalizeStringArray(taskPayload._effective_price_list_ids);
-        const { xml, validationResults, vinoteca: vinotecaTaskMeta } = generateImportXml(
+        const generated = generateImportXml(
           wineArr,
           masterData,
           connection,
@@ -11505,6 +11509,28 @@ ${costPricesXml}
           queuedProductNameOverrides,
           vinotecaCatalogRoutes,
         );
+        let { xml } = generated;
+        const { validationResults, vinoteca: vinotecaTaskMeta } = generated;
+
+        // A new glass receives a semantic color and an order inside its wine-type
+        // block. Existing products are read only and keep their current Order.
+        const glassProductId = productIdByFormat.GLASS;
+        if (glassProductId && !namingProductsById.has(glassProductId)) {
+          const generatedGlass = findXmlElementByAttr(xml, "Product", "Id", glassProductId);
+          if (generatedGlass) {
+            const familyId = String(generatedGlass.attrs.FamilyId || "");
+            const existingFamilyProducts = namingProducts
+              .filter((product) => String(product.FamilyId || "") === familyId)
+              .map((product) => ({ name: product.Name, color: product.Color, order: product.Order }));
+            const glassOrder = nextAgoraGlassOrder(
+              extractWineType(wineArr[0]),
+              generatedGlass.attrs.Name || wineArr[0].name,
+              existingFamilyProducts,
+            );
+            const patchedGlass = setXmlAttrValue(generatedGlass.xml, "Order", String(glassOrder));
+            xml = xml.replace(generatedGlass.xml, patchedGlass);
+          }
+        }
 
         // ── HARD VALIDATION: Compute XML hash for mismatch detection ──
         const taskXmlHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(xml)).then(
