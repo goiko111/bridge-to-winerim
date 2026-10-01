@@ -5802,7 +5802,9 @@ serve(async (req) => {
     const callerDecision = await decideCaller(
       req.headers.get("Authorization"), connectionId,
       supabaseCallerDeps(createClient, supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") ?? "", supabaseKey),
+      req.headers.get("apikey"),
     );
+    if (!callerDecision.ok) console.warn(`[caller-guard] ${action} ${connectionId} rejected ${callerDecision.code}`);
     if (!callerDecision.ok) return callerDeniedResponse(callerDecision, corsHeaders);
 
     const { data: connection, error: connError } = await supabase

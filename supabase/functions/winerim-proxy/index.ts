@@ -469,7 +469,9 @@ serve(async (req) => {
     const callerDecision = await decideCaller(
       req.headers.get("Authorization"), connectionId,
       supabaseCallerDeps(createClient, supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY") ?? "", supabaseKey),
+      req.headers.get("apikey"),
     );
+    if (!callerDecision.ok) console.warn(`[caller-guard] ${action} ${connectionId} rejected ${callerDecision.code}`);
     if (!callerDecision.ok) return callerDeniedResponse(callerDecision, corsHeaders);
 
     // Fetch connection
@@ -1264,19 +1266,23 @@ serve(async (req) => {
             let hidQueuedTotal = 0;
 
             if (autoCreateIds.length > 0 && conn?.auto_push_on_create === true) {
-              const { data: createData } = await supabase.functions.invoke("agora-proxy", {
+              const { data: createData, error: createDataErr } = await supabase.functions.invoke("agora-proxy", {
                 body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoCreateIds, eventType: "CREATE" },
               });
-              parts.push({ eventType: "CREATE", ids: autoCreateIds.length, result: createData });
+              if (createDataErr) { let detail = ""; try { detail = await (createDataErr as any).context?.text?.() ?? ""; } catch (_e) { /* ignore */ } console.error(`[winerim-proxy] evaluate-auto-push CREATE failed for ${connectionId}: ${createDataErr.message} ${detail.slice(0, 300)}`); }
+              else if (createData?.skipped) console.log(`[winerim-proxy] evaluate-auto-push CREATE skipped for ${connectionId}: ${createData.reason}`);
+              parts.push({ eventType: "CREATE", ids: autoCreateIds.length, result: createData, error: createDataErr ? String(createDataErr.message) : undefined });
               queuedTotal += Number(createData?.queued || 0);
               hidQueuedTotal += Number(createData?.hidQueued || 0);
             }
 
             if (autoUpdateIds.length > 0 && conn?.auto_push_on_update === true) {
-              const { data: updateData } = await supabase.functions.invoke("agora-proxy", {
+              const { data: updateData, error: updateDataErr } = await supabase.functions.invoke("agora-proxy", {
                 body: { action: "evaluate-auto-push", connectionId, winerimWineIds: autoUpdateIds, eventType: "UPDATE" },
               });
-              parts.push({ eventType: "UPDATE", ids: autoUpdateIds.length, result: updateData });
+              if (updateDataErr) { let detail = ""; try { detail = await (updateDataErr as any).context?.text?.() ?? ""; } catch (_e) { /* ignore */ } console.error(`[winerim-proxy] evaluate-auto-push UPDATE failed for ${connectionId}: ${updateDataErr.message} ${detail.slice(0, 300)}`); }
+              else if (updateData?.skipped) console.log(`[winerim-proxy] evaluate-auto-push UPDATE skipped for ${connectionId}: ${updateData.reason}`);
+              parts.push({ eventType: "UPDATE", ids: autoUpdateIds.length, result: updateData, error: updateDataErr ? String(updateDataErr.message) : undefined });
               queuedTotal += Number(updateData?.queued || 0);
               hidQueuedTotal += Number(updateData?.hidQueued || 0);
             }

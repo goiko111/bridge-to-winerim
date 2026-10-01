@@ -24,8 +24,11 @@ function safeEqual(a: string, b: string): boolean {
   return r === 0;
 }
 
-export async function decideCaller(authHeader: string | null, connectionId: unknown, deps: CallerDeps): Promise<CallerDecision> {
+export async function decideCaller(authHeader: string | null, connectionId: unknown, deps: CallerDeps, apiKeyHeader?: string | null): Promise<CallerDecision> {
   if (typeof connectionId !== "string" || !UUID.test(connectionId)) return { ok: false, status: 400, code: "INVALID_CONNECTION_ID" };
+  // supabase-js con claves nuevas (sb_secret_…) solo manda la cabecera apikey, sin Authorization.
+  const apiKey = (apiKeyHeader ?? "").trim();
+  if (deps.serviceKey && apiKey && safeEqual(apiKey, deps.serviceKey)) return { ok: true, kind: "internal" };
   const m = /^Bearer\s+(.+)$/i.exec(authHeader ?? "");
   if (!m) return { ok: false, status: 401, code: "MISSING_AUTH" };
   const token = m[1].trim();
