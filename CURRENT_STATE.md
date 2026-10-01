@@ -4,6 +4,28 @@
 
 _Última actualización: 2026-09-23 11:10 UTC_
 
+## Albariza · presentación de COPAS WINERIM - 2026-10-01
+
+### Hechos
+- Se modificaron exclusivamente `Order` y `Color` en las 50 copas con precio de
+  la familia `COPAS WINERIM` de Albariza.
+- El orden fresh quedó en bloques `tinto`, `blanco`, `rosado`, `espumoso`,
+  `fortificado`, `postre`, y alfabético sin el prefijo técnico `C ` dentro de
+  cada bloque. En este corte no había copas rosadas.
+- Readback directo posterior: `50/50` colores y `50/50` órdenes coinciden; las
+  50 tareas terminaron `SUCCESS`, sin fallos.
+- `agora-proxy` asigna a las nuevas copas color semántico y una posición basada
+  en el tipo real de Winerim, sin reordenar productos existentes.
+
+### Decisión
+- Para altas futuras, el tipo se obtiene de metadata Winerim y no del color
+  previo de Agora. Si no queda hueco entre órdenes, se usa el siguiente entero
+  libre sin mover las teclas existentes.
+
+### Tareas pendientes
+- Ninguna para esta intervención; comprobar visualmente el resultado en el TPV
+  solo si operación desea validar el aspecto de los colores.
+
 ## Paquete agora-proxy/winerim-proxy para OK de Goiko - 2026-09-30 16:55
 
 ### Hechos

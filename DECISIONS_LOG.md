@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-10-01 - Orden y color semánticos para copas Agora
+- **Decisión**: ordenar las 50 copas con precio de Albariza por bloque de tipo y
+  nombre sin `C `, cambiando solo `Order` y `Color`; las nuevas copas reciben
+  color y posición mediante `agora-proxy` sin reordenar las existentes.
+- **Razón**: la familia contenía órdenes inválidos o repetidos y colores legacy;
+  el tipo Winerim es una señal más fiable que el color existente para ubicar
+  nuevas copas.
+- **Alternativa descartada**: reclasificar futuras altas por el color leído en
+  Agora o renumerar toda la familia en cada alta. Ambas opciones pueden heredar
+  errores o mover teclas ya usadas por sala.
+- **Rollback / mitigación**: las mutaciones quedaron limitadas a `Order` y
+  `Color`, con lectura fresh posterior `50/50`; el código no modifica productos
+  existentes durante un alta nueva.
+
+---
+
 ## 2026-09-08 - Backfill y tests de formatos Winerim sin desplegar frontend
 - **Decisión**: completar la fase 1 del plan de formatos (migración, catálogo,
   backfill desde `raw_payload->'prices'`) y desplegar solo `winerim-proxy` y

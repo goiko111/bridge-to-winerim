@@ -4,6 +4,24 @@ export const AGORA_BUTTON_TEXT_WINE_NAME_WITH_FORMAT_SUFFIX = "WINE_NAME_WITH_FO
 
 const AGORA_HEX_COLOR = /^#[0-9A-F]{6}$/i;
 
+const AGORA_DEFAULT_COLOR_BY_WINE_TYPE: Record<string, string> = {
+  tinto: "#800040",
+  blanco: "#FFFFFF",
+  rosado: "#DC82EF",
+  espumoso: "#FF8080",
+  fortificado: "#F1C097",
+  dulce: "#F5A623",
+};
+
+const AGORA_WINE_TYPE_ORDER: Record<string, number> = {
+  tinto: 0,
+  blanco: 1,
+  rosado: 2,
+  espumoso: 3,
+  fortificado: 4,
+  dulce: 5,
+};
+
 function providerConfig(connection: unknown): Record<string, unknown> {
   if (!connection || typeof connection !== "object") return {};
   const config = (connection as { provider_config?: unknown }).provider_config;
@@ -83,7 +101,78 @@ export function agoraProductColor(connection: unknown, wineType: unknown, fallba
     : {};
   const canonicalType = canonicalAgoraWineType(wineType);
   const candidate = String(colors[canonicalType] ?? "").trim().toUpperCase();
-  return AGORA_HEX_COLOR.test(candidate) ? candidate : fallback;
+  if (AGORA_HEX_COLOR.test(candidate)) return candidate;
+  return AGORA_DEFAULT_COLOR_BY_WINE_TYPE[canonicalType] || fallback;
+}
+
+export type AgoraGlassPresentationCandidate = {
+  key: string;
+  name: unknown;
+  wineType: unknown;
+};
+
+export type AgoraExistingGlassPresentation = {
+  name: unknown;
+  wineType: unknown;
+  order: unknown;
+};
+
+export function compareAgoraGlassPresentation(
+  left: Pick<AgoraGlassPresentationCandidate, "name" | "wineType">,
+  right: Pick<AgoraGlassPresentationCandidate, "name" | "wineType">,
+): number {
+  const leftType = canonicalAgoraWineType(left.wineType);
+  const rightType = canonicalAgoraWineType(right.wineType);
+  return (AGORA_WINE_TYPE_ORDER[leftType] ?? 999) - (AGORA_WINE_TYPE_ORDER[rightType] ?? 999) ||
+    compareAgoraWineNames(left.name, right.name);
+}
+
+export function buildAgoraGlassPresentation(
+  connection: unknown,
+  candidates: AgoraGlassPresentationCandidate[],
+  orderStep = 100,
+): Record<string, { order: number; color: string }> {
+  const result: Record<string, { order: number; color: string }> = {};
+  [...candidates].sort(compareAgoraGlassPresentation).forEach((candidate, index) => {
+    result[candidate.key] = {
+      order: (index + 1) * orderStep,
+      color: agoraProductColor(connection, candidate.wineType),
+    };
+  });
+  return result;
+}
+
+export function nextAgoraGlassOrder(
+  wineType: unknown,
+  wineName: unknown,
+  existing: AgoraExistingGlassPresentation[],
+): number {
+  const targetType = canonicalAgoraWineType(wineType);
+  const sameType = existing
+    .filter((product) => canonicalAgoraWineType(product.wineType) === targetType)
+    .map((product) => ({ ...product, numericOrder: Number(product.order) }))
+    .filter((product) => Number.isSafeInteger(product.numericOrder) && product.numericOrder > 0)
+    .sort((left, right) => left.numericOrder - right.numericOrder || compareAgoraWineNames(left.name, right.name));
+  const insertionIndex = sameType.findIndex((product) => compareAgoraWineNames(wineName, product.name) < 0);
+  const previous = insertionIndex === 0 ? null : sameType[insertionIndex < 0 ? sameType.length - 1 : insertionIndex - 1];
+  const next = insertionIndex < 0 ? null : sameType[insertionIndex];
+  if (previous && next && next.numericOrder - previous.numericOrder > 1) {
+    return Math.floor((previous.numericOrder + next.numericOrder) / 2);
+  }
+  if (!previous && next && next.numericOrder > 1) return Math.floor(next.numericOrder / 2);
+  if (previous) {
+    const occupiedOrders = new Set(
+      existing
+        .map((product) => Number(product.order))
+        .filter((order) => Number.isSafeInteger(order) && order > 0),
+    );
+    let candidate = previous.numericOrder + 1;
+    while (occupiedOrders.has(candidate)) candidate++;
+    return candidate;
+  }
+
+  const typeRank = AGORA_WINE_TYPE_ORDER[canonicalAgoraWineType(wineType)] ?? 9;
+  return (typeRank + 1) * 100_000;
 }
 
 export type AgoraButtonTextCandidate = {
