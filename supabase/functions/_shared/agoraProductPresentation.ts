@@ -111,6 +111,12 @@ export type AgoraGlassPresentationCandidate = {
   wineType: unknown;
 };
 
+export type AgoraExistingGlassPresentation = {
+  name: unknown;
+  wineType: unknown;
+  order: unknown;
+};
+
 export function compareAgoraGlassPresentation(
   left: Pick<AgoraGlassPresentationCandidate, "name" | "wineType">,
   right: Pick<AgoraGlassPresentationCandidate, "name" | "wineType">,
@@ -139,14 +145,14 @@ export function buildAgoraGlassPresentation(
 export function nextAgoraGlassOrder(
   wineType: unknown,
   wineName: unknown,
-  existing: Array<{ name: unknown; color: unknown; order: unknown }>,
+  existing: AgoraExistingGlassPresentation[],
 ): number {
-  const targetColor = AGORA_DEFAULT_COLOR_BY_WINE_TYPE[canonicalAgoraWineType(wineType)];
+  const targetType = canonicalAgoraWineType(wineType);
   const sameType = existing
-    .filter((product) => String(product.color || "").toUpperCase() === targetColor)
+    .filter((product) => canonicalAgoraWineType(product.wineType) === targetType)
     .map((product) => ({ ...product, numericOrder: Number(product.order) }))
     .filter((product) => Number.isSafeInteger(product.numericOrder) && product.numericOrder > 0)
-    .sort((left, right) => compareAgoraWineNames(left.name, right.name));
+    .sort((left, right) => left.numericOrder - right.numericOrder || compareAgoraWineNames(left.name, right.name));
   const insertionIndex = sameType.findIndex((product) => compareAgoraWineNames(wineName, product.name) < 0);
   const previous = insertionIndex === 0 ? null : sameType[insertionIndex < 0 ? sameType.length - 1 : insertionIndex - 1];
   const next = insertionIndex < 0 ? null : sameType[insertionIndex];
@@ -154,7 +160,16 @@ export function nextAgoraGlassOrder(
     return Math.floor((previous.numericOrder + next.numericOrder) / 2);
   }
   if (!previous && next && next.numericOrder > 1) return Math.floor(next.numericOrder / 2);
-  if (previous) return previous.numericOrder + 1;
+  if (previous) {
+    const occupiedOrders = new Set(
+      existing
+        .map((product) => Number(product.order))
+        .filter((order) => Number.isSafeInteger(order) && order > 0),
+    );
+    let candidate = previous.numericOrder + 1;
+    while (occupiedOrders.has(candidate)) candidate++;
+    return candidate;
+  }
 
   const typeRank = AGORA_WINE_TYPE_ORDER[canonicalAgoraWineType(wineType)] ?? 9;
   return (typeRank + 1) * 100_000;

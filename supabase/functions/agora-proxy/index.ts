@@ -11520,14 +11520,57 @@ ${costPricesXml}
           if (generatedGlass) {
             const familyId = String(generatedGlass.attrs.FamilyId || "");
             const existingFamilyProducts = namingProducts
-              .filter((product) => String(product.FamilyId || "") === familyId)
-              .map((product) => ({ name: product.Name, color: product.Color, order: product.Order }));
+              .filter((product) => String(product.FamilyId || "") === familyId);
+            const existingGlassIds = existingFamilyProducts.map((product) => product.Id);
+            const wineTypeByProductId = new Map<string, string>();
+            for (let offset = 0; offset < existingGlassIds.length; offset += 100) {
+              const productIdChunk = existingGlassIds.slice(offset, offset + 100);
+              if (productIdChunk.length === 0) continue;
+              const { data: trackedGlasses, error: trackedGlassesError } = await supabase
+                .from("winerim_push_tracking")
+                .select("agora_product_id,winerim_wine_id")
+                .eq("connection_id", task.connection_id)
+                .eq("format", "GLASS")
+                .in("agora_product_id", productIdChunk);
+              if (trackedGlassesError) {
+                throw new Error(`Could not resolve existing glass types: ${trackedGlassesError.message}`);
+              }
+              const trackedWineIds = [...new Set((trackedGlasses || []).map((row) => String(row.winerim_wine_id || "")).filter(Boolean))];
+              const wineTypeByWineId = new Map<string, string>();
+              if (trackedWineIds.length > 0) {
+                const { data: trackedWines, error: trackedWinesError } = await supabase
+                  .from("winerim_wines")
+                  .select("winerim_id,wine_type")
+                  .eq("connection_id", task.connection_id)
+                  .in("winerim_id", trackedWineIds);
+                if (trackedWinesError) {
+                  throw new Error(`Could not resolve existing glass wine metadata: ${trackedWinesError.message}`);
+                }
+                for (const trackedWine of trackedWines || []) {
+                  wineTypeByWineId.set(String(trackedWine.winerim_id), String(trackedWine.wine_type || ""));
+                }
+              }
+              for (const trackedGlass of trackedGlasses || []) {
+                wineTypeByProductId.set(
+                  String(trackedGlass.agora_product_id),
+                  wineTypeByWineId.get(String(trackedGlass.winerim_wine_id)) || "",
+                );
+              }
+            }
             const glassOrder = nextAgoraGlassOrder(
               extractWineType(wineArr[0]),
               generatedGlass.attrs.Name || wineArr[0].name,
-              existingFamilyProducts,
+              existingFamilyProducts.map((product) => ({
+                name: product.Name,
+                wineType: wineTypeByProductId.get(product.Id) || "",
+                order: product.Order,
+              })),
             );
-            const patchedGlass = setXmlAttrValue(generatedGlass.xml, "Order", String(glassOrder));
+            const patchedGlass = setXmlAttrValue(
+              setXmlAttrValue(generatedGlass.xml, "Order", String(glassOrder)),
+              "Color",
+              agoraProductColor(connection, extractWineType(wineArr[0])),
+            );
             xml = xml.replace(generatedGlass.xml, patchedGlass);
           }
         }

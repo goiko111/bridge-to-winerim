@@ -84,16 +84,32 @@ describe("Agora product presentation", () => {
 
   it("places a new glass in an available alphabetical gap without moving existing glasses", () => {
     const existing = [
-      { name: "C Albenc", color: "#FFFFFF", order: 200 },
-      { name: "C Leirana", color: "#FFFFFF", order: 400 },
-      { name: "C Clio", color: "#800040", order: 100 },
+      { name: "C Albenc", wineType: "blanco", order: 200 },
+      { name: "C Leirana", wineType: "blanco", order: 400 },
+      { name: "C Clio", wineType: "tinto", order: 100 },
     ];
     expect(nextAgoraGlassOrder("blanco", "C Belondrade", existing)).toBe(300);
     expect(existing).toEqual([
-      { name: "C Albenc", color: "#FFFFFF", order: 200 },
-      { name: "C Leirana", color: "#FFFFFF", order: 400 },
-      { name: "C Clio", color: "#800040", order: 100 },
+      { name: "C Albenc", wineType: "blanco", order: 200 },
+      { name: "C Leirana", wineType: "blanco", order: 400 },
+      { name: "C Clio", wineType: "tinto", order: 100 },
     ]);
+  });
+
+  it("uses wine metadata rather than a stale product color", () => {
+    expect(nextAgoraGlassOrder("blanco", "C Belondrade", [
+      { name: "C Albenc", wineType: "blanco", order: 200 },
+      { name: "C Leirana", wineType: "blanco", order: 400 },
+      { name: "C Otro", wineType: "tinto", order: 300 },
+    ])).toBe(300);
+  });
+
+  it("does not reuse an occupied order when there is no alphabetical gap", () => {
+    expect(nextAgoraGlassOrder("blanco", "C Zorzal", [
+      { name: "C Albenc", wineType: "blanco", order: 200 },
+      { name: "C Tinto", wineType: "tinto", order: 201 },
+      { name: "C Rosado", wineType: "rosado", order: 202 },
+    ])).toBe(203);
   });
 
   it("keeps the format suffix when equal names need a stable disambiguator", () => {
