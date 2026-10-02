@@ -1,3 +1,4 @@
+import { pickLiveGlassFamily } from "../_shared/agoraGlassFamily.ts";
 import { restoreAgoraProductXml } from "../_shared/agoraRestoreProduct.ts";
 import { AUTO_CREATE_MAX_PER_CYCLE, applyAutoCreateCap, guardCreateFormats } from "../_shared/agoraAutoCreateGuard.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -818,19 +819,6 @@ function saPedreraDulceCode(connection: any, wine: any): string | null {
   const wineType = String(wine?.wine_type || wine?.raw_payload?.type || "").toLowerCase();
   if (wineType !== "postre" && wineType !== "dulce") return null;
   return commercialDCode(wine?.name);
-}
-
-export function pickLiveGlassFamily(
-  families: { Id: string | number; Name: string }[] | null | undefined,
-  mapping?: { id: string; name: string } | null,
-): { id: string; name: string } | null {
-  const list = families || [];
-  if (mapping?.id) {
-    const live = list.find((f) => String(f.Id) === String(mapping.id));
-    if (live) return { id: String(live.Id), name: String(live.Name) };
-  }
-  const copas = list.find((f) => String(f.Name || "").trim().toUpperCase() === "COPAS WINERIM");
-  return copas ? { id: String(copas.Id), name: String(copas.Name) } : null;
 }
 
 function saPedreraDedicatedFamily(
