@@ -90,7 +90,8 @@ Deno.serve(async (request) => {
         if (error || !data?.user) throw err("No se pudo invitar", 500, "INVITE_FAILED");
         user = data.user;
       }
-      const { error } = await db.from("user_roles").upsert({ user_id: user.id, role: "admin" }, { onConflict: "user_id,role", ignoreDuplicates: true });
+      const { data: has } = await db.from("user_roles").select("id").eq("user_id", user.id).eq("role", "admin").is("connection_id", null).limit(1);
+      const { error } = has?.length ? { error: null } : await db.from("user_roles").insert({ user_id: user.id, role: "admin", connection_id: null });
       if (error) throw err("No se pudo asignar el rol", 500, "ROLE_GRANT_FAILED");
       return json(request, { ok: true, userId: user.id, confirmed: !!user.email_confirmed_at });
     }
